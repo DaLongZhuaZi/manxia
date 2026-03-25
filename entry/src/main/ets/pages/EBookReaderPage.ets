@@ -25,9 +25,11 @@ import { curves, UIContext, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
+import { TextReaderInteractionOverlay } from '../components/TextReaderInteractionOverlay';
 import {
   TextReaderSettings,
   TextReadingMode,
+  TextReadingDirection,
   TextPageTurnAnimation,
   BackgroundType,
   DEFAULT_TEXT_READER_SETTINGS,
@@ -97,12 +99,15 @@ interface ReaderKitPositionSnapshot {
 struct EBookReaderPage {
   private static readonly TOOLBAR_AUTO_HIDE_DELAY_MS: number = 2200;
   private static readonly GUIDE_LAYOUT_STABILIZE_DELAY_MS: number = 140;
+  private static hasShownInteractionHint: boolean = false;
+  private static lastShownInteractionHintKey: string = '';
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @State private appGuideStep: AppGuideStep | null = null;
   @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('isInBackground') @Watch('onAppBackgroundStateChanged') appInBackground: boolean = false;
   private componentId: string = 'EBookReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private lifecycle = new PageLifecycleManager('EBookReaderPage', { enableDebug: true });
@@ -175,6 +180,7 @@ struct EBookReaderPage {
   @State textCurrentPageEndCharIndex: number = 0;
   @State textReadAloudPlaying: boolean = false;
   @State textReadAloudCurrentCharIndex: number = -1;
+  @State showTextInteractionOverlay: boolean = false;
   @State isCurrentPageBookmarked: boolean = false;
   @State currentPageBookmarkId: string = '';
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
@@ -194,6 +200,10 @@ struct EBookReaderPage {
   @State showTextReaderSettings: boolean = false;
   @State textReaderSettingsOpacity: number = 0;
   @State textReaderSettingsScale: number = 0.95;
+  @State private readerViewportWidth: number = 0;
+  @State private readerViewportHeight: number = 0;
+  private pendingInteractionHintKey: string = '';
+  private interactionOverlayDismissTimer: number = -1;
 
   // UI上下文（用于设置沉浸式模式）
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -306,6 +316,7 @@ struct EBookReaderPage {
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.clearToolbarAutoHideTimer();
     this.clearFullscreenRestoreTimer();
+    this.hideInteractionOverlay();
     const readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
     const readAloudSnapshot = this.readAloudController.getSnapshot();
     const keepReadAloudAliveOnExit = isOpeningReadAloudPlayer || (
@@ -352,12 +363,83 @@ struct EBookReaderPage {
     this.isPageVisible = true;
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
+    this.queueInteractionHintIfNeeded(this.textReaderSettings);
+    this.tryShowQueuedInteractionHint('page_show', 260);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EBookReaderPage');
     this.syncTextReadAloudUiFromController();
     this.readAloudController.refreshMediaSession();
     this.refreshCurrentEBookBookmarkState('on_page_show');
     this.scheduleToolbarAutoHide('page_show');
     void this.refreshPageGuide('onPageShow');
+  }
+
+  private onAppBackgroundStateChanged(): void {
+    if (this.appInBackground || !this.isPageVisible) {
+      return;
+    }
+    this.scheduleFullscreenRestore('app_foreground', 80);
+    this.tryShowQueuedInteractionHint('app_foreground', 260);
+  }
+
+  private getInteractionHintKey(settings: TextReaderSettings = this.textReaderSettings): string {
+    return `${settings.readingMode}`;
+  }
+
+  private queueInteractionHintIfNeeded(settings: TextReaderSettings = this.textReaderSettings): void {
+    const nextKey = this.getInteractionHintKey(settings);
+    if (!EBookReaderPage.hasShownInteractionHint || EBookReaderPage.lastShownInteractionHintKey !== nextKey) {
+      this.pendingInteractionHintKey = nextKey;
+      return;
+    }
+    this.pendingInteractionHintKey = '';
+  }
+
+  private canShowInteractionOverlay(): boolean {
+    return this.isPageVisible &&
+      this.isUsingTextReader() &&
+      !this.isLoading &&
+      !this.errorMessage &&
+      this.textContent.length > 0 &&
+      this.readerViewportWidth > 0 &&
+      this.readerViewportHeight > 0 &&
+      !this.hasReaderOverlayVisible();
+  }
+
+  private clearInteractionOverlayTimer(): void {
+    if (this.interactionOverlayDismissTimer >= 0) {
+      clearTimeout(this.interactionOverlayDismissTimer);
+      this.interactionOverlayDismissTimer = -1;
+    }
+  }
+
+  private hideInteractionOverlay(): void {
+    this.clearInteractionOverlayTimer();
+    this.showTextInteractionOverlay = false;
+  }
+
+  private tryShowQueuedInteractionHint(reason: string, delayMs: number = 0): void {
+    const showOverlay = (): void => {
+      if (!this.pendingInteractionHintKey || !this.canShowInteractionOverlay()) {
+        return;
+      }
+      this.showTextInteractionOverlay = true;
+      EBookReaderPage.lastShownInteractionHintKey = this.pendingInteractionHintKey;
+      this.pendingInteractionHintKey = '';
+      EBookReaderPage.hasShownInteractionHint = true;
+      this.clearInteractionOverlayTimer();
+      this.interactionOverlayDismissTimer = setTimeout(() => {
+        this.hideInteractionOverlay();
+      }, 6000);
+      logger.info(TAG, `show interaction overlay: reason=${reason}, key=${EBookReaderPage.lastShownInteractionHintKey}`);
+    };
+
+    if (delayMs > 0) {
+      setTimeout(() => {
+        showOverlay();
+      }, delayMs);
+      return;
+    }
+    showOverlay();
   }
 
   private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
@@ -495,6 +577,7 @@ struct EBookReaderPage {
     this.isPageVisible = false;
     this.clearToolbarAutoHideTimer();
     this.clearFullscreenRestoreTimer();
+    this.hideInteractionOverlay();
     const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
     if (isOpeningReadAloudPlayer) {
       logger.info(TAG, '电子书阅读器进入听书独立页，保留当前沉浸模式');
@@ -920,7 +1003,8 @@ struct EBookReaderPage {
     this.fullscreenRestoreTimer = setTimeout(() => {
       this.fullscreenRestoreTimer = -1;
       logger.debug(TAG, `重新应用沉浸模式: reason=${reason}`);
-      this.setupFullscreenMode();
+      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext ?? undefined);
+      WindowManager.reapplyCurrentDisplayMode(24);
       if (this.showTopToolbar || this.showBottomToolbar) {
         this.scheduleToolbarAutoHide(`fullscreen_restore_${reason}`);
       }
@@ -930,6 +1014,7 @@ struct EBookReaderPage {
   private handleReaderOverlayClosed(reason: string): void {
     this.scheduleFullscreenRestore(reason);
     this.scheduleToolbarAutoHide(reason);
+    this.tryShowQueuedInteractionHint(reason, 220);
   }
 
   private async loadEBook(bookId: string): Promise<void> {
@@ -2526,8 +2611,28 @@ struct EBookReaderPage {
         .width('100%')
         .height('100%')
         .onClick(() => {
-          this.toggleToolbar();
+          if (!this.isUsingTextReader()) {
+            this.toggleToolbar();
+          }
         })
+        if (this.showTextInteractionOverlay && this.isUsingTextReader()) {
+          TextReaderInteractionOverlay({
+            params: {
+              readerLabel: '鐢靛瓙涔﹂槄璇诲櫒',
+              readingMode: this.textReaderSettings.readingMode,
+              readingDirection: this.textReaderSettings.readingDirection ?? TextReadingDirection.HORIZONTAL,
+              tapToTurn: this.textReaderSettings.tapToTurn,
+              componentWidth: this.readerViewportWidth > 0 ? this.readerViewportWidth : 360,
+              componentHeight: this.readerViewportHeight > 0 ? this.readerViewportHeight : 780,
+              onDismiss: () => {
+                this.hideInteractionOverlay();
+              }
+            }
+          })
+            .width('100%')
+            .height('100%')
+            .zIndex(150)
+        }
 
         // 顶部工具栏（悬浮覆盖）
         if (this.showTopToolbar) {
@@ -2639,13 +2744,25 @@ struct EBookReaderPage {
       .id('ebook_reader_root')
       .onAreaChange((oldValue: Area, newValue: Area) => {
         // 检测屏幕方向变化
-        const newWidth = newValue.width as number;
-        const newHeight = newValue.height as number;
+        const newWidth = Number(newValue.width);
+        const newHeight = Number(newValue.height);
+        if (newWidth <= 0 || newHeight <= 0) {
+          return;
+        }
+        const widthChanged = Math.abs(newWidth - this.readerViewportWidth) > 1;
+        const heightChanged = Math.abs(newHeight - this.readerViewportHeight) > 1;
+        this.readerViewportWidth = newWidth;
+        this.readerViewportHeight = newHeight;
         const newIsLandscape = newWidth > newHeight;
         if (newIsLandscape !== this.isLandscape) {
           this.isLandscape = newIsLandscape;
-          this.screenWidth = newWidth;
-      logger.info(TAG, 'EBookReaderPage onReady');
+        }
+        this.screenWidth = newWidth;
+        if ((widthChanged || heightChanged) && this.isPageVisible) {
+          this.scheduleFullscreenRestore('area_change', 120);
+          if (this.isUsingTextReader()) {
+            this.tryShowQueuedInteractionHint('area_change', 180);
+          }
         }
       })
     }
@@ -2953,6 +3070,8 @@ struct EBookReaderPage {
           logger.info(TAG, '📖 文本阅读器分页完成，通知过渡动画');
           this.reportTransitionLoadingProgress(0.96, 'text_reader_ready');
           this.notifyTransitionReaderReadyOnce('text_reader_ready');
+          this.queueInteractionHintIfNeeded(this.textReaderSettings);
+          this.tryShowQueuedInteractionHint('text_reader_ready', 120);
         }
       })
       .width('100%')
@@ -3128,8 +3247,12 @@ struct EBookReaderPage {
             this.hideTextReaderSettingsWithAnimation();
           },
           onSettingsChange: (settings: TextReaderSettings) => {
+            const previousHintKey = this.getInteractionHintKey(this.textReaderSettings);
             settings.readAloud = this.getSafeReadAloudSettings(settings.readAloud);
             this.textReaderSettings = settings;
+            if (previousHintKey !== this.getInteractionHintKey(settings)) {
+              this.queueInteractionHintIfNeeded(settings);
+            }
             this.saveTextReaderSettings();
             this.syncTextReadAloudContext();
             this.persistGlobalReadAloudSettings(this.getSafeReadAloudSettings(settings.readAloud));

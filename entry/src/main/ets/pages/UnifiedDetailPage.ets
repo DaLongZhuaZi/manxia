@@ -216,10 +216,6 @@ export struct UnifiedDetailPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
-  @State private fullscreenChildShieldVisible: boolean = false;
-  @State private fullscreenChildShieldOpacity: number = 0;
-  private preserveDisplayModeOnNextDisappear: boolean = false;
-  private fullscreenChildShieldCleanupTimer: number = -1;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -604,17 +600,7 @@ export struct UnifiedDetailPage {
   private lifecycle = new PageLifecycleManager('UnifiedDetailPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    if (this.fullscreenChildShieldCleanupTimer >= 0) {
-      clearTimeout(this.fullscreenChildShieldCleanupTimer);
-      this.fullscreenChildShieldCleanupTimer = -1;
-    }
-    if (!this.preserveDisplayModeOnNextDisappear) {
-      WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
-      this.fullscreenChildShieldVisible = false;
-      this.fullscreenChildShieldOpacity = 0;
-    } else {
-      logger.info(TAG, '进入全屏子页面，保留统一详情页窗口模式');
-    }
+    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -1818,39 +1804,7 @@ export struct UnifiedDetailPage {
       sourceId: this.content.sourceId || ''
     };
 
-    this.prepareForFullscreenChildPage();
     this.pathStack.pushPathByName('ZLibraryReaderPage', params);
-  }
-
-  private prepareForFullscreenChildPage(): void {
-    if (this.fullscreenChildShieldCleanupTimer >= 0) {
-      clearTimeout(this.fullscreenChildShieldCleanupTimer);
-      this.fullscreenChildShieldCleanupTimer = -1;
-    }
-    this.preserveDisplayModeOnNextDisappear = true;
-    this.fullscreenChildShieldVisible = true;
-    this.fullscreenChildShieldOpacity = 1;
-  }
-
-  private revealFromFullscreenChildPage(): void {
-    this.preserveDisplayModeOnNextDisappear = false;
-    if (!this.fullscreenChildShieldVisible) {
-      return;
-    }
-    if (this.fullscreenChildShieldCleanupTimer >= 0) {
-      clearTimeout(this.fullscreenChildShieldCleanupTimer);
-      this.fullscreenChildShieldCleanupTimer = -1;
-    }
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseOut
-    }, () => {
-      this.fullscreenChildShieldOpacity = 0;
-    });
-    this.fullscreenChildShieldCleanupTimer = setTimeout(() => {
-      this.fullscreenChildShieldCleanupTimer = -1;
-      this.fullscreenChildShieldVisible = false;
-    }, 220);
   }
 
   /**
@@ -1924,7 +1878,6 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '漫画翻开过渡动画触发导航');
-        this.prepareForFullscreenChildPage();
         this.pathStack.pushPathByName('MangaReaderPage', readerParams);
       },
       undefined,
@@ -1967,7 +1920,6 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '电子书翻开过渡动画触发导航');
-        this.prepareForFullscreenChildPage();
         if (txtNovelReaderParams && originalEBook?.format === EBookFormat.TXT) {
           this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
         } else {
@@ -2025,7 +1977,6 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '小说翻开过渡动画触发导航');
-        this.prepareForFullscreenChildPage();
         this.pathStack.pushPathByName('NovelReaderPage', params);
       },
       undefined,
@@ -4010,36 +3961,61 @@ export struct UnifiedDetailPage {
    * 获取封面图片路径（处理本地文件路径）
    */
   private getCoverImageSource(): string | Resource {
-    const coverUrl = this.content?.coverUrl || '';
+    const coverUrl = this.getRawCoverImagePath();
     if (!coverUrl) {
       return '';
     }
-    
-    // 如果是网络URL，直接返回
+
+    if (coverUrl.startsWith('app.media.')) {
+      return this.resolveAppMediaCoverResource(coverUrl);
+    }
+
     if (coverUrl.startsWith('http://') || coverUrl.startsWith('https://')) {
       return coverUrl;
     }
-    
-    // 如果已经是file://开头，直接返回
+
     if (coverUrl.startsWith('file://')) {
       return coverUrl;
     }
-    
-    // 本地文件路径，添加file://前缀
+
     if (coverUrl.startsWith('/')) {
       return `file://${coverUrl}`;
     }
-    
+
     return coverUrl;
   }
 
-  /**
-   * 判断封面是否为本地文件（非网络URL）
-   */
-  private isLocalFileCover(): boolean {
-    const coverUrl = this.content?.coverUrl || '';
-    if (!coverUrl) return false;
-    return !coverUrl.startsWith('http://') && !coverUrl.startsWith('https://');
+  private getRawCoverImagePath(): string {
+    return this.localCoverPath || this.content?.coverUrl || '';
+  }
+
+  private hasCoverImageSource(): boolean {
+    return this.getRawCoverImagePath().length > 0;
+  }
+
+  private isNetworkCover(): boolean {
+    const coverUrl = this.getRawCoverImagePath();
+    return coverUrl.startsWith('http://') || coverUrl.startsWith('https://');
+  }
+
+  private resolveAppMediaCoverResource(raw: string): Resource {
+    const resourceName = raw.substring('app.media.'.length);
+    if (resourceName === 'mangabook') {
+      return $r('app.media.mangabook');
+    }
+    if (resourceName === 'ebook') {
+      return $r('app.media.ebook');
+    }
+    if (resourceName === 'ic_ebook') {
+      return $r('app.media.ic_ebook');
+    }
+    if (resourceName === 'icon') {
+      return $r('app.media.icon');
+    }
+    if (resourceName === 'ic_source_novel' || resourceName === 'ic_novel') {
+      return $r('app.media.ic_source_novel');
+    }
+    return $r('app.media.ebook');
   }
   
   /**
@@ -4103,18 +4079,16 @@ export struct UnifiedDetailPage {
             .height(COVER_HEIGHT)
             .objectFit(ImageFit.Cover)
             .borderRadius(8)
-        } else if (this.content?.coverUrl && this.isLocalFileCover()) {
-          // 本地电子书封面：直接使用Image组件加载
+        } else if (this.hasCoverImageSource() && !this.isNetworkCover()) {
           Image(this.getCoverImageSource())
             .width(COVER_WIDTH)
             .height(COVER_HEIGHT)
             .objectFit(ImageFit.Cover)
             .borderRadius(8)
             .onError(() => {
-              logger.warn(TAG, `本地封面加载失败: ${this.content?.coverUrl}`);
+              logger.warn(TAG, `封面加载失败: ${this.getRawCoverImagePath()}`);
             })
-        } else if (this.content?.coverUrl) {
-          // 网络封面：使用 AvifImage 组件加载
+        } else if (this.hasCoverImageSource()) {
           AvifImage({
             src: this.getCoverImageSource() as string,
             imageWidth: COVER_WIDTH,
@@ -8034,6 +8008,14 @@ export struct UnifiedDetailPage {
             .blur(50)
             .brightness(0.7)
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        } else if (this.hasCoverImageSource() && !this.isNetworkCover()) {
+          Image(this.getCoverImageSource())
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .blur(50)
+            .brightness(0.7)
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else {
           AvifImage({
             src: this.getCoverImageSource() as string,
@@ -8063,6 +8045,11 @@ export struct UnifiedDetailPage {
       Column() {
         if (this.coverPixelMap) {
           Image(this.coverPixelMap)
+            .width('100%')
+            .height('70%')
+            .objectFit(ImageFit.Contain)
+        } else if (this.hasCoverImageSource() && !this.isNetworkCover()) {
+          Image(this.getCoverImageSource())
             .width('100%')
             .height('70%')
             .objectFit(ImageFit.Contain)
@@ -8164,9 +8151,13 @@ export struct UnifiedDetailPage {
    * 使用 showAssetsCreationDialog 方式，无需申请权限
    */
   private async saveCoverToGallery(): Promise<void> {
-    const coverUrl = this.content?.coverUrl || '';
+    const coverUrl = this.getRawCoverImagePath();
     if (!coverUrl) {
       promptAction.showToast({ message: '无封面图片', duration: 2000 });
+      return;
+    }
+    if (coverUrl.startsWith('app.media.')) {
+      promptAction.showToast({ message: '内置资源封面暂不支持保存', duration: 2000 });
       return;
     }
     
@@ -8253,9 +8244,13 @@ export struct UnifiedDetailPage {
    * 使用系统 Share Kit API
    */
   private async shareCover(): Promise<void> {
-    const coverUrl = this.content?.coverUrl || '';
+    const coverUrl = this.getRawCoverImagePath();
     if (!coverUrl) {
       promptAction.showToast({ message: '无封面图片', duration: 2000 });
+      return;
+    }
+    if (coverUrl.startsWith('app.media.')) {
+      promptAction.showToast({ message: '内置资源封面暂不支持分享', duration: 2000 });
       return;
     }
     
@@ -8333,7 +8328,7 @@ export struct UnifiedDetailPage {
               .aspectRatio(COVER_WIDTH / COVER_HEIGHT)
               .objectFit(ImageFit.Cover)
               .borderRadius(12)
-          } else if (this.content?.coverUrl) {
+          } else if (this.hasCoverImageSource() && this.isNetworkCover()) {
             AvifImage({
               src: this.getCoverImageSource() as string,
               imageWidth: '100%',
@@ -8342,6 +8337,12 @@ export struct UnifiedDetailPage {
               imageBorderRadius: 12
             })
               .aspectRatio(COVER_WIDTH / COVER_HEIGHT)
+          } else if (this.hasCoverImageSource()) {
+            Image(this.getCoverImageSource())
+              .width('100%')
+              .aspectRatio(COVER_WIDTH / COVER_HEIGHT)
+              .objectFit(ImageFit.Cover)
+              .borderRadius(12)
           } else {
             Column() {
               SymbolGlyph($r('sys.symbol.text_book_closed'))
@@ -8719,14 +8720,23 @@ export struct UnifiedDetailPage {
               .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
               .transition({ type: TransitionType.Insert, opacity: 0 })
               .animation({ duration: 300, curve: Curve.EaseOut })
-          } else if (this.content?.coverUrl) {
-            // 回退到 AvifImage
+          } else if (this.hasCoverImageSource() && this.isNetworkCover()) {
             AvifImage({
               src: this.getCoverImageSource() as string,
               imageWidth: '100%',
               imageHeight: '100%',
               objectFit: ImageFit.Cover
             })
+              .blur(30)
+              .opacity(0.5)
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+              .transition({ type: TransitionType.Insert, opacity: 0 })
+              .animation({ duration: 300, curve: Curve.EaseOut })
+          } else if (this.hasCoverImageSource()) {
+            Image(this.getCoverImageSource())
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
               .blur(30)
               .opacity(0.5)
               .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
@@ -8851,22 +8861,6 @@ export struct UnifiedDetailPage {
           })
         }
 
-        if (this.fullscreenChildShieldVisible) {
-          Stack() {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor(this.themeState.currentTheme === ThemeType.DARK ? '#1A1A1A' : '#F5F5F5')
-              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          }
-          .width('100%')
-          .height('100%')
-          .opacity(this.fullscreenChildShieldOpacity)
-          .animation({ duration: 180, curve: Curve.EaseOut })
-          .zIndex(9999)
-          .hitTestBehavior(HitTestMode.None)
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        }
       }
     }
     .hideTitleBar(true)
@@ -8886,7 +8880,6 @@ export struct UnifiedDetailPage {
     })
     .onShown(() => {
       WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
-      this.revealFromFullscreenChildPage();
       // 页面显示时刷新阅读记录（从阅读器返回时）
       this.refreshReadingProgress();
       void this.loadReadAloudCacheSummary();

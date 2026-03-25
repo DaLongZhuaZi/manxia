@@ -46,12 +46,18 @@ struct AboutPage {
   @State responsive_contentPadding: number = 16;
   @State responsive_maxContentWidth: number = 1200;
   @State responsive_isLandscape: boolean = false;
+  private pageInitialized: boolean = false;
+  private appInfoLoading: boolean = false;
 
   @State private appName: string = '漫匣';
   @State private appVersion: string = '';
   @State private buildNumber: string = '';
   private developer: string = 'DaLongZhuaZi';
   private description: string = '一款基于HarmonyOS Next的现代化漫画阅读应用';
+
+  aboutToAppear(): void {
+    void this.initializePage();
+  }
 
   onPageShow(): void {
     try {
@@ -63,24 +69,30 @@ struct AboutPage {
     } catch (err) {
       logger.error(TAG, 'AppStorage.get 异常', String(err));
     }
+    if (this.appVersion.length === 0 || this.buildNumber.length === 0) {
+      void this.loadAppInfo();
+    }
   }
 
-  async onReady(): Promise<void> {
-    ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
-      logger.info(TAG, `主题切换到: ${newTheme}`);
-    });
-    
-    // 初始化字体感知
-    FontAwareHelper.initializeFontAware(
-      this.componentId,
-      this.fontState,
-      (newState: FontAwareState) => {
-        this.fontState = newState;
-      }
-    );
-    
-    // 初始化响应式布局
-    this.initializeResponsiveLayout();
+  private async initializePage(): Promise<void> {
+    if (!this.pageInitialized) {
+      ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
+        logger.info(TAG, `主题切换到: ${newTheme}`);
+      });
+
+      // 初始化字体感知
+      FontAwareHelper.initializeFontAware(
+        this.componentId,
+        this.fontState,
+        (newState: FontAwareState) => {
+          this.fontState = newState;
+        }
+      );
+
+      // 初始化响应式布局
+      this.initializeResponsiveLayout();
+      this.pageInitialized = true;
+    }
     await this.loadAppInfo();
   }
 
@@ -150,6 +162,10 @@ struct AboutPage {
   }
 
   private async loadAppInfo(): Promise<void> {
+    if (this.appInfoLoading) {
+      return;
+    }
+    this.appInfoLoading = true;
     try {
       const label: string = await this.appInfoManager.getLabel();
       const bundleName: string = await this.appInfoManager.getBundleName();
@@ -162,7 +178,21 @@ struct AboutPage {
     } catch (error) {
       const e = error as Error;
       logger.error(TAG, '加载应用信息失败', e.message);
+    } finally {
+      this.appInfoLoading = false;
     }
+  }
+
+  private getDisplayAppName(): string {
+    return this.appName.length > 0 ? this.appName : '漫匣';
+  }
+
+  private getDisplayAppVersion(): string {
+    return this.appVersion.length > 0 ? this.appVersion : '--';
+  }
+
+  private getDisplayBuildNumber(): string {
+    return this.buildNumber.length > 0 ? this.buildNumber : '--';
   }
 
   private goBack(): void {
@@ -185,13 +215,13 @@ struct AboutPage {
         .borderRadius(20)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
 
-      Text('漫匣')
+      Text(this.getDisplayAppName())
         .fontSize(28)
         .fontWeight(FontWeight.Bold)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-      Text(`版本 ${this.appVersion} (${this.buildNumber})`)
+      Text(`版本 ${this.getDisplayAppVersion()} (${this.getDisplayBuildNumber()})`)
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -246,9 +276,9 @@ struct AboutPage {
   @Builder
   buildAppInfo() {
     Column() {
-      this.buildInfoItem('应用名称','漫匣')
-      this.buildInfoItem('版本号', this.appVersion)
-      this.buildInfoItem('构建号', this.buildNumber)
+      this.buildInfoItem('应用名称', this.getDisplayAppName())
+      this.buildInfoItem('版本号', this.getDisplayAppVersion())
+      this.buildInfoItem('构建号', this.getDisplayBuildNumber())
       this.buildInfoItem('开发者', this.developer, false)
     }
     .width('100%')
@@ -566,7 +596,7 @@ struct AboutPage {
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.onPageShow();
-      this.onReady();
+      void this.initializePage();
     })
     .backgroundColor(Color.Transparent)
   }

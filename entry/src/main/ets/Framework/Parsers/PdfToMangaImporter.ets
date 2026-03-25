@@ -26,22 +26,14 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-/**
- * 批量大小：每处理多少页后强制让出更长时间
- */
-const BATCH_SIZE = 3;
-
-/**
- * 每页转换前后的延时（毫秒）
- * 这个延时让系统有机会处理其他事件，避免watchdog检测到线程阻塞
- */
-const PAGE_DELAY_MS = 100;
-
-/**
- * 每批次之间的额外延时（毫秒）
- * 更长的延时确保系统有足够时间响应
- */
-const BATCH_DELAY_MS = 300;
+const UI_YIELD_EVERY_PAGES = 4;
+const UI_YIELD_DELAY_MS = 24;
+const DOCUMENT_SESSION_PAGE_LIMIT = 24;
+const LOW_MEMORY_DOCUMENT_SESSION_PAGE_LIMIT = 8;
+const CRITICAL_MEMORY_DOCUMENT_SESSION_PAGE_LIMIT = 4;
+const DOCUMENT_RECYCLE_DELAY_MS = 60;
+const MEMORY_WARNING_LEVEL_KEY = 'systemMemoryWarningLevel';
+const MEMORY_WARNING_TIME_KEY = 'systemMemoryWarningTime';
 
 /**
  * PDF内容类型枚举
@@ -161,10 +153,78 @@ export class PdfToMangaImporter {
   private pdfDocument: pdfService.PdfDocument | null = null;
   private config: PdfImportConfig;
   private progressCallback?: PdfImportProgressCallback;
+  private documentSessionPageLimit: number = DOCUMENT_SESSION_PAGE_LIMIT;
+  private lastObservedMemoryWarningTime: number = 0;
 
   constructor(config: PdfImportConfig, progressCallback?: PdfImportProgressCallback) {
     this.config = config;
     this.progressCallback = progressCallback;
+    this.lastObservedMemoryWarningTime = AppStorage.get<number>(MEMORY_WARNING_TIME_KEY) ?? 0;
+  }
+
+  private openPdfDocumentSession(reason: string): pdfService.ParseResult {
+    if (!this.pdfDocument) {
+      this.pdfDocument = new pdfService.PdfDocument();
+    }
+    const loadResult = this.pdfDocument.loadDocument(this.config.pdfPath);
+    logger.info(TAG, `PDF 文档会话已打开: reason=${reason}, result=${loadResult}`);
+    return loadResult;
+  }
+
+  private releasePdfDocument(reason: string): void {
+    if (!this.pdfDocument) {
+      return;
+    }
+    try {
+      this.pdfDocument.releaseDocument();
+      logger.info(TAG, `PDF 文档会话已释放: reason=${reason}`);
+    } catch (error) {
+      logger.warn(TAG, `释放 PDF 文档失败: reason=${reason}, error=${String(error)}`);
+    } finally {
+      this.pdfDocument = null;
+    }
+  }
+
+  private async recyclePdfDocument(reason: string, delayMs: number = DOCUMENT_RECYCLE_DELAY_MS): Promise<void> {
+    this.releasePdfDocument(reason);
+    if (delayMs > 0) {
+      await delay(delayMs);
+    }
+    const loadResult = this.openPdfDocumentSession(`reopen_${reason}`);
+    if (loadResult !== pdfService.ParseResult.PARSE_SUCCESS) {
+      throw new Error(`PDF 文档重建失败: ${loadResult}`);
+    }
+  }
+
+  private consumePendingMemoryWarningLevel(): number {
+    const warningTime = AppStorage.get<number>(MEMORY_WARNING_TIME_KEY) ?? 0;
+    if (warningTime <= this.lastObservedMemoryWarningTime) {
+      return -1;
+    }
+    this.lastObservedMemoryWarningTime = warningTime;
+    return AppStorage.get<number>(MEMORY_WARNING_LEVEL_KEY) ?? -1;
+  }
+
+  private tightenDocumentSessionLimit(level: number): void {
+    if (level >= 2) {
+      this.documentSessionPageLimit = Math.min(this.documentSessionPageLimit, CRITICAL_MEMORY_DOCUMENT_SESSION_PAGE_LIMIT);
+      return;
+    }
+    if (level >= 1) {
+      this.documentSessionPageLimit = Math.min(this.documentSessionPageLimit, LOW_MEMORY_DOCUMENT_SESSION_PAGE_LIMIT);
+      return;
+    }
+    if (level >= 0) {
+      this.documentSessionPageLimit = Math.min(this.documentSessionPageLimit, Math.max(LOW_MEMORY_DOCUMENT_SESSION_PAGE_LIMIT, DOCUMENT_SESSION_PAGE_LIMIT / 2));
+    }
+  }
+
+  private async yieldToUi(delayMs: number = UI_YIELD_DELAY_MS): Promise<void> {
+    await delay(delayMs);
+  }
+
+  private buildPageImagePath(outputDir: string, pageIndex: number): string {
+    return `${outputDir}/page_${String(pageIndex).padStart(4, '0')}.webp`;
   }
 
   /**
@@ -200,13 +260,17 @@ export class PdfToMangaImporter {
       this.reportProgress(10, 100, '正在创建目录结构...');
 
       // 4. 转换所有页面为图片
-      // 注意：convertToImage是同步阻塞操作，为避免触发THREAD_BLOCK_6S，
-      // 我们采用分批处理+延时的方式，让系统有机会处理其他事件
+      // 为了避免长时间阻塞和原生缓存持续累积，转换过程中会周期性让出 UI，
+      // 并按会话页数分段重建 PDF 文档。
       const pageCount = this.pdfDocument!.getPageCount();
       const imageFiles: PdfPageImage[] = [];
       
-      logger.info(TAG, `开始转换 ${pageCount} 页PDF，预计需要较长时间...`);
-      
+      logger.info(
+        TAG,
+        `开始转换 ${pageCount} 页 PDF，当前文档会话页数上限=${this.documentSessionPageLimit}，将分段重建文档以控制内存占用`
+      );
+
+      let pagesProcessedInCurrentSession = 0;
       for (let i = 0; i < pageCount; i++) {
         this.reportProgress(
           10 + Math.floor((i / pageCount) * 80),
@@ -220,11 +284,34 @@ export class PdfToMangaImporter {
         } else {
           logger.warn(TAG, `页面 ${i} 转换失败，跳过`);
         }
-        
-        // 每处理BATCH_SIZE页后，添加额外的延时让系统有更多时间响应
-        if ((i + 1) % BATCH_SIZE === 0 && i < pageCount - 1) {
-          logger.info(TAG, `已完成 ${i + 1}/${pageCount} 页，暂停让系统响应...`);
-          await delay(BATCH_DELAY_MS);
+
+        pagesProcessedInCurrentSession++;
+        if (i < pageCount - 1) {
+          const memoryWarningLevel = this.consumePendingMemoryWarningLevel();
+          if (memoryWarningLevel >= 0) {
+            this.tightenDocumentSessionLimit(memoryWarningLevel);
+            logger.warn(
+              TAG,
+              `检测到新的系统内存警告(level=${memoryWarningLevel})，立即重建 PDF 文档，会话页数上限收紧为 ${this.documentSessionPageLimit}`
+            );
+            await this.recyclePdfDocument(`memory_warning_level_${memoryWarningLevel}_after_page_${i + 1}`);
+            pagesProcessedInCurrentSession = 0;
+            continue;
+          }
+
+          if (pagesProcessedInCurrentSession >= this.documentSessionPageLimit) {
+            logger.info(
+              TAG,
+              `已处理 ${i + 1}/${pageCount} 页，重建 PDF 文档以释放原生缓存（sessionLimit=${this.documentSessionPageLimit})`
+            );
+            await this.recyclePdfDocument(`session_limit_after_page_${i + 1}`);
+            pagesProcessedInCurrentSession = 0;
+            continue;
+          }
+
+          if ((i + 1) % UI_YIELD_EVERY_PAGES === 0) {
+            await this.yieldToUi();
+          }
         }
       }
 
@@ -278,12 +365,7 @@ export class PdfToMangaImporter {
       };
     } finally {
       // 清理资源
-      try {
-        this.pdfDocument?.releaseDocument();
-      } catch (error) {
-        logger.warn(TAG, `释放PDF文档失败: ${String(error)}`);
-      }
-      this.pdfDocument = null;
+      this.releasePdfDocument('import_finished');
     }
   }
 
@@ -292,8 +374,7 @@ export class PdfToMangaImporter {
    */
   private async loadPdfDocument(): Promise<PdfImportResult> {
     try {
-      this.pdfDocument = new pdfService.PdfDocument();
-      const loadResult = this.pdfDocument.loadDocument(this.config.pdfPath);
+      const loadResult = this.openPdfDocumentSession('initial_load');
 
       if (loadResult !== pdfService.ParseResult.PARSE_SUCCESS) {
         return {
@@ -302,7 +383,15 @@ export class PdfToMangaImporter {
         };
       }
 
-      const pageCount = this.pdfDocument.getPageCount();
+      const pdfDocument = this.pdfDocument;
+      if (!pdfDocument) {
+        return {
+          success: false,
+          errorMessage: 'PDF加载失败：文档实例为空'
+        };
+      }
+
+      const pageCount = pdfDocument.getPageCount();
       if (pageCount <= 0) {
         return {
           success: false,
@@ -386,19 +475,31 @@ export class PdfToMangaImporter {
   }
 
   /**
-   * 将PixelMap转换为图片Buffer
-   * 使用ImagePacker的异步方法，不会阻塞主线程
+   * 将 PixelMap 直接打包写入文件，避免先创建整块 ArrayBuffer 再复制到文件，降低峰值内存占用。
    */
-  private async pixelMapToBuffer(pixelMap: image.PixelMap, format: string = 'image/jpeg', quality: number = 90): Promise<ArrayBuffer> {
+  private async writePixelMapToFile(
+    pixelMap: image.PixelMap,
+    outputPath: string,
+    format: string = 'image/jpeg',
+    quality: number = 90
+  ): Promise<void> {
     const packOpts: image.PackingOption = {
       format: format,
       quality: quality
     };
     const imagePackerApi = image.createImagePacker();
+    const file = fileIo.openSync(
+      outputPath,
+      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+    );
     try {
-      const buffer = await imagePackerApi.packToData(pixelMap, packOpts);
-      return buffer;
+      await imagePackerApi.packToFile(pixelMap, file.fd, packOpts);
     } finally {
+      try {
+        fileIo.closeSync(file);
+      } catch (closeError) {
+        logger.warn(TAG, `关闭图片输出文件失败: ${String(closeError)}`);
+      }
       imagePackerApi.release();
     }
   }
@@ -406,11 +507,8 @@ export class PdfToMangaImporter {
   /**
    * 将PDF页面转换为图片
    * 
-   * 使用getPagePixelMap()获取页面PixelMap，然后使用ImagePacker异步打包为图片文件。
-   * 这种方式比convertToImage()更不容易阻塞主线程，因为：
-   * 1. getPagePixelMap()获取的是内存中的像素数据
-   * 2. ImagePacker.packToData()是异步操作
-   * 3. 文件写入使用异步API
+   * 使用 getPagePixelMap() 获取页面 PixelMap，然后直接打包写入目标文件，
+   * 避免在内存中额外持有整块编码后的图片 buffer。
    */
   private async convertPageToImage(pageIndex: number, outputDir: string): Promise<PdfPageImage | null> {
     try {
@@ -418,10 +516,7 @@ export class PdfToMangaImporter {
         return null;
       }
 
-      // 在转换前添加短暂延时，让UI有机会响应
-      await delay(PAGE_DELAY_MS);
-
-      logger.info(TAG, `开始转换页面 ${pageIndex}`);
+      logger.debug(TAG, `start converting page ${pageIndex + 1}`);
       
       // 获取PDF页面
       const pdfPage: pdfService.PdfPage = this.pdfDocument.getPage(pageIndex);
@@ -453,43 +548,15 @@ export class PdfToMangaImporter {
           logger.warn(TAG, `获取页面 ${pageIndex} PixelMap尺寸失败: ${String(infoError)}`);
         }
 
-        logger.info(
+        logger.debug(
           TAG,
-          `页面 ${pageIndex} 使用整页渲染尺寸: ${outputWidth}x${outputHeight}, 原始=${pageWidth}x${pageHeight}`
+          `page ${pageIndex + 1} render size=${outputWidth}x${outputHeight}, source=${pageWidth}x${pageHeight}`
         );
 
-        const imgBuffer = await this.pixelMapToBuffer(pixelMap, 'image/webp', 70);
+        const finalPath = this.buildPageImagePath(outputDir, pageIndex);
+        await this.writePixelMapToFile(pixelMap, finalPath, 'image/webp', 70);
 
-        // 生成输出文件路径
-        const outputFileName = `page_${pageIndex}.webp`;
-        const outputPath = `${outputDir}/${outputFileName}`;
-
-        // 异步写入文件
-        const file = fileIo.openSync(outputPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-        try {
-          await fileIo.write(file.fd, imgBuffer);
-        } finally {
-          fileIo.closeSync(file.fd);
-        }
-
-        logger.info(TAG, `页面 ${pageIndex} 转换成功: ${outputPath}`);
-
-        // 转换后添加短暂延时
-        await delay(PAGE_DELAY_MS);
-
-        // 重命名为标准格式: page_0001.webp
-        const standardName = `page_${String(pageIndex).padStart(4, '0')}.webp`;
-        const standardPath = `${outputDir}/${standardName}`;
-
-        let finalPath = outputPath;
-        if (outputPath !== standardPath) {
-          try {
-            fileIo.renameSync(outputPath, standardPath);
-            finalPath = standardPath;
-          } catch (e) {
-            logger.warn(TAG, `重命名文件失败: ${e}`);
-          }
-        }
+        logger.debug(TAG, `page ${pageIndex + 1} converted: ${finalPath}`);
 
         // 获取文件信息
         let fileSize = 0;

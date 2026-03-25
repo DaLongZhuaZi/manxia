@@ -274,6 +274,7 @@ export class WindowManager {
       mainWindow.setWindowSystemBarEnable([]).then(() => {
         logger.info(WindowManager.TAG, '✅ 完全沉浸式模式设置成功');
         WindowManager.currentMode = DisplayMode.FULL_IMMERSIVE;
+        WindowManager.refreshStoredSystemBarHeightsAfterModeChange(mainWindow);
       }).catch((err: BusinessError) => {
         logger.error(WindowManager.TAG, `❌ 隐藏系统栏失败: ${JSON.stringify(err)}`);
       });
@@ -309,6 +310,7 @@ export class WindowManager {
       mainWindow.setWindowSystemBarEnable(['navigation']).then(() => {
         logger.info(WindowManager.TAG, '✅ 状态栏已隐藏，导航栏保持显示');
         WindowManager.currentMode = DisplayMode.HIDE_STATUS_BAR;
+        WindowManager.refreshStoredSystemBarHeightsAfterModeChange(mainWindow);
       }).catch((err: BusinessError) => {
         logger.error(WindowManager.TAG, `❌ 设置系统栏显示失败: ${JSON.stringify(err)}`);
       });
@@ -344,6 +346,7 @@ export class WindowManager {
       mainWindow.setWindowSystemBarEnable(['status']).then(() => {
         logger.info(WindowManager.TAG, '✅ 导航栏已隐藏，状态栏保持显示');
         WindowManager.currentMode = DisplayMode.HIDE_NAVIGATION_BAR;
+        WindowManager.refreshStoredSystemBarHeightsAfterModeChange(mainWindow);
       }).catch((err: BusinessError) => {
         logger.error(WindowManager.TAG, `❌ 设置系统栏显示失败: ${JSON.stringify(err)}`);
       });
@@ -380,6 +383,7 @@ export class WindowManager {
         logger.info(WindowManager.TAG, '✅ 已恢复默认显示模式');
         WindowManager.currentMode = DisplayMode.DEFAULT;
         WindowManager.setDefaultSystemBar(mainWindow);
+        WindowManager.refreshStoredSystemBarHeightsAfterModeChange(mainWindow);
       }).catch((err: BusinessError) => {
         logger.error(WindowManager.TAG, `❌ 恢复默认显示模式失败: ${JSON.stringify(err)}`);
       });
@@ -414,6 +418,7 @@ export class WindowManager {
       // 保持系统栏显示
       mainWindow.setWindowSystemBarEnable(['status', 'navigation']).then(() => {
         logger.info(WindowManager.TAG, '✅ 系统栏保持显示');
+        WindowManager.refreshStoredSystemBarHeightsAfterModeChange(mainWindow);
       }).catch((err: BusinessError) => {
         logger.error(WindowManager.TAG, `❌ 设置系统栏显示失败: ${JSON.stringify(err)}`);
       });
@@ -454,6 +459,7 @@ export class WindowManager {
         logger.info(WindowManager.TAG, '✅ 专用沉浸模式系统栏设置成功');
         WindowManager.currentMode = DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE;
         WindowManager.setNormalSystemBar(mainWindow);
+        WindowManager.refreshStoredSystemBarHeightsAfterModeChange(mainWindow);
       }).catch((err: BusinessError) => {
         logger.error(WindowManager.TAG, `❌ 专用沉浸模式系统栏设置失败: ${JSON.stringify(err)}`);
       });
@@ -991,6 +997,16 @@ export class WindowManager {
     };
   }
 
+  private static refreshStoredSystemBarHeightsAfterModeChange(
+    mainWindow: window.Window,
+    delayMs: number = 96
+  ): void {
+    WindowManager.storeSystemBarHeights(mainWindow);
+    setTimeout(() => {
+      WindowManager.storeSystemBarHeights(mainWindow);
+    }, delayMs);
+  }
+
   /**
    * 获取并存储系统栏高度信息
    * @param windowOrContext 可以传入Window实例或UIContext
@@ -1144,6 +1160,7 @@ export class WindowManager {
         WindowManager.setDefaultSystemBar(mainWindow);
         break;
     }
+    WindowManager.refreshStoredSystemBarHeightsAfterModeChange(mainWindow);
   }
 
   static reapplyCurrentDisplayMode(delayMs: number = 0): void {
