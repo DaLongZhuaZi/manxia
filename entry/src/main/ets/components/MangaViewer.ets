@@ -5497,6 +5497,31 @@ export struct MangaViewer {
       this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
   }
 
+  private shouldReverseWebtoonProgressLayout(): boolean {
+    return this.isContinuousHorizontalRTL();
+  }
+
+  private getActiveProgressChapterTitle(): string {
+    if (this.currentChapterId) {
+      const title = this.getChapterTitleById(this.currentChapterId);
+      if (title.length > 0) {
+        return title;
+      }
+    }
+    return this.chapter.title || '未知章节';
+  }
+
+  private getWebtoonProgressPercentText(): string {
+    return `${Math.round(this.webtoonScrollProgress * 100)}%`;
+  }
+
+  private getWebtoonPageProgressText(): string {
+    if (this.shouldReverseWebtoonProgressLayout()) {
+      return `${this.getCurrentChapterPageCount()} / ${this.currentWebtoonPage + 1}`;
+    }
+    return `${this.currentWebtoonPage + 1} / ${this.getCurrentChapterPageCount()}`;
+  }
+
   private getContinuousHorizontalViewportWidth(): number {
     return (this.screenWidth && this.screenWidth > 0) ? this.screenWidth : 360;
   }
@@ -9149,7 +9174,7 @@ export struct MangaViewer {
     .height(120)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .backgroundColor(colorMap.backgroundSecondary)
+    .backgroundColor(Color.Black)
   }
 
   /**
@@ -9169,7 +9194,7 @@ export struct MangaViewer {
       .height(80)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-      .backgroundColor(colorMap.backgroundSecondary)
+      .backgroundColor(Color.Black)
     } else if ((direction === 'prev' && this.isFirstChapter) || (direction === 'next' && this.isLastChapter)) {
       // 检查是否是边界章节 - 显示边界提示而不是加载中
       Column() {
@@ -10292,53 +10317,42 @@ export struct MangaViewer {
   buildWebtoonProgressIndicator() {
     if (this.showWebtoonProgress && (this.isWebtoonMode() || this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL)) {
       Column() {
-        // [修复] 多章节模式下显示章节标题
-        if (this.currentChapterId && this.currentChapterId !== this.chapter.id) {
-          Text(this.getChapterTitleById(this.currentChapterId))
+        Row() {
+          Text(this.getActiveProgressChapterTitle())
+            .layoutWeight(1)
             .fontSize(10)
             .fontColor(colorMap.accent)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ bottom: 4 })
-        }
-        
-        // 页面信息 - 使用当前章节的页数
-        Row() {
-          Text(`${this.currentWebtoonPage + 1}`)
-            .fontSize(14)
-            .fontColor(colorMap.textOnAccent)
-            .fontWeight(FontWeight.Bold)
+            .textAlign(TextAlign.Start)
 
-          Text(' / ')
-            .fontSize(12)
-            .fontColor(colorMap.textSecondary)
-
-          Text(`${this.getCurrentChapterPageCount()}`)
-            .fontSize(12)
+          Text(this.getWebtoonProgressPercentText())
+            .fontSize(10)
             .fontColor(colorMap.textSecondary)
         }
         .margin({ bottom: 4 })
+        .width('100%')
 
-        // 进度条
-        Row() {
-          Progress({
-            value: this.webtoonScrollProgress * 100,
-            total: 100,
-            type: ProgressType.Linear
-          })
-            .width(120)
-            .height(3)
-            .color(colorMap.primary)
-            .backgroundColor(colorMap.backgroundSecondary)
-        }
-
-        // 进度百分比
-        Text(`${Math.round(this.webtoonScrollProgress * 100)}%`)
-          .fontSize(10)
+        Text(this.getWebtoonPageProgressText())
+          .width('100%')
+          .textAlign(this.shouldReverseWebtoonProgressLayout() ? TextAlign.End : TextAlign.Start)
+          .fontSize(12)
           .fontColor(colorMap.textSecondary)
-          .margin({ top: 2 })
+          .margin({ bottom: 4 })
+
+        Progress({
+          value: this.webtoonScrollProgress * 100,
+          total: 100,
+          type: ProgressType.Linear
+        })
+          .width('100%')
+          .height(3)
+          .color(colorMap.primary)
+          .backgroundColor(colorMap.backgroundSecondary)
+          .scale({ x: this.shouldReverseWebtoonProgressLayout() ? -1 : 1, y: 1 })
       }
-      // .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+      .width(168)
+      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       .backgroundColor(colorMap.backgroundOverlay)
       .borderRadius(16)
       .position({ x: '50%', y: '10%' })
@@ -10509,7 +10523,7 @@ export struct MangaViewer {
       : `${this.readingSettings && this.readingSettings.readingMode !== undefined ? String(this.readingSettings.readingMode) : 'default'}_${this.viewCurrentPageIndex}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}`)
     .width('100%')
     .height('100%')
-    .backgroundColor(Color.Transparent)
+    .backgroundColor(Color.Black)
     .onAreaChange((oldArea: Area, newArea: Area) => {
       const w: number = Number(newArea.width);
       const h: number = Number(newArea.height);

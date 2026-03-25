@@ -6774,6 +6774,21 @@ struct MainMenuPage {
     });
   }
 
+  private restoreBottomBarAfterMainMenuReturn(): void {
+    if (this.useTopTabsNavigation) {
+      return;
+    }
+    this.resetBottomBarScrollState();
+    this.bottomBarOffsetY = this.currentTabIndex === TabIndex.SUWAYOMI ? this.getBottomBarTravelDistance() : 0;
+    setTimeout(() => {
+      if (this.useTopTabsNavigation) {
+        return;
+      }
+      this.resetBottomBarScrollState();
+      this.bottomBarOffsetY = this.currentTabIndex === TabIndex.SUWAYOMI ? this.getBottomBarTravelDistance() : 0;
+    }, this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION + 60);
+  }
+
   private updateMainMenuGlobalBackgroundVisibility(stackSize?: number): void {
     const size = typeof stackSize === 'number' ? stackSize : this.pathStack.size();
     const shouldShow = size === 0 && !this.mainMenuRootRevealLocked;
@@ -6797,6 +6812,7 @@ struct MainMenuPage {
       this.windowModeTransitionOverlayOpacity = 0;
       const shouldAnimateShield = this.mainMenuReentryShieldVisible;
       this.revealMainMenuAfterReturn(shouldAnimateShield);
+      this.restoreBottomBarAfterMainMenuReturn();
       if (shouldAnimateShield) {
         this.windowModeTransitionCleanupTimer = setTimeout(() => {
           this.windowModeTransitionCleanupTimer = -1;
@@ -6815,6 +6831,7 @@ struct MainMenuPage {
     this.windowModeTransitionSwitchTimer = setTimeout(() => {
       this.windowModeTransitionSwitchTimer = -1;
       PageWindowCoordinator.applyRootMainMenu(uiContext);
+      this.restoreBottomBarAfterMainMenuReturn();
       animateTo({
         duration: this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION,
         curve: Curve.EaseOut
@@ -6871,6 +6888,9 @@ struct MainMenuPage {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
     this.updateMainMenuGlobalBackgroundVisibility();
     this.applyMainMenuWindowModeWithTransition();
+    if (WindowManager.getCurrentMode() !== DisplayMode.DEFAULT || this.mainMenuReentryShieldVisible) {
+      this.restoreBottomBarAfterMainMenuReturn();
+    }
     void this.loadLibraryViewMode();
     if (this.fromGuide && this.guideTargetPageOpened && this.targetPage.length > 0) {
       try {
@@ -8910,15 +8930,13 @@ struct MainMenuPage {
         if (this.shouldUseSharedTabMultiColor(config) && this.isSharedTabSelected(config)) {
           SymbolGlyph(this.getSharedTabSystemIcon(config))
             .fontSize(24)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            .fontColor([this.getMainNavigationActiveColor()])
             .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
             .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.isSharedTabSelected(config))
         } else {
           SymbolGlyph(this.getSharedTabSystemIcon(config))
             .fontSize(24)
-            .fontColor([this.isSharedTabSelected(config)
-              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .fontColor([this.getMainNavigationColor(this.isSharedTabSelected(config))])
             .renderingStrategy(SymbolRenderingStrategy.SINGLE)
             .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.isSharedTabSelected(config))
         }
@@ -8926,9 +8944,7 @@ struct MainMenuPage {
         Image(this.currentTabIndex === config.index ? config.selectedIcon : config.icon)
           .width(24)
           .height(24)
-          .fillColor(this.currentTabIndex === config.index
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fillColor(this.getMainNavigationColor(this.currentTabIndex === config.index))
       }
 
       if (config.index === TabIndex.SOURCE && this.hasSourceUpdate) {
@@ -8973,9 +8989,7 @@ struct MainMenuPage {
       Text(config.title)
         .fontSize(11)
         .fontFamily(this.appFontFamily)
-        .fontColor(this.currentTabIndex === config.index
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontColor(this.getMainNavigationColor(this.currentTabIndex === config.index))
         .fontWeight(this.currentTabIndex === config.index ? FontWeight.Medium : FontWeight.Normal)
         .maxLines(1)
         .textAlign(TextAlign.Center)
@@ -8993,9 +9007,7 @@ struct MainMenuPage {
       Text(config.title)
         .fontSize(10)
         .fontFamily(this.appFontFamily)
-        .fontColor(this.currentTabIndex === config.index
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontColor(this.getMainNavigationColor(this.currentTabIndex === config.index))
         .fontWeight(this.currentTabIndex === config.index ? FontWeight.Medium : FontWeight.Normal)
         .maxLines(2)
         .textAlign(TextAlign.Center)
@@ -10530,7 +10542,7 @@ struct MainMenuPage {
    * 根据内容自动显示对应书架，没有内容则不显示，至少保留一个默认书架
    */
   @StorageProp('library_default_grid_columns')
-  private libraryDefaultGridColumnsSetting: number = 0;
+  private libraryDefaultGridColumnsSetting: number = 3;
   @StorageProp('library_shelf_grid_columns')
   private shelfGridColumnsSetting: number = 3;
   @StorageProp('library_hide_wood_shelf_texture')
@@ -10686,7 +10698,7 @@ struct MainMenuPage {
   }
 
   private getLibraryDefaultGridColumnsForDisplay(): number {
-    const responsiveDefault = this.responsive_libraryGridColumns > 0 ? this.responsive_libraryGridColumns : 3;
+    const responsiveDefault = 3;
     const configured = this.libraryDefaultGridColumnsSetting > 0 ? this.libraryDefaultGridColumnsSetting : responsiveDefault;
     return this.normalizeShelfGridColumns(configured);
   }
@@ -10707,9 +10719,7 @@ struct MainMenuPage {
   }
 
   private initShelfGridColumnsSetting(): void {
-    const defaultLibraryColumns = this.normalizeShelfGridColumns(
-      this.responsive_libraryGridColumns > 0 ? this.responsive_libraryGridColumns : 3
-    );
+    const defaultLibraryColumns = this.normalizeShelfGridColumns(3);
     const settingsLibraryColumnsRaw = this.settingsManager.getNumber(
       SettingKeys.LIBRARY_DEFAULT_GRID_COLUMNS,
       Number.NaN
@@ -12143,6 +12153,25 @@ struct MainMenuPage {
     }
 
     return `file://${raw}`;
+  }
+
+  private getEBookTransitionCoverPath(ebook: EBook): string {
+    const raw = this.getEBookCoverPath(ebook);
+    if (!raw || raw.length === 0) {
+      return '';
+    }
+
+    if (raw.startsWith('app.media.')) {
+      logger.debug('MainMenuPage', `电子书封面为资源引用，直接传递给过渡动画: ${raw}`);
+      return raw;
+    }
+
+    if (raw.startsWith('$r(')) {
+      logger.warn('MainMenuPage', `电子书封面为未解析资源表达式，无法用于过渡动画: ${raw}`);
+      return '';
+    }
+
+    return this.getValidEBookCoverPath(ebook);
   }
 
 
@@ -17532,7 +17561,7 @@ struct MainMenuPage {
   private openEBookReaderWithComponentId(ebook: EBook, componentId: string): void {
     logger.info(TAG, `打开电子书阅读器: ${ebook.metadata.title}`);
 
-    const coverPath: string = this.getValidEBookCoverPath(ebook);
+    const coverPath: string = this.getEBookTransitionCoverPath(ebook);
     const readerParams: EBookReaderParams = {
       bookId: ebook.id,
       coverComponentId: componentId
@@ -24987,9 +25016,7 @@ struct MainMenuPage {
       Text(config.title)
         .fontSize(vertical ? 10 : 12)
         .fontFamily(this.appFontFamily)
-        .fontColor(this.currentTabIndex === config.index
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontColor(this.getMainNavigationColor(this.currentTabIndex === config.index))
         .fontWeight(this.currentTabIndex === config.index ? FontWeight.Medium : FontWeight.Normal)
         .maxLines(vertical ? 2 : 1)
         .textAlign(TextAlign.Center)
@@ -25170,9 +25197,7 @@ struct MainMenuPage {
       Text(config.title)
         .fontSize(this.responsive_tabBarVertical ? 10 : 12)
         .fontFamily(this.appFontFamily)
-        .fontColor(this.currentTabIndex === config.index
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontColor(this.getMainNavigationColor(this.currentTabIndex === config.index))
         .fontWeight(this.currentTabIndex === config.index ? FontWeight.Medium : FontWeight.Normal)
         .maxLines(this.responsive_tabBarVertical ? 2 : 1)
         .textAlign(TextAlign.Center)
@@ -25274,6 +25299,18 @@ struct MainMenuPage {
     return this.userThemeTabBarOpacity;
   }
 
+  private getMainNavigationActiveColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK ? '#6EC8FF' : '#0A84FF';
+  }
+
+  private getMainNavigationInactiveColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK ? '#D6DEE8' : '#4B5563';
+  }
+
+  private getMainNavigationColor(selected: boolean): ResourceColor {
+    return selected ? this.getMainNavigationActiveColor() : this.getMainNavigationInactiveColor();
+  }
+
   private getEffectiveBottomBarOffset(): number {
     if (this.currentTabIndex === TabIndex.SUWAYOMI) {
       return this.getBottomBarTravelDistance();
@@ -25285,7 +25322,8 @@ struct MainMenuPage {
   }
 
   private getBottomBarTravelDistance(): number {
-    return this.BOTTOM_BAR_HEIGHT;
+    // 底栏是悬浮布局，隐藏时要连同底部留白一起移出屏幕，否则会始终露出半截。
+    return this.BOTTOM_BAR_HEIGHT + this.BOTTOM_BAR_MARGIN_BOTTOM;
   }
 
   private clampBottomBarOffset(rawOffset: number): number {
@@ -25354,7 +25392,7 @@ struct MainMenuPage {
       const projectedOffset = this.clampBottomBarOffset(
         this.bottomBarOffsetY + this.bottomBarLastScrollDirection * Math.min(this.BOTTOM_BAR_SETTLE_DIRECTION_BIAS, this.bottomBarScrollAccumulator)
       );
-      const shouldHide = projectedOffset >= this.getBottomBarTravelDistance() * this.BOTTOM_BAR_SETTLE_SNAP_RATIO;
+      const shouldHide = projectedOffset >= this.BOTTOM_BAR_HEIGHT * this.BOTTOM_BAR_SETTLE_SNAP_RATIO;
       const targetOffset = shouldHide ? this.getBottomBarTravelDistance() : 0;
       const duration = targetOffset === 0 ? this.BOTTOM_BAR_SHOW_SETTLE_DURATION : this.BOTTOM_BAR_HIDE_SETTLE_DURATION;
       const curve = targetOffset === 0 ? Curve.EaseOut : Curve.EaseInOut;

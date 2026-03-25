@@ -11,6 +11,8 @@ import { startupController } from './Framework/Diagnostics/StartupController';
 import { themeManager, ThemeType } from './Framework/Managers/ThemeManager';
 
 const TAG = 'MyAbilityStage';
+const MEMORY_WARNING_LEVEL_KEY = 'systemMemoryWarningLevel';
+const MEMORY_WARNING_TIME_KEY = 'systemMemoryWarningTime';
 
 /**
  * 🚀 应用阶段生命周期管理
@@ -25,6 +27,8 @@ export default class MyAbilityStage extends AbilityStage {
   onCreate(): void {
     // 开始启动流程监控 - 使用StartupController统一管理
     startupController.startMonitoring();
+    AppStorage.setOrCreate(MEMORY_WARNING_LEVEL_KEY, -1);
+    AppStorage.setOrCreate(MEMORY_WARNING_TIME_KEY, 0);
 
     // 最早期的日志输出，确保能看到应用启动
     logger.startup(TAG, 'onCreate START', '应用阶段开始创建');
@@ -64,6 +68,8 @@ export default class MyAbilityStage extends AbilityStage {
    * 💾 内存不足时调用
    */
   onMemoryLevel(level: number): void {
+    AppStorage.setOrCreate(MEMORY_WARNING_LEVEL_KEY, level);
+    AppStorage.setOrCreate(MEMORY_WARNING_TIME_KEY, Date.now());
     logger.warn('MyAbilityStage', `⚠️ 内存警告: 级别${level}`);
   }
 

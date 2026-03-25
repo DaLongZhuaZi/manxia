@@ -273,9 +273,11 @@ export struct MangaReaderPage {
   @State private appGuideStep: AppGuideStep | null = null;
   @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('isInBackground') @Watch('onAppBackgroundStateChanged') appInBackground: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'MangaReaderPage';
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
+  private isPageVisible: boolean = false;
   
   // 动画相关
   private lifecycle = new PageLifecycleManager('MangaReaderPage', {
@@ -358,6 +360,7 @@ export struct MangaReaderPage {
   @State toolbarOpacity: number = 0.0;
   @State toolbarTranslateY: number = 0;// 工具栏动画位移
   @State autoHideTimer: number = -1;
+  private fullscreenRestoreTimer: number = -1;
   @State showSettingsPanel: boolean = false;
   @State showQuickSettings: boolean = false;
   @State showMoreMenu: boolean = false;
@@ -382,8 +385,8 @@ export struct MangaReaderPage {
   @State showInteractionOverlay: boolean = false;// 初次进入不显示，等待读取真实阅读设置后再显示
   @State overlayDismissTimer: number = -1;
   @State isReadingSettingsReady: boolean = false;// 阅读设置是否已加载
-  private lastShownReadingMode: ReadingMode | null = null;// 上次显示提示时的阅读模式
   private static hasShownInteractionHint: boolean = false;// 是否已经显示过交互提示（应用级别）
+  private static lastShownReadingMode: ReadingMode | null = null;// 上次显示提示时的阅读模式
   
   // 设置面板动画状态
   @State showDebugClickIndicator: boolean = false;
@@ -476,7 +479,10 @@ export struct MangaReaderPage {
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   onPageShow() {
+    this.isPageVisible = true;
+    this.uiContext = this.getUIContext();
     this.setupFullscreenMode();
+    this.scheduleFullscreenRestore('page_show');
     this.refreshCurrentMangaBookmarkState('on_page_show');
     logger.lifecycle(TAG, '漫画阅读器页面开始显示');
     
@@ -588,7 +594,16 @@ export struct MangaReaderPage {
     void this.refreshPageGuide('onPageShow');
   }
 
+  private onAppBackgroundStateChanged(): void {
+    if (this.appInBackground || !this.isPageVisible) {
+      return;
+    }
+    this.scheduleFullscreenRestore('app_foreground', 80);
+  }
+
   onPageHide() {
+    this.isPageVisible = false;
+    this.clearFullscreenRestoreTimer();
     logger.lifecycle(TAG, '漫画阅读器页面隐藏（进入后台）');
     // 初始化主题感知
     this.saveReadingProgressInternal('onPageHide').catch((error: Error) => {
@@ -729,6 +744,7 @@ export struct MangaReaderPage {
   }
 
   aboutToAppear() {
+    this.isPageVisible = true;
     logger.lifecycle(TAG, '漫画阅读器页面即将出现');
     
     // 初始化屏幕尺寸
@@ -917,6 +933,8 @@ export struct MangaReaderPage {
   }
 
   aboutToDisappear() {
+    this.isPageVisible = false;
+    this.clearFullscreenRestoreTimer();
     logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
     
     // 通知预加载管理器：阅读器已关闭
@@ -3084,7 +3102,7 @@ export struct MangaReaderPage {
   private setupFullscreenMode(): void {
     try {
       // 使用WindowManager设置完全沉浸式模式
-      const uiContext = this.getUIContext();
+      const uiContext = this.getUIContext() ?? this.uiContext;
       if (!uiContext) {
         logger.error(TAG, '❌ 无法获取UIContext，设置全屏模式失败');
         return;
@@ -3094,7 +3112,7 @@ export struct MangaReaderPage {
       if (currentMode !== DisplayMode.FULL_IMMERSIVE) {
         this.previousDisplayMode = currentMode;
       }
-      WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, uiContext);
+      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, uiContext);
       logger.info(TAG, '✅ 使用WindowManager设置完全沉浸式阅读模式');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -3113,10 +3131,31 @@ export struct MangaReaderPage {
   /**
    * 恢复正常模式
     */
+  private clearFullscreenRestoreTimer(): void {
+    if (this.fullscreenRestoreTimer !== -1) {
+      clearTimeout(this.fullscreenRestoreTimer);
+      this.fullscreenRestoreTimer = -1;
+    }
+  }
+
+  private scheduleFullscreenRestore(reason: string, delayMs: number = 120): void {
+    this.clearFullscreenRestoreTimer();
+    this.fullscreenRestoreTimer = setTimeout(() => {
+      this.fullscreenRestoreTimer = -1;
+      if (!this.isPageVisible) {
+        return;
+      }
+      const uiContext = this.getUIContext() ?? this.uiContext;
+      logger.debug(TAG, `reapply immersive mode: reason=${reason}`);
+      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, uiContext ?? undefined);
+      WindowManager.reapplyCurrentDisplayMode(24);
+    }, delayMs);
+  }
+
   private restoreNormalMode(): void {
     try {
       // 使用WindowManager恢复默认显示模式
-      const uiContext = this.getUIContext();
+      const uiContext = this.getUIContext() ?? this.uiContext;
       if (!uiContext) {
         logger.error(TAG, '❌ 无法获取UIContext，恢复正常模式失败');
         return;
@@ -3212,8 +3251,8 @@ export struct MangaReaderPage {
     }
     
     // 情况2：阅读模式发生变化
-    if (this.lastShownReadingMode !== null && this.lastShownReadingMode !== currentMode) {
-      logger.info(TAG, `Reading mode changed: ${this.lastShownReadingMode} -> ${currentMode}`);
+    if (MangaReaderPage.lastShownReadingMode !== null && MangaReaderPage.lastShownReadingMode !== currentMode) {
+      logger.info(TAG, `Reading mode changed: ${MangaReaderPage.lastShownReadingMode} -> ${currentMode}`);
       return true;
     }
     
@@ -3236,7 +3275,11 @@ export struct MangaReaderPage {
     }
     
     // 记录当前阅读模式和已显示状态
-    this.lastShownReadingMode = this.readingSettings.readingMode;
+    if (this.overlayDismissTimer !== -1) {
+      clearTimeout(this.overlayDismissTimer);
+      this.overlayDismissTimer = -1;
+    }
+    MangaReaderPage.lastShownReadingMode = this.readingSettings.readingMode;
     MangaReaderPage.hasShownInteractionHint = true;
     
     // 5秒后自动隐藏
@@ -5368,6 +5411,7 @@ export struct MangaReaderPage {
       this.startAutoHideTimer();
     } else {
       this.hideToolbarsWithAnimation();
+      this.scheduleFullscreenRestore('hide_toolbar', 240);
     }
   }
 
@@ -5436,6 +5480,21 @@ export struct MangaReaderPage {
 
   private isScrollableReaderMode(): boolean {
     return this.isWebtoonMode() || this.isContinuousScrollMode();
+  }
+
+  private isReaderProgressRtl(): boolean {
+    if (this.readingSettings.readingDirection !== ReadingDirection.RIGHT_TO_LEFT) {
+      return false;
+    }
+    const mode = this.readingSettings.readingMode;
+    return mode === ReadingMode.SINGLE_PAGE ||
+      mode === ReadingMode.SINGLE_PAGE_RTL ||
+      mode === ReadingMode.DOUBLE_PAGE ||
+      mode === ReadingMode.CONTINUOUS_SCROLL;
+  }
+
+  private getToolbarTotalPageCount(): number {
+    return this.readerState.currentChapter?.totalPages || this.readerState.currentChapter?.pages.length || 0;
   }
 
   /**
@@ -6212,12 +6271,21 @@ export struct MangaReaderPage {
     Column() {
         // 显示效果设置按钮
       Row() {
-        Text(`${this.readerState.currentPageIndex + 1}`)
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-          .width(40)
-          .fontFamily(this.appFontFamily)
-          .textAlign(TextAlign.Center)
+        if (this.isReaderProgressRtl()) {
+          Text(`${this.getToolbarTotalPageCount()}`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .width(40)
+            .fontFamily(this.appFontFamily)
+            .textAlign(TextAlign.Center)
+        } else {
+          Text(`${this.readerState.currentPageIndex + 1}`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .width(40)
+            .fontFamily(this.appFontFamily)
+            .textAlign(TextAlign.Center)
+        }
 
         Slider({
           value: this.readerState.currentPageIndex,
@@ -6228,6 +6296,7 @@ export struct MangaReaderPage {
           .layoutWeight(1)
           .trackColor($r('app.color.divider_primary'))
           .selectedColor($r('app.color.accent_primary'))
+          .scale({ x: this.isReaderProgressRtl() ? -1 : 1, y: 1 })
           .onChange((value: number) => {
             const targetPage = Math.round(value);
             this.readerState.currentPageIndex = targetPage;
@@ -6244,12 +6313,21 @@ export struct MangaReaderPage {
             });
           })
 
-        Text(`${this.readerState.currentChapter?.totalPages || this.readerState.currentChapter?.pages.length || 0}`)
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-          .width(40)
-          .fontFamily(this.appFontFamily)
-          .textAlign(TextAlign.Center)
+        if (this.isReaderProgressRtl()) {
+          Text(`${this.readerState.currentPageIndex + 1}`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .width(40)
+            .fontFamily(this.appFontFamily)
+            .textAlign(TextAlign.Center)
+        } else {
+          Text(`${this.getToolbarTotalPageCount()}`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .width(40)
+            .fontFamily(this.appFontFamily)
+            .textAlign(TextAlign.Center)
+        }
       }
       .width('100%')
       .padding({ left: 16, right: 16 })
@@ -6644,6 +6722,7 @@ export struct MangaReaderPage {
         })
         .width('100%')
         .height('100%')
+        .backgroundColor(Color.Black)
       }
       .width('100%')
       .height('100%')
@@ -6658,10 +6737,15 @@ export struct MangaReaderPage {
         const heightVp = Number(newArea.height);
         
         if (widthVp > 0 && heightVp > 0) {
+          const widthChanged = Math.abs(widthVp - this.componentWidth) > 1;
+          const heightChanged = Math.abs(heightVp - this.componentHeight) > 1;
           this.componentWidth = widthVp;
           this.componentHeight = heightVp;
         // 快速设置面板（带动画）
           this.isLandscapeMode = widthVp > heightVp;
+          if ((widthChanged || heightChanged) && this.isPageVisible) {
+            this.scheduleFullscreenRestore('area_change', 120);
+          }
           logger.debug(TAG, `📐 组件尺寸更新: ${widthVp.toFixed(0)}x${heightVp.toFixed(0)}vp, 横屏=${this.isLandscapeMode}`);
         }
       })
@@ -6686,6 +6770,7 @@ export struct MangaReaderPage {
         }
         .width('100%')
         .height('100%')
+        .backgroundColor(Color.Black)
         // .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
 
         // 完整设置面板（带动画）
@@ -7760,6 +7845,7 @@ export struct MangaReaderPage {
       }
       .width('100%')
       .height('100%')
+      .backgroundColor(Color.Black)
       .opacity(this.contentOpacity)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .focusable(true)

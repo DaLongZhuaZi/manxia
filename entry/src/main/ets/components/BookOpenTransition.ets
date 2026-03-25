@@ -233,6 +233,11 @@ export struct BookOpenTransition {
     if (imagePath.length === 0) {
       return;
     }
+    if (imagePath.startsWith('app.media.')) {
+      logger.info(TAG, `背景图片为应用资源，跳过 PixelMap 预加载: ${imagePath}`);
+      this.backgroundImagePixelMap = null;
+      return;
+    }
     logger.info(TAG, `加载背景图片: ${imagePath}`);
     
     try {
@@ -348,6 +353,36 @@ export struct BookOpenTransition {
       this.coverPixelMap.release();
       this.coverPixelMap = null;
     }
+  }
+
+  private resolveAppMediaImageSource(raw: string): Resource {
+    const resourceName = raw.substring('app.media.'.length);
+    if (resourceName === 'mangabook') {
+      return $r('app.media.mangabook');
+    }
+    if (resourceName === 'ebook') {
+      return $r('app.media.ebook');
+    }
+    if (resourceName === 'ic_ebook') {
+      return $r('app.media.ic_ebook');
+    }
+    if (resourceName === 'icon') {
+      return $r('app.media.icon');
+    }
+    if (resourceName === 'ic_source_novel' || resourceName === 'ic_novel') {
+      return $r('app.media.ic_source_novel');
+    }
+    return $r('app.media.ebook');
+  }
+
+  private toRenderableImageSource(raw: string): string | Resource {
+    if (raw.startsWith('app.media.')) {
+      return this.resolveAppMediaImageSource(raw);
+    }
+    if (raw.startsWith('/') && !raw.startsWith('file://')) {
+      return `file://${raw}`;
+    }
+    return raw;
   }
   
   // ========== 位置变化监听 ==========
@@ -1734,9 +1769,7 @@ export struct BookOpenTransition {
               .backgroundColor(this.getOpenBackdropColor())
 
             if (this.hasOpenBackgroundImage()) {
-              Image(this.getOpenBackgroundImagePath().startsWith('/')
-                ? `file://${this.getOpenBackgroundImagePath()}`
-                : this.getOpenBackgroundImagePath())
+              Image(this.toRenderableImageSource(this.getOpenBackgroundImagePath()))
                 .width('100%')
                 .height('100%')
                 .objectFit(ImageFit.Cover)
@@ -1763,7 +1796,7 @@ export struct BookOpenTransition {
               (this.coverImagePath.startsWith('http://')
                 || this.coverImagePath.startsWith('https://')
                 || this.coverImagePath.startsWith('app.media.'))) {
-            Image(this.coverImagePath)
+            Image(this.toRenderableImageSource(this.coverImagePath))
               .width(this.currentWidth)
               .height(this.currentHeight)
               .position({ x: this.currentX, y: this.currentY })

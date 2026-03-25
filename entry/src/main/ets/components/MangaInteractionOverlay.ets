@@ -1,24 +1,15 @@
-/**
- * 漫画阅读器交互提示Overlay组件（优化版）
- * 为不同阅读模式和设备方向提供定制化的交互提示
- * 支持：单页LTR/RTL/TTB、双页、条漫、连续垂直等模式
- */
-
 import { logger } from '../Utils/Logger';
-import { ReadingMode, ReadingDirection } from '../Models/MangaModels';
-import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { ReadingDirection, ReadingMode } from '../Models/MangaModels';
 
 const TAG = 'MangaInteractionOverlay';
+const OVERLAY_FADE_IN_DELAY_MS: number = 50;
 
-// 交互区域类型
 export enum InteractionZoneType {
-  PAGE_TURN_PREV = 'PAGE_TURN_PREV',        // 上一页区域（蓝色）
-  PAGE_TURN_NEXT = 'PAGE_TURN_NEXT',        // 下一页区域（绿色）
-  TOOLBAR_TOGGLE = 'TOOLBAR_TOGGLE',        // 工具栏切换区域（橙色）
-  SCROLL_AREA = 'SCROLL_AREA'               // 滚动区域（紫色，仅条漫）
+  PAGE_TURN_PREV = 'PAGE_TURN_PREV',
+  PAGE_TURN_NEXT = 'PAGE_TURN_NEXT',
+  TOOLBAR_TOGGLE = 'TOOLBAR_TOGGLE'
 }
 
-// 交互区域定义
 export interface InteractionZone {
   type: InteractionZoneType;
   left: number;
@@ -26,10 +17,8 @@ export interface InteractionZone {
   width: number;
   height: number;
   label: string;
-  icon?: string; // 图标文字（如箭头符号）
 }
 
-// 组件参数
 export interface MangaInteractionOverlayParams {
   readingMode: ReadingMode;
   readingDirection: ReadingDirection;
@@ -41,7 +30,6 @@ export interface MangaInteractionOverlayParams {
   onDismiss: () => void;
 }
 
-// 颜色方案
 interface ColorScheme {
   background: string;
   border: string;
@@ -54,379 +42,257 @@ export struct MangaInteractionOverlay {
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State private zones: InteractionZone[] = [];
   @State private overlayOpacity: number = 0;
-  @State private modeDescription: string = '';
 
   aboutToAppear(): void {
-    this.calculateZones();
-    this.modeDescription = this.getModeDescription();
-    
-    // 淡入动画
+    this.zones = this.buildZones();
     setTimeout(() => {
       this.overlayOpacity = 1;
-    }, 50);
-    
-    logger.info(TAG, `交互提示Overlay已加载: 阅读模式=${this.params.readingMode}, 阅读方向=${this.params.readingDirection}, 设备方向=${this.params.deviceOrientation}`);
+    }, OVERLAY_FADE_IN_DELAY_MS);
+    logger.info(
+      TAG,
+      `overlay ready: mode=${this.params.readingMode}, direction=${this.params.readingDirection}, zones=${this.zones.length}`
+    );
   }
 
-  /**
-   * 根据阅读模式、阅读方向和设备方向计算交互区域
-   */
-  private calculateZones(): void {
-    const zones: InteractionZone[] = [];
-    const width = this.params.componentWidth;
-    const height = this.params.componentHeight;
-    const direction = this.params.readingDirection;
-    
-    // 条漫类模式：忽略阅读方向，统一处理
-    if (this.params.readingMode === ReadingMode.WEBTOON ||
-        this.params.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
-        this.params.readingMode === ReadingMode.CONTINUOUS_VERTICAL) {
-      this.calculateWebtoonZones(zones, width, height);
-      this.zones = zones;
-      logger.debug(TAG, `已计算${zones.length}个交互区域，模式: ${this.params.readingMode}（条漫）`);
-      return;
+  private isContinuousMode(): boolean {
+    return this.params.readingMode === ReadingMode.WEBTOON ||
+      this.params.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+      this.params.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+  }
+
+  private isVerticalPagingMode(): boolean {
+    if (this.params.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
+      return true;
     }
-    
-    // 单页和双页模式：根据阅读模式和阅读方向决定布局
+    return (
+      this.params.readingMode === ReadingMode.SINGLE_PAGE ||
+      this.params.readingMode === ReadingMode.DOUBLE_PAGE
+    ) && (
+      this.params.readingDirection === ReadingDirection.TOP_TO_BOTTOM ||
+      this.params.readingDirection === ReadingDirection.VERTICAL
+    );
+  }
+
+  private isRtlPagingMode(): boolean {
+    if (this.params.readingMode === ReadingMode.SINGLE_PAGE_RTL) {
+      return true;
+    }
+    return this.params.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+  }
+
+  private buildZones(): InteractionZone[] {
+    const width = Math.max(1, this.params.componentWidth);
+    const height = Math.max(1, this.params.componentHeight);
+
+    if (this.isContinuousMode()) {
+      return [{
+        type: InteractionZoneType.TOOLBAR_TOGGLE,
+        left: 0,
+        top: 0,
+        width,
+        height,
+        label: '单击任意位置\n显示或隐藏工具栏'
+      }];
+    }
+
     if (this.params.readingMode === ReadingMode.DOUBLE_PAGE) {
-      // 双页模式根据阅读方向调整
-      if (direction === ReadingDirection.RIGHT_TO_LEFT) {
-        this.calculateDoublePageRTLZones(zones, width, height);
-      } else {
-        this.calculateDoublePageZones(zones, width, height);
+      if (this.isVerticalPagingMode()) {
+        return this.buildVerticalZones(width, height, false);
       }
-    } else {
-      // 单页模式：优先根据阅读模式判断，其次根据阅读方向
-      // 修复：SINGLE_PAGE_RTL 和 SINGLE_PAGE_TTB 模式需要正确显示对应的overlay
-      if (this.params.readingMode === ReadingMode.SINGLE_PAGE_RTL) {
-        // 单页从右到左模式
-        this.calculateRTLZones(zones, width, height);
-      } else if (this.params.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
-        // 单页从上到下模式
-        this.calculateTTBZones(zones, width, height);
-      } else if (this.params.readingMode === ReadingMode.SINGLE_PAGE_LTR) {
-        // 单页从左到右模式
-        this.calculateLTRZones(zones, width, height);
-      } else {
-        // SINGLE_PAGE 默认模式：根据阅读方向决定
-        switch (direction) {
-          case ReadingDirection.RIGHT_TO_LEFT:
-            this.calculateRTLZones(zones, width, height);
-            break;
-          case ReadingDirection.TOP_TO_BOTTOM:
-          case ReadingDirection.VERTICAL:
-            this.calculateTTBZones(zones, width, height);
-            break;
-          case ReadingDirection.LEFT_TO_RIGHT:
-          default:
-            this.calculateLTRZones(zones, width, height);
-            break;
-        }
-      }
+      return this.buildDoublePageZones(width, height, this.isRtlPagingMode());
     }
-    
-    this.zones = zones;
-    logger.debug(TAG, `已计算${zones.length}个交互区域，模式: ${this.params.readingMode}, 方向: ${direction}`);
+
+    if (this.isVerticalPagingMode()) {
+      return this.buildVerticalZones(width, height, true);
+    }
+
+    return this.buildHorizontalZones(width, height, this.isRtlPagingMode());
   }
 
-  /**
-   * 条漫模式区域计算
-   */
-  private calculateWebtoonZones(zones: InteractionZone[], width: number, height: number): void {
-    // 条漫模式：整个区域都是切换工具栏，提示滑动操作
-    zones.push({
-      type: InteractionZoneType.TOOLBAR_TOGGLE,
-      left: 0,
-      top: 0,
-      width: width,
-      height: height,
-      label: '点击显示/隐藏工具栏',
-      icon: '⚙️'
-    });
+  private buildHorizontalZones(width: number, height: number, isRtl: boolean): InteractionZone[] {
+    const sideWidth = width * 0.3;
+    const middleWidth = width - sideWidth * 2;
+    return [
+      {
+        type: isRtl ? InteractionZoneType.PAGE_TURN_NEXT : InteractionZoneType.PAGE_TURN_PREV,
+        left: 0,
+        top: 0,
+        width: sideWidth,
+        height,
+        label: isRtl ? '下一页' : '上一页'
+      },
+      {
+        type: InteractionZoneType.TOOLBAR_TOGGLE,
+        left: sideWidth,
+        top: 0,
+        width: middleWidth,
+        height,
+        label: '显示/隐藏\n工具栏'
+      },
+      {
+        type: isRtl ? InteractionZoneType.PAGE_TURN_PREV : InteractionZoneType.PAGE_TURN_NEXT,
+        left: sideWidth + middleWidth,
+        top: 0,
+        width: sideWidth,
+        height,
+        label: isRtl ? '上一页' : '下一页'
+      }
+    ];
   }
 
-  /**
-   * 上下翻页模式区域计算
-   */
-  private calculateTTBZones(zones: InteractionZone[], width: number, height: number): void {
-    const topHeight = height * 0.3;
-    const middleHeight = height * 0.4;
-    const bottomHeight = height * 0.3;
-    
-    // 上部：上一页
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_PREV,
-      left: 0,
-      top: 0,
-      width: width,
-      height: topHeight,
-      label: '上一页',
-      icon: '↑'
-    });
-    
-    // 中部：工具栏
-    zones.push({
-      type: InteractionZoneType.TOOLBAR_TOGGLE,
-      left: 0,
-      top: topHeight,
-      width: width,
-      height: middleHeight,
-      label: '显示/隐藏工具栏',
-      icon: '⚙️'
-    });
-    
-    // 下部：下一页
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_NEXT,
-      left: 0,
-      top: topHeight + middleHeight,
-      width: width,
-      height: bottomHeight,
-      label: '下一页',
-      icon: '↓'
-    });
+  private buildVerticalZones(width: number, height: number, isSinglePage: boolean): InteractionZone[] {
+    const sideHeight = height * 0.3;
+    const middleHeight = height - sideHeight * 2;
+    const toolbarLabel = isSinglePage ? '显示/隐藏\n工具栏' : '双页中部\n显示工具栏';
+    return [
+      {
+        type: InteractionZoneType.PAGE_TURN_PREV,
+        left: 0,
+        top: 0,
+        width,
+        height: sideHeight,
+        label: '上一页'
+      },
+      {
+        type: InteractionZoneType.TOOLBAR_TOGGLE,
+        left: 0,
+        top: sideHeight,
+        width,
+        height: middleHeight,
+        label: toolbarLabel
+      },
+      {
+        type: InteractionZoneType.PAGE_TURN_NEXT,
+        left: 0,
+        top: sideHeight + middleHeight,
+        width,
+        height: sideHeight,
+        label: '下一页'
+      }
+    ];
   }
 
-  /**
-   * 从右到左翻页模式区域计算
-   */
-  private calculateRTLZones(zones: InteractionZone[], width: number, height: number): void {
-    const leftWidth = width * 0.3;
-    const middleWidth = width * 0.4;
-    const rightWidth = width * 0.3;
-    
-    // 左侧：下一页（RTL模式）
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_NEXT,
-      left: 0,
-      top: 0,
-      width: leftWidth,
-      height: height,
-      label: '下一页',
-      icon: '←'
-    });
-    
-    // 中间：工具栏
-    zones.push({
-      type: InteractionZoneType.TOOLBAR_TOGGLE,
-      left: leftWidth,
-      top: 0,
-      width: middleWidth,
-      height: height,
-      label: '显示/隐藏工具栏',
-      icon: '⚙️'
-    });
-    
-    // 右侧：上一页（RTL模式）
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_PREV,
-      left: leftWidth + middleWidth,
-      top: 0,
-      width: rightWidth,
-      height: height,
-      label: '上一页',
-      icon: '→'
-    });
+  private buildDoublePageZones(width: number, height: number, isRtl: boolean): InteractionZone[] {
+    const edgeWidth = width / 6;
+    const middleWidth = width - edgeWidth * 2;
+    return [
+      {
+        type: isRtl ? InteractionZoneType.PAGE_TURN_NEXT : InteractionZoneType.PAGE_TURN_PREV,
+        left: 0,
+        top: 0,
+        width: edgeWidth,
+        height,
+        label: isRtl ? '下一页' : '上一页'
+      },
+      {
+        type: InteractionZoneType.TOOLBAR_TOGGLE,
+        left: edgeWidth,
+        top: 0,
+        width: middleWidth,
+        height,
+        label: '中间大区域\n显示工具栏'
+      },
+      {
+        type: isRtl ? InteractionZoneType.PAGE_TURN_PREV : InteractionZoneType.PAGE_TURN_NEXT,
+        left: edgeWidth + middleWidth,
+        top: 0,
+        width: edgeWidth,
+        height,
+        label: isRtl ? '上一页' : '下一页'
+      }
+    ];
   }
 
-  /**
-   * 从左到右翻页模式区域计算
-   */
-  private calculateLTRZones(zones: InteractionZone[], width: number, height: number): void {
-    const leftWidth = width * 0.3;
-    const middleWidth = width * 0.4;
-    const rightWidth = width * 0.3;
-    
-    // 左侧：上一页
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_PREV,
-      left: 0,
-      top: 0,
-      width: leftWidth,
-      height: height,
-      label: '上一页',
-      icon: '←'
-    });
-    
-    // 中间：工具栏
-    zones.push({
-      type: InteractionZoneType.TOOLBAR_TOGGLE,
-      left: leftWidth,
-      top: 0,
-      width: middleWidth,
-      height: height,
-      label: '显示/隐藏工具栏',
-      icon: '⚙️'
-    });
-    
-    // 右侧：下一页
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_NEXT,
-      left: leftWidth + middleWidth,
-      top: 0,
-      width: rightWidth,
-      height: height,
-      label: '下一页',
-      icon: '→'
-    });
-  }
-
-  /**
-   * 双页模式区域计算（LTR - 从左到右）
-   */
-  private calculateDoublePageZones(zones: InteractionZone[], width: number, height: number): void {
-    const edgeWidth = width * 0.25;
-    const middleWidth = width * 0.5;
-    
-    // 左侧边缘：上一页
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_PREV,
-      left: 0,
-      top: 0,
-      width: edgeWidth,
-      height: height,
-      label: '上一页',
-      icon: '←'
-    });
-    
-    // 中间区域：工具栏
-    zones.push({
-      type: InteractionZoneType.TOOLBAR_TOGGLE,
-      left: edgeWidth,
-      top: 0,
-      width: middleWidth,
-      height: height,
-      label: '显示/隐藏工具栏',
-      icon: '⚙️'
-    });
-    
-    // 右侧边缘：下一页
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_NEXT,
-      left: edgeWidth + middleWidth,
-      top: 0,
-      width: edgeWidth,
-      height: height,
-      label: '下一页',
-      icon: '→'
-    });
-  }
-
-  /**
-   * 双页模式区域计算（RTL - 从右到左）
-   */
-  private calculateDoublePageRTLZones(zones: InteractionZone[], width: number, height: number): void {
-    const edgeWidth = width * 0.25;
-    const middleWidth = width * 0.5;
-    
-    // 左侧边缘：下一页（RTL模式）
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_NEXT,
-      left: 0,
-      top: 0,
-      width: edgeWidth,
-      height: height,
-      label: '下一页',
-      icon: '←'
-    });
-    
-    // 中间区域：工具栏
-    zones.push({
-      type: InteractionZoneType.TOOLBAR_TOGGLE,
-      left: edgeWidth,
-      top: 0,
-      width: middleWidth,
-      height: height,
-      label: '显示/隐藏工具栏',
-      icon: '⚙️'
-    });
-    
-    // 右侧边缘：上一页（RTL模式）
-    zones.push({
-      type: InteractionZoneType.PAGE_TURN_PREV,
-      left: edgeWidth + middleWidth,
-      top: 0,
-      width: edgeWidth,
-      height: height,
-      label: '上一页',
-      icon: '→'
-    });
-  }
-
-  /**
-   * 获取颜色方案
-   */
   private getColorScheme(type: InteractionZoneType): ColorScheme {
     switch (type) {
       case InteractionZoneType.PAGE_TURN_PREV:
         return {
-          background: 'rgba(33, 150, 243, 0.2)',  // 蓝色
-          border: 'rgba(33, 150, 243, 0.7)',
-          text: 'rgba(33, 150, 243, 1)'
+          background: 'rgba(33, 150, 243, 0.18)',
+          border: 'rgba(33, 150, 243, 0.78)',
+          text: 'rgba(127, 206, 255, 1)'
         };
       case InteractionZoneType.PAGE_TURN_NEXT:
         return {
-          background: 'rgba(76, 175, 80, 0.2)',   // 绿色
-          border: 'rgba(76, 175, 80, 0.7)',
-          text: 'rgba(76, 175, 80, 1)'
+          background: 'rgba(76, 175, 80, 0.18)',
+          border: 'rgba(76, 175, 80, 0.78)',
+          text: 'rgba(156, 255, 178, 1)'
         };
       case InteractionZoneType.TOOLBAR_TOGGLE:
-        return {
-          background: 'rgba(255, 152, 0, 0.2)',   // 橙色
-          border: 'rgba(255, 152, 0, 0.7)',
-          text: 'rgba(255, 152, 0, 1)'
-        };
-      case InteractionZoneType.SCROLL_AREA:
-        return {
-          background: 'rgba(156, 39, 176, 0.2)',  // 紫色
-          border: 'rgba(156, 39, 176, 0.7)',
-          text: 'rgba(156, 39, 176, 1)'
-        };
       default:
         return {
-          background: 'rgba(255, 255, 255, 0.2)',
-          border: 'rgba(255, 255, 255, 0.7)',
-          text: 'rgba(255, 255, 255, 1)'
+          background: 'rgba(255, 152, 0, 0.18)',
+          border: 'rgba(255, 152, 0, 0.82)',
+          text: 'rgba(255, 216, 133, 1)'
         };
     }
   }
 
-  /**
-   * 获取阅读模式描述
-   */
   private getModeDescription(): string {
-    switch (this.params.readingMode) {
-      case ReadingMode.WEBTOON:
-      case ReadingMode.WEBTOON_WITH_GAP:
-        return '条漫模式：上下滑动阅读';
-      case ReadingMode.CONTINUOUS_VERTICAL:
-        return '连续垂直：无缝滚动阅读';
-      case ReadingMode.SINGLE_PAGE_TTB:
-        return '单页模式：上下翻页';
-      case ReadingMode.SINGLE_PAGE_RTL:
-        return '单页模式：从右到左翻页';
-      case ReadingMode.DOUBLE_PAGE:
-        return '双页模式：同时显示两页';
-      case ReadingMode.SINGLE_PAGE:
-      case ReadingMode.SINGLE_PAGE_LTR:
+    if (this.isContinuousMode()) {
+      switch (this.params.readingMode) {
+        case ReadingMode.WEBTOON:
+          return '条漫模式：上下滚动阅读，单击任意位置显示或隐藏工具栏。';
+        case ReadingMode.WEBTOON_WITH_GAP:
+          return '条漫留白模式：上下滚动阅读，保留页间留白，单击任意位置显示或隐藏工具栏。';
+        default:
+          return '连续滚动模式：上下无缝滚动阅读，单击任意位置显示或隐藏工具栏。';
+      }
+    }
+
+    if (this.params.readingMode === ReadingMode.DOUBLE_PAGE) {
+      if (this.isVerticalPagingMode()) {
+        return '双页纵向模式：上方翻到上一页，中间显示工具栏，下方翻到下一页。';
+      }
+      return this.isRtlPagingMode()
+        ? '双页模式（从右往左）：左侧窄边缘下一页，中间大区域显示工具栏，右侧窄边缘上一页。'
+        : '双页模式（从左往右）：左侧窄边缘上一页，中间大区域显示工具栏，右侧窄边缘下一页。';
+    }
+
+    if (this.isVerticalPagingMode()) {
+      return '单页纵向模式：上方上一页，中间显示工具栏，下方下一页。';
+    }
+
+    return this.isRtlPagingMode()
+      ? '单页横向模式（从右往左）：左侧下一页，中间显示工具栏，右侧上一页。'
+      : '单页横向模式（从左往右）：左侧上一页，中间显示工具栏，右侧下一页。';
+  }
+
+  private getReminderText(): string {
+    if (this.isContinuousMode()) {
+      return '提示：连续滚动模式没有左右翻页热区，工具栏通过单击任意位置呼出。';
+    }
+    if (this.params.readingMode === ReadingMode.DOUBLE_PAGE) {
+      return '提示：双页模式只有左右边缘翻页，中间的大区域负责显示或隐藏工具栏。';
+    }
+    return '提示：点击任意标记区域都可以快速确认当前翻页方向。';
+  }
+
+  private getLegendText(type: InteractionZoneType): string {
+    switch (type) {
+      case InteractionZoneType.PAGE_TURN_PREV:
+        return '蓝色区域：翻到上一页';
+      case InteractionZoneType.PAGE_TURN_NEXT:
+        return '绿色区域：翻到下一页';
+      case InteractionZoneType.TOOLBAR_TOGGLE:
       default:
-        return '单页模式：从左到右翻页';
+        return this.isContinuousMode()
+          ? '橙色区域：单击任意位置显示或隐藏工具栏'
+          : '橙色区域：显示或隐藏工具栏';
     }
   }
 
-  /**
-   * 渲染单个交互区域
-   */
+  private hasZoneType(type: InteractionZoneType): boolean {
+    return this.zones.some((zone: InteractionZone) => zone.type === type);
+  }
+
   @Builder
   private buildZone(zone: InteractionZone): void {
     Stack() {
-      // 半透明背景
       Column()
         .width('100%')
         .height('100%')
         .backgroundColor(this.getColorScheme(zone.type).background)
-      
-      // 虚线边框
+
       Column()
         .width('100%')
         .height('100%')
@@ -435,161 +301,127 @@ export struct MangaInteractionOverlay {
           color: this.getColorScheme(zone.type).border,
           style: BorderStyle.Dashed
         })
-      
-      // 中心内容：图标 + 文字
-      Column() {
-        if (zone.icon) {
-          Text(zone.icon)
-            .fontSize(48)
-            .margin({ bottom: 12 })
-            .fontFamily(this.appFontFamily)
-        }
-        
+
+      Column({ space: 8 }) {
         Text(zone.label)
-          .fontSize(18)
+          .fontSize(this.isContinuousMode() ? 24 : 18)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.getColorScheme(zone.type).text)
           .textAlign(TextAlign.Center)
           .textShadow({
             radius: 4,
-            color: 'rgba(0, 0, 0, 0.6)',
+            color: 'rgba(0, 0, 0, 0.45)',
             offsetX: 0,
             offsetY: 2
           })
       }
       .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .padding(12)
     }
-    .width(zone.width)  // vp单位
-    .height(zone.height) // vp单位
-    .position({ x: zone.left, y: zone.top }) // vp单位
+    .width(zone.width)
+    .height(zone.height)
+    .position({ x: zone.left, y: zone.top })
   }
 
-  /**
-   * 渲染说明面板
-   */
+  @Builder
+  private buildLegendRow(type: InteractionZoneType): void {
+    Row({ space: 8 }) {
+      Text('●')
+        .fontSize(14)
+        .fontColor(this.getColorScheme(type).text)
+        .fontFamily(this.appFontFamily)
+      Text(this.getLegendText(type))
+        .fontSize(14)
+        .fontColor(this.getColorScheme(type).text)
+        .fontFamily(this.appFontFamily)
+        .layoutWeight(1)
+    }
+    .width('100%')
+  }
+
   @Builder
   private buildInstructionPanel(): void {
     Column({ space: 12 }) {
-      // 标题
-      Text('交互说明')
-        .fontSize(24)
-        .fontFamily(this.appFontFamily)
+      Text('阅读手势说明')
+        .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor(Color.White)
-      
-      // 模式描述
-      Text(this.modeDescription)
-        .fontSize(16)
         .fontFamily(this.appFontFamily)
-        .fontColor('rgba(255, 255, 255, 0.9)')
-        .margin({ bottom: 8 })
-      
-      // 区域说明
-      Column({ space: 8 }) {
+
+      Text(this.getModeDescription())
+        .fontSize(15)
+        .fontColor('rgba(255,255,255,0.92)')
+        .fontFamily(this.appFontFamily)
+
+      Text(this.getReminderText())
+        .fontSize(13)
+        .fontColor('rgba(255, 216, 133, 1)')
+        .fontFamily(this.appFontFamily)
+
+      Column({ space: 6 }) {
         if (this.hasZoneType(InteractionZoneType.PAGE_TURN_PREV)) {
-          Row({ space: 8 }) {
-            Text('●')
-              .fontSize(16)
-              .fontFamily(this.appFontFamily)
-              .fontColor('rgba(33, 150, 243, 1)')
-            Text('蓝色区域：上一页')
-              .fontSize(15)
-              .fontFamily(this.appFontFamily)
-              .fontColor('rgba(33, 150, 243, 1)')
-          }
+          this.buildLegendRow(InteractionZoneType.PAGE_TURN_PREV);
         }
-        
         if (this.hasZoneType(InteractionZoneType.PAGE_TURN_NEXT)) {
-          Row({ space: 8 }) {
-            Text('●')
-              .fontSize(16)
-              .fontFamily(this.appFontFamily)
-              .fontColor('rgba(76, 175, 80, 1)')
-            Text('绿色区域：下一页')
-              .fontSize(15)
-              .fontFamily(this.appFontFamily)
-              .fontColor('rgba(76, 175, 80, 1)')
-          }
+          this.buildLegendRow(InteractionZoneType.PAGE_TURN_NEXT);
         }
-        
         if (this.hasZoneType(InteractionZoneType.TOOLBAR_TOGGLE)) {
-          Row({ space: 8 }) {
-            Text('●')
-              .fontSize(16)
-              .fontFamily(this.appFontFamily)
-              .fontColor('rgba(255, 152, 0, 1)')
-            Text('橙色区域：显示/隐藏工具栏')
-              .fontSize(15)
-              .fontFamily(this.appFontFamily)
-              .fontColor('rgba(255, 152, 0, 1)')
-          }
+          this.buildLegendRow(InteractionZoneType.TOOLBAR_TOGGLE);
         }
       }
-      .alignItems(HorizontalAlign.Start)
-      
-      // 关闭提示
-      Text('点击任意位置关闭提示')
-        .fontSize(14)
+      .width('100%')
+
+      Text('轻点任意位置关闭提示')
+        .fontSize(13)
+        .fontColor('rgba(255,255,255,0.72)')
         .fontFamily(this.appFontFamily)
-        .fontColor('rgba(255, 255, 255, 0.7)')
-        .margin({ top: 12 })
+        .margin({ top: 4 })
     }
-    .padding(24)
-    .borderRadius(16)
-    .backgroundColor('rgba(0, 0, 0, 0.85)')
+    .width('100%')
+    .padding(22)
+    .borderRadius(18)
+    .backgroundColor('rgba(12, 12, 16, 0.86)')
     .shadow({
-      radius: 20,
-      color: 'rgba(0, 0, 0, 0.5)',
+      radius: 18,
+      color: 'rgba(0, 0, 0, 0.42)',
       offsetX: 0,
       offsetY: 4
     })
   }
 
-  /**
-   * 检查是否有指定类型的区域
-   */
-  private hasZoneType(type: InteractionZoneType): boolean {
-    return this.zones.some((zone: InteractionZone) => zone.type === type);
-  }
-
   build() {
     Stack() {
-      // 半透明黑色背景
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor('rgba(0, 0, 0, 0.75)')
-        .blur(10)
-      
-      // 渲染所有交互区域
+        .backgroundColor('rgba(0, 0, 0, 0.72)')
+        .blur(12)
+
       Stack() {
         ForEach(this.zones, (zone: InteractionZone) => {
           this.buildZone(zone);
-        }, (zone: InteractionZone, index: number) => `zone_${index}_${zone.type}`)
+        }, (zone: InteractionZone, index: number) => `${zone.type}_${index}`)
       }
-      .width(this.params.componentWidth)  // vp单位
-      .height(this.params.componentHeight) // vp单位
-      
-      // 说明面板（居中或底部）
+      .width(this.params.componentWidth)
+      .height(this.params.componentHeight)
+
       Column() {
         this.buildInstructionPanel();
       }
       .width('100%')
       .justifyContent(FlexAlign.End)
-      .padding({ bottom: 60 })
+      .padding({ left: 20, right: 20, bottom: 56 })
     }
     .width('100%')
     .height('100%')
     .opacity(this.overlayOpacity)
-    .animation({
-      duration: 300,
-      curve: Curve.EaseOut
-    })
+    .animation({ duration: 280, curve: Curve.EaseOut })
     .onClick(() => {
-      logger.info(TAG, '用户点击关闭交互提示');
+      logger.info(TAG, 'overlay dismissed by tap');
       this.params.onDismiss();
     })
-    .hitTestBehavior(HitTestMode.Block) // 阻止事件穿透
+    .hitTestBehavior(HitTestMode.Block)
   }
 }

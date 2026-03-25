@@ -20,12 +20,14 @@ import { TextReaderComponent, PaginationMode, TextReaderHighlightRange } from '.
 import { TextFontSettingsPanel } from '../components/TextFontSettingsPanel';
 import { TextBackgroundSettingsPanel } from '../components/TextBackgroundSettingsPanel';
 import { TextReadingSettingsPanel2 } from '../components/TextReadingSettingsPanel2';
+import { TextReaderInteractionOverlay } from '../components/TextReaderInteractionOverlay';
 import { 
   TextReaderSettings, 
   DEFAULT_TEXT_READER_SETTINGS,
   DEFAULT_TEXT_STYLE,
   TextChapter,
   TextReadingMode,
+  TextReadingDirection,
   BackgroundType,
   PageMargins,
   TextAlignment,
@@ -97,6 +99,8 @@ export struct NovelReaderPage {
   private static readonly READ_ALOUD_RESUME_KEY_PREFIX: string = 'novel_read_aloud_resume_char_';
   private static readonly TOOLBAR_AUTO_HIDE_DELAY_MS: number = 2200;
   private static readonly GUIDE_LAYOUT_STABILIZE_DELAY_MS: number = 140;
+  private static hasShownInteractionHint: boolean = false;
+  private static lastShownInteractionHintKey: string = '';
 
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -104,6 +108,7 @@ export struct NovelReaderPage {
   @State private appGuideStep: AppGuideStep | null = null;
   @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('isInBackground') @Watch('onAppBackgroundStateChanged') appInBackground: boolean = false;
   private lifecycle = new PageLifecycleManager('NovelReaderPage', { enableDebug: true });
   private componentId: string = 'NovelReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
@@ -140,6 +145,7 @@ export struct NovelReaderPage {
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
   @State toolbarOpacity: number = 0.0;
+  @State showInteractionOverlay: boolean = false;
   @State showChapterList: boolean = false;
   // 动画状态
   @State showFontSettings: boolean = false;
@@ -154,13 +160,17 @@ export struct NovelReaderPage {
   @State readerKey: number = 0;
   // 百科搜索对话框状态
   private lastReadingMode: TextReadingMode = TextReadingMode.PAGE;
+  private pendingInteractionHintKey: string = '';
   
   // 章节列表滚动控制器
   @State showEncyclopediaDialog: boolean = false;
   @State encyclopediaKeyword: string = '';
   @State encyclopediaUrl: string = '';
+  @State private readerViewportWidth: number = 0;
+  @State private readerViewportHeight: number = 0;
   private toolbarAutoHideTimer: number = -1;
   private fullscreenRestoreTimer: number = -1;
+  private interactionOverlayDismissTimer: number = -1;
 
   // 百科搜索WebView控制器
   private chapterListScroller: Scroller = new Scroller();
@@ -279,6 +289,7 @@ export struct NovelReaderPage {
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.clearToolbarAutoHideTimer();
     this.clearFullscreenRestoreTimer();
+    this.hideInteractionOverlay();
     this.persistReadAloudResumeCharIndex(true);
     this.stopCrossChapterPrefetch(true);
     logger.lifecycle(TAG, 'aboutToDisappear - release resources');
@@ -308,6 +319,8 @@ export struct NovelReaderPage {
     this.isPageVisible = true;
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
+    this.queueInteractionHintIfNeeded(this.settings);
+    this.tryShowQueuedInteractionHint('page_show', 260);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
     this.syncReadAloudStateFromController();
     this.startReadAloudUiSyncTimer();
@@ -316,6 +329,73 @@ export struct NovelReaderPage {
     this.readAloudController.refreshMediaSession();
     this.scheduleToolbarAutoHide('page_show');
     void this.refreshPageGuide('onPageShow');
+  }
+
+  private onAppBackgroundStateChanged(): void {
+    if (this.appInBackground || !this.isPageVisible) {
+      return;
+    }
+    this.scheduleFullscreenRestore('app_foreground', 80);
+    this.tryShowQueuedInteractionHint('app_foreground', 260);
+  }
+
+  private getInteractionHintKey(settings: TextReaderSettings = this.settings): string {
+    return `${settings.readingMode}`;
+  }
+
+  private queueInteractionHintIfNeeded(settings: TextReaderSettings = this.settings): void {
+    const nextKey = this.getInteractionHintKey(settings);
+    if (!NovelReaderPage.hasShownInteractionHint || NovelReaderPage.lastShownInteractionHintKey !== nextKey) {
+      this.pendingInteractionHintKey = nextKey;
+      return;
+    }
+    this.pendingInteractionHintKey = '';
+  }
+
+  private canShowInteractionOverlay(): boolean {
+    return this.isPageVisible &&
+      !this.isLoading &&
+      this.content.length > 0 &&
+      this.readerViewportWidth > 0 &&
+      this.readerViewportHeight > 0 &&
+      !this.hasReaderOverlayVisible();
+  }
+
+  private clearInteractionOverlayTimer(): void {
+    if (this.interactionOverlayDismissTimer >= 0) {
+      clearTimeout(this.interactionOverlayDismissTimer);
+      this.interactionOverlayDismissTimer = -1;
+    }
+  }
+
+  private hideInteractionOverlay(): void {
+    this.clearInteractionOverlayTimer();
+    this.showInteractionOverlay = false;
+  }
+
+  private tryShowQueuedInteractionHint(reason: string, delayMs: number = 0): void {
+    const showOverlay = (): void => {
+      if (!this.pendingInteractionHintKey || !this.canShowInteractionOverlay()) {
+        return;
+      }
+      this.showInteractionOverlay = true;
+      NovelReaderPage.lastShownInteractionHintKey = this.pendingInteractionHintKey;
+      this.pendingInteractionHintKey = '';
+      NovelReaderPage.hasShownInteractionHint = true;
+      this.clearInteractionOverlayTimer();
+      this.interactionOverlayDismissTimer = setTimeout(() => {
+        this.hideInteractionOverlay();
+      }, 6000);
+      logger.info(TAG, `show interaction overlay: reason=${reason}, key=${NovelReaderPage.lastShownInteractionHintKey}`);
+    };
+
+    if (delayMs > 0) {
+      setTimeout(() => {
+        showOverlay();
+      }, delayMs);
+      return;
+    }
+    showOverlay();
   }
 
   private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
@@ -441,6 +521,7 @@ export struct NovelReaderPage {
     this.stopReadAloudUiSyncTimer();
     this.clearToolbarAutoHideTimer();
     this.clearFullscreenRestoreTimer();
+    this.hideInteractionOverlay();
     const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
     if (isOpeningReadAloudPlayer) {
       logger.info(TAG, '小说阅读器进入听书独立页，保留当前沉浸模式');
@@ -1552,7 +1633,8 @@ export struct NovelReaderPage {
     this.fullscreenRestoreTimer = setTimeout(() => {
       this.fullscreenRestoreTimer = -1;
       logger.debug(TAG, `重新应用沉浸模式: reason=${reason}`);
-      this.setupFullscreenMode();
+      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext ?? undefined);
+      WindowManager.reapplyCurrentDisplayMode(24);
       if (this.showTopToolbar || this.showBottomToolbar) {
         this.scheduleToolbarAutoHide(`fullscreen_restore_${reason}`);
       }
@@ -1562,6 +1644,7 @@ export struct NovelReaderPage {
   private handleReaderOverlayClosed(reason: string): void {
     this.scheduleFullscreenRestore(reason);
     this.scheduleToolbarAutoHide(reason);
+    this.tryShowQueuedInteractionHint(reason, 220);
   }
 
   async saveSettings(): Promise<void> {
@@ -1573,6 +1656,7 @@ export struct NovelReaderPage {
   }
 
   onSettingsChange(newSettings: TextReaderSettings): void {
+    const previousHintKey = this.getInteractionHintKey(this.settings);
     const sourceBackground = newSettings.background ?? this.settings.background;
     const sourceTextStyle = newSettings.textStyle ?? this.settings.textStyle;
     const sourcePageMargins = newSettings.pageMargins ?? this.settings.pageMargins;
@@ -1651,6 +1735,11 @@ export struct NovelReaderPage {
     if (oldMode !== newMode) {
       this.lastReadingMode = newMode;
       this.handleReadingModeChange(oldMode, newMode);
+    }
+
+    if (previousHintKey !== this.getInteractionHintKey(nextSettings)) {
+      this.queueInteractionHintIfNeeded(nextSettings);
+      this.tryShowQueuedInteractionHint('settings_change', 260);
     }
   }
   
@@ -3323,6 +3412,25 @@ export struct NovelReaderPage {
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
+        if (this.showInteractionOverlay) {
+          TextReaderInteractionOverlay({
+            params: {
+              readerLabel: '小说阅读器',
+              readingMode: this.settings.readingMode,
+              readingDirection: this.settings.readingDirection ?? TextReadingDirection.HORIZONTAL,
+              tapToTurn: this.settings.tapToTurn,
+              componentWidth: this.readerViewportWidth > 0 ? this.readerViewportWidth : 360,
+              componentHeight: this.readerViewportHeight > 0 ? this.readerViewportHeight : 780,
+              onDismiss: () => {
+                this.hideInteractionOverlay();
+              }
+            }
+          })
+            .width('100%')
+            .height('100%')
+            .zIndex(150)
+        }
+
         // 顶部工具栏（悬浮覆盖）
         if (this.showTopToolbar) {
           Column() {
@@ -3435,6 +3543,21 @@ export struct NovelReaderPage {
       .height('100%')
       .id('novel_reader_root')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .onAreaChange((oldArea: Area, newArea: Area) => {
+        const width = Number(newArea.width);
+        const height = Number(newArea.height);
+        if (width <= 0 || height <= 0) {
+          return;
+        }
+        const widthChanged = Math.abs(width - this.readerViewportWidth) > 1;
+        const heightChanged = Math.abs(height - this.readerViewportHeight) > 1;
+        this.readerViewportWidth = width;
+        this.readerViewportHeight = height;
+        if ((widthChanged || heightChanged) && this.isPageVisible) {
+          this.scheduleFullscreenRestore('area_change', 120);
+          this.tryShowQueuedInteractionHint('area_change', 180);
+        }
+      })
     }
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'NavDestination.onReady 已触发');
@@ -3549,6 +3672,8 @@ export struct NovelReaderPage {
         logger.info(TAG, '📖 文本阅读器分页完成，通知过渡动画');
         this.reportTransitionLoadingProgress(0.96, 'text_reader_ready');
         this.notifyTransitionReaderReadyOnce('TextReaderComponent.onReady');
+        this.queueInteractionHintIfNeeded(this.settings);
+        this.tryShowQueuedInteractionHint('text_reader_ready', 120);
       },
       onAddPurifyRule: (pattern: string) => this.addPurifyRule(pattern),
       onSearchEncyclopedia: (keyword: string) => this.showEncyclopediaSearch(keyword),
