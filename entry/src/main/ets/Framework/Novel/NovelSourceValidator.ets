@@ -602,7 +602,7 @@ export class NovelSourceValidator {
 
     // 有上下文时申请 DATA_TRANSFER 后台长时任务
     if (this.context) {
-      await BackgroundTaskHelper.startDataTransferTask(this.context);
+      await BackgroundTaskHelper.startDataTransferTask(this.context, this.currentValidationTaskId);
     }
 
     // 发送开始通知
@@ -670,7 +670,7 @@ export class NovelSourceValidator {
       this.isValidating = false;
       // 校验完成（无论正常结束还是异常）后停止后台长时任务
       if (this.context) {
-        await BackgroundTaskHelper.stopDataTransferTask(this.context);
+        await BackgroundTaskHelper.stopDataTransferTask(this.context, this.currentValidationTaskId);
       }
     }
 

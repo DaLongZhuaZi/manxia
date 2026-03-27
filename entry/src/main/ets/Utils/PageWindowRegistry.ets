@@ -98,7 +98,6 @@ export class PageWindowRegistry {
   ];
 
   private static readonly SELF_MANAGED_STANDARD_PAGES: string[] = [
-    'AnnotationCenterPage',
     'CoverSelectionPage',
     'EBookSettingsPage',
     'GlobalSearchPage',
@@ -118,6 +117,7 @@ export class PageWindowRegistry {
   private static readonly SELF_MANAGED_FULLSCREEN_PAGES: string[] = [
     'MangaReaderPage',
     'EBookReaderPage',
+    'EBookImageReaderPage',
     'NovelReaderPage',
     'SuwayomiReaderPage',
     'FileEditorPage'
@@ -156,6 +156,17 @@ export class PageWindowRegistry {
       PageSafeAreaContract.SYSTEM_TITLEBAR,
       true,
       DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE
+    );
+
+    appendPageSpecs(
+      specs,
+      ['AnnotationCenterPage'],
+      PageWindowPolicy.TRANSIENT_MODAL,
+      false,
+      PageTitleBarMode.SYSTEM,
+      PageSafeAreaContract.SYSTEM_TITLEBAR,
+      false,
+      DisplayMode.DEFAULT
     );
 
     appendPageSpecs(

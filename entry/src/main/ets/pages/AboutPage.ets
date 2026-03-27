@@ -21,6 +21,7 @@ import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
+const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?taskId=92490ec200cf7ef8e63f0bca11aacfd4&invitationCode=8aA6fdl5bAR';
 
 // 使用NavDestinationContext官方类型
 // @kit.ArkUI提供的NavDestinationContext已包含必要的类型定义
@@ -52,7 +53,7 @@ struct AboutPage {
   @State private appName: string = '漫匣';
   @State private appVersion: string = '';
   @State private buildNumber: string = '';
-  private developer: string = 'DaLongZhuaZi';
+  private developer: string = '周龙溢';
   private description: string = '一款基于HarmonyOS Next的现代化漫画阅读应用';
 
   aboutToAppear(): void {
@@ -334,19 +335,17 @@ struct AboutPage {
   }
 
   /**
-   * 打开 GitHub Release 页面检查更新
+   * 打开邀测版本页面
    */
-  private async openReleasePage(): Promise<void> {
-    const releaseUrl = 'https://github.com/DaLongZhuaZi/manxia/releases';
-    
+  private async openInviteTestPage(): Promise<void> {
     try {
       const context = getContext(this) as common.UIAbilityContext;
-      await context.openLink(releaseUrl, { appLinkingOnly: false });
-      logger.info(TAG, '已打开 Release 页面');
+      await context.openLink(INVITE_TEST_URL, { appLinkingOnly: false });
+      logger.info(TAG, '已打开邀测版本页面');
     } catch (error) {
-      logger.error(TAG, '打开 Release 页面失败', String(error));
+      logger.error(TAG, '打开邀测版本页面失败', String(error));
       promptAction.showToast({
-        message: '无法打开浏览器，请手动访问 GitHub 查看更新',
+        message: '无法打开浏览器，请手动访问邀测版本页面',
         duration: 3000
       });
     }
@@ -408,9 +407,9 @@ struct AboutPage {
         getChangelogManager().forceShowChangelog();
       })
 
-      this.buildButtonItem('检查更新', () => {
-        logger.info(TAG, '检查更新');
-        this.openReleasePage();
+      this.buildButtonItem('邀测版本', () => {
+        logger.info(TAG, '打开邀测版本页面');
+        this.openInviteTestPage();
       })
 
       this.buildButtonItem('版本记录', () => {

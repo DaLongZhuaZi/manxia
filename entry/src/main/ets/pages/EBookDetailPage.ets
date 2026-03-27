@@ -15,6 +15,7 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { EBook, EBookChapter, EBookFormat, EBookStatus } from '../Models/EBookModels';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookReaderParams } from './EBookReaderPage';
+import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
@@ -292,7 +293,7 @@ export struct EBookDetailPage {
         if (txtNovelReaderParams) {
           this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
         } else {
-          this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+          this.pathStack.pushPath({ name: resolveEBookReaderRouteName(this.ebook), param: readerParams });
         }
       },
       ebookBackground,
@@ -332,21 +333,28 @@ export struct EBookDetailPage {
    * 获取电子书背景设置（用于翻开动画）
    * 注意：只有 TXT 格式支持背景图片，MOBI/AZW3/EPUB 只支持背景色
    */
+  private getThemeAdaptiveEBookTransitionBackgroundColor(): string {
+    return ThemeManager.getInstance().isDarkThemeSync() ? '#1E1E1E' : '#FFFFFF';
+  }
+
   private getEBookBackgroundSettings(): EBookBackgroundSettings | undefined {
     if (!this.ebook) {
       return undefined;
     }
     
     let bgSettings: EBookBackgroundSettings = {
-      backgroundColor: '#FFFFFF'  // 默认白色背景
+      backgroundColor: this.getThemeAdaptiveEBookTransitionBackgroundColor()
     };
     
     // 读取电子书保存的背景设置
     if (this.ebook.readingSettings) {
-      bgSettings.backgroundColor = this.ebook.readingSettings.backgroundColor || '#FFFFFF';
+      const followSystemTheme = this.ebook.readingSettings.followSystemTheme !== false;
+      bgSettings.backgroundColor = followSystemTheme
+        ? this.getThemeAdaptiveEBookTransitionBackgroundColor()
+        : (this.ebook.readingSettings.backgroundColor || bgSettings.backgroundColor);
       
       // 只有 TXT 格式支持背景图片
-      if (this.ebook.format === EBookFormat.TXT) {
+      if (!followSystemTheme && this.ebook.format === EBookFormat.TXT) {
         if (this.ebook.readingSettings.backgroundType === 'IMAGE' && 
             this.ebook.readingSettings.backgroundImagePath && 
             this.ebook.readingSettings.backgroundImagePath.length > 0) {
@@ -357,7 +365,7 @@ export struct EBookDetailPage {
       
       logger.info(TAG, `电子书背景设置(${this.ebook.format}): color=${bgSettings.backgroundColor}, image=${bgSettings.backgroundImagePath || '无'}, opacity=${bgSettings.backgroundImageOpacity ?? 'N/A'}`);
     } else {
-      logger.info(TAG, `电子书无阅读设置，使用默认白色背景`);
+      logger.info(TAG, `电子书无阅读设置，使用当前主题背景: ${bgSettings.backgroundColor}`);
     }
     
     return bgSettings;

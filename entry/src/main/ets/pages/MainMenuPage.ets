@@ -19,6 +19,13 @@ import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBac
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import {
+  getHoldingAwarenessManager,
+  HoldingAwarenessConfidence,
+  HoldingAwarenessSide,
+  HoldingAwarenessSource,
+  HoldingUiAnchor
+} from '../Framework/Managers/HoldingAwarenessManager';
 
 // 导入页面组件
 // 测试页面导入已移除，测试功能仍保留在代码中但不再从主菜单导航
@@ -71,6 +78,8 @@ import { SourceDetailPage } from './SourceDetailPage';
 import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
 import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { EBookReaderPage, EBookReaderParams } from './EBookReaderPage';
+import { EBookImageReaderPage } from './EBookImageReaderPage';
+import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
@@ -810,6 +819,7 @@ struct MainMenuPage {
 
   // Tab内容缓存管理器
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
+  private holdingAwarenessManager = getHoldingAwarenessManager();
 
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -869,11 +879,15 @@ struct MainMenuPage {
   private windowModeTransitionTriggerRetryCount: number = 0;
   private navStackReturnWatchTimer: number = -1;
   private lastObservedNavStackSize: number = 0;
+  private mainMenuWindowInsetsResyncTimer: number = -1;
+  private readonly MAIN_MENU_WINDOW_INSETS_RESYNC_DELAY: number = 72;
   @State private showMainMenuGlobalBackground: boolean = true;
 
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @StorageProp('holding_awareness_preferred_anchor') @Watch('onHoldingAwarenessAnchorChanged')
+  holdingAwarenessPreferredAnchor: HoldingUiAnchor = HoldingUiAnchor.RIGHT;
 
   private applyWindowModeForDestination(name: string): void {
     if (!name) {
@@ -1280,6 +1294,8 @@ struct MainMenuPage {
 
   aboutToAppear() {
     this.startNavStackReturnWatch();
+    void this.holdingAwarenessManager.resume();
+    this.logHoldingAwareFloatingSearchDecision('页面即将出现');
     logger.lifecycle(TAG, '🚀 漫画阅读应用启动');
     logger.info(TAG, `初始化时appFontFamily值: ${this.appFontFamily}`);
     this.initShelfGridColumnsSetting();
@@ -1355,10 +1371,15 @@ struct MainMenuPage {
     // 订阅漫画删除事件
     eventBus.subscribe(GameEvent.MANGA_DELETED, (payload: IEventPayload) => {
       logger.info(TAG, `收到漫画删除事件，刷新书库列表`);
-      // 静默刷新漫画列表并切换到书库标签（增量更新，避免闪烁）
+      // 静默刷新漫画列表；如果当前不在书库，再安全切回书库标签
       this.silentRefreshLibrary();
-      this.currentTabIndex = TabIndex.LIBRARY;
-      this.tabsController.changeIndex(TabIndex.LIBRARY);
+      if (this.currentTabIndex !== TabIndex.LIBRARY) {
+        const actualIndex = this.getActualTabsIndexForTabIndex(TabIndex.LIBRARY);
+        if (actualIndex >= 0) {
+          this.currentTabIndex = TabIndex.LIBRARY;
+          this.tabsController.changeIndex(actualIndex);
+        }
+      }
     });
 
     // 订阅小说列表刷新事件（换源后触发）
@@ -2297,7 +2318,109 @@ struct MainMenuPage {
     return h > 0 ? h : deviceInfo.screenHeight;
   }
 
-  private getFloatingSearchButtonX(): number {
+  private onHoldingAwarenessAnchorChanged(): void {
+    this.logHoldingAwareFloatingSearchDecision('握持推荐侧发生变化');
+  }
+
+  private describeHoldingUiAnchorForLog(anchor: HoldingUiAnchor): string {
+    return anchor === HoldingUiAnchor.LEFT ? '左侧' : '右侧';
+  }
+
+  private describeHoldingAwarenessSideForLog(side: HoldingAwarenessSide): string {
+    switch (side) {
+      case HoldingAwarenessSide.NONE:
+        return '未握持';
+      case HoldingAwarenessSide.LEFT:
+        return '左手握持';
+      case HoldingAwarenessSide.RIGHT:
+        return '右手握持';
+      case HoldingAwarenessSide.BOTH:
+        return '双手握持';
+      default:
+        return '未知';
+    }
+  }
+
+  private describeHoldingAwarenessSourceForLog(source: HoldingAwarenessSource): string {
+    switch (source) {
+      case HoldingAwarenessSource.HOLDING_HAND:
+        return '智感握姿';
+      case HoldingAwarenessSource.OPERATING_HAND:
+        return '操作手';
+      case HoldingAwarenessSource.COMBINED:
+        return '联合判断';
+      default:
+        return '默认回退';
+    }
+  }
+
+  private describeHoldingAwarenessConfidenceForLog(confidence: HoldingAwarenessConfidence): string {
+    switch (confidence) {
+      case HoldingAwarenessConfidence.EXACT:
+        return '精确';
+      case HoldingAwarenessConfidence.INFERRED:
+        return '推断';
+      default:
+        return '回退';
+    }
+  }
+
+  private formatHoldingAwareLayoutValue(value: number): string {
+    return value.toFixed(2);
+  }
+
+  private logHoldingAwareFloatingSearchDecision(reason: string): void {
+    const snapshot = this.holdingAwarenessManager.getSnapshot();
+    const searchX = this.getFloatingSearchButtonX();
+    const searchY = this.getFloatingSearchButtonY();
+    const privacyDesc = this.shouldShowPrivacyExitButton()
+      ? `(${this.formatHoldingAwareLayoutValue(this.getFloatingPrivacyExitButtonX())}, ${this.formatHoldingAwareLayoutValue(searchY)})`
+      : '未显示';
+    const shelfDesc = this.shouldShowShelfPreviewSlider()
+      ? `x=${this.formatHoldingAwareLayoutValue(this.getShelfPreviewSliderX())}, width=${this.formatHoldingAwareLayoutValue(this.getShelfPreviewSliderWidth())}`
+      : '未显示';
+    const navLayoutDesc = this.useTopTabsNavigation
+      ? `top_tabs/${this.getEffectiveTabletTopBarPosition()}`
+      : 'bottom_bar';
+
+    logger.info(
+      TAG,
+      `智感握持按钮判断(${reason})：推荐停靠=${this.describeHoldingUiAnchorForLog(snapshot.preferredAnchor)}，` +
+        `当前落点=${this.describeHoldingUiAnchorForLog(this.holdingAwarenessPreferredAnchor)}，` +
+        `握持侧=${this.describeHoldingAwarenessSideForLog(snapshot.side)}，来源=${this.describeHoldingAwarenessSourceForLog(snapshot.source)}，` +
+        `置信度=${this.describeHoldingAwarenessConfidenceForLog(snapshot.confidence)}，感知可用=${snapshot.available ? '是' : '否'}，` +
+        `精确支持=${snapshot.preciseSupported ? '是' : '否'}，搜索按钮=(${this.formatHoldingAwareLayoutValue(searchX)}, ${this.formatHoldingAwareLayoutValue(searchY)})，` +
+        `隐私按钮=${privacyDesc}，书架滑条=${shelfDesc}，导航布局=${navLayoutDesc}`
+    );
+  }
+
+  private shouldAnchorFloatingSearchButtonToLeft(): boolean {
+    return this.holdingAwarenessPreferredAnchor === HoldingUiAnchor.LEFT;
+  }
+
+  private getFloatingSearchButtonLeftX(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    if (!this.useTopTabsNavigation) {
+      const x: number = this.getBottomBarX() + this.FLOAT_SEARCH_BUTTON_MARGIN;
+      return x > this.FLOAT_SEARCH_BUTTON_MARGIN ? x : this.FLOAT_SEARCH_BUTTON_MARGIN;
+    }
+
+    const effectivePosition = this.getEffectiveTabletTopBarPosition();
+    if (effectivePosition === 'left') {
+      const sideBarRightX = this.getAdaptiveLeftOperationBarX() + this.TABLET_SIDE_BAR_WIDTH;
+      const x = sideBarRightX + this.FLOAT_SEARCH_BUTTON_MARGIN;
+      const maxX = deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      return x < maxX ? x : maxX;
+    }
+    if (effectivePosition === 'right') {
+      return this.FLOAT_SEARCH_BUTTON_MARGIN;
+    }
+
+    const x: number = this.getBottomBarX() + this.FLOAT_SEARCH_BUTTON_MARGIN;
+    return x > this.FLOAT_SEARCH_BUTTON_MARGIN ? x : this.FLOAT_SEARCH_BUTTON_MARGIN;
+  }
+
+  private getFloatingSearchButtonRightX(): number {
     const deviceInfo = this.deviceManager.getDeviceInfo();
     if (!this.useTopTabsNavigation) {
       const x: number = this.getBottomBarX() + this.getBottomBarWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
@@ -2317,6 +2440,12 @@ struct MainMenuPage {
 
     const x: number = this.getBottomBarX() + this.getBottomBarWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
     return x > 0 ? x : Math.max(0, deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN);
+  }
+
+  private getFloatingSearchButtonX(): number {
+    return this.shouldAnchorFloatingSearchButtonToLeft()
+      ? this.getFloatingSearchButtonLeftX()
+      : this.getFloatingSearchButtonRightX();
   }
 
   private getFloatingSearchButtonY(): number {
@@ -2366,6 +2495,12 @@ struct MainMenuPage {
   }
 
   private getFloatingPrivacyExitButtonX(): number {
+    if (this.shouldAnchorFloatingSearchButtonToLeft()) {
+      const deviceInfo = this.deviceManager.getDeviceInfo();
+      const x = this.getFloatingSearchButtonX() + this.FLOAT_SEARCH_BUTTON_SIZE + this.FLOAT_SEARCH_BUTTON_MARGIN;
+      const maxX = deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      return x < maxX ? x : maxX;
+    }
     const x = this.getFloatingSearchButtonX() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
     return x > this.FLOAT_SEARCH_BUTTON_MARGIN ? x : this.FLOAT_SEARCH_BUTTON_MARGIN;
   }
@@ -4693,7 +4828,20 @@ struct MainMenuPage {
     contentType: 'manga' | 'ebook' | 'pdfebook' | 'novel',
     contentId: string
   ): string {
-    return `${prefix}_${contentType}_${contentId}_${this.getLibraryContentSelectionRenderToken(contentType, contentId)}`;
+    return `${prefix}_${contentType}_${contentId}`;
+  }
+
+  private getLibraryContentCollectionItemTransition() {
+    return TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY
+        .combine(TransitionEffect.scale({ x: 0.94, y: 0.94 }))
+        .combine(TransitionEffect.translate({ y: 18 }))
+        .animation({ duration: 320, curve: Curve.EaseOut }),
+      TransitionEffect.OPACITY
+        .combine(TransitionEffect.scale({ x: 0.97, y: 0.97 }))
+        .combine(TransitionEffect.translate({ y: -12 }))
+        .animation({ duration: 280, curve: Curve.EaseInOut })
+    );
   }
 
   private getMangaSelectionHitTestMode(): HitTestMode {
@@ -6676,6 +6824,7 @@ struct MainMenuPage {
     }
     this.hideLibraryRefreshFloatingBarImmediately();
     this.clearWindowModeTransitionTimers();
+    this.clearMainMenuWindowInsetsResyncTimer();
     this.windowModeTransitionOverlayVisible = false;
     this.windowModeTransitionOverlayOpacity = 0;
 
@@ -6745,6 +6894,32 @@ struct MainMenuPage {
       clearTimeout(this.windowModeTransitionCleanupTimer);
       this.windowModeTransitionCleanupTimer = -1;
     }
+  }
+
+  private clearMainMenuWindowInsetsResyncTimer(): void {
+    if (this.mainMenuWindowInsetsResyncTimer >= 0) {
+      clearTimeout(this.mainMenuWindowInsetsResyncTimer);
+      this.mainMenuWindowInsetsResyncTimer = -1;
+    }
+  }
+
+  private scheduleMainMenuWindowInsetsResync(
+    delayMs: number = this.MAIN_MENU_WINDOW_INSETS_RESYNC_DELAY
+  ): void {
+    this.clearMainMenuWindowInsetsResyncTimer();
+    this.mainMenuWindowInsetsResyncTimer = setTimeout(() => {
+      this.mainMenuWindowInsetsResyncTimer = -1;
+      if (this.pathStack.size() > 0) {
+        return;
+      }
+      const uiContext = this.getUIContext();
+      if (!uiContext) {
+        return;
+      }
+
+      // Reader pages can return before avoid-area values finish settling.
+      PageWindowCoordinator.reapplyPagePolicy('MainMenuPage', uiContext);
+    }, Math.max(0, delayMs));
   }
 
   private prepareMainMenuReentryShield(): void {
@@ -6819,6 +6994,7 @@ struct MainMenuPage {
           this.mainMenuReentryShieldVisible = false;
         }, this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION + 40);
       }
+      this.scheduleMainMenuWindowInsetsResync();
       return;
     }
 
@@ -6831,6 +7007,7 @@ struct MainMenuPage {
     this.windowModeTransitionSwitchTimer = setTimeout(() => {
       this.windowModeTransitionSwitchTimer = -1;
       PageWindowCoordinator.applyRootMainMenu(uiContext);
+      this.scheduleMainMenuWindowInsetsResync();
       this.restoreBottomBarAfterMainMenuReturn();
       animateTo({
         duration: this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION,
@@ -6886,8 +7063,11 @@ struct MainMenuPage {
    */
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
+    void this.holdingAwarenessManager.resume();
+    this.logHoldingAwareFloatingSearchDecision('页面显示');
     this.updateMainMenuGlobalBackgroundVisibility();
     this.applyMainMenuWindowModeWithTransition();
+    this.scheduleMainMenuWindowInsetsResync();
     if (WindowManager.getCurrentMode() !== DisplayMode.DEFAULT || this.mainMenuReentryShieldVisible) {
       this.restoreBottomBarAfterMainMenuReturn();
     }
@@ -10067,12 +10247,17 @@ struct MainMenuPage {
     } else if (this.libraryViewMode === LibraryViewMode.LIST) {
       Column({ space: 12 }) {
         ForEach(this.getLibraryDefaultMixedItems(), (item: ShelfMixedItem) => {
-          this.buildLibraryDefaultMixedListCard(item)
+          Column() {
+            this.buildLibraryDefaultMixedListCard(item)
+          }
+          .width('100%')
+          .transition(this.getLibraryContentCollectionItemTransition())
+          .animation({ duration: 380, curve: Curve.EaseInOut })
         }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('default_mix_list', item.type, item.id))
         Blank().height(this.getLibraryDefaultBottomSpacerHeight())
       }
       .width('100%')
-      .animation({ duration: 260, curve: Curve.EaseInOut })
+      .animation({ duration: 380, curve: Curve.EaseInOut })
     } else {
       Column({ space: 0 }) {
         Grid() {
@@ -10080,16 +10265,19 @@ struct MainMenuPage {
             GridItem() {
               this.buildLibraryDefaultMixedGridCard(item)
             }
+            .transition(this.getLibraryContentCollectionItemTransition())
+            .animation({ duration: 380, curve: Curve.EaseInOut })
           }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('default_mix_grid', item.type, item.id))
         }
         .columnsTemplate(this.getLibraryGridColumnsTemplate())
         .columnsGap(this.responsive_gridGap)
         .rowsGap(this.responsive_gridGap)
         .width('100%')
+        .animation({ duration: 380, curve: Curve.EaseInOut })
         Blank().height(this.getLibraryDefaultBottomSpacerHeight())
       }
       .width('100%')
-      .animation({ duration: 260, curve: Curve.EaseInOut })
+      .animation({ duration: 380, curve: Curve.EaseInOut })
     }
   }
 
@@ -11108,12 +11296,25 @@ struct MainMenuPage {
   private getShelfPreviewSliderWidth(): number {
     const minWidth = 170;
     const maxWidth = 320;
-    const available = this.getFloatingSearchButtonX() - this.responsive_contentPadding - 12;
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const available = this.shouldAnchorFloatingSearchButtonToLeft()
+      ? deviceInfo.screenWidth
+        - this.responsive_contentPadding
+        - this.getFloatingSearchButtonX()
+        - this.FLOAT_SEARCH_BUTTON_SIZE
+        - 12
+      : this.getFloatingSearchButtonX() - this.responsive_contentPadding - 12;
     if (available < minWidth) return minWidth;
     return available > maxWidth ? maxWidth : available;
   }
 
   private getShelfPreviewSliderX(): number {
+    if (this.shouldAnchorFloatingSearchButtonToLeft()) {
+      const deviceInfo = this.deviceManager.getDeviceInfo();
+      const x = this.getFloatingSearchButtonX() + this.FLOAT_SEARCH_BUTTON_SIZE + 12;
+      const maxX = deviceInfo.screenWidth - this.responsive_contentPadding - this.getShelfPreviewSliderWidth();
+      return x < maxX ? x : maxX;
+    }
     const x = this.getFloatingSearchButtonX() - this.getShelfPreviewSliderWidth() - 12;
     return x > this.responsive_contentPadding ? x : this.responsive_contentPadding;
   }
@@ -14329,6 +14530,8 @@ struct MainMenuPage {
           GridItem() {
             this.buildMangaGridCard(manga, 'shelf_detail')
           }
+          .transition(this.getLibraryContentCollectionItemTransition())
+          .animation({ duration: 380, curve: Curve.EaseInOut })
         }, (manga: Manga) => this.getLibraryContentRenderKey('shelf_manga_grid', 'manga', manga.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
@@ -14338,6 +14541,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
+      .animation({ duration: 380, curve: Curve.EaseInOut })
     } else {
       this.buildShelfEmptyState('没有漫画')
     }
@@ -14354,11 +14558,15 @@ struct MainMenuPage {
           GridItem() {
             this.buildEBookGridCard(ebook, 'shelf_detail')
           }
+          .transition(this.getLibraryContentCollectionItemTransition())
+          .animation({ duration: 380, curve: Curve.EaseInOut })
         }, (ebook: EBook) => this.getLibraryContentRenderKey('shelf_ebook_grid', 'ebook', ebook.id))
         ForEach(this.getShelfFilteredPdfEBookList(), (pdfEbook: Manga) => {
           GridItem() {
             this.buildPdfEBookGridCard(pdfEbook, 'shelf_detail')
           }
+          .transition(this.getLibraryContentCollectionItemTransition())
+          .animation({ duration: 380, curve: Curve.EaseInOut })
         }, (pdfEbook: Manga) => this.getLibraryContentRenderKey('shelf_pdfebook_grid', 'pdfebook', pdfEbook.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
@@ -14368,6 +14576,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
+      .animation({ duration: 380, curve: Curve.EaseInOut })
     } else {
       this.buildShelfEmptyState('没有电子书')
     }
@@ -14384,6 +14593,8 @@ struct MainMenuPage {
           GridItem() {
             this.buildNovelGridCard(novel, 'shelf_detail')
           }
+          .transition(this.getLibraryContentCollectionItemTransition())
+          .animation({ duration: 380, curve: Curve.EaseInOut })
         }, (novel: NovelBook) => this.getLibraryContentRenderKey('shelf_novel_grid', 'novel', novel.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
@@ -14393,6 +14604,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
+      .animation({ duration: 380, curve: Curve.EaseInOut })
     } else {
       this.buildShelfEmptyState('没有小说')
     }
@@ -14710,6 +14922,8 @@ struct MainMenuPage {
               this.buildNovelGridCard(item.data as NovelBook, 'shelf_detail')
             }
           }
+          .transition(this.getLibraryContentCollectionItemTransition())
+          .animation({ duration: 380, curve: Curve.EaseInOut })
         }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('custom_shelf_grid', item.type, item.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
@@ -14719,6 +14933,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
+      .animation({ duration: 380, curve: Curve.EaseInOut })
     } else {
       this.buildShelfEmptyState('书架为空')
     }
@@ -17347,17 +17562,24 @@ struct MainMenuPage {
   /**
    * 获取电子书背景设置（用于翻开动画）
    */
+  private getThemeAdaptiveEBookTransitionBackgroundColor(): string {
+    return this.themeManager.isDarkThemeSync() ? '#1E1E1E' : '#FFFFFF';
+  }
+
   private getEBookBackgroundSettings(ebook: EBook): EBookBackgroundSettings | undefined {
     let bgSettings: EBookBackgroundSettings = {
-      backgroundColor: '#FFFFFF'  // 默认白色背景
+      backgroundColor: this.getThemeAdaptiveEBookTransitionBackgroundColor()
     };
     
     // 读取电子书保存的背景设置
     if (ebook.readingSettings) {
-      bgSettings.backgroundColor = ebook.readingSettings.backgroundColor || '#FFFFFF';
+      const followSystemTheme = ebook.readingSettings.followSystemTheme !== false;
+      bgSettings.backgroundColor = followSystemTheme
+        ? this.getThemeAdaptiveEBookTransitionBackgroundColor()
+        : (ebook.readingSettings.backgroundColor || bgSettings.backgroundColor);
       
       // 只有 TXT 格式支持背景图片
-      if (ebook.format === EBookFormat.TXT) {
+      if (!followSystemTheme && ebook.format === EBookFormat.TXT) {
         if (ebook.readingSettings.backgroundType === 'IMAGE' && 
             ebook.readingSettings.backgroundImagePath && 
             ebook.readingSettings.backgroundImagePath.length > 0) {
@@ -17368,7 +17590,7 @@ struct MainMenuPage {
       
       logger.info(TAG, `电子书背景设置(${ebook.format}): color=${bgSettings.backgroundColor}, image=${bgSettings.backgroundImagePath || '无'}, opacity=${bgSettings.backgroundImageOpacity ?? 'N/A'}`);
     } else {
-      logger.info(TAG, `电子书无阅读设置，使用默认白色背景`);
+      logger.info(TAG, `电子书无阅读设置，使用当前主题背景: ${bgSettings.backgroundColor}`);
     }
     
     return bgSettings;
@@ -17583,7 +17805,7 @@ struct MainMenuPage {
         if (txtNovelReaderParams) {
           this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
         } else {
-          this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+          this.pathStack.pushPath({ name: resolveEBookReaderRouteName(ebook), param: readerParams });
         }
       },
       ebookBackground,
@@ -24721,6 +24943,8 @@ struct MainMenuPage {
         PrivacyPolicyPage()
       } else if (name === 'EBookReaderPage') {
         EBookReaderPage()
+      } else if (name === 'EBookImageReaderPage') {
+        EBookImageReaderPage()
       } else if (name === 'EBookDetailPage') {
         EBookDetailPage()
       } else if (name === 'EBookSettingsPage') {
@@ -25570,6 +25794,7 @@ struct MainMenuPage {
           .width(this.FLOAT_SEARCH_BUTTON_SIZE)
           .height(this.FLOAT_SEARCH_BUTTON_SIZE)
           .position({ x: this.getFloatingPrivacyExitButtonX(), y: this.getFloatingSearchButtonY() })
+          .animation({ duration: 220, curve: Curve.EaseInOut })
           .zIndex(20)
           .key(`floatingPrivacyExit_${this.barRenderKey}`)
         }
@@ -25599,6 +25824,7 @@ struct MainMenuPage {
         .width(this.FLOAT_SEARCH_BUTTON_SIZE)
         .height(this.FLOAT_SEARCH_BUTTON_SIZE)
         .position({ x: this.getFloatingSearchButtonX(), y: this.getFloatingSearchButtonY() })
+        .animation({ duration: 220, curve: Curve.EaseInOut })
         .zIndex(20)
         .key(`floatingSearch_${this.barRenderKey}`)
 

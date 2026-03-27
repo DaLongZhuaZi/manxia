@@ -41,7 +41,7 @@ import { componentSnapshot } from '@kit.ArkUI';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { BackgroundTaskManager, TaskType, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
+import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
 import { PdfImportResult } from '../Framework/Parsers/PdfToMangaImporter';
 import { PdfImportService } from '../Framework/Services/PdfImportService';
 
@@ -3425,29 +3425,37 @@ A: 不会，原文件保持不变。`;
     const taskManager = BackgroundTaskManager.getInstance();
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (!context) {
-      throw new Error('\u65e0\u6cd5\u83b7\u53d6\u5e94\u7528\u4e0a\u4e0b\u6587');
+      throw new Error('无法获取应用上下文');
     }
     const filesDir = context.filesDir;
     const taskId = taskManager.createTask(
       TaskType.PDF_IMPORT,
-      `\u5bfc\u5165: ${dialogResult.title}`,
+      `导入: ${dialogResult.title}`,
       async (onProgress, cancelSignal) => {
         return await this.executePdfImportWithDialogResult(fileUri, dialogResult, filesDir, onProgress, cancelSignal);
+      },
+      {
+        context: context,
+        enableBackgroundRunning: true,
+        notification: {
+          scene: TaskNotificationScene.PDF_IMPORT,
+          targetName: dialogResult.title
+        }
       }
     );
 
     taskManager.startTask(taskId).then(() => {
-      logger.info(TAG, `PDF\u5bfc\u5165\u4efb\u52a1\u5b8c\u6210: ${taskId}`);
-      promptAction.showToast({ message: `\u5bfc\u5165\u6210\u529f: ${dialogResult.title}` });
+      logger.info(TAG, `PDF导入任务完成: ${taskId}`);
+      promptAction.showToast({ message: `导入成功: ${dialogResult.title}` });
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
       void this.reloadDownloadImportState();
     }).catch((error: Error) => {
-      logger.error(TAG, `PDF\u5bfc\u5165\u4efb\u52a1\u5931\u8d25: ${taskId}`, error.message);
-      promptAction.showToast({ message: `\u5bfc\u5165\u5931\u8d25: ${error.message}` });
+      logger.error(TAG, `PDF导入任务失败: ${taskId}`, error.message);
+      promptAction.showToast({ message: `导入失败: ${error.message}` });
       void this.reloadDownloadImportState();
     });
 
-    promptAction.showToast({ message: 'PDF\u5bfc\u5165\u5df2\u5f00\u59cb\uff0c\u53ef\u4ee5\u79bb\u5f00\u6b64\u9875\u9762' });
+    promptAction.showToast({ message: 'PDF导入已开始，可以离开此页面' });
   }
 
   private async executePdfImportWithDialogResult(

@@ -45,6 +45,10 @@ import {
   NovelAdapter,
   AdapterOptions
 } from '../Framework/Adapters/UnifiedContentAdapter';
+import {
+  inspectEBookImagePageSignals,
+  resolveEBookReaderRouteName
+} from '../Framework/Adapters/EBookImageReaderAdapter';
 import { buildLocalTextNovelBookId, buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 
 // 数据管理器导入
@@ -1920,10 +1924,26 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '电子书翻开过渡动画触发导航');
+        const ebookRouteName = resolveEBookReaderRouteName(originalEBook);
+        const signalStats = inspectEBookImagePageSignals(originalEBook);
+        const firstChapter = originalEBook && originalEBook.chapters.length > 0
+          ? originalEBook.chapters[0]
+          : null;
+        logger.info(
+          TAG,
+          `电子书阅读页路由判定: route=${ebookRouteName}, format=${originalEBook?.format || 'null'}, ` +
+            `contentMode=${originalEBook?.contentMode || 'null'}, ` +
+            `preferredReaderEngine=${originalEBook?.preferredReaderEngine || 'null'}, ` +
+            `chapters=${signalStats.totalChapters}, strongSignalChapters=${signalStats.strongSignalChapters}, ` +
+            `sparsePageLikeChapters=${signalStats.sparsePageLikeChapters}, ` +
+            `firstChapterTitle=${firstChapter?.title || ''}, firstChapterLayout=${firstChapter?.resourceLayoutType || ''}, ` +
+            `firstChapterImagePath=${(firstChapter?.resourceImagePath || '').substring(0, 96)}, ` +
+            `firstChapterImageRelativePath=${(firstChapter?.resourceImageRelativePath || '').substring(0, 96)}`
+        );
         if (txtNovelReaderParams && originalEBook?.format === EBookFormat.TXT) {
           this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
         } else {
-          this.pathStack.pushPathByName('EBookReaderPage', params);
+          this.pathStack.pushPathByName(ebookRouteName, params);
         }
       },
       ebookBackground,
@@ -1994,22 +2014,28 @@ export struct UnifiedDetailPage {
     }
 
     const ebook = EBookAdapter.getOriginalEBook(this.content);
-    if (!ebook || !ebook.readingSettings) {
+    if (!ebook) {
       return undefined;
     }
 
+    const defaultBackgroundColor = ThemeManager.getInstance().isDarkThemeSync() ? '#1E1E1E' : '#FFFFFF';
+    const followSystemTheme = ebook.readingSettings?.followSystemTheme !== false;
+
     const background: EBookBackgroundSettings = {
-      backgroundColor: ebook.readingSettings.backgroundColor || '#FFFFFF'
+      backgroundColor: followSystemTheme
+        ? defaultBackgroundColor
+        : (ebook.readingSettings?.backgroundColor || defaultBackgroundColor)
     };
 
     const isTxtBook = ebook.format === EBookFormat.TXT;
-    const hasCustomImage = ebook.readingSettings.backgroundType === 'IMAGE'
-      && typeof ebook.readingSettings.backgroundImagePath === 'string'
+    const hasCustomImage = !followSystemTheme
+      && ebook.readingSettings?.backgroundType === 'IMAGE'
+      && typeof ebook.readingSettings?.backgroundImagePath === 'string'
       && ebook.readingSettings.backgroundImagePath.length > 0;
 
     if (isTxtBook && hasCustomImage) {
-      background.backgroundImagePath = ebook.readingSettings.backgroundImagePath;
-      background.backgroundImageOpacity = ebook.readingSettings.backgroundImageOpacity ?? 0.3;
+      background.backgroundImagePath = ebook.readingSettings?.backgroundImagePath;
+      background.backgroundImageOpacity = ebook.readingSettings?.backgroundImageOpacity ?? 0.3;
     }
 
     return background;

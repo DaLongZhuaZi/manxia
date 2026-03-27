@@ -16,6 +16,12 @@ import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { DataManager } from '../Framework/Data/DataManager';
 import { NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import {
+  collectImageEntries,
+  isImagePageEBook,
+  resolveEBookReaderRouteName,
+  resolveRuntimePageIndexFromLegacyAnchor
+} from '../Framework/Adapters/EBookImageReaderAdapter';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { UnifiedAnnotationRecord, UnifiedAnnotationType, HighlightLineType, AnnotationAnchor } from '../Models/AnnotationModels';
@@ -26,6 +32,7 @@ import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Mana
 
 const TAG = 'AnnotationCenterPage';
 const MAX_CONTENT_WIDTH: number = 960;
+const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 type AnnotationFilterType = 'all' | 'bookmark' | 'highlight' | 'thought';
 type ShareFormatType = 'plain' | 'markdown';
@@ -178,6 +185,7 @@ export struct AnnotationCenterPage {
   private hasCapturedDisplayMode: boolean = false;
   private hasRestoredDisplayMode: boolean = false;
   private hasEnsuredNormalMode: boolean = false;
+  private normalDisplayModeRefreshTimer: number = -1;
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   private lastGuideAnchorId: string = '';
 
@@ -185,6 +193,10 @@ export struct AnnotationCenterPage {
     this.captureCurrentDisplayMode('onPageShow');
     this.ensureNormalDisplayMode('onPageShow');
     void this.refreshPageGuide('onPageShow');
+  }
+
+  aboutToDisappear(): void {
+    this.clearNormalDisplayModeRefreshTimer();
   }
 
   private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
@@ -246,7 +258,7 @@ export struct AnnotationCenterPage {
         void this.refreshPageGuide(`${trigger}_retry_layout`);
       }, 120);
     }
-    logger.debug(TAG, `灵感引导已刷新: trigger=${trigger}, step=${step.id}`);
+    logger.debug(TAG, `灵感引导已刷新: 触发源=${trigger}, 步骤=${step.id}`);
   }
 
   private alignGuideViewport(step: AppGuideStep): boolean {
@@ -285,13 +297,10 @@ export struct AnnotationCenterPage {
     }
     this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
     this.hasCapturedDisplayMode = true;
-    logger.info(TAG, `记录进入灵感页前的显示模式: trigger=${trigger}, mode=${this.previousDisplayMode}`);
+    logger.info(TAG, `记录进入灵感页前的显示模式: 触发源=${trigger}, 模式=${this.previousDisplayMode}`);
   }
 
   private ensureNormalDisplayMode(trigger: string): void {
-    if (this.hasEnsuredNormalMode) {
-      return;
-    }
     try {
       if (!this.uiContext) {
         this.uiContext = this.getUIContext();
@@ -299,12 +308,45 @@ export struct AnnotationCenterPage {
       if (!this.uiContext) {
         return;
       }
-      PageWindowCoordinator.applyPagePolicy('AnnotationCenterPage', this.uiContext);
-      this.hasEnsuredNormalMode = true;
-      logger.info(TAG, `已切换为非沉浸式显示: trigger=${trigger}，确保灵感页标题栏与状态栏避让正常`);
+      if (!this.hasEnsuredNormalMode) {
+        PageWindowCoordinator.applyPagePolicy('AnnotationCenterPage', this.uiContext);
+        this.hasEnsuredNormalMode = true;
+        logger.info(TAG, `已切换为非沉浸式显示: 触发源=${trigger}，确保灵感页标题栏与状态栏避让正常`);
+      } else {
+        PageWindowCoordinator.reapplyPagePolicy('AnnotationCenterPage', this.uiContext);
+        logger.info(TAG, `已同步灵感页显示模式: 触发源=${trigger}`);
+      }
+      this.scheduleNormalDisplayModeRefresh(trigger);
     } catch (error) {
-      logger.warn(TAG, `切换灵感页显示模式失败: trigger=${trigger}, error=${String(error)}`);
+      logger.warn(TAG, `切换灵感页显示模式失败: 触发源=${trigger}, 错误=${String(error)}`);
     }
+  }
+
+  private scheduleNormalDisplayModeRefresh(trigger: string, delay: number = 96): void {
+    this.clearNormalDisplayModeRefreshTimer();
+    this.normalDisplayModeRefreshTimer = setTimeout(() => {
+      this.normalDisplayModeRefreshTimer = -1;
+      try {
+        if (!this.uiContext) {
+          this.uiContext = this.getUIContext();
+        }
+        if (!this.uiContext) {
+          return;
+        }
+        PageWindowCoordinator.reapplyPagePolicy('AnnotationCenterPage', this.uiContext);
+        logger.info(TAG, `已重新校正灵感页显示模式: 触发源=${trigger}`);
+      } catch (error) {
+        logger.warn(TAG, `重新校正灵感页显示模式失败: 触发源=${trigger}, 错误=${String(error)}`);
+      }
+    }, delay);
+  }
+
+  private clearNormalDisplayModeRefreshTimer(): void {
+    if (this.normalDisplayModeRefreshTimer < 0) {
+      return;
+    }
+    clearTimeout(this.normalDisplayModeRefreshTimer);
+    this.normalDisplayModeRefreshTimer = -1;
   }
 
   private restorePreviousDisplayMode(trigger: string): void {
@@ -320,9 +362,9 @@ export struct AnnotationCenterPage {
       }
       PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.uiContext);
       this.hasRestoredDisplayMode = true;
-      logger.info(TAG, `离开灵感页，恢复显示模式: trigger=${trigger}, mode=${this.previousDisplayMode}`);
+      logger.info(TAG, `离开灵感页，恢复显示模式: 触发源=${trigger}, 模式=${this.previousDisplayMode}`);
     } catch (error) {
-      logger.warn(TAG, `恢复离开灵感页显示模式失败: trigger=${trigger}, error=${String(error)}`);
+      logger.warn(TAG, `恢复离开灵感页显示模式失败: 触发源=${trigger}, 错误=${String(error)}`);
     }
   }
 
@@ -345,9 +387,9 @@ export struct AnnotationCenterPage {
         WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, context);
       }, 180);
       this.hasRestoredDisplayMode = true;
-      logger.info(TAG, `返回阅读器前强制恢复全沉浸: trigger=${trigger}`);
+      logger.info(TAG, `返回阅读器前强制恢复全沉浸: 触发源=${trigger}`);
     } catch (error) {
-      logger.warn(TAG, `返回阅读器前恢复全沉浸失败: trigger=${trigger}, error=${String(error)}`);
+      logger.warn(TAG, `返回阅读器前恢复全沉浸失败: 触发源=${trigger}, 错误=${String(error)}`);
     }
   }
 
@@ -1516,7 +1558,7 @@ export struct AnnotationCenterPage {
     this.pathStack.pushPathByName('NovelReaderPage', params);
     logger.info(
       TAG,
-      `定位小说原文成功: bookId=${book.id}, chapterIndex=${params.chapterIndex}, pageIndex=${params.chapterPageIndex ?? -1}, startOffset=${params.chapterStartOffset ?? -1}`
+      `定位小说原文成功: 书籍ID=${book.id}, 章节索引=${params.chapterIndex}, 页索引=${params.chapterPageIndex ?? -1}, 起始偏移=${params.chapterStartOffset ?? -1}`
     );
   }
 
@@ -1568,7 +1610,7 @@ export struct AnnotationCenterPage {
     this.pathStack.pushPathByName('MangaReaderPage', params);
     logger.info(
       TAG,
-      `定位漫画原页成功: mangaId=${mangaId}, contentType=${finalContentType}, sourceId=${sourceId ?? -1}, chapterId=${params.chapterId || ''}, pageIndex=${pageIndex}`
+      `定位漫画原页成功: 漫画ID=${mangaId}, 内容类型=${finalContentType}, 源ID=${sourceId ?? -1}, 章节ID=${params.chapterId || ''}, 页索引=${pageIndex}`
     );
   }
 
@@ -1586,14 +1628,56 @@ export struct AnnotationCenterPage {
     const rawChapterIndex = record.chapterIndex >= 0
       ? record.chapterIndex
       : (ebookContext?.chapterIndex ?? fallbackChapterIndex);
-    const targetChapterIndex = this.clampChapterIndex(rawChapterIndex, chapterCount);
-    const targetChapter = chapterCount > 0 ? ebook.chapters[targetChapterIndex] : null;
     const rawStartOffset = record.startOffset >= 0
       ? record.startOffset
       : (ebookContext?.startOffset ?? -1);
     const rawPageIndex = record.pageIndex >= 0
       ? record.pageIndex
       : (ebookContext?.pageIndex ?? 0);
+    if (isImagePageEBook(ebook)) {
+      const imageEntries = collectImageEntries(ebook);
+      const targetPageIndex = resolveRuntimePageIndexFromLegacyAnchor(
+        ebook,
+        record.chapterId || '',
+        rawChapterIndex,
+        rawPageIndex
+      );
+      const safePageIndex = imageEntries.length > 0
+        ? Math.max(0, Math.min(targetPageIndex, imageEntries.length - 1))
+        : 0;
+      const entry = imageEntries[safePageIndex];
+      if (!entry) {
+        promptAction.showToast({ message: '未找到该灵感对应的图片页', duration: 1500 });
+        return;
+      }
+
+      const previousProgress = ebook.readingProgress;
+      const nextProgress: EBookReadingProgress = {
+        bookId: ebook.id,
+        currentChapterId: entry.ebookChapter.id,
+        currentChapterIndex: entry.ebookChapterIndex,
+        currentPosition: safePageIndex,
+        domPos: `image-page:${safePageIndex}`,
+        progress: imageEntries.length > 0
+          ? Math.max(0, Math.min(100, ((safePageIndex + 1) / imageEntries.length) * 100))
+          : 0,
+        lastReadTime: Date.now(),
+        totalReadingTime: previousProgress?.totalReadingTime || 0
+      };
+      await this.ebookDataManager.saveReadingProgress(nextProgress);
+      ebook.readingProgress = nextProgress;
+
+      const params: EBookReaderRouteParams = { bookId: ebook.id };
+      this.pathStack.pushPathByName(resolveEBookReaderRouteName(ebook), params);
+      logger.info(
+        TAG,
+        `图片 EPUB 灵感定位成功: 书籍ID=${ebook.id}, 页索引=${safePageIndex}, 章节索引=${entry.ebookChapterIndex}`
+      );
+      return;
+    }
+
+    const targetChapterIndex = this.clampChapterIndex(rawChapterIndex, chapterCount);
+    const targetChapter = chapterCount > 0 ? ebook.chapters[targetChapterIndex] : null;
     const rawPosition = rawStartOffset >= 0 ? rawStartOffset : rawPageIndex;
     const currentPosition = ebook.format === EBookFormat.TXT
       ? (Number.isFinite(rawPageIndex) && rawPageIndex >= 0 ? Math.floor(rawPageIndex) : 0)
@@ -1639,16 +1723,16 @@ export struct AnnotationCenterPage {
       this.pathStack.pushPathByName('NovelReaderPage', params);
       logger.info(
         TAG,
-        `定位TXT电子书原页成功: bookId=${ebook.id}, chapterIndex=${targetChapterIndex}, pageIndex=${currentPosition}, startOffset=${safeStartOffset}`
+        `定位TXT电子书原页成功: 书籍ID=${ebook.id}, 章节索引=${targetChapterIndex}, 页索引=${currentPosition}, 起始偏移=${safeStartOffset}`
       );
       return;
     }
 
     const params: EBookReaderRouteParams = { bookId: ebook.id };
-    this.pathStack.pushPathByName('EBookReaderPage', params);
+    this.pathStack.pushPathByName(resolveEBookReaderRouteName(ebook), params);
     logger.info(
       TAG,
-      `定位电子书原页成功: bookId=${ebook.id}, chapterIndex=${targetChapterIndex}, position=${currentPosition}`
+      `定位电子书原页成功: 书籍ID=${ebook.id}, 章节索引=${targetChapterIndex}, 位置=${currentPosition}`
     );
   }
 
@@ -2240,6 +2324,7 @@ export struct AnnotationCenterPage {
 
         Scroll(this.scroller) {
           Column({ space: 12 }) {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
 
             this.buildContentSelectorSection()
 
@@ -2368,7 +2453,7 @@ export struct AnnotationCenterPage {
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
 
         this.buildSharePreviewOverlay()
 
@@ -2396,7 +2481,7 @@ export struct AnnotationCenterPage {
       .id('guide_inspiration_root')
       .expandSafeArea(
         [SafeAreaType.SYSTEM, SafeAreaType.CUTOUT],
-        [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END]
+        [SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END]
       )
     }
     .hideTitleBar(false)
@@ -2474,6 +2559,7 @@ export struct AnnotationCenterPage {
       this.ensureNormalDisplayMode('onAppear');
     })
     .onBackPressed(() => {
+      this.clearNormalDisplayModeRefreshTimer();
       if (this.showSharePreview) {
         this.closeSharePreview();
         return true;

@@ -243,9 +243,30 @@ export class DatabaseManager {
           logger.info(TAG, '🔧 [EBOOK_INFO] 添加隐私列');
           try { await store.executeSql('ALTER TABLE ebook_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
           try { await store.executeSql('ALTER TABLE ebook_info ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_info ADD COLUMN contentMode TEXT DEFAULT 'UNKNOWN'"); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_info ADD COLUMN preferredReaderEngine TEXT DEFAULT 'READER_KIT'"); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_info ADD COLUMN extractedRootPath TEXT DEFAULT ''"); } catch (e) {}
           try { await store.executeSql('UPDATE ebook_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
           try { await store.executeSql('UPDATE ebook_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_info SET contentMode = 'UNKNOWN' WHERE contentMode IS NULL OR contentMode = ''"); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_info SET preferredReaderEngine = 'READER_KIT' WHERE preferredReaderEngine IS NULL OR preferredReaderEngine = ''"); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_info SET extractedRootPath = '' WHERE extractedRootPath IS NULL"); } catch (e) {}
           logger.info(TAG, '✅ [EBOOK_INFO] 列添加完成');
+        } else if (tableName === 'EBOOK_CHAPTER') {
+          logger.info(TAG, '🔧 [EBOOK_CHAPTER] 添加 EPUB 资源列');
+          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceHref TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceFile TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceMediaType TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceLayoutType TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceImagePath TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_chapter ADD COLUMN resourceImageRelativePath TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_chapter SET resourceHref = '' WHERE resourceHref IS NULL"); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_chapter SET resourceFile = '' WHERE resourceFile IS NULL"); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_chapter SET resourceMediaType = '' WHERE resourceMediaType IS NULL"); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_chapter SET resourceLayoutType = '' WHERE resourceLayoutType IS NULL"); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_chapter SET resourceImagePath = '' WHERE resourceImagePath IS NULL"); } catch (e) {}
+          try { await store.executeSql("UPDATE ebook_chapter SET resourceImageRelativePath = '' WHERE resourceImageRelativePath IS NULL"); } catch (e) {}
+          logger.info(TAG, '✅ [EBOOK_CHAPTER] 列添加完成');
         } else if (tableName === 'COMIC_SOURCE') {
           logger.info(TAG, '🔧 [COMIC_SOURCE] 添加扩展列');
           try { await store.executeSql("ALTER TABLE comic_source ADD COLUMN cookies TEXT DEFAULT ''"); } catch (e) {}

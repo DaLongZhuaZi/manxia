@@ -12,7 +12,18 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from '../Models/EBookModels';
+import {
+  EBook,
+  EBookChapter,
+  EBookReadingProgress,
+  EBookReadingSettings,
+  EBookPageMode,
+  EBookFormat,
+  EBookContentMode,
+  DEFAULT_EBOOK_READING_SETTINGS,
+  EBOOK_THEME_PRESETS,
+  EBookThemePreset
+} from '../Models/EBookModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
@@ -24,8 +35,18 @@ import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingS
 import { curves, UIContext, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
+import { MangaViewer } from '../components/MangaViewer';
+import { PreloadDebugInfo } from '../components/PreloadDebugOverlay';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import { TextReaderInteractionOverlay } from '../components/TextReaderInteractionOverlay';
+import {
+  MangaChapter,
+  MangaPage,
+  ImageSourceType,
+  ReadingSettings as MangaReadingSettings,
+  DEFAULT_READING_SETTINGS
+} from '../Models/MangaModels';
+import { DownloadStatus } from '../Framework/Types/StatusEnums';
 import {
   TextReaderSettings,
   TextReadingMode,
@@ -120,6 +141,19 @@ struct EBookReaderPage {
   @State ebook: EBook | null = null;
   @State currentChapter: EBookChapter | null = null;
   @State currentChapterIndex: number = 0;
+  @State private imagePageChapterTick: number = 0;
+  @State private imagePageReaderSettings: MangaReadingSettings = DEFAULT_READING_SETTINGS;
+  @State private imagePagePreloadDebugInfo: PreloadDebugInfo = {
+    currentPage: 0,
+    totalPages: 0,
+    preloadRange: 1,
+    queueItems: [],
+    completedCount: 0,
+    failedCount: 0,
+    memCacheHits: 0,
+    diskCacheHits: 0,
+    networkLoads: 0
+  };
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
 
@@ -350,12 +384,15 @@ struct EBookReaderPage {
       logger.info(TAG, '电子书阅读器即将进入听书独立页，aboutToDisappear 保留沉浸模式');
     }
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
+    if (!isOpeningReadAloudPlayer) {
+      this.restoreNormalMode();
+    }
     eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
     if (!this.isCloseTransitionNavigating) {
       cancelTransition();
     } else {
-      logger.info(TAG, 'aboutToDisappear: close transition in progress, skip cancelTransition');
+      logger.info(TAG, 'aboutToDisappear：关闭过渡动画进行中，跳过 cancelTransition');
     }
   }
 
@@ -430,7 +467,7 @@ struct EBookReaderPage {
       this.interactionOverlayDismissTimer = setTimeout(() => {
         this.hideInteractionOverlay();
       }, 6000);
-      logger.info(TAG, `show interaction overlay: reason=${reason}, key=${EBookReaderPage.lastShownInteractionHintKey}`);
+      logger.info(TAG, `显示交互引导遮罩: 原因=${reason}, 标识=${EBookReaderPage.lastShownInteractionHintKey}`);
     };
 
     if (delayMs > 0) {
@@ -558,7 +595,7 @@ struct EBookReaderPage {
         void this.refreshPageGuide('retry_layout');
       }, 120);
     }
-    logger.debug(TAG, `电子书阅读器引导已刷新: trigger=${trigger}, step=${step.id}`);
+    logger.debug(TAG, `电子书阅读器引导已刷新: 触发源=${trigger}, 步骤=${step.id}`);
   }
 
   private handlePageGuideNext(): void {
@@ -609,7 +646,7 @@ struct EBookReaderPage {
       this.accumulateReadingTime();
     }, EBookReaderPage.READING_TIME_INTERVAL);
     
-    logger.info(TAG, 'EBookReaderPage initialized');
+    logger.info(TAG, '电子书阅读页初始化完成');
   }
 
   /**
@@ -649,7 +686,7 @@ struct EBookReaderPage {
   */
   private registerVolumeKeyListener(): void {
     if (this.isVolumeKeyListenerRegistered) {
-      logger.debug(TAG, 'Volume key listener already registered');
+      logger.debug(TAG, '音量键监听已注册，跳过重复注册');
       return;
     }
 
@@ -753,7 +790,7 @@ struct EBookReaderPage {
         this.uiContext = this.getUIContext();
       }
       if (!this.uiContext) {
-        logger.error(TAG, 'Failed to enter immersive mode: UIContext is null');
+        logger.error(TAG, '进入沉浸模式失败：UIContext 为空');
         return;
       }
       
@@ -762,7 +799,7 @@ struct EBookReaderPage {
         this.previousDisplayMode = currentMode;
       }
       WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, this.uiContext);
-      logger.info(TAG, 'Entered full immersive mode');
+      logger.info(TAG, '已进入全沉浸模式');
     } catch (error) {
       logger.error(TAG, `设置全屏模式失败: ${String(error)}`);
     }
@@ -777,7 +814,7 @@ struct EBookReaderPage {
         this.uiContext = this.getUIContext();
       }
       if (!this.uiContext) {
-        logger.error(TAG, 'Failed to exit immersive mode: UIContext is null');
+        logger.error(TAG, '退出沉浸模式失败：UIContext 为空');
         return;
       }
       
@@ -785,9 +822,11 @@ struct EBookReaderPage {
         ? DisplayMode.DEFAULT
         : this.previousDisplayMode;
       if (WindowManager.getCurrentMode() === targetMode) {
+        WindowManager.reapplyCurrentDisplayMode(180);
         return;
       }
       WindowManager.setDisplayMode(targetMode, this.uiContext);
+      WindowManager.reapplyCurrentDisplayMode(180);
       logger.info(TAG, `恢复显示模式: ${targetMode}`);
     } catch (error) {
       logger.error(TAG, `恢复正常模式失败: ${String(error)}`);
@@ -817,7 +856,7 @@ struct EBookReaderPage {
     }
     this.transitionLoadingProgress = normalized;
     setReaderLoadingProgress(normalized);
-    logger.debug(TAG, `transition loading progress: ${(normalized * 100).toFixed(1)}%, reason=${reason}`);
+    logger.debug(TAG, `过渡加载进度: ${(normalized * 100).toFixed(1)}%, 原因=${reason}`);
   }
 
   private notifyTransitionReaderReadyOnce(reason: string): void {
@@ -848,8 +887,19 @@ struct EBookReaderPage {
     if (!this.isReaderKitSupported(ebook.format)) {
       return false;
     }
+    if (ebook.contentMode === EBookContentMode.IMAGE_PAGE) {
+      const missingImagePath = ebook.chapters.some((chapter: EBookChapter) => {
+        return ((chapter.resourceImagePath || '').length <= 0) && ((chapter.resourceImageRelativePath || '').length <= 0);
+      });
+      if (!missingImagePath) {
+        return false;
+      }
+    }
     const chapterCount = ebook.chapters?.length || 0;
-    return chapterCount <= 1 || this.isUnknownAuthorValue(ebook.metadata.author || '') || this.isGenericDescriptionValue(ebook.metadata.description || '');
+    return chapterCount <= 1 ||
+      ebook.contentMode === EBookContentMode.UNKNOWN ||
+      this.isUnknownAuthorValue(ebook.metadata.author || '') ||
+      this.isGenericDescriptionValue(ebook.metadata.description || '');
   }
 
   private buildReparsedChapterList(reparsed: EBook, targetBookId: string): EBookChapter[] {
@@ -866,6 +916,12 @@ struct EBookReaderPage {
         startPosition: chapter.startPosition || 0,
         endPosition: chapter.endPosition || chapterContent.length,
         wordCount: chapter.wordCount || chapterContent.length,
+        resourceHref: chapter.resourceHref || '',
+        resourceFile: chapter.resourceFile || '',
+        resourceMediaType: chapter.resourceMediaType || '',
+        resourceLayoutType: chapter.resourceLayoutType || '',
+        resourceImagePath: chapter.resourceImagePath || '',
+        resourceImageRelativePath: chapter.resourceImageRelativePath || '',
         createTime: chapter.createTime || now
       };
       return rebuiltChapter;
@@ -933,7 +989,15 @@ struct EBookReaderPage {
       const reparsed = await parser.parse();
       let changed = false;
       const oldChapterCount = ebook.chapters?.length || 0;
-      if (oldChapterCount <= 1 && reparsed.chapters.length > 1) {
+      const currentHasImagePath = ebook.chapters.some((chapter: EBookChapter) => {
+        return ((chapter.resourceImagePath || '').length > 0) || ((chapter.resourceImageRelativePath || '').length > 0);
+      });
+      const reparsedHasImagePath = reparsed.chapters.some((chapter: EBookChapter) => {
+        return ((chapter.resourceImagePath || '').length > 0) || ((chapter.resourceImageRelativePath || '').length > 0);
+      });
+      if ((oldChapterCount <= 1 && reparsed.chapters.length > 1) ||
+        (reparsedHasImagePath && !currentHasImagePath) ||
+        (ebook.contentMode === EBookContentMode.UNKNOWN && reparsed.contentMode !== EBookContentMode.UNKNOWN)) {
         ebook.chapters = this.buildReparsedChapterList(reparsed, ebook.id);
         changed = true;
         logger.info(TAG, `修复目录成功: ${oldChapterCount} -> ${ebook.chapters.length}`);
@@ -941,8 +1005,24 @@ struct EBookReaderPage {
       if (this.mergeMetadataFromReparsed(ebook, reparsed)) {
         changed = true;
       }
+      if (reparsed.contentMode && reparsed.contentMode !== ebook.contentMode) {
+        ebook.contentMode = reparsed.contentMode;
+        changed = true;
+      }
+      if (reparsed.preferredReaderEngine && reparsed.preferredReaderEngine !== ebook.preferredReaderEngine) {
+        ebook.preferredReaderEngine = reparsed.preferredReaderEngine;
+        changed = true;
+      }
+      if ((reparsed.extractedRootPath || '').length > 0 && reparsed.extractedRootPath !== ebook.extractedRootPath) {
+        ebook.extractedRootPath = reparsed.extractedRootPath;
+        changed = true;
+      }
       if (changed) {
         ebook.lastUpdateTime = Date.now();
+        if (ebook.chapters.length > 0) {
+          const safeIndex = Math.max(0, Math.min(ebook.readingProgress.currentChapterIndex, ebook.chapters.length - 1));
+          ebook.readingProgress.currentChapterId = ebook.chapters[safeIndex].id;
+        }
         await this.ebookDataManager.saveEBook(ebook);
         logger.info(TAG, `电子书解析数据修复完成: ${ebook.metadata.title}`);
       } else {
@@ -985,7 +1065,7 @@ struct EBookReaderPage {
         return;
       }
       if (this.showTopToolbar || this.showBottomToolbar) {
-        logger.debug(TAG, `工具栏自动隐藏: reason=${reason}`);
+        logger.debug(TAG, `工具栏自动隐藏: 原因=${reason}`);
         this.hideToolbarWithAnimation();
       }
     }, EBookReaderPage.TOOLBAR_AUTO_HIDE_DELAY_MS);
@@ -1002,7 +1082,7 @@ struct EBookReaderPage {
     this.clearFullscreenRestoreTimer();
     this.fullscreenRestoreTimer = setTimeout(() => {
       this.fullscreenRestoreTimer = -1;
-      logger.debug(TAG, `重新应用沉浸模式: reason=${reason}`);
+      logger.debug(TAG, `重新应用沉浸模式: 原因=${reason}`);
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext ?? undefined);
       WindowManager.reapplyCurrentDisplayMode(24);
       if (this.showTopToolbar || this.showBottomToolbar) {
@@ -1025,6 +1105,7 @@ struct EBookReaderPage {
       this.errorMessage = '';
       this.isCurrentPageBookmarked = false;
       this.currentPageBookmarkId = '';
+      this.imagePageChapterTick = 0;
       this.clearReaderKitStartupGuard('load_start');
       this.reportTransitionLoadingProgress(0.06, 'load_start');
 
@@ -1116,6 +1197,7 @@ struct EBookReaderPage {
       }
 
         // 优先使用保存的章节索引
+      this.syncImagePageReaderSettings();
       if (ebook.readingProgress) {
           // 兼容旧数据：通过章节ID查找索引
         if (typeof ebook.readingProgress.currentChapterIndex === 'number' && ebook.readingProgress.currentChapterIndex >= 0) {
@@ -1153,7 +1235,7 @@ struct EBookReaderPage {
       this.reportTransitionLoadingProgress(0.48, 'settings_restored');
       const chapterCount = ebook.chapters?.length || 0;
       if (chapterCount <= 0) {
-        throw new Error('No chapters available in ebook');
+        throw new Error('电子书中没有可用章节');
       }
       const safeChapterIndex = Math.max(0, Math.min(this.currentChapterIndex, chapterCount - 1));
       if (safeChapterIndex !== this.currentChapterIndex) {
@@ -1162,8 +1244,9 @@ struct EBookReaderPage {
       }
       this.currentChapter = ebook.chapters[this.currentChapterIndex] || ebook.chapters[0];
       if (!this.currentChapter) {
-        throw new Error(`Failed to resolve chapter at index ${this.currentChapterIndex}`);
+        throw new Error(`无法定位章节，索引=${this.currentChapterIndex}`);
       }
+      this.updateImagePagePreloadDebugInfo();
       
       // 调试日志：检查章节内容
         logger.info(TAG, `当前章节内容前100字: ${this.currentChapter.content?.substring(0, 100) || '(空)'}`);
@@ -1196,18 +1279,18 @@ struct EBookReaderPage {
       // TXT: TextReaderComponent.onReady
       // PDF: PdfKitViewerComponent.onLoadComplete/onLoadError
       // 设置沉浸式模式
-      logger.info(TAG, 'ReaderKit view appeared, start loading chapter content');
+      logger.info(TAG, 'ReaderKit 视图已出现，开始加载章节内容');
       
       // 设置沉浸式模式
       this.setupFullscreenMode();
       this.refreshCurrentEBookBookmarkState('load_ebook_success');
       
     } catch (error) {
-      this.errorMessage = `Load chapter failed: ${String(error instanceof Error ? error.message : error)}`;
+      this.errorMessage = `加载章节失败: ${String(error instanceof Error ? error.message : error)}`;
       this.isLoading = false;
       this.isCurrentPageBookmarked = false;
       this.currentPageBookmarkId = '';
-      logger.error(TAG, 'Failed to load chapter content', String(error instanceof Error ? error.message : error));
+      logger.error(TAG, '加载章节内容失败', String(error instanceof Error ? error.message : error));
       this.notifyTransitionReaderReadyOnce('ebook_load_failed');
     }
   }
@@ -1903,6 +1986,11 @@ struct EBookReaderPage {
 
     this.currentChapterIndex--;
     this.currentChapter = this.ebook.chapters[this.currentChapterIndex];
+    if (this.isUsingImagePageReader()) {
+      this.imagePageChapterTick++;
+      this.updateImagePagePreloadDebugInfo();
+      this.refreshCurrentEBookBookmarkState('image_page_previous_chapter');
+    }
     // TXT格式使用页码进度保存，其他格式使用通用方法
     if (this.ebook.format === EBookFormat.TXT) {
       this.textCurrentPageIndex = 0;
@@ -1946,6 +2034,11 @@ struct EBookReaderPage {
 
     this.currentChapterIndex++;
     this.currentChapter = this.ebook.chapters[this.currentChapterIndex];
+    if (this.isUsingImagePageReader()) {
+      this.imagePageChapterTick++;
+      this.updateImagePagePreloadDebugInfo();
+      this.refreshCurrentEBookBookmarkState('image_page_next_chapter');
+    }
     // TXT格式使用页码进度保存，其他格式使用通用方法
     if (this.ebook.format === EBookFormat.TXT) {
       this.textCurrentPageIndex = 0;
@@ -1986,6 +2079,7 @@ struct EBookReaderPage {
 
       // 立即应用到 Reader Kit（如果控制器已就绪）
       this.ebook.readingSettings = settings;
+      this.syncImagePageReaderSettings();
 
       // 保存到数据库
       if (this.readerKitController && this.readerKitController.isControllerReady()) {
@@ -2017,6 +2111,7 @@ struct EBookReaderPage {
     this.ebook.readingSettings.pageMargin = this.pageMargin;
     const isNightMode = this.bgColor === '#1E1E1E' || this.bgColor === '#1B3B2F';
     this.ebook.readingSettings.nightMode = isNightMode;
+    this.syncImagePageReaderSettings();
 
     // 异步保存到数据库
     if (this.readerKitController && this.readerKitController.isControllerReady()) {
@@ -2075,6 +2170,13 @@ struct EBookReaderPage {
         progressPercent = this.textReadAloudCurrentCharIndex >= 0
           ? this.latestTextProgress
           : (this.ebook.readingProgress?.progress || 0);
+      } else if (this.isUsingImagePageReader()) {
+        chapterIndexToSave = Math.max(0, Math.min(this.currentChapterIndex, (this.ebook.chapters?.length || 1) - 1));
+        currentPosition = 0;
+        domPos = '';
+        chapterId = this.ebook.chapters[chapterIndexToSave]?.id || `resource_${chapterIndexToSave}`;
+        const total = this.ebook.chapters?.length || 0;
+        progressPercent = total > 0 ? (((chapterIndexToSave + 1) / total) * 100) : 0;
       } else {
         const snapshot = this.parseReaderKitPositionSnapshot();
         if (snapshot && snapshot.resourceIndex >= 0) {
@@ -2218,6 +2320,13 @@ struct EBookReaderPage {
       this.currentChapter = null;
     }
     this.currentDomPos = ''; // 清空 DOM 位置，从章节开头开始
+    if (this.isUsingImagePageReader()) {
+      this.imagePageChapterTick++;
+      this.updateImagePagePreloadDebugInfo();
+      this.refreshCurrentEBookBookmarkState('jump_to_chapter_image_page');
+      this.saveReadingProgress();
+      return;
+    }
     
       // 纯文本阅读器：重置页码到第一页，并更新文本内容
     if (this.ebook.format === EBookFormat.TXT) {
@@ -2775,7 +2884,7 @@ struct EBookReaderPage {
         this.sourceCoverComponentId = params.coverComponentId || '';
         this.loadEBook(params.bookId);
       } else {
-        this.errorMessage = 'Invalid ebook ID parameter';
+        this.errorMessage = '电子书 ID 参数无效';
         logger.error(TAG, '缺少电子书ID参数');
       }
       setTimeout(() => {
@@ -2857,6 +2966,8 @@ struct EBookReaderPage {
       if (this.ebook.format === EBookFormat.PDF) {
         // EPUB/MOBI/AZW 格式：使用 Reader Kit 阅读器
         this.buildPdfReaderView();
+      } else if (this.isUsingImagePageReader()) {
+        this.buildImagePageReaderView();
       } else if (this.isReaderKitSupported(this.ebook.format)) {
         // TXT 等其他格式：使用文本阅读器
         this.buildReaderKitView();
@@ -2890,6 +3001,18 @@ struct EBookReaderPage {
     // PDF 使用 PDF Kit，EPUB/MOBI/AZW 使用 Reader Kit
     // PDF 使用 PDF Kit，EPUB/MOBI/AZW 使用 Reader Kit
     return this.ebook.format === EBookFormat.TXT;
+  }
+
+  private isUsingImagePageReader(): boolean {
+    if (!this.ebook) {
+      return false;
+    }
+    if (this.ebook.format !== EBookFormat.EPUB || this.ebook.contentMode !== EBookContentMode.IMAGE_PAGE) {
+      return false;
+    }
+    return this.ebook.chapters.some((chapter: EBookChapter) => {
+      return ((chapter.resourceImagePath || '').length > 0) || ((chapter.resourceImageRelativePath || '').length > 0);
+    });
   }
 
   /**
@@ -2931,7 +3054,7 @@ struct EBookReaderPage {
       .width('100%')
       .height('100%')
       .onAppear(() => {
-        logger.info(TAG, 'ReaderKit view appeared');
+        logger.info(TAG, 'ReaderKit 视图已显示');
       })
     }
   }
@@ -2939,6 +3062,185 @@ struct EBookReaderPage {
   /**
   * 构建加载视图
   */
+  @Builder
+  buildImagePageReaderView() {
+    if (this.ebook) {
+      if (this.hasRenderableImagePageChapter()) {
+        MangaViewer({
+          chapter: this.getRenderableImagePageChapter(),
+          currentPageIndex: 0,
+          readingSettings: this.imagePageReaderSettings,
+          zoomScale: 1.0,
+          toolbarsVisible: (this.showTopToolbar || this.showBottomToolbar),
+          chapterTick: this.imagePageChapterTick,
+          preloadCurrentPages: 1,
+          preloadNextPages: 1,
+          preloadDebugInfo: $imagePagePreloadDebugInfo,
+          isFirstChapter: this.currentChapterIndex <= 0,
+          isLastChapter: this.currentChapterIndex >= (this.ebook.chapters.length - 1),
+          callbacks: {
+            onPageChange: (_pageIndex: number) => {
+              this.updateImagePagePreloadDebugInfo();
+              this.refreshCurrentEBookBookmarkState('image_page_change');
+            },
+            onChapterChange: (direction: 'prev' | 'next') => {
+              if (direction === 'prev') {
+                this.previousChapter();
+              } else {
+                this.nextChapter();
+              }
+            },
+            onZoomChange: (_scale: number) => {},
+            onSingleTap: (_event: ClickEvent) => {
+              this.toggleToolbar();
+            },
+            onDoubleTap: (_event: ClickEvent) => {},
+            onComponentReady: () => {
+              logger.info(TAG, 'Image-page EPUB viewer is ready');
+              this.reportTransitionLoadingProgress(0.96, 'image_page_viewer_ready');
+              this.notifyTransitionReaderReadyOnce('image_page_viewer_ready');
+            }
+          }
+        })
+        .width('100%')
+        .height('100%')
+        .onAppear(() => {
+          this.updateImagePagePreloadDebugInfo();
+          logger.info(TAG, 'Image-page EPUB view appeared');
+        })
+      } else {
+        this.buildImagePageFallbackView();
+      }
+    }
+  }
+
+  @Builder
+  private buildImagePageFallbackView() {
+    Column({ space: 12 }) {
+      Text('EPUB 图片页资源未就绪')
+        .fontSize(18)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.textColor)
+
+      Text('当前章节没有可用的页面图片，暂时无法切换到图片阅读模式。')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.textColor)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding(24)
+  }
+
+  private buildImagePageMangaChapter(chapterIndex: number): MangaChapter | null {
+    if (!this.ebook || chapterIndex < 0 || chapterIndex >= this.ebook.chapters.length) {
+      return null;
+    }
+    const ebookChapter = this.ebook.chapters[chapterIndex];
+    const imagePath = this.resolveImagePageChapterPath(ebookChapter);
+    if (imagePath.length <= 0) {
+      return null;
+    }
+    const page: MangaPage = {
+      id: `${this.ebook.id}_img_${chapterIndex}`,
+      index: 0,
+      sourceType: ImageSourceType.LOCAL,
+      imagePath: imagePath,
+      imageUrl: '',
+      localPath: imagePath,
+      isLoaded: false,
+      priority: 10
+    };
+    return {
+      id: ebookChapter.id,
+      title: ebookChapter.title,
+      chapterNumber: chapterIndex + 1,
+      pages: [page],
+      totalPages: 1,
+      publishDate: this.ebook.addTime || Date.now(),
+      language: this.ebook.metadata.language || 'zh-CN',
+      scanlationGroup: '',
+      isDownloaded: true,
+      downloadStatus: DownloadStatus.COMPLETED,
+      downloadProgress: 100,
+      localPath: imagePath
+    };
+  }
+
+  private hasRenderableImagePageChapter(): boolean {
+    return this.buildImagePageMangaChapter(this.currentChapterIndex) !== null;
+  }
+
+  private getRenderableImagePageChapter(): MangaChapter {
+    const chapter = this.buildImagePageMangaChapter(this.currentChapterIndex);
+    if (!chapter) {
+      throw new Error('图片页 EPUB 章节不可渲染');
+    }
+    return chapter;
+  }
+
+  private resolveImagePageChapterPath(chapter: EBookChapter): string {
+    if ((chapter.resourceImagePath || '').length > 0) {
+      return chapter.resourceImagePath || '';
+    }
+    const relativePath = chapter.resourceImageRelativePath || '';
+    if (!this.ebook || relativePath.length <= 0 || (this.ebook.extractedRootPath || '').length <= 0) {
+      return '';
+    }
+    if (relativePath.startsWith('/')) {
+      return relativePath;
+    }
+    return `${this.ebook.extractedRootPath}/${relativePath}`.replace(/\/+/g, '/');
+  }
+
+  private updateImagePagePreloadDebugInfo(): void {
+    const total = this.ebook?.chapters.length || 0;
+    this.imagePagePreloadDebugInfo = {
+      currentPage: this.currentChapterIndex,
+      totalPages: total,
+      preloadRange: 1,
+      queueItems: [],
+      completedCount: 0,
+      failedCount: 0,
+      memCacheHits: 0,
+      diskCacheHits: 0,
+      networkLoads: 0
+    };
+  }
+
+  private syncImagePageReaderSettings(): void {
+    const keepScreenOn = this.ebook?.readingSettings?.keepScreenOn ?? DEFAULT_READING_SETTINGS.keepScreenOn;
+    const volumeKeyNavigation = this.ebook?.readingSettings?.volumeKeyNavigation ?? DEFAULT_READING_SETTINGS.volumeKeyNavigation;
+    const brightness = this.ebook?.readingSettings
+      ? Math.max(0.1, Math.min(2.0, this.ebook.readingSettings.brightness / 100))
+      : DEFAULT_READING_SETTINGS.brightness;
+    const showPageInfo = this.ebook?.readingSettings?.showPageNumber ?? DEFAULT_READING_SETTINGS.showPageInfo;
+    const showPageIndicator = this.ebook?.readingSettings?.showProgress ?? DEFAULT_READING_SETTINGS.showPageIndicator;
+    this.imagePageReaderSettings = {
+      readingMode: DEFAULT_READING_SETTINGS.readingMode,
+      readingDirection: DEFAULT_READING_SETTINGS.readingDirection,
+      brightness: brightness,
+      keepScreenOn: keepScreenOn,
+      pageSpacing: DEFAULT_READING_SETTINGS.pageSpacing,
+      showPageInfo: showPageInfo,
+      showPageIndicator: showPageIndicator,
+      fitMode: 'fit_width',
+      autoPageTurnInterval: DEFAULT_READING_SETTINGS.autoPageTurnInterval,
+      skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
+      pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
+      doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
+      filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
+      volumeKeyNavigation: volumeKeyNavigation,
+      curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity,
+      webtoonLeftMargin: DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+      webtoonRightMargin: DEFAULT_READING_SETTINGS.webtoonRightMargin,
+      webtoonMarginSync: DEFAULT_READING_SETTINGS.webtoonMarginSync
+    };
+  }
+
   @Builder
   buildPdfReaderView() {
     if (this.ebook) {
@@ -3403,7 +3705,7 @@ struct EBookReaderPage {
   }
 
   private parseReaderKitPositionSnapshot(): ReaderKitPositionSnapshot | null {
-    if (this.isUsingTextReader()) {
+    if (this.isUsingTextReader() || this.isUsingImagePageReader()) {
       return null;
     }
     return this.parseReaderKitPositionSnapshotFromDomPos(this.currentDomPos);
@@ -3428,7 +3730,7 @@ struct EBookReaderPage {
 
   private initReaderKitStartupGuard(persistedPageOffset: number): void {
     this.clearReaderKitStartupGuard('reinit');
-    if (!this.ebook || this.isUsingTextReader() || !this.isReaderKitSupported(this.ebook.format)) {
+    if (!this.ebook || this.isUsingTextReader() || this.isUsingImagePageReader() || !this.isReaderKitSupported(this.ebook.format)) {
       return;
     }
     if (!Number.isFinite(persistedPageOffset) || persistedPageOffset <= 0) {
@@ -3483,6 +3785,9 @@ struct EBookReaderPage {
   }
 
   private getCurrentReaderKitPageIndex(): number {
+    if (this.isUsingImagePageReader()) {
+      return 0;
+    }
     const snapshot = this.parseReaderKitPositionSnapshot();
     if (snapshot && snapshot.pageOffset >= 0) {
       return snapshot.pageOffset;
@@ -3497,6 +3802,13 @@ struct EBookReaderPage {
   private getCurrentEBookProgressPercent(): number {
     if (this.isUsingTextReader() && (this.latestTextProgress > 0 || this.textReadAloudCurrentCharIndex >= 0)) {
       return Math.max(0, Math.min(100, this.latestTextProgress));
+    }
+    if (this.isUsingImagePageReader()) {
+      const total = this.ebook?.chapters.length || 0;
+      if (total <= 0) {
+        return 0;
+      }
+      return Math.max(0, Math.min(100, ((this.currentChapterIndex + 1) / total) * 100));
     }
     const snapshot = this.parseReaderKitPositionSnapshot();
     if (snapshot && snapshot.resourceIndex >= 0 && snapshot.resourceCount > 0) {
@@ -3564,6 +3876,11 @@ struct EBookReaderPage {
     if (this.isUsingTextReader()) {
       return `${this.currentChapterIndex + 1} / ${this.ebook?.chapters.length || 0}`;
     }
+    if (this.isUsingImagePageReader()) {
+      const total = this.ebook?.chapters.length || 0;
+      const progressPercent = this.getCurrentEBookProgressPercent();
+      return `${Math.round(progressPercent)}% 路 页面 ${this.currentChapterIndex + 1} / ${total}`;
+    }
     const snapshot = this.parseReaderKitPositionSnapshot();
     const chapterIndex = this.getCurrentReaderKitChapterIndex();
     const pageIndex = this.getCurrentReaderKitPageIndex();
@@ -3600,7 +3917,9 @@ struct EBookReaderPage {
       ? (this.currentChapter?.id || '')
       : (resolvedChapter?.id || `resource_${chapterIndex}`);
     const pageIndex = isTextMode ? Math.max(0, this.textCurrentPageIndex) : this.getCurrentReaderKitPageIndex();
-    const rawProgress = this.ebook.readingProgress?.progress;
+    const rawProgress = this.isUsingImagePageReader()
+      ? this.getCurrentEBookProgressPercent()
+      : this.ebook.readingProgress?.progress;
     const progress = (typeof rawProgress === 'number' && Number.isFinite(rawProgress) && rawProgress >= 0)
       ? Math.max(0, Math.min(1, rawProgress / 100))
       : -1;
@@ -3681,10 +4000,10 @@ struct EBookReaderPage {
       this.isCurrentPageBookmarked = matchedId.length > 0;
       logger.debug(
         TAG,
-        `刷新电子书书签状态: trigger=${trigger}, chapterIndex=${context.chapterIndex}, pageIndex=${context.pageIndex}, bookmarked=${this.isCurrentPageBookmarked}, bookmarkId=${matchedId || 'none'}`
+        `刷新电子书书签状态: 触发源=${trigger}, 章节索引=${context.chapterIndex}, 页索引=${context.pageIndex}, 已加书签=${this.isCurrentPageBookmarked}, 书签ID=${matchedId || '无'}`
       );
     } catch (error) {
-      logger.error(TAG, `刷新电子书书签状态失败: trigger=${trigger}, error=${String(error)}`);
+      logger.error(TAG, `刷新电子书书签状态失败: 触发源=${trigger}, 错误=${String(error)}`);
       this.currentPageBookmarkId = '';
       this.isCurrentPageBookmarked = false;
     }
@@ -3802,6 +4121,7 @@ struct EBookReaderPage {
             // 只在用户释放滑块时触发章节切换，避免拖动过程中频繁触发分页导致卡死
       Button() {
         SymbolGlyph($r('sys.symbol.arrow_left'))
+          .fontColor([$r('app.color.text_primary')])
       }
       .width(48)
       .height(48)
@@ -3832,6 +4152,7 @@ struct EBookReaderPage {
 
       Button() {
         SymbolGlyph($r('sys.symbol.stickers'))
+          .fontColor([$r('app.color.text_primary')])
       }
       .width(48)
       .height(48)
@@ -3843,6 +4164,7 @@ struct EBookReaderPage {
           // 纯文本阅读器：显示综合设置按钮
       Button() {
         SymbolGlyph($r('sys.symbol.more'))
+          .fontColor([$r('app.color.text_primary')])
 
       }
       .width(48)
@@ -3932,6 +4254,7 @@ struct EBookReaderPage {
       // 点击遮罩关闭
         Button() {
           SymbolGlyph($r('sys.symbol.list_bullet'))
+            .fontColor([$r('app.color.text_primary')])
         }
         .width(64)
         .height(48)
@@ -3947,6 +4270,7 @@ struct EBookReaderPage {
       // 菜单面板
           Button() {
             SymbolGlyph($r('sys.symbol.eye'))
+              .fontColor([$r('app.color.text_primary')])
           }
           .width(64)
           .height(48)
@@ -4064,7 +4388,7 @@ struct EBookReaderPage {
         .height(44)
         .padding({ left: 16, right: 16 })
         .onClick(() => {
-          logger.info(TAG, 'MoreMenu: 打开目录');
+          logger.info(TAG, '更多菜单：打开目录');
           this.hideMoreMenuWithAnimation();
           this.showChapterListWithAnimation();
         })

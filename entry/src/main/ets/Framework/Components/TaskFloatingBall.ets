@@ -2,7 +2,7 @@
  * 后台任务悬浮球组件
  * 显示后台任务进度，支持拖拽移动
  */
-import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress } from '../Task/BackgroundTaskManager';
+import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress, TaskStatusListener } from '../Task/BackgroundTaskManager';
 import { logger } from '../../Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 import { AppColors, ColorRole } from '../Theme/AppColors';
@@ -34,29 +34,18 @@ export struct TaskFloatingBall {
   private dragStartY: number = 0;
   private ballStartX: number = 0;
   private ballStartY: number = 0;
+  private taskStatusListener: TaskStatusListener = (_task: BackgroundTask): void => {
+    const wasVisible = this.isVisible;
+    this.refreshTaskState(wasVisible);
+  };
 
   aboutToAppear(): void {
-    // 注册悬浮球更新回调
-    this.taskManager.setFloatingBallCallback((activeTasks: BackgroundTask[]) => {
-      this.tasks = activeTasks;
-      this.isVisible = activeTasks.length > 0;
-      this.mainProgress = this.taskManager.getMainTaskProgress();
-      
-      // 如果所有任务完成，显示toast
-      if (activeTasks.length === 0 && this.isVisible) {
-        this.showCompletionToast();
-      }
-    });
-    
-    // 初始化状态
-    this.tasks = this.taskManager.getActiveTasks();
-    this.isVisible = this.tasks.length > 0;
-    this.mainProgress = this.taskManager.getMainTaskProgress();
+    this.taskManager.addListener(this.taskStatusListener);
+    this.refreshTaskState(false);
   }
 
   aboutToDisappear(): void {
-    // 移除回调
-    this.taskManager.setFloatingBallCallback(null);
+    this.taskManager.removeListener(this.taskStatusListener);
   }
 
   private showCompletionToast(): void {
@@ -67,6 +56,20 @@ export struct TaskFloatingBall {
       });
     } catch (e) {
       logger.warn(TAG, `显示Toast失败: ${e}`);
+    }
+  }
+
+  /**
+   * 从任务管理器重新同步悬浮球状态
+   */
+  private refreshTaskState(wasVisible: boolean): void {
+    const activeTasks = this.taskManager.getActiveTasks();
+    this.tasks = activeTasks;
+    this.mainProgress = this.taskManager.getMainTaskProgress();
+    this.isVisible = activeTasks.length > 0;
+
+    if (wasVisible && activeTasks.length === 0) {
+      this.showCompletionToast();
     }
   }
 

@@ -22,10 +22,127 @@ import { logger } from '../../Utils/Logger';
 
 const TAG = 'ComicConverter';
 
+interface PendingReadingSettingsSaveState {
+  latestSettings: ReadingSettings | null;
+  runningPromise: Promise<void> | null;
+}
+
 /**
  * 漫画数据转换工具类
  */
 export class ComicConverter {
+  private static readingSettingsSaveStates: Map<string, PendingReadingSettingsSaveState> =
+    new Map<string, PendingReadingSettingsSaveState>();
+
+  private static cloneReadingSettings(settings: ReadingSettings): ReadingSettings {
+    return {
+      readingMode: settings.readingMode,
+      readingDirection: settings.readingDirection,
+      brightness: settings.brightness,
+      keepScreenOn: settings.keepScreenOn,
+      pageSpacing: settings.pageSpacing,
+      showPageInfo: settings.showPageInfo,
+      showPageIndicator: settings.showPageIndicator,
+      fitMode: settings.fitMode,
+      autoPageTurnInterval: settings.autoPageTurnInterval,
+      skipIntroPages: settings.skipIntroPages,
+      pageTurnAnimation: settings.pageTurnAnimation,
+      doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      filterSettings: {
+        enabled: settings.filterSettings.enabled,
+        brightness: settings.filterSettings.brightness,
+        contrast: settings.filterSettings.contrast,
+        saturation: settings.filterSettings.saturation,
+        hue: settings.filterSettings.hue,
+        gamma: settings.filterSettings.gamma,
+        sepia: settings.filterSettings.sepia,
+        invert: settings.filterSettings.invert,
+        grayscale: settings.filterSettings.grayscale,
+        blur: settings.filterSettings.blur
+      },
+      volumeKeyNavigation: settings.volumeKeyNavigation,
+      curlBackOpacity: settings.curlBackOpacity ?? DEFAULT_READING_SETTINGS.curlBackOpacity,
+      webtoonLeftMargin: settings.webtoonLeftMargin ?? DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+      webtoonRightMargin: settings.webtoonRightMargin ?? DEFAULT_READING_SETTINGS.webtoonRightMargin,
+      webtoonMarginSync: settings.webtoonMarginSync ?? DEFAULT_READING_SETTINGS.webtoonMarginSync
+    };
+  }
+
+  private static normalizeReadingSettings(settings: ReadingSettings | null | undefined): ReadingSettings {
+    const base = settings || DEFAULT_READING_SETTINGS;
+    const filterSettings = base.filterSettings || DEFAULT_READING_SETTINGS.filterSettings;
+    return ComicConverter.cloneReadingSettings({
+      readingMode: base.readingMode ?? DEFAULT_READING_SETTINGS.readingMode,
+      readingDirection: base.readingDirection ?? DEFAULT_READING_SETTINGS.readingDirection,
+      brightness: base.brightness ?? DEFAULT_READING_SETTINGS.brightness,
+      keepScreenOn: base.keepScreenOn ?? DEFAULT_READING_SETTINGS.keepScreenOn,
+      pageSpacing: base.pageSpacing ?? DEFAULT_READING_SETTINGS.pageSpacing,
+      showPageInfo: base.showPageInfo ?? DEFAULT_READING_SETTINGS.showPageInfo,
+      showPageIndicator: base.showPageIndicator ?? DEFAULT_READING_SETTINGS.showPageIndicator,
+      fitMode: base.fitMode ?? DEFAULT_READING_SETTINGS.fitMode,
+      autoPageTurnInterval: base.autoPageTurnInterval ?? DEFAULT_READING_SETTINGS.autoPageTurnInterval,
+      skipIntroPages: base.skipIntroPages ?? DEFAULT_READING_SETTINGS.skipIntroPages,
+      pageTurnAnimation: base.pageTurnAnimation ?? DEFAULT_READING_SETTINGS.pageTurnAnimation,
+      doublePagePortraitLayout: base.doublePagePortraitLayout ?? DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
+      filterSettings: {
+        enabled: filterSettings.enabled ?? DEFAULT_READING_SETTINGS.filterSettings.enabled,
+        brightness: filterSettings.brightness ?? DEFAULT_READING_SETTINGS.filterSettings.brightness,
+        contrast: filterSettings.contrast ?? DEFAULT_READING_SETTINGS.filterSettings.contrast,
+        saturation: filterSettings.saturation ?? DEFAULT_READING_SETTINGS.filterSettings.saturation,
+        hue: filterSettings.hue ?? DEFAULT_READING_SETTINGS.filterSettings.hue,
+        gamma: filterSettings.gamma ?? DEFAULT_READING_SETTINGS.filterSettings.gamma,
+        sepia: filterSettings.sepia ?? DEFAULT_READING_SETTINGS.filterSettings.sepia,
+        invert: filterSettings.invert ?? DEFAULT_READING_SETTINGS.filterSettings.invert,
+        grayscale: filterSettings.grayscale ?? DEFAULT_READING_SETTINGS.filterSettings.grayscale,
+        blur: filterSettings.blur ?? DEFAULT_READING_SETTINGS.filterSettings.blur
+      },
+      volumeKeyNavigation: base.volumeKeyNavigation ?? DEFAULT_READING_SETTINGS.volumeKeyNavigation,
+      curlBackOpacity: base.curlBackOpacity ?? DEFAULT_READING_SETTINGS.curlBackOpacity,
+      webtoonLeftMargin: base.webtoonLeftMargin ?? DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+      webtoonRightMargin: base.webtoonRightMargin ?? DEFAULT_READING_SETTINGS.webtoonRightMargin,
+      webtoonMarginSync: base.webtoonMarginSync ?? DEFAULT_READING_SETTINGS.webtoonMarginSync
+    });
+  }
+
+  private static async flushReadingSettingsSaveQueue(
+    saveKey: string,
+    comicId: string,
+    userId: string,
+    state: PendingReadingSettingsSaveState
+  ): Promise<void> {
+    try {
+      while (state.latestSettings !== null) {
+        const snapshot = state.latestSettings;
+        state.latestSettings = null;
+        await ComicConverter.saveReadingSettingsInternal(comicId, snapshot, userId);
+      }
+    } finally {
+      state.runningPromise = null;
+      if (state.latestSettings === null) {
+        ComicConverter.readingSettingsSaveStates.delete(saveKey);
+      }
+    }
+  }
+
+  private static async saveReadingSettingsInternal(
+    comicId: string,
+    settings: ReadingSettings,
+    userId: string
+  ): Promise<void> {
+    const dataManager = DataManager.getInstance();
+    const settingKey = `manga_settings_${comicId}`;
+    const snapshot = ComicConverter.normalizeReadingSettings(settings);
+    const settingsJson = JSON.stringify(snapshot);
+
+    try {
+      await dataManager.saveUserSetting(userId, settingKey, settingsJson);
+      logger.info(TAG, `漫画阅读设置保存成功: comicId=${comicId}, userId=${userId}, readingMode=${snapshot.readingMode}, pageTurnAnimation=${snapshot.pageTurnAnimation}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `保存漫画阅读设置失败: comicId=${comicId}, userId=${userId}, 错误=${errorMessage}`);
+      throw error instanceof Error ? error : new Error(errorMessage);
+    }
+  }
   /**
    * 将ComicInfo转换为Manga对象（同步版本，使用默认设置）
    * @deprecated 请使用 convertComicInfoToMangaAsync 以加载完整的阅读设置和进度
@@ -201,7 +318,7 @@ export class ComicConverter {
         // 解析JSON字符串
         const settings = JSON.parse(settingsJson) as ReadingSettings;
         logger.info(TAG, `成功从数据库加载漫画 ${comicId} 的独立阅读设置`);
-        return settings;
+        return ComicConverter.normalizeReadingSettings(settings);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -336,7 +453,7 @@ export class ComicConverter {
       webtoonRightMargin: Math.max(0, Math.min(50, Math.round(globalWebtoonRightMargin))),
       webtoonMarginSync: globalWebtoonMarginSync
     };
-    return fallbackSettings;
+    return ComicConverter.normalizeReadingSettings(fallbackSettings);
   }
 
   /**
@@ -507,6 +624,24 @@ export class ComicConverter {
    * @param userId 用户ID
    */
   public static async saveReadingSettings(comicId: string, settings: ReadingSettings, userId: string = 'default_user'): Promise<void> {
+    const saveKey = `${comicId}|${userId}|reading_settings`;
+    let state = ComicConverter.readingSettingsSaveStates.get(saveKey);
+    if (!state) {
+      state = {
+        latestSettings: null,
+        runningPromise: null
+      };
+      ComicConverter.readingSettingsSaveStates.set(saveKey, state);
+    }
+
+    state.latestSettings = ComicConverter.normalizeReadingSettings(settings);
+    if (state.runningPromise === null) {
+      state.runningPromise = ComicConverter.flushReadingSettingsSaveQueue(saveKey, comicId, userId, state);
+    }
+    return await state.runningPromise;
+  }
+
+  private static async saveReadingSettingsLegacy(comicId: string, settings: ReadingSettings, userId: string = 'default_user'): Promise<void> {
     const dataManager = DataManager.getInstance();
     
     try {

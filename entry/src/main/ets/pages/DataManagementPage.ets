@@ -41,7 +41,7 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint }
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { image } from '@kit.ImageKit';
 import { AvifTranscoder, AvifTranscodeResult } from '../Utils/AvifTranscoder';
-import { BackgroundTaskManager, TaskType, TaskStatus, BackgroundTask, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
+import { BackgroundTaskManager, TaskType, TaskStatus, TaskNotificationScene, BackgroundTask, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
@@ -2364,7 +2364,11 @@ struct DataManagementPage {
    */
   private async startPdfImportTask(fileUri: string, dialogResult: PdfImportDialogResult): Promise<void> {
     const taskManager = BackgroundTaskManager.getInstance();
-    const filesDir = getContext(this).filesDir;
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      throw new Error('无法获取应用上下文');
+    }
+    const filesDir = context.filesDir;
     
     // 创建后台任务
     const taskId = taskManager.createTask(
@@ -2372,6 +2376,14 @@ struct DataManagementPage {
       `导入: ${dialogResult.title}`,
       async (onProgress, cancelSignal) => {
         return await this.executePdfImportWithDialogResult(fileUri, dialogResult, filesDir, onProgress, cancelSignal);
+      },
+      {
+        context: context,
+        enableBackgroundRunning: true,
+        notification: {
+          scene: TaskNotificationScene.PDF_IMPORT,
+          targetName: dialogResult.title
+        }
       }
     );
     

@@ -18,6 +18,7 @@ import { DownloadStatus } from '../Types/StatusEnums';
 import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
 
 const TAG = 'DownloadManager';
+const DOWNLOAD_BACKGROUND_TASK_OWNER = 'download_manager_queue';
 
 /**
  * 下载任务状态
@@ -418,7 +419,7 @@ export class MangaDownloadManager {
     // 有待处理任务时确保后台长时任务已申请
     // await 确保任务注册完成后再派发下载，避免 APP 恰好在此期间进入后台
     if (this.context && (this.downloadQueue.length > 0 || this.activeDownloads.size > 0)) {
-      await BackgroundTaskHelper.startDataTransferTask(this.context);
+      await BackgroundTaskHelper.startDataTransferTask(this.context, DOWNLOAD_BACKGROUND_TASK_OWNER);
     }
 
     // 检查是否有空闲槽位
@@ -444,7 +445,7 @@ export class MangaDownloadManager {
 
     // 队列清空且无活跃下载时停止后台长时任务
     if (this.context && this.downloadQueue.length === 0 && this.activeDownloads.size === 0) {
-      BackgroundTaskHelper.stopDataTransferTask(this.context).catch((err: Error) => {
+      BackgroundTaskHelper.stopDataTransferTask(this.context, DOWNLOAD_BACKGROUND_TASK_OWNER).catch((err: Error) => {
         logger.warn(TAG, `停止后台长时任务失败: ${err.message}`);
       });
     }

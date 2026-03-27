@@ -13,6 +13,7 @@ import { image } from '@kit.ImageKit';
 import { componentUtils, componentSnapshot } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType } from '../Models/TextReaderModels';
 import { 
   BookOpenTransition, 
@@ -84,7 +85,8 @@ export class TransitionController {
   private static readonly OPEN_READER_READY_HIDE_DELAY_MS: number = 780;
   private static readonly MANGA_TRANSITION_BACKGROUND: string = '#000000';
   private static readonly NOVEL_TRANSITION_BACKGROUND: string = '#F5F0E1';
-  private static readonly EBOOK_TRANSITION_BACKGROUND: string = '#FFFFFF';
+  private static readonly EBOOK_TRANSITION_BACKGROUND_LIGHT: string = '#FFFFFF';
+  private static readonly EBOOK_TRANSITION_BACKGROUND_DARK: string = '#121214';
   
   // 状态变化回调
   private onStateChange: ((state: GlobalTransitionState) => void) | null = null;
@@ -228,7 +230,7 @@ export class TransitionController {
         ? providedColor
         : (targetBookType === 'novel'
           ? TransitionController.NOVEL_TRANSITION_BACKGROUND
-          : TransitionController.EBOOK_TRANSITION_BACKGROUND);
+          : this.getDefaultEBookTransitionBackground());
       return {
         backgroundColor: safeBackgroundColor,
         backgroundImagePath: providedBackground?.backgroundImagePath,
@@ -247,8 +249,14 @@ export class TransitionController {
     }
 
     return {
-      backgroundColor: TransitionController.EBOOK_TRANSITION_BACKGROUND
+      backgroundColor: this.getDefaultEBookTransitionBackground()
     };
+  }
+
+  private getDefaultEBookTransitionBackground(): string {
+    return ThemeManager.getInstance().isDarkThemeSync()
+      ? TransitionController.EBOOK_TRANSITION_BACKGROUND_DARK
+      : TransitionController.EBOOK_TRANSITION_BACKGROUND_LIGHT;
   }
 
   private hasUsableBackgroundSetting(background?: EBookBackgroundSettings): boolean {

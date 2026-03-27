@@ -13,6 +13,21 @@ export enum EBookFormat {
   PDF = 'PDF'
 }
 
+export enum EBookContentMode {
+  UNKNOWN = 'UNKNOWN',
+  REFLOWABLE_TEXT = 'REFLOWABLE_TEXT',
+  IMAGE_PAGE = 'IMAGE_PAGE',
+  FIXED_LAYOUT_HTML = 'FIXED_LAYOUT_HTML'
+}
+
+export enum EBookReaderEngine {
+  TEXT = 'TEXT',
+  READER_KIT = 'READER_KIT',
+  MANGA = 'MANGA',
+  WEBVIEW = 'WEBVIEW',
+  PDF_KIT = 'PDF_KIT'
+}
+
 /**
  * 电子书状态枚举
  */
@@ -35,6 +50,12 @@ export interface EBookChapter {
   startPosition: number;       // 在原文件中的起始位置
   endPosition: number;         // 在原文件中的结束位置
   wordCount: number;           // 字数
+  resourceHref?: string;       // EPUB 资源 href
+  resourceFile?: string;       // EPUB 资源文件路径
+  resourceMediaType?: string;  // EPUB 资源媒体类型
+  resourceLayoutType?: string; // 资源布局类型
+  resourceImagePath?: string;  // 提取后的本地图片绝对路径
+  resourceImageRelativePath?: string; // 提取后的本地图片相对路径
   createTime: number;          // 创建时间
 }
 
@@ -199,6 +220,9 @@ export class EBook {
   lastUpdateTime: number;      // 最后更新时间
   isFavorite: boolean;         // 是否收藏
   totalWordCount: number;      // 总字数
+  contentMode: EBookContentMode; // 内容模式
+  preferredReaderEngine: EBookReaderEngine; // 首选阅读引擎
+  extractedRootPath: string;   // EPUB 解压根目录
   isPrivate: boolean = false;  // 是否为隐私内容
   isNSFW: boolean = false;     // 是否为NSFW内容
 
@@ -230,6 +254,9 @@ export class EBook {
     this.lastUpdateTime = lastUpdateTime;
     this.isFavorite = isFavorite;
     this.totalWordCount = totalWordCount;
+    this.contentMode = EBookContentMode.UNKNOWN;
+    this.preferredReaderEngine = format === EBookFormat.TXT ? EBookReaderEngine.TEXT : EBookReaderEngine.READER_KIT;
+    this.extractedRootPath = '';
     this.isPrivate = isPrivate;
     this.isNSFW = isNSFW;
 
@@ -341,9 +368,6 @@ export class EBook {
   }
 }
 
-/**
- * 电子书导入结果
- */
 export interface EBookImportResult {
   success: boolean;            // 是否成功
   book: EBook | null;          // 导入的书籍

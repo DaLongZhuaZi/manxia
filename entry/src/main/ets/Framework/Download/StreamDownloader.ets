@@ -96,10 +96,11 @@ export class StreamDownloader {
     }
   ): Promise<void> {
     const { onProgress, fileNameProvider, headers } = options ?? {};
+    const backgroundTaskOwner = `stream_downloader_${Date.now()}_${urls.length}`;
 
     logger.info(TAG, `开始流式下载 ${urls.length} 个文件 -> ${outputDir}`);
 
-    await BackgroundTaskHelper.startDataTransferTask(context);
+    await BackgroundTaskHelper.startDataTransferTask(context, backgroundTaskOwner);
     this.startHeartbeat();
 
     let completedCount = 0;
@@ -120,7 +121,7 @@ export class StreamDownloader {
       }
     } finally {
       this.stopHeartbeat();
-      await BackgroundTaskHelper.stopDataTransferTask(context);
+      await BackgroundTaskHelper.stopDataTransferTask(context, backgroundTaskOwner);
     }
 
     logger.info(TAG, `流式下载完成，共 ${completedCount}/${urls.length} 个文件`);
