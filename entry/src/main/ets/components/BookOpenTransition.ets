@@ -12,6 +12,7 @@
 import { logger } from '../Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { curves } from '@kit.ArkUI';
+import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { EBookBackgroundSettings } from './BookTransitionOverlay';
 
 const TAG = 'BookOpenTransition';
@@ -1159,13 +1160,15 @@ export struct BookOpenTransition {
       return '#F5F0E1';
     }
     if (this.contentType === 'ebook') {
-      return '#FFFFFF';
+      return this.getDefaultEBookBackdropColor();
     }
     return '#10161E';
   }
 
   private getOpenInnerPageColor(): string {
-    const fallbackColor = '#F6F1E5';
+    const fallbackColor = this.contentType === 'ebook'
+      ? this.getDefaultEBookInnerPageColor()
+      : '#F6F1E5';
     if (!this.ebookBackground || this.ebookBackground.backgroundColor.length === 0) {
       return fallbackColor;
     }
@@ -1179,6 +1182,14 @@ export struct BookOpenTransition {
     }
 
     return this.ebookBackground.backgroundColor;
+  }
+
+  private getDefaultEBookBackdropColor(): string {
+    return ThemeManager.getInstance().isDarkThemeSync() ? '#121214' : '#FFFFFF';
+  }
+
+  private getDefaultEBookInnerPageColor(): string {
+    return ThemeManager.getInstance().isDarkThemeSync() ? '#1C1C1E' : '#F6F1E5';
   }
 
   private getOpenBackdropOpacity(): number {

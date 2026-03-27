@@ -21,7 +21,10 @@ export enum NotificationType {
   CHAPTER_UPDATE = 'chapter_update',        // 章节更新
   VALIDATION_PROGRESS = 'validation_progress', // 校验进度
   VALIDATION_COMPLETE = 'validation_complete', // 校验完成
-  VALIDATION_CANCELLED = 'validation_cancelled' // 校验已取消
+  VALIDATION_CANCELLED = 'validation_cancelled', // 校验已取消
+  PDF_IMPORT_PROGRESS = 'pdf_import_progress', // PDF 导入进度
+  PDF_IMPORT_COMPLETE = 'pdf_import_complete', // PDF 导入完成
+  PDF_IMPORT_FAILED = 'pdf_import_failed' // PDF 导入失败
 }
 
 /**
@@ -172,7 +175,8 @@ export class AppNotificationManager {
 
         if (
           config.type === NotificationType.DOWNLOAD_PROGRESS ||
-          config.type === NotificationType.VALIDATION_PROGRESS
+          config.type === NotificationType.VALIDATION_PROGRESS ||
+          config.type === NotificationType.PDF_IMPORT_PROGRESS
         ) {
           notificationRequest.isOngoing = true;
           notificationRequest.isAlertOnce = true;
@@ -185,7 +189,9 @@ export class AppNotificationManager {
         config.type === NotificationType.DOWNLOAD_COMPLETE ||
         config.type === NotificationType.DOWNLOAD_FAILED ||
         config.type === NotificationType.VALIDATION_COMPLETE ||
-        config.type === NotificationType.VALIDATION_CANCELLED
+        config.type === NotificationType.VALIDATION_CANCELLED ||
+        config.type === NotificationType.PDF_IMPORT_COMPLETE ||
+        config.type === NotificationType.PDF_IMPORT_FAILED
       ) {
         notificationRequest.isOngoing = false;
       }
@@ -393,6 +399,65 @@ export class AppNotificationManager {
   }
 
   /**
+   * 发送 PDF 导入进度通知
+   */
+  public async sendPdfImportProgressNotification(
+    taskId: string,
+    fileName: string,
+    current: number,
+    total: number,
+    stageText?: string
+  ): Promise<boolean> {
+    const progress = this.calculateProgressPercent(current, total);
+    const text = stageText && stageText.length > 0
+      ? `${fileName} - ${stageText}`
+      : fileName;
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: 'PDF导入中',
+      text: text,
+      additionalText: `${progress}%`,
+      progress: { current, max: total },
+      type: NotificationType.PDF_IMPORT_PROGRESS
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送 PDF 导入完成通知
+   */
+  public async sendPdfImportCompleteNotification(
+    taskId: string,
+    fileName: string
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: 'PDF导入完成',
+      text: fileName,
+      type: NotificationType.PDF_IMPORT_COMPLETE
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送 PDF 导入失败通知
+   */
+  public async sendPdfImportFailedNotification(
+    taskId: string,
+    fileName: string,
+    reason: string
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: 'PDF导入失败',
+      text: fileName,
+      additionalText: reason,
+      type: NotificationType.PDF_IMPORT_FAILED
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
    * 取消通知
    */
   public async cancelNotification(notificationId: number): Promise<void> {
@@ -403,6 +468,13 @@ export class AppNotificationManager {
       const err = error as BusinessError;
       logger.error(TAG, `取消通知失败: ${err.code}, ${err.message}`);
     }
+  }
+
+  /**
+   * 按任务 ID 取消通知
+   */
+  public async cancelTaskNotification(taskId: string): Promise<void> {
+    await this.cancelNotification(this.getNotificationId(taskId));
   }
 
   /**

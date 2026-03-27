@@ -6,7 +6,22 @@
 
 import { DatabaseManager } from '../Database/DatabaseManager';
 import { DatabaseRecord } from '../Database/DatabaseTypes';
-import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookFormat, EBookStatus, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
+import {
+  EBook,
+  EBookChapter,
+  EBookReadingProgress,
+  EBookReadingSettings,
+  EBookFormat,
+  EBookStatus,
+  EBookPageMode,
+  EBookContentMode,
+  EBookReaderEngine,
+  DEFAULT_EBOOK_READING_SETTINGS
+} from '../../Models/EBookModels';
+import {
+  ReadingSettings as ImageReaderSettings,
+  DEFAULT_READING_SETTINGS as DEFAULT_IMAGE_READING_SETTINGS
+} from '../../Models/MangaModels';
 import { logger } from '../../Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 import { PRESET_BACKGROUNDS } from '../../Models/TextReaderModels';
@@ -14,6 +29,7 @@ import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationMan
 import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import DownloadDirManager from '../Storage/DownloadDirManager';
+import { DataManager } from './DataManager';
 
 const TAG = 'EBookDataManager';
 
@@ -29,6 +45,27 @@ export interface BackgroundImageInfo {
 interface PendingReadingSettingsSaveState {
   latestSettings: EBookReadingSettings | null;
   runningPromise: Promise<void> | null;
+}
+
+interface PendingReadingProgressSaveState {
+  latestProgress: EBookReadingProgress | null;
+  runningPromise: Promise<void> | null;
+}
+
+interface PendingImageReaderSettingsSaveState {
+  latestSettings: ImageReaderSettings | null;
+  runningPromise: Promise<void> | null;
+}
+
+interface SaveEBookOptions {
+  skipReadingSettings?: boolean;
+}
+
+interface ReadingSettingsRowSnapshot {
+  id: number;
+  createTime: number;
+  updateTime: number;
+  imageReaderSettingsJson: string;
 }
 
 /**
@@ -54,7 +91,10 @@ export class EBookDataManager {
   private static instance: EBookDataManager;
   private dbManager: DatabaseManager;
   private columnsChecked: boolean = false;
+  private readingProgressSaveStates: Map<string, PendingReadingProgressSaveState> = new Map<string, PendingReadingProgressSaveState>();
   private readingSettingsSaveStates: Map<string, PendingReadingSettingsSaveState> = new Map<string, PendingReadingSettingsSaveState>();
+  private imageReaderSettingsSaveStates: Map<string, PendingImageReaderSettingsSaveState> = new Map<string, PendingImageReaderSettingsSaveState>();
+  private lastKnownImageReaderSettingsSnapshots: Map<string, ImageReaderSettings> = new Map<string, ImageReaderSettings>();
 
   private constructor() {
     this.dbManager = DatabaseManager.getInstance();
@@ -70,15 +110,46 @@ export class EBookDataManager {
   /**
    * 保存电子书信息到数据库
    */
-  public async saveEBook(ebook: EBook): Promise<void> {
+  public async saveEBook(ebook: EBook, options: SaveEBookOptions = {}): Promise<void> {
     try {
+      let preservedImageReaderSettings: ImageReaderSettings | null = null;
+      let preservedImageReaderSettingsSource: string = '';
       const title = ebook.metadata?.title || ebook.id || '未知书籍';
       logger.info(TAG, `开始保存电子书: ${title}`);
 
       // 1. 保存电子书基本信息
+      if (options.skipReadingSettings) {
+        const pendingSnapshot = this.getPendingImageReaderSettingsSnapshot(ebook.id);
+        if (pendingSnapshot) {
+          preservedImageReaderSettings = pendingSnapshot;
+          preservedImageReaderSettingsSource = 'pending_memory';
+        } else {
+          const rememberedSnapshot = this.getRememberedImageReaderSettingsSnapshot(ebook.id);
+          if (rememberedSnapshot) {
+            preservedImageReaderSettings = rememberedSnapshot;
+            preservedImageReaderSettingsSource = 'memory_cache';
+          } else {
+            preservedImageReaderSettings = await this.getStoredImageReaderSettingsSnapshot(ebook.id);
+            if (preservedImageReaderSettings) {
+              preservedImageReaderSettingsSource = 'database';
+            }
+          }
+        }
+
+        if (preservedImageReaderSettings) {
+          logger.info(
+            TAG,
+            `skipReadingSettings=true，已预先保留图片阅读设置快照：书籍ID=${ebook.id}，来源=${preservedImageReaderSettingsSource}，阅读模式=${preservedImageReaderSettings.readingMode}，翻页动画=${preservedImageReaderSettings.pageTurnAnimation}`
+          );
+        } else {
+          logger.info(TAG, `skipReadingSettings=true，未检测到可保留的图片阅读设置快照：书籍ID=${ebook.id}`);
+        }
+      }
+
       await this.saveEBookInfo(ebook);
 
       // 2. 保存章节信息
+      await this.deleteEBookChapters(ebook.id);
       for (const chapter of ebook.chapters) {
         await this.saveEBookChapter(chapter);
       }
@@ -87,7 +158,18 @@ export class EBookDataManager {
       await this.saveReadingProgress(ebook.readingProgress);
 
       // 4. 保存阅读设置
-      await this.saveReadingSettings(ebook.id, ebook.readingSettings);
+      if (options.skipReadingSettings) {
+        logger.info(TAG, `已跳过纯文本阅读设置保存：书籍ID=${ebook.id}`);
+        if (preservedImageReaderSettings) {
+          await this.saveImageReaderSettings(ebook.id, preservedImageReaderSettings);
+          logger.info(
+            TAG,
+            `saveEBook 完成后已回写图片阅读设置：书籍ID=${ebook.id}，来源=${preservedImageReaderSettingsSource}`
+          );
+        }
+      } else {
+        await this.saveReadingSettings(ebook.id, ebook.readingSettings);
+      }
 
       logger.info(TAG, `电子书保存成功: ${ebook.metadata.title}`);
     } catch (error) {
@@ -100,12 +182,21 @@ export class EBookDataManager {
    * 保存电子书基本信息
    */
   private async saveEBookInfo(ebook: EBook): Promise<void> {
-    const sql = `
-      INSERT OR REPLACE INTO ebook_info (
+    const insertSql = `
+      INSERT INTO ebook_info (
         id, format, filePath, fileSize, title, author, publisher, publishDate,
         isbn, language, description, coverImagePath, tags, rating, status,
-        isFavorite, totalWordCount, addTime, lastUpdateTime, isPrivate, isNSFW
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        isFavorite, totalWordCount, contentMode, preferredReaderEngine, extractedRootPath,
+        addTime, lastUpdateTime, isPrivate, isNSFW
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    const updateSql = `
+      UPDATE ebook_info SET
+        format = ?, filePath = ?, fileSize = ?, title = ?, author = ?, publisher = ?, publishDate = ?,
+        isbn = ?, language = ?, description = ?, coverImagePath = ?, tags = ?, rating = ?, status = ?,
+        isFavorite = ?, totalWordCount = ?, contentMode = ?, preferredReaderEngine = ?, extractedRootPath = ?,
+        addTime = ?, lastUpdateTime = ?, isPrivate = ?, isNSFW = ?
+      WHERE id = ?
     `;
 
     // 安全访问metadata，防止undefined
@@ -124,8 +215,7 @@ export class EBookDataManager {
 
     logger.info(TAG, `[封面诊断] saveEBookInfo: id=${ebook.id}, coverImagePath='${metadata.coverImagePath}'`);
 
-    const params = [
-      ebook.id,
+    const commonParams = [
       ebook.format,
       ebook.filePath,
       ebook.fileSize,
@@ -142,13 +232,21 @@ export class EBookDataManager {
       ebook.status,
       ebook.isFavorite ? 1 : 0,
       ebook.totalWordCount,
+      ebook.contentMode || EBookContentMode.UNKNOWN,
+      ebook.preferredReaderEngine || EBookReaderEngine.READER_KIT,
+      ebook.extractedRootPath || '',
       ebook.addTime,
       ebook.lastUpdateTime,
       ebook.isPrivate ? 1 : 0  // isPrivate默认为0（普通内容）
+      , ebook.isNSFW ? 1 : 0
     ];
-    params.push(ebook.isNSFW ? 1 : 0);
+    const existingRecords = await this.dbManager.querySql('SELECT id FROM ebook_info WHERE id = ? LIMIT 1', [ebook.id]);
+    if (existingRecords && existingRecords.length > 0) {
+      await this.dbManager.executeSql(updateSql, [...commonParams, ebook.id]);
+      return;
+    }
 
-    await this.dbManager.executeSql(sql, params);
+    await this.dbManager.executeSql(insertSql, [ebook.id, ...commonParams]);
   }
 
   /**
@@ -158,8 +256,9 @@ export class EBookDataManager {
     const sql = `
       INSERT OR REPLACE INTO ebook_chapter (
         id, bookId, chapterNumber, title, content, startPosition,
-        endPosition, wordCount, createTime
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        endPosition, wordCount, resourceHref, resourceFile, resourceMediaType,
+        resourceLayoutType, resourceImagePath, resourceImageRelativePath, createTime
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const params = [
@@ -171,6 +270,12 @@ export class EBookDataManager {
       chapter.startPosition,
       chapter.endPosition,
       chapter.wordCount,
+      chapter.resourceHref || '',
+      chapter.resourceFile || '',
+      chapter.resourceMediaType || '',
+      chapter.resourceLayoutType || '',
+      chapter.resourceImagePath || '',
+      chapter.resourceImageRelativePath || '',
       chapter.createTime
     ];
 
@@ -180,6 +285,10 @@ export class EBookDataManager {
   /**
    * 确保 ebook_reading_progress 表有 domPos 和 currentChapterIndex 列
    */
+  private async deleteEBookChapters(bookId: string): Promise<void> {
+    await this.dbManager.executeSql('DELETE FROM ebook_chapter WHERE bookId = ?', [bookId]);
+  }
+
   private async ensureProgressColumns(): Promise<void> {
     if (this.columnsChecked) {
       return;
@@ -270,7 +379,8 @@ export class EBookDataManager {
         { name: 'showBattery', definition: 'INTEGER DEFAULT 0' },
         { name: 'backgroundType', definition: "TEXT DEFAULT 'COLOR'" },
         { name: 'backgroundImagePath', definition: "TEXT DEFAULT ''" },
-        { name: 'backgroundImageOpacity', definition: 'REAL DEFAULT 0.3' }
+        { name: 'backgroundImageOpacity', definition: 'REAL DEFAULT 0.3' },
+        { name: 'imageReaderSettingsJson', definition: "TEXT DEFAULT ''" }
       ];
       
       for (const col of requiredColumns) {
@@ -278,9 +388,9 @@ export class EBookDataManager {
           try {
             const alterSql = `ALTER TABLE ebook_reading_settings ADD COLUMN ${col.name} ${col.definition}`;
             await this.dbManager.executeSql(alterSql, []);
-            logger.info(TAG, `✅ 已添加列: ${col.name}`);
+            logger.info(TAG, `已添加数据列：${col.name}`);
           } catch (e) {
-            logger.warn(TAG, `添加 ${col.name} 列失败: ${String(e)}`);
+            logger.warn(TAG, `添加数据列失败：列名=${col.name}，错误=${String(e)}`);
           }
         }
       }
@@ -293,31 +403,87 @@ export class EBookDataManager {
 
   /**
    * 保存阅读进度
-   * 使用 DELETE + 单次完整 INSERT 策略，避免 UPDATE 静默失败问题
-   * 参考：HarmonyOS RdbStore UPDATE 语句存在静默失败的已知问题
+   * 串行化同一本书的写入，并使用插入或替换避免并发唯一约束冲突
+   * 仍然保留完整字段写入，避免依赖更新语句时出现静默失败
    */
   public async saveReadingProgress(progress: EBookReadingProgress): Promise<void> {
+    const saveKey = `${progress.bookId}|default_user`;
+    let state = this.readingProgressSaveStates.get(saveKey);
+    if (!state) {
+      state = {
+        latestProgress: null,
+        runningPromise: null
+      };
+      this.readingProgressSaveStates.set(saveKey, state);
+    }
+
+    state.latestProgress = this.cloneReadingProgress(progress);
+    if (state.runningPromise === null) {
+      state.runningPromise = this.flushReadingProgressSaveQueue(saveKey, state);
+    }
+    return await state.runningPromise;
+  }
+
+  private cloneReadingProgress(progress: EBookReadingProgress): EBookReadingProgress {
+    return {
+      bookId: progress.bookId,
+      currentChapterId: progress.currentChapterId,
+      currentChapterIndex: progress.currentChapterIndex,
+      currentPosition: progress.currentPosition,
+      domPos: progress.domPos,
+      progress: progress.progress,
+      lastReadTime: progress.lastReadTime,
+      totalReadingTime: progress.totalReadingTime
+    };
+  }
+
+  private async flushReadingProgressSaveQueue(
+    saveKey: string,
+    state: PendingReadingProgressSaveState
+  ): Promise<void> {
+    try {
+      while (state.latestProgress !== null) {
+        const snapshot = state.latestProgress;
+        state.latestProgress = null;
+        await this.saveReadingProgressInternal(snapshot);
+      }
+    } finally {
+      state.runningPromise = null;
+      if (state.latestProgress === null) {
+        this.readingProgressSaveStates.delete(saveKey);
+      }
+    }
+  }
+
+  private async saveReadingProgressInternal(progress: EBookReadingProgress): Promise<void> {
     // 首次保存时检查并添加缺失的列
     await this.ensureProgressColumns();
     
     const domPosValue = progress.domPos || '';
     const chapterIndexValue = progress.currentChapterIndex || 0;
     
-    // 详细日志：记录保存的数据
-    logger.info(TAG, `保存阅读进度: bookId=${progress.bookId}, chapterIndex=${chapterIndexValue}, domPos长度=${domPosValue.length}`);
+    // 详细记录本次写入的核心数据
+    logger.info(TAG, `保存阅读进度：书籍ID=${progress.bookId}，章节索引=${chapterIndexValue}，位置串长度=${domPosValue.length}`);
     
     const now = Date.now();
     
     try {
-      // 1. 先删除旧记录
-      const deleteSql = `DELETE FROM ebook_reading_progress WHERE bookId = ? AND userId = ?`;
-      await this.dbManager.executeSql(deleteSql, [progress.bookId, 'default_user']);
-      logger.debug(TAG, `旧记录已删除`);
+      // 1. 读取已有记录的创建时间，保持历史数据稳定
+      let createTime = now;
+      try {
+        const existingSql = `SELECT createTime FROM ebook_reading_progress WHERE bookId = ? AND userId = ? LIMIT 1`;
+        const existingResult = await this.dbManager.querySql(existingSql, [progress.bookId, 'default_user']);
+        if (existingResult && existingResult.length > 0) {
+          createTime = Number(getRecordValue(existingResult[0], 'createTime', now));
+        }
+      } catch (queryError) {
+        logger.warn(TAG, `查询现有阅读进度创建时间失败：错误=${String(queryError)}`);
+      }
+      logger.debug(TAG, '正在使用串行插入或替换方式保存阅读进度');
       
-      // 2. 一次性插入完整记录（包含所有字段，避免使用 UPDATE）
-      // 关键：将 currentChapterIndex 和 domPos 直接包含在 INSERT 语句中
+      // 2. 一次性写入完整记录，避免并发删除再插入带来的冲突
       const insertSql = `
-        INSERT INTO ebook_reading_progress (
+        INSERT OR REPLACE INTO ebook_reading_progress (
           bookId, userId, currentChapterId, currentChapterIndex, currentPosition,
           domPos, progress, lastReadTime, totalReadingTime, createTime, updateTime
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -333,12 +499,12 @@ export class EBookDataManager {
         progress.progress || 0,
         progress.lastReadTime || now,
         progress.totalReadingTime || 0,
-        now,
+        createTime,
         now
       ];
       
       await this.dbManager.executeSql(insertSql, insertParams);
-      logger.debug(TAG, `完整记录插入成功: chapterIndex=${chapterIndexValue}, domPosLen=${domPosValue.length}`);
+      logger.debug(TAG, `完整记录写入成功：章节索引=${chapterIndexValue}，位置串长度=${domPosValue.length}`);
       
       // 3. 验证保存结果
       const verifySql = `SELECT currentChapterIndex, domPos FROM ebook_reading_progress WHERE bookId = ? AND userId = ?`;
@@ -349,12 +515,16 @@ export class EBookDataManager {
         const savedChapterIndex = Number(getRecordValue(record, 'currentChapterIndex', 0));
         const savedDomPos = String(getRecordValue(record, 'domPos', ''));
         
-        logger.info(TAG, `验证结果: savedChapterIndex=${savedChapterIndex}, savedDomPos长度=${savedDomPos.length}`);
+        logger.info(TAG, `阅读进度校验结果：保存的章节索引=${savedChapterIndex}，保存的位置串长度=${savedDomPos.length}`);
         
         if (savedChapterIndex === chapterIndexValue && savedDomPos.length === domPosValue.length) {
-          logger.info(TAG, `✅ 阅读进度保存成功`);
-        } else {
-          logger.error(TAG, `❌ 验证失败! 期望: index=${chapterIndexValue}, domPosLen=${domPosValue.length}; 实际: index=${savedChapterIndex}, domPosLen=${savedDomPos.length}`);
+          logger.info(TAG, '阅读进度保存成功');
+        }
+        else {
+          logger.error(
+            TAG,
+            `阅读进度校验失败：期望章节索引=${chapterIndexValue}，期望位置串长度=${domPosValue.length}；实际章节索引=${savedChapterIndex}，实际位置串长度=${savedDomPos.length}`
+          );
           
           // 调试：查询所有列名
           const schemaResult = await this.dbManager.querySql("PRAGMA table_info('ebook_reading_progress')", []);
@@ -362,14 +532,171 @@ export class EBookDataManager {
           for (const row of schemaResult) {
             columnNames.push(String(getRecordValue(row, 'name', '')));
           }
-          logger.error(TAG, `表列名: ${columnNames.join(', ')}`);
+          logger.error(TAG, `数据表列名：${columnNames.join('，')}`);
         }
       } else {
-        logger.error(TAG, `❌ 验证失败! 未找到记录`);
+        logger.error(TAG, '阅读进度校验失败：未找到记录');
       }
       
     } catch (error) {
       logger.error(TAG, `保存阅读进度失败: ${String(error)}`);
+    }
+  }
+
+  private async saveReadingSettingsInternal(bookId: string, settings: EBookReadingSettings): Promise<void> {
+    await this.ensureSettingsColumns();
+
+    const now = Date.now();
+    const finalSettings = await this.applyGlobalSettingsIfNew(bookId, settings);
+
+    try {
+      const bgType = finalSettings.backgroundType ?? 'COLOR';
+      const bgImagePath = finalSettings.backgroundImagePath ?? '';
+      const bgImageOpacity = finalSettings.backgroundImageOpacity ?? 0.3;
+      let existingRowId = 0;
+      let existingCreateTime = now;
+      let existingImageReaderSettingsJson = '';
+      const pendingImageReaderSettings = this.getPendingImageReaderSettingsSnapshot(bookId);
+      const preferredImageReaderSettingsJson = pendingImageReaderSettings ? JSON.stringify(pendingImageReaderSettings) : '';
+
+      try {
+        const existingRow = await this.reconcileReadingSettingsRows(bookId, preferredImageReaderSettingsJson);
+        if (existingRow) {
+          existingRowId = existingRow.id;
+          existingCreateTime = existingRow.createTime > 0 ? existingRow.createTime : now;
+          existingImageReaderSettingsJson = existingRow.imageReaderSettingsJson;
+        }
+      } catch (queryError) {
+        logger.warn(TAG, `读取现有阅读设置记录失败：书籍ID=${bookId}，错误=${String(queryError)}`);
+      }
+
+      if (pendingImageReaderSettings) {
+        existingImageReaderSettingsJson = preferredImageReaderSettingsJson;
+        logger.info(TAG, `保存纯文本阅读设置时检测到待写入的图片阅读设置快照，将优先保留图片阅读数据：书籍ID=${bookId}`);
+      }
+
+      if (existingImageReaderSettingsJson.trim().length <= 0) {
+        const rememberedSnapshot = this.getRememberedImageReaderSettingsSnapshot(bookId);
+        if (rememberedSnapshot) {
+          existingImageReaderSettingsJson = JSON.stringify(rememberedSnapshot);
+          logger.info(TAG, `保存纯文本阅读设置时已从内存快照恢复图片阅读数据：书籍ID=${bookId}`);
+          logger.info(TAG, `淇濆瓨绾枃鏈槄璇昏缃椂浠庡唴瀛樺揩鐓т腑鎭㈠鍥剧墖闃呰鏁版嵁锛氫功绫岻D=${bookId}`);
+        }
+      }
+
+      const insertSql = `
+        INSERT INTO ebook_reading_settings (
+          bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
+          backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
+          pageMargin, pageMode, brightness, autoSave, saveInterval,
+          letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
+          pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
+          showPageNumber, showProgress, showTime, showBattery,
+          backgroundType, backgroundImagePath, backgroundImageOpacity, imageReaderSettingsJson,
+          createTime, updateTime
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+      const updateSql = `
+        UPDATE ebook_reading_settings SET
+          fontSize = ?, fontFamily = ?, fontPath = ?, fontWeight = ?, lineHeight = ?,
+          backgroundColor = ?, textColor = ?, themeBgImage = ?, nightMode = ?, followSystemTheme = ?,
+          pageMargin = ?, pageMode = ?, brightness = ?, autoSave = ?, saveInterval = ?,
+          letterSpacing = ?, paragraphSpacing = ?, firstLineIndent = ?, textAlignment = ?,
+          pageTurnAnimation = ?, tapToTurn = ?, volumeKeyNavigation = ?, keepScreenOn = ?,
+          showPageNumber = ?, showProgress = ?, showTime = ?, showBattery = ?,
+          backgroundType = ?, backgroundImagePath = ?, backgroundImageOpacity = ?, imageReaderSettingsJson = ?,
+          updateTime = ?
+        WHERE id = ?
+      `;
+
+      const commonParams: (string | number)[] = [
+        finalSettings.fontSize,
+        finalSettings.fontFamily,
+        finalSettings.fontPath || '',
+        finalSettings.fontWeight || 400,
+        finalSettings.lineHeight,
+        finalSettings.backgroundColor,
+        finalSettings.textColor,
+        finalSettings.themeBgImage || '',
+        finalSettings.nightMode ? 1 : 0,
+        finalSettings.followSystemTheme !== false ? 1 : 0,
+        finalSettings.pageMargin,
+        finalSettings.pageMode,
+        finalSettings.brightness,
+        finalSettings.autoSave ? 1 : 0,
+        finalSettings.saveInterval,
+        finalSettings.letterSpacing ?? 0,
+        finalSettings.paragraphSpacing ?? 8,
+        finalSettings.firstLineIndent ?? 2,
+        finalSettings.textAlignment ?? 'JUSTIFY',
+        finalSettings.pageTurnAnimation ?? 'SLIDE',
+        finalSettings.tapToTurn !== false ? 1 : 0,
+        finalSettings.volumeKeyNavigation !== false ? 1 : 0,
+        finalSettings.keepScreenOn ? 1 : 0,
+        finalSettings.showPageNumber !== false ? 1 : 0,
+        finalSettings.showProgress ? 1 : 0,
+        finalSettings.showTime !== false ? 1 : 0,
+        finalSettings.showBattery ? 1 : 0,
+        bgType,
+        bgImagePath,
+        bgImageOpacity,
+        existingImageReaderSettingsJson
+      ];
+      const insertParams = commonParams;
+
+      logger.info(
+        TAG,
+        `写入阅读设置：参数数量=${insertParams.length}，背景类型=${bgType}，背景图片路径=${bgImagePath}`
+      );
+      if (existingRowId > 0) {
+        await this.dbManager.executeSql(updateSql, [...commonParams, now, existingRowId]);
+      } else {
+        await this.dbManager.executeSql(insertSql, [
+          bookId,
+          'default_user',
+          ...commonParams,
+          existingCreateTime,
+          now
+        ]);
+      }
+      await this.reconcileReadingSettingsRows(bookId, existingImageReaderSettingsJson);
+      logger.info(TAG, `阅读设置写入成功：书籍ID=${bookId}`);
+
+      const verifySql = `
+        SELECT backgroundType, backgroundImagePath, backgroundImageOpacity, volumeKeyNavigation
+        FROM ebook_reading_settings
+        WHERE bookId = ? AND userId = ?
+        ORDER BY updateTime DESC, createTime DESC, id DESC
+        LIMIT 1
+      `;
+      const verifyResult = await this.dbManager.querySql(verifySql, [bookId, 'default_user']);
+
+      if (verifyResult && verifyResult.length > 0) {
+        const record = verifyResult[0];
+        const recordKeys = Object.keys(record);
+        const savedBgType = String(getRecordValue(record, 'backgroundType', 'COLOR'));
+        const savedBgImagePath = String(getRecordValue(record, 'backgroundImagePath', ''));
+        const savedVolumeKey = Number(getRecordValue(record, 'volumeKeyNavigation', 1)) === 1;
+
+        logger.info(TAG, `校验记录字段列表：${recordKeys.join('，')}`);
+        logger.info(
+          TAG,
+          `阅读设置校验结果：保存的背景类型=${savedBgType}，保存的背景图片路径=${savedBgImagePath}，保存的音量键翻页=${savedVolumeKey ? '已开启' : '已关闭'}`
+        );
+
+        if (savedBgType !== bgType || savedBgImagePath !== bgImagePath) {
+          logger.error(
+            TAG,
+            `阅读设置校验失败：期望背景类型=${bgType}，期望背景图片路径=${bgImagePath}；实际背景类型=${savedBgType}，实际背景图片路径=${savedBgImagePath}`
+          );
+        } else {
+          logger.info(TAG, `阅读设置保存成功：书籍ID=${bookId}`);
+        }
+      } else {
+        logger.error(TAG, `阅读设置校验失败：未找到记录，书籍ID=${bookId}`);
+      }
+    } catch (error) {
+      logger.error(TAG, `保存阅读设置失败：书籍ID=${bookId}，错误=${String(error)}`);
     }
   }
 
@@ -430,6 +757,435 @@ export class EBookDataManager {
     };
   }
 
+  private cloneImageReaderSettings(settings: ImageReaderSettings): ImageReaderSettings {
+    return {
+      readingMode: settings.readingMode,
+      readingDirection: settings.readingDirection,
+      brightness: settings.brightness,
+      keepScreenOn: settings.keepScreenOn,
+      pageSpacing: settings.pageSpacing,
+      showPageInfo: settings.showPageInfo,
+      showPageIndicator: settings.showPageIndicator,
+      fitMode: settings.fitMode,
+      autoPageTurnInterval: settings.autoPageTurnInterval,
+      skipIntroPages: settings.skipIntroPages,
+      pageTurnAnimation: settings.pageTurnAnimation,
+      doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      filterSettings: {
+        enabled: settings.filterSettings.enabled,
+        brightness: settings.filterSettings.brightness,
+        contrast: settings.filterSettings.contrast,
+        saturation: settings.filterSettings.saturation,
+        hue: settings.filterSettings.hue,
+        gamma: settings.filterSettings.gamma,
+        sepia: settings.filterSettings.sepia,
+        invert: settings.filterSettings.invert,
+        grayscale: settings.filterSettings.grayscale,
+        blur: settings.filterSettings.blur
+      },
+      volumeKeyNavigation: settings.volumeKeyNavigation,
+      curlBackOpacity: settings.curlBackOpacity,
+      webtoonLeftMargin: settings.webtoonLeftMargin ?? 0,
+      webtoonRightMargin: settings.webtoonRightMargin ?? 0,
+      webtoonMarginSync: settings.webtoonMarginSync ?? true
+    };
+  }
+
+  private rememberImageReaderSettingsSnapshot(bookId: string, settings: ImageReaderSettings): void {
+    this.lastKnownImageReaderSettingsSnapshots.set(bookId, this.cloneImageReaderSettings(settings));
+  }
+
+  private getRememberedImageReaderSettingsSnapshot(bookId: string): ImageReaderSettings | null {
+    const snapshot = this.lastKnownImageReaderSettingsSnapshots.get(bookId);
+    if (!snapshot) {
+      return null;
+    }
+    return this.cloneImageReaderSettings(snapshot);
+  }
+
+  private getPendingImageReaderSettingsSnapshot(bookId: string): ImageReaderSettings | null {
+    const saveKey = `${bookId}|default_user|image_reader`;
+    const state = this.imageReaderSettingsSaveStates.get(saveKey);
+    if (!state?.latestSettings) {
+      return null;
+    }
+    return this.cloneImageReaderSettings(state.latestSettings);
+  }
+
+  private normalizeImageReaderSettings(settings: ImageReaderSettings | null | undefined): ImageReaderSettings {
+    const base = settings || DEFAULT_IMAGE_READING_SETTINGS;
+    const filterSettings = base.filterSettings || DEFAULT_IMAGE_READING_SETTINGS.filterSettings;
+    return this.cloneImageReaderSettings({
+      readingMode: base.readingMode ?? DEFAULT_IMAGE_READING_SETTINGS.readingMode,
+      readingDirection: base.readingDirection ?? DEFAULT_IMAGE_READING_SETTINGS.readingDirection,
+      brightness: base.brightness ?? DEFAULT_IMAGE_READING_SETTINGS.brightness,
+      keepScreenOn: base.keepScreenOn ?? DEFAULT_IMAGE_READING_SETTINGS.keepScreenOn,
+      pageSpacing: base.pageSpacing ?? DEFAULT_IMAGE_READING_SETTINGS.pageSpacing,
+      showPageInfo: base.showPageInfo ?? DEFAULT_IMAGE_READING_SETTINGS.showPageInfo,
+      showPageIndicator: base.showPageIndicator ?? DEFAULT_IMAGE_READING_SETTINGS.showPageIndicator,
+      fitMode: base.fitMode ?? DEFAULT_IMAGE_READING_SETTINGS.fitMode,
+      autoPageTurnInterval: base.autoPageTurnInterval ?? DEFAULT_IMAGE_READING_SETTINGS.autoPageTurnInterval,
+      skipIntroPages: base.skipIntroPages ?? DEFAULT_IMAGE_READING_SETTINGS.skipIntroPages,
+      pageTurnAnimation: base.pageTurnAnimation ?? DEFAULT_IMAGE_READING_SETTINGS.pageTurnAnimation,
+      doublePagePortraitLayout: base.doublePagePortraitLayout ?? DEFAULT_IMAGE_READING_SETTINGS.doublePagePortraitLayout,
+      filterSettings: {
+        enabled: filterSettings.enabled ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.enabled,
+        brightness: filterSettings.brightness ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.brightness,
+        contrast: filterSettings.contrast ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.contrast,
+        saturation: filterSettings.saturation ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.saturation,
+        hue: filterSettings.hue ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.hue,
+        gamma: filterSettings.gamma ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.gamma,
+        sepia: filterSettings.sepia ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.sepia,
+        invert: filterSettings.invert ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.invert,
+        grayscale: filterSettings.grayscale ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.grayscale,
+        blur: filterSettings.blur ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.blur
+      },
+      volumeKeyNavigation: base.volumeKeyNavigation ?? DEFAULT_IMAGE_READING_SETTINGS.volumeKeyNavigation,
+      curlBackOpacity: base.curlBackOpacity ?? DEFAULT_IMAGE_READING_SETTINGS.curlBackOpacity,
+      webtoonLeftMargin: base.webtoonLeftMargin ?? DEFAULT_IMAGE_READING_SETTINGS.webtoonLeftMargin,
+      webtoonRightMargin: base.webtoonRightMargin ?? DEFAULT_IMAGE_READING_SETTINGS.webtoonRightMargin,
+      webtoonMarginSync: base.webtoonMarginSync ?? DEFAULT_IMAGE_READING_SETTINGS.webtoonMarginSync
+    });
+  }
+
+  private async loadLegacyImageReaderSettings(bookId: string): Promise<ImageReaderSettings | null> {
+    try {
+      const dataManager = DataManager.getInstance();
+      const settingKey = `manga_settings_${bookId}`;
+      const settingsJson = await dataManager.getUserSetting('default_user', settingKey);
+      if (!settingsJson || settingsJson.trim().length <= 0) {
+        return null;
+      }
+
+      const parsed = JSON.parse(settingsJson) as ImageReaderSettings;
+      const normalized = this.normalizeImageReaderSettings(parsed);
+      this.rememberImageReaderSettingsSnapshot(bookId, normalized);
+      logger.warn(
+        TAG,
+        `图片阅读设置缺失，已从旧版单书设置迁移：书籍ID=${bookId}，阅读模式=${normalized.readingMode}，翻页动画=${normalized.pageTurnAnimation}`
+      );
+      void this.saveImageReaderSettings(bookId, normalized).catch((error: Error) => {
+        logger.warn(TAG, `图片阅读设置迁移回写失败：书籍ID=${bookId}，错误=${String(error)}`);
+      });
+      return normalized;
+    } catch (error) {
+      logger.warn(TAG, `读取旧版图片阅读设置失败：书籍ID=${bookId}，错误=${String(error)}`);
+      return null;
+    }
+  }
+
+  private async getStoredImageReaderSettingsSnapshot(bookId: string): Promise<ImageReaderSettings | null> {
+    await this.ensureSettingsColumns();
+    try {
+      const records = await this.queryOrderedReadingSettingsRows(bookId);
+      if (!records || records.length <= 0) {
+        return this.getRememberedImageReaderSettingsSnapshot(bookId);
+      }
+
+      for (const record of records) {
+        const rowSnapshot = this.buildReadingSettingsRowSnapshot(record);
+        const settingsJson = rowSnapshot.imageReaderSettingsJson.trim();
+        if (settingsJson.length <= 0) {
+          continue;
+        }
+
+        try {
+          const normalized = this.normalizeImageReaderSettings(JSON.parse(settingsJson) as ImageReaderSettings);
+          this.rememberImageReaderSettingsSnapshot(bookId, normalized);
+          return normalized;
+        } catch (parseError) {
+          logger.warn(
+            TAG,
+            `预读图片阅读设置快照失败：书籍ID=${bookId}，记录ID=${rowSnapshot.id}，错误=${String(parseError)}`
+          );
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `预读图片阅读设置快照失败：书籍ID=${bookId}，错误=${String(error)}`);
+    }
+
+    return this.getRememberedImageReaderSettingsSnapshot(bookId);
+  }
+
+  private buildReadingSettingsRowSnapshot(record: DatabaseRecord): ReadingSettingsRowSnapshot {
+    return {
+      id: Number(getRecordValue(record, 'id', 0)),
+      createTime: Number(getRecordValue(record, 'createTime', 0)),
+      updateTime: Number(getRecordValue(record, 'updateTime', 0)),
+      imageReaderSettingsJson: String(getRecordValue(record, 'imageReaderSettingsJson', ''))
+    };
+  }
+
+  private getImageReaderSettingsJsonLength(record: DatabaseRecord): number {
+    const explicitLength = Number(getRecordValue(record, 'imageReaderSettingsJsonLength', -1));
+    if (explicitLength >= 0) {
+      return explicitLength;
+    }
+    return this.buildReadingSettingsRowSnapshot(record).imageReaderSettingsJson.trim().length;
+  }
+
+  private describeReadingSettingsRow(record: DatabaseRecord): string {
+    const snapshot = this.buildReadingSettingsRowSnapshot(record);
+    return `id=${snapshot.id}, createTime=${snapshot.createTime}, updateTime=${snapshot.updateTime}, imageReaderSettingsJsonLength=${snapshot.imageReaderSettingsJson.trim().length}`;
+  }
+
+  private async queryOrderedReadingSettingsRows(bookId: string): Promise<DatabaseRecord[]> {
+    const sql = `
+      SELECT
+        id,
+        createTime,
+        updateTime,
+        imageReaderSettingsJson,
+        LENGTH(TRIM(COALESCE(imageReaderSettingsJson, ''))) AS imageReaderSettingsJsonLength
+      FROM ebook_reading_settings
+      WHERE bookId = ? AND userId = ?
+      ORDER BY updateTime DESC, createTime DESC, id DESC
+    `;
+    return await this.dbManager.querySql(sql, [bookId, 'default_user']);
+  }
+
+  private async reconcileReadingSettingsRows(
+    bookId: string,
+    preferredImageReaderSettingsJson: string = ''
+  ): Promise<ReadingSettingsRowSnapshot | null> {
+    const records = await this.queryOrderedReadingSettingsRows(bookId);
+    if (!records || records.length <= 0) {
+      return null;
+    }
+
+    const normalizedPreferredJson = preferredImageReaderSettingsJson.trim();
+    let keeperRecord = records[0];
+    if (normalizedPreferredJson.length <= 0) {
+      const newestNonEmptyRecord = records.find((record: DatabaseRecord) => this.getImageReaderSettingsJsonLength(record) > 0);
+      if (newestNonEmptyRecord) {
+        keeperRecord = newestNonEmptyRecord;
+      }
+    }
+
+    let keeperSnapshot = this.buildReadingSettingsRowSnapshot(keeperRecord);
+    let finalImageReaderSettingsJson = normalizedPreferredJson;
+    if (finalImageReaderSettingsJson.length <= 0) {
+      const newestNonEmptyRecord = records.find((record: DatabaseRecord) => this.getImageReaderSettingsJsonLength(record) > 0);
+      if (newestNonEmptyRecord) {
+        finalImageReaderSettingsJson = this.buildReadingSettingsRowSnapshot(newestNonEmptyRecord).imageReaderSettingsJson;
+      } else {
+        finalImageReaderSettingsJson = keeperSnapshot.imageReaderSettingsJson;
+      }
+    }
+
+    if (records.length > 1) {
+      const rowDescriptions = records.map((record: DatabaseRecord) => this.describeReadingSettingsRow(record)).join(' | ');
+      logger.warn(TAG, `检测到电子书阅读设置存在重复记录，准备自动合并：书籍ID=${bookId}，记录=${rowDescriptions}`);
+    }
+
+    const duplicateIds = records
+      .map((record: DatabaseRecord) => Number(getRecordValue(record, 'id', 0)))
+      .filter((id: number) => id > 0 && id !== keeperSnapshot.id);
+
+    const currentImageReaderSettingsJson = keeperSnapshot.imageReaderSettingsJson.trim();
+    const nextImageReaderSettingsJson = finalImageReaderSettingsJson.trim();
+    if (keeperSnapshot.id > 0 && nextImageReaderSettingsJson !== currentImageReaderSettingsJson) {
+      const repairedUpdateTime = Date.now();
+      await this.dbManager.executeSql(
+        'UPDATE ebook_reading_settings SET imageReaderSettingsJson = ?, updateTime = ? WHERE id = ?',
+        [finalImageReaderSettingsJson, repairedUpdateTime, keeperSnapshot.id]
+      );
+      keeperSnapshot = {
+        id: keeperSnapshot.id,
+        createTime: keeperSnapshot.createTime,
+        updateTime: repairedUpdateTime,
+        imageReaderSettingsJson: finalImageReaderSettingsJson
+      };
+      logger.info(
+        TAG,
+        `已修复电子书阅读设置中的图片阅读数据：书籍ID=${bookId}，记录ID=${keeperSnapshot.id}，数据长度=${nextImageReaderSettingsJson.length}`
+      );
+    }
+
+    if (duplicateIds.length > 0) {
+      const placeholders = duplicateIds.map(() => '?').join(', ');
+      await this.dbManager.executeSql(
+        `DELETE FROM ebook_reading_settings WHERE id IN (${placeholders})`,
+        duplicateIds
+      );
+      logger.info(
+        TAG,
+        `已清理重复的电子书阅读设置记录：书籍ID=${bookId}，保留记录ID=${keeperSnapshot.id}，删除数量=${duplicateIds.length}`
+      );
+    }
+
+    return keeperSnapshot;
+  }
+
+  public async getImageReaderSettings(bookId: string): Promise<ImageReaderSettings> {
+    await this.ensureSettingsColumns();
+
+    const pendingSnapshot = this.getPendingImageReaderSettingsSnapshot(bookId);
+    if (pendingSnapshot) {
+      logger.info(
+        TAG,
+        `读取图片阅读设置：来源=内存快照，书籍ID=${bookId}，阅读模式=${pendingSnapshot.readingMode}，翻页动画=${pendingSnapshot.pageTurnAnimation}`
+      );
+      return pendingSnapshot;
+    }
+
+    try {
+      const records = await this.queryOrderedReadingSettingsRows(bookId);
+      if (records && records.length > 0) {
+        const rowDescriptions = records.map((record: DatabaseRecord) => this.describeReadingSettingsRow(record)).join(' | ');
+        let selectedSettingsJson = '';
+        let hasNonEmptySettingsJson = false;
+        for (const record of records) {
+          const rowSnapshot = this.buildReadingSettingsRowSnapshot(record);
+          const settingsJson = rowSnapshot.imageReaderSettingsJson.trim();
+          if (settingsJson.length <= 0) {
+            continue;
+          }
+          hasNonEmptySettingsJson = true;
+          try {
+            const parsed = JSON.parse(settingsJson) as ImageReaderSettings;
+            const normalized = this.normalizeImageReaderSettings(parsed);
+            this.rememberImageReaderSettingsSnapshot(bookId, normalized);
+            selectedSettingsJson = rowSnapshot.imageReaderSettingsJson;
+            if (records.length > 1) {
+              await this.reconcileReadingSettingsRows(bookId, selectedSettingsJson);
+            }
+            logger.info(
+              TAG,
+              `读取图片阅读设置：来源=数据库图片阅读数据，书籍ID=${bookId}，阅读模式=${normalized.readingMode}，翻页动画=${normalized.pageTurnAnimation}`
+            );
+            return normalized;
+          } catch (parseError) {
+            logger.warn(TAG, `解析图片阅读设置失败：书籍ID=${bookId}，错误=${String(parseError)}`);
+          }
+        }
+        if (selectedSettingsJson.length <= 0) {
+          if (hasNonEmptySettingsJson) {
+            logger.warn(
+              TAG,
+              `图片阅读设置记录已存在，但所有非空数据均解析失败：书籍ID=${bookId}，记录=${rowDescriptions}`
+            );
+          } else {
+            logger.warn(
+              TAG,
+              `图片阅读设置记录已存在，但图片阅读数据为空：书籍ID=${bookId}，记录=${rowDescriptions}`
+            );
+          }
+        }
+      } else {
+        logger.info(TAG, `未找到图片阅读设置记录：书籍ID=${bookId}`);
+      }
+    } catch (error) {
+      logger.error(TAG, `读取图片阅读设置失败：书籍ID=${bookId}，错误=${String(error)}`);
+    }
+
+    try {
+      const rememberedSnapshot = this.getRememberedImageReaderSettingsSnapshot(bookId);
+      if (rememberedSnapshot) {
+        logger.info(
+          TAG,
+          `璇诲彇鍥剧墖闃呰璁剧疆锛氭潵婧?鍐呭瓨鍏滃簳蹇収锛屼功绫岻D=${bookId}锛岄槄璇绘ā寮?${rememberedSnapshot.readingMode}锛岀炕椤靛姩鐢?${rememberedSnapshot.pageTurnAnimation}`
+        );
+        logger.info(
+          TAG,
+          `读取图片阅读设置：来源=内存兜底快照，书籍ID=${bookId}，阅读模式=${rememberedSnapshot.readingMode}，翻页动画=${rememberedSnapshot.pageTurnAnimation}`
+        );
+        return rememberedSnapshot;
+      }
+
+      const legacySettings = await this.loadLegacyImageReaderSettings(bookId);
+      if (legacySettings) {
+        return legacySettings;
+      }
+
+      const defaults = this.cloneImageReaderSettings(DEFAULT_IMAGE_READING_SETTINGS);
+      logger.info(
+        TAG,
+        `读取图片阅读设置：来源=内置默认值，书籍ID=${bookId}，阅读模式=${defaults.readingMode}，翻页动画=${defaults.pageTurnAnimation}`
+      );
+      return defaults;
+    } catch (error) {
+      logger.warn(TAG, `加载图片阅读默认设置失败，改用内置默认值：书籍ID=${bookId}，错误=${String(error)}`);
+      return this.cloneImageReaderSettings(DEFAULT_IMAGE_READING_SETTINGS);
+    }
+  }
+
+  public async loadImageReaderSettings(bookId: string): Promise<ImageReaderSettings> {
+    return this.getImageReaderSettings(bookId);
+  }
+
+  public async saveImageReaderSettings(bookId: string, settings: ImageReaderSettings): Promise<void> {
+    const saveKey = `${bookId}|default_user|image_reader`;
+    let state = this.imageReaderSettingsSaveStates.get(saveKey);
+    if (!state) {
+      state = {
+        latestSettings: null,
+        runningPromise: null
+      };
+      this.imageReaderSettingsSaveStates.set(saveKey, state);
+    }
+
+    const normalizedSettings = this.normalizeImageReaderSettings(settings);
+    this.rememberImageReaderSettingsSnapshot(bookId, normalizedSettings);
+    state.latestSettings = normalizedSettings;
+    if (state.runningPromise === null) {
+      state.runningPromise = this.flushImageReaderSettingsSaveQueue(saveKey, bookId, state);
+    }
+    return await state.runningPromise;
+  }
+
+  private async flushImageReaderSettingsSaveQueue(
+    saveKey: string,
+    bookId: string,
+    state: PendingImageReaderSettingsSaveState
+  ): Promise<void> {
+    try {
+      while (state.latestSettings !== null) {
+        const snapshot = state.latestSettings;
+        state.latestSettings = null;
+        await this.saveImageReaderSettingsInternal(bookId, snapshot);
+      }
+    } finally {
+      state.runningPromise = null;
+      if (state.latestSettings === null) {
+        this.imageReaderSettingsSaveStates.delete(saveKey);
+      }
+    }
+  }
+
+  private async saveImageReaderSettingsInternal(bookId: string, settings: ImageReaderSettings): Promise<void> {
+    await this.ensureSettingsColumns();
+
+    const now = Date.now();
+    const snapshot = this.normalizeImageReaderSettings(settings);
+    const settingsJson = JSON.stringify(snapshot);
+    this.rememberImageReaderSettingsSnapshot(bookId, snapshot);
+
+    try {
+      const existingRow = await this.reconcileReadingSettingsRows(bookId, settingsJson);
+      if (existingRow && existingRow.id > 0) {
+        await this.dbManager.executeSql(
+          'UPDATE ebook_reading_settings SET imageReaderSettingsJson = ?, updateTime = ? WHERE id = ?',
+          [settingsJson, now, existingRow.id]
+        );
+      } else {
+        await this.dbManager.executeSql(
+          `INSERT INTO ebook_reading_settings (
+            bookId, userId, createTime, updateTime, imageReaderSettingsJson
+          ) VALUES (?, ?, ?, ?, ?)`,
+          [bookId, 'default_user', now, now, settingsJson]
+        );
+      }
+      logger.info(
+        TAG,
+        `图片阅读设置保存成功：书籍ID=${bookId}，阅读模式=${snapshot.readingMode}，翻页动画=${snapshot.pageTurnAnimation}`
+      );
+    } catch (error) {
+      logger.error(TAG, `保存图片阅读设置失败：书籍ID=${bookId}，错误=${String(error)}`);
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
   private async flushReadingSettingsSaveQueue(
     saveKey: string,
     bookId: string,
@@ -449,120 +1205,25 @@ export class EBookDataManager {
     }
   }
 
-  private async saveReadingSettingsInternal(bookId: string, settings: EBookReadingSettings): Promise<void> {
-    // 首次保存时检查并添加缺失的列
-    await this.ensureSettingsColumns();
-    
-    const now = Date.now();
-    
-    // 检查是否是新记录（没有自定义设置），如果是则应用全局设置
-    const finalSettings = await this.applyGlobalSettingsIfNew(bookId, settings);
-    
-    try {
-      const bgType = finalSettings.backgroundType ?? 'COLOR';
-      const bgImagePath = finalSettings.backgroundImagePath ?? '';
-      const bgImageOpacity = finalSettings.backgroundImageOpacity ?? 0.3;
-      
-      // 使用 INSERT OR REPLACE 避免并发 DELETE/INSERT 之间的唯一约束冲突。
-      const insertSql = `
-        INSERT OR REPLACE INTO ebook_reading_settings (
-          bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
-          backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
-          pageMargin, pageMode, brightness, autoSave, saveInterval,
-          letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
-          pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
-          showPageNumber, showProgress, showTime, showBattery,
-          backgroundType, backgroundImagePath, backgroundImageOpacity,
-          createTime, updateTime
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      const insertParams: (string | number)[] = [
-        bookId,
-        'default_user',
-        finalSettings.fontSize,
-        finalSettings.fontFamily,
-        finalSettings.fontPath || '',
-        finalSettings.fontWeight || 400,
-        finalSettings.lineHeight,
-        finalSettings.backgroundColor,
-        finalSettings.textColor,
-        finalSettings.themeBgImage || '',
-        finalSettings.nightMode ? 1 : 0,
-        finalSettings.followSystemTheme !== false ? 1 : 0,
-        finalSettings.pageMargin,
-        finalSettings.pageMode,
-        finalSettings.brightness,
-        finalSettings.autoSave ? 1 : 0,
-        finalSettings.saveInterval,
-        // 扩展字段
-        finalSettings.letterSpacing ?? 0,
-        finalSettings.paragraphSpacing ?? 8,
-        finalSettings.firstLineIndent ?? 2,
-        finalSettings.textAlignment ?? 'JUSTIFY',
-        finalSettings.pageTurnAnimation ?? 'SLIDE',
-        finalSettings.tapToTurn !== false ? 1 : 0,
-        finalSettings.volumeKeyNavigation !== false ? 1 : 0,
-        finalSettings.keepScreenOn ? 1 : 0,
-        finalSettings.showPageNumber !== false ? 1 : 0,
-        finalSettings.showProgress ? 1 : 0,
-        finalSettings.showTime !== false ? 1 : 0,
-        finalSettings.showBattery ? 1 : 0,
-        bgType,
-        bgImagePath,
-        bgImageOpacity,
-        now,
-        now
-      ];
-      
-      logger.info(TAG, `INSERT 参数数量: ${insertParams.length}, bgType=${bgType}, bgImagePath=${bgImagePath}`);
-      await this.dbManager.executeSql(insertSql, insertParams);
-      logger.info(TAG, `阅读设置写入成功: bookId=${bookId}`);
-      
-      // 验证保存结果 - 使用显式字段名查询（SELECT * 可能不返回通过 UPDATE 添加的字段）
-      const verifySql = `SELECT backgroundType, backgroundImagePath, backgroundImageOpacity, volumeKeyNavigation FROM ebook_reading_settings WHERE bookId = ? AND userId = ?`;
-      const verifyResult = await this.dbManager.querySql(verifySql, [bookId, 'default_user']);
-      
-      if (verifyResult && verifyResult.length > 0) {
-        const record = verifyResult[0];
-        
-        // 打印完整记录的所有键，用于调试
-        const recordKeys = Object.keys(record);
-        logger.info(TAG, `验证记录的字段列表: ${recordKeys.join(', ')}`);
-        
-        const savedBgType = String(getRecordValue(record, 'backgroundType', 'COLOR'));
-        const savedBgImagePath = String(getRecordValue(record, 'backgroundImagePath', ''));
-        const savedVolumeKey = Number(getRecordValue(record, 'volumeKeyNavigation', 1)) === 1;
-        
-        logger.info(TAG, `阅读设置验证: savedBgType=${savedBgType}, savedBgImagePath=${savedBgImagePath}, savedVolumeKey=${savedVolumeKey}`);
-        
-        if (savedBgType !== bgType || savedBgImagePath !== bgImagePath) {
-          logger.error(TAG, `❌ 阅读设置验证失败! 期望: bgType=${bgType}, bgImagePath=${bgImagePath}; 实际: bgType=${savedBgType}, bgImagePath=${savedBgImagePath}`);
-        } else {
-          logger.info(TAG, `✅ 阅读设置保存成功`);
-        }
-      } else {
-        logger.error(TAG, `❌ 阅读设置验证失败! 未找到记录`);
-      }
-      
-    } catch (error) {
-      logger.error(TAG, `保存阅读设置失败: ${String(error)}`);
-    }
-  }
-
   /**
    * 对于新电子书，应用全局设置中的纯文本阅读器默认值
    * 检测方式：如果设置是默认值（没有自定义背景图片路径），则应用全局设置
    */
   private async applyGlobalSettingsIfNew(bookId: string, settings: EBookReadingSettings): Promise<EBookReadingSettings> {
     try {
-      const existingSql = `SELECT bookId FROM ebook_reading_settings WHERE bookId = ? AND userId = ? LIMIT 1`;
+      const existingSql = `
+        SELECT bookId
+        FROM ebook_reading_settings
+        WHERE bookId = ? AND userId = ?
+        ORDER BY updateTime DESC, createTime DESC, id DESC
+        LIMIT 1
+      `;
       const existingRecords = await this.dbManager.querySql(existingSql, [bookId, 'default_user']);
       if (existingRecords && existingRecords.length > 0) {
         return settings;
       }
       if (!this.shouldApplyGlobalDefaultsForNewBook(settings)) {
-        logger.info(TAG, `Skip applying global defaults for custom settings: bookId=${bookId}`);
+        logger.info(TAG, `检测到自定义设置，跳过套用全局默认值：书籍ID=${bookId}`);
         return settings;
       }
 
@@ -901,6 +1562,9 @@ export class EBookDataManager {
     const status = String(getRecordValue(record, 'status', 'UNREAD')) as EBookStatus;
     const isFavorite = Number(getRecordValue(record, 'isFavorite', 0)) === 1;
     const totalWordCount = Number(getRecordValue(record, 'totalWordCount', 0));
+    const contentMode = String(getRecordValue(record, 'contentMode', EBookContentMode.UNKNOWN)) as EBookContentMode;
+    const preferredReaderEngine = String(getRecordValue(record, 'preferredReaderEngine', EBookReaderEngine.READER_KIT)) as EBookReaderEngine;
+    const extractedRootPath = String(getRecordValue(record, 'extractedRootPath', ''));
     const addTime = Number(getRecordValue(record, 'addTime', 0));
     const lastUpdateTime = Number(getRecordValue(record, 'lastUpdateTime', 0));
     const isNSFW = Number(getRecordValue(record, 'isNSFW', 0)) === 1;
@@ -963,6 +1627,9 @@ export class EBookDataManager {
     
     // 设置隐私状态
     
+    ebook.contentMode = contentMode || EBookContentMode.UNKNOWN;
+    ebook.preferredReaderEngine = preferredReaderEngine || EBookReaderEngine.READER_KIT;
+    ebook.extractedRootPath = extractedRootPath || '';
     return ebook;
   }
 
@@ -986,6 +1653,12 @@ export class EBookDataManager {
           startPosition: Number(getRecordValue(record, 'startPosition', 0)),
           endPosition: Number(getRecordValue(record, 'endPosition', 0)),
           wordCount: Number(getRecordValue(record, 'wordCount', 0)),
+          resourceHref: String(getRecordValue(record, 'resourceHref', '')),
+          resourceFile: String(getRecordValue(record, 'resourceFile', '')),
+          resourceMediaType: String(getRecordValue(record, 'resourceMediaType', '')),
+          resourceLayoutType: String(getRecordValue(record, 'resourceLayoutType', '')),
+          resourceImagePath: String(getRecordValue(record, 'resourceImagePath', '')),
+          resourceImageRelativePath: String(getRecordValue(record, 'resourceImageRelativePath', '')),
           createTime: Number(getRecordValue(record, 'createTime', 0))
         };
         chapters.push(chapter);
@@ -1063,7 +1736,10 @@ export class EBookDataManager {
         pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
         showPageNumber, showProgress, showTime, showBattery,
         backgroundType, backgroundImagePath, backgroundImageOpacity
-      FROM ebook_reading_settings WHERE bookId = ? AND userId = ?`;
+      FROM ebook_reading_settings
+      WHERE bookId = ? AND userId = ?
+      ORDER BY updateTime DESC, createTime DESC, id DESC
+      LIMIT 1`;
       const records = await this.dbManager.querySql(sql, [bookId, 'default_user']);
       
       if (records && records.length > 0) {

@@ -109,9 +109,10 @@ export class SourceVerifier {
 
     logger.info(TAG, `开始批量校验 ${sourceUrls.length} 个书源，并发数: ${concurrency}，超时: ${timeout}ms`);
     const startTime = Date.now();
+    const backgroundTaskOwner = `source_verifier_${startTime}`;
 
     // 申请 DATA_TRANSFER 后台长时任务，APP 进入后台时网络不中断
-    await BackgroundTaskHelper.startDataTransferTask(context);
+    await BackgroundTaskHelper.startDataTransferTask(context, backgroundTaskOwner);
 
     const probeResults: SourceProbeResult[] = [];
     const chunks = SourceVerifier.chunkArray(sourceUrls, concurrency);
@@ -141,7 +142,7 @@ export class SourceVerifier {
       }
     } finally {
       // 校验完成后立即停止后台长时任务，释放系统资源
-      await BackgroundTaskHelper.stopDataTransferTask(context);
+      await BackgroundTaskHelper.stopDataTransferTask(context, backgroundTaskOwner);
     }
 
     const availableCount = probeResults.filter(r => r.available).length;

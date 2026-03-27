@@ -78,6 +78,8 @@ export class WindowManager {
   private static readonly TAG = 'WindowManager';
   private static currentMode: DisplayMode = DisplayMode.DEFAULT;
   private static readonly BACKGROUND_STORAGE_KEY = 'isInBackground';
+  private static readonly LAST_VISIBLE_STATUS_BAR_HEIGHT_KEY = 'window_manager_last_visible_status_bar_height';
+  private static readonly LAST_VISIBLE_NAVIGATION_BAR_HEIGHT_KEY = 'window_manager_last_visible_navigation_bar_height';
   private static windowStageRef: window.WindowStage | null = null;
   private static windowStageEventCallback: ((event: window.WindowStageEventType) => void) | null = null;
   private static themeChangeCallback: ((theme: ThemeType) => void) | null = null;
@@ -1002,9 +1004,24 @@ export class WindowManager {
     delayMs: number = 96
   ): void {
     WindowManager.storeSystemBarHeights(mainWindow);
-    setTimeout(() => {
-      WindowManager.storeSystemBarHeights(mainWindow);
-    }, delayMs);
+    const retryDelays: number[] = [
+      Math.max(0, delayMs),
+      Math.max(delayMs + 144, 240),
+      Math.max(delayMs + 384, 480)
+    ];
+    retryDelays.forEach((retryDelay: number) => {
+      setTimeout(() => {
+        WindowManager.storeSystemBarHeights(mainWindow);
+      }, retryDelay);
+    });
+  }
+
+  private static isStatusBarExpectedVisible(mode: DisplayMode): boolean {
+    return mode !== DisplayMode.FULL_IMMERSIVE && mode !== DisplayMode.HIDE_STATUS_BAR;
+  }
+
+  private static isNavigationBarExpectedVisible(mode: DisplayMode): boolean {
+    return mode !== DisplayMode.FULL_IMMERSIVE && mode !== DisplayMode.HIDE_NAVIGATION_BAR;
   }
 
   /**
@@ -1046,8 +1063,43 @@ export class WindowManager {
       const displayInfo = display.getDefaultDisplaySync();
       const density = displayInfo.densityDPI / 160; // 计算密度比例
 
-      const statusBarHeight = statusBarHeightPx / density;
-      const navigationBarHeight = navigationBarHeightPx / density;
+      const measuredStatusBarHeight = statusBarHeightPx / density;
+      const measuredNavigationBarHeight = navigationBarHeightPx / density;
+      let statusBarHeight = measuredStatusBarHeight;
+      let navigationBarHeight = measuredNavigationBarHeight;
+
+      if (measuredStatusBarHeight > 0) {
+        AppStorage.setOrCreate(WindowManager.LAST_VISIBLE_STATUS_BAR_HEIGHT_KEY, measuredStatusBarHeight);
+      }
+      if (measuredNavigationBarHeight > 0) {
+        AppStorage.setOrCreate(WindowManager.LAST_VISIBLE_NAVIGATION_BAR_HEIGHT_KEY, measuredNavigationBarHeight);
+      }
+
+      if (WindowManager.isStatusBarExpectedVisible(WindowManager.currentMode) && measuredStatusBarHeight <= 0) {
+        const fallbackStatusBarHeight = AppStorage.get<number>(WindowManager.LAST_VISIBLE_STATUS_BAR_HEIGHT_KEY)
+          ?? AppStorage.get<number>('statusBarHeight')
+          ?? 0;
+        if (fallbackStatusBarHeight > 0) {
+          statusBarHeight = fallbackStatusBarHeight;
+          logger.warn(
+            WindowManager.TAG,
+            `Status bar height measured as 0 while visible in mode=${WindowManager.currentMode}, using fallback=${fallbackStatusBarHeight.toFixed(2)}vp`
+          );
+        }
+      }
+
+      if (WindowManager.isNavigationBarExpectedVisible(WindowManager.currentMode) && measuredNavigationBarHeight <= 0) {
+        const fallbackNavigationBarHeight = AppStorage.get<number>(WindowManager.LAST_VISIBLE_NAVIGATION_BAR_HEIGHT_KEY)
+          ?? AppStorage.get<number>('navigationBarHeight')
+          ?? 0;
+        if (fallbackNavigationBarHeight > 0) {
+          navigationBarHeight = fallbackNavigationBarHeight;
+          logger.warn(
+            WindowManager.TAG,
+            `Navigation bar height measured as 0 while visible in mode=${WindowManager.currentMode}, using fallback=${fallbackNavigationBarHeight.toFixed(2)}vp`
+          );
+        }
+      }
 
       // 存储到AppStorage中供组件使用
       AppStorage.setOrCreate('statusBarHeight', statusBarHeight);
@@ -1057,7 +1109,11 @@ export class WindowManager {
       PersistentStorage.persistProp('statusBarHeight', statusBarHeight);
       PersistentStorage.persistProp('navigationBarHeight', navigationBarHeight);
 
-      logger.info(WindowManager.TAG, `📏 系统栏高度信息已存储 - 状态栏: ${statusBarHeight.toFixed(2)}vp, 导航栏: ${navigationBarHeight.toFixed(2)}vp`);
+      logger.info(
+        WindowManager.TAG,
+        `📏 系统栏高度信息已存储 - 状态栏: ${statusBarHeight.toFixed(2)}vp(测量=${measuredStatusBarHeight.toFixed(2)}vp), ` +
+          `导航栏: ${navigationBarHeight.toFixed(2)}vp(测量=${measuredNavigationBarHeight.toFixed(2)}vp)`
+      );
 
     } catch (error) {
       logger.error(WindowManager.TAG, `❌ 存储系统栏高度失败: ${(error as Error).message}`);

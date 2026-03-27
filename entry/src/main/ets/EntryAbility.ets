@@ -30,6 +30,7 @@ import { getAppInitializationManager, InitPhase } from './Framework/Managers/App
 import { getCrashRecorderService } from './Framework/Debug/CrashRecorderService';
 import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
 import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
+import { getHoldingAwarenessManager } from './Framework/Managers/HoldingAwarenessManager';
 
 export default class EntryAbility extends UIAbility {
 
@@ -341,6 +342,7 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('backgroundBlurBgType', backgroundBlurBgType);
       AppStorage.setOrCreate('backgroundBlurBgImage', backgroundBlurBgImage);
       AppStorage.setOrCreate('backgroundBlurIconType', backgroundBlurIconType);
+      void getHoldingAwarenessManager().initialize();
       WindowManager.syncBackgroundState(false, '应用启动初始化');
       logger.info('EntryAbility', `✅ 后台模糊遮罩设置: enabled=${backgroundBlurEnabled}, bgType=${backgroundBlurBgType}, iconType=${backgroundBlurIconType}`);
       

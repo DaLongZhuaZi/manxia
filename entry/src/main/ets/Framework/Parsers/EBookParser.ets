@@ -4,17 +4,30 @@
  * 提供统一的电子书解析接口
  */
 
-import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus, EBookPageMode } from '../../Models/EBookModels';
+import {
+  EBook,
+  EBookFormat,
+  EBookMetadata,
+  EBookChapter,
+  EBookStatus,
+  EBookPageMode,
+  EBookContentMode,
+  EBookReaderEngine
+} from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
 import { pdfService } from '@kit.PDFKit';
 import { bookParser } from '@kit.ReaderKit';
+import { zlib } from '@kit.BasicServicesKit';
 import { TxtMetadataExtractor } from './TxtMetadataExtractor';
 import { isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
 
 const TAG = 'EBookParser';
+const EPUB_IMAGE_RESOURCE_PATTERN = /<(?:img|image)\b[^>]+(?:src|href|xlink:href)\s*=\s*["']([^"']+)["']/ig;
+const EPUB_CONTAINER_FULL_PATH_PATTERN = /full-path\s*=\s*["']([^"']+)["']/i;
+const EPUB_FIXED_LAYOUT_PATTERN = /(pre-paginated|rendition:layout[^"'<>]*["'>\s:=]+pre-paginated)/i;
 
 interface ReaderKitBookParserHandler {
   getBookInfo(): Promise<Object>;
@@ -287,6 +300,7 @@ class ReaderKitEBookParser extends EBookParser {
         }
       }
       
+      const contentAnalysis = await this.analyzeReaderKitContentMode(chapters, infoObj);
       const bookInfo: ReaderKitBookInfo = {
         title: title,
         author: author || '未知作者',
@@ -296,7 +310,10 @@ class ReaderKitEBookParser extends EBookParser {
         language: language,
         description: description || `${this.format} 电子书`,
         coverImagePath: coverImagePath || '',
-        chapters: chapters
+        chapters: contentAnalysis.chapters,
+        contentMode: contentAnalysis.contentMode,
+        preferredReaderEngine: contentAnalysis.preferredReaderEngine,
+        extractedRootPath: contentAnalysis.extractedRootPath
       };
       
       logger.info(TAG, `[ReaderKit] 解析完成: 书名=${bookInfo.title}, 作者=${bookInfo.author}, 出版社=${bookInfo.publisher}, 简介长度=${bookInfo.description.length}, 章节数=${chapters.length}`);
@@ -555,14 +572,360 @@ class ReaderKitEBookParser extends EBookParser {
       const chapterTitle = this.getStringProperty(item, ['catalogName', 'title', 'name', 'chapterTitle', 'label']) ||
         this.getStringPropertyByPartialKey(item, ['catalogname', 'chaptertitle', 'title', 'name', 'label']) ||
         `第${i + 1}章`;
+      const resourceHref = this.getStringProperty(item, ['href', 'resourceHref']) ||
+        this.getStringPropertyByPartialKey(item, ['href']);
+      const resourceFile = this.getStringProperty(item, ['resourceFile', 'file', 'src']) ||
+        this.getStringPropertyByPartialKey(item, ['resourcefile']);
       const ch: ReaderKitChapter = {
         id: chapterId,
         title: chapterTitle,
-        content: ''
+        content: '',
+        resourceHref: resourceHref,
+        resourceFile: resourceFile,
+        resourceMediaType: this.inferMediaTypeFromPath(resourceFile || resourceHref),
+        resourceLayoutType: 'UNKNOWN'
       };
       chapters.push(ch);
     }
     return chapters;
+  }
+
+  private async analyzeReaderKitContentMode(
+    chapters: ReaderKitChapter[],
+    infoObj: Record<string, Object>
+  ): Promise<ReaderKitContentAnalysis> {
+    const defaultContentMode = this.format === EBookFormat.EPUB
+      ? EBookContentMode.REFLOWABLE_TEXT
+      : EBookContentMode.UNKNOWN;
+    const fallback: ReaderKitContentAnalysis = {
+      chapters: chapters,
+      contentMode: defaultContentMode,
+      preferredReaderEngine: EBookReaderEngine.READER_KIT,
+      extractedRootPath: ''
+    };
+    if (this.format !== EBookFormat.EPUB || chapters.length <= 0) {
+      return fallback;
+    }
+
+    try {
+      const extractedRootPath = await this.ensureEpubExtractionRoot();
+      if (extractedRootPath.length <= 0) {
+        return fallback;
+      }
+
+      const opfPath = this.resolveEpubPackageDocumentPath(extractedRootPath);
+      const packageRoot = opfPath.length > 0 ? this.getParentDir(opfPath) : extractedRootPath;
+      const opfText = (opfPath.length > 0 && this.pathExists(opfPath)) ? this.readTextFileSync(opfPath) : '';
+      const enhancedChapters: ReaderKitChapter[] = chapters.map((chapter: ReaderKitChapter) => {
+        return this.enrichEpubChapterResource(chapter, packageRoot, extractedRootPath);
+      });
+
+      let imageChapterCount = 0;
+      for (const chapter of enhancedChapters) {
+        if ((chapter.resourceImagePath || '').length > 0) {
+          imageChapterCount++;
+        }
+      }
+
+      const imageRatio = enhancedChapters.length > 0 ? imageChapterCount / enhancedChapters.length : 0;
+      if (imageChapterCount >= 3 && imageRatio >= 0.6) {
+        for (const chapter of enhancedChapters) {
+          if (!chapter.resourceLayoutType || chapter.resourceLayoutType === 'UNKNOWN' || chapter.resourceLayoutType === 'TEXT_HTML') {
+            chapter.resourceLayoutType = 'IMAGE_PAGE';
+          }
+        }
+        logger.info(TAG, `[ReaderKit] 检测到图片页 EPUB: imageChapters=${imageChapterCount}, total=${enhancedChapters.length}, ratio=${imageRatio.toFixed(2)}`);
+        return {
+          chapters: enhancedChapters,
+          contentMode: EBookContentMode.IMAGE_PAGE,
+          preferredReaderEngine: EBookReaderEngine.MANGA,
+          extractedRootPath: extractedRootPath
+        };
+      }
+
+      if (this.isFixedLayoutEpub(infoObj, opfText)) {
+        logger.info(TAG, '[ReaderKit] 检测到固定版式 EPUB，暂保留 Reader Kit 作为默认引擎');
+        return {
+          chapters: enhancedChapters,
+          contentMode: EBookContentMode.FIXED_LAYOUT_HTML,
+          preferredReaderEngine: EBookReaderEngine.READER_KIT,
+          extractedRootPath: extractedRootPath
+        };
+      }
+
+      return {
+        chapters: enhancedChapters,
+        contentMode: EBookContentMode.REFLOWABLE_TEXT,
+        preferredReaderEngine: EBookReaderEngine.READER_KIT,
+        extractedRootPath: extractedRootPath
+      };
+    } catch (error) {
+      logger.warn(TAG, `[ReaderKit] EPUB 内容模式分析失败，回退为普通文本 EPUB: ${String(error)}`);
+      return fallback;
+    }
+  }
+
+  private async ensureEpubExtractionRoot(): Promise<string> {
+    const extractionRoot = this.buildEpubExtractionPath();
+    const containerPath = `${extractionRoot}/META-INF/container.xml`;
+    if (this.pathExists(containerPath)) {
+      return extractionRoot;
+    }
+
+    if (!this.pathExists(extractionRoot)) {
+      fileIo.mkdirSync(extractionRoot, true);
+    }
+    await zlib.decompressFile(this.normalizeFsPath(this.filePath), extractionRoot);
+    return extractionRoot;
+  }
+
+  private buildEpubExtractionPath(): string {
+    const normalizedPath = this.normalizeFsPath(this.filePath);
+    const parentDir = this.getParentDir(normalizedPath);
+    const baseName = this.getFileNameFromPath(normalizedPath).replace(/\.[^.]+$/i, '');
+    const safeBaseName = baseName.replace(/[^0-9A-Za-z_\-\u4E00-\u9FFF]+/g, '_').replace(/_+/g, '_');
+    const hash = Math.abs(this.hashString(normalizedPath)).toString(36);
+    return `${parentDir}/.__epub_extract_${safeBaseName}_${hash}`;
+  }
+
+  private resolveEpubPackageDocumentPath(extractionRoot: string): string {
+    const containerPath = `${extractionRoot}/META-INF/container.xml`;
+    if (!this.pathExists(containerPath)) {
+      return '';
+    }
+    const containerText = this.readTextFileSync(containerPath);
+    const match = containerText.match(EPUB_CONTAINER_FULL_PATH_PATTERN);
+    if (!match || !match[1]) {
+      return '';
+    }
+    return this.joinNormalizedPath(extractionRoot, this.normalizeRelativeResourcePath(match[1]));
+  }
+
+  private enrichEpubChapterResource(
+    chapter: ReaderKitChapter,
+    packageRoot: string,
+    extractionRoot: string
+  ): ReaderKitChapter {
+    const result: ReaderKitChapter = {
+      id: chapter.id,
+      title: chapter.title,
+      content: chapter.content,
+      resourceHref: chapter.resourceHref || '',
+      resourceFile: chapter.resourceFile || '',
+      resourceMediaType: chapter.resourceMediaType || '',
+      resourceLayoutType: chapter.resourceLayoutType || 'UNKNOWN',
+      resourceImagePath: chapter.resourceImagePath || '',
+      resourceImageRelativePath: chapter.resourceImageRelativePath || ''
+    };
+
+    const rawResourcePath: string = result.resourceFile || result.resourceHref || '';
+    if (rawResourcePath.length <= 0) {
+      return result;
+    }
+
+    const normalizedResourcePath = this.normalizeRelativeResourcePath(rawResourcePath);
+    const chapterResourcePath = this.resolveResourcePathWithFallback(packageRoot, extractionRoot, normalizedResourcePath);
+    result.resourceFile = normalizedResourcePath;
+    if ((result.resourceHref || '').length <= 0) {
+      result.resourceHref = normalizedResourcePath;
+    }
+    result.resourceMediaType = this.inferMediaTypeFromPath(normalizedResourcePath);
+
+    if (result.resourceMediaType.startsWith('image/')) {
+      result.resourceLayoutType = 'IMAGE_PAGE';
+      result.resourceImagePath = chapterResourcePath;
+      result.resourceImageRelativePath = this.buildRelativePath(extractionRoot, chapterResourcePath);
+      return result;
+    }
+
+    if (!this.pathExists(chapterResourcePath)) {
+      return result;
+    }
+
+    const lowerPath = chapterResourcePath.toLowerCase();
+    const isHtmlLike = lowerPath.endsWith('.html') || lowerPath.endsWith('.xhtml') || lowerPath.endsWith('.htm') || lowerPath.endsWith('.svg');
+    if (!isHtmlLike) {
+      return result;
+    }
+
+    const htmlText = this.readTextFileSync(chapterResourcePath);
+    const firstImageRef = this.extractFirstLocalImageRef(htmlText);
+    const textLength = this.measureHtmlTextLength(htmlText);
+    if (firstImageRef.length <= 0) {
+      result.resourceLayoutType = textLength <= 24 ? 'EMPTY_HTML' : 'TEXT_HTML';
+      return result;
+    }
+
+    const imagePath = this.resolveResourcePathWithFallback(this.getParentDir(chapterResourcePath), extractionRoot, firstImageRef);
+    if (!this.pathExists(imagePath)) {
+      result.resourceLayoutType = textLength <= 80 ? 'IMAGE_PAGE' : 'MIXED_HTML';
+      result.resourceImageRelativePath = this.normalizeRelativeResourcePath(firstImageRef);
+      return result;
+    }
+
+    result.resourceLayoutType = textLength <= 80 ? 'IMAGE_PAGE' : 'MIXED_HTML';
+    result.resourceImagePath = imagePath;
+    result.resourceImageRelativePath = this.buildRelativePath(extractionRoot, imagePath);
+    return result;
+  }
+
+  private resolveResourcePathWithFallback(baseDir: string, extractionRoot: string, relativePath: string): string {
+    const normalized = this.normalizeRelativeResourcePath(relativePath);
+    const primary = this.joinNormalizedPath(baseDir, normalized);
+    if (this.pathExists(primary)) {
+      return primary;
+    }
+    return this.joinNormalizedPath(extractionRoot, normalized);
+  }
+
+  private normalizeFsPath(path: string): string {
+    if (path.startsWith('file://')) {
+      const stripped = path.substring(7);
+      return stripped.startsWith('/') ? stripped : `/${stripped}`;
+    }
+    return path;
+  }
+
+  private normalizeRelativeResourcePath(path: string): string {
+    return path
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/#.*/, '')
+      .replace(/\?.*/, '')
+      .replace(/\/+/g, '/')
+      .replace(/^\.\//, '');
+  }
+
+  private joinNormalizedPath(baseDir: string, relativePath: string): string {
+    if (relativePath.startsWith('/')) {
+      return relativePath;
+    }
+    const baseParts = baseDir.replace(/\\/g, '/').split('/').filter((part: string) => part.length > 0);
+    const relativeParts = relativePath.replace(/\\/g, '/').split('/');
+    const resolved = [...baseParts];
+    for (const part of relativeParts) {
+      if (!part || part === '.') {
+        continue;
+      }
+      if (part === '..') {
+        if (resolved.length > 0) {
+          resolved.pop();
+        }
+        continue;
+      }
+      resolved.push(part);
+    }
+    return `${baseDir.startsWith('/') ? '/' : ''}${resolved.join('/')}`;
+  }
+
+  private getParentDir(path: string): string {
+    const normalized = path.replace(/\\/g, '/');
+    const separatorIndex = normalized.lastIndexOf('/');
+    if (separatorIndex <= 0) {
+      return normalized.startsWith('/') ? '/' : '.';
+    }
+    return normalized.substring(0, separatorIndex);
+  }
+
+  private pathExists(path: string): boolean {
+    try {
+      fileIo.statSync(path);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private readTextFileSync(path: string): string {
+    const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    const stat = fileIo.statSync(file.fd);
+    const buffer = new ArrayBuffer(stat.size);
+    fileIo.readSync(file.fd, buffer);
+    fileIo.closeSync(file);
+    return new util.TextDecoder('utf-8', { ignoreBOM: true }).decodeToString(new Uint8Array(buffer));
+  }
+
+  private extractFirstLocalImageRef(htmlText: string): string {
+    EPUB_IMAGE_RESOURCE_PATTERN.lastIndex = 0;
+    let match = EPUB_IMAGE_RESOURCE_PATTERN.exec(htmlText);
+    while (match) {
+      const candidate = String(match[1] || '').trim();
+      if (candidate.length > 0 &&
+        !candidate.startsWith('http://') &&
+        !candidate.startsWith('https://') &&
+        !candidate.startsWith('data:')) {
+        return candidate;
+      }
+      match = EPUB_IMAGE_RESOURCE_PATTERN.exec(htmlText);
+    }
+    return '';
+  }
+
+  private measureHtmlTextLength(htmlText: string): number {
+    const stripped = htmlText
+      .replace(/<script[\s\S]*?<\/script>/ig, ' ')
+      .replace(/<style[\s\S]*?<\/style>/ig, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/ig, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return stripped.length;
+  }
+
+  private buildRelativePath(rootDir: string, fullPath: string): string {
+    const normalizedRoot = rootDir.replace(/\\/g, '/').replace(/\/$/, '');
+    const normalizedFullPath = fullPath.replace(/\\/g, '/');
+    const prefix = `${normalizedRoot}/`;
+    if (normalizedFullPath.startsWith(prefix)) {
+      return normalizedFullPath.substring(prefix.length);
+    }
+    return normalizedFullPath;
+  }
+
+  private isFixedLayoutEpub(infoObj: Record<string, Object>, opfText: string): boolean {
+    const renditionLayout = this.getStringProperty(infoObj, ['renditionLayout', 'layout']);
+    if (renditionLayout.toLowerCase().includes('pre-paginated')) {
+      return true;
+    }
+    return EPUB_FIXED_LAYOUT_PATTERN.test(opfText);
+  }
+
+  private inferMediaTypeFromPath(path: string): string {
+    const lower = path.toLowerCase();
+    if (lower.endsWith('.xhtml') || lower.endsWith('.html') || lower.endsWith('.htm')) {
+      return 'application/xhtml+xml';
+    }
+    if (lower.endsWith('.svg')) {
+      return 'image/svg+xml';
+    }
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (lower.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (lower.endsWith('.gif')) {
+      return 'image/gif';
+    }
+    if (lower.endsWith('.bmp')) {
+      return 'image/bmp';
+    }
+    if (lower.endsWith('.avif')) {
+      return 'image/avif';
+    }
+    return '';
+  }
+
+  private hashString(text: string): number {
+    let hash = 0;
+    for (let index = 0; index < text.length; index++) {
+      hash = ((hash << 5) - hash) + text.charCodeAt(index);
+      hash |= 0;
+    }
+    return hash;
   }
 
   private buildEBookFromReaderKit(bookInfo: ReaderKitBookInfo): EBook {
@@ -584,6 +947,9 @@ class ReaderKitEBookParser extends EBookParser {
       bookId, this.format, this.filePath, 0, metadata, [],
       EBookStatus.UNREAD, null, null, now, now, false, 0
     );
+    ebook.contentMode = bookInfo.contentMode || EBookContentMode.UNKNOWN;
+    ebook.preferredReaderEngine = bookInfo.preferredReaderEngine || EBookReaderEngine.READER_KIT;
+    ebook.extractedRootPath = bookInfo.extractedRootPath || '';
     if (bookInfo.chapters && bookInfo.chapters.length > 0) {
       ebook.chapters = bookInfo.chapters.map((ch, index) => {
         const chapter: EBookChapter = {
@@ -595,6 +961,12 @@ class ReaderKitEBookParser extends EBookParser {
           wordCount: ch.content.length,
           startPosition: 0,
           endPosition: ch.content.length,
+          resourceHref: ch.resourceHref || '',
+          resourceFile: ch.resourceFile || '',
+          resourceMediaType: ch.resourceMediaType || '',
+          resourceLayoutType: ch.resourceLayoutType || '',
+          resourceImagePath: ch.resourceImagePath || '',
+          resourceImageRelativePath: ch.resourceImageRelativePath || '',
           createTime: now
         };
         return chapter;
@@ -637,6 +1009,9 @@ class ReaderKitEBookParser extends EBookParser {
       bookId, this.format, this.filePath, 0, metadata, [],
       EBookStatus.UNREAD, null, null, now, now, false, 0
     );
+    ebook.contentMode = this.format === EBookFormat.TXT ? EBookContentMode.REFLOWABLE_TEXT : EBookContentMode.UNKNOWN;
+    ebook.preferredReaderEngine = this.format === EBookFormat.TXT ? EBookReaderEngine.TEXT : EBookReaderEngine.READER_KIT;
+    ebook.extractedRootPath = '';
     ebook.chapters.push({
       id: `chapter_${now}`,
       bookId: bookId,
@@ -665,6 +1040,9 @@ interface ReaderKitBookInfo {
   description: string;
   coverImagePath: string;
   chapters: ReaderKitChapter[];
+  contentMode: EBookContentMode;
+  preferredReaderEngine: EBookReaderEngine;
+  extractedRootPath: string;
 }
 
 /**
@@ -674,6 +1052,19 @@ interface ReaderKitChapter {
   id: string;
   title: string;
   content: string;
+  resourceHref?: string;
+  resourceFile?: string;
+  resourceMediaType?: string;
+  resourceLayoutType?: string;
+  resourceImagePath?: string;
+  resourceImageRelativePath?: string;
+}
+
+interface ReaderKitContentAnalysis {
+  chapters: ReaderKitChapter[];
+  contentMode: EBookContentMode;
+  preferredReaderEngine: EBookReaderEngine;
+  extractedRootPath: string;
 }
 
 /**

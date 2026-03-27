@@ -3805,6 +3805,7 @@ export struct NovelReaderPage {
         // 目录按钮
         Button() {
           SymbolGlyph($r('sys.symbol.list_bullet'))
+            .fontColor([$r('app.color.text_primary')])
 
         }
         .width(48)
@@ -3820,6 +3821,7 @@ export struct NovelReaderPage {
         // 字体设置按钮
         Button() {
           SymbolGlyph($r('sys.symbol.textformat'))
+            .fontColor([$r('app.color.text_primary')])
 
         }
         .width(48)
@@ -3834,6 +3836,7 @@ export struct NovelReaderPage {
         // 背景设置按钮
         Button() {
           SymbolGlyph($r('sys.symbol.paintbrush'))
+            .fontColor([$r('app.color.text_primary')])
 
         }
         .width(48)
@@ -3848,6 +3851,7 @@ export struct NovelReaderPage {
         // 阅读设置按钮
         Button() {
           SymbolGlyph($r('sys.symbol.gearshape'))
+            .fontColor([$r('app.color.text_primary')])
         }
         .width(48)
         .height(48)
