@@ -1,0 +1,2425 @@
+import { common } from '@kit.AbilityKit';
+import { LengthMetrics } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { logger } from '../Utils/Logger';
+import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Network/NetworkFolderManager';
+import {
+  createEmptyNetworkFolderDraft,
+  createNetworkFolderConnection,
+  draftFromNetworkFolderConnection,
+  getNetworkFolderProtocolLabel,
+  NetworkFolderCacheStats,
+  NetworkFolderConnection,
+  NetworkFolderConnectionDraft,
+  NetworkFolderEntry,
+  NetworkFolderProtocol
+} from '../Models/NetworkFolderModels';
+
+const TAG = 'NetworkFolderPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
+const ACCENT_COLOR: string = '#0F8A6C';
+const INFO_COLOR: string = '#1F7AE0';
+const DANGER_COLOR: string = '#C74848';
+const ACTION_STYLE_NEUTRAL: number = 0;
+const ACTION_STYLE_PRIMARY: number = 1;
+const ACTION_STYLE_INFO: number = 2;
+const ACTION_STYLE_DANGER: number = 3;
+
+interface NavDestinationContext {
+  pathStack: NavPathStack;
+}
+
+interface NetworkFolderImportNavParam {
+  fromPage: string;
+  timestamp: number;
+}
+
+interface NetworkFolderBreadcrumb {
+  label: string;
+  path: string;
+}
+
+@Component
+export struct NetworkFolderPage {
+  private connectionScroller: Scroller = new Scroller();
+  private browserScroller: Scroller = new Scroller();
+  private dialogScroller: Scroller = new Scroller();
+  private manager: NetworkFolderManager = getNetworkFolderManager();
+  private componentId: string = TAG;
+  private pathStack: NavPathStack = new NavPathStack();
+  private protocolOptions: NetworkFolderProtocol[] = ['webdav', 'ftp', 'ftps', 'smb'];
+
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @State connections: NetworkFolderConnection[] = [];
+  @State selectedConnectionId: string = '';
+  @State currentPath: string = '/';
+  @State entries: NetworkFolderEntry[] = [];
+  @State cacheStats: NetworkFolderCacheStats = { directoryCount: 0, fileCount: 0, totalBytes: 0 };
+  @State statusMessage: string = '支持 WebDAV、FTP、FTPS、SMB，可浏览远程目录、缓存文件并直接导入。';
+  @State isInitializing: boolean = false;
+  @State isLoadingDirectory: boolean = false;
+  @State isCaching: boolean = false;
+
+  @State viewMode: string = 'connections';
+  @State pageReady: boolean = false;
+  @State routeOpacity: number = 1;
+  @State routeTranslateX: number = 0;
+  @State routeScale: number = 1;
+  @State directoryOpacity: number = 1;
+  @State directoryTranslateX: number = 0;
+  @State directoryScale: number = 1;
+  @State isPageRefreshing: boolean = false;
+  @State showFloatingCapsule: boolean = false;
+  @State floatingCapsuleText: string = '';
+
+  @State dialogMounted: boolean = false;
+  @State dialogMode: string = 'create';
+  @State dialogDraft: NetworkFolderConnectionDraft = createEmptyNetworkFolderDraft();
+  @State dialogStatusMessage: string = '请填写连接信息。';
+  @State dialogTesting: boolean = false;
+  @State dialogSaving: boolean = false;
+  @State dialogBackdropOpacity: number = 0;
+  @State dialogOpacity: number = 0;
+  @State dialogScale: number = 0.96;
+  @State dialogTranslateY: number = 24;
+  private floatingCapsuleTimer: number = -1;
+
+  aboutToAppear(): void {
+    void ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, undefined, (newState: ThemeAwareState) => {
+      this.themeState = newState;
+    });
+  }
+
+  aboutToDisappear(): void {
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    this.hideFloatingCapsuleImmediately();
+  }
+
+  private color(type: 'background' | 'panel_background' | 'comp_background_tertiary' | 'comp_background_secondary' |
+    'text_primary' | 'text_secondary' | 'text_muted' | 'text_white' | 'button_secondary' |
+    'button_text_secondary' | 'icon_primary' | 'accent_primary'): Resource {
+    return ThemeAwareHelper.getTestManagementThemedColor(type, this.themeState.currentTheme);
+  }
+
+  private async initializePage(): Promise<void> {
+    logger.info(TAG, '开始初始化网络文件夹页面');
+    this.isInitializing = true;
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      await this.manager.initialize(context);
+      this.reloadConnections();
+      this.restoreLastSelection();
+      this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+      if (this.connections.length > 0) {
+        this.statusMessage = `已载入 ${this.connections.length} 个网络连接，点击即可进入远程文件夹。`;
+      } else {
+        this.statusMessage = '还没有网络文件夹连接，先新建一个。';
+      }
+      logger.info(TAG, `网络文件夹页面初始化完成，连接数量 ${this.connections.length}`);
+    } catch (error) {
+      logger.error(TAG, `初始化网络文件夹页面失败：${String(error)}`);
+      this.statusMessage = '网络文件夹页面初始化失败。';
+      this.showToast(`初始化失败：${String(error)}`);
+    } finally {
+      this.isInitializing = false;
+      this.playPageEnterAnimation();
+      this.showEntryFloatingCapsule();
+    }
+  }
+
+  private playPageEnterAnimation(): void {
+    this.pageReady = false;
+    setTimeout(() => {
+      animateTo({ duration: 320, curve: Curve.EaseOut }, () => {
+        this.pageReady = true;
+      });
+    }, 40);
+  }
+
+  private restoreLastSelection(): void {
+    const lastConnectionId = this.manager.getLastConnectionId();
+    let selectedConnection: NetworkFolderConnection | null = null;
+    if (lastConnectionId.length > 0) {
+      selectedConnection = this.getConnectionById(lastConnectionId);
+    }
+    if (!selectedConnection && this.connections.length > 0) {
+      selectedConnection = this.connections[0];
+    }
+    if (!selectedConnection) {
+      this.selectedConnectionId = '';
+      this.currentPath = '/';
+      return;
+    }
+    this.selectedConnectionId = selectedConnection.id;
+    this.currentPath = this.manager.getLastPath(selectedConnection.id);
+    logger.info(TAG, `恢复上次选择的连接：${selectedConnection.name}，路径 ${this.currentPath}`);
+  }
+
+  private reloadConnections(): void {
+    this.connections = this.manager.getConnections();
+    logger.info(TAG, `连接列表已刷新，共 ${this.connections.length} 项`);
+  }
+
+  private refreshConnectionsOverview(): void {
+    this.reloadConnections();
+    this.restoreLastSelection();
+    this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+  }
+
+  private getConnectionById(connectionId: string): NetworkFolderConnection | null {
+    if (connectionId.length === 0) {
+      return null;
+    }
+    for (let index = 0; index < this.connections.length; index++) {
+      const connection = this.connections[index];
+      if (connection.id === connectionId) {
+        return connection;
+      }
+    }
+    return null;
+  }
+
+  private getSelectedConnection(): NetworkFolderConnection | null {
+    return this.getConnectionById(this.selectedConnectionId);
+  }
+
+  private hasSelectedConnection(): boolean {
+    return this.getSelectedConnection() !== null;
+  }
+
+  private getSelectedConnectionForRender(): NetworkFolderConnection {
+    const connection = this.getSelectedConnection();
+    if (connection) {
+      return connection;
+    }
+    throw new Error('当前没有可渲染的网络连接');
+  }
+
+  private isConnectionSelected(connection: NetworkFolderConnection): boolean {
+    return this.selectedConnectionId === connection.id;
+  }
+
+  private isDialogProtocolSelected(protocol: NetworkFolderProtocol): boolean {
+    return this.dialogDraft.protocol === protocol;
+  }
+
+  private async playRouteExitAnimation(offsetX: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      animateTo({
+        duration: 180,
+        curve: Curve.EaseInOut,
+        onFinish: () => {
+          resolve();
+        }
+      }, () => {
+        this.routeOpacity = 0;
+        this.routeTranslateX = offsetX;
+        this.routeScale = 0.985;
+      });
+    });
+  }
+
+  private playRouteEnterAnimation(offsetX: number): void {
+    this.routeOpacity = 0;
+    this.routeTranslateX = offsetX;
+    this.routeScale = 0.985;
+    animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+      this.routeOpacity = 1;
+      this.routeTranslateX = 0;
+      this.routeScale = 1;
+    });
+  }
+
+  private async playDirectoryExitAnimation(offsetX: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      animateTo({
+        duration: 160,
+        curve: Curve.EaseInOut,
+        onFinish: () => {
+          resolve();
+        }
+      }, () => {
+        this.directoryOpacity = 0;
+        this.directoryTranslateX = offsetX;
+        this.directoryScale = 0.992;
+      });
+    });
+  }
+
+  private playDirectoryEnterAnimation(offsetX: number): void {
+    this.directoryOpacity = 0;
+    this.directoryTranslateX = offsetX;
+    this.directoryScale = 0.992;
+    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.directoryOpacity = 1;
+      this.directoryTranslateX = 0;
+      this.directoryScale = 1;
+    });
+  }
+
+  private prepareConnection(connection: NetworkFolderConnection): void {
+    this.selectedConnectionId = connection.id;
+    this.currentPath = this.manager.getLastPath(connection.id);
+    this.entries = [];
+    this.refreshCacheStats(connection.id);
+  }
+
+  private async openConnectionBrowser(connection: NetworkFolderConnection, forceRefresh: boolean): Promise<void> {
+    logger.info(TAG, `进入连接浏览页：${connection.name}`);
+    this.prepareConnection(connection);
+    if (this.viewMode === 'connections') {
+      await this.playRouteExitAnimation(-42);
+      this.viewMode = 'browser';
+      this.playRouteEnterAnimation(42);
+    }
+    this.statusMessage = `已进入连接：${connection.name}`;
+    void this.loadDirectory(forceRefresh);
+  }
+
+  private async returnToConnections(): Promise<void> {
+    logger.info(TAG, '返回网络连接列表页');
+    await this.playRouteExitAnimation(42);
+    this.viewMode = 'connections';
+    this.playRouteEnterAnimation(-42);
+    this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+    this.statusMessage = '已返回网络连接列表。';
+  }
+
+  private async loadDirectory(forceRefresh: boolean): Promise<void> {
+    if (this.selectedConnectionId.length === 0) {
+      this.entries = [];
+      this.refreshCacheStats();
+      this.statusMessage = '请先选择一个网络连接。';
+      return;
+    }
+
+    const connection = this.getSelectedConnection();
+    if (!connection) {
+      this.entries = [];
+      this.statusMessage = '当前连接已失效，请重新选择。';
+      return;
+    }
+
+    logger.info(TAG, `开始加载目录：${connection.name} ${this.currentPath}，强制刷新=${forceRefresh}`);
+    this.isLoadingDirectory = true;
+    try {
+      const result = await this.manager.browseDirectory(this.selectedConnectionId, this.currentPath, forceRefresh);
+      if (!result.success) {
+        logger.warn(TAG, `目录加载失败：${connection.name} ${this.currentPath}，原因：${result.message}`);
+        this.statusMessage = result.message;
+        this.showToast(result.message);
+        return;
+      }
+
+      this.entries = result.entries;
+      if (result.fromCache) {
+        if (result.stale) {
+          this.statusMessage = `远程目录暂时不可用，已显示缓存内容：${this.currentPath}`;
+          this.showToast('已显示缓存目录');
+        } else {
+          this.statusMessage = `已从缓存打开目录：${this.currentPath}`;
+        }
+      } else {
+        this.statusMessage = `目录加载完成：${this.currentPath}，共 ${result.entries.length} 项。`;
+      }
+      this.refreshCacheStats(this.selectedConnectionId);
+      logger.info(TAG, `目录加载完成：${connection.name} ${this.currentPath}，项目数 ${result.entries.length}`);
+    } catch (error) {
+      logger.error(TAG, `加载目录失败：${String(error)}`);
+      this.statusMessage = '目录加载失败。';
+      this.showToast(`加载目录失败：${String(error)}`);
+    } finally {
+      this.isLoadingDirectory = false;
+    }
+  }
+
+  private async browseToPath(targetPath: string, forward: boolean, forceRefresh: boolean): Promise<void> {
+    if (this.selectedConnectionId.length === 0) {
+      return;
+    }
+    const normalizedTargetPath = targetPath.length > 0 ? targetPath : '/';
+    if (normalizedTargetPath === this.currentPath && !forceRefresh) {
+      return;
+    }
+    logger.info(TAG, `切换目录：${this.currentPath} -> ${normalizedTargetPath}`);
+    const exitOffset = forward ? -26 : 26;
+    const enterOffset = forward ? 26 : -26;
+    await this.playDirectoryExitAnimation(exitOffset);
+    this.currentPath = normalizedTargetPath;
+    this.entries = [];
+    this.playDirectoryEnterAnimation(enterOffset);
+    void this.loadDirectory(forceRefresh);
+  }
+
+  private async refreshCurrentDirectory(): Promise<void> {
+    logger.info(TAG, `刷新当前目录：${this.currentPath}`);
+    await this.playDirectoryExitAnimation(0);
+    this.playDirectoryEnterAnimation(0);
+    await this.loadDirectory(true);
+  }
+
+  private async handlePageRefresh(): Promise<void> {
+    if (this.isPageRefreshing) {
+      return;
+    }
+    this.isPageRefreshing = true;
+    this.showRefreshingFloatingCapsule();
+    try {
+      if (this.viewMode === 'browser' && this.hasSelectedConnection()) {
+        await this.refreshCurrentDirectory();
+      } else {
+        this.refreshConnectionsOverview();
+      }
+    } finally {
+      this.isPageRefreshing = false;
+      this.finishRefreshingFloatingCapsule();
+    }
+  }
+
+  private async openEntry(entry: NetworkFolderEntry): Promise<void> {
+    if (!entry.isDirectory) {
+      if (entry.importCategory !== 'unsupported') {
+        await this.importEntry(entry);
+      } else {
+        await this.cacheEntry(entry);
+      }
+      return;
+    }
+    logger.info(TAG, `进入子目录：${entry.relativePath}`);
+    await this.browseToPath(entry.relativePath, true, false);
+  }
+
+  private async goParentDirectory(): Promise<void> {
+    if (this.currentPath === '/') {
+      return;
+    }
+    const lastSlash = this.currentPath.lastIndexOf('/');
+    const parentPath = lastSlash <= 0 ? '/' : this.currentPath.substring(0, lastSlash);
+    logger.info(TAG, `返回上级目录：${this.currentPath} -> ${parentPath}`);
+    await this.browseToPath(parentPath, false, false);
+  }
+
+  private async openBreadcrumb(item: NetworkFolderBreadcrumb): Promise<void> {
+    if (item.path === this.currentPath) {
+      return;
+    }
+    logger.info(TAG, `通过面包屑跳转目录：${item.path}`);
+    const currentDepth = this.getPathDepth(this.currentPath);
+    const targetDepth = this.getPathDepth(item.path);
+    await this.browseToPath(item.path, targetDepth >= currentDepth, false);
+  }
+
+  private getPathDepth(path: string): number {
+    if (path.length === 0 || path === '/') {
+      return 0;
+    }
+    let depth = 0;
+    const normalized = path.startsWith('/') ? path.substring(1) : path;
+    const parts = normalized.split('/');
+    for (let index = 0; index < parts.length; index++) {
+      if (parts[index].length > 0) {
+        depth++;
+      }
+    }
+    return depth;
+  }
+
+  private async cacheEntry(entry: NetworkFolderEntry): Promise<void> {
+    if (this.selectedConnectionId.length === 0 || entry.isDirectory) {
+      return;
+    }
+    logger.info(TAG, `开始缓存远程文件：${entry.relativePath}`);
+    this.isCaching = true;
+    try {
+      const result = await this.manager.downloadFileToCache(this.selectedConnectionId, entry);
+      if (!result.success) {
+        logger.warn(TAG, `缓存远程文件失败：${entry.relativePath}，原因：${result.message}`);
+        this.showToast(result.message);
+        return;
+      }
+      this.statusMessage = result.reusedCache ? `已复用缓存文件：${entry.name}` : `文件已缓存：${entry.name}`;
+      this.showToast(result.reusedCache ? '已复用缓存文件' : '文件缓存完成');
+      this.refreshCacheStats(this.selectedConnectionId);
+      await this.loadDirectory(false);
+      logger.info(TAG, `远程文件缓存完成：${entry.relativePath}`);
+    } catch (error) {
+      logger.error(TAG, `缓存远程文件异常：${String(error)}`);
+      this.showToast(`缓存失败：${String(error)}`);
+    } finally {
+      this.isCaching = false;
+    }
+  }
+
+  private async importEntry(entry: NetworkFolderEntry): Promise<void> {
+    if (this.selectedConnectionId.length === 0 || entry.isDirectory) {
+      return;
+    }
+    logger.info(TAG, `开始导入远程文件：${entry.relativePath}`);
+    this.isCaching = true;
+    try {
+      const result = await this.manager.downloadFileToCache(this.selectedConnectionId, entry);
+      if (!result.success) {
+        logger.warn(TAG, `导入远程文件失败：${entry.relativePath}，原因：${result.message}`);
+        this.showToast(result.message);
+        return;
+      }
+
+      AppStorage.setOrCreate('pendingFileUri', result.fileUri);
+      AppStorage.setOrCreate('pendingFileType', entry.name);
+      AppStorage.setOrCreate('pendingFileCategory', result.importCategory);
+      AppStorage.setOrCreate('fileImportPending', true);
+
+      const navParam: NetworkFolderImportNavParam = {
+        fromPage: 'NetworkFolderPage',
+        timestamp: Date.now()
+      };
+      this.pathStack.pushPathByName('DataManagementPage', navParam);
+      this.statusMessage = `已准备导入文件：${entry.name}`;
+      logger.info(TAG, `远程文件已交给数据管理页导入：${entry.relativePath}，分类 ${result.importCategory}`);
+    } catch (error) {
+      logger.error(TAG, `导入远程文件异常：${String(error)}`);
+      this.showToast(`导入失败：${String(error)}`);
+    } finally {
+      this.isCaching = false;
+    }
+  }
+
+  private async clearCurrentCache(): Promise<void> {
+    if (this.selectedConnectionId.length === 0) {
+      this.showToast('当前没有可清理的连接缓存');
+      return;
+    }
+    const connection = this.getSelectedConnection();
+    logger.info(TAG, `清理当前连接缓存：${connection ? connection.name : this.selectedConnectionId}`);
+    await this.manager.clearCacheForConnection(this.selectedConnectionId);
+    this.refreshCacheStats(this.selectedConnectionId);
+    this.statusMessage = '当前连接缓存已清理。';
+    this.showToast('当前连接缓存已清理');
+    await this.loadDirectory(false);
+  }
+
+  private async clearAllCaches(): Promise<void> {
+    logger.info(TAG, '开始清理全部网络文件夹缓存');
+    await this.manager.clearAllCaches();
+    this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+    this.statusMessage = '全部网络文件夹缓存已清理。';
+    this.showToast('全部缓存已清理');
+    if (this.selectedConnectionId.length > 0) {
+      await this.loadDirectory(false);
+    }
+  }
+
+  private showDeleteConnectionDialog(connection: NetworkFolderConnection): void {
+    AlertDialog.show({
+      title: '删除连接',
+      message: `确定删除“${connection.name}”吗？该连接关联的目录缓存和文件缓存也会一起清理。`,
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: DANGER_COLOR,
+        action: () => {
+          void this.deleteConnection(connection);
+        }
+      }
+    });
+  }
+
+  private showClearAllCacheDialog(): void {
+    AlertDialog.show({
+      title: '清理全部缓存',
+      message: '这会删除所有网络目录缓存和下载缓存，是否继续？',
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '清理',
+        fontColor: DANGER_COLOR,
+        action: () => {
+          void this.clearAllCaches();
+        }
+      }
+    });
+  }
+
+  private async deleteConnection(connection: NetworkFolderConnection): Promise<void> {
+    logger.info(TAG, `开始删除连接：${connection.name}`);
+    try {
+      await this.manager.deleteConnection(connection.id);
+      this.reloadConnections();
+      if (this.selectedConnectionId === connection.id) {
+        this.selectedConnectionId = '';
+        this.currentPath = '/';
+        this.entries = [];
+        this.restoreLastSelection();
+        if (this.viewMode === 'browser') {
+          await this.returnToConnections();
+        }
+      }
+      this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+      this.statusMessage = `连接已删除：${connection.name}`;
+      this.showToast('连接已删除');
+      logger.info(TAG, `连接删除完成：${connection.name}`);
+    } catch (error) {
+      logger.error(TAG, `删除连接失败：${String(error)}`);
+      this.showToast(`删除失败：${String(error)}`);
+    }
+  }
+
+  private openCreateConnectionDialog(): void {
+    logger.info(TAG, '打开新建连接对话框');
+    this.dialogMode = 'create';
+    this.dialogDraft = createEmptyNetworkFolderDraft();
+    this.dialogStatusMessage = '新建后会直接进入远程文件浏览页。';
+    this.showConnectionDialog();
+  }
+
+  private openEditConnectionDialog(connection?: NetworkFolderConnection): void {
+    let targetConnection: NetworkFolderConnection | null = null;
+    if (connection) {
+      targetConnection = connection;
+    } else {
+      targetConnection = this.getSelectedConnection();
+    }
+
+    if (!targetConnection) {
+      this.showToast('当前没有可编辑的连接');
+      return;
+    }
+
+    logger.info(TAG, `打开编辑连接对话框：${targetConnection.name}`);
+    this.dialogMode = 'edit';
+    this.dialogDraft = draftFromNetworkFolderConnection(targetConnection);
+    this.dialogStatusMessage = `正在编辑连接：${targetConnection.name}`;
+    this.showConnectionDialog();
+  }
+
+  private showConnectionDialog(): void {
+    this.dialogMounted = true;
+    this.dialogBackdropOpacity = 0;
+    this.dialogOpacity = 0;
+    this.dialogScale = 0.96;
+    this.dialogTranslateY = 24;
+    setTimeout(() => {
+      animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+        this.dialogBackdropOpacity = 1;
+        this.dialogOpacity = 1;
+        this.dialogScale = 1;
+        this.dialogTranslateY = 0;
+      });
+    }, 16);
+  }
+
+  private async hideConnectionDialog(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      animateTo({
+        duration: 180,
+        curve: Curve.EaseIn,
+        onFinish: () => {
+          this.dialogMounted = false;
+          resolve();
+        }
+      }, () => {
+        this.dialogBackdropOpacity = 0;
+        this.dialogOpacity = 0;
+        this.dialogScale = 0.96;
+        this.dialogTranslateY = 24;
+      });
+    });
+  }
+
+  private closeConnectionDialog(): void {
+    logger.info(TAG, '关闭连接配置对话框');
+    void this.hideConnectionDialog();
+  }
+
+  private validateDraft(draft: NetworkFolderConnectionDraft): boolean {
+    if (draft.protocol === 'webdav' && draft.serverUrl.trim().length === 0) {
+      this.showToast('请输入 WebDAV 服务地址');
+      return false;
+    }
+    if ((draft.protocol === 'ftp' || draft.protocol === 'ftps' || draft.protocol === 'smb') &&
+      draft.host.trim().length === 0) {
+      this.showToast('请输入服务器主机地址');
+      return false;
+    }
+    if (draft.protocol === 'smb' && draft.shareName.trim().length === 0) {
+      this.showToast('请输入 SMB 共享名称');
+      return false;
+    }
+    return true;
+  }
+
+  private cloneDraft(source: NetworkFolderConnectionDraft): NetworkFolderConnectionDraft {
+    const draft: NetworkFolderConnectionDraft = {
+      id: source.id,
+      name: source.name,
+      protocol: source.protocol,
+      serverUrl: source.serverUrl,
+      host: source.host,
+      shareName: source.shareName,
+      domain: source.domain,
+      clientIP: source.clientIP,
+      port: source.port,
+      username: source.username,
+      password: source.password,
+      basePath: source.basePath,
+      passive: source.passive,
+      verifySSL: source.verifySSL,
+      timeoutMs: source.timeoutMs
+    };
+    return draft;
+  }
+
+  private buildPreparedDraft(draft: NetworkFolderConnectionDraft): NetworkFolderConnectionDraft {
+    const preparedDraft = this.cloneDraft(draft);
+    preparedDraft.name = draft.name.trim().length > 0 ? draft.name.trim() : this.suggestConnectionName(draft);
+    return preparedDraft;
+  }
+
+  private suggestConnectionName(draft: NetworkFolderConnectionDraft): string {
+    if (draft.protocol === 'webdav') {
+      return draft.serverUrl.trim().length > 0 ? draft.serverUrl.trim() : 'WebDAV 连接';
+    }
+    if (draft.protocol === 'smb') {
+      const host = draft.host.trim();
+      const share = draft.shareName.trim();
+      if (host.length > 0 && share.length > 0) {
+        return `${host}/${share}`;
+      }
+      if (host.length > 0) {
+        return host;
+      }
+      if (share.length > 0) {
+        return share;
+      }
+      return 'SMB 连接';
+    }
+    if (draft.host.trim().length > 0) {
+      return draft.host.trim();
+    }
+    return `${getNetworkFolderProtocolLabel(draft.protocol)} 连接`;
+  }
+
+  private async saveDialogConnection(): Promise<void> {
+    if (!this.validateDraft(this.dialogDraft)) {
+      return;
+    }
+
+    const preparedDraft = this.buildPreparedDraft(this.dialogDraft);
+    const connectionName = preparedDraft.name;
+    logger.info(TAG, `开始保存连接：${connectionName}`);
+    this.dialogSaving = true;
+    try {
+      const connection = createNetworkFolderConnection(preparedDraft, preparedDraft.id);
+      await this.manager.saveConnection(connection);
+      this.reloadConnections();
+      this.selectedConnectionId = connection.id;
+      this.currentPath = this.manager.getLastPath(connection.id);
+      this.refreshCacheStats(connection.id);
+      this.statusMessage = `连接已保存：${connection.name}`;
+      this.showToast('连接已保存');
+      logger.info(TAG, `连接保存完成：${connection.name}`);
+      await this.hideConnectionDialog();
+      if (this.dialogMode === 'create' || this.viewMode === 'connections') {
+        await this.openConnectionBrowser(connection, false);
+      } else {
+        this.prepareConnection(connection);
+        void this.loadDirectory(true);
+      }
+    } catch (error) {
+      logger.error(TAG, `保存连接失败：${String(error)}`);
+      this.dialogStatusMessage = `保存失败：${String(error)}`;
+      this.showToast(`保存失败：${String(error)}`);
+    } finally {
+      this.dialogSaving = false;
+    }
+  }
+
+  private async testDialogConnection(): Promise<void> {
+    if (!this.validateDraft(this.dialogDraft)) {
+      return;
+    }
+
+    const preparedDraft = this.buildPreparedDraft(this.dialogDraft);
+    const connectionName = preparedDraft.name;
+    logger.info(TAG, `开始测试连接：${connectionName}`);
+    this.dialogTesting = true;
+    try {
+      const connection = createNetworkFolderConnection(preparedDraft, preparedDraft.id);
+      const result = await this.manager.testConnection(connection);
+      this.dialogStatusMessage = result.message;
+      this.statusMessage = result.success
+        ? `连接测试成功：${connection.name}`
+        : `连接测试失败：${result.message}`;
+      this.showToast(result.success ? '连接测试成功' : '连接测试失败');
+      logger.info(TAG, `连接测试结束：${connectionName}，结果 ${result.success ? '成功' : '失败'}，消息：${result.message}`);
+    } catch (error) {
+      logger.error(TAG, `连接测试异常：${String(error)}`);
+      this.dialogStatusMessage = `连接测试失败：${String(error)}`;
+      this.showToast(`连接测试失败：${String(error)}`);
+    } finally {
+      this.dialogTesting = false;
+    }
+  }
+
+  private switchDialogProtocol(protocol: NetworkFolderProtocol): void {
+    logger.info(TAG, `切换连接协议：${getNetworkFolderProtocolLabel(protocol)}`);
+    const nextDraft = this.cloneDraft(this.dialogDraft);
+    nextDraft.protocol = protocol;
+    if (protocol === 'webdav') {
+      nextDraft.port = 443;
+      nextDraft.verifySSL = true;
+    } else if (protocol === 'ftp') {
+      nextDraft.port = 21;
+      nextDraft.passive = true;
+    } else if (protocol === 'ftps') {
+      nextDraft.port = 990;
+      nextDraft.passive = true;
+      nextDraft.verifySSL = true;
+    } else {
+      nextDraft.port = 445;
+    }
+    this.dialogDraft = nextDraft;
+    this.dialogStatusMessage = `当前协议：${getNetworkFolderProtocolLabel(protocol)}`;
+  }
+
+  private refreshCacheStats(connectionId?: string): void {
+    try {
+      this.cacheStats = this.manager.getCacheStats(connectionId);
+    } catch (error) {
+      this.cacheStats = { directoryCount: 0, fileCount: 0, totalBytes: 0 };
+    }
+  }
+
+  private getConnectionCacheSummary(connectionId: string): string {
+    try {
+      const stats = this.manager.getCacheStats(connectionId);
+      return `目录 ${stats.directoryCount} · 文件 ${stats.fileCount} · ${this.formatBytes(stats.totalBytes)}`;
+    } catch (error) {
+      return '缓存状态暂不可用';
+    }
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes <= 0) {
+      return '0 B';
+    }
+    const units: string[] = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    const fixedDigits = size >= 10 || unitIndex === 0 ? 0 : 1;
+    return `${size.toFixed(fixedDigits)} ${units[unitIndex]}`;
+  }
+
+  private padNumber(value: number): string {
+    return `${value}`;
+  }
+
+  private formatDateTime(timestamp: number): string {
+    if (timestamp <= 0) {
+      return '时间未知';
+    }
+    const date = new Date(timestamp);
+    return `${date.getFullYear()}-${this.padNumber(date.getMonth() + 1)}-${this.padNumber(date.getDate())} ` +
+      `${this.padNumber(date.getHours())}:${this.padNumber(date.getMinutes())}`;
+  }
+
+  private formatRelativeTime(timestamp: number): string {
+    if (timestamp <= 0) {
+      return '尚未使用';
+    }
+    const delta = Date.now() - timestamp;
+    if (delta < 60 * 1000) {
+      return '刚刚使用';
+    }
+    if (delta < 60 * 60 * 1000) {
+      return `${Math.floor(delta / (60 * 1000))} 分钟前`;
+    }
+    if (delta < 24 * 60 * 60 * 1000) {
+      return `${Math.floor(delta / (60 * 60 * 1000))} 小时前`;
+    }
+    if (delta < 7 * 24 * 60 * 60 * 1000) {
+      return `${Math.floor(delta / (24 * 60 * 60 * 1000))} 天前`;
+    }
+    return this.formatDateTime(timestamp);
+  }
+
+  private getConnectionEndpoint(connection: NetworkFolderConnection): string {
+    if (connection.protocol === 'webdav') {
+      return connection.serverUrl;
+    }
+    if (connection.protocol === 'smb') {
+      return `\\\\${connection.host}\\${connection.shareName}`;
+    }
+    return `${connection.host}:${connection.port}`;
+  }
+
+  private getConnectionDescription(connection: NetworkFolderConnection): string {
+    if (connection.protocol === 'smb') {
+      return `共享路径 ${connection.shareName} · 基准目录 ${connection.basePath}`;
+    }
+    if (connection.protocol === 'webdav') {
+      return `服务器地址 ${connection.serverUrl}`;
+    }
+    return `远程主机 ${connection.host}:${connection.port} · 基准目录 ${connection.basePath}`;
+  }
+
+  private getProtocolSymbol(protocol: NetworkFolderProtocol): Resource {
+    if (protocol === 'webdav') {
+      return $r('sys.symbol.arrow_clockwise');
+    }
+    if (protocol === 'smb') {
+      return $r('sys.symbol.externaldrive_fill');
+    }
+    return $r('sys.symbol.folder');
+  }
+
+  private getFileSymbol(entry: NetworkFolderEntry): Resource {
+    if (entry.isDirectory) {
+      return $r('sys.symbol.folder_fill');
+    }
+    if (entry.importCategory === 'ebook') {
+      return $r('sys.symbol.text_book_closed');
+    }
+    return $r('sys.symbol.doc_plaintext_fill');
+  }
+
+  private getImportLabel(entry: NetworkFolderEntry): string {
+    if (entry.isDirectory) {
+      return '文件夹';
+    }
+    if (entry.importCategory === 'comic') {
+      return '漫画归档';
+    }
+    if (entry.importCategory === 'ebook') {
+      return '电子书';
+    }
+    if (entry.importCategory === 'pdf') {
+      return 'PDF';
+    }
+    return '暂不支持导入';
+  }
+
+  private getCacheStatusLabel(entry: NetworkFolderEntry): string {
+    if (entry.cacheStatus === 'cached') {
+      return '缓存可用';
+    }
+    if (entry.cacheStatus === 'stale') {
+      return '缓存已过期';
+    }
+    return '尚未缓存';
+  }
+
+  private getCacheStatusColor(entry: NetworkFolderEntry): ResourceColor {
+    if (entry.cacheStatus === 'cached') {
+      return '#35A86B';
+    }
+    if (entry.cacheStatus === 'stale') {
+      return '#D18B2A';
+    }
+    return this.color('text_muted');
+  }
+
+  private getConnectionMarkerColor(connection: NetworkFolderConnection): ResourceColor {
+    return this.selectedConnectionId === connection.id ? ACCENT_COLOR : this.color('text_muted');
+  }
+
+  private getActionBackgroundColor(styleKind: number): ResourceColor {
+    if (styleKind === ACTION_STYLE_PRIMARY) {
+      return ACCENT_COLOR;
+    }
+    if (styleKind === ACTION_STYLE_INFO) {
+      return INFO_COLOR;
+    }
+    if (styleKind === ACTION_STYLE_DANGER) {
+      return DANGER_COLOR;
+    }
+    return this.color('comp_background_tertiary');
+  }
+
+  private getActionForegroundColor(styleKind: number): ResourceColor {
+    if (styleKind === ACTION_STYLE_NEUTRAL) {
+      return this.color('text_primary');
+    }
+    return this.color('text_white');
+  }
+
+  private getBusyLabel(): string {
+    if (this.isInitializing) {
+      return '正在初始化网络文件夹…';
+    }
+    if (this.dialogSaving) {
+      return '正在保存连接配置…';
+    }
+    if (this.dialogTesting) {
+      return '正在测试远程连接…';
+    }
+    if (this.isLoadingDirectory) {
+      return '正在读取远程目录…';
+    }
+    if (this.isCaching) {
+      return '正在处理远程文件…';
+    }
+    return '状态正常';
+  }
+
+  private hasBusyState(): boolean {
+    return this.isInitializing || this.dialogSaving || this.dialogTesting || this.isLoadingDirectory || this.isCaching;
+  }
+
+  private showFloatingCapsuleTemporarily(message: string, duration: number = 2200): void {
+    if (this.floatingCapsuleTimer !== -1) {
+      clearTimeout(this.floatingCapsuleTimer);
+      this.floatingCapsuleTimer = -1;
+    }
+    this.floatingCapsuleText = message;
+    this.showFloatingCapsule = true;
+    this.floatingCapsuleTimer = setTimeout(() => {
+      this.showFloatingCapsule = false;
+      this.floatingCapsuleTimer = -1;
+    }, duration) as number;
+  }
+
+  private hideFloatingCapsuleImmediately(): void {
+    if (this.floatingCapsuleTimer !== -1) {
+      clearTimeout(this.floatingCapsuleTimer);
+      this.floatingCapsuleTimer = -1;
+    }
+    this.showFloatingCapsule = false;
+  }
+
+  private showEntryFloatingCapsule(): void {
+    const connection = this.getSelectedConnection();
+    if (connection) {
+      this.showFloatingCapsuleTemporarily(`当前连接 · ${connection.name}`, 2400);
+      return;
+    }
+    if (this.connections.length > 0) {
+      this.showFloatingCapsuleTemporarily(`网络文件夹 · ${this.connections.length} 个连接`, 2400);
+      return;
+    }
+    this.showFloatingCapsuleTemporarily('网络文件夹 · 暂无连接', 2400);
+  }
+
+  private showRefreshingFloatingCapsule(): void {
+    if (this.floatingCapsuleTimer !== -1) {
+      clearTimeout(this.floatingCapsuleTimer);
+      this.floatingCapsuleTimer = -1;
+    }
+    const connection = this.getSelectedConnection();
+    if (this.viewMode === 'browser' && connection) {
+      this.floatingCapsuleText = `正在刷新 · ${connection.name} · ${this.currentPath}`;
+    } else {
+      this.floatingCapsuleText = '正在刷新 · 网络文件夹';
+    }
+    this.showFloatingCapsule = true;
+  }
+
+  private finishRefreshingFloatingCapsule(): void {
+    this.showFloatingCapsuleTemporarily(this.floatingCapsuleText, 900);
+  }
+
+  private shouldUseCompactConnectionBanner(): boolean {
+    return this.viewMode === 'browser' && this.currentPath !== '/' && this.hasSelectedConnection();
+  }
+
+  private getBreadcrumbs(): NetworkFolderBreadcrumb[] {
+    const breadcrumbs: NetworkFolderBreadcrumb[] = [];
+    breadcrumbs.push({
+      label: '根目录',
+      path: '/'
+    });
+    if (this.currentPath === '/') {
+      return breadcrumbs;
+    }
+    const rawPath = this.currentPath.startsWith('/') ? this.currentPath.substring(1) : this.currentPath;
+    const parts = rawPath.split('/');
+    let currentPath = '';
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index];
+      if (part.length === 0) {
+        continue;
+      }
+      currentPath = `${currentPath}/${part}`;
+      breadcrumbs.push({
+        label: part,
+        path: currentPath
+      });
+    }
+    return breadcrumbs;
+  }
+
+  private showToast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: message });
+  }
+
+  @Builder private buildActionButton(label: string, icon: Resource, styleKind: number, enabled: boolean,
+    onClick: () => void) {
+    Button() {
+      Row({ space: 6 }) {
+        SymbolGlyph(icon)
+          .fontSize(14)
+          .fontColor([enabled ? this.getActionForegroundColor(styleKind) : this.color('text_muted')])
+        Text(label)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(enabled ? this.getActionForegroundColor(styleKind) : this.color('text_muted'))
+      }
+    }
+    .height(36)
+    .borderRadius(12)
+    .enabled(enabled)
+    .backgroundColor(enabled ? this.getActionBackgroundColor(styleKind) : this.color('comp_background_secondary'))
+    .padding({ left: 12, right: 12 })
+    .onClick(() => {
+      onClick();
+    })
+  }
+
+  @Builder private buildToolbarIconButton(icon: Resource, enabled: boolean, onClick: () => void) {
+    Button() {
+      SymbolGlyph(icon)
+        .fontSize(15)
+        .fontColor([enabled ? this.color('text_primary') : this.color('text_muted')])
+    }
+    .width(34)
+    .height(34)
+    .enabled(enabled)
+    .borderRadius(17)
+    .backgroundColor(enabled ? this.color('comp_background_tertiary') : this.color('comp_background_secondary'))
+    .onClick(() => {
+      onClick();
+    })
+  }
+
+  @Builder private buildFloatingStatusCapsule() {
+    Row({ space: 8 }) {
+      if (this.isPageRefreshing || this.isInitializing) {
+        LoadingProgress()
+          .width(16)
+          .height(16)
+          .color(ACCENT_COLOR)
+      } else {
+        SymbolGlyph($r('sys.symbol.externaldrive_fill'))
+          .fontSize(16)
+          .fontColor([this.color('accent_primary')])
+      }
+
+      Text(this.floatingCapsuleText)
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_primary'))
+        .maxLines(1)
+    }
+    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+    .backgroundColor(this.color('panel_background'))
+    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: 1.0
+    })
+    .borderRadius(22)
+  }
+
+  @Builder private buildStatusBanner() {
+    Row({ space: 12 }) {
+      Column() {
+        if (this.hasBusyState()) {
+          LoadingProgress()
+            .width(18)
+            .height(18)
+            .color(ACCENT_COLOR)
+        } else {
+          SymbolGlyph($r('sys.symbol.externaldrive_fill'))
+            .fontSize(22)
+            .fontColor([this.color('accent_primary')])
+        }
+      }
+      .width(34)
+      .height(34)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(17)
+
+      Column({ space: 4 }) {
+        Text(this.getBusyLabel())
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_primary'))
+          .width('100%')
+        Text(this.statusMessage)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
+          .width('100%')
+          .maxLines(2)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(18)
+    .opacity(this.pageReady ? 1 : 0)
+    .translate({ y: this.pageReady ? 0 : 10 })
+    .animation({ duration: 260, curve: Curve.EaseOut })
+  }
+
+  @Builder private buildCompactConnectionBanner(connection: NetworkFolderConnection) {
+    Row({ space: 12 }) {
+      Row() {
+        SymbolGlyph(this.getProtocolSymbol(connection.protocol))
+          .fontSize(18)
+          .fontColor([this.color('accent_primary')])
+      }
+      .width(36)
+      .height(36)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(18)
+
+      Column({ space: 2 }) {
+        Text(connection.name)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_primary'))
+          .width('100%')
+          .maxLines(1)
+        Text(getNetworkFolderProtocolLabel(connection.protocol))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Text('当前连接')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_secondary'))
+        .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(12)
+    }
+    .width('100%')
+    .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(18)
+    .opacity(this.pageReady ? 1 : 0)
+    .translate({ y: this.pageReady ? 0 : 10 })
+    .animation({ duration: 260, curve: Curve.EaseOut })
+  }
+
+  @Builder private buildOverviewStat(label: string, value: string) {
+    Column({ space: 4 }) {
+      Text(value)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor('#FFFFFF')
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor('rgba(255, 255, 255, 0.78)')
+    }
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder private buildConnectionsHeroCard() {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Column({ space: 18 }) {
+        Row({ space: 12 }) {
+          Column() {
+            SymbolGlyph($r('sys.symbol.externaldrive_fill'))
+              .fontSize(30)
+              .fontColor(['#FFFFFF'])
+          }
+          .width(56)
+          .height(56)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('rgba(255, 255, 255, 0.16)')
+          .borderRadius(18)
+
+          Column({ space: 6 }) {
+            Text('网络文件夹')
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor('#FFFFFF')
+            Text('像文件管理器一样浏览远程目录，支持缓存、断线回退与直接导入。')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor('rgba(255, 255, 255, 0.78)')
+              .maxLines(2)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+
+        Row({ space: 18 }) {
+          this.buildOverviewStat('已保存连接', `${this.connections.length}`)
+          this.buildOverviewStat('目录缓存', `${this.cacheStats.directoryCount}`)
+          this.buildOverviewStat('文件缓存', `${this.cacheStats.fileCount}`)
+        }
+        .width('100%')
+      }
+      .width('100%')
+
+      SymbolGlyph($r('sys.symbol.folder_fill'))
+        .fontSize(86)
+        .fontColor(['rgba(255, 255, 255, 0.12)'])
+        .margin({ top: 12, right: 4 })
+    }
+    .width('100%')
+    .padding(18)
+    .backgroundColor('#174E45')
+    .borderRadius(24)
+    .opacity(this.pageReady ? 1 : 0)
+    .translate({ y: this.pageReady ? 0 : 12 })
+    .animation({ duration: 280, curve: Curve.EaseOut })
+  }
+
+  @Builder private buildQuickActionsCard() {
+    Column({ space: 12 }) {
+      Row({ space: 10 }) {
+        this.buildActionButton('新建连接', $r('sys.symbol.plus'), ACTION_STYLE_PRIMARY, true, () => {
+          this.openCreateConnectionDialog();
+        })
+        this.buildActionButton('清理全部缓存', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
+          this.showClearAllCacheDialog();
+        })
+      }
+      .width('100%')
+
+      Text(`当前缓存：目录 ${this.cacheStats.directoryCount} 项，文件 ${this.cacheStats.fileCount} 项，总大小 ${this.formatBytes(this.cacheStats.totalBytes)}`)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_secondary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(20)
+  }
+
+  @Builder private buildConnectionsEmptyState() {
+    Column({ space: 16 }) {
+      Column() {
+        SymbolGlyph($r('sys.symbol.externaldrive_fill'))
+          .fontSize(44)
+          .fontColor([this.color('accent_primary')])
+      }
+      .width(88)
+      .height(88)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(28)
+
+      Text('还没有网络文件夹连接')
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_primary'))
+      Text('先添加一个连接，然后就可以像文件管理器一样浏览远程目录。')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_secondary'))
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+      this.buildActionButton('立即新建连接', $r('sys.symbol.plus'), ACTION_STYLE_PRIMARY, true, () => {
+        this.openCreateConnectionDialog();
+      })
+    }
+    .width('100%')
+    .padding({ top: 56, bottom: 56, left: 24, right: 24 })
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(24)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder private buildConnectionCard(connection: NetworkFolderConnection) {
+    Column({ space: 14 }) {
+      Row({ space: 12 }) {
+        Column() {
+          SymbolGlyph(this.getProtocolSymbol(connection.protocol))
+            .fontSize(22)
+            .fontColor([this.isConnectionSelected(connection) ? '#FFFFFF' : this.color('accent_primary')])
+        }
+        .width(52)
+        .height(52)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.isConnectionSelected(connection) ? ACCENT_COLOR : this.color('comp_background_tertiary'))
+        .borderRadius(16)
+
+        Column({ space: 4 }) {
+          Text(connection.name)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+            .width('100%')
+            .maxLines(1)
+          Text(`${getNetworkFolderProtocolLabel(connection.protocol)} · ${this.getConnectionEndpoint(connection)}`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .width('100%')
+            .maxLines(1)
+          Text(this.getConnectionDescription(connection))
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_muted'))
+            .width('100%')
+            .maxLines(2)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        SymbolGlyph(this.isConnectionSelected(connection) ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.circle'))
+          .fontSize(18)
+          .fontColor([this.getConnectionMarkerColor(connection)])
+      }
+      .width('100%')
+
+      Row({ space: 12 }) {
+        Text(`缓存 ${this.getConnectionCacheSummary(connection.id)}`)
+          .layoutWeight(1)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
+          .maxLines(1)
+        Text(this.formatRelativeTime(connection.lastUsedAt))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_muted'))
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        this.buildActionButton('浏览', $r('sys.symbol.chevron_right'), ACTION_STYLE_PRIMARY, true, () => {
+          void this.openConnectionBrowser(connection, false);
+        })
+        this.buildActionButton('编辑', $r('sys.symbol.gearshape'), ACTION_STYLE_NEUTRAL, true, () => {
+          this.openEditConnectionDialog(connection);
+        })
+        this.buildActionButton('测试', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_INFO, true, () => {
+          this.dialogMode = 'edit';
+          this.dialogDraft = draftFromNetworkFolderConnection(connection);
+          this.dialogStatusMessage = `正在测试连接：${connection.name}`;
+          this.showConnectionDialog();
+          void this.testDialogConnection();
+        })
+        this.buildActionButton('删除', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
+          this.showDeleteConnectionDialog(connection);
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(22)
+    .border({
+      width: this.isConnectionSelected(connection) ? 1.5 : 1,
+      color: this.isConnectionSelected(connection) ? ACCENT_COLOR : this.color('comp_background_tertiary')
+    })
+    .opacity(this.pageReady ? 1 : 0)
+    .translate({ y: this.pageReady ? 0 : 12 })
+    .animation({ duration: 260, curve: Curve.EaseOut })
+  }
+
+  @Builder private buildConnectionsView() {
+    Scroll(this.connectionScroller) {
+      Column({ space: 16 }) {
+        this.buildConnectionsHeroCard()
+        this.buildQuickActionsCard()
+
+        Row() {
+          Text('已保存连接')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+          Blank()
+          Text(`${this.connections.length} 项`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+        }
+        .width('100%')
+
+        if (this.connections.length === 0) {
+          this.buildConnectionsEmptyState()
+        } else {
+          ForEach(this.connections, (connection: NetworkFolderConnection) => {
+            this.buildConnectionCard(connection)
+          }, (connection: NetworkFolderConnection) => connection.id)
+        }
+
+        Blank().height(24)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .edgeEffect(EdgeEffect.Spring)
+    .scrollBar(BarState.Auto)
+  }
+
+  @Builder private buildConnectionsRefreshView() {
+    Refresh({ refreshing: $$this.isPageRefreshing }) {
+      Scroll(this.connectionScroller) {
+        Column({ space: 16 }) {
+          this.buildConnectionsHeroCard()
+          this.buildQuickActionsCard()
+
+          Row() {
+            Text('已保存连接')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+            Blank()
+            Text(`${this.connections.length} 项`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+          }
+          .width('100%')
+
+          if (this.connections.length === 0) {
+            this.buildConnectionsEmptyState()
+          } else {
+            ForEach(this.connections, (connection: NetworkFolderConnection) => {
+              this.buildConnectionCard(connection)
+            }, (connection: NetworkFolderConnection) => connection.id)
+          }
+
+          Blank().height(24)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+      }
+      .width('100%')
+      .height('100%')
+      .edgeEffect(EdgeEffect.Spring)
+      .scrollBar(BarState.Auto)
+    }
+    .onRefreshing(async () => {
+      await this.handlePageRefresh();
+    })
+    .width('100%')
+    .height('100%')
+    .layoutWeight(1)
+  }
+
+  @Builder private buildBrowserRefreshView(connection: NetworkFolderConnection) {
+    Refresh({ refreshing: $$this.isPageRefreshing }) {
+      Scroll(this.browserScroller) {
+        Column({ space: 12 }) {
+          this.buildMergedBrowserToolbar(connection)
+          this.buildEntriesSection(connection)
+          Blank().height(24)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+      }
+      .width('100%')
+      .height('100%')
+      .edgeEffect(EdgeEffect.Spring)
+      .scrollBar(BarState.Auto)
+    }
+    .onRefreshing(async () => {
+      await this.handlePageRefresh();
+    })
+    .width('100%')
+    .height('100%')
+    .layoutWeight(1)
+  }
+
+  @Builder private buildBrowserHeader(connection: NetworkFolderConnection) {
+    Column({ space: this.shouldUseCompactConnectionBanner() ? 12 : 14 }) {
+      Row({ space: 10 }) {
+        this.buildActionButton('连接列表', $r('sys.symbol.arrow_left'), ACTION_STYLE_NEUTRAL, true, () => {
+          void this.returnToConnections();
+        })
+        Blank()
+        this.buildActionButton('编辑', $r('sys.symbol.gearshape'), ACTION_STYLE_NEUTRAL, true, () => {
+          this.openEditConnectionDialog(connection);
+        })
+      }
+      .width('100%')
+
+      Row({ space: 12 }) {
+        Column() {
+          SymbolGlyph(this.getProtocolSymbol(connection.protocol))
+            .fontSize(24)
+            .fontColor([this.color('accent_primary')])
+        }
+        .width(56)
+        .height(56)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(18)
+
+        Column({ space: 4 }) {
+          Text(connection.name)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+            .width('100%')
+            .maxLines(1)
+          Text(`${getNetworkFolderProtocolLabel(connection.protocol)} · ${this.getConnectionEndpoint(connection)}`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .width('100%')
+            .maxLines(1)
+          Text(`缓存 ${this.getConnectionCacheSummary(connection.id)}`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_muted'))
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        this.buildActionButton('刷新', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_INFO, true, () => {
+          void this.refreshCurrentDirectory();
+        })
+        this.buildActionButton('清理缓存', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
+          void this.clearCurrentCache();
+        })
+        this.buildActionButton('上一级', $r('sys.symbol.arrow_left'), ACTION_STYLE_NEUTRAL, this.currentPath !== '/', () => {
+          void this.goParentDirectory();
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(18)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(22)
+  }
+
+  @Builder private buildCompactBrowserToolbar(connection: NetworkFolderConnection) {
+    Column({ space: 10 }) {
+      Row({ space: 10 }) {
+        this.buildActionButton('连接列表', $r('sys.symbol.arrow_left'), ACTION_STYLE_NEUTRAL, true, () => {
+          void this.returnToConnections();
+        })
+        Blank()
+        this.buildActionButton('编辑', $r('sys.symbol.gearshape'), ACTION_STYLE_NEUTRAL, true, () => {
+          this.openEditConnectionDialog(connection);
+        })
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        this.buildActionButton('刷新', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_INFO, true, () => {
+          void this.refreshCurrentDirectory();
+        })
+        this.buildActionButton('清理缓存', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
+          void this.clearCurrentCache();
+        })
+        this.buildActionButton('上一级', $r('sys.symbol.arrow_left'), ACTION_STYLE_NEUTRAL, this.currentPath !== '/', () => {
+          void this.goParentDirectory();
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(22)
+  }
+
+  @Builder private buildMergedBrowserToolbar(connection: NetworkFolderConnection) {
+    Column({ space: 10 }) {
+      Row({ space: 8 }) {
+        this.buildToolbarIconButton($r('sys.symbol.arrow_left'), true, () => {
+          void this.returnToConnections();
+        })
+
+        Row({ space: 8 }) {
+          SymbolGlyph(this.getProtocolSymbol(connection.protocol))
+            .fontSize(16)
+            .fontColor([this.color('accent_primary')])
+          Column({ space: 2 }) {
+            Text(connection.name)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+              .width('100%')
+              .maxLines(1)
+            Text(this.currentPath)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+              .width('100%')
+              .maxLines(1)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .layoutWeight(1)
+        .padding({ left: 2, right: 2 })
+
+        this.buildToolbarIconButton($r('sys.symbol.arrow_clockwise'), true, () => {
+          void this.refreshCurrentDirectory();
+        })
+        this.buildToolbarIconButton($r('sys.symbol.gearshape'), true, () => {
+          this.openEditConnectionDialog(connection);
+        })
+        this.buildToolbarIconButton($r('sys.symbol.chevron_up'), this.currentPath !== '/', () => {
+          void this.goParentDirectory();
+        })
+      }
+      .width('100%')
+
+      Scroll() {
+        Row({ space: 6 }) {
+          ForEach(this.getBreadcrumbs(), (item: NetworkFolderBreadcrumb, index: number) => {
+            Row({ space: 6 }) {
+              Button(item.label)
+                .height(28)
+                .borderRadius(14)
+                .backgroundColor(item.path === this.currentPath ? ACCENT_COLOR : this.color('comp_background_tertiary'))
+                .fontColor(item.path === this.currentPath ? this.color('text_white') : this.color('text_primary'))
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .padding({ left: 10, right: 10 })
+                .onClick(() => {
+                  void this.openBreadcrumb(item);
+                })
+              if (index < this.getBreadcrumbs().length - 1) {
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(10)
+                  .fontColor([this.color('text_muted')])
+              }
+            }
+          }, (item: NetworkFolderBreadcrumb) => item.path)
+        }
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(18)
+  }
+
+  @Builder private buildBreadcrumbBar() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('当前位置')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_primary'))
+        Blank()
+        Text(this.currentPath)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
+          .maxLines(1)
+      }
+      .width('100%')
+
+      Scroll() {
+        Row({ space: 6 }) {
+          ForEach(this.getBreadcrumbs(), (item: NetworkFolderBreadcrumb, index: number) => {
+            Row({ space: 6 }) {
+              Button(item.label)
+                .height(32)
+                .borderRadius(16)
+                .backgroundColor(item.path === this.currentPath ? ACCENT_COLOR : this.color('comp_background_tertiary'))
+                .fontColor(item.path === this.currentPath ? this.color('text_white') : this.color('text_primary'))
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .padding({ left: 12, right: 12 })
+                .onClick(() => {
+                  void this.openBreadcrumb(item);
+                })
+              if (index < this.getBreadcrumbs().length - 1) {
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(12)
+                  .fontColor([this.color('text_muted')])
+              }
+            }
+          }, (item: NetworkFolderBreadcrumb) => item.path)
+        }
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(20)
+  }
+
+  @Builder private buildDirectoryEmptyState(connection: NetworkFolderConnection) {
+    Column({ space: 14 }) {
+      Column() {
+        if (this.isLoadingDirectory) {
+          LoadingProgress()
+            .width(32)
+            .height(32)
+            .color(ACCENT_COLOR)
+        } else {
+          SymbolGlyph($r('sys.symbol.folder_fill'))
+            .fontSize(42)
+            .fontColor([this.color('text_muted')])
+        }
+      }
+      .width(84)
+      .height(84)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(24)
+
+      Text(this.isLoadingDirectory ? '正在读取目录…' : '当前目录为空')
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_primary'))
+      Text(this.isLoadingDirectory
+        ? `正在从 ${connection.name} 获取 ${this.currentPath} 的内容。`
+        : '这个目录里暂时没有可显示的文件或文件夹。')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_secondary'))
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+    }
+    .width('100%')
+    .padding({ top: 56, bottom: 56, left: 20, right: 20 })
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(24)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder private buildEntryCard(entry: NetworkFolderEntry) {
+    Column({ space: 12 }) {
+      Row({ space: 12 }) {
+        Column() {
+          SymbolGlyph(this.getFileSymbol(entry))
+            .fontSize(22)
+            .fontColor([entry.isDirectory ? this.color('accent_primary') : this.color('icon_primary')])
+        }
+        .width(50)
+        .height(50)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(16)
+
+        Column({ space: 4 }) {
+          Text(entry.name)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+            .width('100%')
+            .maxLines(1)
+          Text(entry.isDirectory
+            ? `文件夹 · ${entry.relativePath}`
+            : `${this.formatBytes(entry.size)} · ${this.formatDateTime(entry.lastModified)}`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .width('100%')
+            .maxLines(1)
+          Text(`${this.getImportLabel(entry)} · ${this.getCacheStatusLabel(entry)}`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getCacheStatusColor(entry))
+            .width('100%')
+            .maxLines(1)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Column({ space: 6 }) {
+          SymbolGlyph(entry.cacheStatus === 'cached' ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.circle'))
+            .fontSize(16)
+            .fontColor([this.getCacheStatusColor(entry)])
+          if (entry.isDirectory) {
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(14)
+              .fontColor([this.color('text_muted')])
+          }
+        }
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        if (entry.isDirectory) {
+          this.buildActionButton('打开', $r('sys.symbol.chevron_right'), ACTION_STYLE_PRIMARY, true, () => {
+            void this.openEntry(entry);
+          })
+        } else {
+          this.buildActionButton('缓存', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_NEUTRAL, true, () => {
+            void this.cacheEntry(entry);
+          })
+          this.buildActionButton('导入', $r('sys.symbol.doc_text'), ACTION_STYLE_INFO,
+            entry.importCategory !== 'unsupported', () => {
+              void this.importEntry(entry);
+            })
+        }
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(20)
+    .stateStyles({
+      pressed: {
+        .scale({ x: 0.985, y: 0.985 })
+        .opacity(0.92)
+      }
+    })
+    .onClick(() => {
+      void this.openEntry(entry);
+    })
+  }
+
+  @Builder private buildEntriesSection(connection: NetworkFolderConnection) {
+    Column({ space: 12 }) {
+      Row() {
+        Text('目录内容')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_primary'))
+        Blank()
+        if (this.isLoadingDirectory) {
+          LoadingProgress()
+            .width(16)
+            .height(16)
+            .color(ACCENT_COLOR)
+        } else {
+          Text(`${this.entries.length} 项`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+        }
+      }
+      .width('100%')
+
+      if (this.entries.length === 0) {
+        this.buildDirectoryEmptyState(connection)
+      } else {
+        Column({ space: 12 }) {
+          ForEach(this.entries, (entry: NetworkFolderEntry) => {
+            this.buildEntryCard(entry)
+          }, (entry: NetworkFolderEntry) => entry.key)
+        }
+        .width('100%')
+        .opacity(this.directoryOpacity)
+        .translate({ x: this.directoryTranslateX, y: 0 })
+        .scale({ x: this.directoryScale, y: this.directoryScale })
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder private buildBrowserView(connection: NetworkFolderConnection) {
+    Column({ space: 16 }) {
+      if (this.shouldUseCompactConnectionBanner()) {
+        this.buildCompactBrowserToolbar(connection)
+      } else {
+        this.buildBrowserHeader(connection)
+      }
+      this.buildBreadcrumbBar()
+
+      Scroll(this.browserScroller) {
+        Column({ space: 12 }) {
+          this.buildEntriesSection(connection)
+          Blank().height(24)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .edgeEffect(EdgeEffect.Spring)
+      .scrollBar(BarState.Auto)
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+  }
+  @Builder private buildDialogField(icon: Resource, label: string, placeholder: string, value: string,
+    onChange: (value: string) => void, type: InputType = InputType.Normal) {
+    Column({ space: 8 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph(icon)
+          .fontSize(14)
+          .fontColor([this.color('text_secondary')])
+        Text(label)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
+      }
+      .width('100%')
+
+      TextInput({ text: value, placeholder: placeholder })
+        .type(type)
+        .height(44)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_primary'))
+        .placeholderColor(this.color('text_muted'))
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(12)
+        .padding({ left: 12, right: 12 })
+        .onChange((nextValue: string) => {
+          onChange(nextValue);
+        })
+    }
+    .width('100%')
+  }
+  @Builder private buildDialogToggle(icon: Resource, label: string, description: string, isOn: boolean,
+    onChange: (value: boolean) => void) {
+    Row({ space: 10 }) {
+      Column() {
+        SymbolGlyph(icon)
+          .fontSize(18)
+          .fontColor([this.color('accent_primary')])
+      }
+      .width(34)
+      .height(34)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(10)
+
+      Column({ space: 2 }) {
+        Text(label)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_primary'))
+          .width('100%')
+        Text(description)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
+          .width('100%')
+          .maxLines(2)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: isOn })
+        .onChange((value: boolean) => {
+          onChange(value);
+        })
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.color('comp_background_secondary'))
+    .borderRadius(16)
+  }
+  @Builder private buildDialogProtocolOption(protocol: NetworkFolderProtocol) {
+    Button() {
+      Column({ space: 6 }) {
+        SymbolGlyph(this.getProtocolSymbol(protocol))
+          .fontSize(18)
+          .fontColor([this.isDialogProtocolSelected(protocol) ? this.color('text_white') : this.color('accent_primary')])
+        Text(getNetworkFolderProtocolLabel(protocol))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.isDialogProtocolSelected(protocol) ? this.color('text_white') : this.color('text_primary'))
+      }
+      .width('100%')
+    }
+    .height(72)
+    .layoutWeight(1)
+    .borderRadius(18)
+    .backgroundColor(this.isDialogProtocolSelected(protocol) ? ACCENT_COLOR : this.color('comp_background_tertiary'))
+    .onClick(() => {
+      this.switchDialogProtocol(protocol);
+    })
+  }
+  @Builder private buildDialogStatusCard() {
+    Row({ space: 10 }) {
+      Column() {
+        if (this.dialogTesting || this.dialogSaving) {
+          LoadingProgress()
+            .width(16)
+            .height(16)
+            .color(ACCENT_COLOR)
+        } else {
+          SymbolGlyph($r('sys.symbol.circle'))
+            .fontSize(16)
+            .fontColor([this.color('accent_primary')])
+        }
+      }
+      .width(28)
+      .height(28)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(14)
+
+      Text(this.dialogStatusMessage)
+        .layoutWeight(1)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_secondary'))
+        .maxLines(3)
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.color('comp_background_secondary'))
+    .borderRadius(16)
+  }
+  @Builder private buildConnectionDialog() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(`rgba(6, 12, 18, ${0.52 * this.dialogBackdropOpacity})`)
+        .onClick(() => {
+          this.closeConnectionDialog();
+        })
+
+      Column({ space: 16 }) {
+        Row() {
+          Column({ space: 4 }) {
+            Text(this.dialogMode === 'create' ? '新建网络连接' : '编辑网络连接')
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+            Text(this.dialogMode === 'create'
+              ? '填写连接信息，保存后直接进入远程文件浏览页。'
+              : '更新连接信息，测试通过后可继续浏览和导入。')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([this.color('text_primary')])
+          }
+          .width(38)
+          .height(38)
+          .borderRadius(19)
+          .backgroundColor(this.color('comp_background_tertiary'))
+          .onClick(() => {
+            this.closeConnectionDialog();
+          })
+        }
+        .width('100%')
+
+        Scroll(this.dialogScroller) {
+          Column({ space: 16 }) {
+            this.buildDialogStatusCard()
+
+            Row({ space: 8 }) {
+              ForEach(this.protocolOptions, (protocol: NetworkFolderProtocol) => {
+                this.buildDialogProtocolOption(protocol)
+              }, (protocol: NetworkFolderProtocol) => protocol)
+            }
+            .width('100%')
+
+            this.buildDialogField($r('sys.symbol.doc_text'), '连接名称', '留空时自动生成',
+              this.dialogDraft.name, (value: string) => {
+                const nextDraft = this.cloneDraft(this.dialogDraft);
+                nextDraft.name = value;
+                this.dialogDraft = nextDraft;
+              })
+
+            if (this.dialogDraft.protocol === 'webdav') {
+              this.buildDialogField($r('sys.symbol.arrow_clockwise'), '服务地址', 'https://example.com/dav',
+                this.dialogDraft.serverUrl, (value: string) => {
+                  const nextDraft = this.cloneDraft(this.dialogDraft);
+                  nextDraft.serverUrl = value;
+                  this.dialogDraft = nextDraft;
+                })
+            } else {
+              this.buildDialogField($r('sys.symbol.externaldrive_fill'), '主机地址',
+                this.dialogDraft.protocol === 'smb' ? '192.168.1.10' : 'ftp.example.com',
+                this.dialogDraft.host, (value: string) => {
+                  const nextDraft = this.cloneDraft(this.dialogDraft);
+                  nextDraft.host = value;
+                  this.dialogDraft = nextDraft;
+                })
+            }
+
+            if (this.dialogDraft.protocol === 'smb') {
+              this.buildDialogField($r('sys.symbol.folder_fill'), '共享名称', 'media',
+                this.dialogDraft.shareName, (value: string) => {
+                  const nextDraft = this.cloneDraft(this.dialogDraft);
+                  nextDraft.shareName = value;
+                  this.dialogDraft = nextDraft;
+                })
+            }
+
+            Row({ space: 12 }) {
+              Column() {
+                this.buildDialogField($r('sys.symbol.circle'), '用户名', '可留空',
+                  this.dialogDraft.username, (value: string) => {
+                    const nextDraft = this.cloneDraft(this.dialogDraft);
+                    nextDraft.username = value;
+                    this.dialogDraft = nextDraft;
+                  })
+              }
+              .layoutWeight(1)
+
+              Column() {
+                this.buildDialogField($r('sys.symbol.circle'), '密码', '可留空',
+                  this.dialogDraft.password, (value: string) => {
+                    const nextDraft = this.cloneDraft(this.dialogDraft);
+                    nextDraft.password = value;
+                    this.dialogDraft = nextDraft;
+                  }, InputType.Password)
+              }
+              .layoutWeight(1)
+            }
+            .width('100%')
+
+            if (this.dialogDraft.protocol === 'smb') {
+              Row({ space: 12 }) {
+                Column() {
+                  this.buildDialogField($r('sys.symbol.circle'), '域', 'WORKGROUP',
+                    this.dialogDraft.domain, (value: string) => {
+                      const nextDraft = this.cloneDraft(this.dialogDraft);
+                      nextDraft.domain = value;
+                      this.dialogDraft = nextDraft;
+                    })
+                }
+                .layoutWeight(1)
+
+                Column() {
+                  this.buildDialogField($r('sys.symbol.circle'), '客户端 IP', '留空自动探测',
+                    this.dialogDraft.clientIP, (value: string) => {
+                      const nextDraft = this.cloneDraft(this.dialogDraft);
+                      nextDraft.clientIP = value;
+                      this.dialogDraft = nextDraft;
+                    })
+                }
+                .layoutWeight(1)
+              }
+              .width('100%')
+            }
+
+            Row({ space: 12 }) {
+              Column() {
+                this.buildDialogField($r('sys.symbol.folder'), '基准路径',
+                  this.dialogDraft.protocol === 'smb' ? '/books' : '/library',
+                  this.dialogDraft.basePath, (value: string) => {
+                    const nextDraft = this.cloneDraft(this.dialogDraft);
+                    nextDraft.basePath = value;
+                    this.dialogDraft = nextDraft;
+                  })
+              }
+              .layoutWeight(1)
+
+              Column() {
+                this.buildDialogField($r('sys.symbol.circle'), '端口', `${this.dialogDraft.port}`,
+                  `${this.dialogDraft.port}`, (value: string) => {
+                    const nextDraft = this.cloneDraft(this.dialogDraft);
+                    const parsed = parseInt(value, 10);
+                    if (!Number.isNaN(parsed) && parsed > 0) {
+                      nextDraft.port = parsed;
+                    }
+                    this.dialogDraft = nextDraft;
+                  }, InputType.Number)
+              }
+              .layoutWeight(1)
+            }
+            .width('100%')
+
+            this.buildDialogField($r('sys.symbol.circle'), '超时（毫秒）', '30000',
+              `${this.dialogDraft.timeoutMs}`, (value: string) => {
+                const nextDraft = this.cloneDraft(this.dialogDraft);
+                const parsed = parseInt(value, 10);
+                if (!Number.isNaN(parsed) && parsed > 0) {
+                  nextDraft.timeoutMs = parsed;
+                }
+                this.dialogDraft = nextDraft;
+              }, InputType.Number)
+
+            if (this.dialogDraft.protocol === 'ftp' || this.dialogDraft.protocol === 'ftps') {
+              this.buildDialogToggle($r('sys.symbol.arrow_clockwise'), '被动模式',
+                '建议保留开启，以兼容更多 FTP 服务端。', this.dialogDraft.passive, (value: boolean) => {
+                  const nextDraft = this.cloneDraft(this.dialogDraft);
+                  nextDraft.passive = value;
+                  this.dialogDraft = nextDraft;
+                })
+            }
+
+            if (this.dialogDraft.protocol === 'webdav' || this.dialogDraft.protocol === 'ftps') {
+              this.buildDialogToggle($r('sys.symbol.checkmark_circle_fill'), '验证 SSL',
+                '建议保持开启，只有在自签名证书场景再关闭。', this.dialogDraft.verifySSL, (value: boolean) => {
+                  const nextDraft = this.cloneDraft(this.dialogDraft);
+                  nextDraft.verifySSL = value;
+                  this.dialogDraft = nextDraft;
+                })
+            }
+
+            Blank().height(8)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+
+        Row({ space: 10 }) {
+          this.buildActionButton('取消', $r('sys.symbol.xmark'), ACTION_STYLE_NEUTRAL, true, () => {
+            this.closeConnectionDialog();
+          })
+          this.buildActionButton(this.dialogTesting ? '测试中…' : '测试连接', $r('sys.symbol.arrow_clockwise'),
+            ACTION_STYLE_INFO, !this.dialogSaving, () => {
+              void this.testDialogConnection();
+            })
+          this.buildActionButton(this.dialogSaving ? '保存中…' : '保存', $r('sys.symbol.checkmark_circle_fill'),
+            ACTION_STYLE_PRIMARY, !this.dialogTesting, () => {
+              void this.saveDialogConnection();
+            })
+        }
+        .width('100%')
+      }
+      .width('92%')
+      .height('84%')
+      .padding({ left: 20, right: 20, top: 20, bottom: 20 })
+      .backgroundColor(this.color('panel_background'))
+      .borderRadius(26)
+      .opacity(this.dialogOpacity)
+      .scale({ x: this.dialogScale, y: this.dialogScale })
+      .translate({ x: 0, y: this.dialogTranslateY })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(this.color('background'))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        Column({ space: 0 }) {
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
+
+          Stack() {
+            if (this.viewMode === 'connections') {
+              this.buildConnectionsRefreshView()
+            } else {
+              if (this.hasSelectedConnection()) {
+                this.buildBrowserRefreshView(this.getSelectedConnectionForRender())
+              } else {
+                this.buildConnectionsRefreshView()
+              }
+            }
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .opacity(this.routeOpacity)
+          .translate({ x: this.routeTranslateX, y: this.pageReady ? 0 : 12 })
+          .scale({ x: this.routeScale, y: this.routeScale })
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ left: 0, right: 0, top: 0, bottom: 0 })
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        if (this.showFloatingCapsule) {
+          Column() {
+            this.buildFloatingStatusCapsule()
+          }
+          .width('100%')
+          .padding({ top: TITLE_BAR_HEIGHT_MINI + 10, left: 16, right: 16 })
+          .alignItems(HorizontalAlign.Center)
+          .translate({ y: this.showFloatingCapsule ? 0 : -12 })
+          .opacity(this.showFloatingCapsule ? 1 : 0)
+          .animation({ duration: 220, curve: Curve.EaseInOut })
+          .hitTestBehavior(HitTestMode.None)
+          .zIndex(12)
+        }
+
+        if (this.dialogMounted) {
+          this.buildConnectionDialog()
+        }
+      }
+    }
+      .titleBar({
+        padding: {
+          start: LengthMetrics.vp(16),
+          end: LengthMetrics.vp(16)
+        },
+        style: {
+          originalStyle: {
+            backgroundStyle: { backgroundColor: this.color('panel_background') },
+            contentStyle: {
+              titleStyle: { mainTitleColor: this.color('text_primary') },
+              backIconStyle: {
+                backgroundColor: this.color('comp_background_tertiary'),
+                iconColor: this.color('icon_primary')
+              }
+            }
+          }
+        },
+        content: {
+          title: {
+            mainTitle: '网络文件夹'
+          }
+        }
+      })
+      .onReady((context: NavDestinationContext) => {
+        this.pathStack = context.pathStack;
+        void this.initializePage();
+      })
+      .onBackPressed(() => {
+        if (this.dialogMounted) {
+          this.closeConnectionDialog();
+          return true;
+        }
+        if (this.viewMode === 'browser') {
+          if (this.currentPath !== '/') {
+            void this.goParentDirectory();
+          } else {
+            void this.returnToConnections();
+          }
+          return true;
+        }
+        return false;
+      })
+      .backgroundColor(Color.Transparent)
+  }
+}

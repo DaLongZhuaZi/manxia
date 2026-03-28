@@ -3,6 +3,7 @@
   "description": "Please describe the basic information.",
   "dependencies": {
     "@ohos/commons-compress": "^2.0.6",
+    "@ohos/smbj": "2.0.2",
     "@ohos/oh7zip": "1.0.3",
     "@ohos/minizip": "1.0.4",
     "@ohos/unrar": "2.0.4"

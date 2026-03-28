@@ -300,6 +300,14 @@
         }
       },
       {
+        "name": "ohos.permission.GET_NETWORK_INFO",
+        "reason": "$string:get_network_info_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
         "reason": "$string:background_running_reason",
         "usedScene": {
@@ -309,14 +317,6 @@
       },
       {
         "name": "ohos.permission.DETECT_GESTURE"
-      },
-      {
-        "name": "ohos.permission.ACTIVITY_MOTION",
-        "reason": "$string:activity_motion_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
       },
       {
         "name": "ohos.permission.VIBRATE",
