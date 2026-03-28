@@ -1,0 +1,29 @@
+{
+	"app": {
+		"bundleName": "com.openharmony.myapplication",
+		"debug": true,
+		"versionCode": 1000000,
+		"versionName": "1.0.0",
+		"minAPIVersion": 10,
+		"targetAPIVersion": 10,
+		"apiReleaseType": "Release",
+		"compileSdkVersion": "4.0.10.16",
+		"compileSdkType": "OpenHarmony",
+		"appEnvironments": [],
+		"bundleType": "app",
+		"buildMode": "debug"
+	},
+	"module": {
+		"name": "library",
+		"type": "har",
+		"deviceTypes": [
+			"default",
+			"tablet"
+		],
+		"packageName": "@ohos/node-polyfill",
+		"installationFree": false,
+		"virtualMachine": "ark9.0.0.0",
+		"compileMode": "esmodule",
+		"dependencies": []
+	}
+}

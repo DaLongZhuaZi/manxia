@@ -1,0 +1,9 @@
+globalThis["harmonyEvents"]  = require("./events");
+globalThis["harmonyPath"] = require("./path");
+globalThis["harmonyBuffer"]  = require("./buffer");
+globalThis["harmonyStream"] = require("./stream/lib/ours");
+globalThis["harmonyProcess"]  = require("./process");
+globalThis["harmonyQueryString"]  = require("./querystring");
+globalThis["harmonyUtil"]  = require("./util");
+globalThis["harmonyUrl"]  = require("./url");
+globalThis["harmonyTimers"]  = require("./timers");

@@ -1,0 +1,57 @@
+
+[
+    {
+        "Name": "openharmony-polyfill/packages/polyfill",
+        "License": "MulanPSL-2.0",
+        "License File": "LICENSE",
+        "Version Number": "0.18.6",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/originjs/openharmony-polyfill/tree/main/packages",
+        "Description": "This project is a polyfill that implements a subset of the standard web interface for OpenHarmony"
+    },
+    {
+        "Name": "node",
+        "License": "MIT license",
+        "License File": " LICENSE ",
+        "Version Number": "18.8.0",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/nodejs/node",
+        "Description": "Node.js JavaScript runtime"
+    },
+    {
+        "Name": "buffer",
+        "License": "MIT license",
+        "License File": " LICENSE ",
+        "Version Number": "v6.0.3",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/feross/buffer",
+        "Description": "The buffer module from node.js, for the browser"
+    },
+    {
+        "Name": "crypto-browserify",
+        "License": "MIT license",
+        "License File": " LICENSE ",
+        "Version Number": "v3.12.0",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/browserify/crypto-browserify",
+        "Description": "A port of node's crypto module to the browser."
+    },
+    {
+        "Name": "events",
+        "License": "MIT license",
+        "License File": " LICENSE ",
+        "Version Number": "v3.3.0",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/browserify/events",
+        "Description": "This implements the Node.js events module for environments that do not have it, like browsers."
+    },
+    {
+        "Name": "node-process",
+        "License": "MIT license",
+        "License File": " LICENSE ",
+        "Version Number": "v0.11.0",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/defunctzombie/node-process",
+        "Description": "Works in node.js and browsers via the browser.js shim provided with the module"
+    }
+]

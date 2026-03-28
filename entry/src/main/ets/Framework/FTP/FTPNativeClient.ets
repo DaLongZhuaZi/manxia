@@ -237,6 +237,42 @@ export class FTPNativeClient {
   }
 
   /**
+   * 获取目录列表结果（保留错误信息）
+   */
+  async listWithResult(remotePath: string = '/'): Promise<FTPListResult> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    if (!nativeModule) {
+      const message = `FTP Native模块未加载: ${nativeModuleError}`;
+      logger.warn(TAG, message);
+      return {
+        success: false,
+        message: message,
+        files: []
+      };
+    }
+
+    try {
+      logger.info(TAG, `获取目录列表结果: ${remotePath}`);
+      const result = nativeModule.ftpList(remotePath);
+      if (result.success) {
+        this.currentPath = remotePath;
+      }
+      return result;
+    } catch (error) {
+      const message = `获取目录列表失败: ${error}`;
+      logger.error(TAG, message);
+      return {
+        success: false,
+        message: message,
+        files: []
+      };
+    }
+  }
+
+  /**
    * 上传文件
    */
   async upload(localPath: string, remotePath: string): Promise<FTPResult> {

@@ -6,6 +6,7 @@ project(WebDAVNative)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # 设置头文件搜索目录
 include_directories(
@@ -36,12 +37,20 @@ set_target_properties(curl PROPERTIES
 )
 
 # 添加WebDAV库（包含FTP支持）
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ENABLE_LIBKRB5 OFF CACHE BOOL "" FORCE)
+set(ENABLE_GSSAPI OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libsmb2 ${CMAKE_CURRENT_BINARY_DIR}/libsmb2)
+
 add_library(webdav_native SHARED
     curl_global.cpp
     webdav_client.cpp
     webdav_napi.cpp
     ftp_client.cpp
     ftp_napi.cpp
+    smb_client.cpp
+    smb_napi.cpp
 )
 
 # 链接依赖库
@@ -49,6 +58,7 @@ target_link_libraries(webdav_native PUBLIC
     libace_napi.z.so
     libhilog_ndk.z.so
     curl
+    smb2
     mbedtls
     mbedx509
     mbedcrypto

@@ -5,7 +5,7 @@ import { logger } from '../Utils/Logger';
 import { widgetDataSync } from '../Utils/WidgetDataSync';
 import { common } from '@kit.AbilityKit';
 import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
-import { CommonModifier, LengthMetrics, promptAction, router } from '@kit.ArkUI';
+import { CommonModifier, LengthMetrics, promptAction, router, curves } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
 import { picker } from '@kit.CoreFileKit';
@@ -32,6 +32,7 @@ import {
 // import { TestManagementPage } from './TestManagementPage';
 import { DataManagementPage } from './DataManagementPage';
 import { DownloadSyncPage } from './DownloadSyncPage';
+import { NetworkFolderPage } from './NetworkFolderPage';
 import { MangaReaderPage } from './MangaReaderPage';
 import { MangaDetailPage, MangaDetailPageParams } from './MangaDetailPage';
 import { WebViewConfigurableSystemTestPage } from './WebViewConfigurableSystemTestPage';
@@ -4831,16 +4832,26 @@ struct MainMenuPage {
     return `${prefix}_${contentType}_${contentId}`;
   }
 
+  private getLibraryCollectionLayoutAnimationOptions(): AnimateParam {
+    const animationOptions: AnimateParam = {
+      duration: 460,
+      curve: curves.springMotion(0.68, 0.9)
+    };
+    return animationOptions;
+  }
+
+  private animateLibraryCollectionLayout(update: () => void): void {
+    animateTo(this.getLibraryCollectionLayoutAnimationOptions(), () => {
+      update();
+    });
+  }
+
   private getLibraryContentCollectionItemTransition() {
     return TransitionEffect.asymmetric(
       TransitionEffect.OPACITY
-        .combine(TransitionEffect.scale({ x: 0.94, y: 0.94 }))
-        .combine(TransitionEffect.translate({ y: 18 }))
-        .animation({ duration: 320, curve: Curve.EaseOut }),
-      TransitionEffect.OPACITY
-        .combine(TransitionEffect.scale({ x: 0.97, y: 0.97 }))
-        .combine(TransitionEffect.translate({ y: -12 }))
-        .animation({ duration: 280, curve: Curve.EaseInOut })
+        .combine(TransitionEffect.scale({ x: 0.98, y: 0.98 }))
+        .animation({ duration: 180, curve: Curve.EaseOut }),
+      TransitionEffect.IDENTITY
     );
   }
 
@@ -5622,18 +5633,15 @@ struct MainMenuPage {
    * 静默刷新书库（增量更新，避免闪屏）
    * 优化：不加载章节信息，书库只需要基本信息，章节在进入详情页时再加载
    */
-  private async silentRefreshLibrary(): Promise<void> {
+  private async silentRefreshLibrary(enableCollectionLayoutAnimation: boolean = false): Promise<void> {
     try {
       logger.debug(TAG, '静默刷新书库（增量更新，不加载章节）');
 
       // 加载新的漫画列表（不加载章节信息，大幅提升速度）
       const newMangaList = this.filterFavoriteMangaItems(await this.loadAllMangaFromDatabase());
+      const refreshedPdfEbooks = newMangaList.filter((manga: Manga) => manga.contentType === 'ebook');
 
-      // 增量更新漫画列表（不替换整个列表，避免封面闪烁）
-      this.incrementalUpdateMangaList(this.mangaList, newMangaList);
-      this.applyLibraryFilter();
-
-      // 增量更新电子书列表
+      let refreshedFavoriteEbooks: EBook[] | undefined;
       try {
         let newEbookList: EBook[] = [];
         if (this.isPrivacyMode) {
@@ -5642,16 +5650,12 @@ struct MainMenuPage {
           newEbookList = await this.ebookDataManager.getNonPrivateEBooks();
         }
         await this.normalizeEBookCoversForDisplay(newEbookList);
-        const newPdfEbooks = newMangaList.filter((manga: Manga) => manga.contentType === 'ebook');
-
-        this.incrementalUpdateEBookList(this.ebookList, this.filterFavoriteEBookItems(newEbookList));
-        this.incrementalUpdateMangaList(this.pdfEbookList, newPdfEbooks);
-        this.applyEBookFilter();
+        refreshedFavoriteEbooks = this.filterFavoriteEBookItems(newEbookList);
       } catch (ebookErr) {
         logger.warn(TAG, `静默刷新电子书列表失败: ${ebookErr instanceof Error ? ebookErr.message : String(ebookErr)}`);
       }
 
-      // 增量更新小说列表
+      let refreshedFavoriteNovels: NovelBook[] | undefined;
       try {
         // 确保 novelDataManager 已初始化
         if (!this.novelDataManager) {
@@ -5668,11 +5672,30 @@ struct MainMenuPage {
           newNovelList = await this.novelDataManager.getNonPrivateBooks();
         }
         await this.normalizeNovelCoversForDisplay(newNovelList);
-        this.incrementalUpdateNovelList(this.novelList, this.filterFavoriteNovelItems(newNovelList));
-        this.applyNovelFilter();
-        logger.debug(TAG, `静默刷新小说列表完成: 收藏 ${this.novelList.length} 本 / 全部 ${newNovelList.length} 本`);
+        refreshedFavoriteNovels = this.filterFavoriteNovelItems(newNovelList);
+        logger.debug(TAG, `静默刷新小说列表完成: 收藏 ${refreshedFavoriteNovels.length} 本 / 全部 ${newNovelList.length} 本`);
       } catch (novelErr) {
         logger.warn(TAG, `静默刷新小说列表失败: ${novelErr instanceof Error ? novelErr.message : String(novelErr)}`);
+      }
+
+      const applyUpdates = () => {
+        this.incrementalUpdateMangaList(this.mangaList, newMangaList);
+        this.incrementalUpdateMangaList(this.pdfEbookList, refreshedPdfEbooks);
+        if (refreshedFavoriteEbooks !== undefined) {
+          this.incrementalUpdateEBookList(this.ebookList, refreshedFavoriteEbooks);
+        }
+        if (refreshedFavoriteNovels !== undefined) {
+          this.incrementalUpdateNovelList(this.novelList, refreshedFavoriteNovels);
+        }
+        void this.applyLibraryFilter();
+        this.applyEBookFilter();
+        this.applyNovelFilter();
+      };
+
+      if (enableCollectionLayoutAnimation) {
+        this.animateLibraryCollectionLayout(applyUpdates);
+      } else {
+        applyUpdates();
       }
 
       logger.debug(TAG, `静默刷新书库完成：漫画 ${this.mangaList.length} 部，电子书 ${this.ebookList.length} 本，小说 ${this.novelList.length} 本`);
@@ -7935,7 +7958,8 @@ struct MainMenuPage {
       }
 
       this.exitAllLibraryMultiSelectModes();
-      await this.silentRefreshLibrary();
+      await this.silentRefreshLibrary(true);
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `书库混合批量删除失败: ${errorMessage}`);
@@ -7974,7 +7998,7 @@ struct MainMenuPage {
       this.exitMultiSelectMode();
 
       // 静默刷新漫画列表（增量更新，避免闪烁）
-      await this.silentRefreshLibrary();
+      await this.silentRefreshLibrary(true);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -8186,7 +8210,7 @@ struct MainMenuPage {
       this.exitEBookMultiSelectMode();
 
       // 刷新电子书列表
-      await this.loadEBookList();
+      await this.silentRefreshLibrary(true);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -8275,7 +8299,7 @@ struct MainMenuPage {
       this.exitNovelMultiSelectMode();
 
       // 刷新小说列表
-      await this.loadNovelList();
+      await this.silentRefreshLibrary(true);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -10252,12 +10276,12 @@ struct MainMenuPage {
           }
           .width('100%')
           .transition(this.getLibraryContentCollectionItemTransition())
-          .animation({ duration: 380, curve: Curve.EaseInOut })
+          .animation(this.getLibraryCollectionLayoutAnimationOptions())
         }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('default_mix_list', item.type, item.id))
         Blank().height(this.getLibraryDefaultBottomSpacerHeight())
       }
       .width('100%')
-      .animation({ duration: 380, curve: Curve.EaseInOut })
+      .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       Column({ space: 0 }) {
         Grid() {
@@ -10266,18 +10290,18 @@ struct MainMenuPage {
               this.buildLibraryDefaultMixedGridCard(item)
             }
             .transition(this.getLibraryContentCollectionItemTransition())
-            .animation({ duration: 380, curve: Curve.EaseInOut })
+            .animation(this.getLibraryCollectionLayoutAnimationOptions())
           }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('default_mix_grid', item.type, item.id))
         }
         .columnsTemplate(this.getLibraryGridColumnsTemplate())
         .columnsGap(this.responsive_gridGap)
         .rowsGap(this.responsive_gridGap)
         .width('100%')
-        .animation({ duration: 380, curve: Curve.EaseInOut })
+        .animation(this.getLibraryCollectionLayoutAnimationOptions())
         Blank().height(this.getLibraryDefaultBottomSpacerHeight())
       }
       .width('100%')
-      .animation({ duration: 380, curve: Curve.EaseInOut })
+      .animation(this.getLibraryCollectionLayoutAnimationOptions())
     }
   }
 
@@ -14531,7 +14555,7 @@ struct MainMenuPage {
             this.buildMangaGridCard(manga, 'shelf_detail')
           }
           .transition(this.getLibraryContentCollectionItemTransition())
-          .animation({ duration: 380, curve: Curve.EaseInOut })
+          .animation(this.getLibraryCollectionLayoutAnimationOptions())
         }, (manga: Manga) => this.getLibraryContentRenderKey('shelf_manga_grid', 'manga', manga.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
@@ -14541,7 +14565,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
-      .animation({ duration: 380, curve: Curve.EaseInOut })
+      .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       this.buildShelfEmptyState('没有漫画')
     }
@@ -14559,14 +14583,14 @@ struct MainMenuPage {
             this.buildEBookGridCard(ebook, 'shelf_detail')
           }
           .transition(this.getLibraryContentCollectionItemTransition())
-          .animation({ duration: 380, curve: Curve.EaseInOut })
+          .animation(this.getLibraryCollectionLayoutAnimationOptions())
         }, (ebook: EBook) => this.getLibraryContentRenderKey('shelf_ebook_grid', 'ebook', ebook.id))
         ForEach(this.getShelfFilteredPdfEBookList(), (pdfEbook: Manga) => {
           GridItem() {
             this.buildPdfEBookGridCard(pdfEbook, 'shelf_detail')
           }
           .transition(this.getLibraryContentCollectionItemTransition())
-          .animation({ duration: 380, curve: Curve.EaseInOut })
+          .animation(this.getLibraryCollectionLayoutAnimationOptions())
         }, (pdfEbook: Manga) => this.getLibraryContentRenderKey('shelf_pdfebook_grid', 'pdfebook', pdfEbook.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
@@ -14576,7 +14600,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
-      .animation({ duration: 380, curve: Curve.EaseInOut })
+      .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       this.buildShelfEmptyState('没有电子书')
     }
@@ -14594,7 +14618,7 @@ struct MainMenuPage {
             this.buildNovelGridCard(novel, 'shelf_detail')
           }
           .transition(this.getLibraryContentCollectionItemTransition())
-          .animation({ duration: 380, curve: Curve.EaseInOut })
+          .animation(this.getLibraryCollectionLayoutAnimationOptions())
         }, (novel: NovelBook) => this.getLibraryContentRenderKey('shelf_novel_grid', 'novel', novel.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
@@ -14604,7 +14628,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
-      .animation({ duration: 380, curve: Curve.EaseInOut })
+      .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       this.buildShelfEmptyState('没有小说')
     }
@@ -14923,7 +14947,7 @@ struct MainMenuPage {
             }
           }
           .transition(this.getLibraryContentCollectionItemTransition())
-          .animation({ duration: 380, curve: Curve.EaseInOut })
+          .animation(this.getLibraryCollectionLayoutAnimationOptions())
         }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('custom_shelf_grid', item.type, item.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
@@ -14933,7 +14957,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
-      .animation({ duration: 380, curve: Curve.EaseInOut })
+      .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       this.buildShelfEmptyState('书架为空')
     }
@@ -18227,13 +18251,15 @@ struct MainMenuPage {
     try {
       logger.info(TAG, `开始删除电子书: ${ebook.id}`);
       await this.ebookDataManager.deleteEBook(ebook.id);
-      const newList: EBook[] = [];
-      for (let i: number = 0; i < this.ebookList.length; i++) {
-        const b: EBook = this.ebookList[i];
-        if (b.id !== ebook.id) { newList.push(b); }
-      }
-      this.ebookList = newList;
-      this.applyEBookFilter();
+      this.animateLibraryCollectionLayout(() => {
+        for (let i: number = 0; i < this.ebookList.length; i++) {
+          if (this.ebookList[i].id === ebook.id) {
+            this.ebookList.splice(i, 1);
+            break;
+          }
+        }
+        this.applyEBookFilter();
+      });
       this.showToast('电子书已删除');
       logger.info(TAG, `电子书删除成功: ${ebook.metadata.title}`);
     } catch (error) {
@@ -18329,17 +18355,20 @@ struct MainMenuPage {
             logger.info(TAG, `开始删除漫画: ${mangaId}`);
             await this.dataManager.deleteComic(mangaId);
 
-            const newMangaList: Manga[] = [];
-            for (let i: number = 0; i < this.mangaList.length; i++) {
-              const mm: Manga = this.mangaList[i];
-              if (mm.id !== mangaId) { newMangaList.push(mm); }
-            }
-            this.mangaList = newMangaList;
+            this.animateLibraryCollectionLayout(() => {
+              for (let i: number = 0; i < this.mangaList.length; i++) {
+                if (this.mangaList[i].id === mangaId) {
+                  this.mangaList.splice(i, 1);
+                  break;
+                }
+              }
+              this.incrementalUpdateMangaList(this.pdfEbookList,
+                this.mangaList.filter((item: Manga) => item.contentType === 'ebook'));
+              void this.applyLibraryFilter();
+              this.applyEBookFilter();
+            });
 
             eventBus.publish(GameEvent.MANGA_DELETED, new MangaDeletedPayload(mangaId));
-
-            // 触发动画
-            await this.applyLibraryFilter();
 
             this.showToast('漫画已删除');
             logger.info(TAG, `漫画删除成功: ${mangaId}`);
@@ -18439,15 +18468,15 @@ struct MainMenuPage {
             logger.info(TAG, `开始删除电子书: ${ebookId}`);
             await this.ebookDataManager.deleteEBook(ebookId);
 
-            const newEbookList: EBook[] = [];
-            for (let i: number = 0; i < this.ebookList.length; i++) {
-              const eb: EBook = this.ebookList[i];
-              if (eb.id !== ebookId) { newEbookList.push(eb); }
-            }
-            this.ebookList = newEbookList;
-
-            // 触发动画
-            await this.applyEBookFilter();
+            this.animateLibraryCollectionLayout(() => {
+              for (let i: number = 0; i < this.ebookList.length; i++) {
+                if (this.ebookList[i].id === ebookId) {
+                  this.ebookList.splice(i, 1);
+                  break;
+                }
+              }
+              this.applyEBookFilter();
+            });
 
             this.showToast('电子书已删除');
             logger.info(TAG, `电子书删除成功: ${ebookId}`);
@@ -18541,15 +18570,15 @@ struct MainMenuPage {
             logger.info(TAG, `开始删除小说: ${novelId}`);
             await this.novelDataManager?.deleteBook(novelId);
 
-            const newNovelList: NovelBook[] = [];
-            for (let i: number = 0; i < this.novelList.length; i++) {
-              const nv: NovelBook = this.novelList[i];
-              if (nv.id !== novelId) { newNovelList.push(nv); }
-            }
-            this.novelList = newNovelList;
-
-            // 触发动画
-            await this.applyNovelFilter();
+            this.animateLibraryCollectionLayout(() => {
+              for (let i: number = 0; i < this.novelList.length; i++) {
+                if (this.novelList[i].id === novelId) {
+                  this.novelList.splice(i, 1);
+                  break;
+                }
+              }
+              this.applyNovelFilter();
+            });
 
             this.showToast('小说已删除');
             logger.info(TAG, `小说删除成功: ${novelId}`);
@@ -24620,6 +24649,22 @@ struct MainMenuPage {
               this.showToast('打开数据管理页面失败');
             }
           }, 'guide_main_setting_data_management')
+          this.buildSettingItem('网络文件夹', '通过 WebDAV/FTP/FTPS/SMB 连接远程文件夹并导入文件', $r('sys.symbol.externaldrive_fill'), () => {
+            try {
+              const navigationPath: NavigationPath = {
+                name: 'NetworkFolderPage',
+                param: {
+                  fromPage: 'MainMenuPage',
+                  timestamp: Date.now()
+                }
+              };
+              this.pathStack.pushPath(navigationPath);
+              logger.info(TAG, '导航到网络文件夹页面');
+            } catch (error) {
+              logger.error(TAG, '导航到网络文件夹页面失败', String(error));
+              this.showToast('打开网络文件夹页面失败');
+            }
+          }, 'guide_main_setting_network_folder')
           this.buildSettingItem('Download导入', '从Download目录扫描并导入文件', $r('sys.symbol.folder_fill'), () => {
             try {
               const navigationPath: NavigationPath = {
@@ -24859,6 +24904,8 @@ struct MainMenuPage {
       // } else
       if (name === 'DataManagementPage') {
         DataManagementPage()
+      } else if (name === 'NetworkFolderPage') {
+        NetworkFolderPage()
       } else if (name === 'DownloadSyncPage') {
         DownloadSyncPage()
       } else if (name === 'MangaReaderPage') {

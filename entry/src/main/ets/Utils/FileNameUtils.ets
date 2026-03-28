@@ -9,6 +9,11 @@ import { logger } from './Logger';
 
 const TAG = 'FileNameUtils';
 
+export interface SanitizedMangaPath {
+  source: string;
+  comic: string;
+}
+
 /**
  * 清理文件名中的非法字符
  * 
@@ -64,14 +69,16 @@ export function sanitizeFileName(fileName: string, fallbackName: string = 'untit
  * @param comicTitle 漫画标题
  * @returns 清理后的目录路径
  */
-export function sanitizeMangaPath(sourceId: string, comicTitle: string): { source: string, comic: string } {
+export function sanitizeMangaPath(sourceId: string, comicTitle: string): SanitizedMangaPath {
   const safeSource = sanitizeFileName(sourceId, 'unknown_source', 50);
   const safeComic = sanitizeFileName(comicTitle, `comic_${Date.now()}`, 100);
-  
-  return {
+
+  const sanitizedPath: SanitizedMangaPath = {
     source: safeSource,
     comic: safeComic
   };
+
+  return sanitizedPath;
 }
 
 /**

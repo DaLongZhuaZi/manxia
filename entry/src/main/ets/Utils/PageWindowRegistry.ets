@@ -56,6 +56,7 @@ export class PageWindowRegistry {
     'MangaSourceTestPage',
     'MainMenuSettingsSubPage',
     'NetworkSettingsSubPage',
+    'NetworkFolderPage',
     'NotificationSettingsSubPage',
     'NovelBookshelfPage',
     'NovelDetailPage',

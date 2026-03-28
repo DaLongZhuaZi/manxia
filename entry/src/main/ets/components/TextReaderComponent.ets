@@ -568,9 +568,24 @@ export struct TextReaderComponent {
   private getPaginationSignature(): string {
     const ts = this.settings.textStyle;
     const pm = this.getEffectivePageMargins();
-    return `${this.settings.readingMode}|${this.settings.readingDirection}|${ts.fontSize}|${ts.lineHeight}|` +
+    return `${this.settings.readingMode}|${this.settings.readingDirection}|${this.getResolvedPaginationMode()}|` +
+      `${ts.fontSize}|${ts.lineHeight}|` +
       `${ts.letterSpacing}|${ts.paragraphSpacing}|${ts.firstLineIndent}|${pm.top}|${pm.bottom}|${pm.left}|${pm.right}|` +
       `${this.getEffectiveBottomBarHeight()}|${this.componentWidth}|${this.componentHeight}`;
+  }
+
+  /**
+   * 两端对齐依赖 Text 组件的自然换行。
+   * 如果先手工插入分页换行，再交给 JUSTIFY 渲染，右边缘会出现明显参差。
+   */
+  private getResolvedPaginationMode(): PaginationMode {
+    if (this.paginationMode === PaginationMode.ONLINE) {
+      return PaginationMode.ONLINE;
+    }
+    if (this.settings.textStyle.textAlignment === TextAlignment.JUSTIFY) {
+      return PaginationMode.ONLINE;
+    }
+    return PaginationMode.LOCAL;
   }
 
   private getCurrentAnchorCharIndex(): number {
@@ -1615,7 +1630,7 @@ export struct TextReaderComponent {
     // 计算每行字符数：考虑字间距
     // 计算每行字符数：考虑字间距
     // 总宽度 = n个字符宽度 + (n-1)个字间距
-    const widthFactor = this.paginationMode === PaginationMode.ONLINE ? 1.0 : 0.92;
+    const widthFactor = this.getResolvedPaginationMode() === PaginationMode.ONLINE ? 1.0 : 0.92;
     
     // maxWidth + letterSpacing = n * (avgCharWidth + letterSpacing)
     // n = (maxWidth + letterSpacing) / (avgCharWidth + letterSpacing)
@@ -1666,7 +1681,8 @@ export struct TextReaderComponent {
     }
     
     // 更新当前页面内容
-    if (this.paginationMode === PaginationMode.ONLINE) {
+    const resolvedPaginationMode = this.getResolvedPaginationMode();
+    if (resolvedPaginationMode === PaginationMode.ONLINE) {
       this.paginateContentOnlineMode(linesPerPage);
     } else {
       this.paginateContentLocalMode(linesPerPage);
