@@ -78,7 +78,7 @@ struct WelcomeGuidePage {
       title: '主题选择',
       subtitle: '选择一个您喜欢的风格',
       description: '您可以先在这里直接选择默认提供的两套主题预设之一，快速完成初始风格设置。后续如果需要更细致地调整透明度、背景或视觉效果，也可以再从设置页进入对应页面慢慢微调。',
-      icon: $r('sys.symbol.paintbrush'),
+      icon: $r('sys.symbol.paintpalette'),
       buttonText: '继续下一步',
       showSkip: false
     };
@@ -88,7 +88,7 @@ struct WelcomeGuidePage {
       title: '从Download同步',
       subtitle: '导入您的漫画与电子书',
       description: '您可以将漫画文件（支持CBZ等格式压缩包）和电子书（TXT、EPUB、MOBI、AZW3、PDF等）放置到Download文件夹下的“漫匣”文件夹当中，然后通过Download同步功能导入到书库。点击下方按钮前往Download同步页面。',
-      icon: $r('sys.symbol.folder_fill'),
+      icon: $r('sys.symbol.square_and_arrow_down'),
       buttonText: '前往Download同步',
       showSkip: false
     };
@@ -121,7 +121,7 @@ struct WelcomeGuidePage {
       title: '自定义体验',
       subtitle: '打造专属于您的阅读体验',
       description: '漫匣支持丰富的自定义设置，包括自定义字体、自定义页面布局、自定义底栏标签、主题颜色等。您可以在设置页面中根据个人喜好进行调整。点击下方按钮前往全局设置页面。',
-      icon: $r('sys.symbol.gearshape'),
+      icon: $r('sys.symbol.slider_horizontal_2_square'),
       buttonText: '前往全局设置',
       showSkip: false
     };
@@ -131,7 +131,7 @@ struct WelcomeGuidePage {
       title: '阅读报告',
       subtitle: '了解您的阅读习惯',
       description: '开启阅读报告功能后，应用将收集您的阅读时长、阅读偏好等数据，在本地分析处理后为您生成个性化的阅读分析报告。此功能默认关闭，您可以随时进入报告页面中更改。',
-      icon: $r('sys.symbol.book'),
+      icon: $r('sys.symbol.histogram_fill'),
       buttonText: '继续',
       showSkip: false
     };
@@ -143,7 +143,7 @@ struct WelcomeGuidePage {
       description: this.sourceFeaturesEnabled
         ? '现在，您可以在书库页面查看已导入的漫画与电子书，或者从图源/书源当中获取，点击封面即可前往详情页开始阅读。祝您阅读愉快！'
         : '现在，您可以在书库页面查看已导入的漫画与电子书，点击封面即可前往详情页开始阅读。祝您阅读愉快！',
-      icon: $r('sys.symbol.book'),
+      icon: $r('sys.symbol.books_vertical_fill'),
       buttonText: '进入书库',
       showSkip: false
     };

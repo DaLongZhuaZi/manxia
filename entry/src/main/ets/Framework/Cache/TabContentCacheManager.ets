@@ -1,6 +1,6 @@
 /**
  * Tab内容缓存管理器
- * 持久化缓存书源(BOOK_SOURCE)和Suwayomi两个Tab的完整内容数据
+ * 持久化缓存书源(BOOK_SOURCE)、Suwayomi 和 Komga 三个 Tab 的完整内容数据
  * 冷启动时先显示缓存内容，再静默刷新增量更新
  *
  * 文件路径: entry/src/main/ets/Framework/Cache/TabContentCacheManager.ets
@@ -9,7 +9,16 @@
 import { logger } from '../../Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
+import { getContext } from '../../GlobalContext';
 import { ComicInfo } from '../Source/SourceExecutor';
+import {
+  KomgaBrowseFilters,
+  KomgaBrowseMode,
+  KomgaContentType,
+  KomgaFeedType,
+  KomgaFilterOptions,
+  KomgaInstanceConfig
+} from '../Source/KomgaModels';
 import { SuwayomiCategory } from '../Source/SuwayomiSource';
 
 const TAG = 'TabContentCacheManager';
@@ -51,16 +60,39 @@ export interface SuwayomiCacheData {
 }
 
 /**
+ * Komga Tab缓存数据
+ */
+export interface KomgaCacheData {
+  items: ComicInfo[];
+  instances: KomgaInstanceConfig[];
+  currentInstanceId: string;
+  browseMode: KomgaBrowseMode;
+  contentType: KomgaContentType;
+  feedType: KomgaFeedType;
+  displayMode: 'grid' | 'list';
+  searchQuery: string;
+  filters: KomgaBrowseFilters;
+  filterOptions: KomgaFilterOptions;
+  showFilters: boolean;
+  hasMore: boolean;
+  currentPage: number;
+  errorMessage: string;
+  timestamp: number;
+}
+
+/**
  * Tab内容缓存管理器单例
  */
 export class TabContentCacheManager {
   private static instance: TabContentCacheManager | null = null;
   private bookSourceCache: BookSourceCacheData | null = null;
   private suwayomiCache: SuwayomiCacheData | null = null;
+  private komgaCache: KomgaCacheData | null = null;
   private initialized: boolean = false;
   private readonly PREF_NAME = 'tab_content_cache';
   private readonly BOOK_SOURCE_KEY = 'book_source_cache';
   private readonly SUWAYOMI_KEY = 'suwayomi_cache';
+  private readonly KOMGA_KEY = 'komga_cache';
 
   private constructor() {
     logger.info(TAG, 'Tab内容缓存管理器创建');
@@ -93,6 +125,13 @@ export class TabContentCacheManager {
       if (suwayomiJson) {
         this.suwayomiCache = JSON.parse(suwayomiJson) as SuwayomiCacheData;
         logger.info(TAG, `加载Suwayomi缓存: ${this.suwayomiCache.mangas.length} 部漫画, ${this.suwayomiCache.categories.length} 个分类`);
+      }
+
+      // 加载Komga缓存
+      const komgaJson = await dataPreferences.get(this.KOMGA_KEY, '') as string;
+      if (komgaJson) {
+        this.komgaCache = JSON.parse(komgaJson) as KomgaCacheData;
+        logger.info(TAG, `加载Komga缓存: ${this.komgaCache.items.length} 个条目, ${this.komgaCache.instances.length} 个实例`);
       }
 
       this.initialized = true;
@@ -164,6 +203,37 @@ export class TabContentCacheManager {
     return this.suwayomiCache !== null && this.suwayomiCache.mangas.length > 0;
   }
 
+  // ==================== Komga缓存 ====================
+
+  /**
+   * 保存Komga Tab缓存
+   */
+  async saveKomgaCache(data: KomgaCacheData): Promise<void> {
+    try {
+      this.komgaCache = data;
+      const dataPreferences = await preferences.getPreferences(getContext(), this.PREF_NAME);
+      await dataPreferences.put(this.KOMGA_KEY, JSON.stringify(data));
+      await dataPreferences.flush();
+      logger.debug(TAG, `Komga缓存已保存: ${data.items.length} 个条目`);
+    } catch (error) {
+      logger.error(TAG, `保存Komga缓存失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 获取Komga Tab缓存
+   */
+  getKomgaCache(): KomgaCacheData | null {
+    return this.komgaCache;
+  }
+
+  /**
+   * 是否有Komga缓存数据
+   */
+  hasKomgaCache(): boolean {
+    return this.komgaCache !== null;
+  }
+
   // ==================== 通用方法 ====================
 
   /**
@@ -173,9 +243,11 @@ export class TabContentCacheManager {
     try {
       this.bookSourceCache = null;
       this.suwayomiCache = null;
+      this.komgaCache = null;
       const dataPreferences = await preferences.getPreferences(getContext(), this.PREF_NAME);
       await dataPreferences.delete(this.BOOK_SOURCE_KEY);
       await dataPreferences.delete(this.SUWAYOMI_KEY);
+      await dataPreferences.delete(this.KOMGA_KEY);
       await dataPreferences.flush();
       logger.info(TAG, '所有Tab内容缓存已清除');
     } catch (error) {
@@ -210,6 +282,21 @@ export class TabContentCacheManager {
       logger.info(TAG, 'Suwayomi Tab缓存已清除');
     } catch (error) {
       logger.error(TAG, `清除Suwayomi缓存失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 清除Komga缓存
+   */
+  async clearKomgaCache(): Promise<void> {
+    try {
+      this.komgaCache = null;
+      const dataPreferences = await preferences.getPreferences(getContext(), this.PREF_NAME);
+      await dataPreferences.delete(this.KOMGA_KEY);
+      await dataPreferences.flush();
+      logger.info(TAG, 'Komga Tab缓存已清除');
+    } catch (error) {
+      logger.error(TAG, `清除Komga缓存失败: ${String(error)}`);
     }
   }
 }

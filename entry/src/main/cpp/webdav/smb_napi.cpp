@@ -52,8 +52,12 @@ static std::string GetStringFromNapi(napi_env env, napi_value value)
         return "";
     }
 
-    std::string result(length, '\0');
-    napi_get_value_string_utf8(env, value, &result[0], length + 1, &length);
+    std::string result(length + 1, '\0');
+    size_t copiedLength = 0;
+    if (napi_get_value_string_utf8(env, value, &result[0], result.size(), &copiedLength) != napi_ok) {
+        return "";
+    }
+    result.resize(copiedLength);
     return result;
 }
 
@@ -278,6 +282,13 @@ static napi_value SmbDownload(napi_env env, napi_callback_info info)
 
     const std::string remotePath = GetStringFromNapi(env, args[0]);
     const std::string localPath = GetStringFromNapi(env, args[1]);
+    if (localPath.empty()) {
+        smbnative::Result result;
+        result.success = false;
+        result.message = "本地缓存路径不能为空";
+        return CreateResultObject(env, result);
+    }
+
     const smbnative::Result result = g_smbClient->downloadFile(remotePath, localPath);
     return CreateResultObject(env, result);
 }

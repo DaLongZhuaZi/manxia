@@ -30,6 +30,7 @@ export interface ExecutePdfImportOptions {
   fileUri: string;
   dialogResult: PdfImportDialogResult;
   filesDir: string;
+  outputDir?: string;
   cancelSignal?: TaskCancelSignal;
   onProgress?: (current: number, total: number, message: string) => void;
   sourceId?: string;
@@ -53,7 +54,7 @@ export class PdfImportService {
     if (parseResult.bestCandidate.title.trim().length > 0) {
       return parseResult.bestCandidate.title;
     }
-    return fileName.replace(/\.[^.]+$/i, '').replace(/^\d{13,}_/, '');
+    return fileName.replace(/\.[^.]+$/i, '').replace(/^\d{13,}_/, '').replace(/_[a-f0-9]{6,}$/i, '');
   }
 
   public isSandboxPdfPath(fileUri: string, filesDir: string): boolean {
@@ -122,7 +123,7 @@ export class PdfImportService {
       const sandboxPath = await this.copyPdfToSandbox(options.fileUri, options.filesDir, options.cancelSignal);
 
       this.throwIfCancelled(options.cancelSignal);
-      const outputDir = this.ensureOutputDir(options.filesDir);
+      const outputDir = this.resolveOutputDir(options.filesDir, options.outputDir);
       const importMode = options.dialogResult.importMode === DialogImportMode.SINGLE_CHAPTER
         ? PdfImportMode.SINGLE_CHAPTER
         : PdfImportMode.TANKOUBON;
@@ -184,8 +185,10 @@ export class PdfImportService {
     }
   }
 
-  private ensureOutputDir(filesDir: string): string {
-    const outputDir = `${filesDir}/${PDF_OUTPUT_DIR_NAME}`;
+  private resolveOutputDir(filesDir: string, preferredOutputDir?: string): string {
+    const outputDir = preferredOutputDir && preferredOutputDir.trim().length > 0
+      ? preferredOutputDir.trim()
+      : `${filesDir}/${PDF_OUTPUT_DIR_NAME}`;
     try {
       fs.mkdirSync(outputDir, true);
     } catch (_error) {

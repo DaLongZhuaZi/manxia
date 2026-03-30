@@ -36,12 +36,7 @@ set_target_properties(curl PROPERTIES
     IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../../../libs/${OHOS_ARCH}/libcurl.so
 )
 
-# 添加WebDAV库（包含FTP支持）
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(ENABLE_LIBKRB5 OFF CACHE BOOL "" FORCE)
-set(ENABLE_GSSAPI OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libsmb2 ${CMAKE_CURRENT_BINARY_DIR}/libsmb2)
+# 添加 WebDAV/FTP 原生模块
 
 add_library(webdav_native SHARED
     curl_global.cpp
@@ -49,8 +44,6 @@ add_library(webdav_native SHARED
     webdav_napi.cpp
     ftp_client.cpp
     ftp_napi.cpp
-    smb_client.cpp
-    smb_napi.cpp
 )
 
 # 链接依赖库
@@ -58,7 +51,6 @@ target_link_libraries(webdav_native PUBLIC
     libace_napi.z.so
     libhilog_ndk.z.so
     curl
-    smb2
     mbedtls
     mbedx509
     mbedcrypto

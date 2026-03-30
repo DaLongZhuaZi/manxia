@@ -87,7 +87,7 @@ export struct NovelSettingsPage {
     {
       title: '书源管理',
       subtitle: '管理小说书源',
-      icon: $r('sys.symbol.doc_text'),
+      icon: $r('sys.symbol.text_book_closed'),
       iconColor: '#4CAF50',
       route: 'NovelSourceManagementPage'
     },
@@ -108,7 +108,7 @@ export struct NovelSettingsPage {
     {
       title: '订阅源管理',
       subtitle: '新增、编辑、刷新 RSS 源',
-      icon: $r('sys.symbol.gearshape'),
+      icon: $r('sys.symbol.rectangle_stack'),
       iconColor: '#3F51B5',
       route: 'RssSubscriptionManagementPage'
     },
@@ -143,7 +143,7 @@ export struct NovelSettingsPage {
     {
       title: '书源调试',
       subtitle: '测试书源各项功能',
-      icon: $r('sys.symbol.gearshape'),
+      icon: $r('sys.symbol.wrench_and_screwdriver'),
       iconColor: '#FF9800',
       route: 'NovelSourceDebugPage'
     },

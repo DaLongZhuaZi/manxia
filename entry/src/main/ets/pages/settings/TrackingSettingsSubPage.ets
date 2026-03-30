@@ -21,6 +21,7 @@ import {
 } from '../../Framework/Tracking/TrackingModels';
 import { getAniListTracker, AniListTracker } from '../../Framework/Tracking/trackers/AniListTracker';
 import { getSuwayomiTracker, SuwayomiTracker } from '../../Framework/Tracking/trackers/SuwayomiTracker';
+import { getKomgaTracker, KomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
 import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
@@ -70,6 +71,7 @@ export struct TrackingSettingsSubPage {
   // 跟踪器实例
   private aniListTracker: AniListTracker = getAniListTracker();
   private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
+  private komgaTracker: KomgaTracker = getKomgaTracker();
 
   private lifecycle = new PageLifecycleManager('TrackingSettingsSubPage', { enableDebug: true });
 
@@ -198,6 +200,7 @@ export struct TrackingSettingsSubPage {
     // 初始化跟踪器
     await this.aniListTracker.initialize();
     await this.suwayomiTracker.initialize();
+    await this.komgaTracker.initialize();
 
     // 初始化所有进度记录的状态
     const statusList: TrackerLoginStatus[] = [];
@@ -213,6 +216,9 @@ export struct TrackingSettingsSubPage {
       } else if (info.id === TrackerId.SUWAYOMI) {
         isLoggedIn = this.suwayomiTracker.isLoggedIn();
         username = this.suwayomiTracker.getConfig().serverUrl || '';
+      } else if (info.id === TrackerId.KOMGA) {
+        isLoggedIn = this.komgaTracker.isLoggedIn();
+        username = this.komgaTracker.getAuthState().username;
       }
 
       const status: TrackerLoginStatus = {
@@ -234,8 +240,7 @@ export struct TrackingSettingsSubPage {
    * 获取可用的进度记录列表（只显示已实现的服务）
    */
   private getAvailableTrackers(): TrackerInfo[] {
-    // 目前只有 AniList 和 Suwayomi 可用
-    const availableIds: TrackerId[] = [TrackerId.ANILIST, TrackerId.SUWAYOMI];
+    const availableIds: TrackerId[] = [TrackerId.ANILIST, TrackerId.SUWAYOMI, TrackerId.KOMGA];
     return TRACKER_INFO_LIST.filter(tracker => availableIds.includes(tracker.id));
   }
 
@@ -243,7 +248,7 @@ export struct TrackingSettingsSubPage {
    * 检查进度记录是否可用
    */
   private isTrackerAvailable(trackerId: TrackerId): boolean {
-    return trackerId === TrackerId.ANILIST || trackerId === TrackerId.SUWAYOMI;
+    return trackerId === TrackerId.ANILIST || trackerId === TrackerId.SUWAYOMI || trackerId === TrackerId.KOMGA;
   }
 
   private handleTrackerClick(tracker: TrackerInfo): void {
@@ -252,6 +257,10 @@ export struct TrackingSettingsSubPage {
     // Suwayomi 总是进入设置页面（可以编辑配置或登出）
     if (tracker.id === TrackerId.SUWAYOMI) {
       this.pathStack.pushPathByName('SuwayomiSettingsPage', null);
+      return;
+    }
+    if (tracker.id === TrackerId.KOMGA) {
+      this.pathStack.pushPathByName('KomgaSettingsPage', null);
       return;
     }
     
@@ -275,6 +284,9 @@ export struct TrackingSettingsSubPage {
       case TrackerId.SUWAYOMI:
         // 导航到 Suwayomi 设置页面
         this.pathStack.pushPathByName('SuwayomiSettingsPage', null);
+        break;
+      case TrackerId.KOMGA:
+        this.pathStack.pushPathByName('KomgaSettingsPage', null);
         break;
       default:
         this.showComingSoonToast(tracker.name);
@@ -313,6 +325,9 @@ export struct TrackingSettingsSubPage {
       case TrackerId.SUWAYOMI:
         await this.suwayomiTracker.logout();
         break;
+      case TrackerId.KOMGA:
+        await this.komgaTracker.logout();
+        break;
       default:
         break;
     }
@@ -349,6 +364,8 @@ export struct TrackingSettingsSubPage {
         return $r('app.media.icon');
       case 'suwayomi_icon':
         return $r('app.media.suwayomi_icon');
+      case 'komga_icon':
+        return $r('app.media.komga_icon');
       default:
         return $r('app.media.icon');
     }
@@ -449,7 +466,7 @@ export struct TrackingSettingsSubPage {
       case TrackerId.SUWAYOMI:
         return '自托管漫画服务器同步';
       case TrackerId.KOMGA:
-        return '自托管漫画服务器同步';
+        return 'Komga 自托管漫画库连接';
       default:
         return '进度记录';
     }

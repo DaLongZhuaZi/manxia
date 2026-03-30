@@ -9,6 +9,7 @@ import { CommonModifier, LengthMetrics, promptAction, router, curves } from '@ki
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
 import { picker } from '@kit.CoreFileKit';
+import { hdsEffect } from '@kit.UIDesignKit';
 import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
 
 // 主题相关导入
@@ -58,11 +59,17 @@ import { TrackingSettingsSubPage } from './settings/TrackingSettingsSubPage';
 import { AniListLoginPage } from './settings/AniListLoginPage';
 import { SuwayomiSettingsPage } from './settings/SuwayomiSettingsPage';
 import { SuwayomiWebUIPage } from './settings/SuwayomiWebUIPage';
+import { KomgaSettingsPage } from './settings/KomgaSettingsPage';
 import { SuwayomiBrowsePage } from './SuwayomiBrowsePage';
+import { KomgaBrowsePage } from './KomgaBrowsePage';
 import { SuwayomiSourceBrowsePage, SuwayomiSourceBrowseParams } from './SuwayomiSourceBrowsePage';
 import { getSuwayomiTracker } from '../Framework/Tracking/trackers/SuwayomiTracker';
+import { getKomgaTracker } from '../Framework/Tracking/trackers/KomgaTracker';
 import { SuwayomiMangaDetailPage } from './SuwayomiMangaDetailPage';
 import { SuwayomiReaderPage } from './SuwayomiReaderPage';
+import { KomgaMangaDetailPage } from './KomgaMangaDetailPage';
+import { KomgaReaderPage } from './KomgaReaderPage';
+import { MainMenuKomgaTabContent } from '../components/MainMenuKomgaTabContent';
 import { ZLibraryReaderPage } from './ZLibraryReaderPage';
 import { DownloadManagerPage } from './DownloadManagerPage';
 import { AboutPage } from './AboutPage';
@@ -366,7 +373,8 @@ enum TabIndex {
   SOURCE = 3,       // 图源（高级模式）
   BOOK_SOURCE = 4,  // 书源（小说源发现+搜索）
   SUWAYOMI = 5,     // Suwayomi（漫画服务器）
-  SETTINGS = 6
+  SETTINGS = 6,
+  KOMGA = 7
 }
 
 type TabletTopBarPosition = 'top' | 'bottom' | 'left' | 'right';
@@ -407,11 +415,12 @@ interface TabConfig {
   title: string;
   icon: Resource;
   selectedIcon: Resource;
-  systemIcon?: Resource; // 系统图标（SymbolGlyph）
-  useSystemIcon?: boolean; // 是否使用系统图标
-  hasMultiColor?: boolean; // 是否支持多色效果
+  systemIcon?: Resource;
+  useSystemIcon?: boolean;
+  hasMultiColor?: boolean;
+  applyFillColor?: boolean;
   index: number;
-  required: boolean; // 是否必须显示
+  required: boolean;
 }
 
 interface MainMenuSettingGuideItem {
@@ -533,7 +542,8 @@ struct MainMenuPage {
 
   // 底部导航状态
   @State @Watch('onCurrentTabIndexChangedForGuide') currentTabIndex: number = TabIndex.LIBRARY;
-  private tabsController: TabsController = new TabsController();
+  private tabsController: SwiperController = new SwiperController();
+  private lastCommittedTabIndex: number = TabIndex.LIBRARY;
 
   // 引导相关状态
   @State private fromGuide: boolean = false;
@@ -817,6 +827,7 @@ struct MainMenuPage {
   private suwayomiInitialized: boolean = false; // Suwayomi是否已初始化
   private suwayomiExecutor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private readonly SUWAYOMI_PAGE_SIZE: number = 50;
+  @State private komgaTabRefreshSignal: number = 0;
 
   // Tab内容缓存管理器
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
@@ -853,6 +864,9 @@ struct MainMenuPage {
   
   // Bottom bar follow-scroll state
   @State private bottomBarOffsetY: number = 0;
+  @State private bottomBarVisualProgress: number = 0;
+  @State private bottomBarBounceScale: number = 1;
+  @State private bottomBarBounceTabIndex: number = -1;
   private readonly BOTTOM_BAR_STOP_SETTLE_DELAY: number = 56;
   private readonly BOTTOM_BAR_HIDE_SETTLE_DURATION: number = 150;
   private readonly BOTTOM_BAR_SHOW_SETTLE_DURATION: number = 180;
@@ -861,6 +875,9 @@ struct MainMenuPage {
   private bottomBarScrollAccumulator: number = 0;
   private bottomBarLastScrollDirection: number = 0;
   private bottomBarSettleTimer: number = -1;
+  private bottomBarBounceTimer: number = -1;
+  private bottomBarFakeDragLastOffsetX: number = 0;
+  private isBottomBarFakeDragging: boolean = false;
   private suppressTabClickUntil: number = 0;
   private readonly TAB_LONG_PRESS_SUPPRESS_MS: number = 650;
   @State private windowModeTransitionOverlayVisible: boolean = false;
@@ -1204,6 +1221,7 @@ struct MainMenuPage {
   @StorageProp('fileOpenNewWantTrigger') @Watch('onFileOpenNewWantTrigger') private fileOpenTrigger: number = 0;
   // Bug 3 fix: 防止aboutToAppear/onPageShow/@Watch三路同时触发重复导入调度
   private fileImportScheduled: boolean = false;
+  private readonly startupTraceBeforeTabConfigs: boolean = this.logStartupTrace('startup_trace_before_tab_configs');
 
   // 导航标签配置
   private tabConfigs: TabConfig[] = [
@@ -1258,6 +1276,16 @@ struct MainMenuPage {
       required: false
     },
     {
+      title: 'Komga',
+      icon: $r('app.media.komga_icon'),
+      selectedIcon: $r('app.media.komga_icon'),
+      useSystemIcon: false,
+      hasMultiColor: false,
+      applyFillColor: false,
+      index: TabIndex.KOMGA,
+      required: false
+    },
+    {
       title: '管理',
       icon: $r('app.media.ic_settings'),
       selectedIcon: $r('app.media.ic_settings'),
@@ -1268,6 +1296,7 @@ struct MainMenuPage {
       required: true // 必须显示
     }
   ];
+  private readonly startupTraceAfterTabConfigs: boolean = this.logStartupTrace('startup_trace_after_tab_configs');
 
   // 可见标签索引列表（从设置加载）
   @State private visibleTabIndices: number[] = [];
@@ -1281,6 +1310,11 @@ struct MainMenuPage {
 
   private isSourceFeatureTab(index: number): boolean {
     return index === TabIndex.SOURCE || index === TabIndex.BOOK_SOURCE;
+  }
+
+  private logStartupTrace(stage: string): boolean {
+    logger.info(TAG, stage);
+    return true;
   }
 
   private shouldDisplayTabConfig(config: TabConfig): boolean {
@@ -1377,8 +1411,7 @@ struct MainMenuPage {
       if (this.currentTabIndex !== TabIndex.LIBRARY) {
         const actualIndex = this.getActualTabsIndexForTabIndex(TabIndex.LIBRARY);
         if (actualIndex >= 0) {
-          this.currentTabIndex = TabIndex.LIBRARY;
-          this.tabsController.changeIndex(actualIndex);
+          this.changeMainContentToActualIndex(actualIndex);
         }
       }
     });
@@ -2241,6 +2274,48 @@ struct MainMenuPage {
     return w > 0 ? w : 0;
   }
 
+  private clampBottomBarVisualProgress(progress: number): number {
+    const maxProgress: number = Math.max(0, this.cachedVisibleTabConfigs.length - 1);
+    return Math.max(0, Math.min(maxProgress, progress));
+  }
+
+  private syncBottomBarVisualProgressFromActualIndex(actualIndex: number): void {
+    this.bottomBarVisualProgress = this.clampBottomBarVisualProgress(actualIndex);
+  }
+
+  private getBottomBarVisualActualIndex(): number {
+    return Math.round(this.clampBottomBarVisualProgress(this.bottomBarVisualProgress));
+  }
+
+  private getBottomBarVisualTabIndex(): number {
+    return this.getTabIndexForActualTabsIndex(this.getBottomBarVisualActualIndex());
+  }
+
+  private isBottomBarVisualSelected(config: TabConfig): boolean {
+    return this.getBottomBarVisualTabIndex() === config.index;
+  }
+
+  private getBottomBarIndicatorTrackWidth(): number {
+    const trackWidth: number = this.getBottomBarWidth() - 20;
+    return trackWidth > 0 ? trackWidth : 0;
+  }
+
+  private getBottomBarIndicatorSlotWidth(): number {
+    if (this.cachedVisibleTabConfigs.length <= 0) {
+      return 0;
+    }
+    return this.getBottomBarIndicatorTrackWidth() / this.cachedVisibleTabConfigs.length;
+  }
+
+  private getBottomBarIndicatorWidth(): number {
+    const indicatorWidth: number = this.getBottomBarIndicatorSlotWidth() - 8;
+    return indicatorWidth > 0 ? indicatorWidth : 0;
+  }
+
+  private getBottomBarIndicatorX(): number {
+    return 14 + this.getBottomBarIndicatorSlotWidth() * this.clampBottomBarVisualProgress(this.bottomBarVisualProgress);
+  }
+
   private getMainContentTopInset(): number {
     return 0;
   }
@@ -2451,10 +2526,10 @@ struct MainMenuPage {
 
   private getFloatingSearchButtonY(): number {
     if (!this.useTopTabsNavigation) {
-      if (this.currentTabIndex === TabIndex.SUWAYOMI) {
+      if (this.isOverlayBottomNavTab(this.currentTabIndex)) {
         const deviceInfo = this.deviceManager.getDeviceInfo();
         const y: number = deviceInfo.screenHeight
-          - this.getSuwayomiBottomSpacerHeight()
+          - this.getOverlayBottomNavSpacerHeight(this.currentTabIndex)
           - this.FLOAT_SEARCH_BUTTON_SIZE
           - this.FLOAT_SEARCH_BUTTON_MARGIN;
         return y > this.statusBarHeight ? y : this.statusBarHeight;
@@ -2556,6 +2631,18 @@ struct MainMenuPage {
 
   private getSuwayomiBottomSpacerHeight(): number {
     return 80;
+  }
+
+  private getKomgaBottomSpacerHeight(): number {
+    return 80;
+  }
+
+  private isOverlayBottomNavTab(tabIndex: number): boolean {
+    return tabIndex === TabIndex.SUWAYOMI || tabIndex === TabIndex.KOMGA;
+  }
+
+  private getOverlayBottomNavSpacerHeight(tabIndex: number): number {
+    return tabIndex === TabIndex.KOMGA ? this.getKomgaBottomSpacerHeight() : this.getSuwayomiBottomSpacerHeight();
   }
 
   private shouldAttachLibraryFloatingBar(): boolean {
@@ -6260,9 +6347,8 @@ struct MainMenuPage {
     setTimeout(() => {
       try {
         // 处理目标标签页
-        if (this.targetTab >= 0 && this.targetTab <= TabIndex.SETTINGS) {
-          this.currentTabIndex = this.targetTab;
-          this.tabsController.changeIndex(this.targetTab);
+        if (this.targetTab >= 0 && this.targetTab <= TabIndex.KOMGA) {
+          this.changeMainContentToTabIndex(this.targetTab);
           logger.info(TAG, `切换到标签页: ${this.targetTab}`);
         }
 
@@ -6364,6 +6450,8 @@ struct MainMenuPage {
         return AppGuidePageId.MAIN_BOOK_SOURCE;
       case TabIndex.SUWAYOMI:
         return AppGuidePageId.MAIN_SUWAYOMI;
+      case TabIndex.KOMGA:
+        return AppGuidePageId.MAIN_KOMGA;
       case TabIndex.SETTINGS:
         return AppGuidePageId.MAIN_SETTINGS;
       case TabIndex.LIBRARY:
@@ -6383,6 +6471,7 @@ struct MainMenuPage {
       pageId === AppGuidePageId.MAIN_SOURCE ||
       pageId === AppGuidePageId.MAIN_BOOK_SOURCE ||
       pageId === AppGuidePageId.MAIN_SUWAYOMI ||
+      pageId === AppGuidePageId.MAIN_KOMGA ||
       pageId === AppGuidePageId.MAIN_SETTINGS;
   }
 
@@ -6398,6 +6487,8 @@ struct MainMenuPage {
         return TabIndex.BOOK_SOURCE;
       case AppGuidePageId.MAIN_SUWAYOMI:
         return TabIndex.SUWAYOMI;
+      case AppGuidePageId.MAIN_KOMGA:
+        return TabIndex.KOMGA;
       case AppGuidePageId.MAIN_SETTINGS:
         return TabIndex.SETTINGS;
       case AppGuidePageId.MAIN_LIBRARY:
@@ -6460,6 +6551,8 @@ struct MainMenuPage {
         return '书源标签用于发现和搜索小说内容';
       case TabIndex.SUWAYOMI:
         return 'Suwayomi 标签用于连接漫画服务器';
+      case TabIndex.KOMGA:
+        return 'Komga 标签用于连接自建漫画服务器';
       case TabIndex.SETTINGS:
         return '管理标签汇总主题、导入、备份与帮助';
       case TabIndex.HOME:
@@ -6481,6 +6574,8 @@ struct MainMenuPage {
         return '这里负责小说书源的发现与搜索，后续进入书源管理页时还会继续介绍导入、启用和排查流程。';
       case TabIndex.SUWAYOMI:
         return '这里用于接入 Suwayomi 服务器内容，适合浏览服务器书库、分类和在线阅读资源。';
+      case TabIndex.KOMGA:
+        return '这里用于接入 Komga 服务器内容，适合在主页面直接浏览实例、筛选系列与阅读列表，并继续进入详情页和阅读器。';
       case TabIndex.SETTINGS:
         return '这里集中放置主题设置、全局设置、导入、备份、帮助中心等管理项。接下来我会按当前页面里真实显示的顺序继续介绍。';
       case TabIndex.HOME:
@@ -6662,8 +6757,7 @@ struct MainMenuPage {
       this.resetBottomBarScrollState();
       this.bottomBarOffsetY = 0;
     }
-    this.currentTabIndex = targetTab;
-    this.tabsController.changeIndex(actualIndex);
+    this.changeMainContentToActualIndex(actualIndex);
     logger.info(TAG, `引导切换主页面标签: 标签索引=${targetTab}`);
     return true;
   }
@@ -6977,13 +7071,13 @@ struct MainMenuPage {
       return;
     }
     this.resetBottomBarScrollState();
-    this.bottomBarOffsetY = this.currentTabIndex === TabIndex.SUWAYOMI ? this.getBottomBarTravelDistance() : 0;
+    this.bottomBarOffsetY = this.isOverlayBottomNavTab(this.currentTabIndex) ? this.getBottomBarTravelDistance() : 0;
     setTimeout(() => {
       if (this.useTopTabsNavigation) {
         return;
       }
       this.resetBottomBarScrollState();
-      this.bottomBarOffsetY = this.currentTabIndex === TabIndex.SUWAYOMI ? this.getBottomBarTravelDistance() : 0;
+      this.bottomBarOffsetY = this.isOverlayBottomNavTab(this.currentTabIndex) ? this.getBottomBarTravelDistance() : 0;
     }, this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION + 60);
   }
 
@@ -7136,6 +7230,12 @@ struct MainMenuPage {
       case TabIndex.BOOK_SOURCE:
         // 书源页：确保初始化并加载书源列表
         this.initializeAndLoadBookSources();
+        break;
+      case TabIndex.SUWAYOMI:
+        this.silentInitializeSuwayomi();
+        break;
+      case TabIndex.KOMGA:
+        this.komgaTabRefreshSignal = this.komgaTabRefreshSignal + 1;
         break;
       default:
         break;
@@ -7315,19 +7415,22 @@ struct MainMenuPage {
     if (this.cachedVisibleTabConfigs.length === 0) {
       return;
     }
-    
-    // 检查当前标签是否在可见列表中
+
     const currentTabActualIndex = this.cachedVisibleTabConfigs.findIndex(
       (cfg: TabConfig) => cfg.index === this.currentTabIndex
     );
     const isCurrentTabVisible = currentTabActualIndex >= 0;
-    
-    if (forceFirst || !isCurrentTabVisible) {
-      // 强制选中第一个，或当前标签不可见时切换到第一个可见标签
+
+    if (!isCurrentTabVisible) {
       const firstVisibleTab = this.cachedVisibleTabConfigs[0];
       this.currentTabIndex = firstVisibleTab.index;
-      this.tabsController.changeIndex(0);
+      this.changeMainContentToActualIndex(0, false);
       logger.info(TAG, `已切换到第一个可见标签: ${firstVisibleTab.title} (index=${firstVisibleTab.index})`);
+      return;
+    }
+
+    if (forceFirst) {
+      logger.info(TAG, `启动时保留默认标签: ${this.currentTabIndex}`);
     }
   }
 
@@ -7358,6 +7461,7 @@ struct MainMenuPage {
     }
     
     this.cachedVisibleTabConfigs = orderedConfigs;
+    this.syncBottomBarVisualProgressFromActualIndex(this.getActualTabsIndexForTabIndex(this.currentTabIndex));
     logger.info(TAG, `更新可见标签缓存: ${this.cachedVisibleTabConfigs.length} 个标签，顺序: ${orderedConfigs.map((c: TabConfig) => c.title).join(', ')}`);
     this.scrollSideTabToCenter(this.currentTabIndex);
   }
@@ -7470,7 +7574,7 @@ struct MainMenuPage {
     // 注意：saveVisibleTabs 已经更新了 cachedVisibleTabConfigs
     if (this.cachedVisibleTabConfigs.length > 0) {
       this.currentTabIndex = this.cachedVisibleTabConfigs[0].index;
-      this.tabsController.changeIndex(0);
+      this.changeMainContentToActualIndex(0, false);
     }
     this.showToast('底栏配置已保存');
   }
@@ -7502,6 +7606,32 @@ struct MainMenuPage {
     }
     // 越界时返回第一个可见标签
     return this.cachedVisibleTabConfigs.length > 0 ? this.cachedVisibleTabConfigs[0].index : TabIndex.LIBRARY;
+  }
+
+  private changeMainContentToActualIndex(actualIndex: number, animated: boolean = true): void {
+    if (actualIndex < 0) {
+      return;
+    }
+    if (!animated) {
+      this.lastCommittedTabIndex = this.getTabIndexForActualTabsIndex(actualIndex);
+      this.syncBottomBarVisualProgressFromActualIndex(actualIndex);
+    }
+    const currentActualIndex: number = this.getActualTabsIndexForTabIndex(this.lastCommittedTabIndex);
+    const animationMode: SwiperAnimationMode = !animated
+      ? SwiperAnimationMode.NO_ANIMATION
+      : (Math.abs(actualIndex - currentActualIndex) > 1
+        ? SwiperAnimationMode.FAST_ANIMATION
+        : SwiperAnimationMode.DEFAULT_ANIMATION);
+    this.tabsController.changeIndex(actualIndex, animationMode);
+  }
+
+  private changeMainContentToTabIndex(tabIndex: number, animated: boolean = true): void {
+    const actualIndex = this.getActualTabsIndexForTabIndex(tabIndex);
+    if (actualIndex < 0) {
+      logger.warn(TAG, `标签 ${tabIndex} 当前不可见，无法切换`);
+      return;
+    }
+    this.changeMainContentToActualIndex(actualIndex, animated);
   }
 
   /**
@@ -9144,6 +9274,10 @@ struct MainMenuPage {
             .renderingStrategy(SymbolRenderingStrategy.SINGLE)
             .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.isSharedTabSelected(config))
         }
+      } else if (config.applyFillColor === false) {
+        Image(this.currentTabIndex === config.index ? config.selectedIcon : config.icon)
+          .width(24)
+          .height(24)
       } else {
         Image(this.currentTabIndex === config.index ? config.selectedIcon : config.icon)
           .width(24)
@@ -9178,7 +9312,7 @@ struct MainMenuPage {
     if (config.systemIcon) {
       return config.systemIcon;
     }
-    return $r('sys.symbol.book');
+    return $r('sys.symbol.books_vertical_fill');
   }
 
   private shouldUseSharedTabMultiColor(config: TabConfig): boolean {
@@ -9502,7 +9636,7 @@ struct MainMenuPage {
             .height(50)
             .backgroundColor(Color.Transparent)
         } else {
-          SymbolGlyph($r('sys.symbol.book'))
+          SymbolGlyph($r('sys.symbol.text_book_closed'))
             .fontSize(34)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
         }
@@ -9556,7 +9690,7 @@ struct MainMenuPage {
           .height(40)
           .backgroundColor(Color.Transparent)
       } else {
-        SymbolGlyph($r('sys.symbol.book'))
+        SymbolGlyph($r('sys.symbol.text_book_closed'))
           .fontSize(28)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
       }
@@ -9631,6 +9765,48 @@ struct MainMenuPage {
     }
   }
 
+  private async navigateToKomga(): Promise<void> {
+    const tracker = getKomgaTracker();
+    await tracker.initialize();
+    const config = tracker.getConfig();
+    const currentInstance = tracker.getCurrentInstance();
+    if (config.useBrowsePageAsEntry && currentInstance && currentInstance.serverUrl) {
+      this.pathStack.pushPathByName('KomgaBrowsePage', null);
+    } else {
+      this.pathStack.pushPathByName('KomgaSettingsPage', null);
+    }
+  }
+
+  @Builder
+  buildKomgaEntryCardCompact() {
+    Column({ space: 8 }) {
+      Image($r('app.media.komga_icon'))
+        .width(44)
+        .height(44)
+
+      Text('Komga')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      Text('自建漫画库')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      void this.navigateToKomga();
+    })
+  }
+
   /**
    * 构建 Suwayomi 入口卡片
    */
@@ -9703,6 +9879,11 @@ struct MainMenuPage {
       }
       .width('100%')
 
+      Column() {
+        this.buildKomgaEntryCardCompact()
+      }
+      .width('100%')
+
       // 最近阅读
       Column({ space: 12 }) {
         Row() {
@@ -9720,8 +9901,7 @@ struct MainMenuPage {
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .onClick(() => {
-              this.currentTabIndex = TabIndex.LIBRARY;
-              this.tabsController.changeIndex(this.currentTabIndex);
+              this.changeMainContentToTabIndex(TabIndex.LIBRARY);
             })
         }
         .width('100%')
@@ -9768,8 +9948,7 @@ struct MainMenuPage {
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .onClick(() => {
-                this.currentTabIndex = TabIndex.LIBRARY;
-                this.tabsController.changeIndex(this.currentTabIndex);
+                this.changeMainContentToTabIndex(TabIndex.LIBRARY);
               })
           }
           .width('100%')
@@ -21617,7 +21796,7 @@ struct MainMenuPage {
 
         // 书源管理按钮
         Button() {
-          SymbolGlyph($r('sys.symbol.doc_text'))
+          SymbolGlyph($r('sys.symbol.text_book_closed'))
             .fontSize(20)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
         }
@@ -21637,7 +21816,7 @@ struct MainMenuPage {
       Row({ space: 12 }) {
         // 书源选择按钮
         Row({ space: 6 }) {
-          SymbolGlyph($r('sys.symbol.book'))
+          SymbolGlyph($r('sys.symbol.text_book_closed'))
             .fontSize(16)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
           Text(this.selectedBookSourceName || '选择书源')
@@ -21802,7 +21981,7 @@ struct MainMenuPage {
           } else if (this.bookSourceList.length === 0) {
             // 空状态提示
             Column({ space: 12 }) {
-              SymbolGlyph($r('sys.symbol.book'))
+              SymbolGlyph($r('sys.symbol.text_book_closed'))
                 .fontSize(64)
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
                 .opacity(0.3)
@@ -22960,7 +23139,7 @@ struct MainMenuPage {
         }
       } else if (this.getFilteredSuwayomiMangas().length === 0) {
         Column() {
-          SymbolGlyph($r('sys.symbol.book'))
+          SymbolGlyph($r('sys.symbol.text_book_closed'))
             .fontSize(48)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
           Text(this.suwayomiSearchQuery.trim() ? '未找到匹配的漫画' : '暂无漫画')
@@ -23330,7 +23509,7 @@ struct MainMenuPage {
         .color(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
       Row({ space: 0 }) {
         Column({ space: 4 }) {
-          SymbolGlyph(this.suwayomiBrowseMode === 'library' ? $r('sys.symbol.books_vertical_fill') : $r('sys.symbol.book'))
+          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
             .fontSize(24)
             .fontColor([this.suwayomiBrowseMode === 'library' ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
@@ -23359,7 +23538,7 @@ struct MainMenuPage {
         })
 
         Column({ space: 4 }) {
-          SymbolGlyph(this.suwayomiBrowseMode === 'sources' ? $r('sys.symbol.more') : $r('sys.symbol.square_grid_2x2'))
+          SymbolGlyph($r('sys.symbol.rectangle_stack'))
             .fontSize(24)
             .fontColor([this.suwayomiBrowseMode === 'sources' ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
@@ -23842,7 +24021,7 @@ struct MainMenuPage {
         .width('100%')
       } else {
         Column() {
-          SymbolGlyph($r('sys.symbol.doc_text'))
+          SymbolGlyph($r('sys.symbol.rectangle_stack'))
             .fontSize(40)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
           
@@ -24533,7 +24712,7 @@ struct MainMenuPage {
 
         // 设置选项列表
         Column() {
-          this.buildSettingItem('主题设置', '自定义背景、强调色', $r('sys.symbol.paintbrush'), () => {
+          this.buildSettingItem('主题设置', '自定义背景、强调色', $r('sys.symbol.paintpalette'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'ThemeSettingsPage',
@@ -24549,7 +24728,7 @@ struct MainMenuPage {
               this.showToast('打开主题设置页面失败');
             }
           }, 'guide_main_setting_theme')
-          this.buildSettingItem('全局设置', '默认阅读模式、下载选项', $r('sys.symbol.gearshape'), () => {
+          this.buildSettingItem('全局设置', '默认阅读模式、下载选项', $r('sys.symbol.slider_horizontal_2_square'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'GlobalSettingsPage',
@@ -24597,7 +24776,7 @@ struct MainMenuPage {
             }, 'guide_main_setting_download_manager')
           }
 
-          this.buildSettingItem('备份与恢复', '备份所有数据或从备份恢复', $r('sys.symbol.mobiledata_and_cloud'), () => {
+          this.buildSettingItem('备份与恢复', '备份所有数据或从备份恢复', $r('sys.symbol.arrow_2_circlepath'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'BackupPage',
@@ -24633,7 +24812,7 @@ struct MainMenuPage {
               }
             }, 'guide_main_setting_storage')
           }
-          this.buildSettingItem('文件导入', '单独导入Mihon/Komikku本地漫画、电子书、小说', $r('sys.symbol.folder'), () => {
+          this.buildSettingItem('文件导入', '单独导入Mihon/Komikku本地漫画、电子书、小说', $r('sys.symbol.folder_badge_plus'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'DataManagementPage',
@@ -24649,7 +24828,7 @@ struct MainMenuPage {
               this.showToast('打开数据管理页面失败');
             }
           }, 'guide_main_setting_data_management')
-          this.buildSettingItem('网络文件夹', '通过 WebDAV/FTP/FTPS/SMB 连接远程文件夹并导入文件', $r('sys.symbol.externaldrive_fill'), () => {
+          this.buildSettingItem('网络文件夹', '通过 WebDAV/FTP/FTPS/SMB 连接远程文件夹并导入文件', $r('sys.symbol.wifi'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'NetworkFolderPage',
@@ -24665,7 +24844,7 @@ struct MainMenuPage {
               this.showToast('打开网络文件夹页面失败');
             }
           }, 'guide_main_setting_network_folder')
-          this.buildSettingItem('Download导入', '从Download目录扫描并导入文件', $r('sys.symbol.folder_fill'), () => {
+          this.buildSettingItem('Download导入', '从Download目录扫描并导入文件', $r('sys.symbol.square_and_arrow_down'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'DownloadSyncPage',
@@ -24683,7 +24862,7 @@ struct MainMenuPage {
           }, 'guide_main_setting_download_sync')
           // 文件编辑器仅在高级模式下显示
           if (this.advancedModeEnabled) {
-            this.buildSettingItem('文件编辑器', '编辑代码、配置文件、Markdown', $r('sys.symbol.case_fill'), () => {
+            this.buildSettingItem('文件编辑器', '编辑代码、配置文件、Markdown', $r('sys.symbol.doc_plaintext'), () => {
               try {
                 const navigationPath: NavigationPath = {
                   name: 'FileEditorPage',
@@ -24956,16 +25135,24 @@ struct MainMenuPage {
         AniListLoginPage()
       } else if (name === 'SuwayomiSettingsPage') {
         SuwayomiSettingsPage()
+      } else if (name === 'KomgaSettingsPage') {
+        KomgaSettingsPage()
       } else if (name === 'SuwayomiWebUIPage') {
         SuwayomiWebUIPage()
       } else if (name === 'SuwayomiBrowsePage') {
         SuwayomiBrowsePage()
+      } else if (name === 'KomgaBrowsePage') {
+        KomgaBrowsePage()
       } else if (name === 'SuwayomiSourceBrowsePage') {
         SuwayomiSourceBrowsePage()
       } else if (name === 'SuwayomiMangaDetailPage') {
         SuwayomiMangaDetailPage()
+      } else if (name === 'KomgaMangaDetailPage') {
+        KomgaMangaDetailPage()
       } else if (name === 'SuwayomiReaderPage') {
         SuwayomiReaderPage()
+      } else if (name === 'KomgaReaderPage') {
+        KomgaReaderPage()
       } else if (name === 'ZLibraryReaderPage') {
         ZLibraryReaderPage()
       } else if (name === 'DownloadManagerPage') {
@@ -25231,6 +25418,16 @@ struct MainMenuPage {
       .height('100%')
       .backgroundColor(Color.Transparent)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    } else if (tabIndex === TabIndex.KOMGA) {
+      MainMenuKomgaTabContent({
+        topSpacerHeight: this.getInitialTopOverlaySpacerHeight(),
+        bottomSpacerHeight: this.getKomgaBottomSpacerHeight(),
+        refreshSignal: this.komgaTabRefreshSignal
+      })
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.SETTINGS) {
       // 设置标签
       Column() { this.buildSettingsContent() }
@@ -25245,18 +25442,44 @@ struct MainMenuPage {
    */
   @Builder
   buildHorizontalTabBar() {
-    Row({ space: 0 }) {
-      // 底部导航栏标签按钮（使用缓存数组避免无限渲染）
-      ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
-        this.buildHorizontalTabButton(cfg)
-      })
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.cachedVisibleTabConfigs.length > 0) {
+        this.buildHorizontalTabIndicator()
+      }
+
+      Row({ space: 0 }) {
+        ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
+          this.buildHorizontalTabButton(cfg)
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
     }
     .width('100%')
     .height(this.BOTTOM_BAR_HEIGHT)
-    .padding({ left: 16, right: 16 })
     .backgroundColor(Color.Transparent)
     .borderRadius(this.getGlassRadius())
     .opacity(this.getTabBarOpacity())
+  }
+
+  @Builder
+  buildHorizontalTabIndicator() {
+    Column()
+      .width(this.getBottomBarIndicatorWidth())
+      .height(44)
+      .position({ x: this.getBottomBarIndicatorX(), y: 6 })
+      .borderRadius(16)
+      .clip(true)
+      .backgroundColor(this.getBottomBarSelectedChipBackground(this.getBottomBarVisualTabIndex()))
+      .shadow({
+        radius: 16,
+        color: this.getBottomBarGlowShadowColor(this.getBottomBarVisualTabIndex()),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .visualEffect(this.getBottomBarIndicatorVisualEffect())
+      .animation({ duration: this.isBottomBarFakeDragging ? 0 : 180, curve: Curve.EaseOut })
   }
 
   /**
@@ -25268,10 +25491,16 @@ struct MainMenuPage {
         return 'guide_main_tab_home';
       case TabIndex.LIBRARY:
         return 'guide_main_tab_library';
+      case TabIndex.DISCOVER:
+        return 'guide_main_tab_discover';
       case TabIndex.SOURCE:
         return 'guide_main_tab_source';
       case TabIndex.BOOK_SOURCE:
         return 'guide_main_tab_book_source';
+      case TabIndex.SUWAYOMI:
+        return 'guide_main_tab_suwayomi';
+      case TabIndex.KOMGA:
+        return 'guide_main_tab_komga';
       case TabIndex.SETTINGS:
         return 'guide_main_tab_settings';
       default:
@@ -25425,8 +25654,7 @@ struct MainMenuPage {
       // 将 TabIndex 转换为实际 Tabs 组件中的位置索引
       const actualIndex = this.getActualTabsIndexForTabIndex(tabIndex);
       if (actualIndex >= 0) {
-        this.currentTabIndex = tabIndex; // 保存的是 TabIndex 枚举值
-        this.tabsController.changeIndex(actualIndex); // Tabs 组件使用实际位置索引
+        this.changeMainContentToActualIndex(actualIndex);
         this.scrollSideTabToCenter(tabIndex);
       } else {
         logger.warn(TAG, `标签 ${tabIndex} 不可见，无法切换`);
@@ -25443,12 +25671,20 @@ struct MainMenuPage {
       this.buildTabItem(config)
     }
     .width('100%')
-    .height(56)
+    .height(44)
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
     .padding(0)
-    .margin({ left: 12, right: 12 })
+    .margin({ left: 4, right: 4 })
     .id(this.getGuideTabAnchorId(config.index))
+    .borderRadius(16)
+    .clip(true)
+    .backgroundColor(Color.Transparent)
+    .opacity(this.isBottomBarVisualSelected(config) ? 1 : 0.90)
+    .scale(this.bottomBarBounceTabIndex === config.index
+      ? { x: this.bottomBarBounceScale, y: this.bottomBarBounceScale }
+      : { x: 1, y: 1 })
+    .animation({ duration: 220, curve: Curve.EaseOut })
     .onClick(() => { this.handleTabButtonClick(config.index) })
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
@@ -25463,20 +25699,50 @@ struct MainMenuPage {
   @Builder
   buildTabItem(config: TabConfig) {
     Column({ space: 4 }) {
-      this.buildSharedTabIcon(config)
-
+      this.buildBottomBarTabIcon(config)
       Text(config.title)
         .fontSize(this.responsive_tabBarVertical ? 10 : 12)
         .fontFamily(this.appFontFamily)
-        .fontColor(this.getMainNavigationColor(this.currentTabIndex === config.index))
-        .fontWeight(this.currentTabIndex === config.index ? FontWeight.Medium : FontWeight.Normal)
+        .fontColor(this.getMainNavigationColor(this.isBottomBarVisualSelected(config)))
+        .fontWeight(this.isBottomBarVisualSelected(config) ? FontWeight.Medium : FontWeight.Normal)
         .maxLines(this.responsive_tabBarVertical ? 2 : 1)
         .textAlign(TextAlign.Center)
     }
     .width(this.responsive_tabBarVertical ? ResponsiveLayoutHelper.getSidebarWidth() : '100%')
-    .height(this.responsive_tabBarVertical ? '100%' : 56)
+    .height(this.responsive_tabBarVertical ? '100%' : 44)
     .justifyContent(FlexAlign.Center)
     .padding(this.responsive_tabBarVertical ? { left: 8, right: 8 } : 0)
+  }
+
+  @Builder
+  buildBottomBarTabIcon(config: TabConfig) {
+    Stack() {
+      if (config.useSystemIcon) {
+        SymbolGlyph(this.getSharedTabSystemIcon(config))
+          .fontSize(24)
+          .fontColor([this.getMainNavigationColor(this.isBottomBarVisualSelected(config))])
+          .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+      } else if (config.applyFillColor === false) {
+        Image(this.isBottomBarVisualSelected(config) ? config.selectedIcon : config.icon)
+          .width(24)
+          .height(24)
+      } else {
+        Image(this.isBottomBarVisualSelected(config) ? config.selectedIcon : config.icon)
+          .width(24)
+          .height(24)
+          .fillColor(this.getMainNavigationColor(this.isBottomBarVisualSelected(config)))
+      }
+
+      if (config.index === TabIndex.SOURCE && this.hasSourceUpdate) {
+        Circle()
+          .width(8)
+          .height(8)
+          .fill('#FF4444')
+          .position({ x: 16, y: 0 })
+      }
+    }
+    .width(24)
+    .height(24)
   }
 
   // 悬浮 + 模糊玻璃背景（纯修饰符，不使用@Builder，不包含逻辑语句）
@@ -25582,8 +25848,248 @@ struct MainMenuPage {
     return selected ? this.getMainNavigationActiveColor() : this.getMainNavigationInactiveColor();
   }
 
+  private getBottomBarGlowColor(tabIndex: number): ResourceColor {
+    switch (tabIndex) {
+      case TabIndex.DISCOVER:
+        return '#6BE6C1';
+      case TabIndex.SOURCE:
+        return '#FFBE6B';
+      case TabIndex.BOOK_SOURCE:
+        return '#FF9C70';
+      case TabIndex.SUWAYOMI:
+        return '#7BCFFF';
+      case TabIndex.KOMGA:
+        return '#F0C75A';
+      case TabIndex.SETTINGS:
+        return this.themeState.currentTheme === ThemeType.DARK ? '#D7E6F2' : '#7B8A99';
+      case TabIndex.HOME:
+      case TabIndex.LIBRARY:
+      default:
+        return this.themeState.currentTheme === ThemeType.DARK ? '#6EC8FF' : '#0A84FF';
+    }
+  }
+
+  private getBottomBarGlowShadowColor(tabIndex: number): string {
+    if (!this.userThemeShadowEnabled) {
+      return 'rgba(0, 0, 0, 0)';
+    }
+    switch (tabIndex) {
+      case TabIndex.DISCOVER:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(107, 230, 193, 0.28)'
+          : 'rgba(33, 190, 150, 0.16)';
+      case TabIndex.SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 190, 107, 0.30)'
+          : 'rgba(255, 166, 77, 0.18)';
+      case TabIndex.BOOK_SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 156, 112, 0.30)'
+          : 'rgba(255, 120, 84, 0.18)';
+      case TabIndex.SUWAYOMI:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(123, 207, 255, 0.30)'
+          : 'rgba(64, 171, 240, 0.18)';
+      case TabIndex.KOMGA:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(240, 199, 90, 0.28)'
+          : 'rgba(214, 153, 39, 0.16)';
+      case TabIndex.SETTINGS:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(215, 230, 242, 0.22)'
+          : 'rgba(123, 138, 153, 0.12)';
+      case TabIndex.HOME:
+      case TabIndex.LIBRARY:
+      default:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(110, 200, 255, 0.30)'
+          : 'rgba(10, 132, 255, 0.18)';
+    }
+  }
+
+  private getBottomBarSelectedChipBackground(tabIndex: number): string {
+    switch (tabIndex) {
+      case TabIndex.DISCOVER:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(107, 230, 193, 0.16)'
+          : 'rgba(33, 190, 150, 0.09)';
+      case TabIndex.SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 190, 107, 0.16)'
+          : 'rgba(255, 166, 77, 0.09)';
+      case TabIndex.BOOK_SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 156, 112, 0.16)'
+          : 'rgba(255, 120, 84, 0.09)';
+      case TabIndex.SUWAYOMI:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(123, 207, 255, 0.18)'
+          : 'rgba(64, 171, 240, 0.09)';
+      case TabIndex.KOMGA:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(240, 199, 90, 0.16)'
+          : 'rgba(214, 153, 39, 0.09)';
+      case TabIndex.SETTINGS:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(215, 230, 242, 0.12)'
+          : 'rgba(123, 138, 153, 0.07)';
+      case TabIndex.HOME:
+      case TabIndex.LIBRARY:
+      default:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(110, 200, 255, 0.16)'
+          : 'rgba(10, 132, 255, 0.09)';
+    }
+  }
+
+  private getBottomBarFlowAccentColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK ? '#FFE0A3' : '#FFC56F';
+  }
+
+  private getBottomBarContainerVisualEffect() {
+    return new hdsEffect.HdsEffectBuilder()
+      .pointLight({
+        illuminatedType: hdsEffect.PointLightIlluminatedType.DEFAULT_FEATHERING_BORDER
+      })
+      .shaderEffect({
+        effectType: hdsEffect.EffectType.DUAL_EDGE_FLOW_LIGHT,
+        animation: {
+          duration: 5200,
+          iterations: -1,
+          autoPlay: true,
+          curve: Curve.Linear,
+          expectedFrameRateRange: {
+            expected: hdsEffect.FrameRateType.FRAME_RATE_30,
+            min: hdsEffect.FrameRateType.FRAME_RATE_15,
+            max: hdsEffect.FrameRateType.FRAME_RATE_60
+          }
+        },
+        params: {
+          firstEdgeFlowLight: {
+            startPos: 0,
+            endPos: 1.0,
+            color: this.getBottomBarGlowColor(this.getBottomBarVisualTabIndex())
+          },
+          secondEdgeFlowLight: {
+            startPos: 0.45,
+            endPos: 1.45,
+            color: this.getBottomBarFlowAccentColor()
+          }
+        }
+      })
+      .buildEffect();
+  }
+
+  private getBottomBarIndicatorVisualEffect() {
+    const glowColor: ResourceColor = this.getBottomBarGlowColor(this.getBottomBarVisualTabIndex());
+    const builder: hdsEffect.HdsEffectBuilder = new hdsEffect.HdsEffectBuilder();
+
+    builder.pointLight({
+      illuminatedType: hdsEffect.PointLightIlluminatedType.DEFAULT_FEATHERING_BORDER,
+      options: {
+        color: glowColor,
+        intensity: this.themeState.currentTheme === ThemeType.DARK ? 0.42 : 0.24,
+        height: this.themeState.currentTheme === ThemeType.DARK ? 60 : 48,
+        bloom: this.themeState.currentTheme === ThemeType.DARK ? 0.34 : 0.16
+      }
+    });
+
+    builder.shaderEffect({
+      effectType: hdsEffect.EffectType.DUAL_EDGE_FLOW_LIGHT,
+      animation: {
+        duration: 2600,
+        iterations: -1,
+        autoPlay: true,
+        curve: Curve.Linear,
+        expectedFrameRateRange: {
+          expected: hdsEffect.FrameRateType.FRAME_RATE_30,
+          min: hdsEffect.FrameRateType.FRAME_RATE_15,
+          max: hdsEffect.FrameRateType.FRAME_RATE_60
+        }
+      },
+      params: {
+        firstEdgeFlowLight: {
+          startPos: -0.08,
+          endPos: 0.92,
+          color: glowColor
+        },
+        secondEdgeFlowLight: {
+          startPos: 0.46,
+          endPos: 1.46,
+          color: this.getBottomBarFlowAccentColor()
+        }
+      }
+    });
+
+    return builder.buildEffect();
+  }
+
+  private canStartBottomBarFakeDrag(): boolean {
+    if (this.useTopTabsNavigation || this.cachedVisibleTabConfigs.length <= 1) {
+      return false;
+    }
+    if (this.isOverlayBottomNavTab(this.currentTabIndex)) {
+      return false;
+    }
+    return true;
+  }
+
+  private beginBottomBarFakeDrag(): void {
+    if (!this.canStartBottomBarFakeDrag()) {
+      return;
+    }
+    this.bottomBarFakeDragLastOffsetX = 0;
+    try {
+      this.tabsController.finishAnimation();
+    } catch (error) {
+      logger.debug(TAG, `底栏开始拖动前结束动画失败: ${String(error)}`);
+    }
+    this.isBottomBarFakeDragging = this.tabsController.startFakeDrag();
+    if (this.isBottomBarFakeDragging) {
+      this.suppressTabClickUntil = Date.now() + 180;
+    }
+  }
+
+  private updateBottomBarFakeDrag(event: GestureEvent): void {
+    if (!this.isBottomBarFakeDragging) {
+      return;
+    }
+    const deltaX: number = event.offsetX - this.bottomBarFakeDragLastOffsetX;
+    this.bottomBarFakeDragLastOffsetX = event.offsetX;
+    if (Math.abs(deltaX) < 0.01) {
+      return;
+    }
+    this.tabsController.fakeDragBy(deltaX);
+  }
+
+  private endBottomBarFakeDrag(): void {
+    if (!this.isBottomBarFakeDragging) {
+      return;
+    }
+    const currentActualIndex: number = this.getActualTabsIndexForTabIndex(this.lastCommittedTabIndex);
+    const targetActualIndex: number = this.getBottomBarVisualActualIndex();
+    this.isBottomBarFakeDragging = false;
+    this.bottomBarFakeDragLastOffsetX = 0;
+    this.suppressTabClickUntil = Date.now() + 180;
+    const stopped: boolean = this.tabsController.stopFakeDrag();
+    if (!stopped) {
+      this.syncBottomBarVisualProgressFromActualIndex(this.getActualTabsIndexForTabIndex(this.currentTabIndex));
+      return;
+    }
+    if (targetActualIndex !== currentActualIndex) {
+      this.changeMainContentToActualIndex(targetActualIndex, true);
+    }
+  }
+
+  private handleMainContentDidScroll(_selectedIndex: number, index: number, position: number, _mainAxisLength: number): void {
+    if (index < 0) {
+      return;
+    }
+    this.bottomBarVisualProgress = this.clampBottomBarVisualProgress(index - position);
+  }
+
   private getEffectiveBottomBarOffset(): number {
-    if (this.currentTabIndex === TabIndex.SUWAYOMI) {
+    if (this.isOverlayBottomNavTab(this.currentTabIndex)) {
       return this.getBottomBarTravelDistance();
     }
     if (!isMainPageBottomBarAnimationEnabled()) {
@@ -25621,12 +26127,38 @@ struct MainMenuPage {
     }
   }
 
+  private triggerBottomBarSelectionBounce(tabIndex: number): void {
+    if (this.bottomBarBounceTimer >= 0) {
+      clearTimeout(this.bottomBarBounceTimer);
+      this.bottomBarBounceTimer = -1;
+    }
+
+    this.bottomBarBounceTabIndex = tabIndex;
+    this.bottomBarBounceScale = 0.92;
+    animateTo({
+      duration: 110,
+      curve: Curve.EaseOut
+    }, () => {
+      this.bottomBarBounceScale = 1.08;
+    });
+
+    this.bottomBarBounceTimer = setTimeout(() => {
+      animateTo({
+        duration: 180,
+        curve: Curve.EaseOut
+      }, () => {
+        this.bottomBarBounceScale = 1;
+      });
+      this.bottomBarBounceTimer = -1;
+    }, 110);
+  }
+
   /**
    * 处理滚动事件，实现底栏跟手滑动隐藏/显示
    * @param deltaY Y轴滚动偏移量变化值（正值=向下滚动，负值=向上滚动）
    */
   private handleScrollForBottomBar(deltaY: number): void {
-    if (!isMainPageBottomBarAnimationEnabled() || this.useTopTabsNavigation || this.currentTabIndex === TabIndex.SUWAYOMI) {
+    if (!isMainPageBottomBarAnimationEnabled() || this.useTopTabsNavigation || this.isOverlayBottomNavTab(this.currentTabIndex)) {
       return;
     }
     this.clearBottomBarSettleTimer();
@@ -25655,7 +26187,7 @@ struct MainMenuPage {
         return;
       }
 
-      if (this.useTopTabsNavigation || this.currentTabIndex === TabIndex.SUWAYOMI) {
+      if (this.useTopTabsNavigation || this.isOverlayBottomNavTab(this.currentTabIndex)) {
         this.resetBottomBarScrollState();
         return;
       }
@@ -25681,7 +26213,7 @@ struct MainMenuPage {
       return;
     }
 
-    if (this.useTopTabsNavigation || this.currentTabIndex === TabIndex.SUWAYOMI) {
+    if (this.useTopTabsNavigation || this.isOverlayBottomNavTab(this.currentTabIndex)) {
       this.resetBottomBarScrollState();
       return;
     }
@@ -25695,6 +26227,72 @@ struct MainMenuPage {
     this.clearBottomBarSettleTimer();
     this.bottomBarScrollAccumulator = 0;
     this.bottomBarLastScrollDirection = 0;
+  }
+
+  private handleMainContentIndexChanged(actualIndex: number): void {
+    const previousTabIndex = this.lastCommittedTabIndex;
+    const tabIndex = this.getTabIndexForActualTabsIndex(actualIndex);
+    this.isBottomBarFakeDragging = false;
+    this.bottomBarFakeDragLastOffsetX = 0;
+    this.lastCommittedTabIndex = tabIndex;
+    this.currentTabIndex = tabIndex;
+    this.syncBottomBarVisualProgressFromActualIndex(actualIndex);
+    this.scrollSideTabToCenter(tabIndex);
+    logger.info(TAG, `标签页切换: 实际位置=${actualIndex}, TabIndex=${tabIndex}`);
+    if (previousTabIndex !== tabIndex) {
+      this.triggerBottomBarSelectionBounce(tabIndex);
+    }
+
+    this.resetBottomBarScrollState();
+    if (this.isOverlayBottomNavTab(tabIndex)) {
+      animateTo({
+        duration: 200,
+        curve: Curve.EaseOut
+      }, () => {
+        this.bottomBarOffsetY = this.getBottomBarTravelDistance();
+      });
+    } else {
+      animateTo({
+        duration: 200,
+        curve: Curve.EaseOut
+      }, () => {
+        this.bottomBarOffsetY = 0;
+      });
+    }
+
+    if (previousTabIndex === TabIndex.SETTINGS && tabIndex !== TabIndex.SETTINGS) {
+      logger.info(TAG, '从设置页返回，重新加载用户配置');
+      this.loadUserThemeConfig();
+      this.loadVisibleTabs();
+      void this.loadLibraryViewMode();
+      if (tabIndex === TabIndex.KOMGA) {
+        this.komgaTabRefreshSignal = this.komgaTabRefreshSignal + 1;
+      }
+    }
+
+    switch (tabIndex) {
+      case TabIndex.HOME:
+        this.silentRefreshRecentReadingList();
+        break;
+      case TabIndex.LIBRARY:
+        this.silentRefreshLibrary();
+        break;
+      case TabIndex.DISCOVER:
+        this.silentRefreshDiscoverData();
+        break;
+      case TabIndex.SOURCE:
+        this.silentRefreshSources();
+        break;
+      case TabIndex.BOOK_SOURCE:
+        this.initializeAndLoadBookSources();
+        break;
+      case TabIndex.SUWAYOMI:
+        this.silentInitializeSuwayomi();
+        break;
+      case TabIndex.KOMGA:
+      default:
+        break;
+    }
   }
 
   build() {
@@ -25723,21 +26321,14 @@ struct MainMenuPage {
           // 主要内容区域包装器 - 包含底部导航栏避让
           Column() {
             // 主要内容区域 - 使用Tabs动态渲染可见标签页
-            Tabs({
-              controller: this.tabsController
-            }) {
+            Swiper(this.tabsController) {
               // 动态渲染可见的标签页（使用缓存数组避免ForEach无限渲染）
               ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig) => {
-                TabContent() {
-                  Stack() {
-                    this.buildTabContentForIndex(cfg.index)
-                  }
-                  .width('100%')
-                  .height('100%')
-                  .backgroundColor(Color.Transparent)
-                  .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-                  .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
+                Stack() {
+                  this.buildTabContentForIndex(cfg.index)
                 }
+                .width('100%')
+                .height('100%')
                 .backgroundColor(Color.Transparent)
                 .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
                 .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
@@ -25745,75 +26336,21 @@ struct MainMenuPage {
             }
             .layoutWeight(1)
             .backgroundColor(Color.Transparent)
-            .barBackgroundColor(Color.Transparent)
-            .barHeight(0)
+            .indicator(false)
+            .loop(false)
+            .cachedCount(3)
+            .duration(260)
+            .curve(Curve.EaseOut)
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
             .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
+            .onAppear(() => {
+              this.changeMainContentToActualIndex(this.getActualTabsIndexForTabIndex(this.currentTabIndex), false);
+            })
+            .onContentDidScroll((selectedIndex: number, index: number, position: number, mainAxisLength: number) => {
+              this.handleMainContentDidScroll(selectedIndex, index, position, mainAxisLength);
+            })
             .onChange((actualIndex: number) => {
-              // 将实际 Tabs 位置索引转换为 TabIndex 枚举值
-              const previousTabIndex = this.currentTabIndex;
-              const tabIndex = this.getTabIndexForActualTabsIndex(actualIndex);
-              this.currentTabIndex = tabIndex;
-              this.scrollSideTabToCenter(tabIndex);
-              logger.info(TAG, `标签页切换: 实际位置=${actualIndex}, TabIndex=${tabIndex}`);
-              
-              // 切换标签时重置底栏滚动状态
-              this.resetBottomBarScrollState();
-              // Suwayomi标签页有自己的底部导航，隐藏主底栏
-              if (tabIndex === TabIndex.SUWAYOMI) {
-                animateTo({
-                  duration: 200,
-                  curve: Curve.EaseOut
-                }, () => {
-                  this.bottomBarOffsetY = this.getBottomBarTravelDistance();
-                });
-              } else {
-                animateTo({
-                  duration: 200,
-                  curve: Curve.EaseOut
-                }, () => {
-                  this.bottomBarOffsetY = 0;
-                });
-              }
-
-              // 从设置Tab切换到其他Tab时，重新加载用户主题配置和标签配置
-              // 这样可以安全地应用在设置页面中做的任何配置更改
-              if (previousTabIndex === TabIndex.SETTINGS && tabIndex !== TabIndex.SETTINGS) {
-                logger.info(TAG, '从设置页返回，重新加载用户配置');
-                this.loadUserThemeConfig();
-                this.loadVisibleTabs();
-                void this.loadLibraryViewMode();
-              }
-
-              // 切换标签时静默刷新对应数据（不显示加载状态，避免闪屏）
-              switch (tabIndex) {
-                case TabIndex.HOME:
-                  // 首页：静默刷新最近阅读列表
-                  this.silentRefreshRecentReadingList();
-                  break;
-                case TabIndex.LIBRARY:
-                  // 书库：静默刷新漫画和电子书列表
-                  this.silentRefreshLibrary();
-                  break;
-                case TabIndex.DISCOVER:
-                  // 发现页：静默刷新发现页数据
-                  this.silentRefreshDiscoverData();
-                  break;
-                case TabIndex.SOURCE:
-                  // 图源页：静默刷新图源列表（增量更新，避免闪烁）
-                  this.silentRefreshSources();
-                  break;
-                case TabIndex.BOOK_SOURCE:
-                  // 书源标签：确保初始化并加载书源列表
-                  this.initializeAndLoadBookSources();
-                  break;
-                case TabIndex.SUWAYOMI:
-                  // Suwayomi标签：静默初始化（有缓存则不重新加载）
-                  this.silentInitializeSuwayomi();
-                  break;
-                default:
-                  break;
-              }
+              this.handleMainContentIndexChanged(actualIndex);
             })
           }
           .layoutWeight(1)
@@ -25901,13 +26438,36 @@ struct MainMenuPage {
           .width(this.getBottomBarWidth())
           .height(this.BOTTOM_BAR_HEIGHT)
           .borderRadius(this.getGlassRadius())
-          .backgroundColor(Color.Transparent)
-          .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+          .clip(true)
+          .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
+            ? 'rgba(10, 16, 24, 0.42)'
+            : 'rgba(255, 255, 255, 0.40)')
+          .backgroundBlurStyle(BlurStyle.BACKGROUND_THICK, {
             colorMode: ThemeColorMode.SYSTEM,
             adaptiveColor: AdaptiveColor.DEFAULT,
-            scale: 1.0
+            scale: this.themeState.currentTheme === ThemeType.DARK ? 1.12 : 1.08
           })
-          .shadow({ radius: 16, color: this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)', offsetX: 0, offsetY: -4 })
+          .shadow({
+            radius: 20,
+            color: this.userThemeShadowEnabled
+              ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.34)' : 'rgba(0, 0, 0, 0.12)')
+              : 'rgba(0, 0, 0, 0)',
+            offsetX: 0,
+            offsetY: 6
+          })
+          .visualEffect(this.getBottomBarContainerVisualEffect())
+          .gesture(
+            PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+              .onActionStart(() => {
+                this.beginBottomBarFakeDrag();
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                this.updateBottomBarFakeDrag(event);
+              })
+              .onActionEnd(() => {
+                this.endBottomBarFakeDrag();
+              })
+          )
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
           .translate({ y: this.getEffectiveBottomBarOffset() })
           .opacity(1 - this.getEffectiveBottomBarOffset() / this.getBottomBarTravelDistance() * 0.3)

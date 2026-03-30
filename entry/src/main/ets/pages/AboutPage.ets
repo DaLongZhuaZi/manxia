@@ -21,7 +21,7 @@ import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?taskId=92490ec200cf7ef8e63f0bca11aacfd4&invitationCode=8aA6fdl5bAR';
+const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?taskId=5af3c709d4fde5ab7e7b3d93aae8430f&invitationCode=8aA6fdl5bAR';
 
 // 使用NavDestinationContext官方类型
 // @kit.ArkUI提供的NavDestinationContext已包含必要的类型定义

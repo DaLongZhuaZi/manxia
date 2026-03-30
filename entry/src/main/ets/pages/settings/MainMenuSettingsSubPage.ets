@@ -21,6 +21,8 @@ import {
   DEFAULT_ANIMATION_SETTINGS
 } from '../../Framework/Animation/AnimationSettingsManager';
 import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Framework/Tracking/trackers/SuwayomiTracker';
+import { getKomgaTracker, KomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
+import { KomgaConfig } from '../../Framework/Source/KomgaModels';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
 import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
@@ -81,7 +83,8 @@ enum TabIndex {
   SOURCE = 3,
   BOOK_SOURCE = 4,
   SUWAYOMI = 5,
-  SETTINGS = 6
+  SETTINGS = 6,
+  KOMGA = 7
 }
 
 type TabletTopBarPosition = 'top' | 'bottom' | 'left' | 'right';
@@ -128,12 +131,14 @@ export struct MainMenuSettingsSubPage {
   @State libraryCoverOpenReaderEnabled: boolean = true;
   @State mainPageBottomBarAnimationEnabled: boolean = DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled;
   @State suwayomiBrowsePageAsEntryEnabled: boolean = false;
+  @State komgaBrowsePageAsEntryEnabled: boolean = true;
   @State libraryDisplayMode: string = 'flat';
 
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
   private animationSettingsManager: AnimationSettingsManager = AnimationSettingsManager.getInstance();
   private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
+  private komgaTracker: KomgaTracker = getKomgaTracker();
   private dataManager: DataManager = DataManager.getInstance();
 
   // 详情页选项列表（只保留默认和统一详情页两项）
@@ -149,6 +154,7 @@ export struct MainMenuSettingsSubPage {
     { title: '图源', index: TabIndex.SOURCE, required: false },
     { title: '书源', index: TabIndex.BOOK_SOURCE, required: false },
     { title: 'Suwayomi', index: TabIndex.SUWAYOMI, required: false },
+    { title: 'Komga', index: TabIndex.KOMGA, required: false },
     { title: '管理', index: TabIndex.SETTINGS, required: true }
   ];
 
@@ -169,7 +175,20 @@ export struct MainMenuSettingsSubPage {
   }
 
   private getDefaultTabIndices(): number[] {
-    return this.getAvailableTabConfigs().map((cfg: TabConfig) => cfg.index);
+    const preferredOrder: number[] = [
+      TabIndex.LIBRARY,
+      TabIndex.SOURCE,
+      TabIndex.BOOK_SOURCE,
+      TabIndex.SETTINGS
+    ];
+    const availableIndices = this.getAvailableTabConfigs().map((cfg: TabConfig) => cfg.index);
+    const defaults: number[] = [];
+    for (const idx of preferredOrder) {
+      if (availableIndices.includes(idx)) {
+        defaults.push(idx);
+      }
+    }
+    return defaults.length > 0 ? defaults : this.getAvailableTabConfigs().map((cfg: TabConfig) => cfg.index);
   }
 
   private sanitizeVisibleTabIndices(indices: number[]): number[] {
@@ -242,6 +261,7 @@ export struct MainMenuSettingsSubPage {
     this.loadSettings();
     this.loadVisibleTabs();
     this.loadSuwayomiEntrySettings();
+    this.loadKomgaEntrySettings();
     this.loadLibraryDisplayMode();
   }
 
@@ -340,6 +360,16 @@ export struct MainMenuSettingsSubPage {
       this.suwayomiBrowsePageAsEntryEnabled = config.useBrowsePageAsEntry ?? false;
     } catch (error) {
       logger.error(TAG, '加载 Suwayomi 入口设置失败', String(error));
+    }
+  }
+
+  private async loadKomgaEntrySettings(): Promise<void> {
+    try {
+      await this.komgaTracker.initialize();
+      const config = this.komgaTracker.getConfig();
+      this.komgaBrowsePageAsEntryEnabled = config.useBrowsePageAsEntry;
+    } catch (error) {
+      logger.error(TAG, '加载 Komga 入口设置失败', String(error));
     }
   }
 
@@ -581,6 +611,34 @@ export struct MainMenuSettingsSubPage {
       logger.error(TAG, '加载可见标签配置失败', String(error));
       this.visibleTabIndices = this.getDefaultTabIndices();
       this.tempVisibleTabIndices = [...this.visibleTabIndices];
+    }
+  }
+
+  private async saveKomgaBrowseEntrySetting(enabled: boolean): Promise<void> {
+    try {
+      await this.komgaTracker.initialize();
+      const config = this.komgaTracker.getConfig();
+      const nextConfig: KomgaConfig = {
+        instances: config.instances,
+        currentInstanceId: config.currentInstanceId,
+        useBrowsePageAsEntry: enabled
+      };
+      const success = await this.komgaTracker.saveConfig(nextConfig);
+      if (!success) {
+        throw new Error('saveConfig failed');
+      }
+      this.komgaBrowsePageAsEntryEnabled = enabled;
+      promptAction.showToast({
+        message: '设置已保存',
+        duration: 1500
+      });
+    } catch (error) {
+      logger.error(TAG, '保存 Komga 入口设置失败', String(error));
+      this.komgaBrowsePageAsEntryEnabled = !enabled;
+      promptAction.showToast({
+        message: '保存失败，请重试',
+        duration: 1500
+      });
     }
   }
 
@@ -1274,7 +1332,7 @@ export struct MainMenuSettingsSubPage {
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .padding({ left: 4 })
 
-              Text('控制主页面书库点击行为、底栏动画和 Suwayomi 入口跳转行为')
+              Text('控制主页面书库点击行为、底栏动画，以及 Suwayomi / Komga 入口跳转行为')
                 .fontSize(13)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1371,6 +1429,37 @@ export struct MainMenuSettingsSubPage {
                   .onChange((isOn: boolean) => {
                     this.suwayomiBrowsePageAsEntryEnabled = isOn;
                     this.saveSuwayomiBrowseEntrySetting(isOn);
+                  })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .borderRadius(12)
+              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+
+              Row() {
+                Column({ space: 4 }) {
+                  Text('Komga 入口直达浏览页')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('开启后，主页面 Komga 入口将直接跳转到浏览页面')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.komgaBrowsePageAsEntryEnabled })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    this.komgaBrowsePageAsEntryEnabled = isOn;
+                    this.saveKomgaBrowseEntrySetting(isOn);
                   })
               }
               .width('100%')

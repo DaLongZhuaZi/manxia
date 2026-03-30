@@ -35,6 +35,9 @@ export interface ChapterInfo {
   title: string;
   url?: string;
   updateTime?: number;
+  chapterNumber?: number;
+  seriesTitle?: string;
+  pageCount?: number;
 }
 
 /**

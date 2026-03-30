@@ -66,6 +66,7 @@ export interface BackupData {
 export interface CloudConfigBackupSection {
   webdav?: WebDAVConfigBackup;
   suwayomi?: SuwayomiConfigBackup;
+  komga?: KomgaConfigBackup;
   ftp?: FTPConnectionsBackup;
 }
 
@@ -91,6 +92,31 @@ export interface SuwayomiConfigBackup {
   password: string;
   useAuth: boolean;
   useBrowsePageAsEntry: boolean;
+}
+
+/**
+ * Komga 配置备份
+ */
+export interface KomgaConfigBackup {
+  instances: KomgaInstanceConfigBackup[];
+  currentInstanceId: string;
+  useBrowsePageAsEntry: boolean;
+}
+
+/**
+ * 单个 Komga 实例配置备份
+ */
+export interface KomgaInstanceConfigBackup {
+  id: string;
+  displayName: string;
+  serverUrl: string;
+  authMode: 'NONE' | 'BASIC' | 'API_KEY';
+  username: string;
+  password: string;
+  apiKey: string;
+  defaultLibraryIds: string[];
+  chapterTitleTemplate: string;
+  enabled: boolean;
 }
 
 /**

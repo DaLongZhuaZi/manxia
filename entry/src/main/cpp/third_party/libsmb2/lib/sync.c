@@ -74,7 +74,11 @@ static int wait_for_reply(struct smb2_context *smb2,
 		pfd.events = smb2_which_events(smb2);
 
 		if (poll(&pfd, 1, 1000) < 0) {
-			smb2_set_error(smb2, "Poll failed");
+			if (errno == EINTR) {
+				continue;
+			}
+			smb2_set_error(smb2, "Poll failed: %s(%d), fd=%d, events=%d",
+                                        strerror(errno), errno, (int)pfd.fd, pfd.events);
 			return -1;
 		}
                 if (smb2->timeout) {

@@ -22,6 +22,7 @@ import { Manga, MangaChapter } from '../Models/MangaModels';
 import { CompressionUtils, ExtractionResult, RecursiveExtractionResult } from '../Utils/CompressionUtils';
 import { ComicInfoParser, ComicInfo } from '../Utils/ComicInfoParser';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
 import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Components/CoverSelectionDialog';
 import { eventBus, GameEvent, MangaImportCompletedPayload, FileImportRequestedPayload, IEventPayload } from '../Framework/EventBus';
 
@@ -822,8 +823,98 @@ struct DataManagementPage {
    * 使用DOWNLOAD模式创建应用专属目录并访问
    * 通过DocumentViewPicker的DOWNLOAD模式，自动在Download/包名/目录下创建
    */
+  private syncDownloadDirStateFromManager(): void {
+    if (!DownloadDirManager.isReady()) {
+      return;
+    }
+    this.downloadDirPath = DownloadDirManager.getPath();
+    this.downloadDirUri = DownloadDirManager.getUri();
+    try {
+      const filenames = fs.listFileSync(this.downloadDirPath);
+      this.downloadDirFiles = filenames;
+      this.downloadDirFileCount = filenames.length;
+    } catch (error) {
+      logger.warn(TAG, `刷新 Download 目录状态失败: ${String(error)}`);
+      this.downloadDirFiles = [];
+      this.downloadDirFileCount = 0;
+    }
+  }
+
+  private async ensureManagedDownloadDirReady(reason: string): Promise<boolean> {
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      logger.error(TAG, `无法获取上下文，不能准备 Download 目录: ${reason}`);
+      this.showToast('无法访问 Download 应用目录');
+      return false;
+    }
+
+    DownloadDirManager.setContext(context);
+    if (!DownloadDirManager.isReady()) {
+      logger.info(TAG, `开始准备 Download 应用目录: ${reason}`);
+      const granted = await DownloadDirManager.requestAccess();
+      if (!granted || !DownloadDirManager.isReady()) {
+        logger.warn(TAG, `Download 应用目录授权失败: ${reason}`);
+        this.showToast('需要授予 Download 应用目录权限后才能继续');
+        return false;
+      }
+    }
+
+    this.syncDownloadDirStateFromManager();
+    logger.info(TAG, `Download 应用目录已就绪: ${this.downloadDirPath}`);
+    return this.downloadDirPath.length > 0;
+  }
+
+  private resolveLocalImportPath(sourceUri: string): string {
+    try {
+      return new fileUri.FileUri(sourceUri).path;
+    } catch (_error) {
+      if (sourceUri.startsWith('file://docs')) {
+        return sourceUri.replace('file://docs', '');
+      }
+      if (sourceUri.startsWith('file://')) {
+        return sourceUri.replace('file://', '');
+      }
+      return sourceUri;
+    }
+  }
+
+  private buildNetworkImportSafeFileName(displayName: string): string {
+    const trimmed = displayName.trim();
+    const baseName = (trimmed.length > 0 ? trimmed : 'network_import_file').replace(/[<>:\"/\\\\|?*]/g, '_');
+    const lastDot = baseName.lastIndexOf('.');
+    const uniqueSuffix = `${Date.now().toString(16)}`;
+    if (lastDot <= 0) {
+      return `${baseName}_${uniqueSuffix}`;
+    }
+    const namePart = baseName.substring(0, lastDot);
+    const extension = baseName.substring(lastDot);
+    return `${namePart}_${uniqueSuffix}${extension}`;
+  }
+
+  private async stageNetworkImportFileToDownload(relativeDir: string, sourceUri: string, displayName: string): Promise<string> {
+    const prepared = await this.ensureManagedDownloadDirReady('网络文件夹导入');
+    if (!prepared) {
+      throw new Error('Download 应用目录尚未准备就绪');
+    }
+
+    const sourcePath = this.resolveLocalImportPath(sourceUri);
+    const targetDir = DownloadDirManager.ensureDirectory(relativeDir);
+    const targetPath = `${targetDir}/${this.buildNetworkImportSafeFileName(displayName)}`;
+    fs.copyFileSync(sourcePath, targetPath);
+    logger.info(TAG, `网络文件夹缓存文件已转存到 Download 应用目录: ${targetPath}`);
+    this.syncDownloadDirStateFromManager();
+    return targetPath;
+  }
+
   private async accessAppDownloadDir(): Promise<void> {
     try {
+      const ready = await this.ensureManagedDownloadDirReady('手动连接 Download 目录');
+      if (!ready) {
+        return;
+      }
+      promptAction.showToast({ message: `目录连接成功，共 ${this.downloadDirFileCount} 个文件` });
+      return;
+
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
       if (!context) {
         promptAction.showToast({ message: '无法获取上下文' });
@@ -1827,12 +1918,12 @@ struct DataManagementPage {
       setTimeout((): void => {
         const ctx: UIContext | undefined = this.uiContext;
         if (!ctx) {
-          logger.warn(TAG, 'UIContext 未就绪，回退使用通用控制器');
+          logger.warn(TAG, '界面上下文未就绪，回退使用通用对话框控制器');
           UniversalDialogManager.show(dialogOptions);
           return;
         }
         UniversalDialogManager.showWithContext(ctx as UIContext, dialogOptions);
-        logger.info(TAG, 'UniversalDialogManager.showWithContext 已调用，等待用户选择');
+        logger.info(TAG, '已调用带上下文的通用对话框控制器，等待用户选择');
       }, 0);
     });
   }
@@ -1884,12 +1975,12 @@ struct DataManagementPage {
       setTimeout((): void => {
         const ctx: UIContext | undefined = this.uiContext;
         if (!ctx) {
-          logger.warn(TAG, 'UIContext 未就绪，回退使用通用控制器');
+          logger.warn(TAG, '界面上下文未就绪，回退使用通用对话框控制器');
           UniversalDialogManager.show(dialogOptions);
           return;
         }
         UniversalDialogManager.showWithContext(ctx as UIContext, dialogOptions);
-        logger.info(TAG, 'UniversalDialogManager.showWithContext 已调用，等待用户选择');
+        logger.info(TAG, '已调用带上下文的通用对话框控制器，等待用户选择');
       }, 0);
     });
   }
@@ -2023,6 +2114,13 @@ struct DataManagementPage {
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
     this.uiContext = this.getUIContext();
+    const abilityContext = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (abilityContext) {
+      DownloadDirManager.setContext(abilityContext);
+      if (DownloadDirManager.isReady()) {
+        this.syncDownloadDirStateFromManager();
+      }
+    }
     
     // 使用ThemeAwareHelper统一管理主题
     ThemeAwareHelper.initializeThemeAware(
@@ -2076,6 +2174,9 @@ struct DataManagementPage {
         const pendingFileUri = AppStorage.get<string>('pendingFileUri');
         const pendingFileType = AppStorage.get<string>('pendingFileType');
         const pendingFileCategory = AppStorage.get<string>('pendingFileCategory');
+        const pendingFileSource = AppStorage.get<string>('pendingFileSource');
+        const pendingFileTarget = AppStorage.get<string>('pendingFileTarget');
+        const pendingFileDisplayName = AppStorage.get<string>('pendingFileDisplayName');
         
         if (pendingFileUri) {
           logger.info(TAG, `准备处理文件: ${pendingFileUri}, 分类: ${pendingFileCategory}`);
@@ -2084,10 +2185,20 @@ struct DataManagementPage {
           AppStorage.delete('pendingFileUri');
           AppStorage.delete('pendingFileType');
           AppStorage.delete('pendingFileCategory');
+          AppStorage.delete('pendingFileSource');
+          AppStorage.delete('pendingFileTarget');
+          AppStorage.delete('pendingFileDisplayName');
           
           // 延迟处理，确保UI完全渲染
           setTimeout(() => {
-            this.handlePendingFileWithCategory(pendingFileUri, pendingFileType || '', pendingFileCategory || '');
+            this.handlePendingFileWithCategory(
+              pendingFileUri,
+              pendingFileType || '',
+              pendingFileCategory || '',
+              pendingFileSource || '',
+              pendingFileTarget || '',
+              pendingFileDisplayName || ''
+            );
           }, 800);
         }
       }
@@ -2099,9 +2210,21 @@ struct DataManagementPage {
   /**
    * 根据文件分类处理待导入的文件
    */
-  private async handlePendingFileWithCategory(fileUri: string, fileType: string, category: string): Promise<void> {
+  private async handlePendingFileWithCategory(
+    fileUri: string,
+    fileType: string,
+    category: string,
+    source: string = '',
+    target: string = '',
+    displayName: string = ''
+  ): Promise<void> {
     try {
-      logger.info(TAG, `根据分类处理文件: ${fileUri}, 分类: ${category}`);
+      logger.info(TAG, `根据分类处理文件: ${fileUri}, 分类: ${category}, 来源: ${source}, 目标: ${target}`);
+
+      if (source === 'network_folder' && target === 'download_dir') {
+        await this.handleNetworkFolderPendingImport(fileUri, fileType, category, displayName);
+        return;
+      }
       
       switch (category) {
         case 'comic':
@@ -2127,6 +2250,51 @@ struct DataManagementPage {
     } catch (error) {
       logger.error(TAG, '根据分类处理文件失败', String(error));
     }
+  }
+
+  private async handleNetworkFolderPendingImport(
+    fileUri: string,
+    fileType: string,
+    category: string,
+    displayName: string
+  ): Promise<void> {
+    const resolvedName = displayName.trim().length > 0 ? displayName : fileType;
+    logger.info(TAG, `开始处理网络文件夹导入: ${resolvedName}, 分类: ${category}`);
+
+    switch (category) {
+      case 'comic':
+        await this.handleNetworkFolderComicImport(fileUri, resolvedName);
+        return;
+      case 'ebook':
+        await this.handleNetworkFolderEBookImport(fileUri, resolvedName);
+        return;
+      case 'pdf':
+        await this.handleNetworkFolderPdfImport(fileUri, resolvedName);
+        return;
+      default:
+        logger.warn(TAG, `网络文件夹导入遇到不支持的分类: ${category}`);
+        this.showToast('当前网络文件暂不支持直接导入');
+        return;
+    }
+  }
+
+  private async handleNetworkFolderComicImport(fileUriValue: string, displayName: string): Promise<void> {
+    const stagedPath = await this.stageNetworkImportFileToDownload('imports/network_folder/comics', fileUriValue, displayName);
+    const stagedUri = fileUri.getUriFromPath(stagedPath);
+    logger.info(TAG, `网络漫画文件已转入 Download 应用目录，准备显示漫画导入对话框: ${stagedPath}`);
+    await this.showDownloadSingleImportDialog(stagedUri, displayName);
+  }
+
+  private async handleNetworkFolderEBookImport(fileUriValue: string, displayName: string): Promise<void> {
+    const stagedPath = await this.stageNetworkImportFileToDownload('ebooks', fileUriValue, displayName);
+    logger.info(TAG, `网络电子书文件已转入 Download 应用目录，准备继续电子书导入: ${stagedPath}`);
+    await this.continueImportEBook(stagedPath);
+  }
+
+  private async handleNetworkFolderPdfImport(fileUriValue: string, displayName: string): Promise<void> {
+    const stagedPath = await this.stageNetworkImportFileToDownload('imports/network_folder/pdfs', fileUriValue, displayName);
+    logger.info(TAG, `网络 PDF 文件已转入 Download 应用目录，准备显示 PDF 导入对话框: ${stagedPath}`);
+    await this.handlePdfImportWithCategorySelection(stagedPath, DownloadDirManager.ensureDirectory('manga'), 'network_folder_pdf');
   }
 
   /**
@@ -2302,7 +2470,11 @@ struct DataManagementPage {
   /**
    * 处理PDF文件导入，显示综合设置对话框
    */
-  private async handlePdfImportWithCategorySelection(fileUri: string): Promise<void> {
+  private async handlePdfImportWithCategorySelection(
+    fileUri: string,
+    preferredOutputDir: string = '',
+    sourceId: string = 'local_pdf'
+  ): Promise<void> {
     try {
       logger.info(TAG, `处理PDF文件导入，显示设置对话框: ${fileUri}`);
       
@@ -2321,7 +2493,7 @@ struct DataManagementPage {
       logger.info(TAG, `用户确认PDF导入: 类型=${dialogResult.contentType}, 标题=${dialogResult.title}`);
       
       // 开始后台导入任务
-      await this.startPdfImportTask(fileUri, dialogResult);
+      await this.startPdfImportTask(fileUri, dialogResult, preferredOutputDir, sourceId);
       
     } catch (error) {
       logger.error(TAG, '处理PDF文件导入失败', String(error instanceof Error ? error.message : error));
@@ -2362,7 +2534,12 @@ struct DataManagementPage {
   /**
    * 启动PDF导入后台任务
    */
-  private async startPdfImportTask(fileUri: string, dialogResult: PdfImportDialogResult): Promise<void> {
+  private async startPdfImportTask(
+    fileUri: string,
+    dialogResult: PdfImportDialogResult,
+    preferredOutputDir: string = '',
+    sourceId: string = 'local_pdf'
+  ): Promise<void> {
     const taskManager = BackgroundTaskManager.getInstance();
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (!context) {
@@ -2375,7 +2552,15 @@ struct DataManagementPage {
       TaskType.PDF_IMPORT,
       `导入: ${dialogResult.title}`,
       async (onProgress, cancelSignal) => {
-        return await this.executePdfImportWithDialogResult(fileUri, dialogResult, filesDir, onProgress, cancelSignal);
+        return await this.executePdfImportWithDialogResult(
+          fileUri,
+          dialogResult,
+          filesDir,
+          onProgress,
+          cancelSignal,
+          preferredOutputDir,
+          sourceId
+        );
       },
       {
         context: context,
@@ -2411,14 +2596,18 @@ struct DataManagementPage {
     dialogResult: PdfImportDialogResult,
     filesDir: string,
     onProgress: (current: number, total: number, message: string) => void,
-    cancelSignal: TaskCancelSignal
+    cancelSignal: TaskCancelSignal,
+    preferredOutputDir: string = '',
+    sourceId: string = 'local_pdf'
   ): Promise<PdfImportResult> {
     try {
       const result = await this.pdfImportService.executeImport({
         fileUri: fileUri,
         dialogResult: dialogResult,
         filesDir: filesDir,
+        outputDir: preferredOutputDir,
         cancelSignal: cancelSignal,
+        sourceId: sourceId,
         onProgress: (current: number, total: number, message: string) => {
           onProgress(current, total, message);
           this.updateProgress(ImportStatus.PROCESSING, message, total > 0 ? Math.floor((current / total) * 100) : 0);
@@ -2793,7 +2982,7 @@ struct DataManagementPage {
         duration: 2000
       });
     } catch (error) {
-      logger.error(TAG, 'Show toast failed', String(error));
+      logger.error(TAG, '显示提示消息失败', String(error));
     }
   }
 
@@ -3078,7 +3267,10 @@ struct DataManagementPage {
       
       // 如果书名看起来像是时间戳开头的文件名，尝试提取真实书名
       if (ebook.metadata.title.match(/^\d+_/)) {
-        const cleanTitle = ebook.metadata.title.replace(/^\d+_/, '').replace(/\.(txt|epub|mobi|azw|azw3|pdf)$/i, '');
+        const cleanTitle = ebook.metadata.title
+          .replace(/^\d+_/, '')
+          .replace(/\.(txt|epub|mobi|azw|azw3|pdf)$/i, '')
+          .replace(/_[a-f0-9]{6,}$/i, '');
         if (cleanTitle.length > 0) {
           ebook.metadata.title = cleanTitle;
           logger.info(TAG, `提取真实书名: ${cleanTitle}`);
@@ -3155,7 +3347,7 @@ struct DataManagementPage {
    */
   private formatCoverTitle(title: string): string {
     // 移除文件扩展名
-    let cleanTitle = title.replace(/\.(txt|epub|pdf|mobi|azw3?)$/i, '');
+    let cleanTitle = title.replace(/\.(txt|epub|pdf|mobi|azw3?)$/i, '').replace(/_[a-f0-9]{6,}$/i, '');
     // 如果标题过长，截断并添加省略号
     if (cleanTitle.length > 20) {
       cleanTitle = cleanTitle.substring(0, 17) + '...';
@@ -7152,7 +7344,7 @@ struct DataManagementPage {
     if (DataManagementPage.MANGA_EXTENSIONS.includes(ext)) return $r('sys.symbol.rectangle_stack');
     if (DataManagementPage.EBOOK_EXTENSIONS.includes(ext)) return $r('sys.symbol.book');
     if (DataManagementPage.PDF_EXTENSIONS.includes(ext)) return $r('sys.symbol.doc_plaintext');
-    if (DataManagementPage.NOVEL_EXTENSIONS.includes(ext)) return $r('sys.symbol.doc_text');
+    if (DataManagementPage.NOVEL_EXTENSIONS.includes(ext)) return $r('sys.symbol.text_book_closed');
     return $r('sys.symbol.folder');
   }
 
@@ -7940,7 +8132,7 @@ struct DataManagementPage {
       }
     })
     .onReady((context: NavDestinationContext) => {
-      logger.info(TAG, 'HdsNavDestination.onReady 已触发');
+      logger.info(TAG, '主导航目标页 onReady 已触发');
       this.pathStack = context.pathStack;
     })
     .backgroundColor(Color.Transparent)

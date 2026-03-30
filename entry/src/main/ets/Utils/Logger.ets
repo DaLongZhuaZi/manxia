@@ -172,6 +172,22 @@ class Logger {
     return formattedMessage;
   }
 
+  private formatArgs(args: (string | number | boolean)[]): string {
+    if (args.length <= 0) {
+      return '';
+    }
+    return args.map((item: string | number | boolean) => String(item)).join(' ');
+  }
+
+  private formatMessageWithArgs(level: LogLevel, tag: string, message: string,
+    args: (string | number | boolean)[]): string {
+    const argsText = this.formatArgs(args);
+    if (argsText.length <= 0) {
+      return this.formatMessage(level, tag, message);
+    }
+    return this.formatMessage(level, tag, `${message} ${argsText}`);
+  }
+
   /**
    * 🔍 调试级别的日志
    * @param tag - 日志分类标签, 例如 'RenderSystem'
@@ -180,7 +196,7 @@ class Logger {
    */
   public debug(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.DEBUG) {
-      const formattedMessage = this.formatMessage(LogLevel.DEBUG, tag, message);
+      const formattedMessage = this.formatMessageWithArgs(LogLevel.DEBUG, tag, message, args);
       // 仅当hilog输出级别允许时才输出到hilog
       if (this.shouldOutputToHilog(LogLevel.DEBUG)) {
         hilog.debug(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
@@ -198,7 +214,7 @@ class Logger {
    */
   public info(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.INFO) {
-      const formattedMessage = this.formatMessage(LogLevel.INFO, tag, message);
+      const formattedMessage = this.formatMessageWithArgs(LogLevel.INFO, tag, message, args);
       // 仅当hilog输出级别允许时才输出到hilog
       if (this.shouldOutputToHilog(LogLevel.INFO)) {
         hilog.info(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
@@ -216,7 +232,7 @@ class Logger {
    */
   public warn(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.WARN) {
-      const formattedMessage = this.formatMessage(LogLevel.WARN, tag, message);
+      const formattedMessage = this.formatMessageWithArgs(LogLevel.WARN, tag, message, args);
       // 仅当hilog输出级别允许时才输出到hilog
       if (this.shouldOutputToHilog(LogLevel.WARN)) {
         hilog.warn(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
@@ -234,7 +250,7 @@ class Logger {
    */
   public error(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.ERROR) {
-      const formattedMessage = this.formatMessage(LogLevel.ERROR, tag, message);
+      const formattedMessage = this.formatMessageWithArgs(LogLevel.ERROR, tag, message, args);
       // 仅当hilog输出级别允许时才输出到hilog
       if (this.shouldOutputToHilog(LogLevel.ERROR)) {
         hilog.error(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
@@ -252,7 +268,7 @@ class Logger {
    */
   public fatal(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.FATAL) {
-      const formattedMessage = this.formatMessage(LogLevel.FATAL, tag, message);
+      const formattedMessage = this.formatMessageWithArgs(LogLevel.FATAL, tag, message, args);
       // 仅当hilog输出级别允许时才输出到hilog
       if (this.shouldOutputToHilog(LogLevel.FATAL)) {
         hilog.fatal(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);

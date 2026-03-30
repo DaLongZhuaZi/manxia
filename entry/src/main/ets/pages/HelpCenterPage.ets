@@ -28,29 +28,29 @@ function getHelpItemIcon(id: string): Resource {
     case 'quick_start':
       return $r('sys.symbol.play_circle');
     case 'reader_guide':
-      return $r('sys.symbol.book');
+      return $r('sys.symbol.books_vertical_fill');
     case 'library_management':
       return $r('sys.symbol.books_vertical_fill');
     case 'file_import':
-      return $r('sys.symbol.doc');
+      return $r('sys.symbol.folder_badge_plus');
     case 'download_sync':
-      return $r('sys.symbol.folder');
+      return $r('sys.symbol.square_and_arrow_down');
     case 'backup_restore':
-      return $r('sys.symbol.arrow_clockwise');
+      return $r('sys.symbol.arrow_2_circlepath');
     case 'storage_management':
       return $r('sys.symbol.externaldrive');
     case 'manga_settings':
-      return $r('sys.symbol.book');
+      return $r('sys.symbol.slider_horizontal_2_square');
     case 'ebook_settings':
       return $r('sys.symbol.text_book_closed');
     case 'source_settings':
-      return $r('sys.symbol.gearshape');
+      return $r('sys.symbol.slider_horizontal_2_square');
     case 'source_guide':
-      return $r('sys.symbol.more');
+      return $r('sys.symbol.rectangle_stack');
     case 'faq':
       return $r('sys.symbol.questionmark_circle');
     default:
-      return $r('sys.symbol.doc');
+      return $r('sys.symbol.doc_plaintext');
   }
 }
 
