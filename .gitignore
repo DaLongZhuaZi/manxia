@@ -26,6 +26,7 @@
 docs/logs/*.txt
 
 # Temporary files
+/tmp/
 *.tmp
 *.bak
 *.swp

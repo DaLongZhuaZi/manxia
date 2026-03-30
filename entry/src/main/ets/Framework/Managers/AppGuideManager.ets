@@ -32,6 +32,7 @@ export enum AppGuidePageId {
   MAIN_SOURCE = 'main_source',
   MAIN_BOOK_SOURCE = 'main_book_source',
   MAIN_SUWAYOMI = 'main_suwayomi',
+  MAIN_KOMGA = 'main_komga',
   MAIN_SETTINGS = 'main_settings',
   DOWNLOAD_SYNC = 'download_sync_page',
   BACKUP_RESTORE = 'backup_restore_page',

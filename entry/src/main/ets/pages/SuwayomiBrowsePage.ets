@@ -897,7 +897,7 @@ export struct SuwayomiBrowsePage {
       Row({ space: 0 }) {
         // 库标签
         Column({ space: 4 }) {
-          SymbolGlyph(this.browseMode === 'library' ? $r('sys.symbol.books_vertical_fill') : $r('sys.symbol.book'))
+          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
             .fontSize(24)
             .fontColor([this.browseMode === 'library' ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
@@ -916,7 +916,7 @@ export struct SuwayomiBrowsePage {
 
         // 源标签
         Column({ space: 4 }) {
-          SymbolGlyph(this.browseMode === 'sources' ? $r('sys.symbol.more') : $r('sys.symbol.square_grid_2x2'))
+          SymbolGlyph($r('sys.symbol.rectangle_stack'))
             .fontSize(24)
             .fontColor([this.browseMode === 'sources' ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :

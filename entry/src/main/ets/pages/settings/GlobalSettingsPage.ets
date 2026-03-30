@@ -68,28 +68,28 @@ export struct GlobalSettingsPage {
       id: 'reading',
       title: '阅读设置',
       subtitle: '漫画、电子书、纯文本阅读器的默认设置',
-      icon: $r('sys.symbol.book'),
+      icon: $r('sys.symbol.books_vertical_fill'),
       targetPage: 'ReadingSettingsSubPage'
     },
     {
       id: 'page',
       title: '页面设置',
       subtitle: '详情页类型选择、页面显示偏好',
-      icon: $r('sys.symbol.doc_text'),
+      icon: $r('sys.symbol.rectangle_stack'),
       targetPage: 'PageSettingsSubPage'
     },
     {
       id: 'main_menu',
       title: '主页面设置',
       subtitle: '主页面入口交互、底栏标签与平板顶栏布局',
-      icon: $r('sys.symbol.doc_text'),
+      icon: $r('sys.symbol.square_grid_2x2'),
       targetPage: 'MainMenuSettingsSubPage'
     },
     {
       id: 'source_features',
       title: '源功能设置',
       subtitle: '控制图源/书源相关入口、标签、按钮与信息展示',
-      icon: $r('sys.symbol.gearshape'),
+      icon: $r('sys.symbol.slider_horizontal_2_square'),
       targetPage: 'SourceFeatureSettingsSubPage'
     },
     {

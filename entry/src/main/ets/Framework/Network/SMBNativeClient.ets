@@ -1,7 +1,17 @@
 import { logger } from '../../Utils/Logger';
-import webdavNativeModuleImport from 'libwebdav_native.so';
+import {
+  NetworkFolderConnection,
+  normalizeRelativeNetworkFolderPath
+} from '../../Models/NetworkFolderModels';
+import {
+  SMBClientAdapter,
+  SMBDirectoryListResult,
+  SMBOperationResult,
+  isSMBFeatureEnabled
+} from './SMBClientAdapter';
 
 const TAG = 'SMBNativeClient';
+const COMPAT_CONNECTION_ID = '__legacy_smb_native_client__';
 
 export interface SMBNativeConfig {
   host: string;
@@ -37,146 +47,181 @@ export interface SMBNativeListResult {
   files: SMBNativeFileInfo[];
 }
 
-interface NativeModule {
-  smbInit(config: SMBNativeConfig): boolean;
-  smbTestConnection(remotePath: string): SMBNativeResult;
-  smbList(remotePath: string): SMBNativeListResult;
-  smbDownload(remotePath: string, localPath: string): SMBNativeResult;
-  smbDestroy(): void;
-}
-
-let nativeModule: NativeModule | null = null;
-let nativeModuleError: string = '';
-let nativeModuleChecked: boolean = false;
-
-function checkNativeModule(): void {
-  if (nativeModuleChecked) {
-    return;
-  }
-  nativeModuleChecked = true;
-
-  try {
-    if (webdavNativeModuleImport && typeof webdavNativeModuleImport.smbInit === 'function') {
-      nativeModule = webdavNativeModuleImport as NativeModule;
-      logger.info(TAG, 'SMB 原生模块加载成功');
-      return;
-    }
-
-    nativeModuleError = 'SMB 原生模块接口不完整';
-    logger.warn(TAG, nativeModuleError);
-  } catch (error) {
-    nativeModuleError = `SMB 原生模块加载失败: ${String(error)}`;
-    logger.error(TAG, nativeModuleError);
-  }
-}
-
 export function isSMBNativeAvailable(): boolean {
-  checkNativeModule();
-  return nativeModule !== null;
+  return isSMBFeatureEnabled();
 }
 
 export function getSMBNativeError(): string {
-  return nativeModuleError;
+  return '';
 }
 
 export class SMBNativeClient {
   private config: SMBNativeConfig;
   private initialized: boolean = false;
+  private adapter: SMBClientAdapter = new SMBClientAdapter();
 
   constructor(config: SMBNativeConfig) {
     this.config = config;
   }
 
   public async initialize(): Promise<boolean> {
-    checkNativeModule();
-    if (!nativeModule) {
-      logger.error(TAG, `SMB 原生模块不可用: ${nativeModuleError}`);
+    const validationMessage = this.validateConfig();
+    if (validationMessage.length > 0) {
+      logger.error(TAG, validationMessage);
+      this.initialized = false;
       return false;
     }
 
-    try {
-      logger.info(TAG, `初始化 SMB 原生客户端：${this.config.host}/${this.config.shareName}`);
-      this.initialized = nativeModule.smbInit(this.config);
-      if (!this.initialized) {
-        logger.error(TAG, 'SMB 原生客户端初始化失败');
-      }
-      return this.initialized;
-    } catch (error) {
-      logger.error(TAG, `初始化 SMB 原生客户端异常: ${String(error)}`);
-      return false;
-    }
+    logger.info(TAG, `SMB client ready via @ohos/smbj public entry: ${this.config.host.trim()}/${this.config.shareName.trim()}`);
+    this.initialized = true;
+    return true;
   }
 
   public async testConnection(remotePath: string = ''): Promise<SMBNativeResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    if (!nativeModule) {
-      return this.buildFailureResult(`SMB 原生模块不可用: ${nativeModuleError}`);
+    const readyError = await this.ensureReady();
+    if (readyError.length > 0) {
+      return this.buildFailureResult(readyError);
     }
 
     try {
-      logger.info(TAG, `测试 SMB 连接：${this.config.host}/${this.config.shareName} ${remotePath}`);
-      return nativeModule.smbTestConnection(remotePath);
+      const connection = this.buildCompatConnection();
+      const normalizedPath = this.normalizeRemotePath(remotePath);
+      logger.info(TAG, `Testing SMB connection via adapter: ${connection.host}/${connection.shareName} ${normalizedPath}`);
+
+      if (normalizedPath !== '/') {
+        const listResult: SMBDirectoryListResult = await this.adapter.listDirectory(connection, normalizedPath);
+        return this.buildResultFromOperation(listResult);
+      }
+
+      const result: SMBOperationResult = await this.adapter.testConnection(connection);
+      return this.buildResultFromOperation(result);
     } catch (error) {
-      return this.buildFailureResult(`SMB 连接测试失败: ${String(error)}`);
+      return this.buildFailureResult(`SMB connection failed: ${String(error)}`);
     }
   }
 
   public async list(remotePath: string = ''): Promise<SMBNativeListResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    if (!nativeModule) {
-      return {
-        success: false,
-        statusCode: 0,
-        message: `SMB 原生模块不可用: ${nativeModuleError}`,
-        files: []
-      };
+    const readyError = await this.ensureReady();
+    if (readyError.length > 0) {
+      return this.buildListFailureResult(readyError);
     }
 
     try {
-      logger.info(TAG, `读取 SMB 目录：${this.config.host}/${this.config.shareName} ${remotePath}`);
-      return nativeModule.smbList(remotePath);
-    } catch (error) {
+      const connection = this.buildCompatConnection();
+      const normalizedPath = this.normalizeRemotePath(remotePath);
+      logger.info(TAG, `Listing SMB directory via adapter: ${connection.host}/${connection.shareName} ${normalizedPath}`);
+      const result: SMBDirectoryListResult = await this.adapter.listDirectory(connection, normalizedPath);
+      if (!result.success) {
+        return this.buildListFailureResult(result.message);
+      }
+
+      const files: SMBNativeFileInfo[] = [];
+      for (let index = 0; index < result.entries.length; index++) {
+        const entry = result.entries[index];
+        const relativePrefix = normalizedPath === '/' ? '' : normalizedPath;
+        files.push({
+          path: entry.name.length > 0 ? `${relativePrefix}/${entry.name}` : normalizedPath,
+          name: entry.name,
+          size: entry.size,
+          lastModified: entry.lastModified,
+          isDirectory: entry.isDirectory
+        });
+      }
+
       return {
-        success: false,
+        success: true,
         statusCode: 0,
-        message: `读取 SMB 目录失败: ${String(error)}`,
-        files: []
+        message: result.message,
+        files: files
       };
+    } catch (error) {
+      return this.buildListFailureResult(`SMB directory load failed: ${String(error)}`);
     }
   }
 
   public async download(remotePath: string, localPath: string): Promise<SMBNativeResult> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    if (!nativeModule) {
-      return this.buildFailureResult(`SMB 原生模块不可用: ${nativeModuleError}`);
+    const readyError = await this.ensureReady();
+    if (readyError.length > 0) {
+      return this.buildFailureResult(readyError);
     }
 
     try {
-      logger.info(TAG, `下载 SMB 文件：${this.config.host}/${this.config.shareName} ${remotePath}`);
-      return nativeModule.smbDownload(remotePath, localPath);
+      const connection = this.buildCompatConnection();
+      const normalizedPath = this.normalizeRemotePath(remotePath);
+      logger.info(TAG, `Downloading SMB file via adapter: ${connection.host}/${connection.shareName} ${normalizedPath}`);
+      const result: SMBOperationResult = await this.adapter.downloadFile(connection, normalizedPath, localPath);
+      return this.buildResultFromOperation(result);
     } catch (error) {
-      return this.buildFailureResult(`下载 SMB 文件失败: ${String(error)}`);
+      return this.buildFailureResult(`SMB download failed: ${String(error)}`);
     }
   }
 
   public destroy(): void {
-    if (nativeModule) {
-      try {
-        nativeModule.smbDestroy();
-      } catch (error) {
-        logger.warn(TAG, `销毁 SMB 原生客户端失败: ${String(error)}`);
-      }
+    if (this.initialized) {
+      logger.info(TAG, 'SMB adapter client destroyed');
     }
     this.initialized = false;
+  }
+
+  private async ensureReady(): Promise<string> {
+    if (this.initialized) {
+      return '';
+    }
+
+    const initialized = await this.initialize();
+    if (initialized) {
+      return '';
+    }
+    return 'SMB initialization failed';
+  }
+
+  private validateConfig(): string {
+    if (this.config.host.trim().length === 0) {
+      return 'SMB host is required';
+    }
+    if (this.config.shareName.trim().length === 0) {
+      return 'SMB share name is required';
+    }
+    return '';
+  }
+
+  private buildCompatConnection(): NetworkFolderConnection {
+    const now = Date.now();
+    return {
+      id: COMPAT_CONNECTION_ID,
+      name: `${this.config.host.trim()}/${this.config.shareName.trim()}`,
+      protocol: 'smb',
+      serverUrl: '',
+      host: this.config.host.trim(),
+      shareName: this.config.shareName.trim(),
+      domain: this.config.domain.trim(),
+      clientIP: '',
+      port: this.config.port > 0 ? this.config.port : 445,
+      username: this.config.username.trim(),
+      password: this.config.password,
+      basePath: '/',
+      passive: true,
+      verifySSL: false,
+      timeoutMs: this.config.timeoutMs > 0 ? this.config.timeoutMs : 30000,
+      createdAt: now,
+      lastUsedAt: 0
+    };
+  }
+
+  private normalizeRemotePath(remotePath: string): string {
+    return normalizeRelativeNetworkFolderPath(remotePath.length > 0 ? remotePath : '/');
+  }
+
+  private buildResultFromOperation(result: SMBOperationResult): SMBNativeResult {
+    if (!result.success) {
+      return this.buildFailureResult(result.message);
+    }
+    return {
+      success: true,
+      statusCode: 0,
+      message: result.message,
+      data: ''
+    };
   }
 
   private buildFailureResult(message: string): SMBNativeResult {
@@ -185,6 +230,15 @@ export class SMBNativeClient {
       statusCode: 0,
       message: message,
       data: ''
+    };
+  }
+
+  private buildListFailureResult(message: string): SMBNativeListResult {
+    return {
+      success: false,
+      statusCode: 0,
+      message: message,
+      files: []
     };
   }
 }

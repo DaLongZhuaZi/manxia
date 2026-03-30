@@ -20,6 +20,9 @@ import {
 import { SandboxManager } from '../Storage/SandboxManager';
 import {
   NetworkFolderBrowseResult,
+  NetworkFolderCacheDetail,
+  NetworkFolderDirectoryCacheDetail,
+  NetworkFolderDownloadCacheDetail,
   NetworkFolderCacheStats,
   NetworkFolderConnection,
   NetworkFolderDownloadResult,
@@ -188,15 +191,28 @@ export class NetworkFolderManager {
     const normalized = this.normalizeConnection(connection);
     logger.info(TAG, `保存网络连接配置：${normalized.name} (${normalized.protocol})`);
     const index = this.connections.findIndex((item: NetworkFolderConnection) => item.id === normalized.id);
+    let shouldResetRuntimeState = false;
     if (index >= 0) {
       const existing = this.connections[index];
       const updatedConnection = this.cloneConnection(normalized);
       updatedConnection.createdAt = existing.createdAt;
       updatedConnection.lastUsedAt = existing.lastUsedAt;
+      shouldResetRuntimeState = this.shouldResetConnectionRuntimeState(existing, updatedConnection);
       this.connections[index] = updatedConnection;
     } else {
       this.connections.push(normalized);
     }
+
+    if (shouldResetRuntimeState) {
+      logger.info(TAG, `连接关键配置已变更，重置缓存与浏览状态：${normalized.id}`);
+      await this.clearCacheForConnection(normalized.id);
+      this.lastPaths.set(normalized.id, '/');
+      if (this.lastConnectionId === normalized.id) {
+        this.lastConnectionId = normalized.id;
+      }
+      await this.persistLastState();
+    }
+
     await this.persistConnections();
     logger.info(TAG, `网络连接配置已保存：${normalized.name}`);
   }
@@ -479,6 +495,56 @@ export class NetworkFolderManager {
       directoryCount: directoryCount,
       fileCount: fileCount,
       totalBytes: totalBytes
+    };
+  }
+
+  public getCacheDetail(connectionId?: string): NetworkFolderCacheDetail {
+    this.ensureInitialized();
+
+    const filterConnectionId = connectionId?.trim() ?? '';
+    const directories: NetworkFolderDirectoryCacheDetail[] = [];
+    const files: NetworkFolderDownloadCacheDetail[] = [];
+
+    for (const item of this.directoryCache.values()) {
+      if (filterConnectionId.length > 0 && item.connectionId !== filterConnectionId) {
+        continue;
+      }
+      directories.push({
+        connectionId: item.connectionId,
+        relativePath: item.relativePath,
+        fetchedAt: item.fetchedAt,
+        entryCount: item.entries.length
+      });
+    }
+
+    for (const item of this.downloadCache.values()) {
+      if (filterConnectionId.length > 0 && item.connectionId !== filterConnectionId) {
+        continue;
+      }
+      files.push({
+        connectionId: item.connectionId,
+        relativePath: item.relativePath,
+        localPath: item.localPath,
+        fileName: item.fileName,
+        size: item.size,
+        versionTag: item.versionTag,
+        cachedAt: item.cachedAt,
+        lastAccessedAt: item.lastAccessedAt,
+        fileExists: this.fileExists(item.localPath)
+      });
+    }
+
+    directories.sort((left: NetworkFolderDirectoryCacheDetail, right: NetworkFolderDirectoryCacheDetail) => {
+      return right.fetchedAt - left.fetchedAt;
+    });
+    files.sort((left: NetworkFolderDownloadCacheDetail, right: NetworkFolderDownloadCacheDetail) => {
+      return right.lastAccessedAt - left.lastAccessedAt;
+    });
+
+    return {
+      stats: this.getCacheStats(connectionId),
+      directories: directories,
+      files: files
     };
   }
 
@@ -1200,17 +1266,126 @@ export class NetworkFolderManager {
     return normalizeRelativeNetworkFolderPath(normalized);
   }
 
+  private shouldResetConnectionRuntimeState(
+    previous: NetworkFolderConnection,
+    next: NetworkFolderConnection
+  ): boolean {
+    if (previous.protocol !== next.protocol) {
+      return true;
+    }
+    if (previous.serverUrl !== next.serverUrl) {
+      return true;
+    }
+    if (previous.host !== next.host) {
+      return true;
+    }
+    if (previous.shareName !== next.shareName) {
+      return true;
+    }
+    if (previous.domain !== next.domain) {
+      return true;
+    }
+    if (previous.port !== next.port) {
+      return true;
+    }
+    if (previous.username !== next.username) {
+      return true;
+    }
+    if (previous.basePath !== next.basePath) {
+      return true;
+    }
+    if (previous.passive !== next.passive) {
+      return true;
+    }
+    return previous.verifySSL !== next.verifySSL;
+  }
+
+  private normalizeSMBHost(hostValue: string): string {
+    let normalized = hostValue.trim();
+    normalized = normalized.replace(/^smb:\/\//i, '');
+    normalized = normalized.replace(/^\\\\+/, '');
+    normalized = normalized.replace(/^\/+/, '');
+    normalized = normalized.replace(/\\/g, '/');
+    const separatorIndex = normalized.indexOf('/');
+    if (separatorIndex >= 0) {
+      normalized = normalized.substring(0, separatorIndex);
+    }
+    return normalized.trim();
+  }
+
+  private normalizeSMBShareName(hostValue: string, shareValue: string): string {
+    const normalizedHost = this.normalizeSMBHost(hostValue);
+    let normalized = shareValue.trim();
+    if (normalized.length === 0) {
+      const normalizedHostSource = hostValue.trim()
+        .replace(/^smb:\/\//i, '')
+        .replace(/^\\\\+/, '')
+        .replace(/^\/+/, '')
+        .replace(/\\/g, '/');
+      const hostParts = normalizedHostSource.split('/').filter((item: string) => item.length > 0);
+      if (hostParts.length > 1) {
+        return hostParts[1];
+      }
+      return '';
+    }
+
+    normalized = normalized.replace(/^smb:\/\//i, '');
+    normalized = normalized.replace(/^\\\\+/, '');
+    normalized = normalized.replace(/^\/+/, '');
+    normalized = normalized.replace(/\\/g, '/');
+
+    const parts = normalized.split('/').filter((item: string) => item.length > 0);
+    if (parts.length === 0) {
+      return '';
+    }
+    if (parts.length === 1) {
+      return parts[0];
+    }
+    if (normalizedHost.length > 0 && parts[0].toLowerCase() === normalizedHost.toLowerCase()) {
+      return parts[1];
+    }
+    return parts[0];
+  }
+
+  private normalizeSMBBasePath(basePath: string, shareName: string): string {
+    let normalizedPath = normalizeConnectionBasePath(basePath);
+    const normalizedShareName = this.normalizeSMBShareName('', shareName);
+    if (normalizedShareName.length === 0) {
+      return normalizedPath;
+    }
+
+    const sharePrefix = `/${normalizedShareName}`;
+    const lowerPath = normalizedPath.toLowerCase();
+    const lowerSharePrefix = sharePrefix.toLowerCase();
+    if (lowerPath === lowerSharePrefix) {
+      return '/';
+    }
+    if (lowerPath.startsWith(`${lowerSharePrefix}/`)) {
+      normalizedPath = normalizedPath.substring(sharePrefix.length);
+    }
+    return normalizeConnectionBasePath(normalizedPath);
+  }
+
   private normalizeConnection(connection: NetworkFolderConnection): NetworkFolderConnection {
     const protocol = connection.protocol === 'ftp' || connection.protocol === 'ftps' || connection.protocol === 'smb'
       ? connection.protocol
       : 'webdav';
+    const normalizedHost = protocol === 'smb'
+      ? this.normalizeSMBHost(String(connection.host || ''))
+      : String(connection.host || '').trim();
+    const normalizedShareName = protocol === 'smb'
+      ? this.normalizeSMBShareName(normalizedHost, String(connection.shareName || ''))
+      : String(connection.shareName || '').trim();
+    const normalizedBasePath = protocol === 'smb'
+      ? this.normalizeSMBBasePath(connection.basePath || '/', normalizedShareName)
+      : normalizeConnectionBasePath(connection.basePath || '/');
     return {
       id: String(connection.id || '').trim(),
       name: String(connection.name || '').trim(),
       protocol: protocol,
       serverUrl: String(connection.serverUrl || '').trim(),
-      host: String(connection.host || '').trim(),
-      shareName: String(connection.shareName || '').trim(),
+      host: normalizedHost,
+      shareName: normalizedShareName,
       domain: String(connection.domain || '').trim(),
       clientIP: String(connection.clientIP || '').trim(),
       port: Number(connection.port) > 0
@@ -1218,7 +1393,7 @@ export class NetworkFolderManager {
         : (protocol === 'ftps' ? 990 : protocol === 'ftp' ? 21 : protocol === 'smb' ? 445 : 443),
       username: String(connection.username || '').trim(),
       password: String(connection.password || ''),
-      basePath: normalizeConnectionBasePath(connection.basePath || '/'),
+      basePath: normalizedBasePath,
       passive: connection.passive !== false,
       verifySSL: connection.verifySSL !== false,
       timeoutMs: Number(connection.timeoutMs) > 0 ? Math.floor(Number(connection.timeoutMs)) : 30000,

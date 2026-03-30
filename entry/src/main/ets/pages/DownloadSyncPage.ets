@@ -554,7 +554,7 @@ A: 不会，原文件保持不变。`;
     if (DownloadSyncPage.MANGA_EXTENSIONS.includes(ext)) return $r('sys.symbol.rectangle_stack');
     if (DownloadSyncPage.EBOOK_EXTENSIONS.includes(ext)) return $r('sys.symbol.book');
     if (DownloadSyncPage.PDF_EXTENSIONS.includes(ext)) return $r('sys.symbol.doc_plaintext');
-    if (DownloadSyncPage.NOVEL_EXTENSIONS.includes(ext)) return $r('sys.symbol.doc_text');
+    if (DownloadSyncPage.NOVEL_EXTENSIONS.includes(ext)) return $r('sys.symbol.text_book_closed');
     return $r('sys.symbol.folder');
   }
 
@@ -1685,7 +1685,7 @@ A: 不会，原文件保持不变。`;
       if (this.pendingNovelFiles.length > 0) {
         Column({ space: 6 }) {
           Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.doc_text'))
+            SymbolGlyph($r('sys.symbol.text_book_closed'))
               .fontSize(16)
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             Text(`小说文件 (${this.pendingNovelFiles.length})`)

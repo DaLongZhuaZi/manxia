@@ -239,6 +239,8 @@ struct SplashPage {
    * 跳转到主页面或引导页面
    */
   private navigateToMainPage(): void {
+    let targetUrl: string = '';
+    let startupRoutePending: boolean = false;
     try {
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
       if (!context) {
@@ -246,38 +248,58 @@ struct SplashPage {
         return;
       }
 
-      // 检查是否需要显示引导页面
       const shouldShowGuide = this.welcomeGuideManager.shouldShowGuide();
       logger.info('SplashPage', `是否显示引导: ${shouldShowGuide}`);
 
-      // 快捷入口冷启动：在 MainMenuPage 启动时使用“即时路由模式”，减少主页面闪现
-      const startupRoutePending = !shouldShowGuide && this.hasWidgetTargetPage();
+      startupRoutePending = !shouldShowGuide && this.hasWidgetTargetPage();
       AppStorage.setOrCreate('startupRoutePending', startupRoutePending);
       AppStorage.setOrCreate('appGuideStartupPending', false);
       if (startupRoutePending) {
         this.loadingProgress = '正在准备快捷入口...';
       }
 
-      // 首次引导重新回到 WelcomeGuidePage，由它串联各页面 AppGuide 流程。
       const router = this.uiContext?.getRouter();
       if (router) {
-        const targetUrl = shouldShowGuide ? 'pages/WelcomeGuidePage' : 'pages/MainMenuPage';
-        
+        targetUrl = shouldShowGuide ? 'pages/WelcomeGuidePage' : 'pages/MainMenuPage';
+        logger.info('SplashPage', `prepare_navigation: targetUrl=${targetUrl}, startupRoutePending=${startupRoutePending}`);
+
         router.pushUrl({
           url: targetUrl
         }).then(() => {
-          logger.info('SplashPage', `✅ 成功跳转到${shouldShowGuide ? 'WelcomeGuidePage' : 'MainMenuPage'}，首启引导=${shouldShowGuide}`);
-          // 跳转成功后清除路由历史，防止用户返回 SplashPage
+          logger.info('SplashPage', `navigation_success: target=${shouldShowGuide ? 'WelcomeGuidePage' : 'MainMenuPage'}, shouldShowGuide=${shouldShowGuide}`);
           router.clear();
-        }).catch((error: Error) => {
-          logger.error('SplashPage', '跳转失败', error.message);
+        }).catch((error: Object | string | number | boolean) => {
+          logger.error('SplashPage', `navigation_failed: ${this.buildNavigationErrorDetails(error)}`);
         });
       } else {
         logger.error('SplashPage', '无法获取Router实例');
       }
     } catch (error) {
-      logger.error('SplashPage', '跳转过程中发生异常', String(error));
+      const errorDetails: string = this.buildNavigationErrorDetails(error as Object | string | number | boolean | null | undefined);
+      logger.error('SplashPage',
+        `navigation_exception: targetUrl=${targetUrl}, startupRoutePending=${startupRoutePending}, details=${errorDetails}`);
     }
+  }
+
+  private buildNavigationErrorDetails(error: Object | string | number | boolean | null | undefined): string {
+    let errorDetails: string = String(error);
+    if (typeof error === 'object' && error !== null) {
+      const routeError: Error = error as Error;
+      if (typeof routeError.message === 'string' && routeError.message.length > 0 && routeError.message !== errorDetails) {
+        errorDetails = `${errorDetails}; message=${routeError.message}`;
+      }
+      if (typeof routeError.stack === 'string' && routeError.stack.length > 0) {
+        errorDetails = `${errorDetails}; stack=${routeError.stack}`;
+      }
+      try {
+        const errorJson: string = JSON.stringify(error);
+        if (errorJson.length > 0 && errorJson !== '{}') {
+          errorDetails = `${errorDetails}; json=${errorJson}`;
+        }
+      } catch {
+      }
+    }
+    return errorDetails;
   }
 
   private hasWidgetTargetPage(): boolean {

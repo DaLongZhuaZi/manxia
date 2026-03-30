@@ -54,10 +54,14 @@ import {
   CustomFontBackup,
   SettingItemBackup,
   SuwayomiConfigBackup,
+  KomgaConfigBackup,
+  KomgaInstanceConfigBackup,
   FTPConnectionsBackup,
   FTPConnectionBackup
 } from '../../Models/BackupModels';
 import { MetadataXmlGenerator, MangaMetadata, EBookMetadata, NovelMetadata } from '../../Utils/MetadataXmlGenerator';
+import { KomgaAuthMode, KomgaConfig, KomgaInstanceConfig } from '../Source/KomgaModels';
+import { loadKomgaConfig, saveKomgaConfig } from '../Source/KomgaConfigStore';
 
 import { NovelBook, NovelSourceInfo, NovelReadStatus } from '../../Models/NovelModels';
 import { LegadoBookSource, LegadoSourceImportResult } from '../Novel/LegadoSourceTypes';
@@ -537,7 +541,46 @@ export class EnhancedBackupManager {
       logger.warn(TAG, `导出Suwayomi配置失败: ${error}`);
     }
     
-    // 3. 导出FTP连接配置
+    // 3. 导出 Komga 配置
+    try {
+      const komgaConfig = await loadKomgaConfig();
+      const hasMeaningfulInstance = komgaConfig.instances.some(instance =>
+        instance.serverUrl.trim().length > 0 ||
+        instance.displayName.trim().length > 0 ||
+        instance.username.trim().length > 0 ||
+        instance.password.trim().length > 0 ||
+        instance.apiKey.trim().length > 0 ||
+        instance.defaultLibraryIds.length > 0
+      );
+      if (hasMeaningfulInstance || komgaConfig.useBrowsePageAsEntry !== true) {
+        const instances: KomgaInstanceConfigBackup[] = [];
+        komgaConfig.instances.forEach((instance: KomgaInstanceConfig) => {
+          const instanceBackup: KomgaInstanceConfigBackup = {
+            id: instance.id,
+            displayName: instance.displayName,
+            serverUrl: instance.serverUrl,
+            authMode: instance.authMode,
+            username: instance.username,
+            password: instance.password,
+            apiKey: instance.apiKey,
+            defaultLibraryIds: instance.defaultLibraryIds.concat(),
+            chapterTitleTemplate: instance.chapterTitleTemplate,
+            enabled: instance.enabled
+          };
+          instances.push(instanceBackup);
+        });
+        const komgaBackup: KomgaConfigBackup = {
+          instances,
+          currentInstanceId: komgaConfig.currentInstanceId,
+          useBrowsePageAsEntry: komgaConfig.useBrowsePageAsEntry
+        };
+        result.komga = komgaBackup;
+        logger.info(TAG, `已导出 Komga 配置，共 ${instances.length} 个实例`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `导出 Komga 配置失败：${String(error)}`);
+    }
+    
     try {
       const context = getGlobalContext();
       const ftpPrefs = await preferences.getPreferences(context, 'ftp_connections');
@@ -784,7 +827,47 @@ export class EnhancedBackupManager {
       }
     }
     
-    // 3. 恢复FTP连接配置
+    // 3. 恢复 Komga 配置
+    if (cloudConfig.komga) {
+      try {
+        const komgaBackup: KomgaConfigBackup = cloudConfig.komga;
+        const restoredInstances: KomgaInstanceConfig[] = [];
+        (komgaBackup.instances || []).forEach((instance: KomgaInstanceConfigBackup) => {
+          const authMode: KomgaAuthMode = instance.authMode === 'BASIC' || instance.authMode === 'API_KEY'
+            ? instance.authMode
+            : 'NONE';
+          const defaultLibraryIds: string[] = Array.isArray(instance.defaultLibraryIds)
+            ? instance.defaultLibraryIds.map((item: string) => String(item))
+            : [];
+          const restoredInstance: KomgaInstanceConfig = {
+            id: typeof instance.id === 'string' ? instance.id : '',
+            displayName: typeof instance.displayName === 'string' ? instance.displayName : '',
+            serverUrl: typeof instance.serverUrl === 'string' ? instance.serverUrl : '',
+            authMode: authMode,
+            username: typeof instance.username === 'string' ? instance.username : '',
+            password: typeof instance.password === 'string' ? instance.password : '',
+            apiKey: typeof instance.apiKey === 'string' ? instance.apiKey : '',
+            defaultLibraryIds: defaultLibraryIds,
+            chapterTitleTemplate: typeof instance.chapterTitleTemplate === 'string' ? instance.chapterTitleTemplate : '',
+            enabled: instance.enabled !== false
+          };
+          restoredInstances.push(restoredInstance);
+        });
+        const restoredConfig: KomgaConfig = {
+          instances: restoredInstances,
+          currentInstanceId: typeof komgaBackup.currentInstanceId === 'string' ? komgaBackup.currentInstanceId : '',
+          useBrowsePageAsEntry: komgaBackup.useBrowsePageAsEntry !== false
+        };
+        const success = await saveKomgaConfig(restoredConfig);
+        if (!success) {
+          throw new Error('saveKomgaConfig failed');
+        }
+        logger.info(TAG, `已恢复 Komga 配置，共 ${restoredConfig.instances.length} 个实例`);
+      } catch (error) {
+        logger.error(TAG, `恢复 Komga 配置失败：${String(error)}`);
+      }
+    }
+    
     if (cloudConfig.ftp && cloudConfig.ftp.connections.length > 0) {
       try {
         const ftpPrefs = await preferences.getPreferences(context, 'ftp_connections');

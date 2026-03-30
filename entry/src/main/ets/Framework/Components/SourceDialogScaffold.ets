@@ -31,7 +31,7 @@ export struct SourceDialogScaffold {
   @Prop maskBlurStyle: BlurStyle = BlurStyle.BACKGROUND_THIN;
   @Prop maskColor: ResourceColor = $r('app.color.system_resource_background_overlay');
   @Prop dialogRadius: number = 14;
-  @Prop onMaskTap: () => void = () => {};
+  onMaskTap: () => void = () => {};
   @BuilderParam content: () => void = this.emptyContentBuilder;
   @State private maskTapEnabled: boolean = false;
 

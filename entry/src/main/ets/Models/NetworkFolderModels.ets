@@ -76,6 +76,31 @@ export interface NetworkFolderCacheStats {
   totalBytes: number;
 }
 
+export interface NetworkFolderDirectoryCacheDetail {
+  connectionId: string;
+  relativePath: string;
+  fetchedAt: number;
+  entryCount: number;
+}
+
+export interface NetworkFolderDownloadCacheDetail {
+  connectionId: string;
+  relativePath: string;
+  localPath: string;
+  fileName: string;
+  size: number;
+  versionTag: string;
+  cachedAt: number;
+  lastAccessedAt: number;
+  fileExists: boolean;
+}
+
+export interface NetworkFolderCacheDetail {
+  stats: NetworkFolderCacheStats;
+  directories: NetworkFolderDirectoryCacheDetail[];
+  files: NetworkFolderDownloadCacheDetail[];
+}
+
 export interface NetworkFolderDownloadResult {
   success: boolean;
   message: string;

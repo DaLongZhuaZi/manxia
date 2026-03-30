@@ -5,6 +5,9 @@ import { logger } from '../Utils/Logger';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Network/NetworkFolderManager';
 import {
+  NetworkFolderCacheDetail,
+  NetworkFolderDirectoryCacheDetail,
+  NetworkFolderDownloadCacheDetail,
   createEmptyNetworkFolderDraft,
   createNetworkFolderConnection,
   draftFromNetworkFolderConnection,
@@ -84,6 +87,11 @@ export struct NetworkFolderPage {
   @State dialogOpacity: number = 0;
   @State dialogScale: number = 0.96;
   @State dialogTranslateY: number = 24;
+  @State cacheDetailConnectionId: string = '';
+  @State cacheDetailStats: NetworkFolderCacheStats = { directoryCount: 0, fileCount: 0, totalBytes: 0 };
+  @State cacheDirectoryDetails: NetworkFolderDirectoryCacheDetail[] = [];
+  @State cacheFileDetails: NetworkFolderDownloadCacheDetail[] = [];
+  private cacheReturnView: string = 'connections';
   private floatingCapsuleTimer: number = -1;
 
   aboutToAppear(): void {
@@ -166,6 +174,9 @@ export struct NetworkFolderPage {
     this.reloadConnections();
     this.restoreLastSelection();
     this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+    if (this.viewMode === 'cache') {
+      this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+    }
   }
 
   private getConnectionById(connectionId: string): NetworkFolderConnection | null {
@@ -325,6 +336,9 @@ export struct NetworkFolderPage {
         this.statusMessage = `目录加载完成：${this.currentPath}，共 ${result.entries.length} 项。`;
       }
       this.refreshCacheStats(this.selectedConnectionId);
+      if (this.viewMode === 'cache') {
+        this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+      }
       logger.info(TAG, `目录加载完成：${connection.name} ${this.currentPath}，项目数 ${result.entries.length}`);
     } catch (error) {
       logger.error(TAG, `加载目录失败：${String(error)}`);
@@ -369,6 +383,9 @@ export struct NetworkFolderPage {
     try {
       if (this.viewMode === 'browser' && this.hasSelectedConnection()) {
         await this.refreshCurrentDirectory();
+      } else if (this.viewMode === 'cache') {
+        this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+        this.statusMessage = '缓存详情已刷新。';
       } else {
         this.refreshConnectionsOverview();
       }
@@ -442,6 +459,9 @@ export struct NetworkFolderPage {
       this.statusMessage = result.reusedCache ? `已复用缓存文件：${entry.name}` : `文件已缓存：${entry.name}`;
       this.showToast(result.reusedCache ? '已复用缓存文件' : '文件缓存完成');
       this.refreshCacheStats(this.selectedConnectionId);
+      if (this.viewMode === 'cache') {
+        this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+      }
       await this.loadDirectory(false);
       logger.info(TAG, `远程文件缓存完成：${entry.relativePath}`);
     } catch (error) {
@@ -469,6 +489,9 @@ export struct NetworkFolderPage {
       AppStorage.setOrCreate('pendingFileUri', result.fileUri);
       AppStorage.setOrCreate('pendingFileType', entry.name);
       AppStorage.setOrCreate('pendingFileCategory', result.importCategory);
+      AppStorage.setOrCreate('pendingFileSource', 'network_folder');
+      AppStorage.setOrCreate('pendingFileTarget', 'download_dir');
+      AppStorage.setOrCreate('pendingFileDisplayName', entry.name);
       AppStorage.setOrCreate('fileImportPending', true);
 
       const navParam: NetworkFolderImportNavParam = {
@@ -495,6 +518,9 @@ export struct NetworkFolderPage {
     logger.info(TAG, `清理当前连接缓存：${connection ? connection.name : this.selectedConnectionId}`);
     await this.manager.clearCacheForConnection(this.selectedConnectionId);
     this.refreshCacheStats(this.selectedConnectionId);
+    if (this.viewMode === 'cache') {
+      this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+    }
     this.statusMessage = '当前连接缓存已清理。';
     this.showToast('当前连接缓存已清理');
     await this.loadDirectory(false);
@@ -504,6 +530,9 @@ export struct NetworkFolderPage {
     logger.info(TAG, '开始清理全部网络文件夹缓存');
     await this.manager.clearAllCaches();
     this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+    if (this.viewMode === 'cache') {
+      this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+    }
     this.statusMessage = '全部网络文件夹缓存已清理。';
     this.showToast('全部缓存已清理');
     if (this.selectedConnectionId.length > 0) {
@@ -562,6 +591,9 @@ export struct NetworkFolderPage {
         }
       }
       this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+      if (this.viewMode === 'cache') {
+        this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+      }
       this.statusMessage = `连接已删除：${connection.name}`;
       this.showToast('连接已删除');
       logger.info(TAG, `连接删除完成：${connection.name}`);
@@ -648,11 +680,39 @@ export struct NetworkFolderPage {
       this.showToast('请输入服务器主机地址');
       return false;
     }
-    if (draft.protocol === 'smb' && draft.shareName.trim().length === 0) {
+    if (draft.protocol === 'smb' &&
+      draft.shareName.trim().length === 0 &&
+      this.inferSMBShareNameFromHost(draft.host).length === 0) {
       this.showToast('请输入 SMB 共享名称');
       return false;
     }
     return true;
+  }
+
+  private normalizeSMBHostInput(hostValue: string): string {
+    let normalized = hostValue.trim();
+    normalized = normalized.replace(/^smb:\/\//i, '');
+    normalized = normalized.replace(/^\\\\+/, '');
+    normalized = normalized.replace(/^\/+/, '');
+    normalized = normalized.replace(/\\/g, '/');
+    const separatorIndex = normalized.indexOf('/');
+    if (separatorIndex >= 0) {
+      normalized = normalized.substring(0, separatorIndex);
+    }
+    return normalized.trim();
+  }
+
+  private inferSMBShareNameFromHost(hostValue: string): string {
+    const normalizedHostSource = hostValue.trim()
+      .replace(/^smb:\/\//i, '')
+      .replace(/^\\\\+/, '')
+      .replace(/^\/+/, '')
+      .replace(/\\/g, '/');
+    const parts = normalizedHostSource.split('/').filter((item: string) => item.length > 0);
+    if (parts.length > 1) {
+      return parts[1];
+    }
+    return '';
   }
 
   private cloneDraft(source: NetworkFolderConnectionDraft): NetworkFolderConnectionDraft {
@@ -678,7 +738,13 @@ export struct NetworkFolderPage {
 
   private buildPreparedDraft(draft: NetworkFolderConnectionDraft): NetworkFolderConnectionDraft {
     const preparedDraft = this.cloneDraft(draft);
-    preparedDraft.name = draft.name.trim().length > 0 ? draft.name.trim() : this.suggestConnectionName(draft);
+    if (preparedDraft.protocol === 'smb') {
+      if (preparedDraft.shareName.trim().length === 0) {
+        preparedDraft.shareName = this.inferSMBShareNameFromHost(preparedDraft.host);
+      }
+      preparedDraft.host = this.normalizeSMBHostInput(preparedDraft.host);
+    }
+    preparedDraft.name = draft.name.trim().length > 0 ? draft.name.trim() : this.suggestConnectionName(preparedDraft);
     return preparedDraft;
   }
 
@@ -722,6 +788,9 @@ export struct NetworkFolderPage {
       this.selectedConnectionId = connection.id;
       this.currentPath = this.manager.getLastPath(connection.id);
       this.refreshCacheStats(connection.id);
+      if (this.viewMode === 'cache') {
+        this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+      }
       this.statusMessage = `连接已保存：${connection.name}`;
       this.showToast('连接已保存');
       logger.info(TAG, `连接保存完成：${connection.name}`);
@@ -795,6 +864,62 @@ export struct NetworkFolderPage {
     } catch (error) {
       this.cacheStats = { directoryCount: 0, fileCount: 0, totalBytes: 0 };
     }
+  }
+
+  private refreshCacheDetail(connectionId?: string): void {
+    try {
+      const detail: NetworkFolderCacheDetail = this.manager.getCacheDetail(connectionId);
+      this.cacheDetailConnectionId = connectionId?.trim() ?? '';
+      this.cacheDetailStats = detail.stats;
+      this.cacheDirectoryDetails = detail.directories;
+      this.cacheFileDetails = detail.files;
+    } catch (error) {
+      logger.warn(TAG, `刷新缓存详情失败：${String(error)}`);
+      this.cacheDetailConnectionId = connectionId?.trim() ?? '';
+      this.cacheDetailStats = { directoryCount: 0, fileCount: 0, totalBytes: 0 };
+      this.cacheDirectoryDetails = [];
+      this.cacheFileDetails = [];
+    }
+  }
+
+  private async openCacheDetailView(connectionId?: string): Promise<void> {
+    const targetConnectionId = connectionId?.trim() ?? '';
+    logger.info(TAG, `打开缓存详情页：${targetConnectionId.length > 0 ? targetConnectionId : '全部连接'}`);
+    this.refreshCacheDetail(targetConnectionId.length > 0 ? targetConnectionId : undefined);
+    this.cacheReturnView = this.viewMode;
+    if (this.viewMode !== 'cache') {
+      await this.playRouteExitAnimation(-42);
+      this.viewMode = 'cache';
+      this.playRouteEnterAnimation(42);
+    }
+    this.statusMessage = targetConnectionId.length > 0 ? '已进入当前连接缓存详情页。' : '已进入全部缓存详情页。';
+  }
+
+  private async leaveCacheDetailView(): Promise<void> {
+    logger.info(TAG, '返回网络文件夹主视图');
+    await this.playRouteExitAnimation(42);
+    this.viewMode = this.cacheReturnView === 'cache' ? 'connections' : this.cacheReturnView;
+    this.playRouteEnterAnimation(-42);
+    this.statusMessage = this.viewMode === 'browser' ? '已返回远程目录浏览页。' : '已返回网络连接列表。';
+  }
+
+  private getCacheDetailTitle(): string {
+    if (this.cacheDetailConnectionId.length === 0) {
+      return '全部缓存';
+    }
+    const connection = this.getConnectionById(this.cacheDetailConnectionId);
+    return connection ? `${connection.name} 的缓存` : '连接缓存';
+  }
+
+  private getCacheDetailSubtitle(): string {
+    if (this.cacheDetailConnectionId.length === 0) {
+      return '查看所有网络连接的目录缓存与文件缓存。';
+    }
+    const connection = this.getConnectionById(this.cacheDetailConnectionId);
+    if (!connection) {
+      return '查看当前连接关联的目录缓存与文件缓存。';
+    }
+    return `${getNetworkFolderProtocolLabel(connection.protocol)} · ${this.getConnectionEndpoint(connection)}`;
   }
 
   private getConnectionCacheSummary(connectionId: string): string {
@@ -1300,6 +1425,9 @@ export struct NetworkFolderPage {
         this.buildActionButton('新建连接', $r('sys.symbol.plus'), ACTION_STYLE_PRIMARY, true, () => {
           this.openCreateConnectionDialog();
         })
+        this.buildActionButton('缓存详情', $r('sys.symbol.inbox_fill'), ACTION_STYLE_INFO, true, () => {
+          void this.openCacheDetailView();
+        })
         this.buildActionButton('清理全部缓存', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
           this.showClearAllCacheDialog();
         })
@@ -1530,6 +1658,266 @@ export struct NetworkFolderPage {
     .layoutWeight(1)
   }
 
+  private getCacheDetailConnectionName(connectionId: string): string {
+    const connection = this.getConnectionById(connectionId);
+    return connection ? connection.name : connectionId;
+  }
+
+  @Builder private buildCacheEmptyState(title: string, message: string) {
+    Column({ space: 14 }) {
+      Column() {
+        SymbolGlyph($r('sys.symbol.inbox_fill'))
+          .fontSize(42)
+          .fontColor([this.color('text_muted')])
+      }
+      .width(84)
+      .height(84)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(24)
+
+      Text(title)
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_primary'))
+      Text(message)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_secondary'))
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+    }
+    .width('100%')
+    .padding({ top: 32, bottom: 32, left: 20, right: 20 })
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(24)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder private buildDirectoryCacheCard(detail: NetworkFolderDirectoryCacheDetail) {
+    Column({ space: 8 }) {
+      Row({ space: 10 }) {
+        Column() {
+          SymbolGlyph($r('sys.symbol.folder_fill'))
+            .fontSize(20)
+            .fontColor([this.color('accent_primary')])
+        }
+        .width(44)
+        .height(44)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(14)
+
+        Column({ space: 4 }) {
+          Text(detail.relativePath)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+            .width('100%')
+            .maxLines(1)
+          Text(`${this.getCacheDetailConnectionName(detail.connectionId)} · ${detail.entryCount} 项`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .width('100%')
+            .maxLines(1)
+          Text(`最近刷新：${this.formatDateTime(detail.fetchedAt)}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_muted'))
+            .width('100%')
+            .maxLines(1)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(18)
+  }
+
+  @Builder private buildFileCacheCard(detail: NetworkFolderDownloadCacheDetail) {
+    Column({ space: 8 }) {
+      Row({ space: 10 }) {
+        Column() {
+          SymbolGlyph(detail.fileExists ? $r('sys.symbol.doc_plaintext_fill') : $r('sys.symbol.exclamationmark_triangle_fill'))
+            .fontSize(20)
+            .fontColor([detail.fileExists ? this.color('icon_primary') : DANGER_COLOR])
+        }
+        .width(44)
+        .height(44)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(14)
+
+        Column({ space: 4 }) {
+          Text(detail.fileName)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+            .width('100%')
+            .maxLines(1)
+          Text(`${this.getCacheDetailConnectionName(detail.connectionId)} · ${this.formatBytes(detail.size)}`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .width('100%')
+            .maxLines(1)
+          Text(`远程路径：${detail.relativePath}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_muted'))
+            .width('100%')
+            .maxLines(1)
+          Text(`本地路径：${detail.localPath}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_muted'))
+            .width('100%')
+            .maxLines(1)
+          Text(`缓存于 ${this.formatDateTime(detail.cachedAt)} · 最近访问 ${this.formatDateTime(detail.lastAccessedAt)}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_muted'))
+            .width('100%')
+            .maxLines(1)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(18)
+  }
+
+  @Builder private buildCacheDetailView() {
+    Scroll(this.browserScroller) {
+      Column({ space: 14 }) {
+        Column({ space: 12 }) {
+          Row({ space: 10 }) {
+            this.buildActionButton('返回', $r('sys.symbol.arrow_left'), ACTION_STYLE_NEUTRAL, true, () => {
+              void this.leaveCacheDetailView();
+            })
+            this.buildActionButton('刷新', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_INFO, true, () => {
+              this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+              this.showToast('缓存详情已刷新');
+            })
+            Blank()
+            if (this.cacheDetailConnectionId.length > 0) {
+              this.buildActionButton('清理当前', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
+                void this.clearCurrentCache();
+              })
+            } else {
+              this.buildActionButton('清理全部', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
+                this.showClearAllCacheDialog();
+              })
+            }
+          }
+          .width('100%')
+
+          Column({ space: 6 }) {
+            Text(this.getCacheDetailTitle())
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+              .width('100%')
+            Text(this.getCacheDetailSubtitle())
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+              .width('100%')
+          }
+          .width('100%')
+
+          Row({ space: 12 }) {
+            this.buildOverviewStat('目录缓存', `${this.cacheDetailStats.directoryCount}`)
+            this.buildOverviewStat('文件缓存', `${this.cacheDetailStats.fileCount}`)
+            this.buildOverviewStat('占用空间', this.formatBytes(this.cacheDetailStats.totalBytes))
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(this.color('panel_background'))
+        .borderRadius(22)
+
+        Column({ space: 10 }) {
+          Row() {
+            Text('目录缓存明细')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+            Blank()
+            Text(`${this.cacheDirectoryDetails.length} 项`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+          }
+          .width('100%')
+
+          if (this.cacheDirectoryDetails.length === 0) {
+            this.buildCacheEmptyState('暂无目录缓存', '远程目录尚未被缓存，进入目录后会在这里显示明细。')
+          } else {
+            Column({ space: 10 }) {
+              ForEach(this.cacheDirectoryDetails, (detail: NetworkFolderDirectoryCacheDetail) => {
+                this.buildDirectoryCacheCard(detail)
+              }, (detail: NetworkFolderDirectoryCacheDetail) => `${detail.connectionId}_${detail.relativePath}_${detail.fetchedAt}`)
+            }
+            .width('100%')
+          }
+        }
+        .width('100%')
+
+        Column({ space: 10 }) {
+          Row() {
+            Text('文件缓存明细')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+            Blank()
+            Text(`${this.cacheFileDetails.length} 项`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+          }
+          .width('100%')
+
+          if (this.cacheFileDetails.length === 0) {
+            this.buildCacheEmptyState('暂无文件缓存', '当你缓存或导入远程文件后，这里会显示对应的本地缓存文件。')
+          } else {
+            Column({ space: 10 }) {
+              ForEach(this.cacheFileDetails, (detail: NetworkFolderDownloadCacheDetail) => {
+                this.buildFileCacheCard(detail)
+              }, (detail: NetworkFolderDownloadCacheDetail) => `${detail.connectionId}_${detail.relativePath}_${detail.cachedAt}`)
+            }
+            .width('100%')
+          }
+        }
+        .width('100%')
+
+        Blank().height(24)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .edgeEffect(EdgeEffect.Spring)
+    .scrollBar(BarState.Auto)
+  }
+
   @Builder private buildBrowserRefreshView(connection: NetworkFolderConnection) {
     Refresh({ refreshing: $$this.isPageRefreshing }) {
       Scroll(this.browserScroller) {
@@ -1608,6 +1996,9 @@ export struct NetworkFolderPage {
         this.buildActionButton('刷新', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_INFO, true, () => {
           void this.refreshCurrentDirectory();
         })
+        this.buildActionButton('缓存详情', $r('sys.symbol.inbox_fill'), ACTION_STYLE_NEUTRAL, true, () => {
+          void this.openCacheDetailView(connection.id);
+        })
         this.buildActionButton('清理缓存', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
           void this.clearCurrentCache();
         })
@@ -1639,6 +2030,9 @@ export struct NetworkFolderPage {
       Row({ space: 8 }) {
         this.buildActionButton('刷新', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_INFO, true, () => {
           void this.refreshCurrentDirectory();
+        })
+        this.buildActionButton('缓存详情', $r('sys.symbol.inbox_fill'), ACTION_STYLE_NEUTRAL, true, () => {
+          void this.openCacheDetailView(connection.id);
         })
         this.buildActionButton('清理缓存', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
           void this.clearCurrentCache();
@@ -1689,6 +2083,9 @@ export struct NetworkFolderPage {
 
         this.buildToolbarIconButton($r('sys.symbol.arrow_clockwise'), true, () => {
           void this.refreshCurrentDirectory();
+        })
+        this.buildToolbarIconButton($r('sys.symbol.inbox_fill'), true, () => {
+          void this.openCacheDetailView(connection.id);
         })
         this.buildToolbarIconButton($r('sys.symbol.gearshape'), true, () => {
           this.openEditConnectionDialog(connection);
@@ -1887,7 +2284,7 @@ export struct NetworkFolderPage {
           this.buildActionButton('缓存', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_NEUTRAL, true, () => {
             void this.cacheEntry(entry);
           })
-          this.buildActionButton('导入', $r('sys.symbol.doc_text'), ACTION_STYLE_INFO,
+          this.buildActionButton('导入', $r('sys.symbol.square_and_arrow_down'), ACTION_STYLE_INFO,
             entry.importCategory !== 'unsupported', () => {
               void this.importEntry(entry);
             })
@@ -2076,7 +2473,7 @@ export struct NetworkFolderPage {
             .height(16)
             .color(ACCENT_COLOR)
         } else {
-          SymbolGlyph($r('sys.symbol.circle'))
+          SymbolGlyph($r('sys.symbol.info_circle'))
             .fontSize(16)
             .fontColor([this.color('accent_primary')])
         }
@@ -2153,7 +2550,7 @@ export struct NetworkFolderPage {
             }
             .width('100%')
 
-            this.buildDialogField($r('sys.symbol.doc_text'), '连接名称', '留空时自动生成',
+            this.buildDialogField($r('sys.symbol.externaldrive_fill'), '连接名称', '留空时自动生成',
               this.dialogDraft.name, (value: string) => {
                 const nextDraft = this.cloneDraft(this.dialogDraft);
                 nextDraft.name = value;
@@ -2161,14 +2558,14 @@ export struct NetworkFolderPage {
               })
 
             if (this.dialogDraft.protocol === 'webdav') {
-              this.buildDialogField($r('sys.symbol.arrow_clockwise'), '服务地址', 'https://example.com/dav',
+              this.buildDialogField($r('sys.symbol.link'), '服务地址', 'https://example.com/dav',
                 this.dialogDraft.serverUrl, (value: string) => {
                   const nextDraft = this.cloneDraft(this.dialogDraft);
                   nextDraft.serverUrl = value;
                   this.dialogDraft = nextDraft;
                 })
             } else {
-              this.buildDialogField($r('sys.symbol.externaldrive_fill'), '主机地址',
+              this.buildDialogField($r('sys.symbol.desktop'), '主机地址',
                 this.dialogDraft.protocol === 'smb' ? '192.168.1.10' : 'ftp.example.com',
                 this.dialogDraft.host, (value: string) => {
                   const nextDraft = this.cloneDraft(this.dialogDraft);
@@ -2188,7 +2585,7 @@ export struct NetworkFolderPage {
 
             Row({ space: 12 }) {
               Column() {
-                this.buildDialogField($r('sys.symbol.circle'), '用户名', '可留空',
+                this.buildDialogField($r('sys.symbol.person_fill'), '用户名', '可留空',
                   this.dialogDraft.username, (value: string) => {
                     const nextDraft = this.cloneDraft(this.dialogDraft);
                     nextDraft.username = value;
@@ -2198,7 +2595,7 @@ export struct NetworkFolderPage {
               .layoutWeight(1)
 
               Column() {
-                this.buildDialogField($r('sys.symbol.circle'), '密码', '可留空',
+                this.buildDialogField($r('sys.symbol.lock_fill'), '密码', '可留空',
                   this.dialogDraft.password, (value: string) => {
                     const nextDraft = this.cloneDraft(this.dialogDraft);
                     nextDraft.password = value;
@@ -2212,7 +2609,7 @@ export struct NetworkFolderPage {
             if (this.dialogDraft.protocol === 'smb') {
               Row({ space: 12 }) {
                 Column() {
-                  this.buildDialogField($r('sys.symbol.circle'), '域', 'WORKGROUP',
+                  this.buildDialogField($r('sys.symbol.building'), '域', 'WORKGROUP',
                     this.dialogDraft.domain, (value: string) => {
                       const nextDraft = this.cloneDraft(this.dialogDraft);
                       nextDraft.domain = value;
@@ -2222,7 +2619,7 @@ export struct NetworkFolderPage {
                 .layoutWeight(1)
 
                 Column() {
-                  this.buildDialogField($r('sys.symbol.circle'), '客户端 IP', '留空自动探测',
+                  this.buildDialogField($r('sys.symbol.wifi'), '客户端 IP', '留空自动探测',
                     this.dialogDraft.clientIP, (value: string) => {
                       const nextDraft = this.cloneDraft(this.dialogDraft);
                       nextDraft.clientIP = value;
@@ -2247,7 +2644,7 @@ export struct NetworkFolderPage {
               .layoutWeight(1)
 
               Column() {
-                this.buildDialogField($r('sys.symbol.circle'), '端口', `${this.dialogDraft.port}`,
+                this.buildDialogField($r('sys.symbol.link'), '端口', `${this.dialogDraft.port}`,
                   `${this.dialogDraft.port}`, (value: string) => {
                     const nextDraft = this.cloneDraft(this.dialogDraft);
                     const parsed = parseInt(value, 10);
@@ -2261,7 +2658,7 @@ export struct NetworkFolderPage {
             }
             .width('100%')
 
-            this.buildDialogField($r('sys.symbol.circle'), '超时（毫秒）', '30000',
+            this.buildDialogField($r('sys.symbol.timer'), '超时（毫秒）', '30000',
               `${this.dialogDraft.timeoutMs}`, (value: string) => {
                 const nextDraft = this.cloneDraft(this.dialogDraft);
                 const parsed = parseInt(value, 10);
@@ -2340,6 +2737,8 @@ export struct NetworkFolderPage {
           Stack() {
             if (this.viewMode === 'connections') {
               this.buildConnectionsRefreshView()
+            } else if (this.viewMode === 'cache') {
+              this.buildCacheDetailView()
             } else {
               if (this.hasSelectedConnection()) {
                 this.buildBrowserRefreshView(this.getSelectedConnectionForRender())
@@ -2408,6 +2807,10 @@ export struct NetworkFolderPage {
       .onBackPressed(() => {
         if (this.dialogMounted) {
           this.closeConnectionDialog();
+          return true;
+        }
+        if (this.viewMode === 'cache') {
+          void this.leaveCacheDetailView();
           return true;
         }
         if (this.viewMode === 'browser') {

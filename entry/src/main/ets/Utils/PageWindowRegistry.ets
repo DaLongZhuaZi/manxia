@@ -48,6 +48,9 @@ export class PageWindowRegistry {
     'HelloWorldPage',
     'HelpCenterPage',
     'InteractionSettingsSubPage',
+    'KomgaBrowsePage',
+    'KomgaMangaDetailPage',
+    'KomgaSettingsPage',
     'JsvmPlaygroundPage',
     'LifecycleMonitorPage',
     'LogManagerPage',
@@ -119,6 +122,7 @@ export class PageWindowRegistry {
     'MangaReaderPage',
     'EBookReaderPage',
     'EBookImageReaderPage',
+    'KomgaReaderPage',
     'NovelReaderPage',
     'SuwayomiReaderPage',
     'FileEditorPage'

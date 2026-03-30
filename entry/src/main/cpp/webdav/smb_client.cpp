@@ -214,6 +214,15 @@ public:
 
         const std::string serverTarget = BuildServerTarget(config.host, config.port);
         const char* userValue = config.username.empty() ? nullptr : config.username.c_str();
+        OH_LOG_INFO(
+            LOG_APP,
+            "开始连接 SMB 共享: host=%{public}s port=%{public}d share=%{public}s target=%{public}s encryption=%{public}d",
+            config.host.c_str(),
+            config.port,
+            config.shareName.c_str(),
+            serverTarget.c_str(),
+            config.enableEncryption ? 1 : 0
+        );
         const int rc = smb2_connect_share(
             session->context,
             serverTarget.c_str(),
@@ -221,9 +230,21 @@ public:
             userValue
         );
         if (rc != 0) {
+            const int statusCode = ConvertStatusCode(session->context, rc);
+            const std::string errorMessage = BuildErrorMessage("连接 SMB 共享失败", session->context, rc);
+            OH_LOG_ERROR(
+                LOG_APP,
+                "连接 SMB 共享失败: host=%{public}s port=%{public}d share=%{public}s rc=%{public}d ntStatus=%{public}d detail=%{public}s",
+                config.host.c_str(),
+                config.port,
+                config.shareName.c_str(),
+                rc,
+                statusCode,
+                errorMessage.c_str()
+            );
             if (errorResult != nullptr) {
                 errorResult->success = false;
-                errorResult->statusCode = ConvertStatusCode(session->context, rc);
+                errorResult->statusCode = statusCode;
                 errorResult->message = BuildErrorMessage("连接 SMB 共享失败", session->context, rc);
             }
             return nullptr;
