@@ -98,7 +98,8 @@ export enum GlassLevel {
   NAVIGATION = 'navigation',
   CARD = 'card',
   SHEET = 'sheet',
-  FLOATING = 'floating'
+  FLOATING = 'floating',
+  FEATURED = 'featured'
 }
 
 export interface GlassStyleToken {
@@ -107,6 +108,7 @@ export interface GlassStyleToken {
   backgroundColorResource: Resource;
   blurStyle: BlurStyle;
   blurOptions: BackgroundBlurStyleOptions;
+  backgroundEffect?: BackgroundEffectOptions;
   radius: number;
   shadowColor: string;
   borderColor: string;
@@ -123,6 +125,7 @@ export interface GlassEffectOptions {
   blurStyle: BlurStyle;
   radius: number;
   backgroundColor?: string;
+  backgroundEffect?: BackgroundEffectOptions;
   borderColor?: string;
   borderWidth?: number;
   blurOptions?: BackgroundBlurStyleOptions;
@@ -585,6 +588,8 @@ export class ThemeManager {
         return (this.getComponentTransparency('dialog') + this.getComponentTransparency('menu')) / 2;
       case GlassLevel.FLOATING:
         return this.getComponentTransparency('floatingBall');
+      case GlassLevel.FEATURED:
+        return this.getComponentTransparency('card');
       case GlassLevel.HERO:
       default:
         return this.getComponentTransparency('card');
@@ -602,6 +607,8 @@ export class ThemeManager {
         return isDark ? 0.72 : 0.54;
       case GlassLevel.SHEET:
         return isDark ? 0.9 : 0.8;
+      case GlassLevel.FEATURED:
+        return isDark ? 0.12 : 0.10;
       case GlassLevel.FLOATING:
       default:
         return isDark ? 0.84 : 0.68;
@@ -612,8 +619,8 @@ export class ThemeManager {
     const theme: ThemeType = this.getActualThemeSync();
     const alpha: number = this.clampNumber(
       this.getBaseGlassAlpha(level) * (0.45 + this.getGlassTransparencyForLevel(level) * 0.55),
-      0.18,
-      0.96
+      level === GlassLevel.FEATURED ? 0.04 : 0.18,
+      level === GlassLevel.FEATURED ? 0.24 : 0.96
     );
 
     if (this.isDarkLikeTheme(theme)) {
@@ -626,6 +633,8 @@ export class ThemeManager {
           return `rgba(18, 24, 36, ${alpha})`;
         case GlassLevel.FLOATING:
           return `rgba(20, 28, 40, ${alpha})`;
+        case GlassLevel.FEATURED:
+          return `rgba(10, 18, 30, ${alpha})`;
         case GlassLevel.CARD:
         default:
           return `rgba(18, 24, 36, ${alpha})`;
@@ -641,6 +650,8 @@ export class ThemeManager {
         return `rgba(255, 255, 255, ${this.clampNumber(alpha + 0.08, 0.24, 0.98)})`;
       case GlassLevel.FLOATING:
         return `rgba(252, 253, 255, ${alpha})`;
+      case GlassLevel.FEATURED:
+        return `rgba(210, 228, 255, ${alpha})`;
       case GlassLevel.CARD:
       default:
         return `rgba(255, 255, 255, ${alpha})`;
@@ -658,6 +669,8 @@ export class ThemeManager {
         return isDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.74)';
       case GlassLevel.FLOATING:
         return isDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.68)';
+      case GlassLevel.FEATURED:
+        return isDark ? 'rgba(226, 240, 255, 0.16)' : 'rgba(255, 255, 255, 0.54)';
       case GlassLevel.CARD:
       default:
         return isDark ? 'rgba(255, 255, 255, 0.09)' : 'rgba(255, 255, 255, 0.58)';
@@ -686,6 +699,9 @@ export class ThemeManager {
       case GlassLevel.FLOATING:
         levelFactor = 0.82;
         break;
+      case GlassLevel.FEATURED:
+        levelFactor = 0.68;
+        break;
       case GlassLevel.CARD:
       default:
         levelFactor = 0.7;
@@ -709,6 +725,8 @@ export class ThemeManager {
       case GlassLevel.NAVIGATION:
       case GlassLevel.FLOATING:
         return BlurStyle.Regular;
+      case GlassLevel.FEATURED:
+        return BlurStyle.BACKGROUND_ULTRA_THICK;
       case GlassLevel.CARD:
       default:
         return BlurStyle.Thin;
@@ -718,6 +736,17 @@ export class ThemeManager {
   private getGlassBlurOptionsForLevel(level: GlassLevel): BackgroundBlurStyleOptions {
     const blurEnabled: boolean = this.isBlurEffectEnabled() && this.getUserThemeProfile().effects.enableGlassmorphism;
     const intensity: number = blurEnabled ? this.clampNumber(this.getUserThemeProfile().effects.blurIntensity / 100, 0, 1) : 0;
+    const isDark: boolean = this.isDarkLikeTheme(this.getActualThemeSync());
+
+    if (level === GlassLevel.FEATURED) {
+      return {
+        colorMode: ThemeColorMode.SYSTEM,
+        adaptiveColor: AdaptiveColor.DEFAULT,
+        scale: blurEnabled ? this.clampNumber((isDark ? 1.10 : 1.04) + intensity * 0.22, 0.78, 1.32) : 0.0,
+        policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
+      };
+    }
+
     let levelMultiplier: number = 0.82;
 
     switch (level) {
@@ -747,6 +776,32 @@ export class ThemeManager {
     };
   }
 
+  private getGlassBackgroundEffectForLevel(level: GlassLevel): BackgroundEffectOptions | undefined {
+    const blurEnabled: boolean = this.isBlurEffectEnabled() && this.getUserThemeProfile().effects.enableGlassmorphism;
+    if (!blurEnabled) {
+      return undefined;
+    }
+
+    const isDark: boolean = this.isDarkLikeTheme(this.getActualThemeSync());
+    switch (level) {
+      case GlassLevel.FEATURED:
+        return {
+          radius: isDark ? 36 : 34,
+          saturation: isDark ? 1.36 : 1.44,
+          brightness: isDark ? 1.04 : 1.12,
+          color: isDark ? 'rgba(132, 188, 255, 0.022)' : 'rgba(126, 182, 255, 0.020)',
+          adaptiveColor: AdaptiveColor.DEFAULT
+        };
+      case GlassLevel.HERO:
+      case GlassLevel.NAVIGATION:
+      case GlassLevel.CARD:
+      case GlassLevel.SHEET:
+      case GlassLevel.FLOATING:
+      default:
+        return undefined;
+    }
+  }
+
   private getGlassRadiusForLevel(level: GlassLevel): number {
     const baseRadius: number = Math.max(8, this.getUserCornerRadius());
     switch (level) {
@@ -758,6 +813,8 @@ export class ThemeManager {
         return baseRadius + 8;
       case GlassLevel.FLOATING:
         return baseRadius + 4;
+      case GlassLevel.FEATURED:
+        return baseRadius + 6;
       case GlassLevel.CARD:
       default:
         return baseRadius + 2;
@@ -832,12 +889,13 @@ export class ThemeManager {
       backgroundColorResource: this.getGlassBackgroundResource(),
       blurStyle: this.getGlassBlurStyleForLevel(level),
       blurOptions: this.getGlassBlurOptionsForLevel(level),
+      backgroundEffect: this.getGlassBackgroundEffectForLevel(level),
       radius: this.getGlassRadiusForLevel(level),
       shadowColor: this.getGlassShadowColorForLevel(level),
       borderColor: this.getGlassBorderColorForLevel(level),
       borderWidth: 1,
       opacity: this.getGlassTransparencyForLevel(level),
-      renderGroup: level === GlassLevel.HERO || level === GlassLevel.SHEET || level === GlassLevel.FLOATING
+      renderGroup: level === GlassLevel.HERO || level === GlassLevel.SHEET || level === GlassLevel.FLOATING || level === GlassLevel.FEATURED
     };
   }
 
@@ -929,6 +987,7 @@ export class ThemeManager {
       backgroundColor: token.backgroundColor,
       blurStyle: token.blurStyle,
       blurOptions: token.blurOptions,
+      backgroundEffect: token.backgroundEffect,
       radius: token.radius,
       shadowColor: token.shadowColor,
       borderColor: token.borderColor,

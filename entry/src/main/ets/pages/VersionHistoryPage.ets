@@ -25,6 +25,8 @@ import {
   DEFAULT_VERSION_COMMIT_REPOSITORIES,
   DEFAULT_VERSION_COMMIT_FETCH_LIMIT
 } from '../Framework/Managers/VersionHistoryManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'VersionHistoryPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -38,6 +40,7 @@ interface NavDestinationContext {
 @Component
 struct VersionHistoryPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
 
   // 主题/字体状态
@@ -712,7 +715,7 @@ struct VersionHistoryPage {
         } else {
           Scroll(this.scroller) {
             Column({ space: 12 }) {
-              Blank().height(TITLE_BAR_HEIGHT_MINI)
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
               this.buildSummaryCard()
 
@@ -749,33 +752,18 @@ struct VersionHistoryPage {
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
         }
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '版本记录',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack
+        })
       }
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
-          },
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '版本记录' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.onPageShow();

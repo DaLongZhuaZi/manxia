@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/pages/NovelSourceDebugPage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -18,9 +18,10 @@ import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { NovelSourceExecutor } from '../Framework/Novel/NovelSourceExecutor';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelSourceDebugPage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 /**
  * 调试步骤枚举
@@ -376,7 +377,7 @@ export struct NovelSourceDebugPage {
         
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           
           // 搜索输入区
           this.buildSearchInput()
@@ -428,30 +429,18 @@ export struct NovelSourceDebugPage {
         if (this.isRunning) {
           this.buildLoadingOverlay()
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: this.source ? `调试: ${this.source.bookSourceName}` : '书源调试',
+          appFontFamily: this.appFontFamily
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: this.source ? `调试: ${this.source.bookSourceName}` : '书源调试'
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady(() => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');

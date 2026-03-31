@@ -4,6 +4,8 @@ import { HdsNavDestination } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Network/NetworkFolderManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import {
   NetworkFolderCacheDetail,
   NetworkFolderDirectoryCacheDetail,
@@ -55,6 +57,7 @@ export struct NetworkFolderPage {
 
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @State connections: NetworkFolderConnection[] = [];
   @State selectedConnectionId: string = '';
   @State currentPath: string = '/';
@@ -103,6 +106,26 @@ export struct NetworkFolderPage {
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     this.hideFloatingCapsuleImmediately();
+  }
+
+  private handleTitleBarBack(): boolean {
+    if (this.dialogMounted) {
+      this.closeConnectionDialog();
+      return true;
+    }
+    if (this.viewMode === 'cache') {
+      void this.leaveCacheDetailView();
+      return true;
+    }
+    if (this.viewMode === 'browser') {
+      if (this.currentPath !== '/') {
+        void this.goParentDirectory();
+      } else {
+        void this.returnToConnections();
+      }
+      return true;
+    }
+    return false;
   }
 
   private color(type: 'background' | 'panel_background' | 'comp_background_tertiary' | 'comp_background_secondary' |
@@ -2732,7 +2755,7 @@ export struct NetworkFolderPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column({ space: 0 }) {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
           Stack() {
             if (this.viewMode === 'connections') {
@@ -2763,7 +2786,11 @@ export struct NetworkFolderPage {
             this.buildFloatingStatusCapsule()
           }
           .width('100%')
-          .padding({ top: TITLE_BAR_HEIGHT_MINI + 10, left: 16, right: 16 })
+          .padding({
+            top: SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight) + 10,
+            left: 16,
+            right: 16
+          })
           .alignItems(HorizontalAlign.Center)
           .translate({ y: this.showFloatingCapsule ? 0 : -12 })
           .opacity(this.showFloatingCapsule ? 1 : 0)
@@ -2772,11 +2799,21 @@ export struct NetworkFolderPage {
           .zIndex(12)
         }
 
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '网络文件夹',
+          appFontFamily: this.appFontFamily,
+          backAction: () => this.handleTitleBarBack()
+        })
+
         if (this.dialogMounted) {
           this.buildConnectionDialog()
         }
       }
     }
+      .hideTitleBar(true)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+      /*
       .titleBar({
         padding: {
           start: LengthMetrics.vp(16),
@@ -2800,28 +2837,13 @@ export struct NetworkFolderPage {
           }
         }
       })
+      */
       .onReady((context: NavDestinationContext) => {
         this.pathStack = context.pathStack;
         void this.initializePage();
       })
       .onBackPressed(() => {
-        if (this.dialogMounted) {
-          this.closeConnectionDialog();
-          return true;
-        }
-        if (this.viewMode === 'cache') {
-          void this.leaveCacheDetailView();
-          return true;
-        }
-        if (this.viewMode === 'browser') {
-          if (this.currentPath !== '/') {
-            void this.goParentDirectory();
-          } else {
-            void this.returnToConnections();
-          }
-          return true;
-        }
-        return false;
+        return this.handleTitleBarBack();
       })
       .backgroundColor(Color.Transparent)
   }

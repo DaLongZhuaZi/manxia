@@ -148,8 +148,8 @@ export class SuwayomiTracker extends BaseTracker {
   /**
    * 初始化跟踪器
    */
-  public async initialize(): Promise<void> {
-    if (this._isInitialized) {
+  public async initialize(forceReload: boolean = false): Promise<void> {
+    if (this._isInitialized && !forceReload) {
       return;
     }
     await this.loadConfig();

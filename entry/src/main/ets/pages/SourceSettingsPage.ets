@@ -3,8 +3,8 @@
  * 图源设置页面
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, UIContext } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { UIContext } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -21,9 +21,10 @@ import { SourceLoginPageParams } from './SourceLoginPage';
 import { ReadingMode, ReadingDirection, PageTurnAnimationType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG: string = 'SourceSettingsPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 /**
  * 页面导航参数
@@ -257,6 +258,18 @@ export struct SourceSettingsPage {
   /**
    * 加载图源配置中的镜像站点和自定义设置
    */
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [{
+      id: 'help',
+      symbol: $r('sys.symbol.questionmark_circle'),
+      label: '帮助',
+      onClick: () => {
+        this.showSourceSettingsHelp();
+      },
+      enabled: true
+    }];
+  }
+
   private async loadSourceConfigSettings(): Promise<void> {
     if (!this.pageParams || !this.pageParams.sourceName) {
       return;
@@ -1983,18 +1996,31 @@ export struct SourceSettingsPage {
             }
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: this.statusBarHeight + 8, bottom: this.navigationBarHeight + 8 })
+          .padding({
+            left: 16,
+            right: 16,
+            top: SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight),
+            bottom: this.navigationBarHeight + 8
+          })
         }
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '图源设置',
+          appFontFamily: this.appFontFamily,
+          pathStack: this.pathStack,
+          actions: this.getTitleBarActions()
+        })
       }
     }
     .width('100%')
     .height('100%')
-    .titleBar({
+    /* .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
         end: LengthMetrics.vp(16)
@@ -2023,7 +2049,9 @@ export struct SourceSettingsPage {
           }]
         }
       }
-    })
+    }) */
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       // 从context直接获取参数

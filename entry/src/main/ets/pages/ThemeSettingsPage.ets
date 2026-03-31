@@ -25,6 +25,8 @@ import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
 import { SettingsGlassStyleHelper } from './settings/SettingsGlassStyleHelper';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'ThemeSettingsPage';
 
@@ -1946,6 +1948,34 @@ export struct ThemeSettingsPage {
     });
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    if (this.selectionModeEnabled) {
+      return [
+        {
+          id: 'delete_selected',
+          symbol: $r('sys.symbol.trash'),
+          onClick: () => { this.showDeleteConfirmDialogSystem(); },
+          enabled: this.selectedThemeIds.length > 0
+        },
+        {
+          id: 'cancel_selection',
+          symbol: $r('sys.symbol.xmark'),
+          onClick: () => { this.exitSelectionMode(); },
+          enabled: true
+        }
+      ];
+    }
+
+    return [
+      {
+        id: 'restore_default_theme',
+        symbol: $r('sys.symbol.arrow_counterclockwise'),
+        onClick: () => { void this.restoreDefaultCustomTheme(); },
+        enabled: true
+      }
+    ];
+  }
+
   /**
    * 显示“关闭自定义主题”确认对话框
    * 仅关闭当前应用，不删除已保存的自定义主题
@@ -2007,7 +2037,7 @@ export struct ThemeSettingsPage {
               justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
             }) {
               Blank()
-                .height(56)
+                .height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
                 .width('100%')
               // 主题商店（列表 + 创建入口）
               if (!this.isCreatingCustomTheme) {
@@ -3128,71 +3158,22 @@ export struct ThemeSettingsPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '主题设置',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack,
+          actions: this.getTitleBarActions()
+        })
         }
         .width('100%')
         .height('100%')
         .id('guide_theme_settings_root')
       }
-      .titleBar({
-        padding: {
-          start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.COMMON_BLUR,
-          blurEffectiveStartOffset: LengthMetrics.vp(0),
-          blurEffectiveEndOffset: LengthMetrics.vp(56)
-        },
-        originalStyle: {
-          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '主题设置' },
-        menu: {
-          value: this.selectionModeEnabled ? [
-            {
-              content: {
-                label: '删除所选',
-                icon: $r('sys.symbol.trash'),
-                isEnabled: this.selectedThemeIds.length > 0,
-                action: () => { this.showDeleteConfirmDialogSystem(); }
-              }
-            },
-            {
-              content: {
-                label: '取消选择',
-                icon: $r('sys.media.ohos_ic_public_cancel'),
-                isEnabled: true,
-                action: () => { this.exitSelectionMode(); }
-              }
-            }
-          ] : [
-            {
-              content: {
-                label: '恢复默认主题',
-                icon: $r('sys.symbol.arrow_counterclockwise'),
-                isEnabled: true,
-                action: () => { this.restoreDefaultCustomTheme(); }
-              }
-            }
-          ]
-        }
-      }
-    })
+      .hideTitleBar(true)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.applyPendingSearchTarget();

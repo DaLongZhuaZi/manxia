@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/pages/JsvmPlaygroundPage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../Utils/Logger';
@@ -17,10 +17,11 @@ import { NativeJsEngine, JsContext, JsResult, getNativeJsEngine } from '../Frame
 import { testHtmlParser } from '../libs/htmlparser/index';
 import { getLegadoRhinoEngine, JsEngineType, LegadoRhinoEngine } from '../Framework/Novel/LegadoRhinoEngine';
 import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import quickjs from 'libquickjs_engine.so';
 
 const TAG = 'JsvmPlaygroundPage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 /**
  * QuickJS执行结果接口
@@ -58,6 +59,7 @@ export struct JsvmPlaygroundPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `JsvmPlaygroundPage_${Date.now()}`;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   
@@ -1238,7 +1240,7 @@ result`,
         
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           // 工具栏
           this.buildToolbar()
           
@@ -1271,30 +1273,18 @@ result`,
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: 'JSVM Playground',
+          appFontFamily: this.appFontFamily
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: 'JSVM Playground'
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady(() => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');

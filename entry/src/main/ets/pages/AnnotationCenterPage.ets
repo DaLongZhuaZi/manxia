@@ -8,6 +8,7 @@ import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
@@ -29,6 +30,8 @@ import { EBookFormat, EBookReadingProgress } from '../Models/EBookModels';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'AnnotationCenterPage';
 const MAX_CONTENT_WIDTH: number = 960;
@@ -134,6 +137,7 @@ export struct AnnotationCenterPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @State themeState: ThemeAwareState = new ThemeAwareState();
   private scroller: Scroller = new Scroller();
 
   @State contentType: UnifiedContentType = UnifiedContentType.NOVEL;
@@ -188,6 +192,7 @@ export struct AnnotationCenterPage {
   private normalDisplayModeRefreshTimer: number = -1;
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   private lastGuideAnchorId: string = '';
+  private componentId: string = 'AnnotationCenterPage';
 
   onPageShow(): void {
     this.captureCurrentDisplayMode('onPageShow');
@@ -195,8 +200,20 @@ export struct AnnotationCenterPage {
     void this.refreshPageGuide('onPageShow');
   }
 
+  aboutToAppear(): void {
+    void ThemeAwareHelper.initializeThemeAware(
+      this.componentId,
+      this.themeState,
+      undefined,
+      (newState: ThemeAwareState) => {
+        this.themeState = newState;
+      }
+    );
+  }
+
   aboutToDisappear(): void {
     this.clearNormalDisplayModeRefreshTimer();
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
   private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
@@ -2311,6 +2328,17 @@ export struct AnnotationCenterPage {
     getHelpPanelManagerV2().showInlineHelp('灵感页帮助', helpContent);
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'annotation_help',
+        symbol: $r('sys.symbol.questionmark_circle'),
+        onClick: () => { this.showAnnotationCenterHelp(); },
+        enabled: true
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -2324,7 +2352,7 @@ export struct AnnotationCenterPage {
 
         Scroll(this.scroller) {
           Column({ space: 12 }) {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
             this.buildContentSelectorSection()
 
@@ -2475,6 +2503,16 @@ export struct AnnotationCenterPage {
             }
           })
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '灵感',
+          appFontFamily: this.appFontFamily,
+          contentPadding: 16,
+          maxContentWidth: MAX_CONTENT_WIDTH,
+          pathStack: this.pathStack,
+          actions: this.getTitleBarActions()
+        })
       }
       .width('100%')
       .height('100%')
@@ -2484,38 +2522,9 @@ export struct AnnotationCenterPage {
         [SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END]
       )
     }
-    .hideTitleBar(false)
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .mode(NavDestinationMode.STANDARD)
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: $r('app.color.settings_panel_background')
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: '灵感'
-        },
-        menu: {
-          value: [{
-            content: {
-              label: '帮助',
-              icon: $r('sys.symbol.questionmark_circle'),
-              isEnabled: true,
-              action: () => {
-                this.showAnnotationCenterHelp();
-              }
-            }
-          }]
-        }
-      }
-    })
     .backgroundColor(Color.Transparent)
     .onWillAppear(() => {
       this.captureCurrentDisplayMode('onWillAppear');

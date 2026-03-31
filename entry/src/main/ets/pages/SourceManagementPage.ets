@@ -4,8 +4,8 @@
  * 使用 HdsNavDestination 实现统一的导航体验
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
@@ -18,6 +18,8 @@ import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Ne
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { SourceManager, getSourceManager } from '../Framework/Source/SourceManager';
 import { SourceTester, TestResult, TestItemResult } from '../Framework/Source/SourceTester';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'SourceManagementPage';
 
@@ -55,14 +57,13 @@ enum SourceFilterType {
   NSFW = 'nsfw'
 }
 
-const TITLE_BAR_HEIGHT_MINI = 56;
-
 @Component
 export struct SourceManagementPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   // 所有图源（内存中完整列表）
   private allSources: SourceInfo[] = [];
   // 当前显示的图源（分页加载）
@@ -439,7 +440,7 @@ export struct SourceManagementPage {
         // 内容层
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           
           // 搜索栏
           this.buildSearchBar()
@@ -472,30 +473,18 @@ export struct SourceManagementPage {
             }
           })
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '图源管理',
+          appFontFamily: this.appFontFamily
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: '图源管理'
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');

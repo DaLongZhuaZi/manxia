@@ -36,6 +36,9 @@ import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
 
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -88,6 +91,7 @@ export struct GlobalSearchPage {
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @StorageLink('source_features_enabled') @Watch('onSourceFeaturesEnabledChanged') sourceFeaturesEnabled: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
@@ -211,7 +215,7 @@ export struct GlobalSearchPage {
     let yOffset = 0;
     switch (anchorId) {
       case 'guide_global_search_input':
-        yOffset = TITLE_BAR_HEIGHT_MINI;
+        yOffset = SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight);
         break;
       case 'guide_global_search_content_types':
       case 'guide_global_search_source_types':
@@ -770,6 +774,19 @@ export struct GlobalSearchPage {
     }
   }
 
+  private getSearchResultSurfaceStyle() {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface;
+  }
+
+  private getSearchResultRowStyle() {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row;
+  }
+
+  private getSearchResultCoverRadius(): number {
+    const surfaceRadius = this.getSearchResultSurfaceStyle().radius;
+    return Math.max(8, Math.min(12, surfaceRadius));
+  }
+
   /**
    * 获取已选源的摘要信息
    */
@@ -1040,7 +1057,7 @@ export struct GlobalSearchPage {
         // 内容层
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
           // 搜索栏
           Row({ space: 12 }) {
@@ -1349,6 +1366,14 @@ export struct GlobalSearchPage {
             const errorInfo = event.error.getErrorInfo();
             logger.warn(TAG, `WebView错误: ${errorInfo}`);
           })
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '全局搜索',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack
+        })
       }
       .width('100%')
       .height('100%')
@@ -1365,24 +1390,8 @@ export struct GlobalSearchPage {
         this.handlePageParams();
       }
     })
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '全局搜索' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
   }
 
@@ -1401,12 +1410,12 @@ export struct GlobalSearchPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .fontColor(this.getSearchResultRowStyle().titleColor)
               
               Text(`(${this.getItemCountText(group)})`)
                 .fontSize(14)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .fontColor(this.getSearchResultRowStyle().subtitleColor)
                 .margin({ left: 8 })
             }
             .width('100%')
@@ -1463,13 +1472,13 @@ export struct GlobalSearchPage {
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .fontColor(this.getSearchResultRowStyle().titleColor)
           
           if (group.isSearching) {
             Text('搜索中...')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .fontColor(this.getSearchResultRowStyle().subtitleColor)
           } else if (group.hasError) {
             Text('搜索失败')
               .fontSize(12)
@@ -1479,7 +1488,7 @@ export struct GlobalSearchPage {
             Text(this.getItemCountText(group))
               .fontSize(12)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .fontColor(this.getSearchResultRowStyle().subtitleColor)
           }
         }
         .alignItems(HorizontalAlign.Start)
@@ -1512,7 +1521,7 @@ export struct GlobalSearchPage {
           Text('搜索中...')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .fontColor(this.getSearchResultRowStyle().subtitleColor)
         }
         .width('100%')
         .height(180)
@@ -1553,7 +1562,7 @@ export struct GlobalSearchPage {
         Text('搜索失败，请重试')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.getSearchResultRowStyle().subtitleColor)
           .width('100%')
           .height(180)
           .textAlign(TextAlign.Center)
@@ -1561,7 +1570,7 @@ export struct GlobalSearchPage {
         Text('暂无结果')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.getSearchResultRowStyle().subtitleColor)
           .width('100%')
           .height(180)
           .textAlign(TextAlign.Center)
@@ -1569,11 +1578,24 @@ export struct GlobalSearchPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .backgroundColor(this.getSearchResultSurfaceStyle().backgroundColor)
+    .backgroundBlurStyle(
+      this.getSearchResultSurfaceStyle().blurStyle,
+      this.getSearchResultSurfaceStyle().blurOptions
+    )
+    .backgroundEffect(this.getSearchResultSurfaceStyle().backgroundEffect)
+    .linearGradient(this.getSearchResultSurfaceStyle().surfaceGradient)
+    .borderRadius(this.getSearchResultSurfaceStyle().radius)
+    .clip(true)
     .border({
-      width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      width: this.getSearchResultSurfaceStyle().borderWidth,
+      color: this.getSearchResultSurfaceStyle().borderColor
+    })
+    .shadow({
+      radius: this.getSearchResultSurfaceStyle().radius + 4,
+      color: this.getSearchResultSurfaceStyle().shadowColor,
+      offsetX: 0,
+      offsetY: 8
     })
   }
 
@@ -1629,6 +1651,81 @@ export struct GlobalSearchPage {
     }
   }
 
+  @Builder
+  private buildSearchResultCoverMedia(item: UnifiedSearchItem) {
+    if (item.coverUrl && item.coverUrl.length > 0) {
+      Image(this.getUnifiedCoverSource(item))
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Cover)
+        .backgroundColor(this.getSearchResultSurfaceStyle().backgroundColor)
+        .alt(this.getDefaultCover(item.contentType))
+    } else if (item.contentType === SearchContentType.NOVEL) {
+      Image($r('app.media.ebook'))
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Contain)
+        .backgroundColor(this.getSearchResultSurfaceStyle().backgroundColor)
+        .alt($r('app.media.ebook'))
+    } else {
+      Column() {
+        Text(item.title.substring(0, 1))
+          .fontSize(32)
+          .fontFamily(this.appFontFamily)
+          .fontColor('#FFFFFF')
+          .fontWeight(FontWeight.Bold)
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      .justifyContent(FlexAlign.Center)
+    }
+  }
+
+  @Builder
+  private buildSearchResultCover(item: UnifiedSearchItem) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.buildSearchResultCoverMedia(item)
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient(this.getSearchResultSurfaceStyle().surfaceGradient)
+        .opacity(0.34)
+
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSearchResultSurfaceStyle().topEdgeColor)
+
+      Column()
+        .width('100%')
+        .height(1)
+        .align(Alignment.Bottom)
+        .backgroundColor(this.getSearchResultSurfaceStyle().bottomEdgeColor)
+    }
+    .width(100)
+    .height(140)
+    .backgroundColor(this.getSearchResultSurfaceStyle().backgroundColor)
+    .backgroundBlurStyle(
+      this.getSearchResultSurfaceStyle().blurStyle,
+      this.getSearchResultSurfaceStyle().blurOptions
+    )
+    .backgroundEffect(this.getSearchResultSurfaceStyle().backgroundEffect)
+    .borderRadius(this.getSearchResultCoverRadius())
+    .clip(true)
+    .border({
+      width: this.getSearchResultSurfaceStyle().borderWidth,
+      color: this.getSearchResultSurfaceStyle().borderColor
+    })
+    .shadow({
+      radius: this.getSearchResultCoverRadius() + 2,
+      color: this.getSearchResultSurfaceStyle().shadowColor,
+      offsetX: 0,
+      offsetY: 2
+    })
+  }
+
 
   /**
    * 构建项目卡片（统一搜索结果）
@@ -1636,48 +1733,13 @@ export struct GlobalSearchPage {
   @Builder
   buildItemCard(item: UnifiedSearchItem) {
     Column({ space: 8 }) {
-      if (item.coverUrl && item.coverUrl.length > 0) {
-        Image(this.getUnifiedCoverSource(item))
-          .width(100)
-          .height(140)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
-          .backgroundColor(
-            ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)
-          )
-          .alt(this.getDefaultCover(item.contentType))
-      } else {
-        if (item.contentType === SearchContentType.NOVEL) {
-          Image($r('app.media.ebook'))
-            .width(100)
-            .height(140)
-            .borderRadius(8)
-            .objectFit(ImageFit.Contain)
-            .backgroundColor(
-              ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)
-            )
-            .alt($r('app.media.ebook'))
-        } else {
-          Column() {
-            Text(item.title.substring(0, 1))
-              .fontSize(32)
-              .fontFamily(this.appFontFamily)
-              .fontColor('#FFFFFF')
-              .fontWeight(FontWeight.Bold)
-          }
-          .width(100)
-          .height(140)
-          .borderRadius(8)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .justifyContent(FlexAlign.Center)
-        }
-      }
+      this.buildSearchResultCover(item)
 
       Column() {
         Text(item.title)
           .fontSize(13)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.getSearchResultRowStyle().titleColor)
           .maxLines(2)
           .lineHeight(18)
           .textOverflow({ overflow: TextOverflow.Ellipsis })

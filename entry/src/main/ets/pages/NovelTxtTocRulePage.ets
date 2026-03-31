@@ -1,12 +1,12 @@
-/**
+﻿/**
  * TXT目录规则管理页面
- * 管理本地TXT文件的章节识别规则
+ * ????TXT?????????
  * 
  * 文件路径: entry/src/main/ets/pages/NovelTxtTocRulePage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
@@ -21,7 +21,8 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelTxtTocRulePage';
 @Component
@@ -76,7 +77,7 @@ export struct NovelTxtTocRulePage {
   async loadRules(): Promise<void> {
     this.isLoading = true;
     try {
-      // 确保管理器已初始化
+      // ?????????
       await this.ruleManager.initialize();
       this.rules = this.ruleManager.getAllRules();
     } catch (error) {
@@ -100,11 +101,11 @@ export struct NovelTxtTocRulePage {
       return;
     }
 
-    // 验证正则表达式
+    // ???????
     try {
       new RegExp(this.formRule);
     } catch (error) {
-      promptAction.showToast({ message: `正则表达式无效: ${String(error)}` });
+      promptAction.showToast({ message: `???????: ${String(error)}` });
       return;
     }
 
@@ -135,7 +136,7 @@ export struct NovelTxtTocRulePage {
   async deleteRule(rule: TxtTocRule): Promise<void> {
     promptAction.showDialog({
       title: '确认删除',
-      message: `确定要删除规则"${rule.name}"吗？`,
+      message: `??????? "${rule.name}" ??`,
       buttons: [
         { text: '取消', color: '#666666' },
         { text: '删除', color: '#FF4D4F' }
@@ -179,16 +180,16 @@ export struct NovelTxtTocRulePage {
       
       while ((match = regex.exec(this.testText)) !== null) {
         matches.push(match[0]);
-        if (matches.length >= 10) break; // 最多显示10个匹配
+        if (matches.length >= 10) break; // ????10?????
       }
 
       if (matches.length > 0) {
-        this.testResult = `✓ 匹配到 ${matches.length} 个结果:\n${matches.join('\n')}`;
+        this.testResult = `匹配成功，共 ${matches.length} 个结果\n${matches.join('\n')}`;
       } else {
-        this.testResult = '✗ 没有匹配到任何内容';
+        this.testResult = '未匹配到任何内容';
       }
     } catch (error) {
-      this.testResult = `✗ 正则表达式错误: ${String(error)}`;
+      this.testResult = `正则错误: ${String(error)}`;
     }
   }
 
@@ -235,7 +236,7 @@ export struct NovelTxtTocRulePage {
   }
 
   /**
-   * 从本地文件导入规则
+   * ?????????
    */
   async importFromFile(): Promise<void> {
     try {
@@ -255,12 +256,12 @@ export struct NovelTxtTocRulePage {
       const selectResult = await documentPicker.select(selectOptions);
       
       if (!selectResult || selectResult.length === 0) {
-        logger.info(TAG, '用户取消了文件选择');
+        logger.info(TAG, '?????????');
         return;
       }
 
       const fileUri = selectResult[0];
-      logger.info(TAG, `用户选择了文件: ${fileUri}`);
+      logger.info(TAG, `???????: ${fileUri}`);
       
       // 读取文件内容
       const file = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
@@ -269,7 +270,7 @@ export struct NovelTxtTocRulePage {
       
       if (fileSize > 50 * 1024 * 1024) {
         fs.closeSync(file);
-        promptAction.showToast({ message: '文件过大，最大支持50MB' });
+        promptAction.showToast({ message: '?????????50MB' });
         return;
       }
       
@@ -297,7 +298,7 @@ export struct NovelTxtTocRulePage {
         });
       }
     } catch (error) {
-      logger.error(TAG, `从文件导入失败: ${String(error)}`);
+      logger.error(TAG, `???????: ${String(error)}`);
       promptAction.showToast({ message: `导入失败: ${String(error)}` });
     }
   }
@@ -331,10 +332,48 @@ export struct NovelTxtTocRulePage {
     });
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'add',
+        label: '添加',
+        symbol: $r('sys.symbol.plus'),
+        onClick: () => {
+          this.resetForm();
+          this.showAddDialog = true;
+        }
+      },
+      {
+        id: 'import',
+        label: '导入',
+        symbol: $r('sys.symbol.download'),
+        onClick: () => {
+          this.showImportOptions();
+        }
+      },
+      {
+        id: 'export',
+        label: '导出',
+        symbol: $r('sys.symbol.upload'),
+        onClick: () => {
+          void this.exportToClipboard();
+        }
+      },
+      {
+        id: 'reset',
+        label: '重置',
+        symbol: $r('sys.symbol.arrow_counterclockwise'),
+        onClick: () => {
+          void this.resetToDefault();
+        }
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层
+        // ???
         SharedPageBackgroundLayer({
           defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
           mode: GlobalBackgroundLayerMode.IMMERSIVE
@@ -345,6 +384,7 @@ export struct NovelTxtTocRulePage {
         
         if (this.isLoading) {
           Column() {
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildLoading()
           }
           .width('100%')
@@ -352,6 +392,7 @@ export struct NovelTxtTocRulePage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else if (this.rules.length === 0) {
           Column() {
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildEmpty()
           }
           .width('100%')
@@ -359,6 +400,11 @@ export struct NovelTxtTocRulePage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else {
           List() {
+            ListItem() {
+              Column()
+                .width('100%')
+                .height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+            }
             ForEach(this.rules, (rule: TxtTocRule) => {
               ListItem() {
                 this.buildRuleItem(rule)
@@ -380,64 +426,19 @@ export struct NovelTxtTocRulePage {
         if (this.showAddDialog) {
           this.buildAddDialog()
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: 'TXT目录规则',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar(withSafeAreaTitleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: 'TXT目录规则'
-        },
-        menu: {
-          value: [{
-            content: {
-              label: '添加',
-              icon: $r('sys.symbol.plus'),
-              isEnabled: true,
-              action: () => { 
-                this.resetForm();
-                this.showAddDialog = true;
-              }
-            }
-          }, {
-            content: {
-              label: '导入',
-              icon: $r('sys.symbol.download'),
-              isEnabled: true,
-              action: () => { this.showImportOptions(); }
-            }
-          }, {
-            content: {
-              label: '导出',
-              icon: $r('sys.symbol.upload'),
-              isEnabled: true,
-              action: () => { this.exportToClipboard(); }
-            }
-          }, {
-            content: {
-              label: '重置',
-              icon: $r('sys.symbol.arrow_counterclockwise'),
-              isEnabled: true,
-              action: () => { this.resetToDefault(); }
-            }
-          }]
-        }
-      }
-    }))
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onWillAppear(() => {
       PageWindowCoordinator.applyPagePolicy('NovelTxtTocRulePage', this.getUIContext());
@@ -450,7 +451,7 @@ export struct NovelTxtTocRulePage {
     })
     .onShown(() => {
       PageWindowCoordinator.reapplyPagePolicy('NovelTxtTocRulePage', this.getUIContext());
-      logger.info(TAG, 'TXT目录规则页 onShown 重新应用默认显示模式');
+      logger.info(TAG, 'TXT????? onShown ??????????');
     })
   }
 
@@ -512,7 +513,7 @@ export struct NovelTxtTocRulePage {
   @Builder
   buildRuleItem(rule: TxtTocRule) {
     Row() {
-      // 状态指示
+      // ????
       Column()
         .width(4)
         .height(40)
@@ -551,7 +552,7 @@ export struct NovelTxtTocRulePage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 12 })
       
-      // 开关
+      // ??
       Toggle({ type: ToggleType.Switch, isOn: rule.enabled })
         .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .onChange((isOn: boolean) => {
@@ -596,7 +597,7 @@ export struct NovelTxtTocRulePage {
         })
         .transition(TransitionEffect.opacity(0).animation({ duration: 250, curve: Curve.EaseOut }))
       
-      // 对话框
+      // ???
       Column() {
         Text(this.editingRule ? '编辑规则' : '添加规则')
           .fontSize(18)
@@ -616,8 +617,8 @@ export struct NovelTxtTocRulePage {
             this.formName = value;
           })
         
-        // 正则表达式
-        TextArea({ placeholder: '正则表达式 (如: ^\\s*第[0-9]+章.*)', text: this.formRule })
+        // ?????
+        TextArea({ placeholder: '????? (?: ^\\s*?[0-9]+?.*)', text: this.formRule })
           .width('100%')
           .height(80)
           .margin({ top: 12 })
@@ -628,7 +629,7 @@ export struct NovelTxtTocRulePage {
           })
         
         // 示例文本
-        TextInput({ placeholder: '示例文本 (可选)', text: this.formExample })
+        TextInput({ placeholder: '???? (??)', text: this.formExample })
           .width('100%')
           .height(44)
           .margin({ top: 12 })
@@ -669,7 +670,7 @@ export struct NovelTxtTocRulePage {
           Text(this.testResult)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(this.testResult.startsWith('✓') ? '#52C41A' : '#FF4D4F')
+            .fontColor(this.testResult.startsWith('匹配成功') ? '#52C41A' : '#FF4D4F')
             .margin({ top: 8 })
             .maxLines(5)
             .textOverflow({ overflow: TextOverflow.Ellipsis })

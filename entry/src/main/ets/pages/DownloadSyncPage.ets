@@ -44,6 +44,8 @@ import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Mana
 import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
 import { PdfImportResult } from '../Framework/Parsers/PdfToMangaImporter';
 import { PdfImportService } from '../Framework/Services/PdfImportService';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'DownloadSyncPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -307,11 +309,22 @@ struct DownloadSyncPage {
       this.scroller,
       anchorId,
       'guide_download_sync_scroll',
-      TITLE_BAR_HEIGHT_MINI + 18,
+      SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight) + 18,
       this.navigationBarHeight + 24,
       280
     );
     return scrollResult.available && scrollResult.scrolled;
+  }
+
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [{
+      id: 'help',
+      label: '帮助',
+      symbol: $r('sys.symbol.questionmark_circle'),
+      onClick: () => {
+        this.showDownloadSyncHelp();
+      }
+    }];
   }
 
   aboutToDisappear(): void {
@@ -937,7 +950,7 @@ A: 不会，原文件保持不变。`;
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
 
         Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
           // 标签页切换 - VSCode风格
           this.buildSecondaryTabs()
@@ -1017,9 +1030,16 @@ A: 不会，原文件保持不变。`;
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .constraintSize({ maxWidth: this.responsive_maxContentWidth })
         .padding({
-          top: this.statusBarHeight,
+          top: 0,
           left: this.responsive_contentPadding,
           right: this.responsive_contentPadding
+        })
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: 'Download同步',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
         })
 
         if (this.appGuideStep) {
@@ -1045,6 +1065,9 @@ A: 不会，原文件保持不变。`;
       }
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    /*
     .titleBar({
       padding: { start: LengthMetrics.vp(16), end: LengthMetrics.vp(16) },
       style: {
@@ -1072,6 +1095,7 @@ A: 不会，原文件保持不变。`;
         }
       }
     })
+    */
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
       this.pathStack = context.pathStack;
