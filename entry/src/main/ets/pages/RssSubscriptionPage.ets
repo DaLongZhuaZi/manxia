@@ -4,7 +4,7 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -15,9 +15,10 @@ import { RssFeedItem, RssFetchResult, RssSubscriptionSource } from '../Models/Rs
 import { getRssSubscriptionInitializer } from '../Framework/Rss/RssSubscriptionInitializer';
 import { getRssSubscriptionManager, RssSubscriptionManager } from '../Framework/Rss/RssSubscriptionManager';
 import { RssSubscriptionDetailPageParams } from './RssSubscriptionDetailPage';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'RssSubscriptionPage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 type FeedFilterMode = 'all' | 'unread' | 'starred';
 
@@ -28,6 +29,7 @@ export struct RssSubscriptionPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private readonly componentId: string = `RssSubscriptionPage_${Date.now()}`;
 
   @State allItems: RssFeedItem[] = [];
@@ -387,6 +389,70 @@ export struct RssSubscriptionPage {
     this.pathStack.pushPathByName('RssFavoritesPage', null);
   }
 
+  private toggleSearchBar(): void {
+    this.showSearchBar = !this.showSearchBar;
+    if (!this.showSearchBar) {
+      this.searchKeyword = '';
+      this.applySearchFilter();
+    }
+  }
+
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'search',
+        label: '搜索',
+        symbol: $r('sys.symbol.magnifyingglass'),
+        onClick: () => {
+          this.toggleSearchBar();
+        }
+      },
+      {
+        id: 'management',
+        label: '管理',
+        symbol: $r('sys.symbol.gearshape'),
+        onClick: () => {
+          this.openManagementPage();
+        }
+      },
+      {
+        id: 'favorites',
+        label: '收藏',
+        symbol: $r('sys.symbol.star'),
+        onClick: () => {
+          this.openFavoritesPage();
+        }
+      },
+      {
+        id: 'refresh',
+        label: '刷新',
+        symbol: $r('sys.symbol.arrow_clockwise'),
+        enabled: !this.isRefreshing,
+        onClick: () => {
+          void this.refreshAll();
+        }
+      },
+      {
+        id: 'refreshDue',
+        label: '刷新到期',
+        symbol: $r('sys.symbol.arrow_clockwise'),
+        enabled: !this.isRefreshing,
+        onClick: () => {
+          void this.refreshDueSources();
+        }
+      },
+      {
+        id: 'batch',
+        label: '批量',
+        symbol: $r('sys.symbol.ellipsis_circle'),
+        enabled: this.items.length > 0 && !this.isBatchOperating,
+        onClick: () => {
+          this.showBatchActionMenu();
+        }
+      }
+    ];
+  }
+
   @Builder
   private buildFilterBar() {
     Column({ space: 10 }) {
@@ -606,7 +672,7 @@ export struct RssSubscriptionPage {
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
 
         Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           Column() {
             this.buildSearchBar()
           }
@@ -705,98 +771,19 @@ export struct RssSubscriptionPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '订阅源',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
-          },
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '订阅源' },
-        menu: {
-          value: [{
-            content: {
-              label: '搜索',
-              icon: $r('sys.symbol.magnifyingglass'),
-              isEnabled: true,
-              action: () => {
-                this.showSearchBar = !this.showSearchBar;
-                if (!this.showSearchBar) {
-                  this.searchKeyword = '';
-                  this.applySearchFilter();
-                }
-              }
-            }
-          }, {
-            content: {
-              label: '管理',
-              icon: $r('sys.symbol.gearshape'),
-              isEnabled: true,
-              action: () => {
-                this.openManagementPage();
-              }
-            }
-          }, {
-            content: {
-              label: '收藏',
-              icon: $r('sys.symbol.star'),
-              isEnabled: true,
-              action: () => {
-                this.openFavoritesPage();
-              }
-            }
-          }, {
-            content: {
-              label: '刷新',
-              icon: $r('sys.symbol.arrow_clockwise'),
-              isEnabled: !this.isRefreshing,
-              action: () => {
-                this.refreshAll();
-              }
-            }
-          }, {
-            content: {
-              label: '刷新到期',
-              icon: $r('sys.symbol.arrow_clockwise'),
-              isEnabled: !this.isRefreshing,
-              action: () => {
-                this.refreshDueSources();
-              }
-            }
-          }, {
-            content: {
-              label: '批量',
-              icon: $r('sys.symbol.ellipsis_circle'),
-              isEnabled: this.items.length > 0 && !this.isBatchOperating,
-              action: () => {
-                this.showBatchActionMenu();
-              }
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
   }
 }
-
-

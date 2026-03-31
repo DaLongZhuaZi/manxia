@@ -18,6 +18,8 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'AvifTestPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -46,6 +48,7 @@ export interface AvifTestPageParams {
 
 @Component
 export struct AvifTestPage {
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @State isLoading: boolean = false;
   @State loadingText: string = '';
   @State selectedFilePath: string = '';
@@ -590,7 +593,7 @@ export struct AvifTestPage {
     HdsNavDestination() {
       Stack() {
         Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           // 状态栏
           Row({ space: 8 }) {
             Text(this.avifStatus)
@@ -635,6 +638,14 @@ export struct AvifTestPage {
           .justifyContent(FlexAlign.Center)
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         }
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: 'AVIF图片查看器',
+          appFontFamily: this.appFontFamily,
+          contentPadding: 16,
+          maxContentWidth: 1200,
+          pathStack: this.pathStack
+        })
       }
     }
     .onReady((context: NavDestinationContext) => {
@@ -677,23 +688,7 @@ export struct AvifTestPage {
       this.pathStack.pop();
       return true;
     })
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: 'AVIF图片查看器' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
   }
 }

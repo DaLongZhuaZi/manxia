@@ -5,8 +5,7 @@
  * 支持后续添加更多一级和二级内容
  */
 
-import { HdsNavDestination, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType, GlassLevel, GlassStyleToken } from '../../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
@@ -20,6 +19,9 @@ import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } f
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../../Framework/Managers/AppGuideManager';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { PageWindowCoordinator } from '../../Utils/PageWindowCoordinator';
+import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 
 const TAG = 'GlobalSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -36,6 +38,7 @@ interface SettingsGroupItem {
 @Component
 export struct GlobalSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
   @State private searchKeyword: string = '';
   @State private searchResults: SettingsSearchResult[] = [];
@@ -178,6 +181,7 @@ export struct GlobalSettingsPage {
   }
 
   onPageShow(): void {
+    PageWindowCoordinator.reapplyPagePolicy('GlobalSettingsPage', this.getUIContext());
     try {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
       if (stack) {
@@ -356,7 +360,7 @@ export struct GlobalSettingsPage {
       this.scroller,
       anchorId,
       'guide_global_settings_scroll',
-      TITLE_BAR_HEIGHT_MINI + 16,
+      this.getStatusBarInset() + TITLE_BAR_HEIGHT_MINI + 16,
       32,
       280
     );
@@ -485,10 +489,6 @@ export struct GlobalSettingsPage {
     return this.themeManager.getGlassToken(level);
   }
 
-  private getTitleBarIconBackground(): string {
-    return this.getGlassToken(GlassLevel.FLOATING).backgroundColor;
-  }
-
   private getGlassBackground(level: GlassLevel = GlassLevel.CARD): string {
     return this.getGlassToken(level).backgroundColor;
   }
@@ -515,6 +515,458 @@ export struct GlobalSettingsPage {
 
   private getGlassShadowColor(level: GlassLevel = GlassLevel.CARD): string {
     return this.getGlassToken(level).shadowColor;
+  }
+
+  private getStatusBarInset(): number {
+    return this.statusBarHeight > 0 ? this.statusBarHeight : 24;
+  }
+
+  private getCustomHeaderRowHeight(): number {
+    return TITLE_BAR_HEIGHT_MINI;
+  }
+
+  private getCustomHeaderHeight(): number {
+    return this.getStatusBarInset() + this.getCustomHeaderRowHeight() + 10;
+  }
+
+  private getCustomHeaderTopPadding(): number {
+    return this.getStatusBarInset() + 4;
+  }
+
+  private getCustomHeaderContentTopPadding(): number {
+    return this.getCustomHeaderHeight() - 8;
+  }
+
+  private getCustomHeaderBackButtonSize(): number {
+    return 40;
+  }
+
+  private getCustomHeaderBackdropColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(8, 14, 24, 0.014)'
+      : 'rgba(255, 255, 255, 0.010)';
+  }
+
+  private getCustomHeaderBackdropBlurRadius(): number {
+    return this.themeState.currentTheme === ThemeType.DARK ? 15 : 10;
+  }
+
+  private getCustomHeaderBackButtonFillColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? '#2D384B'
+      : '#F8FBFF';
+  }
+
+  private getCustomHeaderBackButtonBorderColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.16)'
+      : 'rgba(188, 206, 232, 0.92)';
+  }
+
+  private getCustomHeaderBackButtonShadowColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(0, 0, 0, 0.22)'
+      : 'rgba(164, 186, 220, 0.18)';
+  }
+
+  private getCustomHeaderBackButtonIconColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(248, 251, 255, 0.98)'
+      : '#6E7F98';
+  }
+
+  private getCustomHeaderTitleColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(244, 248, 255, 0.96)'
+      : 'rgba(24, 30, 40, 0.96)';
+  }
+
+  private getCustomHeaderReflectionOpacity(): number {
+    return this.themeState.currentTheme === ThemeType.DARK ? 0.70 : 0.82;
+  }
+
+  private getCustomHeaderBackButtonEdgeHighlightGradient(): LinearGradient {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        angle: 180,
+        colors: [
+          ['rgba(255, 255, 255, 0.34)', 0],
+          ['rgba(255, 255, 255, 0.10)', 0.34],
+          ['rgba(255, 255, 255, 0)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 180,
+      colors: [
+        ['rgba(255, 255, 255, 0.72)', 0],
+        ['rgba(255, 255, 255, 0.18)', 0.34],
+        ['rgba(255, 255, 255, 0)', 1]
+      ]
+    };
+  }
+
+  private getCustomHeaderSurfaceGradient(): LinearGradient {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        angle: 180,
+        colors: [
+          ['rgba(204, 230, 255, 0.050)', 0],
+          ['rgba(88, 118, 158, 0.020)', 0.28],
+          ['rgba(16, 24, 36, 0.006)', 0.68],
+          ['rgba(12, 20, 30, 0)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 180,
+      colors: [
+        ['rgba(255, 255, 255, 0.040)', 0],
+        ['rgba(240, 246, 255, 0.016)', 0.26],
+        ['rgba(255, 255, 255, 0.005)', 0.62],
+        ['rgba(255, 255, 255, 0)', 1]
+      ]
+    };
+  }
+
+  private getCustomHeaderReflectionGradient(): LinearGradient {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        angle: 24,
+        colors: [
+          ['rgba(255, 255, 255, 0)', 0],
+          ['rgba(236, 245, 255, 0.032)', 0.18],
+          ['rgba(255, 255, 255, 0.056)', 0.38],
+          ['rgba(255, 255, 255, 0.016)', 0.58],
+          ['rgba(255, 255, 255, 0)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 24,
+      colors: [
+        ['rgba(255, 255, 255, 0)', 0],
+        ['rgba(255, 255, 255, 0.026)', 0.18],
+        ['rgba(255, 255, 255, 0.060)', 0.38],
+        ['rgba(255, 255, 255, 0.015)', 0.58],
+        ['rgba(255, 255, 255, 0)', 1]
+      ]
+    };
+  }
+
+  private getCustomHeaderBackButtonHighlightGradient(): LinearGradient {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        angle: 180,
+        colors: [
+          ['rgba(255, 255, 255, 0.16)', 0],
+          ['rgba(255, 255, 255, 0.05)', 0.38],
+          ['rgba(255, 255, 255, 0)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 180,
+      colors: [
+        ['rgba(255, 255, 255, 0.14)', 0],
+        ['rgba(255, 255, 255, 0.03)', 0.42],
+        ['rgba(255, 255, 255, 0)', 1]
+      ]
+    };
+  }
+
+  /* Legacy HDS title bar experiment is disabled for this page-specific custom glass header iteration.
+  private getImmersiveTitleBarBackground(): ResourceColor {
+    return Color.Transparent;
+  }
+
+  private getImmersiveTitleBarMaskExtraHeight(): number {
+    return 0;
+  }
+
+  private getImmersiveTitleBarBlurRadius(): number {
+    return this.themeState.currentTheme === ThemeType.DARK ? 42 : 36;
+  }
+
+  private getImmersiveTitleBarScrolledBackground(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(10, 18, 30, 0.26)'
+      : 'rgba(255, 255, 255, 0.20)';
+  }
+
+  private getImmersiveTitleBarTitleShadowColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(0, 0, 0, 0.34)'
+      : 'rgba(255, 255, 255, 0.40)';
+  }
+
+  private getImmersiveTopGlassHeight(): number {
+    return this.getCustomHeaderHeight() + 32;
+  }
+
+  private getImmersiveTopSpacerHeight(): number {
+    return this.getCustomHeaderContentTopPadding() - 8;
+  }
+
+  private getImmersiveTopGlassBackground(): string {
+    return this.getGlassBackground(GlassLevel.FEATURED);
+  }
+
+  private getImmersiveTopGlassBlurStyle(): BlurStyle {
+    return this.getGlassBlurStyle(GlassLevel.FEATURED);
+  }
+
+  private getImmersiveTopGlassBlurOptions(): BackgroundBlurStyleOptions {
+    return this.getGlassBlurOptions(GlassLevel.FEATURED);
+  }
+
+  private getImmersiveTopGlassBackgroundEffect(): BackgroundEffectOptions | undefined {
+    return this.getGlassBackgroundEffect(GlassLevel.FEATURED);
+  }
+
+  private getImmersiveTopGlassSurfaceGradient(): LinearGradient {
+    return this.getCustomHeaderSurfaceGradient();
+  }
+
+  private getImmersiveTopGlassReflectionGradient(): LinearGradient {
+    return this.getCustomHeaderReflectionGradient();
+  }
+
+  private getImmersiveTitleBarPadding(): PaddingOptions {
+    const padding: PaddingOptions = {
+      start: LengthMetrics.vp(16),
+      end: LengthMetrics.vp(16)
+    };
+    return padding;
+  }
+
+  private getImmersiveTitleBarTitleStyle(): HdsNavigationTitleStyle {
+    const titleStyle: HdsNavigationTitleStyle = {
+      mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
+      mainTitleShadowColor: this.getImmersiveTitleBarTitleShadowColor()
+    };
+    return titleStyle;
+  }
+
+  private getImmersiveTitleBarBackIconStyle(): HdsNavigationIconItemStyle {
+    const backIconStyle: HdsNavigationIconItemStyle = {
+      backgroundColor: this.getTitleBarIconBackground(),
+      iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+    };
+    return backIconStyle;
+  }
+
+  private getImmersiveTitleBarContentStyle(): HdsTitleBarContentStyle {
+    const contentStyle: HdsTitleBarContentStyle = {
+      titleStyle: this.getImmersiveTitleBarTitleStyle(),
+      backIconStyle: this.getImmersiveTitleBarBackIconStyle()
+    };
+    return contentStyle;
+  }
+
+  private getImmersiveTitleBarDivider(): HdsNavigationDividerParams {
+    const divider: HdsNavigationDividerParams = {
+      showType: DividerShowType.OFF
+    };
+    return divider;
+  }
+
+  private getImmersiveTitleBarBackgroundStyle(backgroundColor: ResourceColor): HdsNavigationBackgroundStyle {
+    const backgroundStyle: HdsNavigationBackgroundStyle = {
+      backgroundColor,
+      maskExtraHeight: this.getImmersiveTitleBarMaskExtraHeight(),
+      blurRadius: this.getImmersiveTitleBarBlurRadius()
+    };
+    return backgroundStyle;
+  }
+
+  private getImmersiveTitleBarOriginalStyle(): HdsNavigationTitleBarStyle {
+    const originalStyle: HdsNavigationTitleBarStyle = {
+      backgroundStyle: this.getImmersiveTitleBarBackgroundStyle(this.getImmersiveTitleBarBackground()),
+      contentStyle: this.getImmersiveTitleBarContentStyle()
+    };
+    return originalStyle;
+  }
+
+  private getImmersiveTitleBarScrollEffectStyle(): HdsNavigationTitleBarStyle {
+    const scrollEffectStyle: HdsNavigationTitleBarStyle = {
+      backgroundStyle: this.getImmersiveTitleBarBackgroundStyle(this.getImmersiveTitleBarScrolledBackground()),
+      contentStyle: this.getImmersiveTitleBarContentStyle()
+    };
+    return scrollEffectStyle;
+  }
+
+  private getImmersiveTitleBarScrollEffectOptions(): ScrollEffectOptions {
+    const scrollEffectOptions: ScrollEffectOptions = {
+      enableScrollEffect: true,
+      scrollEffectType: ScrollEffectType.COMMON_BLUR,
+      blurEffectiveStartOffset: LengthMetrics.vp(0),
+      blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI + 20),
+      enableRefreshOffsetChange: false
+    };
+    return scrollEffectOptions;
+  }
+
+  private getImmersiveTitleBarStyleOptions(): TitleBarStyleOptions {
+    const styleOptions: TitleBarStyleOptions = {
+      scrollEffectOpts: this.getImmersiveTitleBarScrollEffectOptions(),
+      originalStyle: this.getImmersiveTitleBarOriginalStyle(),
+      scrollEffectStyle: this.getImmersiveTitleBarScrollEffectStyle()
+    };
+    return styleOptions;
+  }
+
+  private getImmersiveTitleBarContentOptions(): TitleBarContentOptions {
+    const title: HdsNavigationTitle = {
+      mainTitle: '全局设置'
+    };
+    const contentOptions: TitleBarContentOptions = {
+      title,
+      divider: this.getImmersiveTitleBarDivider()
+    };
+    return contentOptions;
+  }
+
+  private getImmersiveTitleBarOptions(): HdsNavigationTitleBarOptions {
+    const titleBarOptions: HdsNavigationTitleBarOptions = {
+      padding: this.getImmersiveTitleBarPadding(),
+      style: this.getImmersiveTitleBarStyleOptions(),
+      content: this.getImmersiveTitleBarContentOptions(),
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true
+    };
+    return titleBarOptions;
+  }
+
+  @Builder
+  buildImmersiveTopGlassBridge() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient(this.getImmersiveTopGlassSurfaceGradient())
+
+      Column()
+        .width('56%')
+        .height('100%')
+        .position({ x: 0, y: 0 })
+        .linearGradient(this.getImmersiveTopGlassReflectionGradient())
+
+      Column({ space: 12 }) {
+        Blank().height(this.getImmersiveTopSpacerHeight())
+        this.buildSearchBar()
+      }
+      .width('100%')
+      .height('100%')
+      .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+      .padding({
+        left: this.responsive_contentPadding,
+        right: this.responsive_contentPadding
+      })
+    }
+    .width('100%')
+    .height(this.getImmersiveTopGlassHeight())
+    .margin({ top: -this.getStatusBarInset() })
+    .backgroundColor(this.getImmersiveTopGlassBackground())
+    .backgroundBlurStyle(this.getImmersiveTopGlassBlurStyle(), this.getImmersiveTopGlassBlurOptions())
+    .backgroundEffect(this.getImmersiveTopGlassBackgroundEffect())
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .zIndex(0)
+  }
+
+  */
+
+  @Builder
+  buildCustomGlassBackButton() {
+    Button({ type: ButtonType.Circle, stateEffect: true }) {
+      Stack({ alignContent: Alignment.Center }) {
+        Column()
+          .width('70%')
+          .height(8)
+          .position({ x: 6, y: 4 })
+          .linearGradient(this.getCustomHeaderBackButtonEdgeHighlightGradient())
+          .borderRadius(999)
+          .opacity(this.themeState.currentTheme === ThemeType.DARK ? 0.80 : 0.92)
+
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor([this.getCustomHeaderBackButtonIconColor()])
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .width(this.getCustomHeaderBackButtonSize())
+    .height(this.getCustomHeaderBackButtonSize())
+    .backgroundColor(this.getCustomHeaderBackButtonFillColor())
+    .border({
+      width: 1,
+      color: this.getCustomHeaderBackButtonBorderColor()
+    })
+    .shadow({
+      radius: 16,
+      color: this.getCustomHeaderBackButtonShadowColor()
+    })
+    .linearGradient(this.getCustomHeaderBackButtonHighlightGradient())
+    .onClick(() => {
+      this.goBack();
+    })
+  }
+
+  @Builder
+  buildCustomGlassTitleBar() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.getCustomHeaderBackdropColor())
+        .backdropBlur(this.getCustomHeaderBackdropBlurRadius())
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient(this.getCustomHeaderSurfaceGradient())
+
+      Column()
+        .width('24%')
+        .height('62%')
+        .position({ x: 0, y: 0 })
+        .linearGradient(this.getCustomHeaderReflectionGradient())
+        .opacity(this.getCustomHeaderReflectionOpacity())
+
+      Column() {
+        Row({ space: 12 }) {
+          this.buildCustomGlassBackButton()
+
+          Text('全局设置')
+            .fontSize(26)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getCustomHeaderTitleColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        }
+        .justifyContent(FlexAlign.Start)
+        .alignItems(VerticalAlign.Center)
+        .width('100%')
+        .height(this.getCustomHeaderRowHeight())
+        .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+        .padding({
+          left: this.responsive_contentPadding,
+          right: this.responsive_contentPadding
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ top: this.getCustomHeaderTopPadding() })
+      .alignItems(HorizontalAlign.Center)
+
+    }
+    .width('100%')
+    .height(this.getCustomHeaderHeight())
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .zIndex(10)
   }
 
   @Builder
@@ -726,7 +1178,7 @@ export struct GlobalSettingsPage {
 
   build() {
     HdsNavDestination() {
-      Stack() {
+      Stack({ alignContent: Alignment.TopStart }) {
         SharedPageBackgroundLayer({
           defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
           mode: GlobalBackgroundLayerMode.IMMERSIVE
@@ -734,41 +1186,47 @@ export struct GlobalSettingsPage {
           .width('100%')
           .height('100%')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          
+
         Scroll(this.scroller) {
-          Column({ space: 16 }) {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
-            this.buildSearchBar()
+          Column() {
+            Column({ space: 16 }) {
+              this.buildSearchBar()
 
-            if (this.isSearchMode()) {
-              this.buildSearchResultList()
-            } else {
-              if (this.responsive_isLandscape) {
-                // 横屏：使用Grid布局，每行2个
-                Grid() {
-                  ForEach(this.getSettingsGroups(), (item: SettingsGroupItem) => {
-                    GridItem() {
-                      this.buildSettingsGroupItem(item)
-                    }
-                  })
-                }
-                .id('guide_global_settings_group_list')
-                .columnsTemplate('1fr 1fr')
-                .columnsGap(12)
-                .rowsGap(12)
-                .width('100%')
+              if (this.isSearchMode()) {
+                this.buildSearchResultList()
               } else {
-                // 竖屏：列表布局
-                this.buildSettingsGroupList()
+                if (this.responsive_isLandscape) {
+                  Grid() {
+                    ForEach(this.getSettingsGroups(), (item: SettingsGroupItem) => {
+                      GridItem() {
+                        this.buildSettingsGroupItem(item)
+                      }
+                    })
+                  }
+                  .id('guide_global_settings_group_list')
+                  .columnsTemplate('1fr 1fr')
+                  .columnsGap(12)
+                  .rowsGap(12)
+                  .width('100%')
+                } else {
+                  this.buildSettingsGroupList()
+                }
               }
-            }
 
-            Blank().height(40)
+              Blank().height(40)
+            }
+            .enabled(this.settingsTapEnabled)
+            .width('100%')
+            .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+            .padding({
+              top: SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight),
+              left: this.responsive_contentPadding,
+              right: this.responsive_contentPadding,
+              bottom: 40
+            })
           }
-          .enabled(this.settingsTapEnabled)
           .width('100%')
-          .constraintSize({ maxWidth: this.responsive_maxContentWidth })
-          .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
+          .alignItems(HorizontalAlign.Center)
         }
         .width('100%')
         .height('100%')
@@ -780,6 +1238,15 @@ export struct GlobalSettingsPage {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '全局设置',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack
+        })
 
         if (this.appGuideStep) {
           AppGuideOverlay({
@@ -802,38 +1269,10 @@ export struct GlobalSettingsPage {
         }
       }
       .id('guide_global_settings_root')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.COMMON_BLUR,
-          blurEffectiveStartOffset: LengthMetrics.vp(0),
-          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
-        },
-        originalStyle: {
-          backgroundStyle: { backgroundColor: this.getGlassBackground(GlassLevel.NAVIGATION) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: this.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: { backgroundColor: this.getGlassBackground(GlassLevel.SHEET) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: this.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '全局设置' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.onPageShow();

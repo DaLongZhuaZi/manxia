@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/pages/NovelSettingsPage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -14,9 +14,10 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelSettingsPage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 const NOVEL_SETTINGS_STORE = 'novel_settings';
 
 /**
@@ -249,7 +250,7 @@ export struct NovelSettingsPage {
           Scroll() {
             Column() {
               // 标题栏占位
-              Blank().height(TITLE_BAR_HEIGHT_MINI)
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
               
               // 功能入口磁贴区域
               this.buildFeatureTilesSection()
@@ -269,30 +270,18 @@ export struct NovelSettingsPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '小说设置',
+          appFontFamily: this.appFontFamily
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: '小说设置'
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady(() => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');

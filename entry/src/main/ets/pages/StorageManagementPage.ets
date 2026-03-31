@@ -21,6 +21,8 @@ import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPrel
 import { DiskCacheManager } from '../Framework/Cache/DiskCacheManager';
 import { CacheManagementPanel } from '../components/CacheManagementPanel';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'StorageManagementPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -75,6 +77,22 @@ export struct StorageManagementPage {
   private lifecycle = new PageLifecycleManager('StorageManagementPage', { enableDebug: true });
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
   pathStack: NavPathStack = new NavPathStack();
+
+  private getTitleBarSpacerHeight(): number {
+    const statusBarHeight = AppStorage.get<number>('statusBarHeight');
+    return SettingsPageTitleBarManager.getContentTopPadding(statusBarHeight ?? 0);
+  }
+
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [{
+      id: 'help',
+      label: '帮助',
+      symbol: $r('sys.symbol.questionmark_circle'),
+      onClick: () => {
+        this.showStorageHelp();
+      }
+    }];
+  }
 
   aboutToAppear(): void {
     logger.info(TAG, '存储管理页面初始化');
@@ -593,7 +611,7 @@ export struct StorageManagementPage {
           // 空白区域
           Blank()
             .width('100%')
-            .height(56)
+            .height(this.getTitleBarSpacerHeight())
 
           if (this.isLoading) {
             // 加载中
@@ -794,6 +812,13 @@ export struct StorageManagementPage {
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
 
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '存储管理',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
+
         // 缓存管理面板弹窗
         if (this.showCacheConfig) {
           Column() {
@@ -815,8 +840,10 @@ export struct StorageManagementPage {
         }
       }
     }
-    .hideTitleBar(false)
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .mode(NavDestinationMode.STANDARD)
+    /*
     .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
@@ -847,6 +874,7 @@ export struct StorageManagementPage {
         }
       }
     })
+    */
     .backgroundColor(Color.Transparent)
   }
 

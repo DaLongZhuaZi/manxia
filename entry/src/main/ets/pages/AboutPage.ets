@@ -18,6 +18,8 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -29,6 +31,7 @@ const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?task
 @Component
 struct AboutPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
 
   // 主题相关状态
@@ -515,7 +518,7 @@ struct AboutPage {
             // 左侧：应用图标、名称、版本等基础信息（添加滚动支持）
             Scroll() {
               Column() {
-                Blank().height(TITLE_BAR_HEIGHT_MINI)
+                Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
                 this.buildAppHeader()
                 this.buildAppInfo()
               }
@@ -531,7 +534,7 @@ struct AboutPage {
             // 右侧：操作按钮和版权信息
             Scroll(this.scroller) {
               Column() {
-                Blank().height(TITLE_BAR_HEIGHT_MINI)
+                Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
                 this.buildActionButtons()
                 this.buildCopyright()
               }
@@ -551,7 +554,7 @@ struct AboutPage {
           // 竖屏布局：原有布局
           Scroll(this.scroller) {
             Column() {
-              Blank().height(TITLE_BAR_HEIGHT_MINI)
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
               
               this.buildAppHeader()
               this.buildAppInfo()
@@ -572,26 +575,18 @@ struct AboutPage {
           .scrollBar(BarState.Auto)
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         }
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '关于',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack
+        })
       }
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '关于' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.onPageShow();

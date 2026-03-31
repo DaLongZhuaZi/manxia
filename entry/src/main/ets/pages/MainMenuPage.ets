@@ -134,6 +134,7 @@ import { FontSettingsSubPage } from './settings/FontSettingsSubPage';
 import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } from './settings/PageSettingsSubPage';
 import { MainMenuSettingsSubPage } from './settings/MainMenuSettingsSubPage';
 import { SourceFeatureSettingsSubPage } from './settings/SourceFeatureSettingsSubPage';
+import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';
@@ -848,7 +849,7 @@ struct MainMenuPage {
   @State responsive_discoverGridColumns: number = 3; // 发现页网格列数（横屏：SM=5, MD=7, LG=10）
   @State barRenderKey: number = 0; // 顶栏/底栏重渲染触发器，屏幕方向或折叠状态变化时递增
   private readonly BOTTOM_BAR_HEIGHT: number = 56;
-  private readonly BOTTOM_BAR_MARGIN_BOTTOM: number = 24;
+  private readonly BOTTOM_BAR_MARGIN_BOTTOM: number = 45;
   private readonly BOTTOM_BAR_MARGIN_LEFT: number = 12;
   private readonly BOTTOM_BAR_MARGIN_RIGHT: number = 12;
   private readonly FLOAT_SEARCH_BUTTON_SIZE: number = 48;
@@ -867,17 +868,32 @@ struct MainMenuPage {
   @State private bottomBarVisualProgress: number = 0;
   @State private bottomBarBounceScale: number = 1;
   @State private bottomBarBounceTabIndex: number = -1;
+  @State private bottomBarIndicatorVisible: boolean = false;
+  @State private bottomBarIndicatorOpacity: number = 0;
+  @State private bottomBarIndicatorScale: number = 0.88;
+  @State private bottomBarIndicatorLiftY: number = 10;
+  @State private bottomBarIndicatorInteractiveProgress: number = 0;
+  @State private bottomBarIndicatorGlowStrength: number = 0.2;
   private readonly BOTTOM_BAR_STOP_SETTLE_DELAY: number = 56;
   private readonly BOTTOM_BAR_HIDE_SETTLE_DURATION: number = 150;
   private readonly BOTTOM_BAR_SHOW_SETTLE_DURATION: number = 180;
   private readonly BOTTOM_BAR_SETTLE_SNAP_RATIO: number = 0.5;
   private readonly BOTTOM_BAR_SETTLE_DIRECTION_BIAS: number = 8;
+  private readonly BOTTOM_BAR_INDICATOR_SHOW_DURATION: number = 150;
+  private readonly BOTTOM_BAR_INDICATOR_HIDE_DURATION: number = 180;
+  private readonly BOTTOM_BAR_INDICATOR_HIDE_DELAY: number = 260;
   private bottomBarScrollAccumulator: number = 0;
   private bottomBarLastScrollDirection: number = 0;
   private bottomBarSettleTimer: number = -1;
   private bottomBarBounceTimer: number = -1;
+  private bottomBarIndicatorHideTimer: number = -1;
+  private bottomBarIndicatorDismissTimer: number = -1;
+  private bottomBarIndicatorPulseTimer: number = -1;
   private bottomBarFakeDragLastOffsetX: number = 0;
+  private bottomBarFakeDragLastProgress: number = 0;
+  private bottomBarFakeDragMainAxisLength: number = 0;
   private isBottomBarFakeDragging: boolean = false;
+  private isBottomBarIndicatorDragging: boolean = false;
   private suppressTabClickUntil: number = 0;
   private readonly TAB_LONG_PRESS_SUPPRESS_MS: number = 650;
   @State private windowModeTransitionOverlayVisible: boolean = false;
@@ -2281,10 +2297,20 @@ struct MainMenuPage {
 
   private syncBottomBarVisualProgressFromActualIndex(actualIndex: number): void {
     this.bottomBarVisualProgress = this.clampBottomBarVisualProgress(actualIndex);
+    if (!this.bottomBarIndicatorVisible && !this.isBottomBarIndicatorDragging) {
+      this.bottomBarIndicatorInteractiveProgress = this.bottomBarVisualProgress;
+    }
+  }
+
+  private getBottomBarIndicatorRenderProgress(): number {
+    if (this.bottomBarIndicatorVisible || this.bottomBarIndicatorOpacity > 0.001 || this.isBottomBarIndicatorDragging) {
+      return this.clampBottomBarVisualProgress(this.bottomBarIndicatorInteractiveProgress);
+    }
+    return this.clampBottomBarVisualProgress(this.bottomBarVisualProgress);
   }
 
   private getBottomBarVisualActualIndex(): number {
-    return Math.round(this.clampBottomBarVisualProgress(this.bottomBarVisualProgress));
+    return Math.round(this.getBottomBarIndicatorRenderProgress());
   }
 
   private getBottomBarVisualTabIndex(): number {
@@ -2308,12 +2334,166 @@ struct MainMenuPage {
   }
 
   private getBottomBarIndicatorWidth(): number {
-    const indicatorWidth: number = this.getBottomBarIndicatorSlotWidth() - 8;
+    const indicatorWidth: number = this.getBottomBarIndicatorSlotWidth() - 2;
     return indicatorWidth > 0 ? indicatorWidth : 0;
   }
 
   private getBottomBarIndicatorX(): number {
-    return 14 + this.getBottomBarIndicatorSlotWidth() * this.clampBottomBarVisualProgress(this.bottomBarVisualProgress);
+    return 11 + this.getBottomBarIndicatorSlotWidth() * this.getBottomBarIndicatorRenderProgress();
+  }
+
+  private shouldRenderBottomBarIndicator(): boolean {
+    return this.cachedVisibleTabConfigs.length > 0 && (this.bottomBarIndicatorVisible || this.bottomBarIndicatorOpacity > 0.001);
+  }
+
+  private getBottomBarIndicatorProgressFromLocalX(localX: number): number {
+    const slotWidth: number = this.getBottomBarIndicatorSlotWidth();
+    if (slotWidth <= 0) {
+      return this.clampBottomBarVisualProgress(this.bottomBarVisualProgress);
+    }
+    return this.clampBottomBarVisualProgress((localX - 10) / slotWidth - 0.5);
+  }
+
+  private getBottomBarGestureLocalX(event: GestureEvent): number {
+    const finger = event.fingerList[0];
+    return finger !== undefined ? finger.localX : event.offsetX;
+  }
+
+  private getBottomBarFakeDragAxisLength(): number {
+    if (this.bottomBarFakeDragMainAxisLength > 0) {
+      return this.bottomBarFakeDragMainAxisLength;
+    }
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    return deviceInfo.screenWidth > 0 ? deviceInfo.screenWidth : this.getBottomBarWidth();
+  }
+
+  private clearBottomBarIndicatorHideTimer(): void {
+    if (this.bottomBarIndicatorHideTimer >= 0) {
+      clearTimeout(this.bottomBarIndicatorHideTimer);
+      this.bottomBarIndicatorHideTimer = -1;
+    }
+  }
+
+  private clearBottomBarIndicatorDismissTimer(): void {
+    if (this.bottomBarIndicatorDismissTimer >= 0) {
+      clearTimeout(this.bottomBarIndicatorDismissTimer);
+      this.bottomBarIndicatorDismissTimer = -1;
+    }
+  }
+
+  private clearBottomBarIndicatorPulseTimer(): void {
+    if (this.bottomBarIndicatorPulseTimer >= 0) {
+      clearTimeout(this.bottomBarIndicatorPulseTimer);
+      this.bottomBarIndicatorPulseTimer = -1;
+    }
+  }
+
+  private showBottomBarIndicator(progress?: number, immediate: boolean = false): void {
+    this.clearBottomBarIndicatorHideTimer();
+    this.clearBottomBarIndicatorDismissTimer();
+    if (progress !== undefined) {
+      this.bottomBarIndicatorInteractiveProgress = this.clampBottomBarVisualProgress(progress);
+    }
+    this.bottomBarIndicatorVisible = true;
+    if (immediate) {
+      this.bottomBarIndicatorOpacity = 1;
+      this.bottomBarIndicatorScale = 1;
+      this.bottomBarIndicatorLiftY = 0;
+      this.bottomBarIndicatorGlowStrength = 1;
+      return;
+    }
+    animateTo({
+      duration: this.BOTTOM_BAR_INDICATOR_SHOW_DURATION,
+      curve: Curve.EaseOut
+    }, () => {
+      this.bottomBarIndicatorOpacity = 1;
+      this.bottomBarIndicatorScale = 1;
+      this.bottomBarIndicatorLiftY = 0;
+      this.bottomBarIndicatorGlowStrength = 0.92;
+    });
+  }
+
+  private hideBottomBarIndicator(delay: number = this.BOTTOM_BAR_INDICATOR_HIDE_DELAY): void {
+    this.clearBottomBarIndicatorHideTimer();
+    this.clearBottomBarIndicatorDismissTimer();
+    const runHide = () => {
+      if (this.isBottomBarIndicatorDragging) {
+        return;
+      }
+      animateTo({
+        duration: this.BOTTOM_BAR_INDICATOR_HIDE_DURATION,
+        curve: Curve.EaseInOut
+      }, () => {
+        this.bottomBarIndicatorOpacity = 0;
+        this.bottomBarIndicatorScale = 0.88;
+        this.bottomBarIndicatorLiftY = 10;
+        this.bottomBarIndicatorGlowStrength = 0.12;
+      });
+      this.bottomBarIndicatorDismissTimer = setTimeout(() => {
+        this.bottomBarIndicatorDismissTimer = -1;
+        if (!this.isBottomBarIndicatorDragging) {
+          this.bottomBarIndicatorVisible = false;
+          this.bottomBarIndicatorInteractiveProgress = this.bottomBarVisualProgress;
+        }
+      }, this.BOTTOM_BAR_INDICATOR_HIDE_DURATION + 24);
+    };
+
+    if (delay <= 0) {
+      runHide();
+      return;
+    }
+
+    this.bottomBarIndicatorHideTimer = setTimeout(() => {
+      this.bottomBarIndicatorHideTimer = -1;
+      runHide();
+    }, delay);
+  }
+
+  private pulseBottomBarIndicator(progress?: number): void {
+    this.showBottomBarIndicator(progress, true);
+    this.clearBottomBarIndicatorPulseTimer();
+    animateTo({
+      duration: 110,
+      curve: Curve.EaseOut
+    }, () => {
+      this.bottomBarIndicatorScale = 1.06;
+      this.bottomBarIndicatorGlowStrength = 1;
+      this.bottomBarIndicatorLiftY = 0;
+      this.bottomBarIndicatorOpacity = 1;
+    });
+    this.bottomBarIndicatorPulseTimer = setTimeout(() => {
+      animateTo({
+        duration: 170,
+        curve: Curve.EaseOut
+      }, () => {
+        this.bottomBarIndicatorScale = 1;
+        this.bottomBarIndicatorGlowStrength = 0.88;
+      });
+      this.bottomBarIndicatorPulseTimer = -1;
+    }, 110);
+  }
+
+  private handleBottomBarButtonTouch(tabIndex: number, event: TouchEvent): void {
+    if (this.useTopTabsNavigation || this.cachedVisibleTabConfigs.length <= 0) {
+      return;
+    }
+    const actualIndex: number = this.getActualTabsIndexForTabIndex(tabIndex);
+    if (actualIndex < 0) {
+      return;
+    }
+    switch (event.type) {
+      case TouchType.Down:
+        this.showBottomBarIndicator(actualIndex);
+        break;
+      case TouchType.Up:
+      case TouchType.Cancel:
+        if (!this.isBottomBarIndicatorDragging && Date.now() >= this.suppressTabClickUntil) {
+          this.hideBottomBarIndicator(120);
+        }
+        break;
+      default:
+        break;
+    }
   }
 
   private getMainContentTopInset(): number {
@@ -2630,11 +2810,11 @@ struct MainMenuPage {
   }
 
   private getSuwayomiBottomSpacerHeight(): number {
-    return 80;
+    return 125;
   }
 
   private getKomgaBottomSpacerHeight(): number {
-    return 80;
+    return 125;
   }
 
   private isOverlayBottomNavTab(tabIndex: number): boolean {
@@ -4479,7 +4659,7 @@ struct MainMenuPage {
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .fontColor(this.getSettingsAnalyticsCardTitleColor())
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
@@ -4532,7 +4712,7 @@ struct MainMenuPage {
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .fontColor(this.getSettingsAnalyticsCardTitleColor())
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
@@ -9470,33 +9650,27 @@ struct MainMenuPage {
   buildFloatingSearchButton() {
     Button() {
       SymbolGlyph($r('sys.symbol.magnifyingglass'))
-        .fontSize(22)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        .fontSize(30)
+        .fontColor([this.getSettingsAnalyticsCardIconColor()])
     }
     .type(ButtonType.Circle)
     .width(this.FLOAT_SEARCH_BUTTON_SIZE)
     .height(this.FLOAT_SEARCH_BUTTON_SIZE)
-    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(30, 30, 30, 0.45)'
-      : 'rgba(255, 255, 255, 0.45)')
-    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
-      colorMode: ThemeColorMode.SYSTEM,
-      adaptiveColor: AdaptiveColor.DEFAULT,
-      scale: 1.0
-    })
+    .padding(0)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
+    .clip(true)
     .border({
-      width: 1,
-      color: this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(255, 255, 255, 0.22)'
-        : 'rgba(255, 255, 255, 0.60)'
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
     })
     .shadow({
-      radius: 12,
-      color: this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(0, 0, 0, 0.35)'
-        : 'rgba(0, 0, 0, 0.12)',
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
       offsetX: 0,
-      offsetY: 3
+      offsetY: 8
     })
     .onClick(() => {
       try {
@@ -9918,7 +10092,7 @@ struct MainMenuPage {
             Text('加载中...')
               .fontSize(14)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
               .margin({ left: 8 })
           }
           .width('100%')
@@ -11551,12 +11725,85 @@ struct MainMenuPage {
     return !this.hideWoodShelfTexture;
   }
 
-  private getShelfBaseLayerColor(): string {
-    return 'rgba(0, 0, 0, 0)';
+  private getShelfCardFeaturedSurfaceStyle() {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface;
   }
 
-  private getShelfBaseLayerBorderColor(): string {
-    return 'rgba(0, 0, 0, 0)';
+  private getShelfBaseLayerColorById(shelfId: string): string {
+    if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(38, 56, 86, 0.34)'
+        : 'rgba(208, 225, 246, 0.34)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(160, 200, 255, 0.16)'
+      : 'rgba(255, 255, 255, 0.42)';
+  }
+
+  private getShelfBaseLayerBorderColorById(shelfId: string): string {
+    if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(170, 200, 236, 0.30)'
+        : 'rgba(168, 196, 232, 0.42)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(204, 226, 252, 0.28)'
+      : 'rgba(214, 230, 248, 0.54)';
+  }
+
+  private getShelfCardSurfaceGradientById(shelfId: string): LinearGradient {
+    if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? {
+            angle: 145,
+            colors: [
+              ['rgba(176, 212, 255, 0.16)', 0],
+              ['rgba(42, 66, 102, 0.08)', 0.34],
+              ['rgba(22, 34, 52, 0.06)', 0.74],
+              ['rgba(166, 205, 252, 0.10)', 1]
+            ]
+          }
+        : {
+            angle: 145,
+            colors: [
+              ['rgba(248, 252, 255, 0.34)', 0],
+              ['rgba(206, 224, 246, 0.16)', 0.34],
+              ['rgba(178, 204, 236, 0.12)', 0.74],
+              ['rgba(236, 246, 255, 0.24)', 1]
+            ]
+          };
+    }
+    return this.getShelfCardFeaturedSurfaceStyle().surfaceGradient;
+  }
+
+  private getShelfCardSurfaceTopEdgeColorById(shelfId: string): ResourceColor {
+    if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(232, 244, 255, 0.22)'
+        : 'rgba(255, 255, 255, 0.70)';
+    }
+    return this.getShelfCardFeaturedSurfaceStyle().topEdgeColor;
+  }
+
+  private getShelfCardSurfaceBottomEdgeColorById(shelfId: string): ResourceColor {
+    if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(144, 188, 246, 0.16)'
+        : 'rgba(134, 176, 226, 0.16)';
+    }
+    return this.getShelfCardFeaturedSurfaceStyle().bottomEdgeColor;
+  }
+
+  private getShelfCardBlurStyleById(_shelfId: string): BlurStyle | undefined {
+    return this.getShelfCardFeaturedSurfaceStyle().blurStyle;
+  }
+
+  private getShelfCardBlurOptionsById(_shelfId: string): BackgroundBlurStyleOptions {
+    return this.getShelfCardFeaturedSurfaceStyle().blurOptions;
+  }
+
+  private getShelfCardBackgroundEffectById(_shelfId: string): BackgroundEffectOptions | undefined {
+    return this.getShelfCardFeaturedSurfaceStyle().backgroundEffect;
   }
 
   private getShelfPreviewPrimaryWidth(): number {
@@ -11635,28 +11882,28 @@ struct MainMenuPage {
   private getShelfCardBackgroundColorById(shelfId: string) {
     if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
       return this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(20, 25, 35, 0.78)'
-        : 'rgba(32, 44, 64, 0.78)';
+        ? 'rgba(22, 30, 44, 0.78)'
+        : 'rgba(208, 222, 240, 0.72)';
     }
-    return this.getGlassBackground();
+    return this.getShelfCardFeaturedSurfaceStyle().backgroundColor;
   }
 
   private getShelfCardBorderColorById(shelfId: string): string {
     if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
       return this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(132, 158, 196, 0.46)'
-        : 'rgba(196, 214, 240, 0.52)';
+        ? 'rgba(182, 208, 236, 0.42)'
+        : 'rgba(172, 196, 228, 0.56)';
     }
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(128, 150, 180, 0.22)'
-      : 'rgba(255, 255, 255, 0.28)';
+    return this.getShelfCardFeaturedSurfaceStyle().borderColor as string;
   }
 
   private getShelfCardShadowColorById(shelfId: string): string {
     if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
-      return 'rgba(8, 12, 20, 0.46)';
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(8, 12, 20, 0.44)'
+        : 'rgba(90, 114, 142, 0.20)';
     }
-    return 'rgba(0, 0, 0, 0.28)';
+    return this.getShelfCardFeaturedSurfaceStyle().shadowColor;
   }
 
   private getShelfCardFixedHeight(): number {
@@ -11903,14 +12150,31 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       // 书架容器（轻玻璃卡片 + 底部书架装饰）
       Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .borderRadius(10)
+          .linearGradient(this.getShelfCardSurfaceGradientById(shelf.id))
+
+        Column()
+          .width('100%')
+          .height(1)
+          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById(shelf.id))
+
+        Column()
+          .width('100%')
+          .height(1)
+          .align(Alignment.Bottom)
+          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById(shelf.id))
+
         // 底层玻璃托板（关闭木质书架时不显示）
         if (this.shouldShowShelfBaseDecoration()) {
           Row()
             .width('100%')
             .height(16)
-            .backgroundColor(this.getShelfBaseLayerColor())
+            .backgroundColor(this.getShelfBaseLayerColorById(shelf.id))
             .borderRadius(8)
-            .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById(shelf.id) })
             .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
@@ -12051,7 +12315,8 @@ struct MainMenuPage {
     .height(this.getShelfCardFixedHeight())
     .padding(10)
     .backgroundColor(this.getShelfCardBackgroundColorById(shelf.id))
-    .backgroundBlurStyle(this.getGlassBlur())
+    .backgroundBlurStyle(this.getShelfCardBlurStyleById(shelf.id), this.getShelfCardBlurOptionsById(shelf.id))
+    .backgroundEffect(this.getShelfCardBackgroundEffectById(shelf.id))
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById(shelf.id), offsetY: 4 })
@@ -12118,13 +12383,30 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       // 书架容器（与普通书架卡片保持一致）
       Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .borderRadius(10)
+          .linearGradient(this.getShelfCardSurfaceGradientById('system_add_shelf'))
+
+        Column()
+          .width('100%')
+          .height(1)
+          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById('system_add_shelf'))
+
+        Column()
+          .width('100%')
+          .height(1)
+          .align(Alignment.Bottom)
+          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById('system_add_shelf'))
+
         if (this.shouldShowShelfBaseDecoration()) {
           Row()
             .width('100%')
             .height(16)
-            .backgroundColor(this.getShelfBaseLayerColor())
+            .backgroundColor(this.getShelfBaseLayerColorById('system_add_shelf'))
             .borderRadius(8)
-            .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById('system_add_shelf') })
             .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
@@ -12159,7 +12441,8 @@ struct MainMenuPage {
     .height(this.getShelfCardFixedHeight())
     .padding(10)
     .backgroundColor(this.getShelfCardBackgroundColorById('system_add_shelf'))
-    .backgroundBlurStyle(this.getGlassBlur())
+    .backgroundBlurStyle(this.getShelfCardBlurStyleById('system_add_shelf'), this.getShelfCardBlurOptionsById('system_add_shelf'))
+    .backgroundEffect(this.getShelfCardBackgroundEffectById('system_add_shelf'))
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_add_shelf'), offsetY: 4 })
@@ -12178,13 +12461,30 @@ struct MainMenuPage {
   buildShelfManageCard() {
     Column({ space: 8 }) {
       Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .borderRadius(10)
+          .linearGradient(this.getShelfCardSurfaceGradientById(`system_type_${ShelfType}`))
+
+        Column()
+          .width('100%')
+          .height(1)
+          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById(`system_type_${ShelfType}`))
+
+        Column()
+          .width('100%')
+          .height(1)
+          .align(Alignment.Bottom)
+          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById(`system_type_${ShelfType}`))
+
         if (this.shouldShowShelfBaseDecoration()) {
           Row()
             .width('100%')
             .height(16)
-            .backgroundColor(this.getShelfBaseLayerColor())
+            .backgroundColor(this.getShelfBaseLayerColorById(`system_type_${ShelfType}`))
             .borderRadius(8)
-            .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById(`system_type_${ShelfType}`) })
             .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
@@ -12218,7 +12518,8 @@ struct MainMenuPage {
     .height(this.getShelfCardFixedHeight())
     .padding(10)
     .backgroundColor(this.getShelfCardBackgroundColorById(`system_type_${ShelfType}`))
-    .backgroundBlurStyle(this.getGlassBlur())
+    .backgroundBlurStyle(this.getShelfCardBlurStyleById(`system_type_${ShelfType}`), this.getShelfCardBlurOptionsById(`system_type_${ShelfType}`))
+    .backgroundEffect(this.getShelfCardBackgroundEffectById(`system_type_${ShelfType}`))
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById(`system_type_${ShelfType}`), offsetY: 4 })
@@ -12618,13 +12919,30 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       // 书架容器（轻玻璃卡片 + 底部书架装饰）
       Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .borderRadius(10)
+          .linearGradient(this.getShelfCardSurfaceGradientById('system_manage_shelf'))
+
+        Column()
+          .width('100%')
+          .height(1)
+          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById('system_manage_shelf'))
+
+        Column()
+          .width('100%')
+          .height(1)
+          .align(Alignment.Bottom)
+          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById('system_manage_shelf'))
+
         if (this.shouldShowShelfBaseDecoration()) {
           Row()
             .width('100%')
             .height(16)
-            .backgroundColor(this.getShelfBaseLayerColor())
+            .backgroundColor(this.getShelfBaseLayerColorById('system_manage_shelf'))
             .borderRadius(8)
-            .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById('system_manage_shelf') })
             .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
@@ -12720,7 +13038,8 @@ struct MainMenuPage {
     .height(this.getShelfCardFixedHeight())
     .padding(10)
     .backgroundColor(this.getShelfCardBackgroundColorById('system_manage_shelf'))
-    .backgroundBlurStyle(this.getGlassBlur())
+    .backgroundBlurStyle(this.getShelfCardBlurStyleById('system_manage_shelf'), this.getShelfCardBlurOptionsById('system_manage_shelf'))
+    .backgroundEffect(this.getShelfCardBackgroundEffectById('system_manage_shelf'))
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_manage_shelf'), offsetY: 4 })
@@ -13802,7 +14121,8 @@ struct MainMenuPage {
         Row() {
           SymbolGlyph($r('sys.symbol.magnifyingglass'))
             .fontSize(16)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            .fontColor([this.getSettingsAnalyticsCardChevronColor()])
+            .opacity(this.getSettingsAnalyticsCardChevronOpacity())
           TextInput({ placeholder: '搜索...', text: this.dynamicFilterSearchText })
             .layoutWeight(1)
             .height(36)
@@ -14572,7 +14892,7 @@ struct MainMenuPage {
             Text('没有可用的书架')
               .fontSize(14)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
             Text('请先创建支持该内容类型的书架')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
@@ -23141,7 +23461,8 @@ struct MainMenuPage {
         Column() {
           SymbolGlyph($r('sys.symbol.text_book_closed'))
             .fontSize(48)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            .fontColor([this.getSettingsAnalyticsCardChevronColor()])
+            .opacity(this.getSettingsAnalyticsCardChevronOpacity())
           Text(this.suwayomiSearchQuery.trim() ? '未找到匹配的漫画' : '暂无漫画')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
@@ -24259,86 +24580,104 @@ struct MainMenuPage {
    */
   @Builder
   buildSourceCard(source: SourceInfo) {
-    Row({ space: 12 }) {
-      // 图源图标
-      if (source.iconPath) {
-        Image('file://' + source.iconPath)
-          .width(48)
-          .height(48)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      } else {
-        Image($r('app.media.ic_source_normal'))
-          .width(48)
-          .height(48)
-          .borderRadius(8)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      }
+    Column() {
+      Row({ space: 12 }) {
+        // 图源图标
+        if (source.iconPath) {
+          Image('file://' + source.iconPath)
+            .width(48)
+            .height(48)
+            .borderRadius(8)
+            .objectFit(ImageFit.Cover)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        } else {
+          Image($r('app.media.ic_source_normal'))
+            .width(48)
+            .height(48)
+            .borderRadius(8)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        }
 
-      // 图源信息
-      Column({ space: 4 }) {
-        Row({ space: 8 }) {
-          Text(source.name)
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        // 图源信息
+        Column({ space: 4 }) {
+          Row({ space: 8 }) {
+            Text(source.name)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSettingsAnalyticsCardTitleColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          if (!source.isEnabled) {
-            Text('已禁用')
+            if (!source.isEnabled) {
+              Text('已禁用')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                .borderRadius(4)
+            }
+          }
+          .width('100%')
+
+          if (source.description) {
+            Text(source.description)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+
+          Row({ space: 4 }) {
+            Text(`${source.language} · v${source.version}`)
               .fontSize(12)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-              .borderRadius(4)
-          }
-        }
-        .width('100%')
-
-        if (source.description) {
-          Text(source.description)
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-
-        Row({ space: 4 }) {
-          Text(`${source.language} · v${source.version}`)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          
-          if (source.requireProxy) {
-            Row({ space: 2 }) {
-              SymbolGlyph($r('sys.symbol.airplane_departure'))
-                .fontSize(11)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)])
-              Text('需要代理')
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+              .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+            
+            if (source.requireProxy) {
+              Row({ space: 2 }) {
+                SymbolGlyph($r('sys.symbol.airplane_departure'))
+                  .fontSize(11)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)])
+                Text('需要代理')
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+              }
             }
           }
         }
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
 
-      // 箭头图标
-      SymbolGlyph($r('sys.symbol.arrow_right'))
-        .fontSize(20)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        // 箭头图标
+        SymbolGlyph($r('sys.symbol.arrow_right'))
+          .fontSize(20)
+          .fontColor([this.getSettingsAnalyticsCardChevronColor()])
+          .opacity(this.getSettingsAnalyticsCardChevronOpacity())
+      }
+      .width('100%')
+      .padding(12)
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
     .onClick(() => {
       this.openSourceDetail(source);
     })
@@ -24352,7 +24691,7 @@ struct MainMenuPage {
     .bindPopup(this.showSourceContextMenu && this.contextMenuSource?.id === source.id, {
       builder: this.buildSourceContextMenu(source),
       placement: Placement.Bottom,
-      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      popupColor: this.getSettingsAnalyticsCardBackground(),
       enableArrow: true,
       autoCancel: true,
       onStateChange: (e) => {
@@ -24435,179 +24774,195 @@ struct MainMenuPage {
    */
   @Builder
   buildSourceGridCard(source: SourceInfo) {
-    Column({ space: 8 }) {
-      // 图源图标
-      Stack() {
-        if (source.iconPath) {
-          Image('file://' + source.iconPath)
+    Column() {
+      Column({ space: 8 }) {
+        // 图源图标
+        Stack() {
+          if (source.iconPath) {
+            Image('file://' + source.iconPath)
+              .width('100%')
+              .height(80)
+              .borderRadius(12)
+              .objectFit(ImageFit.Cover)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          } else {
+            Column() {
+              Image($r('app.media.ic_source_normal'))
+                .width(48)
+                .height(48)
+                .fillColor(this.getSettingsAnalyticsCardIconColor())
+            }
             .width('100%')
             .height(80)
             .borderRadius(12)
-            .objectFit(ImageFit.Cover)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-        } else {
-          Column() {
-            Image($r('app.media.ic_source_normal'))
-              .width(48)
-              .height(48)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .justifyContent(FlexAlign.Center)
           }
-          .width('100%')
-          .height(80)
-          .borderRadius(12)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .justifyContent(FlexAlign.Center)
-        }
 
-        // 禁用状态遮罩
-        if (!source.isEnabled) {
-          Column() {
-            Text('已禁用')
+          // 禁用状态遮罩
+          if (!source.isEnabled) {
+            Column() {
+              Text('已禁用')
+                .fontSize(10)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .height('100%')
+            .backgroundColor('#80000000')
+            .borderRadius(12)
+            .justifyContent(FlexAlign.Center)
+          }
+
+          // 需要代理标识（使用系统图标）
+          if (source.requireProxy) {
+            SymbolGlyph($r('sys.symbol.airplane_departure'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+              .position({ x: 4, y: 4 })
+          }
+        }
+        .width('100%')
+        .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
+
+        // 图源名称
+        Text(source.name)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardTitleColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .textAlign(TextAlign.Center)
+
+        // 版本和语言
+        Text(`${source.language} · v${source.version}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .textAlign(TextAlign.Center)
+
+        // 网络标识（如果需要代理）
+        if (source.requireProxy) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.airplane_departure'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            Text('需要代理')
               .fontSize(10)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
           .width('100%')
-          .height('100%')
-          .backgroundColor('#80000000')
-          .borderRadius(12)
           .justifyContent(FlexAlign.Center)
+          .margin({ top: 2 })
         }
 
-        // 需要代理标识（使用系统图标）
-        if (source.requireProxy) {
-          SymbolGlyph($r('sys.symbol.airplane_departure'))
-            .fontSize(14)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
-            .position({ x: 4, y: 4 })
+        // 快捷操作按钮（三行显示）
+        Column({ space: 4 }) {
+          // 热门按钮
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.star'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('热门')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSettingsAnalyticsCardTitleColor())
+          }
+          .width('100%')
+          .height(24)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => {
+            this.openSourceDetailWithTab(source, 'popular');
+          })
+
+          // 最新按钮
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.clock'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('最新')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSettingsAnalyticsCardTitleColor())
+          }
+          .width('100%')
+          .height(24)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => {
+            this.openSourceDetailWithTab(source, 'latest');
+          })
+
+          // 搜索按钮
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('搜索')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSettingsAnalyticsCardTitleColor())
+          }
+          .width('100%')
+          .height(24)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => {
+            this.openSourceDetailWithSearch(source);
+          })
+
+          // 设置按钮
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.gearshape'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('管理')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSettingsAnalyticsCardTitleColor())
+          }
+          .width('100%')
+          .height(24)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => {
+            this.openSourceSettings(source);
+          })
         }
+        .width('100%')
+        .margin({ top: 4 })
       }
       .width('100%')
-      .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
-
-      // 图源名称
-      Text(source.name)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .textAlign(TextAlign.Center)
-
-      // 版本和语言
-      Text(`${source.language} · v${source.version}`)
-        .fontSize(11)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .textAlign(TextAlign.Center)
-
-      // 网络标识（如果需要代理）
-      if (source.requireProxy) {
-        Row({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.airplane_departure'))
-            .fontSize(12)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-          Text('需要代理')
-            .fontSize(10)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .margin({ top: 2 })
-      }
-
-      // 快捷操作按钮（三行显示）
-      Column({ space: 4 }) {
-        // 热门按钮
-        Row({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.star'))
-            .fontSize(12)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('热门')
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        }
-        .width('100%')
-        .height(24)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(6)
-        .onClick(() => {
-          this.openSourceDetailWithTab(source, 'popular');
-        })
-
-        // 最新按钮
-        Row({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.clock'))
-            .fontSize(12)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('最新')
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        }
-        .width('100%')
-        .height(24)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(6)
-        .onClick(() => {
-          this.openSourceDetailWithTab(source, 'latest');
-        })
-
-        // 搜索按钮
-        Row({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.magnifyingglass'))
-            .fontSize(12)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('搜索')
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        }
-        .width('100%')
-        .height(24)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(6)
-        .onClick(() => {
-          this.openSourceDetailWithSearch(source);
-        })
-
-        // 设置按钮
-        Row({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.gearshape'))
-            .fontSize(12)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('管理')
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        }
-        .width('100%')
-        .height(24)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(6)
-        .onClick(() => {
-          this.openSourceSettings(source);
-        })
-      }
-      .width('100%')
-      .margin({ top: 4 })
+      .padding(8)
     }
     .width('100%')
-    .padding(8)
-    .backgroundColor(this.getGlassBackground())
-    .backgroundBlurStyle(this.getGlassBlur())
-    .borderRadius(this.getGlassRadius())
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
     .onClick(() => {
       this.openSourceDetail(source);
     })
@@ -24621,7 +24976,7 @@ struct MainMenuPage {
     .bindPopup(this.showSourceContextMenu && this.contextMenuSource?.id === source.id, {
       builder: this.buildSourceContextMenu(source),
       placement: Placement.Bottom,
-      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      popupColor: this.getSettingsAnalyticsCardBackground(),
       enableArrow: true,
       autoCancel: true,
       onStateChange: (e) => {
@@ -24648,22 +25003,205 @@ struct MainMenuPage {
   /**
    * 构建设置内容
    */
+  private getSettingsAnalyticsCardBackground(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundColor;
+  }
+
+  private getSettingsAnalyticsCardBlurStyle(): BlurStyle | undefined {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurStyle;
+  }
+
+  private getSettingsAnalyticsCardBlurOptions(): BackgroundBlurStyleOptions {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurOptions;
+  }
+
+  private getSettingsAnalyticsCardBackgroundEffect(): BackgroundEffectOptions | undefined {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundEffect;
+  }
+
+  private getSettingsAnalyticsCardBorderColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderColor;
+  }
+
+  private getSettingsAnalyticsCardBorderWidth(): number {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderWidth;
+  }
+
+  private getSettingsAnalyticsCardShadowColor(): string {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.shadowColor;
+  }
+
+  private getSettingsAnalyticsCardRadius(): number {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius;
+  }
+
+  private getSettingsAnalyticsCardTopEdgeColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.topEdgeColor;
+  }
+
+  private getSettingsAnalyticsCardBottomEdgeColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.bottomEdgeColor;
+  }
+
+  private getSettingsAnalyticsCardSurfaceGradient(): LinearGradient {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.surfaceGradient;
+  }
+
+  private getSettingsAnalyticsCardIconColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.iconColor;
+  }
+
+  private getSettingsAnalyticsCardTitleColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.titleColor;
+  }
+
+  private getSettingsAnalyticsCardSubtitleColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.subtitleColor;
+  }
+
+  private getSettingsAnalyticsCardChevronColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.chevronColor;
+  }
+
+  private getSettingsAnalyticsCardChevronOpacity(): number {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.chevronOpacity;
+  }
+
+  private getSettingsManagementItemIconColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getManagementListItemStyle(this.themeState.currentTheme).iconColor;
+  }
+
+  private getSettingsManagementItemTitleColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getManagementListItemStyle(this.themeState.currentTheme).titleColor;
+  }
+
+  private getSettingsManagementItemSubtitleColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getManagementListItemStyle(this.themeState.currentTheme).subtitleColor;
+  }
+
+  private getSettingsManagementItemChevronColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getManagementListItemStyle(this.themeState.currentTheme).chevronColor;
+  }
+
+  private getSettingsManagementItemChevronOpacity(): number {
+    return SettingsPageSurfaceManager.getManagementListItemStyle(this.themeState.currentTheme).chevronOpacity;
+  }
+
+  private getSettingsManagementContentSurfaceStyle() {
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme);
+  }
+
+  @Builder
+  buildSettingsAnalyticsCard() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .borderRadius(this.getSettingsAnalyticsCardRadius())
+        .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .align(Alignment.Bottom)
+        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
+
+      Row() {
+        Column() {
+          SymbolGlyph($r('sys.symbol.histogram_fill'))
+            .fontSize(54)
+            .fontColor([this.getSettingsAnalyticsCardIconColor()])
+        }
+        .width(60)
+        .height(60)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+
+        Column({ space: 4 }) {
+          Text('阅读报告')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getSettingsAnalyticsCardTitleColor())
+
+          Text('查看您的阅读统计与趋势分析')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        .margin({ left: 16 })
+
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(20)
+          .fontColor([this.getSettingsAnalyticsCardChevronColor()])
+          .opacity(this.getSettingsAnalyticsCardChevronOpacity())
+      }
+      .width('100%')
+      .height('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding(16)
+    }
+    .width('100%')
+    .height(92)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .margin({ bottom: 16 })
+    .id('guide_main_setting_analytics')
+    .onClick(() => {
+      try {
+        const navigationPath: NavigationPath = {
+          name: 'ReadingAnalyticsPage',
+          param: {
+            fromPage: 'MainMenuPage',
+            timestamp: Date.now()
+          }
+        };
+        this.pathStack.pushPath(navigationPath);
+        logger.info(TAG, '导航到阅读报告页面');
+      } catch (error) {
+        logger.error(TAG, '导航到阅读报告页面失败', String(error));
+        this.showToast('打开阅读报告页面失败');
+      }
+    })
+  }
+
   @Builder
   buildSettingsContent() {
     Scroll(this.settingsScroller) {
       Column({ space: 0 }) {
         Blank().height(this.getInitialTopOverlaySpacerHeight())
+        this.buildSettingsAnalyticsCard()
         // 用户信息区域
         Row() {
-          Stack({ alignContent: Alignment.Center }) {
+          Column() {
             SymbolGlyph($r('sys.symbol.histogram_fill'))
-              .fontSize(56)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+              .fontSize(54)
+              .fontColor([this.getSettingsAnalyticsCardIconColor()])
           }
           .width(60)
           .height(60)
-          .borderRadius(30)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
 
           Column({ space: 4 }) {
             Text('阅读报告')
@@ -24686,13 +25224,21 @@ struct MainMenuPage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
         }
         .width('100%')
-        .padding(16)
-        .backgroundColor(this.getGlassBackground())
-        .backgroundBlurStyle(this.getGlassBlur())
-        .borderRadius(this.getGlassRadius())
-        .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
-        .margin({ bottom: 16 })
-        .id('guide_main_setting_analytics')
+        .height(0)
+        .padding(0)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .borderRadius(this.getSettingsAnalyticsCardRadius())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .shadow({ radius: this.getSettingsAnalyticsCardRadius() + 4, color: 'rgba(0, 0, 0, 0)', offsetX: 0, offsetY: 0 })
+        .margin({ bottom: 0 })
+        .opacity(0)
+        .hitTestBehavior(HitTestMode.None)
+        .id('guide_main_setting_analytics_legacy_hidden')
         .onClick(() => {
           try {
             const navigationPath: NavigationPath = {
@@ -24998,10 +25544,24 @@ struct MainMenuPage {
 
           
         }
-        .backgroundColor(this.getGlassBackground())
-        .backgroundBlurStyle(this.getGlassBlur())
-        .borderRadius(this.getGlassRadius())
-        .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+        .backgroundColor(this.getSettingsManagementContentSurfaceStyle().backgroundColor)
+        .backgroundBlurStyle(
+          this.getSettingsManagementContentSurfaceStyle().blurStyle,
+          this.getSettingsManagementContentSurfaceStyle().blurOptions
+        )
+        .backgroundEffect(this.getSettingsManagementContentSurfaceStyle().backgroundEffect)
+        .borderRadius(this.getSettingsManagementContentSurfaceStyle().radius)
+        .clip(true)
+        .border({
+          width: this.getSettingsManagementContentSurfaceStyle().borderWidth,
+          color: this.getSettingsManagementContentSurfaceStyle().borderColor
+        })
+        .shadow({
+          radius: this.getSettingsManagementContentSurfaceStyle().radius + 4,
+          color: this.getSettingsManagementContentSurfaceStyle().shadowColor,
+          offsetX: 0,
+          offsetY: 8
+        })
 
         Blank().height(this.getMainTabBottomSpacerHeight())
       }
@@ -25032,21 +25592,21 @@ struct MainMenuPage {
       // 使用SymbolGlyph系统图标
       SymbolGlyph(icon as Resource)
         .fontSize(24)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        .fontColor([this.getSettingsManagementItemIconColor()])
         .renderingStrategy(SymbolRenderingStrategy.SINGLE)
 
       Column({ space: 2 }) {
         Text(title)
           .fontSize(16)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsManagementItemTitleColor())
           .textAlign(TextAlign.Start)
           .width('100%')
 
         Text(subtitle)
           .fontSize(14)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsManagementItemSubtitleColor())
           .textAlign(TextAlign.Start)
           .width('100%')
       }
@@ -25056,7 +25616,8 @@ struct MainMenuPage {
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(20)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        .fontColor([this.getSettingsManagementItemChevronColor()])
+        .opacity(this.getSettingsManagementItemChevronOpacity())
     }
     .width('100%')
     .height(64)
@@ -25443,7 +26004,22 @@ struct MainMenuPage {
   @Builder
   buildHorizontalTabBar() {
     Stack({ alignContent: Alignment.TopStart }) {
-      if (this.cachedVisibleTabConfigs.length > 0) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .borderRadius(this.getGlassRadius())
+        .linearGradient(this.getBottomBarContainerSurfaceGradient())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getBottomBarContainerTopEdgeColor())
+
+      if (this.shouldRenderBottomBarIndicator()) {
+        this.buildHorizontalTabIndicatorAura()
+      }
+
+      if (this.shouldRenderBottomBarIndicator()) {
         this.buildHorizontalTabIndicator()
       }
 
@@ -25464,22 +26040,77 @@ struct MainMenuPage {
   }
 
   @Builder
-  buildHorizontalTabIndicator() {
+  buildHorizontalTabIndicatorAura() {
     Column()
-      .width(this.getBottomBarIndicatorWidth())
-      .height(44)
-      .position({ x: this.getBottomBarIndicatorX(), y: 6 })
-      .borderRadius(16)
+      .width(this.getBottomBarIndicatorWidth() + 22)
+      .height(54)
+      .position({ x: this.getBottomBarIndicatorX() - 11, y: 1 + this.bottomBarIndicatorLiftY * 0.35 })
+      .borderRadius(999)
       .clip(true)
+      .radialGradient(this.getBottomBarIndicatorAuraGradient(this.getBottomBarVisualTabIndex()))
+      .opacity((this.themeState.currentTheme === ThemeType.DARK ? 0.76 : 0.58)
+        * this.bottomBarIndicatorOpacity
+        * (0.72 + 0.28 * this.bottomBarIndicatorGlowStrength))
+      .scale({
+        x: 0.95 + 0.05 * this.bottomBarIndicatorScale,
+        y: 0.94 + 0.06 * this.bottomBarIndicatorScale
+      })
+      .animation({ duration: this.isBottomBarIndicatorDragging ? 0 : 180, curve: Curve.EaseOut })
+  }
+
+  @Builder
+  buildHorizontalTabIndicator() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .borderRadius(18)
+        .radialGradient(this.getBottomBarIndicatorCoreGlowGradient(this.getBottomBarVisualTabIndex()))
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .borderRadius(18)
+        .linearGradient(this.getBottomBarIndicatorSurfaceGradient(this.getBottomBarVisualTabIndex()))
+
+      Column()
+        .width('100%')
+        .height(20)
+        .borderRadius(18)
+        .linearGradient(this.getBottomBarIndicatorHighlightGradient(this.getBottomBarVisualTabIndex()))
+
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getBottomBarIndicatorInnerLineColor())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getBottomBarIndicatorBottomLineColor())
+        .position({ x: 0, y: 45 })
+    }
+      .width(this.getBottomBarIndicatorWidth())
+      .height(46)
+      .position({ x: this.getBottomBarIndicatorX(), y: 5 + this.bottomBarIndicatorLiftY })
+      .borderRadius(18)
+      .clip(true)
+      .opacity(this.bottomBarIndicatorOpacity)
+      .scale({ x: this.bottomBarIndicatorScale, y: this.bottomBarIndicatorScale })
       .backgroundColor(this.getBottomBarSelectedChipBackground(this.getBottomBarVisualTabIndex()))
+      .backgroundBlurStyle(this.getBottomBarIndicatorBlurStyle(), this.getBottomBarIndicatorBlurOptions())
+      .backgroundEffect(this.getBottomBarIndicatorBackgroundEffect())
+      .border({
+        width: 1,
+        color: this.getBottomBarIndicatorBorderColor()
+      })
       .shadow({
-        radius: 16,
+        radius: (this.themeState.currentTheme === ThemeType.DARK ? 20 : 16) + this.bottomBarIndicatorGlowStrength * 7,
         color: this.getBottomBarGlowShadowColor(this.getBottomBarVisualTabIndex()),
         offsetX: 0,
-        offsetY: 2
+        offsetY: this.themeState.currentTheme === ThemeType.DARK ? 4 : 3
       })
-      .visualEffect(this.getBottomBarIndicatorVisualEffect())
-      .animation({ duration: this.isBottomBarFakeDragging ? 0 : 180, curve: Curve.EaseOut })
+      .animation({ duration: this.isBottomBarIndicatorDragging ? 0 : 180, curve: Curve.EaseOut })
   }
 
   /**
@@ -25654,8 +26285,14 @@ struct MainMenuPage {
       // 将 TabIndex 转换为实际 Tabs 组件中的位置索引
       const actualIndex = this.getActualTabsIndexForTabIndex(tabIndex);
       if (actualIndex >= 0) {
+        const currentActualIndex: number = this.getActualTabsIndexForTabIndex(this.lastCommittedTabIndex);
+        this.pulseBottomBarIndicator(actualIndex);
         this.changeMainContentToActualIndex(actualIndex);
         this.scrollSideTabToCenter(tabIndex);
+        this.hideBottomBarIndicator(actualIndex === currentActualIndex ? 220 : 360);
+        if (actualIndex === currentActualIndex) {
+          this.triggerBottomBarSelectionBounce(tabIndex);
+        }
       } else {
         logger.warn(TAG, `标签 ${tabIndex} 不可见，无法切换`);
       }
@@ -25685,6 +26322,9 @@ struct MainMenuPage {
       ? { x: this.bottomBarBounceScale, y: this.bottomBarBounceScale }
       : { x: 1, y: 1 })
     .animation({ duration: 220, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => {
+      this.handleBottomBarButtonTouch(config.index, event);
+    })
     .onClick(() => { this.handleTabButtonClick(config.index) })
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
@@ -25743,6 +26383,9 @@ struct MainMenuPage {
     }
     .width(24)
     .height(24)
+    .opacity(this.isBottomBarVisualSelected(config) ? 1 : (this.themeState.currentTheme === ThemeType.DARK ? 0.84 : 0.88))
+    .scale(this.isBottomBarVisualSelected(config) ? { x: 1.04, y: 1.04 } : { x: 1, y: 1 })
+    .animation({ duration: (this.isBottomBarIndicatorDragging || this.isBottomBarFakeDragging) ? 0 : 180, curve: Curve.EaseOut })
   }
 
   // 悬浮 + 模糊玻璃背景（纯修饰符，不使用@Builder，不包含逻辑语句）
@@ -25907,117 +26550,391 @@ struct MainMenuPage {
     }
   }
 
+  private getBottomBarContainerBackground(): ResourceColor {
+    if (!this.userThemeBlurEnabled) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(16, 22, 34, 0.48)'
+        : 'rgba(245, 249, 255, 0.60)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(8, 14, 24, 0.04)'
+      : 'rgba(255, 255, 255, 0.06)';
+  }
+
+  private getBottomBarContainerBorderColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(231, 242, 255, 0.12)'
+      : 'rgba(255, 255, 255, 0.28)';
+  }
+
+  private getBottomBarContainerShadowColor(): string {
+    if (!this.userThemeShadowEnabled) {
+      return 'rgba(0, 0, 0, 0)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(0, 0, 0, 0.12)'
+      : 'rgba(84, 99, 126, 0.04)';
+  }
+
+  private getBottomBarContainerBlurStyle(): BlurStyle | undefined {
+    if (!this.userThemeBlurEnabled) {
+      return undefined;
+    }
+    return BlurStyle.BACKGROUND_ULTRA_THICK;
+  }
+
+  private getBottomBarContainerBlurOptions(): BackgroundBlurStyleOptions {
+    return {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: this.themeState.currentTheme === ThemeType.DARK ? 1.18 : 1.14,
+      policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
+    };
+  }
+
+  private getBottomBarContainerBackgroundEffect(): BackgroundEffectOptions | undefined {
+    if (!this.userThemeBlurEnabled) {
+      return undefined;
+    }
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        radius: 40,
+        saturation: 1.48,
+        brightness: 1.05,
+        color: 'rgba(232, 242, 255, 0.015)',
+        adaptiveColor: AdaptiveColor.DEFAULT
+      };
+    }
+    return {
+      radius: 38,
+      saturation: 1.58,
+      brightness: 1.14,
+      color: 'rgba(255, 255, 255, 0.02)',
+      adaptiveColor: AdaptiveColor.DEFAULT
+    };
+  }
+
+  private getBottomBarContainerSurfaceGradient(): LinearGradient {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        angle: 180,
+        colors: [
+          ['rgba(255, 255, 255, 0.08)', 0],
+          ['rgba(183, 214, 255, 0.03)', 0.24],
+          ['rgba(12, 18, 28, 0.01)', 0.68],
+          ['rgba(255, 255, 255, 0.02)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 180,
+      colors: [
+        ['rgba(255, 255, 255, 0.20)', 0],
+        ['rgba(255, 255, 255, 0.08)', 0.26],
+        ['rgba(176, 208, 244, 0.03)', 0.70],
+        ['rgba(255, 255, 255, 0.08)', 1]
+      ]
+    };
+  }
+
+  private getBottomBarContainerTopEdgeColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(240, 247, 255, 0.18)'
+      : 'rgba(255, 255, 255, 0.54)';
+  }
+
   private getBottomBarSelectedChipBackground(tabIndex: number): string {
     switch (tabIndex) {
       case TabIndex.DISCOVER:
         return this.themeState.currentTheme === ThemeType.DARK
-          ? 'rgba(107, 230, 193, 0.16)'
-          : 'rgba(33, 190, 150, 0.09)';
+          ? 'rgba(107, 230, 193, 0.18)'
+          : 'rgba(33, 190, 150, 0.10)';
       case TabIndex.SOURCE:
         return this.themeState.currentTheme === ThemeType.DARK
-          ? 'rgba(255, 190, 107, 0.16)'
-          : 'rgba(255, 166, 77, 0.09)';
+          ? 'rgba(255, 190, 107, 0.18)'
+          : 'rgba(255, 166, 77, 0.10)';
       case TabIndex.BOOK_SOURCE:
         return this.themeState.currentTheme === ThemeType.DARK
-          ? 'rgba(255, 156, 112, 0.16)'
-          : 'rgba(255, 120, 84, 0.09)';
+          ? 'rgba(255, 156, 112, 0.18)'
+          : 'rgba(255, 120, 84, 0.10)';
       case TabIndex.SUWAYOMI:
         return this.themeState.currentTheme === ThemeType.DARK
-          ? 'rgba(123, 207, 255, 0.18)'
-          : 'rgba(64, 171, 240, 0.09)';
+          ? 'rgba(123, 207, 255, 0.20)'
+          : 'rgba(64, 171, 240, 0.10)';
       case TabIndex.KOMGA:
         return this.themeState.currentTheme === ThemeType.DARK
-          ? 'rgba(240, 199, 90, 0.16)'
-          : 'rgba(214, 153, 39, 0.09)';
+          ? 'rgba(240, 199, 90, 0.18)'
+          : 'rgba(214, 153, 39, 0.10)';
       case TabIndex.SETTINGS:
         return this.themeState.currentTheme === ThemeType.DARK
-          ? 'rgba(215, 230, 242, 0.12)'
-          : 'rgba(123, 138, 153, 0.07)';
+          ? 'rgba(215, 230, 242, 0.14)'
+          : 'rgba(123, 138, 153, 0.08)';
       case TabIndex.HOME:
       case TabIndex.LIBRARY:
       default:
         return this.themeState.currentTheme === ThemeType.DARK
-          ? 'rgba(110, 200, 255, 0.16)'
-          : 'rgba(10, 132, 255, 0.09)';
+          ? 'rgba(110, 200, 255, 0.18)'
+          : 'rgba(10, 132, 255, 0.10)';
     }
   }
 
-  private getBottomBarFlowAccentColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK ? '#FFE0A3' : '#FFC56F';
+  private getBottomBarIndicatorBlurStyle(): BlurStyle | undefined {
+    if (!this.userThemeBlurEnabled) {
+      return undefined;
+    }
+    return BlurStyle.COMPONENT_REGULAR;
   }
 
-  private getBottomBarContainerVisualEffect() {
-    return new hdsEffect.HdsEffectBuilder()
-      .pointLight({
-        illuminatedType: hdsEffect.PointLightIlluminatedType.DEFAULT_FEATHERING_BORDER
-      })
-      .shaderEffect({
-        effectType: hdsEffect.EffectType.DUAL_EDGE_FLOW_LIGHT,
-        animation: {
-          duration: 5200,
-          iterations: -1,
-          autoPlay: true,
-          curve: Curve.Linear,
-          expectedFrameRateRange: {
-            expected: hdsEffect.FrameRateType.FRAME_RATE_30,
-            min: hdsEffect.FrameRateType.FRAME_RATE_15,
-            max: hdsEffect.FrameRateType.FRAME_RATE_60
-          }
-        },
-        params: {
-          firstEdgeFlowLight: {
-            startPos: 0,
-            endPos: 1.0,
-            color: this.getBottomBarGlowColor(this.getBottomBarVisualTabIndex())
-          },
-          secondEdgeFlowLight: {
-            startPos: 0.45,
-            endPos: 1.45,
-            color: this.getBottomBarFlowAccentColor()
-          }
-        }
-      })
-      .buildEffect();
+  private getBottomBarIndicatorBlurOptions(): BackgroundBlurStyleOptions {
+    return {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: this.themeState.currentTheme === ThemeType.DARK ? 0.72 : 0.66,
+      policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
+    };
+  }
+
+  private getBottomBarIndicatorBackgroundEffect(): BackgroundEffectOptions | undefined {
+    if (!this.userThemeBlurEnabled) {
+      return undefined;
+    }
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        radius: 12,
+        saturation: 1.12,
+        brightness: 1.08,
+        color: 'rgba(255, 255, 255, 0.02)',
+        adaptiveColor: AdaptiveColor.DEFAULT
+      };
+    }
+    return {
+      radius: 12,
+      saturation: 1.14,
+      brightness: 1.04,
+      color: 'rgba(255, 255, 255, 0.03)',
+      adaptiveColor: AdaptiveColor.DEFAULT
+    };
+  }
+
+  private getBottomBarIndicatorBorderColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.30)'
+      : 'rgba(255, 255, 255, 0.74)';
+  }
+
+  private getBottomBarIndicatorInnerLineColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.44)'
+      : 'rgba(255, 255, 255, 0.86)';
+  }
+
+  private getBottomBarIndicatorBottomLineColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.22)'
+      : 'rgba(255, 255, 255, 0.64)';
+  }
+
+  private getBottomBarIndicatorSurfaceGradient(tabIndex: number): LinearGradient {
+    const baseColor: string = this.getBottomBarSelectedChipBackground(tabIndex);
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        angle: 180,
+        colors: [
+          ['rgba(255, 255, 255, 0.26)', 0],
+          [baseColor, 0.34],
+          [baseColor, 0.72],
+          ['rgba(255, 255, 255, 0.16)', 0.92],
+          ['rgba(255, 255, 255, 0.08)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 180,
+      colors: [
+        ['rgba(255, 255, 255, 0.66)', 0],
+        [baseColor, 0.34],
+        [baseColor, 0.74],
+        ['rgba(255, 255, 255, 0.34)', 0.92],
+        ['rgba(255, 255, 255, 0.18)', 1]
+      ]
+    };
+  }
+
+  private getBottomBarIndicatorHighlightGradient(tabIndex: number): LinearGradient {
+    const glowShadowColor: string = this.getBottomBarGlowShadowColor(tabIndex);
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        angle: 180,
+        colors: [
+          ['rgba(255, 255, 255, 0.48)', 0],
+          [glowShadowColor, 0.44],
+          ['rgba(255, 255, 255, 0.04)', 0.82],
+          ['rgba(255, 255, 255, 0)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 180,
+      colors: [
+        ['rgba(255, 255, 255, 0.78)', 0],
+        [glowShadowColor, 0.40],
+        ['rgba(255, 255, 255, 0.08)', 0.84],
+        ['rgba(255, 255, 255, 0)', 1]
+      ]
+    };
+  }
+
+  private getBottomBarIndicatorAuraGradient(tabIndex: number): RadialGradientOptions {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        center: ['50%', '50%'],
+        radius: '82%',
+        colors: [
+          [this.getBottomBarIndicatorAuraCoreColor(tabIndex), 0],
+          [this.getBottomBarIndicatorAuraMidColor(tabIndex), 0.36],
+          ['rgba(255, 255, 255, 0)', 1]
+        ]
+      };
+    }
+    return {
+      center: ['50%', '50%'],
+      radius: '78%',
+      colors: [
+        [this.getBottomBarIndicatorAuraCoreColor(tabIndex), 0],
+        [this.getBottomBarIndicatorAuraMidColor(tabIndex), 0.30],
+        ['rgba(255, 255, 255, 0)', 1]
+      ]
+    };
+  }
+
+  private getBottomBarIndicatorCoreGlowGradient(tabIndex: number): RadialGradientOptions {
+    return {
+      center: ['52%', '48%'],
+      radius: '88%',
+      colors: [
+        [this.getBottomBarIndicatorCoreGlowColor(tabIndex), 0],
+        ['rgba(255, 255, 255, 0)', 1]
+      ]
+    };
+  }
+
+  private getBottomBarIndicatorAuraCoreColor(tabIndex: number): ResourceColor {
+    switch (tabIndex) {
+      case TabIndex.DISCOVER:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(107, 230, 193, 0.28)'
+          : 'rgba(72, 204, 167, 0.20)';
+      case TabIndex.SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 190, 107, 0.28)'
+          : 'rgba(255, 176, 96, 0.20)';
+      case TabIndex.BOOK_SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 156, 112, 0.28)'
+          : 'rgba(255, 142, 100, 0.20)';
+      case TabIndex.SUWAYOMI:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(123, 207, 255, 0.30)'
+          : 'rgba(100, 192, 248, 0.20)';
+      case TabIndex.KOMGA:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(240, 199, 90, 0.28)'
+          : 'rgba(224, 175, 68, 0.20)';
+      case TabIndex.SETTINGS:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(215, 230, 242, 0.18)'
+          : 'rgba(164, 178, 191, 0.16)';
+      case TabIndex.HOME:
+      case TabIndex.LIBRARY:
+      default:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(110, 200, 255, 0.30)'
+          : 'rgba(72, 164, 255, 0.22)';
+    }
+  }
+
+  private getBottomBarIndicatorAuraMidColor(tabIndex: number): ResourceColor {
+    switch (tabIndex) {
+      case TabIndex.DISCOVER:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(107, 230, 193, 0.12)'
+          : 'rgba(72, 204, 167, 0.08)';
+      case TabIndex.SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 190, 107, 0.12)'
+          : 'rgba(255, 176, 96, 0.08)';
+      case TabIndex.BOOK_SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 156, 112, 0.12)'
+          : 'rgba(255, 142, 100, 0.08)';
+      case TabIndex.SUWAYOMI:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(123, 207, 255, 0.14)'
+          : 'rgba(100, 192, 248, 0.08)';
+      case TabIndex.KOMGA:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(240, 199, 90, 0.12)'
+          : 'rgba(224, 175, 68, 0.08)';
+      case TabIndex.SETTINGS:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(215, 230, 242, 0.08)'
+          : 'rgba(164, 178, 191, 0.06)';
+      case TabIndex.HOME:
+      case TabIndex.LIBRARY:
+      default:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(110, 200, 255, 0.14)'
+          : 'rgba(72, 164, 255, 0.08)';
+    }
+  }
+
+  private getBottomBarIndicatorCoreGlowColor(tabIndex: number): ResourceColor {
+    switch (tabIndex) {
+      case TabIndex.DISCOVER:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(183, 255, 230, 0.16)'
+          : 'rgba(180, 255, 231, 0.12)';
+      case TabIndex.SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 226, 176, 0.16)'
+          : 'rgba(255, 225, 170, 0.12)';
+      case TabIndex.BOOK_SOURCE:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 205, 182, 0.16)'
+          : 'rgba(255, 204, 178, 0.12)';
+      case TabIndex.SUWAYOMI:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(196, 233, 255, 0.18)'
+          : 'rgba(194, 231, 255, 0.12)';
+      case TabIndex.KOMGA:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 232, 178, 0.16)'
+          : 'rgba(255, 229, 172, 0.12)';
+      case TabIndex.SETTINGS:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 255, 255, 0.10)'
+          : 'rgba(255, 255, 255, 0.10)';
+      case TabIndex.HOME:
+      case TabIndex.LIBRARY:
+      default:
+        return this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(194, 232, 255, 0.18)'
+          : 'rgba(196, 232, 255, 0.12)';
+    }
   }
 
   private getBottomBarIndicatorVisualEffect() {
     const glowColor: ResourceColor = this.getBottomBarGlowColor(this.getBottomBarVisualTabIndex());
+    const glowStrength: number = 0.52 + this.bottomBarIndicatorGlowStrength * 0.48;
     const builder: hdsEffect.HdsEffectBuilder = new hdsEffect.HdsEffectBuilder();
 
     builder.pointLight({
       illuminatedType: hdsEffect.PointLightIlluminatedType.DEFAULT_FEATHERING_BORDER,
       options: {
         color: glowColor,
-        intensity: this.themeState.currentTheme === ThemeType.DARK ? 0.42 : 0.24,
+        intensity: (this.themeState.currentTheme === ThemeType.DARK ? 0.36 : 0.24) * glowStrength,
         height: this.themeState.currentTheme === ThemeType.DARK ? 60 : 48,
-        bloom: this.themeState.currentTheme === ThemeType.DARK ? 0.34 : 0.16
-      }
-    });
-
-    builder.shaderEffect({
-      effectType: hdsEffect.EffectType.DUAL_EDGE_FLOW_LIGHT,
-      animation: {
-        duration: 2600,
-        iterations: -1,
-        autoPlay: true,
-        curve: Curve.Linear,
-        expectedFrameRateRange: {
-          expected: hdsEffect.FrameRateType.FRAME_RATE_30,
-          min: hdsEffect.FrameRateType.FRAME_RATE_15,
-          max: hdsEffect.FrameRateType.FRAME_RATE_60
-        }
-      },
-      params: {
-        firstEdgeFlowLight: {
-          startPos: -0.08,
-          endPos: 0.92,
-          color: glowColor
-        },
-        secondEdgeFlowLight: {
-          startPos: 0.46,
-          endPos: 1.46,
-          color: this.getBottomBarFlowAccentColor()
-        }
+        bloom: (this.themeState.currentTheme === ThemeType.DARK ? 0.28 : 0.14) * (0.68 + this.bottomBarIndicatorGlowStrength * 0.32)
       }
     });
 
@@ -26034,56 +26951,86 @@ struct MainMenuPage {
     return true;
   }
 
-  private beginBottomBarFakeDrag(): void {
+  private beginBottomBarFakeDrag(event: GestureEvent): void {
     if (!this.canStartBottomBarFakeDrag()) {
       return;
     }
-    this.bottomBarFakeDragLastOffsetX = 0;
+    const pressProgress: number = this.getBottomBarIndicatorProgressFromLocalX(this.getBottomBarGestureLocalX(event));
+    this.isBottomBarIndicatorDragging = true;
+    this.bottomBarFakeDragLastProgress = pressProgress;
+    this.bottomBarFakeDragLastOffsetX = event.offsetX;
+    this.showBottomBarIndicator(pressProgress, true);
     try {
       this.tabsController.finishAnimation();
     } catch (error) {
       logger.debug(TAG, `底栏开始拖动前结束动画失败: ${String(error)}`);
     }
     this.isBottomBarFakeDragging = this.tabsController.startFakeDrag();
-    if (this.isBottomBarFakeDragging) {
-      this.suppressTabClickUntil = Date.now() + 180;
-    }
+    this.suppressTabClickUntil = Date.now() + 180;
   }
 
   private updateBottomBarFakeDrag(event: GestureEvent): void {
-    if (!this.isBottomBarFakeDragging) {
+    if (!this.isBottomBarIndicatorDragging && !this.isBottomBarFakeDragging) {
       return;
     }
+    const progress: number = this.getBottomBarIndicatorProgressFromLocalX(this.getBottomBarGestureLocalX(event));
+    this.bottomBarIndicatorInteractiveProgress = progress;
+    this.bottomBarIndicatorGlowStrength = 1;
+    this.bottomBarIndicatorLiftY = 0;
+    this.bottomBarIndicatorOpacity = 1;
+    this.bottomBarIndicatorScale = 1;
+    const deltaProgress: number = progress - this.bottomBarFakeDragLastProgress;
+    this.bottomBarFakeDragLastProgress = progress;
     const deltaX: number = event.offsetX - this.bottomBarFakeDragLastOffsetX;
     this.bottomBarFakeDragLastOffsetX = event.offsetX;
-    if (Math.abs(deltaX) < 0.01) {
+    if (!this.isBottomBarFakeDragging || Math.abs(deltaProgress) < 0.0001) {
       return;
     }
-    this.tabsController.fakeDragBy(deltaX);
+    const contentDeltaX: number = -deltaProgress * this.getBottomBarFakeDragAxisLength();
+    if (Math.abs(contentDeltaX) < 0.01 && Math.abs(deltaX) < 0.01) {
+      return;
+    }
+    this.tabsController.fakeDragBy(contentDeltaX);
   }
 
   private endBottomBarFakeDrag(): void {
-    if (!this.isBottomBarFakeDragging) {
+    if (!this.isBottomBarIndicatorDragging && !this.isBottomBarFakeDragging) {
       return;
     }
     const currentActualIndex: number = this.getActualTabsIndexForTabIndex(this.lastCommittedTabIndex);
     const targetActualIndex: number = this.getBottomBarVisualActualIndex();
+    const targetTabIndex: number = this.getTabIndexForActualTabsIndex(targetActualIndex);
+    const wasFakeDragging: boolean = this.isBottomBarFakeDragging;
+    this.isBottomBarIndicatorDragging = false;
     this.isBottomBarFakeDragging = false;
     this.bottomBarFakeDragLastOffsetX = 0;
+    this.bottomBarFakeDragLastProgress = 0;
     this.suppressTabClickUntil = Date.now() + 180;
-    const stopped: boolean = this.tabsController.stopFakeDrag();
-    if (!stopped) {
-      this.syncBottomBarVisualProgressFromActualIndex(this.getActualTabsIndexForTabIndex(this.currentTabIndex));
+    let stopped: boolean = false;
+    if (wasFakeDragging) {
+      stopped = this.tabsController.stopFakeDrag();
+    }
+    this.pulseBottomBarIndicator(targetActualIndex);
+    if (targetActualIndex === currentActualIndex) {
+      this.triggerBottomBarSelectionBounce(targetTabIndex);
+      this.hideBottomBarIndicator(240);
       return;
     }
-    if (targetActualIndex !== currentActualIndex) {
+    if (stopped || !wasFakeDragging) {
       this.changeMainContentToActualIndex(targetActualIndex, true);
+      this.hideBottomBarIndicator(360);
+      return;
     }
+    this.syncBottomBarVisualProgressFromActualIndex(this.getActualTabsIndexForTabIndex(this.currentTabIndex));
+    this.hideBottomBarIndicator(180);
   }
 
   private handleMainContentDidScroll(_selectedIndex: number, index: number, position: number, _mainAxisLength: number): void {
     if (index < 0) {
       return;
+    }
+    if (_mainAxisLength > 0) {
+      this.bottomBarFakeDragMainAxisLength = _mainAxisLength;
     }
     this.bottomBarVisualProgress = this.clampBottomBarVisualProgress(index - position);
   }
@@ -26233,10 +27180,16 @@ struct MainMenuPage {
     const previousTabIndex = this.lastCommittedTabIndex;
     const tabIndex = this.getTabIndexForActualTabsIndex(actualIndex);
     this.isBottomBarFakeDragging = false;
+    this.isBottomBarIndicatorDragging = false;
     this.bottomBarFakeDragLastOffsetX = 0;
+    this.bottomBarFakeDragLastProgress = 0;
     this.lastCommittedTabIndex = tabIndex;
     this.currentTabIndex = tabIndex;
     this.syncBottomBarVisualProgressFromActualIndex(actualIndex);
+    if (this.bottomBarIndicatorVisible) {
+      this.bottomBarIndicatorInteractiveProgress = this.clampBottomBarVisualProgress(actualIndex);
+      this.hideBottomBarIndicator(this.BOTTOM_BAR_INDICATOR_HIDE_DELAY);
+    }
     this.scrollSideTabToCenter(tabIndex);
     logger.info(TAG, `标签页切换: 实际位置=${actualIndex}, TabIndex=${tabIndex}`);
     if (previousTabIndex !== tabIndex) {
@@ -26439,27 +27392,23 @@ struct MainMenuPage {
           .height(this.BOTTOM_BAR_HEIGHT)
           .borderRadius(this.getGlassRadius())
           .clip(true)
-          .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-            ? 'rgba(10, 16, 24, 0.42)'
-            : 'rgba(255, 255, 255, 0.40)')
-          .backgroundBlurStyle(BlurStyle.BACKGROUND_THICK, {
-            colorMode: ThemeColorMode.SYSTEM,
-            adaptiveColor: AdaptiveColor.DEFAULT,
-            scale: this.themeState.currentTheme === ThemeType.DARK ? 1.12 : 1.08
+          .backgroundColor(this.getBottomBarContainerBackground())
+          .backgroundBlurStyle(this.getBottomBarContainerBlurStyle(), this.getBottomBarContainerBlurOptions())
+          .backgroundEffect(this.getBottomBarContainerBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getBottomBarContainerBorderColor()
           })
           .shadow({
-            radius: 20,
-            color: this.userThemeShadowEnabled
-              ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.34)' : 'rgba(0, 0, 0, 0.12)')
-              : 'rgba(0, 0, 0, 0)',
+            radius: 22,
+            color: this.getBottomBarContainerShadowColor(),
             offsetX: 0,
-            offsetY: 6
+            offsetY: 8
           })
-          .visualEffect(this.getBottomBarContainerVisualEffect())
           .gesture(
-            PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
-              .onActionStart(() => {
-                this.beginBottomBarFakeDrag();
+            PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 1 })
+              .onActionStart((event: GestureEvent) => {
+                this.beginBottomBarFakeDrag(event);
               })
               .onActionUpdate((event: GestureEvent) => {
                 this.updateBottomBarFakeDrag(event);

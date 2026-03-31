@@ -517,12 +517,14 @@ export class AppColors {
   static get glassCard(): string { return AppColors.getGlassToken(GlassLevel.CARD).backgroundColor; }
   static get glassSheet(): string { return AppColors.getGlassToken(GlassLevel.SHEET).backgroundColor; }
   static get glassFloating(): string { return AppColors.getGlassToken(GlassLevel.FLOATING).backgroundColor; }
+  static get glassFeatured(): string { return AppColors.getGlassToken(GlassLevel.FEATURED).backgroundColor; }
 
   static get glassHeroBorder(): string { return AppColors.getGlassToken(GlassLevel.HERO).borderColor; }
   static get glassNavigationBorder(): string { return AppColors.getGlassToken(GlassLevel.NAVIGATION).borderColor; }
   static get glassCardBorder(): string { return AppColors.getGlassToken(GlassLevel.CARD).borderColor; }
   static get glassSheetBorder(): string { return AppColors.getGlassToken(GlassLevel.SHEET).borderColor; }
   static get glassFloatingBorder(): string { return AppColors.getGlassToken(GlassLevel.FLOATING).borderColor; }
+  static get glassFeaturedBorder(): string { return AppColors.getGlassToken(GlassLevel.FEATURED).borderColor; }
   
   // ==================== 工具方法 ====================
 

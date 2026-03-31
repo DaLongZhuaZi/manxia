@@ -1,12 +1,12 @@
-/**
- * 字典规则管理页面
- * 管理在线词典查询规则
+﻿/**
+ * 瀛楀吀瑙勫垯绠＄悊椤甸潰
+ * 绠＄悊鍦ㄧ嚎璇嶅吀鏌ヨ瑙勫垯
  * 
- * 文件路径: entry/src/main/ets/pages/NovelDictRulePage.ets
+ * 鏂囦欢璺緞: entry/src/main/ets/pages/NovelDictRulePage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
@@ -17,9 +17,10 @@ import { getNovelDictRuleManager, DictRule, AddDictRuleParams } from '../Framewo
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelDictRulePage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 @Component
 export struct NovelDictRulePage {
@@ -37,12 +38,12 @@ export struct NovelDictRulePage {
   @State showAddDialog: boolean = false;
   @State editingRule: DictRule | null = null;
   
-  // 表单数据
+  // 琛ㄥ崟鏁版嵁
   @State formName: string = '';
   @State formUrlRule: string = '';
   @State formShowRule: string = '';
   
-  // 测试相关
+  // 娴嬭瘯鐩稿叧
   @State testWord: string = '';
   @State testResult: string = '';
   @State isTesting: boolean = false;
@@ -51,7 +52,7 @@ export struct NovelDictRulePage {
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
-      logger.info(TAG, `主题切换: ${theme}`);
+      logger.info(TAG, `涓婚鍒囨崲: ${theme}`);
     });
     FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
       this.fontState = newState;
@@ -66,11 +67,11 @@ export struct NovelDictRulePage {
   async loadRules(): Promise<void> {
     this.isLoading = true;
     try {
-      // 确保管理器已初始化
+      // 纭繚绠＄悊鍣ㄥ凡鍒濆鍖?
       await this.ruleManager.initialize();
       this.rules = this.ruleManager.getAllRules();
     } catch (error) {
-      logger.error(TAG, `加载规则失败: ${String(error)}`);
+      logger.error(TAG, `鍔犺浇瑙勫垯澶辫触: ${String(error)}`);
     }
     this.isLoading = false;
   }
@@ -86,13 +87,13 @@ export struct NovelDictRulePage {
 
   async saveRule(): Promise<void> {
     if (!this.formName.trim() || !this.formUrlRule.trim()) {
-      promptAction.showToast({ message: '请填写规则名称和URL规则' });
+      promptAction.showToast({ message: '请填写规则名称和 URL 规则' });
       return;
     }
 
-    // 验证URL规则包含占位符
+    // 楠岃瘉URL瑙勫垯鍖呭惈鍗犱綅绗?
     if (!this.formUrlRule.includes('{{key}}')) {
-      promptAction.showToast({ message: 'URL规则必须包含 {{key}} 占位符' });
+      promptAction.showToast({ message: 'URL 规则必须包含 {{key}} 占位符' });
       return;
     }
 
@@ -116,17 +117,17 @@ export struct NovelDictRulePage {
       this.resetForm();
       this.loadRules();
     } catch (error) {
-      promptAction.showToast({ message: `保存失败: ${String(error)}` });
+      promptAction.showToast({ message: `淇濆瓨澶辫触: ${String(error)}` });
     }
   }
 
   async deleteRule(rule: DictRule): Promise<void> {
     promptAction.showDialog({
-      title: '确认删除',
-      message: `确定要删除规则"${rule.name}"吗？`,
+      title: '纭鍒犻櫎',
+      message: `确定要删除规则 "${rule.name}" 吗？`,
       buttons: [
-        { text: '取消', color: '#666666' },
-        { text: '删除', color: '#FF4D4F' }
+        { text: '鍙栨秷', color: '#666666' },
+        { text: '鍒犻櫎', color: '#FF4D4F' }
       ]
     }).then(async (result) => {
       if (result.index === 1) {
@@ -152,7 +153,7 @@ export struct NovelDictRulePage {
 
   async testDictRule(): Promise<void> {
     if (!this.formUrlRule.trim()) {
-      this.testResult = '请先输入URL规则';
+      this.testResult = '请先输入 URL 规则';
       return;
     }
     if (!this.testWord.trim()) {
@@ -164,24 +165,24 @@ export struct NovelDictRulePage {
     this.testResult = '正在查询...';
 
     try {
-      // 构建测试URL
+      // 鏋勫缓娴嬭瘯URL
       const testUrl = this.formUrlRule.replace(/\{\{key\}\}/g, encodeURIComponent(this.testWord));
-      this.testResult = `✓ 生成的URL:\n${testUrl}`;
+      this.testResult = `生成的 URL:\n${testUrl}`;
     } catch (error) {
-      this.testResult = `✗ 测试失败: ${String(error)}`;
+      this.testResult = `测试失败: ${String(error)}`;
     }
 
     this.isTesting = false;
   }
 
   /**
-   * 显示导入选项菜单
+   * 鏄剧ず瀵煎叆閫夐」鑿滃崟
    */
   showImportOptions(): void {
     promptAction.showActionMenu({
       title: '选择导入方式',
       buttons: [
-        { text: '从剪贴板导入', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '浠庡壀璐存澘瀵煎叆', color: $r('sys.color.ohos_id_color_text_primary') },
         { text: '从本地文件导入', color: $r('sys.color.ohos_id_color_text_primary') },
         { text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') }
       ]
@@ -206,18 +207,18 @@ export struct NovelDictRulePage {
         if (text) {
           const result = await this.ruleManager.importFromJSON(text);
           promptAction.showToast({ 
-            message: `导入完成: ${result.success}/${result.total} 成功` 
+            message: `瀵煎叆瀹屾垚: ${result.success}/${result.total} 鎴愬姛` 
           });
           this.loadRules();
         }
       }
     } catch (error) {
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      promptAction.showToast({ message: `瀵煎叆澶辫触: ${String(error)}` });
     }
   }
 
   /**
-   * 从本地文件导入规则
+   * 浠庢湰鍦版枃浠跺鍏ヨ鍒?
    */
   async importFromFile(): Promise<void> {
     try {
@@ -233,25 +234,25 @@ export struct NovelDictRulePage {
         fileSuffixFilters: ['.json', '.txt'],
       };
 
-      logger.info(TAG, '打开文件选择器，选择字典规则文件');
+      logger.info(TAG, '鎵撳紑鏂囦欢閫夋嫨鍣紝閫夋嫨瀛楀吀瑙勫垯鏂囦欢');
       const selectResult = await documentPicker.select(selectOptions);
       
       if (!selectResult || selectResult.length === 0) {
-        logger.info(TAG, '用户取消了文件选择');
+        logger.info(TAG, '鐢ㄦ埛鍙栨秷浜嗘枃浠堕€夋嫨');
         return;
       }
 
       const fileUri = selectResult[0];
-      logger.info(TAG, `用户选择了文件: ${fileUri}`);
+      logger.info(TAG, `鐢ㄦ埛閫夋嫨浜嗘枃浠? ${fileUri}`);
       
-      // 读取文件内容
+      // 璇诲彇鏂囦欢鍐呭
       const file = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
       const stat = fs.statSync(file.fd);
       const fileSize = stat.size;
       
       if (fileSize > 50 * 1024 * 1024) {
         fs.closeSync(file);
-        promptAction.showToast({ message: '文件过大，最大支持50MB' });
+        promptAction.showToast({ message: '鏂囦欢杩囧ぇ锛屾渶澶ф敮鎸?0MB' });
         return;
       }
       
@@ -263,24 +264,24 @@ export struct NovelDictRulePage {
       const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
       const jsonContent = decoder.decode(uint8Array);
       
-      logger.info(TAG, `读取到文件内容，长度: ${jsonContent.length}`);
+      logger.info(TAG, `璇诲彇鍒版枃浠跺唴瀹癸紝闀垮害: ${jsonContent.length}`);
       
-      // 导入规则
+      // 瀵煎叆瑙勫垯
       const result = await this.ruleManager.importFromJSON(jsonContent);
       
       if (result.success > 0) {
         promptAction.showToast({ 
-          message: `导入完成: ${result.success}/${result.total} 成功` 
+          message: `瀵煎叆瀹屾垚: ${result.success}/${result.total} 鎴愬姛` 
         });
         this.loadRules();
       } else {
         promptAction.showToast({ 
-          message: `导入失败: ${result.errors.join(', ')}` 
+          message: `瀵煎叆澶辫触: ${result.errors.join(', ')}` 
         });
       }
     } catch (error) {
-      logger.error(TAG, `从文件导入失败: ${String(error)}`);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      logger.error(TAG, `浠庢枃浠跺鍏ュけ璐? ${String(error)}`);
+      promptAction.showToast({ message: `瀵煎叆澶辫触: ${String(error)}` });
     }
   }
 
@@ -292,7 +293,7 @@ export struct NovelDictRulePage {
       await systemPasteboard.setData(pasteData);
       promptAction.showToast({ message: '已复制到剪贴板' });
     } catch (error) {
-      promptAction.showToast({ message: `导出失败: ${String(error)}` });
+      promptAction.showToast({ message: `瀵煎嚭澶辫触: ${String(error)}` });
     }
   }
 
@@ -313,10 +314,48 @@ export struct NovelDictRulePage {
     });
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'add',
+        label: '娣诲姞',
+        symbol: $r('sys.symbol.plus'),
+        onClick: () => {
+          this.resetForm();
+          this.showAddDialog = true;
+        }
+      },
+      {
+        id: 'import',
+        label: '瀵煎叆',
+        symbol: $r('sys.symbol.download'),
+        onClick: () => {
+          this.showImportOptions();
+        }
+      },
+      {
+        id: 'export',
+        label: '瀵煎嚭',
+        symbol: $r('sys.symbol.upload'),
+        onClick: () => {
+          void this.exportToClipboard();
+        }
+      },
+      {
+        id: 'reset',
+        label: '閲嶇疆',
+        symbol: $r('sys.symbol.arrow_counterclockwise'),
+        onClick: () => {
+          void this.resetToDefault();
+        }
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层
+        // 鑳屾櫙灞?
         Column()
           .width('100%')
           .height('100%')
@@ -325,7 +364,7 @@ export struct NovelDictRulePage {
         
         if (this.isLoading) {
           Column() {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildLoading()
           }
           .width('100%')
@@ -333,7 +372,7 @@ export struct NovelDictRulePage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else if (this.rules.length === 0) {
           Column() {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildEmpty()
           }
           .width('100%')
@@ -342,7 +381,9 @@ export struct NovelDictRulePage {
         } else {
           List() {
             ListItem() {
-              Column().height(TITLE_BAR_HEIGHT_MINI)
+              Column()
+                .width('100%')
+                .height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             }
             ForEach(this.rules, (rule: DictRule) => {
               ListItem() {
@@ -365,64 +406,19 @@ export struct NovelDictRulePage {
         if (this.showAddDialog) {
           this.buildAddDialog()
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '字典规则',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: '字典规则'
-        },
-        menu: {
-          value: [{
-            content: {
-              label: '添加',
-              icon: $r('sys.symbol.plus'),
-              isEnabled: true,
-              action: () => { 
-                this.resetForm();
-                this.showAddDialog = true;
-              }
-            }
-          }, {
-            content: {
-              label: '导入',
-              icon: $r('sys.symbol.download'),
-              isEnabled: true,
-              action: () => { this.showImportOptions(); }
-            }
-          }, {
-            content: {
-              label: '导出',
-              icon: $r('sys.symbol.upload'),
-              isEnabled: true,
-              action: () => { this.exportToClipboard(); }
-            }
-          }, {
-            content: {
-              label: '重置',
-              icon: $r('sys.symbol.arrow_counterclockwise'),
-              isEnabled: true,
-              action: () => { this.resetToDefault(); }
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       this.loadRules();
@@ -445,12 +441,12 @@ export struct NovelDictRulePage {
   @Builder
   buildEmpty() {
     Column() {
-      Text('暂无字典规则')
+      Text('鏆傛棤瀛楀吀瑙勫垯')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       
-      Button('添加规则')
+      Button('娣诲姞瑙勫垯')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
@@ -487,14 +483,14 @@ export struct NovelDictRulePage {
   @Builder
   buildRuleItem(rule: DictRule) {
     Row() {
-      // 状态指示
+      // 鐘舵€佹寚绀?
       Column()
         .width(4)
         .height(40)
         .borderRadius(2)
         .backgroundColor(rule.enabled ? '#52C41A' : '#D9D9D9')
       
-      // 信息
+      // 淇℃伅
       Column() {
         Text(rule.name)
           .fontSize(15)
@@ -516,7 +512,7 @@ export struct NovelDictRulePage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 12 })
       
-      // 开关
+      // 寮€鍏?
       Toggle({ type: ToggleType.Switch, isOn: rule.enabled })
         .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .onChange((isOn: boolean) => {
@@ -536,7 +532,7 @@ export struct NovelDictRulePage {
   @Builder
   buildSwipeActions(rule: DictRule) {
     Row() {
-      Button('删除')
+      Button('鍒犻櫎')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
@@ -550,7 +546,7 @@ export struct NovelDictRulePage {
   @Builder
   buildAddDialog() {
     Column() {
-      // 遮罩
+      // 閬僵
       Column()
         .width('100%')
         .layoutWeight(1)
@@ -561,17 +557,17 @@ export struct NovelDictRulePage {
         })
         .transition(TransitionEffect.opacity(0).animation({ duration: 250, curve: Curve.EaseOut }))
       
-      // 对话框
+      // 瀵硅瘽妗?
       Column() {
-        Text(this.editingRule ? '编辑规则' : '添加规则')
+        Text(this.editingRule ? '缂栬緫瑙勫垯' : '娣诲姞瑙勫垯')
           .fontSize(18)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .margin({ top: 20 })
         
-        // 规则名称
-        TextInput({ placeholder: '规则名称 (如: 百度百科)', text: this.formName })
+        // 瑙勫垯鍚嶇О
+        TextInput({ placeholder: '瑙勫垯鍚嶇О (濡? 鐧惧害鐧剧)', text: this.formName })
           .width('100%')
           .height(44)
           .margin({ top: 16 })
@@ -581,8 +577,8 @@ export struct NovelDictRulePage {
             this.formName = value;
           })
         
-        // URL规则
-        TextArea({ placeholder: 'URL规则 (使用 {{key}} 作为关键词占位符)\n如: https://baike.baidu.com/item/{{key}}', text: this.formUrlRule })
+        // URL瑙勫垯
+        TextArea({ placeholder: 'URL瑙勫垯 (浣跨敤 {{key}} 浣滀负鍏抽敭璇嶅崰浣嶇)\n濡? https://baike.baidu.com/item/{{key}}', text: this.formUrlRule })
           .width('100%')
           .height(80)
           .margin({ top: 12 })
@@ -592,8 +588,8 @@ export struct NovelDictRulePage {
             this.formUrlRule = value;
           })
         
-        // 显示规则（可选）
-        TextInput({ placeholder: '显示规则 (可选，用于提取结果的正则)', text: this.formShowRule })
+        // 鏄剧ず瑙勫垯锛堝彲閫夛級
+        TextInput({ placeholder: '鏄剧ず瑙勫垯 (鍙€夛紝鐢ㄤ簬鎻愬彇缁撴灉鐨勬鍒?', text: this.formShowRule })
           .width('100%')
           .height(44)
           .margin({ top: 12 })
@@ -603,8 +599,8 @@ export struct NovelDictRulePage {
             this.formShowRule = value;
           })
         
-        // 测试区域
-        Text('测试规则')
+        // 娴嬭瘯鍖哄煙
+        Text('娴嬭瘯瑙勫垯')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -612,7 +608,7 @@ export struct NovelDictRulePage {
           .alignSelf(ItemAlign.Start)
         
         Row() {
-          TextInput({ placeholder: '输入测试词语...', text: this.testWord })
+          TextInput({ placeholder: '杈撳叆娴嬭瘯璇嶈...', text: this.testWord })
             .layoutWeight(1)
             .height(40)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
@@ -621,7 +617,7 @@ export struct NovelDictRulePage {
               this.testWord = value;
             })
           
-          Button('测试')
+          Button('娴嬭瘯')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -638,15 +634,15 @@ export struct NovelDictRulePage {
           Text(this.testResult)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(this.testResult.startsWith('✓') ? '#52C41A' : '#FF4D4F')
+            .fontColor(this.testResult.startsWith('生成的 URL') ? '#52C41A' : '#FF4D4F')
             .margin({ top: 8 })
             .maxLines(5)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         
-        // 按钮
+        // 鎸夐挳
         Row() {
-          Button('取消')
+          Button('鍙栨秷')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -659,7 +655,7 @@ export struct NovelDictRulePage {
               this.resetForm();
             })
           
-          Button('保存')
+          Button('淇濆瓨')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')

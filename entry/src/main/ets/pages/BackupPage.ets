@@ -39,6 +39,8 @@ import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'BackupPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -346,7 +348,7 @@ struct BackupPage {
     if (anchorId === 'guide_backup_tabs') {
       return {
         x: rect.x,
-        y: rect.y + TITLE_BAR_HEIGHT_MINI,
+        y: rect.y + this.getTitleBarSpacerHeight(),
         width: rect.width,
         height: rect.height,
         borderRadius: rect.borderRadius
@@ -443,11 +445,27 @@ struct BackupPage {
       this.scroller,
       anchorId,
       'guide_backup_scroll',
-      TITLE_BAR_HEIGHT_MINI + 18,
+      this.getTitleBarSpacerHeight() + 18,
       32,
       280
     );
     return scrollResult.available && scrollResult.scrolled;
+  }
+
+  private getTitleBarSpacerHeight(): number {
+    const statusBarHeight = AppStorage.get<number>('statusBarHeight');
+    return SettingsPageTitleBarManager.getContentTopPadding(statusBarHeight ?? 0);
+  }
+
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [{
+      id: 'help',
+      label: '帮助',
+      symbol: $r('sys.symbol.questionmark_circle'),
+      onClick: () => {
+        this.showBackupHelp();
+      }
+    }];
   }
   
   /**
@@ -1876,7 +1894,7 @@ struct BackupPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(this.getTitleBarSpacerHeight())
           
           // Tab切换栏
           this.buildTabBar()
@@ -1931,6 +1949,13 @@ struct BackupPage {
         .height('100%')
         .id('guide_backup_root')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '备份与恢复',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
         
         // 对话框层
         this.buildBackupOptionsDialog()
@@ -1961,8 +1986,10 @@ struct BackupPage {
       .width('100%')
       .height('100%')
     }
-  .hideTitleBar(false)
+  .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .mode(NavDestinationMode.STANDARD)
+    /*
     .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
@@ -1993,6 +2020,7 @@ struct BackupPage {
         }
       }
     })
+    */
     .onShown(() => {
       void this.refreshPageGuide('onShown');
     })

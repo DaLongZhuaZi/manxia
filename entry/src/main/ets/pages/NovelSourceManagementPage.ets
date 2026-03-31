@@ -13,8 +13,8 @@
  * 文件路径: entry/src/main/ets/pages/NovelSourceManagementPage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
@@ -40,6 +40,8 @@ import { ValidationProgressDialog, ValidationProgressController, ValidationProgr
 import { GroupManagementDialog, GroupInfo, GroupOperationCallback, SplitCondition } from '../Framework/Components/GroupManagementDialog';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { FileEditorParams } from './FileEditorPage';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelSourceManagementPage';
 
@@ -59,8 +61,6 @@ interface SourceMenuItem {
   icon: Resource;
   action: string;
 }
-
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 @Component
 export struct NovelSourceManagementPage {
@@ -310,6 +310,59 @@ export struct NovelSourceManagementPage {
     this.applyFilter();
   }
 
+  private toggleSearchBar(): void {
+    this.showSearchBar = !this.showSearchBar;
+    if (!this.showSearchBar) {
+      this.searchKeyword = '';
+      this.applyFilter();
+    }
+  }
+
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'search',
+        label: '搜索',
+        symbol: $r('sys.symbol.magnifyingglass'),
+        onClick: () => {
+          this.toggleSearchBar();
+        }
+      },
+      {
+        id: 'multiSelect',
+        label: this.isMultiSelectMode ? '取消多选' : '多选',
+        symbol: $r('sys.symbol.checkmark'),
+        onClick: () => {
+          this.toggleMultiSelectMode();
+        }
+      },
+      {
+        id: 'import',
+        label: '导入书源',
+        symbol: $r('sys.symbol.folder'),
+        onClick: () => {
+          this.showImportOptions();
+        }
+      },
+      {
+        id: 'validate',
+        label: '校验书源',
+        symbol: $r('sys.symbol.wrench_arrow_counterclockwise'),
+        onClick: () => {
+          void this.validateAllSources();
+        }
+      },
+      {
+        id: 'more',
+        label: '更多',
+        symbol: $r('sys.symbol.more'),
+        onClick: () => {
+          this.showMoreOptions();
+        }
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -327,7 +380,7 @@ export struct NovelSourceManagementPage {
         // 内容层：预留标题栏高度
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           
           // 搜索栏（可隐藏，带动画）
           Column() {
@@ -384,76 +437,21 @@ export struct NovelSourceManagementPage {
           this.buildOperatingOverlay()
         }
 
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '书源管理',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
+
       }
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .width('100%')
       .height('100%')
       .id('guide_novel_source_root')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: '书源管理'
-        },
-        menu: {
-          value: [{
-            content: {
-              label: '搜索',
-              icon: $r('sys.symbol.magnifyingglass'),
-              isEnabled: true,
-              action: () => { 
-                this.showSearchBar = !this.showSearchBar;
-                if (!this.showSearchBar) {
-                  this.searchKeyword = '';
-                  this.applyFilter();
-                }
-              }
-            }
-          }, {
-            content: {
-              label: this.isMultiSelectMode ? '取消多选' : '多选',
-              icon: $r('sys.symbol.checkmark'),
-              isEnabled: true,
-              action: () => { this.toggleMultiSelectMode(); }
-            }
-          }, {
-            content: {
-              label: '导入书源',
-              icon: $r('sys.symbol.folder'),
-              isEnabled: true,
-              action: () => { this.showImportOptions(); }
-            }
-          }, {
-            content: {
-              label: '校验书源',
-              icon: $r('sys.symbol.wrench_arrow_counterclockwise'),
-              isEnabled: true,
-              action: () => { this.validateAllSources(); }
-            }
-          }, {
-            content: {
-              label: '更多',
-              icon: $r('sys.symbol.more'),
-              isEnabled: true,
-              action: () => { this.showMoreOptions(); }
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');

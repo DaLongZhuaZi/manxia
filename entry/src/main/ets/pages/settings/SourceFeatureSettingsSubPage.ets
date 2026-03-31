@@ -7,12 +7,15 @@ import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsM
 import { logger } from '../../Utils/Logger';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 
 const TAG = 'SourceFeatureSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 @Component
 export struct SourceFeatureSettingsSubPage {
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
@@ -96,7 +99,7 @@ export struct SourceFeatureSettingsSubPage {
 
         Scroll() {
           Column({ space: 16 }) {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildToggleCard()
             Blank().height(40)
           }
@@ -108,18 +111,15 @@ export struct SourceFeatureSettingsSubPage {
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '源功能设置',
+          appFontFamily: this.appFontFamily
+        })
       }
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      content: {
-        title: { mainTitle: '源功能设置' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
   }
 }
-

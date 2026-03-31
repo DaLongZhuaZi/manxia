@@ -669,6 +669,54 @@ export struct MainMenuKomgaTabContent {
     this.pathStack.pushPathByName('KomgaMangaDetailPage', params);
   }
 
+  private getBrowseModeLabel(): string {
+    return this.browseMode === 'library' ? '库模式' : '发现模式';
+  }
+
+  private getFeedTypeLabel(): string {
+    if (this.feedType === 'LATEST') {
+      return '最新';
+    }
+    if (this.feedType === 'SEARCH') {
+      return '搜索';
+    }
+    return '热门';
+  }
+
+  private getCurrentSortLabel(): string {
+    const option = KOMGA_SORT_OPTIONS.find((item: KomgaSortOption) => item.key === this.filters.sortKey);
+    return option ? option.label : '相关度';
+  }
+
+  private getResultSummaryText(): string {
+    if (this.items.length > 0) {
+      return `共 ${this.items.length} 项`;
+    }
+    if (this.isLoading) {
+      return '正在加载';
+    }
+    if (this.errorMessage.length > 0) {
+      return '加载失败';
+    }
+    return '等待加载内容';
+  }
+
+  private getItemDescription(item: ComicInfo): string {
+    const description = (item.description || '').trim();
+    if (description.length > 0) {
+      return description;
+    }
+    const summary = this.getStringField(item, 'summary').trim();
+    if (summary.length > 0) {
+      return summary;
+    }
+    const seriesTitle = this.getStringField(item, 'seriesTitle').trim();
+    if (seriesTitle.length > 0 && seriesTitle !== item.title) {
+      return seriesTitle;
+    }
+    return '';
+  }
+
   @Builder
   private buildToolbarButton(icon: Resource, action: () => void) {
     Button() {
@@ -686,12 +734,12 @@ export struct MainMenuKomgaTabContent {
   @Builder
   private buildChip(label: string, selected: boolean, action: () => void) {
     Text(label)
-      .fontSize(12)
+      .fontSize(13)
       .fontColor(selected ? Color.White : this.color('text_primary'))
       .fontFamily(this.appFontFamily)
       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
       .backgroundColor(selected ? this.color('accent_blue') : this.color('comp_background_tertiary'))
-      .borderRadius(999)
+      .borderRadius(16)
       .margin({ right: 8, bottom: 8 })
       .onClick(() => action())
   }
@@ -707,38 +755,16 @@ export struct MainMenuKomgaTabContent {
   }
 
   @Builder
-  private buildStatCard(title: string, value: string) {
-    Column({ space: 6 }) {
-      Text(title)
-        .fontSize(11)
-        .fontColor(this.color('text_muted'))
-        .fontFamily(this.appFontFamily)
-      Text(value)
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.color('text_primary'))
-        .fontFamily(this.appFontFamily)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .width('31.5%')
-    .padding(14)
-    .backgroundColor(this.color('comp_background_tertiary'))
-    .borderRadius(16)
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
   private buildOverviewPanel() {
-    Column({ space: 14 }) {
-      Row({ space: 10 }) {
+    Column({ space: 8 }) {
+      Row({ space: 12 }) {
         Column({ space: 6 }) {
           Text('Komga')
             .fontSize(22)
             .fontWeight(FontWeight.Bold)
             .fontColor(this.color('text_primary'))
             .fontFamily(this.appFontFamily)
-          Text(`${this.getCurrentInstanceLabel()} · ${this.browseMode === 'library' ? '库模式' : '发现模式'} · ${this.getCurrentContentTypeLabel()}`)
+          Text(`${this.getCurrentInstanceLabel()} · ${this.getBrowseModeLabel()} · ${this.getCurrentContentTypeLabel()}`)
             .fontSize(12)
             .fontColor(this.color('text_muted'))
             .fontFamily(this.appFontFamily)
@@ -751,75 +777,81 @@ export struct MainMenuKomgaTabContent {
         this.buildToolbarButton($r('sys.symbol.arrow_clockwise'), () => {
           void this.refreshContent();
         })
-        this.buildToolbarButton($r('sys.symbol.gearshape'), () => {
-          this.openSettings();
-        })
       }
       .width('100%')
 
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-        this.buildStatCard('实例', `${this.instances.length}`)
-        this.buildStatCard('结果', `${this.items.length}`)
-        this.buildStatCard('筛选', `${this.getActiveFilterCount()}`)
+      Row({ space: 8 }) {
+        Text(`${this.instances.length} 个实例`)
+          .fontSize(11)
+          .fontColor(this.color('text_muted'))
+          .fontFamily(this.appFontFamily)
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .backgroundColor(this.color('comp_background_tertiary'))
+          .borderRadius(999)
+        Text(this.getResultSummaryText())
+          .fontSize(11)
+          .fontColor(this.color('text_muted'))
+          .fontFamily(this.appFontFamily)
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .backgroundColor(this.color('comp_background_tertiary'))
+          .borderRadius(999)
+        if (this.getActiveFilterCount() > 0) {
+          Text(`筛选 ${this.getActiveFilterCount()}`)
+            .fontSize(11)
+            .fontColor(this.color('accent_blue'))
+            .fontFamily(this.appFontFamily)
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .backgroundColor(this.color('comp_background_tertiary'))
+            .borderRadius(999)
+        }
       }
       .width('100%')
-
-      Text(this.getActiveFilterCount() > 0
-        ? `已启用 ${this.getActiveFilterCount()} 个筛选条件，可下拉刷新或切换模式查看更多内容。`
-        : '支持多实例切换、发现流浏览、阅读列表和书籍级内容查看。')
-        .fontSize(12)
-        .lineHeight(18)
-        .fontColor(this.color('text_muted'))
-        .fontFamily(this.appFontFamily)
     }
     .width('100%')
-    .padding(18)
-    .backgroundColor(this.color('panel_background'))
-    .borderRadius(20)
-    .border({ width: 1, color: this.color('panel_border') })
+    .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
   private buildGridItem(item: ComicInfo) {
-    Column({ space: 8 }) {
-      Stack({ alignContent: Alignment.TopEnd }) {
-        KomgaImage({ src: this.getCoverUrl(item), imageWidth: '100%', imageHeight: 196, objectFit: ImageFit.Cover, imgBorderRadius: 12 })
+    Column({ space: 6 }) {
+      Stack({ alignContent: Alignment.BottomStart }) {
+        KomgaImage({ src: this.getCoverUrl(item), imageWidth: '100%', imageHeight: 168, objectFit: ImageFit.Cover, imgBorderRadius: 10 })
         Text(this.getItemTypeLabel(item))
-          .fontSize(11)
+          .fontSize(10)
           .fontFamily(this.appFontFamily)
-          .fontColor(Color.White)
+          .fontColor(this.color('accent_blue'))
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor('rgba(0, 0, 0, 0.55)')
+          .backgroundColor(this.color('comp_background_tertiary'))
           .borderRadius(999)
-          .margin({ top: 8, right: 8 })
+          .margin({ left: 8, bottom: 8 })
       }
       Text(item.title)
-        .fontSize(14)
+        .fontSize(12)
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
         .fontColor(this.color('text_primary'))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
       Text(this.getItemMetaLine(item))
-        .fontSize(12)
+        .fontSize(11)
         .fontFamily(this.appFontFamily)
         .fontColor(this.color('text_muted'))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
     }
-    .width('48%')
-    .padding(12)
-    .backgroundColor(this.color('panel_background'))
-    .borderRadius(16)
-    .border({ width: 1, color: this.color('panel_border') })
+    .width('100%')
+    .padding(4)
     .onClick(() => this.openDetail(item))
   }
 
   @Builder
   private buildListItem(item: ComicInfo) {
     Row({ space: 12 }) {
-      KomgaImage({ src: this.getCoverUrl(item), imageWidth: 92, imageHeight: 132, objectFit: ImageFit.Cover, imgBorderRadius: 12 })
-      Column({ space: 8 }) {
+      KomgaImage({ src: this.getCoverUrl(item), imageWidth: 60, imageHeight: 84, objectFit: ImageFit.Cover, imgBorderRadius: 8 })
+      Column({ space: 4 }) {
         Text(item.title)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
@@ -833,12 +865,21 @@ export struct MainMenuKomgaTabContent {
           .fontColor(this.color('text_muted'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(item.description || '暂无简介')
-          .fontSize(12)
+        if (this.getItemDescription(item).length > 0) {
+          Text(this.getItemDescription(item))
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_muted'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        Text(this.getItemTypeLabel(item))
+          .fontSize(10)
           .fontFamily(this.appFontFamily)
-          .fontColor(this.color('text_muted'))
-          .maxLines(3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .fontColor(this.color('accent_blue'))
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .backgroundColor(this.color('comp_background_tertiary'))
+          .borderRadius(999)
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -846,8 +887,7 @@ export struct MainMenuKomgaTabContent {
     .width('100%')
     .padding(12)
     .backgroundColor(this.color('panel_background'))
-    .borderRadius(16)
-    .border({ width: 1, color: this.color('panel_border') })
+    .borderRadius(12)
     .onClick(() => this.openDetail(item))
   }
 
@@ -855,61 +895,90 @@ export struct MainMenuKomgaTabContent {
     Refresh({ refreshing: $$this.isRefreshing }) {
       Stack({ alignContent: Alignment.Bottom }) {
         Scroll() {
-          Column({ space: 16 }) {
+          Column({ space: 12 }) {
             Blank().height(this.topSpacerHeight)
             this.buildOverviewPanel()
 
+            Row({ space: 8 }) {
+              Search({ value: this.searchQuery, placeholder: this.browseMode === 'library' ? '搜索 Komga 书库...' : '搜索 Komga 目录...' })
+                .layoutWeight(1)
+                .height(40)
+                .searchButton('搜索')
+                .onChange((value: string) => {
+                  this.searchQuery = value;
+                })
+                .onSubmit((_value: string) => {
+                  void this.loadItems(true, false);
+                })
+              this.buildToolbarButton($r('sys.symbol.gearshape'), () => {
+                this.openSettings();
+              })
+              this.buildToolbarButton(this.displayMode === 'grid' ? $r('sys.symbol.list_bullet') : $r('sys.symbol.square_grid_2x2'), () => {
+                this.setDisplayMode(this.displayMode === 'grid' ? 'list' : 'grid');
+              })
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 8, bottom: 4 })
+
             if (this.instances.length > 0) {
-              Column({ space: 12 }) {
-                this.buildPanelTitle('实例')
-                Flex({ wrap: FlexWrap.Wrap }) {
-                  ForEach(this.instances, (instance: KomgaInstanceConfig) => {
-                    this.buildChip(getKomgaInstanceDisplayName(instance), instance.id === this.currentInstanceId, () => {
-                      void this.switchInstance(instance.id);
-                    })
-                  }, (instance: KomgaInstanceConfig) => instance.id)
+              Column({ space: 8 }) {
+                Row() {
+                  Text('实例')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_primary'))
+                  Blank()
+                  Text(this.getCurrentInstanceLabel())
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_muted'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
                 }
+                .width('100%')
+
+                Scroll() {
+                  Row({ space: 0 }) {
+                    ForEach(this.instances, (instance: KomgaInstanceConfig) => {
+                      this.buildChip(getKomgaInstanceDisplayName(instance), instance.id === this.currentInstanceId, () => {
+                        void this.switchInstance(instance.id);
+                      })
+                    }, (instance: KomgaInstanceConfig) => instance.id)
+                  }
+                }
+                .scrollable(ScrollDirection.Horizontal)
+                .scrollBar(BarState.Off)
+                .width('100%')
+                .height(44)
               }
               .width('100%')
-              .padding(16)
-              .backgroundColor(this.color('panel_background'))
-              .borderRadius(16)
-              .border({ width: 1, color: this.color('panel_border') })
+              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
             }
 
-            Column({ space: 12 }) {
-              Row({ space: 8 }) {
-                Search({ value: this.searchQuery, placeholder: this.browseMode === 'library' ? '搜索 Komga 书库...' : '搜索 Komga 目录...' })
-                  .layoutWeight(1)
-                  .height(40)
-                  .searchButton('搜索')
-                  .onChange((value: string) => {
-                    this.searchQuery = value;
-                  })
-                  .onSubmit((_value: string) => {
-                    void this.loadItems(true, false);
-                  })
-                this.buildToolbarButton($r('sys.symbol.gearshape'), () => {
-                  this.openSettings();
-                })
-                this.buildToolbarButton(this.displayMode === 'grid' ? $r('sys.symbol.list_bullet') : $r('sys.symbol.square_grid_2x2'), () => {
-                  this.setDisplayMode(this.displayMode === 'grid' ? 'list' : 'grid');
-                })
-              }
-
-              Flex({ wrap: FlexWrap.Wrap }) {
+            Scroll() {
+              Row({ space: 0 }) {
                 this.buildChip('库', this.browseMode === 'library', () => { this.setBrowseMode('library'); })
                 this.buildChip('发现', this.browseMode === 'discover', () => { this.setBrowseMode('discover'); })
                 this.buildChip('系列', this.contentType === 'SERIES', () => { this.setContentType('SERIES'); })
                 this.buildChip('阅读列表', this.contentType === 'READLISTS', () => { this.setContentType('READLISTS'); })
                 this.buildChip('书籍', this.contentType === 'BOOKS', () => { this.setContentType('BOOKS'); })
-                this.buildChip('热门', this.feedType === 'POPULAR', () => { this.setFeedType('POPULAR'); })
-                this.buildChip('最新', this.feedType === 'LATEST', () => { this.setFeedType('LATEST'); })
+                if (this.browseMode === 'discover' && this.searchQuery.trim().length <= 0) {
+                  this.buildChip('热门', this.feedType === 'POPULAR', () => { this.setFeedType('POPULAR'); })
+                  this.buildChip('最新', this.feedType === 'LATEST', () => { this.setFeedType('LATEST'); })
+                }
                 this.buildChip('筛选', this.showFilters, () => { this.toggleFilterPanel(); })
               }
+              .padding({ left: 16, right: 16 })
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .width('100%')
+            .height(44)
 
-              if (this.showFilters) {
-                Column({ space: 10 }) {
+            if (this.showFilters) {
+              Column() {
+                Column({ space: 12 }) {
                   if (this.filterOptions.libraries.length > 0) {
                     this.buildPanelTitle('书库范围')
                     Flex({ wrap: FlexWrap.Wrap }) {
@@ -920,6 +989,7 @@ export struct MainMenuKomgaTabContent {
                       }, (library: KomgaLibraryOption) => library.id)
                     }
                   }
+
                   this.buildPanelTitle('阅读进度')
                   Flex({ wrap: FlexWrap.Wrap }) {
                     this.buildChip('全部进度', this.filters.readStatusMode === 'ANY', () => { this.setReadStatusMode('ANY'); })
@@ -927,12 +997,14 @@ export struct MainMenuKomgaTabContent {
                     this.buildChip('阅读中', this.filters.readStatusMode === 'IN_PROGRESS', () => { this.setReadStatusMode('IN_PROGRESS'); })
                     this.buildChip('已读', this.filters.readStatusMode === 'READ', () => { this.setReadStatusMode('READ'); })
                   }
+
                   this.buildPanelTitle('排序')
                   Flex({ wrap: FlexWrap.Wrap }) {
                     ForEach(KOMGA_SORT_OPTIONS, (option: KomgaSortOption) => {
                       this.buildChip(option.label, this.filters.sortKey === option.key, () => { this.setSortKey(option.key); })
                     }, (option: KomgaSortOption) => option.key)
                   }
+
                   if (this.contentType === 'SERIES' && this.filterOptions.collections.length > 0) {
                     this.buildPanelTitle('收藏集')
                     Flex({ wrap: FlexWrap.Wrap }) {
@@ -944,6 +1016,7 @@ export struct MainMenuKomgaTabContent {
                       }, (collection: KomgaCollectionOption) => collection.id)
                     }
                   }
+
                   if (this.filterOptions.genres.length > 0) {
                     this.buildPanelTitle('流派')
                     Flex({ wrap: FlexWrap.Wrap }) {
@@ -952,6 +1025,7 @@ export struct MainMenuKomgaTabContent {
                       }, (genre: string) => genre)
                     }
                   }
+
                   if (this.filterOptions.tags.length > 0) {
                     this.buildPanelTitle('标签')
                     Flex({ wrap: FlexWrap.Wrap }) {
@@ -960,6 +1034,7 @@ export struct MainMenuKomgaTabContent {
                       }, (tag: string) => tag)
                     }
                   }
+
                   if (this.filterOptions.publishers.length > 0) {
                     this.buildPanelTitle('出版社')
                     Flex({ wrap: FlexWrap.Wrap }) {
@@ -968,6 +1043,7 @@ export struct MainMenuKomgaTabContent {
                       }, (publisher: string) => publisher)
                     }
                   }
+
                   if (this.getAuthorRoleKeys().length > 0) {
                     this.buildPanelTitle('作者')
                     Flex({ wrap: FlexWrap.Wrap }) {
@@ -985,141 +1061,193 @@ export struct MainMenuKomgaTabContent {
                     }
                   }
                 }
+                .width('100%')
+                .padding(16)
+                .backgroundColor(this.color('panel_background'))
+                .borderRadius(16)
               }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
             }
-            .width('100%')
-            .padding(16)
-            .backgroundColor(this.color('panel_background'))
-            .borderRadius(16)
-            .border({ width: 1, color: this.color('panel_border') })
 
-            Row() {
-              Text(this.items.length > 0 ? `当前显示 ${this.items.length} 项` : '等待加载内容')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(this.color('text_muted'))
+            Row({ space: 8 }) {
+              if (this.browseMode === 'library') {
+                Text('排序')
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_muted'))
+                Text(this.getCurrentSortLabel())
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('accent_blue'))
+                  .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                  .backgroundColor(this.color('comp_background_tertiary'))
+                  .borderRadius(12)
+              } else {
+                Text('动态')
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_muted'))
+                Text(this.getFeedTypeLabel())
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('accent_blue'))
+                  .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                  .backgroundColor(this.color('comp_background_tertiary'))
+                  .borderRadius(12)
+              }
               Blank()
-              Text(`${this.browseMode === 'library' ? '库模式' : '发现模式'} · ${this.getCurrentContentTypeLabel()}`)
+              Text(this.getResultSummaryText())
                 .fontSize(12)
                 .fontFamily(this.appFontFamily)
                 .fontColor(this.color('text_muted'))
             }
             .width('100%')
+            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
 
             if (this.errorMessage.length > 0 && this.items.length > 0) {
-              Row({ space: 12 }) {
-                Text(this.errorMessage)
-                  .layoutWeight(1)
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor('#FF6B6B')
-                  .maxLines(2)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                Button('重试')
-                  .height(32)
-                  .backgroundColor(this.color('comp_background_tertiary'))
-                  .fontColor(this.color('text_primary'))
-                  .fontSize(12)
-                  .onClick(() => { void this.refreshContent(); })
-              }
-              .width('100%')
-              .padding(12)
-              .backgroundColor(this.color('panel_background'))
-              .borderRadius(12)
-              .border({ width: 1, color: this.color('panel_border') })
-            }
-
-            if (this.errorMessage.length > 0 && this.items.length <= 0) {
-              Column({ space: 12 }) {
-                Text(this.errorMessage)
-                  .width('100%')
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor('#FF6B6B')
+              Column() {
                 Row({ space: 12 }) {
-                  Button('重新加载')
+                  Text(this.errorMessage)
                     .layoutWeight(1)
-                    .backgroundColor(this.color('accent_blue'))
-                    .fontColor(Color.White)
-                    .onClick(() => { void this.refreshContent(); })
-                  Button('打开设置')
-                    .layoutWeight(1)
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor('#FF6B6B')
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Button('重试')
+                    .height(32)
                     .backgroundColor(this.color('comp_background_tertiary'))
                     .fontColor(this.color('text_primary'))
-                    .onClick(() => { this.openSettings(); })
+                    .fontSize(12)
+                    .onClick(() => { void this.refreshContent(); })
                 }
+                .width('100%')
+                .padding(12)
+                .backgroundColor(this.color('panel_background'))
+                .borderRadius(12)
               }
               .width('100%')
-              .padding(16)
-              .backgroundColor(this.color('panel_background'))
-              .borderRadius(16)
-              .border({ width: 1, color: this.color('panel_border') })
-            } else if (this.isLoading && this.items.length <= 0) {
-              Column({ space: 12 }) {
-                LoadingProgress()
-                Text('正在同步 Komga 内容...')
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(this.color('text_muted'))
-              }
-              .width('100%')
-              .padding(24)
-              .backgroundColor(this.color('panel_background'))
-              .borderRadius(16)
-            } else if (this.items.length <= 0) {
-              Column({ space: 12 }) {
-                SymbolGlyph($r('sys.symbol.rectangle_stack'))
-                  .fontSize(28)
-                  .fontColor([this.color('text_muted')])
-                Text(this.searchQuery.trim().length > 0 ? '没有找到匹配内容' : '当前没有可浏览内容')
-                  .fontSize(14)
-                  .fontWeight(FontWeight.Medium)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(this.color('text_primary'))
-                Text('你可以切换实例、调整筛选条件，或前往 Komga 设置检查连接。')
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(this.color('text_muted'))
-                  .textAlign(TextAlign.Center)
-                Button('打开 Komga 设置')
-                  .backgroundColor(this.color('accent_blue'))
-                  .fontColor(Color.White)
-                  .onClick(() => { this.openSettings(); })
-              }
-              .width('100%')
-              .padding(24)
-              .backgroundColor(this.color('panel_background'))
-              .borderRadius(16)
-            } else if (this.displayMode === 'grid') {
-              Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-                ForEach(this.items, (item: ComicInfo) => {
-                  this.buildGridItem(item)
-                }, (item: ComicInfo) => this.getItemKey(item))
-              }
-              .width('100%')
-            } else {
-              Column({ space: 12 }) {
-                ForEach(this.items, (item: ComicInfo) => {
-                  this.buildListItem(item)
-                }, (item: ComicInfo) => this.getItemKey(item))
-              }
-              .width('100%')
+              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
             }
 
-            if (this.hasMore && this.items.length > 0) {
-              Button(this.isLoadingMore ? '加载中...' : '加载更多')
+            Column() {
+              if (this.errorMessage.length > 0 && this.items.length <= 0) {
+                Column({ space: 12 }) {
+                  Text(this.errorMessage)
+                    .width('100%')
+                    .fontSize(13)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor('#FF6B6B')
+                  Row({ space: 12 }) {
+                    Button('重新加载')
+                      .layoutWeight(1)
+                      .backgroundColor(this.color('accent_blue'))
+                      .fontColor(Color.White)
+                      .onClick(() => { void this.refreshContent(); })
+                    Button('打开设置')
+                      .layoutWeight(1)
+                      .backgroundColor(this.color('comp_background_tertiary'))
+                      .fontColor(this.color('text_primary'))
+                      .onClick(() => { this.openSettings(); })
+                  }
+                }
                 .width('100%')
-                .backgroundColor(this.color('comp_background_tertiary'))
-                .fontColor(this.color('text_primary'))
-                .enabled(!this.isLoadingMore)
-                .onClick(() => { void this.loadItems(false, false); })
+                .height(220)
+                .padding(20)
+                .backgroundColor(this.color('panel_background'))
+                .borderRadius(16)
+                .justifyContent(FlexAlign.Center)
+              } else if (this.isLoading && this.items.length <= 0) {
+                Column({ space: 12 }) {
+                  LoadingProgress()
+                    .width(48)
+                    .height(48)
+                  Text('正在同步 Komga 内容...')
+                    .fontSize(13)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_muted'))
+                }
+                .width('100%')
+                .height(220)
+                .padding(24)
+                .justifyContent(FlexAlign.Center)
+              } else if (this.items.length <= 0) {
+                Column({ space: 12 }) {
+                  SymbolGlyph($r('sys.symbol.rectangle_stack'))
+                    .fontSize(40)
+                    .fontColor([this.color('text_muted')])
+                  Text(this.searchQuery.trim().length > 0 ? '没有找到匹配内容' : '当前没有可浏览内容')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_primary'))
+                  Text('可以切换实例、调整筛选条件，或前往 Komga 设置检查连接。')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_muted'))
+                    .textAlign(TextAlign.Center)
+                  Button('打开 Komga 设置')
+                    .backgroundColor(this.color('accent_blue'))
+                    .fontColor(Color.White)
+                    .onClick(() => { this.openSettings(); })
+                }
+                .width('100%')
+                .height(240)
+                .padding(24)
+                .justifyContent(FlexAlign.Center)
+              } else {
+                Stack() {
+                  if (this.displayMode === 'grid') {
+                    Grid() {
+                      ForEach(this.items, (item: ComicInfo) => {
+                        GridItem() {
+                          this.buildGridItem(item)
+                        }
+                      }, (item: ComicInfo) => this.getItemKey(item))
+                    }
+                    .columnsTemplate('1fr 1fr 1fr')
+                    .columnsGap(8)
+                    .rowsGap(8)
+                    .width('100%')
+                    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
+                  }
+
+                  if (this.displayMode === 'list') {
+                    Column({ space: 8 }) {
+                      ForEach(this.items, (item: ComicInfo) => {
+                        this.buildListItem(item)
+                      }, (item: ComicInfo) => this.getItemKey(item))
+                    }
+                    .width('100%')
+                    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
+                  }
+                }
+                .width('100%')
+              }
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 4, bottom: 0 })
+
+            if (this.hasMore && this.items.length > 0) {
+              Column() {
+                Button(this.isLoadingMore ? '加载中...' : '加载更多')
+                  .width('100%')
+                  .height(44)
+                  .backgroundColor(this.color('comp_background_tertiary'))
+                  .fontColor(this.color('text_primary'))
+                  .enabled(!this.isLoadingMore)
+                  .onClick(() => { void this.loadItems(false, false); })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 4, bottom: 0 })
             }
 
             Blank().height(this.bottomSpacerHeight)
           }
           .width('100%')
-          .padding(16)
-          .backgroundColor(this.color('background_dark'))
+          .padding(0)
+          .backgroundColor(Color.Transparent)
         }
         .width('100%')
         .height('100%')

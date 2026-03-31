@@ -5,8 +5,8 @@
  * 文件路径: entry/src/main/ets/pages/NovelReplaceRulePage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
@@ -21,7 +21,8 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelReplaceRulePage';
 
@@ -279,6 +280,36 @@ export struct NovelReplaceRulePage {
     }
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'add',
+        label: '添加',
+        symbol: $r('sys.symbol.plus'),
+        onClick: () => {
+          this.resetForm();
+          this.showAddDialog = true;
+        }
+      },
+      {
+        id: 'import',
+        label: '导入',
+        symbol: $r('sys.symbol.download'),
+        onClick: () => {
+          this.showImportOptions();
+        }
+      },
+      {
+        id: 'export',
+        label: '导出',
+        symbol: $r('sys.symbol.upload'),
+        onClick: () => {
+          void this.exportToClipboard();
+        }
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -294,6 +325,7 @@ export struct NovelReplaceRulePage {
         
         if (this.isLoading) {
           Column() {
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildLoading()
           }
           .width('100%')
@@ -301,6 +333,7 @@ export struct NovelReplaceRulePage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else if (this.rules.length === 0) {
           Column() {
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildEmpty()
           }
           .width('100%')
@@ -308,6 +341,11 @@ export struct NovelReplaceRulePage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else {
           List() {
+            ListItem() {
+              Column()
+                .width('100%')
+                .height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+            }
             ForEach(this.rules, (rule: ReplaceRule) => {
               ListItem() {
                 this.buildRuleItem(rule)
@@ -328,57 +366,19 @@ export struct NovelReplaceRulePage {
         if (this.showAddDialog) {
           this.buildAddDialog()
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '替换净化规则',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar(withSafeAreaTitleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: '替换净化规则'
-        },
-        menu: {
-          value: [{
-            content: {
-              label: '添加',
-              icon: $r('sys.symbol.plus'),
-              isEnabled: true,
-              action: () => {
-                this.resetForm();
-                this.showAddDialog = true;
-              }
-            }
-          }, {
-            content: {
-              label: '导入',
-              icon: $r('sys.symbol.download'),
-              isEnabled: true,
-              action: () => { this.showImportOptions(); }
-            }
-          }, {
-            content: {
-              label: '导出',
-              icon: $r('sys.symbol.upload'),
-              isEnabled: true,
-              action: () => { this.exportToClipboard(); }
-            }
-          }]
-        }
-      }
-    }))
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onWillAppear(() => {
       PageWindowCoordinator.applyPagePolicy('NovelReplaceRulePage', this.getUIContext());

@@ -4,7 +4,7 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -15,9 +15,10 @@ import { RssFeedItem, RssFetchResult, RssSubscriptionSource } from '../Models/Rs
 import { getRssSubscriptionInitializer } from '../Framework/Rss/RssSubscriptionInitializer';
 import { getRssSubscriptionManager, RssSubscriptionManager } from '../Framework/Rss/RssSubscriptionManager';
 import { RssSubscriptionDetailPageParams } from './RssSubscriptionDetailPage';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'RssFavoritesPage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 @Component
 export struct RssFavoritesPage {
@@ -26,6 +27,7 @@ export struct RssFavoritesPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private readonly componentId: string = `RssFavoritesPage_${Date.now()}`;
 
   @State allItems: RssFeedItem[] = [];
@@ -198,6 +200,36 @@ export struct RssFavoritesPage {
     this.pathStack.pushPathByName('RssSubscriptionPage', null);
   }
 
+  private toggleSearchBar(): void {
+    this.showSearchBar = !this.showSearchBar;
+    if (!this.showSearchBar) {
+      this.searchKeyword = '';
+      this.applySearchFilter();
+    }
+  }
+
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'search',
+        label: '搜索',
+        symbol: $r('sys.symbol.magnifyingglass'),
+        onClick: () => {
+          this.toggleSearchBar();
+        }
+      },
+      {
+        id: 'refresh',
+        label: '刷新',
+        symbol: $r('sys.symbol.arrow_clockwise'),
+        enabled: !this.isLoading,
+        onClick: () => {
+          void this.loadData();
+        }
+      }
+    ];
+  }
+
   @Builder
   private buildSourceButton(title: string, selected: boolean, onClick: () => void) {
     Button(title)
@@ -337,137 +369,98 @@ export struct RssFavoritesPage {
 
   build() {
     HdsNavDestination() {
-      Column() {
-        Blank().height(TITLE_BAR_HEIGHT_MINI)
-
+      Stack() {
         Column() {
-          this.buildSearchBar()
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
+          Column() {
+            this.buildSearchBar()
+          }
+          .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          .height(this.showSearchBar ? 56 : 0)
+          .opacity(this.showSearchBar ? 1 : 0)
+          .clip(true)
+          .animation({ duration: 200, curve: Curve.EaseOut })
+
+          this.buildFilterBar()
+
+          if (this.isLoading) {
+            Column({ space: 10 }) {
+              LoadingProgress()
+                .width(36)
+                .height(36)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              Text('加载中...')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+          } else if (this.items.length === 0) {
+            Column({ space: 12 }) {
+              Text('暂无收藏条目')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+              Text('可在订阅流中点击“收藏”后回到本页查看')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+              Button('打开订阅流')
+                .fontFamily(this.appFontFamily)
+                .fontColor('#FFFFFF')
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .borderRadius(20)
+                .onClick(() => {
+                  this.openSubscriptionPage();
+                })
+            }
+            .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+          } else {
+            List() {
+              ForEach(this.items, (item: RssFeedItem) => {
+                ListItem() {
+                  this.buildItemCard(item)
+                }
+              }, (item: RssFeedItem) => item.id)
+            }
+            .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+            .layoutWeight(1)
+            .padding({ left: 12, right: 12, top: 8 })
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+          }
         }
         .width('100%')
+        .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .height(this.showSearchBar ? 56 : 0)
-        .opacity(this.showSearchBar ? 1 : 0)
-        .clip(true)
-        .animation({ duration: 200, curve: Curve.EaseOut })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .animation(ThemeAwareHelper.getThemeTransitionAnimation())
 
-        this.buildFilterBar()
-
-        if (this.isLoading) {
-          Column({ space: 10 }) {
-            LoadingProgress()
-              .width(36)
-              .height(36)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            Text('加载中...')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .width('100%')
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else if (this.items.length === 0) {
-          Column({ space: 12 }) {
-            Text('暂无收藏条目')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-            Text('可在订阅流中点击“收藏”后回到本页查看')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-            Button('打开订阅流')
-              .fontFamily(this.appFontFamily)
-              .fontColor('#FFFFFF')
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              .borderRadius(20)
-              .onClick(() => {
-                this.openSubscriptionPage();
-              })
-          }
-          .width('100%')
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else {
-          List() {
-            ForEach(this.items, (item: RssFeedItem) => {
-              ListItem() {
-                this.buildItemCard(item)
-              }
-            }, (item: RssFeedItem) => item.id)
-          }
-          .width('100%')
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .layoutWeight(1)
-          .padding({ left: 12, right: 12, top: 8 })
-          .scrollBar(BarState.Auto)
-          .edgeEffect(EdgeEffect.Spring)
-        }
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: 'RSS收藏',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
       }
-      .width('100%')
-      .height('100%')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-      .animation(ThemeAwareHelper.getThemeTransitionAnimation())
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
-          },
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: 'RSS收藏' },
-        menu: {
-          value: [{
-            content: {
-              label: '搜索',
-              icon: $r('sys.symbol.magnifyingglass'),
-              isEnabled: true,
-              action: () => {
-                this.showSearchBar = !this.showSearchBar;
-                if (!this.showSearchBar) {
-                  this.searchKeyword = '';
-                  this.applySearchFilter();
-                }
-              }
-            }
-          }, {
-            content: {
-              label: '刷新',
-              icon: $r('sys.symbol.arrow_clockwise'),
-              isEnabled: !this.isLoading,
-              action: () => {
-                this.loadData();
-              }
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
   }
 }

@@ -4,7 +4,7 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { picker, fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
@@ -25,9 +25,10 @@ import {
   RssSourceUpdatePayload,
   RssSubscriptionManager
 } from '../Framework/Rss/RssSubscriptionManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'RssSubscriptionManagementPage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 interface BatchActionButton {
   text: string;
@@ -57,6 +58,7 @@ export struct RssSubscriptionManagementPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private readonly componentId: string = `RssSubscriptionManagementPage_${Date.now()}`;
 
   @State sources: RssSubscriptionSource[] = [];
@@ -2506,6 +2508,77 @@ export struct RssSubscriptionManagementPage {
     }
   }
 
+  private toggleSearchBar(): void {
+    this.showSearchBar = !this.showSearchBar;
+    if (!this.showSearchBar) {
+      this.searchKeyword = '';
+      this.applyFilter();
+    }
+  }
+
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'search',
+        label: '搜索',
+        symbol: $r('sys.symbol.magnifyingglass'),
+        onClick: () => {
+          this.toggleSearchBar();
+        }
+      },
+      {
+        id: 'create',
+        label: '新增',
+        symbol: $r('sys.symbol.plus'),
+        onClick: () => {
+          this.openCreateDialog();
+        }
+      },
+      {
+        id: 'import',
+        label: '导入',
+        symbol: $r('sys.symbol.download'),
+        onClick: () => {
+          this.showImportOptions();
+        }
+      },
+      {
+        id: 'export',
+        label: '导出',
+        symbol: $r('sys.symbol.upload'),
+        onClick: () => {
+          void this.exportSourcesToClipboard();
+        }
+      },
+      {
+        id: 'group',
+        label: '分组',
+        symbol: $r('sys.symbol.ellipsis_circle'),
+        onClick: () => {
+          this.showGroupOperationMenu();
+        }
+      },
+      {
+        id: 'refreshDue',
+        label: '刷新到期',
+        symbol: $r('sys.symbol.arrow_clockwise'),
+        enabled: !this.isRefreshing,
+        onClick: () => {
+          void this.refreshDueSources();
+        }
+      },
+      {
+        id: 'refreshAll',
+        label: '刷新全部',
+        symbol: $r('sys.symbol.arrow_clockwise'),
+        enabled: !this.isRefreshing,
+        onClick: () => {
+          void this.refreshAllSources();
+        }
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -2517,7 +2590,7 @@ export struct RssSubscriptionManagementPage {
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
 
         Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           Column() {
             this.buildSearchBar()
           }
@@ -2642,105 +2715,19 @@ export struct RssSubscriptionManagementPage {
         if (this.showRulePreviewDialog) {
           this.buildRulePreviewDialog()
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '订阅源管理',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
-          },
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '订阅源管理' },
-        menu: {
-          value: [{
-            content: {
-              label: '搜索',
-              icon: $r('sys.symbol.magnifyingglass'),
-              isEnabled: true,
-              action: () => {
-                this.showSearchBar = !this.showSearchBar;
-                if (!this.showSearchBar) {
-                  this.searchKeyword = '';
-                  this.applyFilter();
-                }
-              }
-            }
-          }, {
-            content: {
-              label: '新增',
-              icon: $r('sys.symbol.plus'),
-              isEnabled: true,
-              action: () => {
-                this.openCreateDialog();
-              }
-            }
-          }, {
-            content: {
-              label: '导入',
-              icon: $r('sys.symbol.download'),
-              isEnabled: true,
-              action: () => {
-                this.showImportOptions();
-              }
-            }
-          }, {
-            content: {
-              label: '导出',
-              icon: $r('sys.symbol.upload'),
-              isEnabled: true,
-              action: () => {
-                this.exportSourcesToClipboard();
-              }
-            }
-          }, {
-            content: {
-              label: '分组',
-              icon: $r('sys.symbol.ellipsis_circle'),
-              isEnabled: true,
-              action: () => {
-                this.showGroupOperationMenu();
-              }
-            }
-          }, {
-            content: {
-              label: '刷新到期',
-              icon: $r('sys.symbol.arrow_clockwise'),
-              isEnabled: !this.isRefreshing,
-              action: () => {
-                this.refreshDueSources();
-              }
-            }
-          }, {
-            content: {
-              label: '刷新全部',
-              icon: $r('sys.symbol.arrow_clockwise'),
-              isEnabled: !this.isRefreshing,
-              action: () => {
-                this.refreshAllSources();
-              }
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
   }
 }

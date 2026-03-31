@@ -4,7 +4,7 @@
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -14,9 +14,10 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { RssSubscriptionSource } from '../Models/RssSubscriptionModels';
 import { getRssSubscriptionInitializer } from '../Framework/Rss/RssSubscriptionInitializer';
 import { getRssSubscriptionManager, RssSubscriptionManager } from '../Framework/Rss/RssSubscriptionManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'RssSourceDebugPage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 export interface RssSourceDebugPageParams {
   sourceId?: string;
@@ -37,6 +38,7 @@ export struct RssSourceDebugPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private readonly componentId: string = `RssSourceDebugPage_${Date.now()}`;
 
   @State sources: RssSubscriptionSource[] = [];
@@ -213,130 +215,45 @@ export struct RssSourceDebugPage {
       })
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'refresh',
+        label: '刷新',
+        symbol: $r('sys.symbol.arrow_clockwise'),
+        enabled: !this.isLoading,
+        onClick: () => {
+          void this.initializeAndLoad();
+        }
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
-      Column() {
-        Blank().height(TITLE_BAR_HEIGHT_MINI)
+      Stack() {
+        Column() {
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
-        if (this.isLoading) {
-          Column({ space: 10 }) {
-            LoadingProgress()
-              .width(36)
-              .height(36)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            Text('加载中...')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else {
-          Scroll() {
+          if (this.isLoading) {
             Column({ space: 10 }) {
-              Text('调试源选择')
-                .width('100%')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
+              LoadingProgress()
+                .width(36)
+                .height(36)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              Text('加载中...')
+                .fontSize(13)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              Scroll() {
-                Row({ space: 8 }) {
-                  ForEach(this.sources, (source: RssSubscriptionSource) => {
-                    this.buildSourceButton(source)
-                  }, (source: RssSubscriptionSource) => source.id)
-                }
-                .width('100%')
-              }
-              .width('100%')
-              .scrollable(ScrollDirection.Horizontal)
-              .scrollBar(BarState.Off)
-
-              if (this.selectedSource) {
-                Column({ space: 6 }) {
-                  Text(`名称: ${this.selectedSource.name}`)
-                    .width('100%')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-
-                  Text(`URL: ${this.selectedSource.url}`)
-                    .width('100%')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-
-                  Text(`最近成功: ${this.formatTime(this.selectedSource.lastSuccessTime)}`)
-                    .width('100%')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-
-                  Text(`下次到期: ${this.getNextDueTimeText(this.selectedSource)}`)
-                    .width('100%')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                }
-                .width('100%')
-                .padding(12)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                .borderRadius(10)
-
-                Row({ space: 10 }) {
-                  TextInput({ placeholder: '预览条数', text: $$this.previewLimitText })
-                    .width('30%')
-                    .height(36)
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                    .borderRadius(8)
-
-                  Button(this.isRunning ? '执行中...' : '刷新源')
-                    .height(36)
-                    .layoutWeight(1)
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor('#FFFFFF')
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                    .borderRadius(18)
-                    .enabled(!this.isRunning)
-                    .onClick(() => {
-                      this.runRefreshDebug();
-                    })
-
-                  Button(this.isRunning ? '执行中...' : '规则预览')
-                    .height(36)
-                    .layoutWeight(1)
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                    .borderRadius(18)
-                    .enabled(!this.isRunning)
-                    .onClick(() => {
-                      this.runRulePreviewDebug();
-                    })
-                }
-                .width('100%')
-              }
-
-              Row() {
-                Button('清空输出')
-                  .height(32)
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                  .borderRadius(16)
-                  .onClick(() => {
-                    this.clearDebugOutput();
-                  })
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.End)
-
-              Column({ space: 6 }) {
-                Text('调试输出')
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+          } else {
+            Scroll() {
+              Column({ space: 10 }) {
+                Text('调试源选择')
                   .width('100%')
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
@@ -344,77 +261,150 @@ export struct RssSourceDebugPage {
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
                 Scroll() {
-                  Text(this.debugOutput.length > 0 ? this.debugOutput : '暂无调试输出')
-                    .width('100%')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .lineHeight(20)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .textAlign(TextAlign.Start)
+                  Row({ space: 8 }) {
+                    ForEach(this.sources, (source: RssSubscriptionSource) => {
+                      this.buildSourceButton(source)
+                    }, (source: RssSubscriptionSource) => source.id)
+                  }
+                  .width('100%')
                 }
                 .width('100%')
-                .height(320)
-                .padding(10)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                .borderRadius(10)
-                .scrollBar(BarState.Auto)
-                .edgeEffect(EdgeEffect.Spring)
+                .scrollable(ScrollDirection.Horizontal)
+                .scrollBar(BarState.Off)
+
+                if (this.selectedSource) {
+                  Column({ space: 6 }) {
+                    Text(`名称: ${this.selectedSource.name}`)
+                      .width('100%')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+
+                    Text(`URL: ${this.selectedSource.url}`)
+                      .width('100%')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+
+                    Text(`最近成功: ${this.formatTime(this.selectedSource.lastSuccessTime)}`)
+                      .width('100%')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+
+                    Text(`下次到期: ${this.getNextDueTimeText(this.selectedSource)}`)
+                      .width('100%')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  }
+                  .width('100%')
+                  .padding(12)
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                  .borderRadius(10)
+
+                  Row({ space: 10 }) {
+                    TextInput({ placeholder: '预览条数', text: $$this.previewLimitText })
+                      .width('30%')
+                      .height(36)
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                      .borderRadius(8)
+
+                    Button(this.isRunning ? '执行中...' : '刷新源')
+                      .height(36)
+                      .layoutWeight(1)
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor('#FFFFFF')
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                      .borderRadius(18)
+                      .enabled(!this.isRunning)
+                      .onClick(() => {
+                        this.runRefreshDebug();
+                      })
+
+                    Button(this.isRunning ? '执行中...' : '规则预览')
+                      .height(36)
+                      .layoutWeight(1)
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                      .borderRadius(18)
+                      .enabled(!this.isRunning)
+                      .onClick(() => {
+                        this.runRulePreviewDebug();
+                      })
+                  }
+                  .width('100%')
+                }
+
+                Row() {
+                  Button('清空输出')
+                    .height(32)
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                    .borderRadius(16)
+                    .onClick(() => {
+                      this.clearDebugOutput();
+                    })
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.End)
+
+                Column({ space: 6 }) {
+                  Text('调试输出')
+                    .width('100%')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                  Scroll() {
+                    Text(this.debugOutput.length > 0 ? this.debugOutput : '暂无调试输出')
+                      .width('100%')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .lineHeight(20)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      .textAlign(TextAlign.Start)
+                  }
+                  .width('100%')
+                  .height(320)
+                  .padding(10)
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                  .borderRadius(10)
+                  .scrollBar(BarState.Auto)
+                  .edgeEffect(EdgeEffect.Spring)
+                }
+                .width('100%')
               }
               .width('100%')
+              .padding({ left: 12, right: 12, top: 8, bottom: 18 })
             }
             .width('100%')
-            .padding({ left: 12, right: 12, top: 8, bottom: 18 })
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+            .layoutWeight(1)
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.Spring)
           }
-          .width('100%')
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .layoutWeight(1)
-          .scrollBar(BarState.Off)
-          .edgeEffect(EdgeEffect.Spring)
         }
+        .width('100%')
+        .height('100%')
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .animation(ThemeAwareHelper.getThemeTransitionAnimation())
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '订阅源调试',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-      .animation(ThemeAwareHelper.getThemeTransitionAnimation())
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
-          },
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '订阅源调试' },
-        menu: {
-          value: [{
-            content: {
-              label: '刷新',
-              icon: $r('sys.symbol.arrow_clockwise'),
-              isEnabled: !this.isLoading,
-              action: () => {
-                this.initializeAndLoad();
-              }
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: RssSourceDebugContext) => {
       const param = context.pathInfo.param as RssSourceDebugPageParams | null;
       this.initialSourceId = param && param.sourceId ? param.sourceId : '';

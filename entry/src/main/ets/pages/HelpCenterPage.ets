@@ -14,6 +14,8 @@ import { logger } from '../Utils/Logger';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { HELP_ITEMS_DATA, HELP_CATEGORIES, HelpItemData } from '../Data/HelpData';
 import { AppGuideFlowId, AppGuideFlowSummary, AppGuideManager } from '../Framework/Managers/AppGuideManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'HelpCenterPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -60,6 +62,7 @@ export struct HelpCenterPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageLink('source_features_enabled') sourceFeaturesEnabled: boolean = false;
   private uiContext: UIContext | null = null;
   private scroller: Scroller = new Scroller();
@@ -431,7 +434,7 @@ export struct HelpCenterPage {
 
         // 内容层
         Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
           Scroll(this.scroller) {
             Column({ space: 24 }) {
@@ -478,8 +481,17 @@ export struct HelpCenterPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '帮助中心',
+          appFontFamily: this.appFontFamily
+        })
       }
     }
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    /*
     .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
@@ -498,6 +510,7 @@ export struct HelpCenterPage {
         title: { mainTitle: '帮助中心' }
       }
     })
+    */
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.uiContext = this.getUIContext();

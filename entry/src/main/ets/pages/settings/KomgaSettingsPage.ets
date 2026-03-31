@@ -18,6 +18,8 @@ import {
   createEmptyKomgaConfig,
   getKomgaInstanceDisplayName
 } from '../../Framework/Source/KomgaConfigStore';
+import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 
 const TAG = 'KomgaSettingsPage';
 const PAGE_BOTTOM_SPACER: number = 32;
@@ -32,6 +34,7 @@ type KomgaSettingsColorKey =
 @Component
 export struct KomgaSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
@@ -426,6 +429,8 @@ export struct KomgaSettingsPage {
 
         Scroll() {
           Column({ space: 16 }) {
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
           Column({ space: 12 }) {
             Text('实例管理')
               .fontSize(16)
@@ -678,25 +683,37 @@ export struct KomgaSettingsPage {
           Blank().height(PAGE_BOTTOM_SPACER)
         }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 16, bottom: 0 })
+          .padding({ left: 16, right: 16, top: 0, bottom: 0 })
           .opacity(this.pageContentOpacity)
         }
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .backgroundColor(this.color('background_dark'))
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: 'Komga 设置',
+          appFontFamily: this.appFontFamily,
+          contentPadding: 16,
+          maxContentWidth: 1200,
+          pathStack: this.pathStack
+        })
       }
       .width('100%')
       .height('100%')
     }
     .title('Komga 设置')
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
     })
     .onShown(() => {
       this.revealPageContent();
     })
+    .backgroundColor(Color.Transparent)
   }
 }

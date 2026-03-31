@@ -26,6 +26,8 @@ import { SettingsSearchSupport } from './SettingsSearchSupport';
 import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 
 const TAG = 'TrackingSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -36,12 +38,25 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
 interface TrackerLoginStatus {
   trackerId: TrackerId;
   isLoggedIn: boolean;
-  username: string;
+  statusText: string;
+  primaryInfoLabel: string;
+  primaryInfoValue: string;
+  connectionLabel: string;
+  connectionValue: string;
+  secondaryInfo: string;
+  statusTone: TrackerStatusTone;
+}
+
+enum TrackerStatusTone {
+  NEUTRAL = 0,
+  INFO = 1,
+  SUCCESS = 2
 }
 
 @Component
 export struct TrackingSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
@@ -67,6 +82,7 @@ export struct TrackingSettingsSubPage {
 
   // 进度记录状态
   @State trackerStatusList: TrackerLoginStatus[] = [];
+  private trackerRefreshVersion: number = 0;
 
   // 跟踪器实例
   private aniListTracker: AniListTracker = getAniListTracker();
@@ -105,8 +121,7 @@ export struct TrackingSettingsSubPage {
     } catch (err) {
       logger.error(TAG, 'AppStorage.get 异常', String(err));
     }
-    // 每次页面显示时刷新进度记录状态
-    this.initializeTrackerStatus();
+    this.refreshTrackerStatus();
   }
 
   onReady(): void {
@@ -124,9 +139,13 @@ export struct TrackingSettingsSubPage {
     // 初始化响应式布局
     this.initializeResponsiveLayout();
 
-    // 初始化进度记录状态
-    this.initializeTrackerStatus();
+    this.refreshTrackerStatus();
     this.applyPendingSearchTarget();
+  }
+
+  private refreshTrackerStatus(): void {
+    const refreshVersion = ++this.trackerRefreshVersion;
+    void this.initializeTrackerStatus(refreshVersion);
   }
 
   private applyPendingSearchTarget(): void {
@@ -196,44 +215,115 @@ export struct TrackingSettingsSubPage {
     }
   }
 
-  private async initializeTrackerStatus(): Promise<void> {
-    // 初始化跟踪器
-    await this.aniListTracker.initialize();
-    await this.suwayomiTracker.initialize();
-    await this.komgaTracker.initialize();
+  private async initializeTrackerStatus(refreshVersion: number): Promise<void> {
+    try {
+      await this.aniListTracker.initialize();
+      await this.suwayomiTracker.initialize(true);
+      await this.komgaTracker.initialize(true);
 
-    // 初始化所有进度记录的状态
-    const statusList: TrackerLoginStatus[] = [];
-    for (let i = 0; i < TRACKER_INFO_LIST.length; i++) {
-      const info = TRACKER_INFO_LIST[i];
-      let isLoggedIn = false;
-      let username = '';
-
-      // 检查各进度记录的登录状态
-      if (info.id === TrackerId.ANILIST) {
-        isLoggedIn = this.aniListTracker.isLoggedIn();
-        username = this.aniListTracker.getAuthState().username;
-      } else if (info.id === TrackerId.SUWAYOMI) {
-        isLoggedIn = this.suwayomiTracker.isLoggedIn();
-        username = this.suwayomiTracker.getConfig().serverUrl || '';
-      } else if (info.id === TrackerId.KOMGA) {
-        isLoggedIn = this.komgaTracker.isLoggedIn();
-        username = this.komgaTracker.getAuthState().username;
+      const statusList: TrackerLoginStatus[] = [
+        this.buildAniListTrackerStatus(),
+        this.buildSuwayomiTrackerStatus(),
+        this.buildKomgaTrackerStatus()
+      ];
+      if (refreshVersion !== this.trackerRefreshVersion) {
+        logger.info(TAG, `忽略过期的进度记录状态刷新: version=${refreshVersion}`);
+        return;
       }
-
-      const status: TrackerLoginStatus = {
-        trackerId: info.id,
-        isLoggedIn: isLoggedIn,
-        username: username
-      };
-      statusList.push(status);
+      this.trackerStatusList = statusList.concat();
+      logger.info(TAG, `初始化进度记录状态: ${this.trackerStatusList.length}个服务`);
+    } catch (error) {
+      logger.error(TAG, '初始化进度记录状态失败', String(error));
     }
-    this.trackerStatusList = statusList;
-    logger.info(TAG, `初始化进度记录状态: ${this.trackerStatusList.length}个服务`);
   }
 
   private getTrackerStatus(trackerId: TrackerId): TrackerLoginStatus | undefined {
     return this.trackerStatusList.find(s => s.trackerId === trackerId);
+  }
+
+  private getTrackerStatusOrDefault(trackerId: TrackerId): TrackerLoginStatus {
+    const status = this.getTrackerStatus(trackerId);
+    if (status) {
+      return status;
+    }
+    return {
+      trackerId: trackerId,
+      isLoggedIn: false,
+      statusText: '未配置',
+      primaryInfoLabel: '状态',
+      primaryInfoValue: '暂未获取服务状态',
+      connectionLabel: '连接',
+      connectionValue: '状态获取失败',
+      secondaryInfo: '请稍后重试',
+      statusTone: TrackerStatusTone.NEUTRAL
+    };
+  }
+
+  private buildAniListTrackerStatus(): TrackerLoginStatus {
+    const authState = this.aniListTracker.getAuthState();
+    const isLoggedIn = authState.isLoggedIn && authState.username.trim().length > 0;
+    return {
+      trackerId: TrackerId.ANILIST,
+      isLoggedIn: isLoggedIn,
+      statusText: isLoggedIn ? '已登录' : '未登录',
+      primaryInfoLabel: '账号',
+      primaryInfoValue: isLoggedIn ? authState.username : '点击登录 AniList 账号',
+      connectionLabel: '授权',
+      connectionValue: isLoggedIn ? 'OAuth 授权已建立' : '尚未建立 AniList 授权',
+      secondaryInfo: isLoggedIn ? 'OAuth 已授权，可同步漫画阅读进度' : '登录后可将阅读进度同步到 AniList',
+      statusTone: isLoggedIn ? TrackerStatusTone.SUCCESS : TrackerStatusTone.NEUTRAL
+    };
+  }
+
+  private buildSuwayomiTrackerStatus(): TrackerLoginStatus {
+    const config = this.suwayomiTracker.getConfig();
+    const hasServer = config.serverUrl.trim().length > 0;
+    let authText = '认证：未启用';
+    if (config.useAuth) {
+      authText = config.username.trim().length > 0 ? `认证：${config.username}` : '认证：已启用';
+    }
+    const secondaryInfo = hasServer
+      ? `${config.useBrowsePageAsEntry ? '浏览页入口' : '设置页入口'} · 可用于进度同步`
+      : '配置 Suwayomi 服务器后即可启用同步';
+    return {
+      trackerId: TrackerId.SUWAYOMI,
+      isLoggedIn: hasServer,
+      statusText: hasServer ? '已配置' : '未配置',
+      primaryInfoLabel: '服务器',
+      primaryInfoValue: hasServer ? config.serverUrl : '点击填写 Suwayomi 服务器地址',
+      connectionLabel: '认证',
+      connectionValue: hasServer ? authText : '未建立服务器连接',
+      secondaryInfo: secondaryInfo,
+      statusTone: hasServer ? TrackerStatusTone.INFO : TrackerStatusTone.NEUTRAL
+    };
+  }
+
+  private buildKomgaTrackerStatus(): TrackerLoginStatus {
+    const config = this.komgaTracker.getConfig();
+    const currentInstance = this.komgaTracker.getCurrentInstance();
+    const hasCurrentInstance = currentInstance !== null && currentInstance.serverUrl.trim().length > 0;
+    const enabledInstanceCount = config.instances.filter((instance) => {
+      return instance.enabled !== false && instance.serverUrl.trim().length > 0;
+    }).length;
+    const authModeText = hasCurrentInstance && currentInstance
+      ? (currentInstance.authMode === 'API_KEY'
+        ? 'API Key 认证'
+        : (currentInstance.authMode === 'BASIC' ? 'Basic 认证' : '匿名访问'))
+      : '未建立实例连接';
+    const secondaryInfo = hasCurrentInstance
+      ? `${authModeText} · ${config.useBrowsePageAsEntry ? '浏览页入口' : '设置页入口'} · 已启用实例 ${enabledInstanceCount} 个`
+      : `已保存实例 ${config.instances.length} 个，点击继续配置 Komga`;
+    return {
+      trackerId: TrackerId.KOMGA,
+      isLoggedIn: hasCurrentInstance,
+      statusText: hasCurrentInstance ? '已配置' : '未配置',
+      primaryInfoLabel: '当前实例',
+      primaryInfoValue: hasCurrentInstance ? this.komgaTracker.getAuthState().username : '点击配置 Komga 实例',
+      connectionLabel: '服务器',
+      connectionValue: hasCurrentInstance && currentInstance ? currentInstance.serverUrl : '未配置服务器地址',
+      secondaryInfo: secondaryInfo,
+      statusTone: hasCurrentInstance ? TrackerStatusTone.INFO : TrackerStatusTone.NEUTRAL
+    };
   }
 
   /**
@@ -267,7 +357,7 @@ export struct TrackingSettingsSubPage {
     if (status && status.isLoggedIn) {
       // 已登录，显示账户管理对话框
       logger.info(TAG, `点击已登录的进度记录: ${tracker.name}`);
-      this.showAccountDialog(tracker, status.username);
+      this.showAccountDialog(tracker, status.primaryInfoValue);
     } else {
       // 未登录，开始登录流程
       logger.info(TAG, `点击未登录的进度记录: ${tracker.name}`);
@@ -331,8 +421,7 @@ export struct TrackingSettingsSubPage {
       default:
         break;
     }
-    // 刷新状态
-    await this.initializeTrackerStatus();
+    this.refreshTrackerStatus();
     import('@kit.ArkUI').then(arkUI => {
       arkUI.promptAction.showToast({
         message: `已从 ${tracker.name} 登出`,
@@ -374,48 +463,81 @@ export struct TrackingSettingsSubPage {
   @Builder
   buildTrackerItem(tracker: TrackerInfo) {
     Row() {
-      // 图标区域
       Image(this.getTrackerIcon(tracker.icon))
         .width(44)
         .height(44)
         .borderRadius(22)
         .objectFit(ImageFit.Cover)
 
-      // 信息区域
-      Column({ space: 4 }) {
-        Text(tracker.name)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Column({ space: 8 }) {
+        Row({ space: 8 }) {
+          Text(tracker.name)
+            .layoutWeight(1)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          Text(this.getTrackerStatusOrDefault(tracker.id).statusText)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getTrackerStatusTextColor(tracker.id))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .backgroundColor(this.getTrackerStatusBackgroundColor(tracker.id))
+            .borderRadius(999)
+        }
+        .width('100%')
 
         Text(this.getTrackerDescription(tracker.id))
           .fontSize(13)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-      .margin({ left: 12 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-      // 状态指示
-      if (this.getTrackerStatus(tracker.id)?.isLoggedIn) {
-        Column({ space: 2 }) {
-          Text(this.getTrackerStatus(tracker.id)?.username || '已登录')
-            .fontSize(13)
+        Row({ space: 6 }) {
+          Text(this.getTrackerStatusOrDefault(tracker.id).primaryInfoLabel)
+            .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+
+          Text(this.getTrackerStatusOrDefault(tracker.id).primaryInfoValue)
+            .layoutWeight(1)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
-        .alignItems(HorizontalAlign.End)
-        .constraintSize({ maxWidth: 100 })
-      } else {
-        Text('未登录')
-          .fontSize(13)
+        .width('100%')
+
+        Row({ space: 6 }) {
+          Text(this.getTrackerStatusOrDefault(tracker.id).connectionLabel)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+
+          Text(this.getTrackerStatusOrDefault(tracker.id).connectionValue)
+            .layoutWeight(1)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+
+        Text(this.getTrackerStatusOrDefault(tracker.id).secondaryInfo)
+          .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 12, right: 8 })
 
       Image($r('sys.symbol.chevron_right'))
         .width(16)
@@ -470,6 +592,29 @@ export struct TrackingSettingsSubPage {
       default:
         return '进度记录';
     }
+  }
+
+  private getTrackerStatusTextColor(trackerId: TrackerId): ResourceColor {
+    const status = this.getTrackerStatusOrDefault(trackerId);
+    switch (status.statusTone) {
+      case TrackerStatusTone.SUCCESS:
+        return ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme);
+      case TrackerStatusTone.INFO:
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+      default:
+        return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+    }
+  }
+
+  private getTrackerStatusBackgroundColor(trackerId: TrackerId): ResourceColor {
+    const status = this.getTrackerStatusOrDefault(trackerId);
+    if (status.statusTone === TrackerStatusTone.SUCCESS) {
+      return this.themeState.currentTheme === ThemeType.DARK ? 'rgba(16, 185, 129, 0.18)' : 'rgba(16, 185, 129, 0.10)';
+    }
+    if (status.statusTone === TrackerStatusTone.INFO) {
+      return this.themeState.currentTheme === ThemeType.DARK ? 'rgba(2, 169, 255, 0.18)' : 'rgba(2, 169, 255, 0.10)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK ? 'rgba(148, 163, 184, 0.14)' : 'rgba(100, 116, 139, 0.10)';
   }
 
   @Builder
@@ -542,7 +687,7 @@ export struct TrackingSettingsSubPage {
 
         Scroll(this.scroller) {
           Column({ space: 16 }) {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             Flex({
               wrap: FlexWrap.Wrap,
               justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
@@ -631,43 +776,24 @@ export struct TrackingSettingsSubPage {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '进度记录',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack
+        })
       }
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.COMMON_BLUR,
-          blurEffectiveStartOffset: LengthMetrics.vp(0),
-          blurEffectiveEndOffset: LengthMetrics.vp(56)
-        },
-        originalStyle: {
-          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '进度记录' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
-      this.onPageShow();
       this.onReady();
+    })
+    .onWillShow(() => {
+      this.onPageShow();
     })
     .backgroundColor(Color.Transparent)
   }

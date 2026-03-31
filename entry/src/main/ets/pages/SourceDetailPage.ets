@@ -4,8 +4,7 @@
  * 参考Mihon和Komikku的设计
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -38,9 +37,11 @@ import { ProxyManager } from '../Framework/Network/ProxyManager';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { SourceContentCache } from '../Framework/Cache/SourceContentCache';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
 
 const TAG = 'SourceDetailPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 /**
  * 显示模式枚举
@@ -178,6 +179,7 @@ interface AdaptiveCoverRow {
 @Component
 export struct SourceDetailPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
@@ -1271,8 +1273,70 @@ export struct SourceDetailPage {
     return rows;
   }
 
-  private getCoverFrameBorderColor(): string {
-    return 'rgba(0,0,0,0)';
+  private getReadingStyleCoverSurface() {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface;
+  }
+
+  private getReadingStyleCoverRadius(): number {
+    const surfaceRadius = this.getReadingStyleCoverSurface().radius;
+    return Math.max(8, Math.min(14, surfaceRadius));
+  }
+
+  @Builder
+  private buildComicCoverImage(comic: ComicInfo) {
+    Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
+      .width('100%')
+      .height('100%')
+      .objectFit(ImageFit.Contain)
+      .backgroundColor(this.getReadingStyleCoverSurface().backgroundColor)
+      .onAppear(() => {
+        this.loadCoverPixelMap(comic);
+      })
+      .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
+  }
+
+  @Builder
+  private buildReadingStyleComicCover(comic: ComicInfo) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.buildComicCoverImage(comic)
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient(this.getReadingStyleCoverSurface().surfaceGradient)
+        .opacity(0.34)
+
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getReadingStyleCoverSurface().topEdgeColor)
+
+      Column()
+        .width('100%')
+        .height(1)
+        .align(Alignment.Bottom)
+        .backgroundColor(this.getReadingStyleCoverSurface().bottomEdgeColor)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.getReadingStyleCoverSurface().backgroundColor)
+    .backgroundBlurStyle(
+      this.getReadingStyleCoverSurface().blurStyle,
+      this.getReadingStyleCoverSurface().blurOptions
+    )
+    .backgroundEffect(this.getReadingStyleCoverSurface().backgroundEffect)
+    .borderRadius(this.getReadingStyleCoverRadius())
+    .clip(true)
+    .border({
+      width: this.getReadingStyleCoverSurface().borderWidth,
+      color: this.getReadingStyleCoverSurface().borderColor
+    })
+    .shadow({
+      radius: this.getReadingStyleCoverRadius() + 2,
+      color: this.getReadingStyleCoverSurface().shadowColor,
+      offsetX: 0,
+      offsetY: 2
+    })
   }
 
   private async loadCoverPixelMap(comic: ComicInfo): Promise<void> {
@@ -2504,6 +2568,52 @@ export struct SourceDetailPage {
     }
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'search',
+        symbol: $r('sys.symbol.magnifyingglass'),
+        label: '搜索',
+        onClick: () => {
+          this.showSearchDialog = true;
+        },
+        enabled: true
+      },
+      {
+        id: 'settings',
+        symbol: $r('sys.symbol.gearshape_fill'),
+        label: '设置',
+        onClick: () => {
+          logger.info(TAG, `准备跳转到设置页, sourceName=${this.sourceName}`);
+          const params = { sourceName: this.sourceName } as SourceSettingsPageParams;
+          logger.info(TAG, `跳转参数: ${JSON.stringify(params)}`);
+          this.pathStack.pushPathByName('SourceSettingsPage', params);
+        },
+        enabled: true
+      },
+      {
+        id: 'login',
+        symbol: $r('sys.symbol.person_crop_circle_fill'),
+        label: this.isLoggedIn ? '重新登录' : '登录',
+        onClick: () => {
+          logger.info(TAG, `点击登录按钮, isLoggedIn=${this.isLoggedIn}`);
+          void this.showLogin();
+        },
+        enabled: true
+      },
+      {
+        id: 'debug',
+        symbol: $r('sys.symbol.worldclock_fill_1'),
+        label: '调试',
+        onClick: () => {
+          logger.info(TAG, '点击调试按钮，显示WebView调试窗口');
+          this.showWebViewDebugDialog = true;
+        },
+        enabled: this.useWebView
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -2517,7 +2627,7 @@ export struct SourceDetailPage {
         // 内容层
         Column() {
           // 预留标题栏空间
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
           // 标签栏
           this.buildTabBar()
@@ -2626,6 +2736,22 @@ export struct SourceDetailPage {
         }
 
         // 登录对话框（WebView登录）
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: this.sourceInfo?.name || '图源详情',
+          appFontFamily: this.appFontFamily,
+          backAction: (): boolean => {
+            try {
+              this.pathStack.pop();
+              return true;
+            } catch (_error) {
+              return false;
+            }
+          },
+          actions: this.getTitleBarActions(),
+          maxDirectActions: 2
+        })
+
         if (this.showLoginDialog) {
           this.buildLoginDialog()
         }
@@ -2653,7 +2779,7 @@ export struct SourceDetailPage {
       .width('100%')
       .height('100%')
     }
-    .titleBar({
+    /* .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
         end: LengthMetrics.vp(16)
@@ -2726,7 +2852,9 @@ export struct SourceDetailPage {
           ]
         }
       }
-    })
+    }) */
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
     })
@@ -4743,37 +4871,11 @@ export struct SourceDetailPage {
     Column({ space: 8 }) {
       // 封面容器 - 使用Stack实现加载动画效果
       Stack() {
-        // 封面 - 横屏时高度为屏幕高度的一半，宽度自适应
-        if (this.isLandscape && this.screenHeight > 0) {
-          Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-            .width('100%')
-            .height('100%')
-            .borderRadius(0)
-            .objectFit(ImageFit.Contain)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .onAppear(() => {
-              this.loadCoverPixelMap(comic);
-            })
-            .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
-        } else {
-          // 竖屏时使用原有样式
-          Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-            .width('100%')
-            .height('100%')
-            .borderRadius(0)
-            .objectFit(ImageFit.Contain)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .onAppear(() => {
-              this.loadCoverPixelMap(comic);
-            })
-            .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
-        }
+        this.buildReadingStyleComicCover(comic)
       }
       .width('100%')
       .aspectRatio(this.getComicCoverAspectRatio(comic))
       .padding(4)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .border({ width: 1, color: this.getCoverFrameBorderColor() })
 
       // 标题 - 固定高度确保卡片一致
       Text(comic.title)
@@ -4825,26 +4927,11 @@ export struct SourceDetailPage {
     Row({ space: 12 }) {
       // 封面 - 精致的封面卡片
       Stack() {
-        Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-          .width(72)
-          .aspectRatio(0.72)
-          .borderRadius(0)
-          .objectFit(ImageFit.Contain)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .onAppear(() => {
-            this.loadCoverPixelMap(comic);
-          })
-          .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
+        this.buildReadingStyleComicCover(comic)
       }
+      .width(72)
+      .aspectRatio(0.72)
       .padding(3)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .border({ width: 1, color: this.getCoverFrameBorderColor() })
-      .shadow({
-        radius: 6,
-        color: '#15000000',
-        offsetX: 0,
-        offsetY: 2
-      })
 
       // 信息区域
       Column({ space: 4 }) {
@@ -4921,22 +5008,11 @@ export struct SourceDetailPage {
     Column({ space: 10 }) {
       // 大封面 - 添加加载动画
       Stack() {
-        Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-          .width('100%')
-          .height('100%')
-          .borderRadius(0)
-          .objectFit(ImageFit.Contain)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .onAppear(() => {
-            this.loadCoverPixelMap(comic);
-          })
-          .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
+        this.buildReadingStyleComicCover(comic)
       }
       .width('100%')
       .aspectRatio(this.getComicCoverAspectRatio(comic))
       .padding(4)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .border({ width: 1, color: this.getCoverFrameBorderColor() })
 
       // 标题
       Text(comic.title)

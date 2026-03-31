@@ -63,6 +63,38 @@ export class SettingsGlassStyleHelper {
     return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FLOATING).shadowColor;
   }
 
+  static getFeaturedBackground(): string {
+    return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FEATURED).backgroundColor;
+  }
+
+  static getFeaturedBlurStyle(): BlurStyle {
+    return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FEATURED).blurStyle;
+  }
+
+  static getFeaturedBlurOptions(): BackgroundBlurStyleOptions {
+    return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FEATURED).blurOptions;
+  }
+
+  static getFeaturedBackgroundEffect(): BackgroundEffectOptions | undefined {
+    return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FEATURED).backgroundEffect;
+  }
+
+  static getFeaturedRadius(): number {
+    return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FEATURED).radius;
+  }
+
+  static getFeaturedBorderColor(): string {
+    return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FEATURED).borderColor;
+  }
+
+  static getFeaturedBorderWidth(): number {
+    return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FEATURED).borderWidth;
+  }
+
+  static getFeaturedShadowColor(): string {
+    return SettingsGlassStyleHelper.getGlassToken(GlassLevel.FEATURED).shadowColor;
+  }
+
   static getNavigationBackground(): string {
     return SettingsGlassStyleHelper.getGlassToken(GlassLevel.NAVIGATION).backgroundColor;
   }

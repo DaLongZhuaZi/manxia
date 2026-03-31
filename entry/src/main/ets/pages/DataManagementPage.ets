@@ -50,6 +50,8 @@ import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult,
 import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'DataManagementPage';
 // 定义标题栏最小高度，用于内容占位
@@ -817,6 +819,17 @@ struct DataManagementPage {
 - 导入后原文件不会被删除（可选择删除）`;
 
     getHelpPanelManagerV2().showInlineHelp('文件导入帮助', helpContent);
+  }
+
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [{
+      id: 'help',
+      label: '帮助',
+      symbol: $r('sys.symbol.questionmark_circle'),
+      onClick: () => {
+        this.showFileImportHelp();
+      }
+    }];
   }
 
   /**
@@ -8032,7 +8045,7 @@ struct DataManagementPage {
         // 内容层 - 选择文件导入
         Column() {
           // 标题栏占位
-          // Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
           // 内容区域
           Scroll(this.scroller) {
@@ -8086,10 +8099,17 @@ struct DataManagementPage {
         .constraintSize({ maxWidth: this.responsive_maxContentWidth })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .padding({
-          top: this.statusBarHeight,
+          top: 0,
           // bottom: this.navigationBarHeight,
           left: this.responsive_contentPadding,
           right: this.responsive_contentPadding
+        })
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '文件导入',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
         })
 
         // 批量导入策略选择对话框
@@ -8099,6 +8119,9 @@ struct DataManagementPage {
       }
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    /*
     .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
@@ -8131,6 +8154,7 @@ struct DataManagementPage {
         }
       }
     })
+    */
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, '主导航目标页 onReady 已触发');
       this.pathStack = context.pathStack;

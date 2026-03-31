@@ -9,7 +9,8 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'OpenSourceLicensePage';
 /**
@@ -243,6 +244,8 @@ export struct OpenSourceLicensePage {
           // 滚动内容
           Scroll(this.scroller) {
             Column() {
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
               // 项目信息
               this.buildSectionTitle('项目信息', $r('sys.symbol.computer_host_fill'))
               this.buildParagraph('漫匣（ManXia）是一款基于HarmonyOS Next的现代化漫画阅读应用，采用纯ArkTS架构开发。')
@@ -424,30 +427,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '开源许可',
+          contentPadding: 20,
+          maxContentWidth: 1200
+        })
       }
     }
     .backgroundColor(Color.Transparent)
-    .titleBar(withSafeAreaTitleBar({
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
-          },
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '开源许可' }
-      }
-    }))
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onWillAppear(() => {
       PageWindowCoordinator.applyPagePolicy('OpenSourceLicensePage', this.getUIContext());
     })

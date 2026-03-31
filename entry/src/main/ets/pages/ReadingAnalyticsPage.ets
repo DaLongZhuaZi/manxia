@@ -4,8 +4,7 @@
  * 根据用户的阅读记录，分析并展示阅读习惯、统计数据等
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -31,9 +30,10 @@ import { widgetDataSync } from '../Utils/WidgetDataSync';
 import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { UnifiedAnnotationRecord, UnifiedAnnotationType } from '../Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'ReadingAnalyticsPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
 const USER_MANUAL_TITLE = '漫匣使用手册'; // 需要过滤掉的使用手册标题
 
 // NavDestinationContext接口定义
@@ -205,6 +205,7 @@ interface InspirationStatistics {
 @Component
 struct ReadingAnalyticsPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
 
   // 主题相关状态
@@ -4677,6 +4678,29 @@ struct ReadingAnalyticsPage {
     .width('100%')
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'viewMode',
+        label: this.isLongTermView ? '日视图' : '长期视图',
+        symbol: this.isLongTermView ? $r('sys.symbol.calendar_01_a') : $r('sys.symbol.calendar_badge_clock'),
+        enabled: this.hasAskedPermission && !this.isLoading,
+        onClick: () => {
+          this.toggleViewMode();
+        }
+      },
+      {
+        id: 'clearData',
+        label: '清除数据',
+        symbol: $r('sys.symbol.trash'),
+        enabled: this.hasAskedPermission && !this.isLoading,
+        onClick: () => {
+          this.showClearDataConfirmDialog();
+        }
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -4690,7 +4714,7 @@ struct ReadingAnalyticsPage {
         // 如果未询问过权限或功能未启用，显示权限请求界面
         if ((!this.hasAskedPermission || !this.analyticsEnabled) && !this.isLoading) {
           Column() {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             this.buildPermissionRequest()
           }
           .width('100%')
@@ -4699,7 +4723,7 @@ struct ReadingAnalyticsPage {
           // 长期视图
           Scroll(this.scroller) {
             Column({ space: 0 }) {
-              Blank().height(TITLE_BAR_HEIGHT_MINI)
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
               if (this.responsive_isLandscape) {
                 // 横屏模式：使用更紧凑的布局
                 this.buildLandscapeContent()
@@ -4735,7 +4759,7 @@ struct ReadingAnalyticsPage {
           // 日视图
           Scroll(this.scroller) {
             Column({ space: 0 }) {
-              Blank().height(TITLE_BAR_HEIGHT_MINI)
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
               if (this.isLoading) {
                 this.buildLoadingState()
               } else {
@@ -4828,47 +4852,20 @@ struct ReadingAnalyticsPage {
         if (this.showGoalSettingDialog) {
           this.buildGoalSettingDialog()
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '阅读报告',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack,
+          actions: this.getTitleBarActions()
+        })
       }
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '阅读报告' },
-        menu: {
-          value: [{
-            content: {
-              label: this.isLongTermView ? '日视图' : '长期视图',
-              icon: this.isLongTermView ? $r('sys.symbol.calendar_01_a') : $r('sys.symbol.calendar_badge_clock'),
-              isEnabled: this.hasAskedPermission && !this.isLoading,
-              action: () => {
-                this.toggleViewMode();
-              }
-            }
-          }, {
-            content: {
-              label: '清除数据',
-              icon: $r('sys.symbol.trash'),
-              isEnabled: this.hasAskedPermission && !this.isLoading,
-              action: () => {
-                this.showClearDataConfirmDialog();
-              }
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       

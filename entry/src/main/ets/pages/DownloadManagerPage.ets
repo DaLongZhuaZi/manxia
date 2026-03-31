@@ -17,6 +17,8 @@ import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheCont
 import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadTask, UnifiedTaskStatus, UnifiedDownloadType } from '../Framework/Download/UnifiedDownloadManager';
 import { PermanentImageCacheManager } from '../Framework/Cache/PermanentImageCacheManager';
 import { DataManager } from '../Framework/Data/DataManager';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'DownloadManagerPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -46,6 +48,7 @@ struct DownloadManagerPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'DownloadManagerPage';
 
@@ -921,7 +924,7 @@ struct DownloadManagerPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
           if (this.isLoading) {
             Column({ space: 20 }) {
@@ -992,8 +995,17 @@ struct DownloadManagerPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '下载管理',
+          appFontFamily: this.appFontFamily
+        })
       }
     }
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    /*
     .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
@@ -1012,6 +1024,7 @@ struct DownloadManagerPage {
         title: { mainTitle: '下载管理' }
       }
     })
+    */
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.onPageShow();

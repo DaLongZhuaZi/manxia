@@ -8,7 +8,8 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger } from '../Utils/Logger';
 import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'PrivacyPolicyPage';
 /**
@@ -124,6 +125,8 @@ export struct PrivacyPolicyPage {
 
           Scroll(this.scroller) {
             Column() {
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
               Text('漫匣隐私政策')
                 .fontSize(22)
                 .fontWeight(FontWeight.Bold)
@@ -193,30 +196,17 @@ export struct PrivacyPolicyPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '隐私政策',
+          contentPadding: 20,
+          maxContentWidth: 1200
+        })
       }
     }
     .backgroundColor(Color.Transparent)
-    .titleBar(withSafeAreaTitleBar({
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
-          },
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '隐私政策' }
-      }
-    }))
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onWillAppear(() => {
       PageWindowCoordinator.applyPagePolicy('PrivacyPolicyPage', this.getUIContext());
     })

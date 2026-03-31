@@ -1,4 +1,4 @@
-﻿// 文件路径: entry/src/main/ets/pages/settings/MainMenuSettingsSubPage.ets
+// 文件路径: entry/src/main/ets/pages/settings/MainMenuSettingsSubPage.ets
 /**
  * 主页面设置子页面
  * 集中管理 MainMenuPage 相关设置
@@ -27,6 +27,8 @@ import { SettingsSearchSupport } from './SettingsSearchSupport';
 import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 
 const TAG = 'MainMenuSettingsSubPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -101,6 +103,7 @@ export class PageSettingKeys {
 @Component
 export struct MainMenuSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
@@ -1317,7 +1320,7 @@ export struct MainMenuSettingsSubPage {
 
         Scroll(this.scroller) {
           Column({ space: 16 }) {
-            Blank().height(TITLE_BAR_HEIGHT)
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             Flex({
               wrap: FlexWrap.Wrap,
               justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
@@ -1633,39 +1636,18 @@ export struct MainMenuSettingsSubPage {
         })
         .edgeEffect(EdgeEffect.Spring)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '主页面设置',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack
+        })
       }
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.COMMON_BLUR,
-          blurEffectiveStartOffset: LengthMetrics.vp(0),
-          blurEffectiveEndOffset: LengthMetrics.vp(56)
-        },
-        originalStyle: {
-          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '主页面设置' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.applyPendingSearchTarget();
