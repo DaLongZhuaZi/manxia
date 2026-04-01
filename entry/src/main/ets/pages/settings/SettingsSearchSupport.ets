@@ -104,6 +104,12 @@ export class SettingsSearchSupport {
     { id: 'main_menu_animation', title: '主页面动画', description: '主导航栏滚动隐藏/显示动画', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['主页面动画', '主导航栏动画效果', '滚动隐藏', '底栏动画'] },
     { id: 'animation_reset', title: '动画设置恢复默认', description: '恢复全部动画设置默认值', targetPage: 'AnimationSettingsSubPage', anchorId: 'animation_reset', scrollOffset: 1220, keywords: ['恢复所有动画设置为默认值'] },
 
+    // 视觉效果
+    { id: 'visual_effects_capability', title: '视觉效果设备能力', description: '查看设备支持的材质类型、沉浸式材质能力与推荐档位', targetPage: 'VisualEffectsSettingsSubPage', anchorId: 'visual_effects_capability', scrollOffset: 0, keywords: ['视觉效果', '材质能力', 'hdsMaterial', '沉浸式材质', '设备支持', '推荐档位'] },
+    { id: 'visual_effects_strategy', title: '视觉效果材质策略', description: '切换系统自适应或手动固定档位', targetPage: 'VisualEffectsSettingsSubPage', anchorId: 'visual_effects_strategy', scrollOffset: 520, keywords: ['系统自适应', '手动固定档位', '材质策略', '自定义档位', '手动档位'] },
+    { id: 'visual_effects_effective', title: '视觉效果当前生效等级', description: '查看当前最终生效的材质等级与推荐说明', targetPage: 'VisualEffectsSettingsSubPage', anchorId: 'visual_effects_effective', scrollOffset: 980, keywords: ['当前生效等级', '材质等级', '推荐说明', 'effective'] },
+    { id: 'visual_effects_actions', title: '视觉效果检测与重置', description: '重新检测设备能力或恢复推荐设置', targetPage: 'VisualEffectsSettingsSubPage', anchorId: 'visual_effects_actions', scrollOffset: 1420, keywords: ['重新检测', '恢复推荐设置', '检测设备能力', '重置视觉效果'] },
+
     // 进度记录
     { id: 'tracking_services', title: '进度记录服务', description: 'MAL/AniList/Bangumi 等同步服务配置', targetPage: 'TrackingSettingsSubPage', anchorId: 'tracking_services', scrollOffset: 0, keywords: ['进度记录', '未登录', 'AniList', 'MAL', 'Bangumi', 'Suwayomi'] },
     { id: 'tracking_info', title: '进度记录说明', description: '跟踪机制与同步规则说明', targetPage: 'TrackingSettingsSubPage', anchorId: 'tracking_info', scrollOffset: 680, keywords: ['关于进度记录', '注意：跟踪是单向的'] },

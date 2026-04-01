@@ -54,6 +54,7 @@ import { AdvancedSettingsSubPage } from './settings/AdvancedSettingsSubPage';
 import { ErrorManagementSubPage } from './settings/ErrorManagementSubPage';
 import { InteractionSettingsSubPage } from './settings/InteractionSettingsSubPage';
 import { AnimationSettingsSubPage } from './settings/AnimationSettingsSubPage';
+import { VisualEffectsSettingsSubPage } from './settings/VisualEffectsSettingsSubPage';
 import { isMainPageBottomBarAnimationEnabled } from '../Framework/Animation/AnimationSettingsManager';
 import { TrackingSettingsSubPage } from './settings/TrackingSettingsSubPage';
 import { AniListLoginPage } from './settings/AniListLoginPage';
@@ -3557,7 +3558,7 @@ struct MainMenuPage {
         },
         alignment: DialogAlignment.Center,
         autoCancel: true,
-        cornerRadius: 16,
+        cornerRadius: this.getSettingsAnalyticsCardRadius(),
         customStyle: true
       });
       
@@ -13509,9 +13510,21 @@ struct MainMenuPage {
       }
       .width('85%')
       .padding(20)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
-      .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)', offsetY: 4 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
@@ -13590,9 +13603,21 @@ struct MainMenuPage {
       }
       .width('85%')
       .padding(20)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
-      .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)', offsetY: 4 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
@@ -13646,9 +13671,21 @@ struct MainMenuPage {
       .width(this.addShelfDialogStep === 3 ? '95%' : '90%')
       .constraintSize({ maxHeight: this.addShelfDialogStep === 3 ? '85%' : '90%' })
       .padding(24)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(20)
-      .shadow({ radius: 24, color: 'rgba(0, 0, 0, 0.25)', offsetY: 8 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 6,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 10
+      })
       .scale({ x: this.showAddShelfDialog ? 1 : 0.8, y: this.showAddShelfDialog ? 1 : 0.8 })
       .opacity(this.showAddShelfDialog ? 1 : 0)
       .animation({ duration: 300, curve: Curve.EaseOut })
@@ -14690,9 +14727,21 @@ struct MainMenuPage {
       }
       .width('85%')
       .padding(24)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(20)
-      .shadow({ radius: 24, color: 'rgba(0, 0, 0, 0.25)', offsetY: 8 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
@@ -14779,9 +14828,21 @@ struct MainMenuPage {
       }
       .width('85%')
       .padding(24)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(20)
-      .shadow({ radius: 24, color: 'rgba(0, 0, 0, 0.25)', offsetY: 8 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
@@ -14935,9 +14996,21 @@ struct MainMenuPage {
       }
       .width('85%')
       .padding(20)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
-      .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)', offsetY: 4 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
@@ -16332,8 +16405,21 @@ struct MainMenuPage {
       }
       .width('85%')
       .padding(20)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
@@ -20101,11 +20187,21 @@ struct MainMenuPage {
       }
       .width('89%')
       .padding(20)
-      .backgroundColor(this.getGlassBackground())
-      .backgroundBlurStyle(this.getGlassBlur())
-      .borderRadius(this.getGlassRadius())
-      .opacity(AppColors.getTransparency('dialog'))
-      .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
@@ -21078,8 +21174,21 @@ struct MainMenuPage {
     }
     .width('90%')
     .padding(24)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(16)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   /**
@@ -21184,9 +21293,21 @@ struct MainMenuPage {
     }
     .width('100%')
     .padding(24)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
-    .borderRadius({ topLeft: 16, topRight: 16 })
-    .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)', offsetX: 0, offsetY: -4 })
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius({ topLeft: this.getSettingsAnalyticsCardRadius(), topRight: this.getSettingsAnalyticsCardRadius() })
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: -4
+    })
   }
 
   /**
@@ -24013,9 +24134,21 @@ struct MainMenuPage {
       }
       .width('85%')
       .padding(20)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
-      .shadow({ radius: 20, color: '#40000000', offsetY: 8 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
       .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.scale({ x: 0.9, y: 0.9 })))
     }
     .width('100%')
@@ -24119,9 +24252,21 @@ struct MainMenuPage {
       .width('85%')
       .height('70%')
       .constraintSize({ maxWidth: 450, maxHeight: 550 })
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(this.getGlassRadius())
-      // .opacity(AppColors.getTransparency('dialog'))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
       .padding(20)
     }
     .width('100%')
@@ -25274,6 +25419,22 @@ struct MainMenuPage {
               this.showToast('打开主题设置页面失败');
             }
           }, 'guide_main_setting_theme')
+          this.buildSettingItem('视觉效果', '查看设备材质能力与材质档位策略', $r('sys.symbol.lightbulb'), () => {
+            try {
+              const navigationPath: NavigationPath = {
+                name: 'VisualEffectsSettingsSubPage',
+                param: {
+                  fromPage: 'MainMenuPage',
+                  timestamp: Date.now()
+                }
+              };
+              this.pathStack.pushPath(navigationPath);
+              logger.info(TAG, '导航到视觉效果设置页面');
+            } catch (error) {
+              logger.error(TAG, '导航到视觉效果设置页面失败', String(error));
+              this.showToast('打开视觉效果设置页面失败');
+            }
+          }, 'guide_main_setting_visual_effects')
           this.buildSettingItem('全局设置', '默认阅读模式、下载选项', $r('sys.symbol.slider_horizontal_2_square'), () => {
             try {
               const navigationPath: NavigationPath = {
@@ -25690,6 +25851,8 @@ struct MainMenuPage {
         InteractionSettingsSubPage()
       } else if (name === 'AnimationSettingsSubPage') {
         AnimationSettingsSubPage()
+      } else if (name === 'VisualEffectsSettingsSubPage') {
+        VisualEffectsSettingsSubPage()
       } else if (name === 'TrackingSettingsSubPage') {
         TrackingSettingsSubPage()
       } else if (name === 'AniListLoginPage') {

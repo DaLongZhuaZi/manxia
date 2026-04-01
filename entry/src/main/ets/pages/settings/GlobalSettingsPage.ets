@@ -117,6 +117,13 @@ export struct GlobalSettingsPage {
       targetPage: 'AnimationSettingsSubPage'
     },
     {
+      id: 'visual_effects',
+      title: '视觉效果',
+      subtitle: '查看设备材质能力，管理系统自适应与手动档位',
+      icon: $r('sys.symbol.lightbulb'),
+      targetPage: 'VisualEffectsSettingsSubPage'
+    },
+    {
       id: 'tracking',
       title: '进度记录',
       subtitle: 'MAL、AniList、Bangumi等进度同步',
@@ -468,6 +475,8 @@ export struct GlobalSettingsPage {
         return '交互设置';
       case 'AnimationSettingsSubPage':
         return '动画设置';
+      case 'VisualEffectsSettingsSubPage':
+        return '视觉效果';
       case 'TrackingSettingsSubPage':
         return '进度记录';
       case 'NetworkSettingsSubPage':
