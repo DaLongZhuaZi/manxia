@@ -15,6 +15,7 @@ import { ThemeManager } from './Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager } from './Framework/Managers/DeviceAdaptationManager';
 import { SettingsManager, SettingKeys } from './Framework/Managers/SettingsManager';
 import { AnimationSettingsManager } from './Framework/Animation/AnimationSettingsManager';
+import { VisualEffectsManager } from './Framework/Managers/VisualEffectsManager';
 import { AppNotificationManager } from './Framework/Managers/NotificationManager';
 import { MangaDownloadManager } from './Framework/Download/DownloadManager';
 import { getNovelSourceValidator } from './Framework/Novel/NovelSourceValidator';
@@ -327,6 +328,9 @@ export default class EntryAbility extends UIAbility {
       // 初始化动画设置管理器
       const animationSettingsManager = AnimationSettingsManager.getInstance();
       await animationSettingsManager.initialize();
+      const visualEffectsManager = VisualEffectsManager.getInstance();
+      await visualEffectsManager.initialize();
+      logger.info('EntryAbility', '视觉效果管理器初始化完成');
       logger.info('EntryAbility', '✅ 动画设置管理器初始化完成');
 
       // 记录关键设置
