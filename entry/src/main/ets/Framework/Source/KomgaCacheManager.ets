@@ -28,6 +28,16 @@ export class KomgaCacheManager {
     }
   }
 
+  public getCachedPagePath(mangaKey: string, chapterKey: string, pageIndex: number): string | null {
+    try {
+      const cachePath = this.getPageCachePath(mangaKey, chapterKey, pageIndex);
+      fs.accessSync(cachePath);
+      return cachePath;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   public async cacheCover(itemKey: string, coverUrl: string, headers?: Record<string, string>): Promise<string | null> {
     if (!coverUrl || coverUrl.trim().length <= 0) {
       return null;
@@ -69,16 +79,57 @@ export class KomgaCacheManager {
     }
   }
 
+  public async cachePage(
+    mangaKey: string,
+    chapterKey: string,
+    pageIndex: number,
+    pageUrl: string,
+    headers?: Record<string, string>
+  ): Promise<string | null> {
+    if (!pageUrl || pageUrl.trim().length <= 0) {
+      return null;
+    }
+
+    const cachedPath = this.getCachedPagePath(mangaKey, chapterKey, pageIndex);
+    if (cachedPath) {
+      return cachedPath;
+    }
+
+    const request = http.createHttp();
+    try {
+      const response = await request.request(pageUrl, {
+        method: http.RequestMethod.GET,
+        header: this.getRequestHeaders(headers),
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        connectTimeout: 20000,
+        readTimeout: 30000
+      });
+
+      if (response.responseCode < 200 || response.responseCode >= 300 || !response.result) {
+        logger.warn(TAG, `缓存 Komga 章节页失败，响应码: ${response.responseCode}, pageIndex=${pageIndex + 1}`);
+        return null;
+      }
+
+      const filePath = this.getPageCachePath(mangaKey, chapterKey, pageIndex);
+      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      try {
+        fs.writeSync(file.fd, response.result as ArrayBuffer);
+      } finally {
+        fs.closeSync(file.fd);
+      }
+      return filePath;
+    } catch (error) {
+      logger.error(TAG, `缓存 Komga 章节页失败: ${String(error)}`);
+      return null;
+    } finally {
+      request.destroy();
+    }
+  }
+
   public clearCoverCache(): boolean {
     try {
       const coverDir = this.getCoverCacheDir();
-      const files = fs.listFileSync(coverDir);
-      files.forEach(file => {
-        try {
-          fs.unlinkSync(`${coverDir}/${file}`);
-        } catch (_error) {
-        }
-      });
+      this.clearDirectoryContents(coverDir);
       return true;
     } catch (error) {
       logger.error(TAG, `清理 Komga 封面缓存失败: ${String(error)}`);
@@ -86,8 +137,21 @@ export class KomgaCacheManager {
     }
   }
 
+  public clearChapterCache(): boolean {
+    try {
+      const chapterDir = this.getChapterCacheDir();
+      this.clearDirectoryContents(chapterDir);
+      return true;
+    } catch (error) {
+      logger.error(TAG, `清理 Komga 章节缓存失败: ${String(error)}`);
+      return false;
+    }
+  }
+
   public clearAllCache(): boolean {
-    return this.clearCoverCache();
+    const coverResult = this.clearCoverCache();
+    const chapterResult = this.clearChapterCache();
+    return coverResult && chapterResult;
   }
 
   private getCoverCachePath(itemKey: string, coverUrl: string): string {
@@ -103,6 +167,29 @@ export class KomgaCacheManager {
     const coverDir = `${baseDir}/covers`;
     this.ensureDirectory(coverDir);
     return coverDir;
+  }
+
+  private getChapterCacheDir(): string {
+    const baseDir = this.getBaseCacheDir();
+    const chapterDir = `${baseDir}/chapters`;
+    this.ensureDirectory(chapterDir);
+    return chapterDir;
+  }
+
+  private getMangaChapterCacheDir(mangaKey: string, chapterKey: string): string {
+    const chapterRoot = this.getChapterCacheDir();
+    const safeMangaKey = this.sanitizeKey(mangaKey);
+    const safeChapterKey = this.sanitizeKey(chapterKey);
+    const mangaDir = `${chapterRoot}/${safeMangaKey}`;
+    const chapterDir = `${mangaDir}/${safeChapterKey}`;
+    this.ensureDirectory(mangaDir);
+    this.ensureDirectory(chapterDir);
+    return chapterDir;
+  }
+
+  private getPageCachePath(mangaKey: string, chapterKey: string, pageIndex: number): string {
+    const chapterDir = this.getMangaChapterCacheDir(mangaKey, chapterKey);
+    return `${chapterDir}/page_${String(pageIndex + 1).padStart(4, '0')}.img`;
   }
 
   private getBaseCacheDir(): string {
@@ -139,11 +226,30 @@ export class KomgaCacheManager {
   }
 
   private sanitizeKey(value: string): string {
-    return value
+    const sanitized = value
       .replace(/[\\/:*?"<>|]/g, '_')
       .replace(/\s+/g, '_')
       .trim()
       .substring(0, 120);
+    return sanitized.length > 0 ? sanitized : 'unknown';
+  }
+
+  private clearDirectoryContents(path: string): void {
+    const entries: string[] = fs.listFileSync(path);
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
+      const entryPath = `${path}/${entry}`;
+      try {
+        const stat = fs.statSync(entryPath);
+        if (stat.isDirectory()) {
+          this.clearDirectoryContents(entryPath);
+          fs.rmdirSync(entryPath);
+        } else {
+          fs.unlinkSync(entryPath);
+        }
+      } catch (_error) {
+      }
+    }
   }
 
   private getExtensionFromUrl(url: string): string {

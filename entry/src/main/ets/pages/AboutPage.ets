@@ -23,7 +23,7 @@ import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarMana
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?taskId=5af3c709d4fde5ab7e7b3d93aae8430f&invitationCode=8aA6fdl5bAR';
+const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?taskId=d27ed310ec99682e86cbe49f6caf337d&invitationCode=9fYuJIubYMw';
 
 // 使用NavDestinationContext官方类型
 // @kit.ArkUI提供的NavDestinationContext已包含必要的类型定义
@@ -219,7 +219,7 @@ struct AboutPage {
         .borderRadius(20)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
 
-      Text(this.getDisplayAppName())
+      Text('漫匣')
         .fontSize(28)
         .fontWeight(FontWeight.Bold)
         .fontFamily(this.appFontFamily)
@@ -485,7 +485,7 @@ struct AboutPage {
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .opacity(0.6)
 
-      Text('基于 HarmonyOS Next API 18 构建')
+      Text('基于 HarmonyOS Next API 23 构建')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))

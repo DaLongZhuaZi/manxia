@@ -25,6 +25,7 @@ export interface ComicInfo {
   tags?: string[];
   url?: string;
   updateTime?: number;
+  instanceId?: string;
 }
 
 /**
@@ -38,7 +39,10 @@ export interface ChapterInfo {
   chapterNumber?: number;
   seriesTitle?: string;
   pageCount?: number;
+  coverUrl?: string;
+  instanceId?: string;
 }
+
 
 /**
  * 页面信息

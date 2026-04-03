@@ -618,12 +618,46 @@ export class SuwayomiCacheManager {
   }
 
   /**
+   * 清除所有章节缓存
+   */
+  public clearChapterCache(): boolean {
+    try {
+      const chapterDir = this.getChapterPagesCacheDir();
+      this.clearDirectoryContents(chapterDir);
+      logger.info(TAG, '章节缓存已清除');
+      return true;
+    } catch (error) {
+      logger.error(TAG, `清除章节缓存失败: ${error}`);
+      return false;
+    }
+  }
+
+  /**
    * 清除所有Suwayomi缓存
    */
   public clearAllCache(): boolean {
     const coverResult = this.clearCoverCache();
     const iconResult = this.clearSourceIconCache();
-    return coverResult && iconResult;
+    const chapterResult = this.clearChapterCache();
+    return coverResult && iconResult && chapterResult;
+  }
+
+  private clearDirectoryContents(path: string): void {
+    const entries: string[] = fs.listFileSync(path);
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
+      const entryPath = `${path}/${entry}`;
+      try {
+        const stat = fs.statSync(entryPath);
+        if (stat.isDirectory()) {
+          this.clearDirectoryContents(entryPath);
+          fs.rmdirSync(entryPath);
+        } else {
+          fs.unlinkSync(entryPath);
+        }
+      } catch (_error) {
+      }
+    }
   }
 }
 

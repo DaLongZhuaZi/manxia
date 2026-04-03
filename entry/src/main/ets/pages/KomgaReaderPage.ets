@@ -15,10 +15,12 @@ const READING_PROGRESS_STORE: string = 'komga_reading_progress';
 interface KomgaReaderParams {
   itemId: string;
   contentType: KomgaContentType;
+  instanceId: string;
   bookId: string;
   chapterIndex: number;
   mangaTitle: string;
 }
+
 
 @Component
 export struct KomgaReaderPage {
@@ -28,7 +30,9 @@ export struct KomgaReaderPage {
   @State itemId: string = '';
   @State contentType: KomgaContentType = 'SERIES';
   @State mangaTitle: string = '';
+  @State instanceId: string = '';
   @State chapterId: string = '';
+
   @State chapterIndex: number = 0;
   @State chapterTitle: string = '';
   @State pages: PageInfo[] = [];
@@ -190,11 +194,15 @@ export struct KomgaReaderPage {
     return typeof chapter.chapterNumber === 'number' ? Number(chapter.chapterNumber) : 0;
   }
 
-  private async loadChapterList(): Promise<void> {
-    await this.executor.initialize(true);
-    const detail: ComicDetailInfo | null = await this.executor.getDetail(this.itemId, this.contentType);
+  private async loadChapterList(forceRefresh: boolean = false): Promise<void> {
+    await this.executor.initialize(forceRefresh);
+    const detail: ComicDetailInfo | null = await this.executor.getDetail(this.itemId, this.contentType, this.instanceId, forceRefresh);
+    if (detail !== null && detail.instanceId !== undefined && detail.instanceId.length > 0) {
+      this.instanceId = detail.instanceId;
+    }
     this.chapterList = this.sortChapters(detail);
     if (this.chapterList.length <= 0) {
+
       this.chapterTitle = '';
       return;
     }
@@ -215,7 +223,7 @@ export struct KomgaReaderPage {
     this.chapterTitle = current.title;
   }
 
-  private async loadPages(): Promise<void> {
+  private async loadPages(forceRefresh: boolean = false): Promise<void> {
     if (this.chapterId.length <= 0) {
       this.errorMessage = '章节 ID 无效';
       return;
@@ -224,8 +232,8 @@ export struct KomgaReaderPage {
     this.isLoading = true;
     this.errorMessage = '';
     try {
-      await this.executor.initialize(true);
-      this.pages = await this.executor.getPages(this.chapterId);
+      await this.executor.initialize(forceRefresh);
+      this.pages = await this.executor.getPages(this.chapterId, this.instanceId, forceRefresh);
       await this.restoreReadingProgress();
       if (this.currentPage >= 0 && this.currentPage < this.pages.length) {
         this.swiperController.changeIndex(this.currentPage);
@@ -237,6 +245,7 @@ export struct KomgaReaderPage {
       this.isLoading = false;
     }
   }
+
 
   private async restoreReadingProgress(): Promise<void> {
     try {
@@ -494,8 +503,12 @@ export struct KomgaReaderPage {
         .fontColor(Color.White)
         .fontFamily(this.appFontFamily)
         .onClick(() => {
-          void this.loadPages();
+          void (async () => {
+            await this.loadChapterList(true);
+            await this.loadPages(true);
+          })();
         })
+
     }
     .width('100%')
     .height('100%')
@@ -541,8 +554,10 @@ export struct KomgaReaderPage {
                 imageWidth: '100%',
                 imageHeight: '100%',
                 objectFit: ImageFit.Contain,
-                imgBorderRadius: 0
+                imgBorderRadius: 0,
+                requestHeaders: this.executor.getImageHeaders(this.instanceId)
               })
+
             }
             .width('100%')
             .height('100%')
@@ -628,11 +643,13 @@ export struct KomgaReaderPage {
       const param: Object | undefined = context.pathInfo.param as Object | undefined;
       if (param !== null && param !== undefined) {
         const params: KomgaReaderParams = param as KomgaReaderParams;
-        this.itemId = params.itemId;
-        this.contentType = params.contentType;
-        this.chapterId = params.bookId;
-        this.chapterIndex = params.chapterIndex;
-        this.mangaTitle = params.mangaTitle;
+          this.itemId = params.itemId;
+          this.contentType = params.contentType;
+          this.instanceId = params.instanceId || '';
+          this.chapterId = params.bookId;
+          this.chapterIndex = params.chapterIndex;
+          this.mangaTitle = params.mangaTitle;
+
       }
 
       void (async () => {

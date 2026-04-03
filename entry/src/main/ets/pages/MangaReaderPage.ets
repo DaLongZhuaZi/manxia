@@ -20,6 +20,8 @@ import { DataManager, PageInfo, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, 
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
 import CookieManager from '../Framework/Managers/CookieManager';
 import { DataService } from '../Framework/Services/DataService';
+import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
+import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
@@ -38,7 +40,8 @@ import {
 } from '../Models/MangaModels';
 import { MangaViewer } from '../components/MangaViewer';
 import { MangaReaderSettings } from '../components/MangaReaderSettings';
-import { RequestHeaders } from '../Framework/Cache/ImageCacheManager';
+import { ImageCacheManager, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
+import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
 import { PreloadDebugOverlay, PreloadDebugInfo } from '../components/PreloadDebugOverlay';
 import fs from '@ohos.file.fs';
 import { MangaQuickSettings } from '../components/MangaQuickSettings';
@@ -87,6 +90,8 @@ export interface MangaReaderPageParams {
   mangaId?: string;
   /** 图源ID（用于WebView图源） */
   sourceId?: number;
+  /** 图源包名（用于特定图源专用逻辑） */
+  sourcePkg?: string;
   /** 图源名称（例如：KOMIIC；本地则为 LOCAL） */
   sourceName?: string;
   /** 阅读内容类型（本地/在线未下载/在线已下载） */
@@ -293,6 +298,8 @@ export struct MangaReaderPage {
 
   // 数据服务与阅读进度状态
   private dataService: DataService = DataService.getInstance();
+  private remoteLibraryBridge: RemoteLibraryMangaBridge = RemoteLibraryMangaBridge.getInstance();
+  private suwayomiExecutor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private annotationManager = getUnifiedAnnotationManager();
   private lastProgressSaveTime: number = 0;
   private lastSavedPageIndex: number = -1;
@@ -309,6 +316,9 @@ export struct MangaReaderPage {
   @State networkHeadersTick: number = 0;
   @State chapterTick: number = 0;// [新增] 章节切换计数器，用于通知MangaViewer重新加载
   private currentSourceId: number = -1;
+  private currentSourcePkg: string = '';
+  private photos18PageCachePartition: string = 'photos18_reader';
+
   @State private dailyLimitReached: boolean = false;
   @State private dailyLimitPromptVisible: boolean = false;
   @State private dailyLimitMessage: string = '';
@@ -328,6 +338,7 @@ export struct MangaReaderPage {
   };
   // 图源预加载设置
   private webviewController: webview.WebviewController = new webview.WebviewController();
+  @State private webViewControllerAttached: boolean = false;
   
   // 图源预加载设置
   private sourcePreloadSettings: SourcePreloadSettings = {
@@ -934,6 +945,7 @@ export struct MangaReaderPage {
 
   aboutToDisappear() {
     this.isPageVisible = false;
+    this.webViewControllerAttached = false;
     this.clearFullscreenRestoreTimer();
     logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
     
@@ -1009,9 +1021,9 @@ export struct MangaReaderPage {
     eventBus.publish(GameEvent.MANGA_READING_PROGRESS_UPDATED, new BasePayload());
     
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
-    if (!this.isCloseTransitionNavigating) {
+    if (this.shouldUseReaderTransition() && !this.isCloseTransitionNavigating) {
       cancelTransition();
-    } else {
+    } else if (this.shouldUseReaderTransition()) {
       logger.info(TAG, 'aboutToDisappear: close transition in progress, skip cancelTransition');
     }
     
@@ -1386,12 +1398,172 @@ export struct MangaReaderPage {
   * [新增] 强制更新网络请求头，确保Referer正确
   * 必须在 currentChapter 确定后调用
   */
-  private updateNetworkHeadersForChapter(): void {
-    const engine = this.mangaEngine;
+  private isPhotos18Source(): boolean {
+    if (this.currentSourcePkg === 'com.manxia.extension.all.photos18') {
+      return true;
+    }
+    if (this.pageParams?.sourcePkg === 'com.manxia.extension.all.photos18') {
+      return true;
+    }
+    const sourceName = this.pageParams?.sourceName || '';
+    if (sourceName.toLowerCase().includes('photos18')) {
+      return true;
+    }
+    return false;
+  }
+
+  private getPhotos18Origin(): string {
+    return 'https://www.photos18.com';
+  }
+
+  private isInvalidPhotos18RefererCandidate(value: string): boolean {
+    const trimmed = value.trim();
+    return trimmed.length === 0 || trimmed.startsWith('id_') || trimmed.startsWith('local_');
+  }
+
+  private buildPhotos18GalleryUrl(rawValue: string): string {
+    let candidate = rawValue.trim();
+    if (candidate.length === 0) {
+      return '';
+    }
+    const schemeIndex = candidate.indexOf('://');
+    if (schemeIndex >= 0) {
+      const pathIndex = candidate.indexOf('/', schemeIndex + 3);
+      candidate = pathIndex >= 0 ? candidate.substring(pathIndex) : '';
+    }
+    const queryIndex = candidate.indexOf('?');
+    if (queryIndex >= 0) {
+      candidate = candidate.substring(0, queryIndex);
+    }
+    const hashIndex = candidate.indexOf('#');
+    if (hashIndex >= 0) {
+      candidate = candidate.substring(0, hashIndex);
+    }
+    if (candidate.startsWith('/zh-hans/')) {
+      candidate = candidate.substring('/zh-hans/'.length);
+    } else if (candidate === '/zh-hans') {
+      candidate = '';
+    }
+    candidate = candidate.replace(/^\/+/, '').replace(/\/+$/, '');
+    if (candidate.startsWith('v/')) {
+      candidate = candidate.substring(2);
+    }
+    if (candidate.length === 0) {
+      return '';
+    }
+    return `${this.getPhotos18Origin()}/v/${candidate}`;
+  }
+
+  private buildPhotos18CachePartition(referer: string): string {
+    const normalizedReferer = referer.trim().length > 0 ? referer.trim() : this.getPhotos18Origin();
+    let hash = 0;
+    for (let i = 0; i < normalizedReferer.length; i++) {
+      const charCode = normalizedReferer.charCodeAt(i);
+      hash = ((hash << 5) - hash) + charCode;
+      hash = hash & hash;
+    }
+    return `photos18_reader_${Math.abs(hash).toString(36)}`;
+  }
+
+  private resolvePhotos18ReaderReferer(manga?: Manga | null, chapter?: MangaChapter | null): string {
+    let candidate = '';
+    if (chapter) {
+      const chapterWithExternalId = chapter as ChapterInfoToMangaChapterConverter;
+      if (chapterWithExternalId.externalId && !this.isInvalidPhotos18RefererCandidate(chapterWithExternalId.externalId)) {
+        candidate = chapterWithExternalId.externalId;
+      } else if (!this.isInvalidPhotos18RefererCandidate(chapter.id)) {
+        candidate = chapter.id;
+      }
+    }
+    if (candidate.length === 0 && manga && manga.sourceInfo && !this.isInvalidPhotos18RefererCandidate(manga.sourceInfo.sourceUrl)) {
+      candidate = manga.sourceInfo.sourceUrl;
+    }
+    const referer = this.buildPhotos18GalleryUrl(candidate);
+    return referer.length > 0 ? referer : this.getPhotos18Origin();
+  }
+
+  private resolvePhotos18ReaderRefererFromParams(
+    params: MangaReaderPageParams,
+    manga?: Manga | null,
+    chapter?: MangaChapter | null
+  ): string {
+    const resolvedFromState = this.resolvePhotos18ReaderReferer(manga, chapter);
+    if (resolvedFromState !== this.getPhotos18Origin()) {
+      return resolvedFromState;
+    }
+
+    let candidate = '';
+    if (params.chapterId && !this.isInvalidPhotos18RefererCandidate(params.chapterId)) {
+      candidate = params.chapterId;
+    }
+
+    if (candidate.length === 0 && params.manga && params.manga.sourceInfo &&
+      !this.isInvalidPhotos18RefererCandidate(params.manga.sourceInfo.sourceUrl)) {
+      candidate = params.manga.sourceInfo.sourceUrl;
+    }
+
+    if (candidate.length === 0 && params.mangaId && !this.isInvalidPhotos18RefererCandidate(params.mangaId)) {
+      candidate = params.mangaId;
+    }
+
+    const referer = this.buildPhotos18GalleryUrl(candidate);
+    return referer.length > 0 ? referer : this.getPhotos18Origin();
+  }
+
+  private async preparePhotos18ImageSession(baseUrl: string): Promise<void> {
+    if (!this.isPhotos18Source() || this.currentSourceId <= 0) {
+      return;
+    }
+    const contextUrl = baseUrl.trim().length > 0 ? baseUrl.trim() : this.getPhotos18Origin();
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+      await this.ensureHiddenWebViewSourceContextReady(contextUrl);
+      const cookieManager = CookieManager.getInstance();
+      const refreshed: boolean = await cookieManager.forceCaptureWebViewCookies(this.currentSourceId, this.webviewController, contextUrl);
+      ImageCacheManager.getInstance().clearCookieCache(this.currentSourceId);
+      OnlineImageLoader.getInstance().clearCookieCache(this.currentSourceId);
+      logger.info(TAG, `Photos18阅读器图片会话预热完成: refreshed=${refreshed}`);
+    } catch (error) {
+      logger.warn(TAG, `Photos18阅读器图片会话预热失败: ${String(error)}`);
+    }
+  }
+
+  private async updateNetworkHeadersForChapter(): Promise<void> {
     const manga = this.readerState.currentManga;
     const chapter = this.readerState.currentChapter;
 
     if ( !manga || !chapter ) {
+      return;
+    }
+
+    if (this.isPhotos18Source()) {
+      try {
+        const cm = CookieManager.getInstance();
+        const cookieStr = await cm.getCookieString(this.currentSourceId);
+        const referer = this.resolvePhotos18ReaderReferer(manga, chapter);
+        this.photos18PageCachePartition = this.buildPhotos18CachePartition(referer);
+        const photos18Headers: RequestHeaders = {
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
+          referer: referer,
+          origin: this.getPhotos18Origin(),
+          acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+          cacheControl: 'no-cache',
+          pragma: 'no-cache',
+          secFetchDest: 'image',
+          secFetchMode: 'no-cors',
+          secFetchSite: 'same-origin',
+          cookie: cookieStr,
+          cachePartition: this.photos18PageCachePartition
+        } as RequestHeaders;
+
+        this.networkHeaders = photos18Headers;
+        this.networkHeadersTick = this.networkHeadersTick + 1;
+        logger.info(TAG, `Photos18章节图片请求头已刷新: referer=${referer}, cookieLen=${cookieStr.length}`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.warn(TAG, `Photos18章节Cookie获取失败: ${errorMessage}`);
+      }
       return;
     }
 
@@ -1479,7 +1651,7 @@ export struct MangaReaderPage {
         const updated: RequestHeaders = {
           userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
           referer: newReferer,
-          origin: newReferer,
+          origin: this.isPhotos18Source() ? this.getPhotos18Origin() : newReferer,
           accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
           acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7'
         } as RequestHeaders;
@@ -1592,7 +1764,244 @@ export struct MangaReaderPage {
     return `${mangaId}|${chapterId}|${pageIndex}|${contentType}|${sourceId}`;
   }
 
+  private isRemoteProviderContentType(contentType: MangaReaderContentType): boolean {
+    return contentType === MangaReaderContentType.Suwayomi || contentType === MangaReaderContentType.Komga;
+  }
+
+  private shouldUseReaderTransition(params?: MangaReaderPageParams | null): boolean {
+    const effectiveParams = params ? params : this.pageParams;
+    if (!effectiveParams) {
+      return true;
+    }
+    return !this.isRemoteProviderContentType(effectiveParams.contentType);
+  }
+
+  private resolveRemoteProviderReadingSettingsScopeKey(mangaId: string): string | null {
+    const parsedProviderId = RemoteLibraryMangaBridge.parseProviderMangaId(mangaId);
+    if (parsedProviderId === null) {
+      return null;
+    }
+    if (parsedProviderId.providerType === 'suwayomi') {
+      return 'manga_settings_provider_suwayomi';
+    }
+    const instanceId = parsedProviderId.instanceId ? parsedProviderId.instanceId : 'default';
+    return `manga_settings_provider_komga_${instanceId}`;
+  }
+
+  private async hasPersistedPerMangaReadingSettings(mangaId: string): Promise<boolean> {
+    const settingKey = `manga_settings_${mangaId}`;
+    try {
+      const settingsJson = await DataManager.getInstance().getUserSetting('default_user', settingKey);
+      return settingsJson !== null && settingsJson.length > 0;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `检查单漫画阅读设置失败: key=${settingKey}, error=${errorMessage}`);
+      return false;
+    }
+  }
+
+  private async loadRemoteProviderScopedReadingSettings(mangaId: string): Promise<ReadingSettings | null> {
+    const scopeKey = this.resolveRemoteProviderReadingSettingsScopeKey(mangaId);
+    if (scopeKey === null) {
+      return null;
+    }
+
+    try {
+      const settingsJson = await DataManager.getInstance().getUserSetting('default_user', scopeKey);
+      if (settingsJson === null || settingsJson.length <= 0) {
+        return null;
+      }
+      const parsedSettings = JSON.parse(settingsJson) as ReadingSettings;
+      const normalizedSettings = this.cloneReadingSettings(parsedSettings);
+      AppStorage.setOrCreate(scopeKey, settingsJson);
+      logger.info(TAG, `已加载远程图源阅读设置: key=${scopeKey}`);
+      return normalizedSettings;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `加载远程图源阅读设置失败: mangaId=${mangaId}, error=${errorMessage}`);
+      return null;
+    }
+  }
+
+  private async persistRemoteProviderScopedReadingSettings(
+    mangaId: string,
+    settings: ReadingSettings,
+    trigger: string
+  ): Promise<boolean> {
+    const scopeKey = this.resolveRemoteProviderReadingSettingsScopeKey(mangaId);
+    if (scopeKey === null) {
+      return false;
+    }
+
+    const settingsJson = JSON.stringify(settings);
+    AppStorage.setOrCreate(scopeKey, settingsJson);
+
+    try {
+      await DataManager.getInstance().saveUserSetting('default_user', scopeKey, settingsJson);
+      logger.info(TAG, `远程图源阅读设置已持久化: key=${scopeKey}, trigger=${trigger}`);
+      return true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `远程图源阅读设置持久化失败: key=${scopeKey}, trigger=${trigger}, error=${errorMessage}`);
+      return false;
+    }
+  }
+
+  private getFirstLoadedMangaChapter(manga: Manga): MangaChapter | undefined {
+    if (manga.chapters.length <= 0) {
+      return undefined;
+    }
+    let firstChapter: MangaChapter = manga.chapters[0];
+    for (let index = 1; index < manga.chapters.length; index++) {
+      const currentChapter = manga.chapters[index];
+      if (currentChapter.chapterNumber < firstChapter.chapterNumber) {
+        firstChapter = currentChapter;
+      }
+    }
+    return firstChapter;
+  }
+
+  private normalizeAnnotationCenterMangaContentType(contentType?: MangaReaderContentType): 'Local' | 'OnlineUndownloaded' | 'OnlineDownloaded' {
+    if (contentType === MangaReaderContentType.OnlineDownloaded) {
+      return 'OnlineDownloaded';
+    }
+    if (
+      contentType === MangaReaderContentType.OnlineUndownloaded ||
+      contentType === MangaReaderContentType.Suwayomi ||
+      contentType === MangaReaderContentType.Komga
+    ) {
+      return 'OnlineUndownloaded';
+    }
+    return 'Local';
+  }
+
+  private resolveRemoteProviderChapter(manga: Manga, requestedChapterId?: string): MangaChapter | null {
+    const normalizedChapterId = String(requestedChapterId || '').trim();
+    if (normalizedChapterId.length > 0) {
+      const parsedRequestedChapter = RemoteLibraryMangaBridge.parseProviderChapterId(normalizedChapterId);
+      const rawRequestedChapterId = parsedRequestedChapter ? parsedRequestedChapter.rawChapterId : normalizedChapterId;
+
+      for (let index = 0; index < manga.chapters.length; index++) {
+        const chapter = manga.chapters[index];
+        if (chapter.id === normalizedChapterId || chapter.externalId === normalizedChapterId) {
+          return chapter;
+        }
+
+        const parsedChapter = RemoteLibraryMangaBridge.parseProviderChapterId(chapter.id);
+        if (parsedChapter && parsedChapter.rawChapterId === rawRequestedChapterId) {
+          return chapter;
+        }
+
+        if (!parsedChapter && chapter.id === rawRequestedChapterId) {
+          return chapter;
+        }
+      }
+    }
+
+    const firstChapter = this.getFirstLoadedMangaChapter(manga);
+    return firstChapter ? firstChapter : null;
+  }
+
+  private async initializeRemoteProviderReaderSafe(params: MangaReaderPageParams): Promise<boolean> {
+    if (!this.isRemoteProviderContentType(params.contentType)) {
+      return false;
+    }
+
+    const providerMangaId = params.mangaId || params.manga?.id || '';
+    if (providerMangaId.length <= 0) {
+      throw new Error('Remote provider reader missing mangaId');
+    }
+
+    this.currentSourceId = -1;
+    this.currentSourcePkg = '';
+    this.mangaEngine = null;
+    this.networkHeaders = undefined;
+    this.readerState.isLoading = true;
+    this.readerState.errorMessage = '';
+    this.readerState.loadingMessage = 'Loading remote manga...';
+
+    let manga = params.manga;
+    if (!manga || !this.remoteLibraryBridge.isRemoteProviderManga(manga) || manga.chapters.length <= 0) {
+      const detailManga = await this.remoteLibraryBridge.loadRemoteMangaDetail(manga || null, providerMangaId);
+      if (detailManga === null) {
+        throw new Error('Failed to load remote manga detail');
+      }
+      manga = detailManga;
+    }
+
+    this.readerState.currentManga = manga;
+    this.reportTransitionLoadingProgress(0.28, 'manga_bound');
+
+    const chapter = this.resolveRemoteProviderChapter(manga, params.chapterId);
+    if (chapter === null) {
+      this.readerState.errorMessage = `Remote manga has no readable chapter: ${manga.title}`;
+      this.readerState.isLoading = false;
+      this.notifyTransitionReaderReadyOnce('remote_provider_no_chapter');
+      return true;
+    }
+
+    this.readerState.currentChapter = chapter;
+    this.reportTransitionLoadingProgress(0.46, 'chapter_bound');
+
+    if (chapter.pages.length <= 0) {
+      this.readerState.loadingMessage = `Loading chapter ${chapter.title}...`;
+      const remotePages = await this.remoteLibraryBridge.loadChapterPages(manga, chapter);
+      if (remotePages.length <= 0) {
+        throw new Error(`Remote chapter has no pages: ${chapter.title}`);
+      }
+      chapter.pages = remotePages;
+    }
+
+    if (!chapter.totalPages || chapter.totalPages <= 0) {
+      chapter.totalPages = chapter.pages.length;
+    }
+
+    this.networkHeaders = await this.remoteLibraryBridge.getRequestHeaders(manga);
+    this.networkHeadersTick = this.networkHeadersTick + 1;
+    this.isNetworkConfigReady = true;
+
+    const totalPages = chapter.totalPages || chapter.pages.length;
+    if (totalPages <= 0 || chapter.pages.length <= 0) {
+      this.readerState.errorMessage = `Remote chapter has no pages: ${chapter.title}`;
+      this.readerState.isLoading = false;
+      this.notifyTransitionReaderReadyOnce('remote_provider_no_pages');
+      return true;
+    }
+
+    const requestedPageIndex = params.pageIndex !== undefined ? params.pageIndex : 0;
+    const maxPageIndex = Math.max(0, chapter.pages.length - 1);
+    this.readerState.currentPageIndex = Math.max(0, Math.min(requestedPageIndex, maxPageIndex));
+    this.refreshCurrentMangaBookmarkState('initialize_remote_provider_reader');
+    this.reportTransitionLoadingProgress(0.72, 'chapter_pages_ready');
+
+    await this.loadReadingSettings();
+    this.reportTransitionLoadingProgress(0.84, 'reading_settings_ready');
+
+    setTimeout(() => {
+      this.preloadImages();
+    }, 0);
+
+    this.sessionStartTimestamp = Date.now();
+    this.lastProgressSaveTime = 0;
+    this.lastSavedPageIndex = -1;
+    this.readerState.loadingMessage = '';
+    this.lastInitializedParamsKey = this.buildInitParamsKey(params);
+    this.readerState.isLoading = false;
+    this.reportTransitionLoadingProgress(0.94, 'init_done_wait_visual_ready');
+    this.waitForTransitionReaderReady('remote_provider_init_success');
+
+    logger.info(TAG, `Remote provider reader initialized: manga=${manga.title}, chapter=${chapter.title}, pages=${chapter.pages.length}`);
+    return true;
+  }
+
   private refreshNetworkUserAgentAsync(engine: MangaSourceEngine, params: MangaReaderPageParams): void {
+    if (this.isPhotos18Source()) {
+      return;
+    }
+    if (!this.webViewControllerAttached) {
+      logger.debug(TAG, '隐藏WebView控制器尚未附加，跳过异步刷新WebView UserAgent');
+      return;
+    }
     const expectedKey = this.buildInitParamsKey(params);
     engine.getWebViewUserAgent().then((ua: string) => {
       const normalizedUa = ua ? ua.trim() : '';
@@ -1630,8 +2039,82 @@ export struct MangaReaderPage {
       logger.debug(TAG, `异步刷新WebView UserAgent失败（已忽略）: ${String(error)}`);
     });
   }
+
+  private async waitForHiddenWebViewAttached(timeoutMs: number = 3000): Promise<void> {
+    if (this.webViewControllerAttached) {
+      return;
+    }
+
+    const startTime = Date.now();
+    while (!this.webViewControllerAttached && Date.now() - startTime < timeoutMs) {
+      await new Promise<void>((resolve: () => void) => {
+        setTimeout(resolve, 50);
+      });
+    }
+
+    if (!this.webViewControllerAttached) {
+      throw new Error(`隐藏WebView控制器附加超时(${timeoutMs}ms)`);
+    }
+  }
+
+  private async waitForHiddenWebViewUrl(baseUrl: string, timeoutMs: number = 5000): Promise<void> {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      if (!this.mangaEngine) {
+        throw new Error('MangaSourceEngine未初始化');
+      }
+
+      try {
+        const currentUrl: string = await this.mangaEngine.getCurrentUrl();
+        if (currentUrl.startsWith(baseUrl)) {
+          return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.debug(TAG, `等待隐藏WebView进入图源上下文时读取URL失败: ${message}`);
+      }
+
+      await new Promise<void>((resolve: () => void) => {
+        setTimeout(resolve, 150);
+      });
+    }
+
+    throw new Error(`隐藏WebView未进入图源上下文: ${baseUrl}`);
+  }
+
+  private async ensureHiddenWebViewSourceContextReady(baseUrl: string): Promise<void> {
+    const normalizedBaseUrl: string = baseUrl.trim();
+    if (normalizedBaseUrl.length === 0) {
+      return;
+    }
+
+    await this.waitForHiddenWebViewAttached();
+
+    if (!this.mangaEngine) {
+      return;
+    }
+
+    let currentUrl: string = '';
+    try {
+      currentUrl = await this.mangaEngine.getCurrentUrl();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.debug(TAG, `读取隐藏WebView当前URL失败，将直接预热图源上下文: ${message}`);
+    }
+
+    if (currentUrl.startsWith(normalizedBaseUrl)) {
+      logger.debug(TAG, `隐藏WebView已处于图源上下文: ${currentUrl}`);
+      return;
+    }
+
+    logger.info(TAG, `隐藏WebView预热图源上下文: ${normalizedBaseUrl}`);
+    this.webviewController.loadUrl(normalizedBaseUrl);
+    await this.waitForHiddenWebViewUrl(normalizedBaseUrl);
+    logger.info(TAG, `隐藏WebView图源上下文已就绪: ${normalizedBaseUrl}`);
+  }
   
   private async initializeMangaReader(params: MangaReaderPageParams): Promise<void> {
+    this.pageParams = params;
     const initKey = this.buildInitParamsKey(params);
     if (!this.isInitializing &&
       this.lastInitializedParamsKey === initKey &&
@@ -1692,15 +2175,21 @@ export struct MangaReaderPage {
   * 实际的初始化逻辑
   */
   private async doActualInitialization(params: MangaReaderPageParams): Promise<void> {
-    // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
-    // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
-    const srcId = params.sourceId || this.currentSourceId;
-    const srcName = params.sourceName || params.manga?.sourceInfo?.sourceName || '';
-    const isKomiic = (srcId === 6 || srcId === 14) || srcName.toLowerCase().includes('komiic');
-
-    if (params.sourceId && typeof params.sourceId === 'number' && params.sourceId > 0) {
-      this.currentSourceId = params.sourceId;
+    if (await this.initializeRemoteProviderReaderSafe(params)) {
+      return;
     }
+
+    // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
+    // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
+      const srcId = params.sourceId || this.currentSourceId;
+      const srcName = params.sourceName || params.manga?.sourceInfo?.sourceName || '';
+      const isKomiic = (srcId === 6 || srcId === 14) || srcName.toLowerCase().includes('komiic');
+
+      if (params.sourceId && typeof params.sourceId === 'number' && params.sourceId > 0) {
+        this.currentSourceId = params.sourceId;
+      }
+      this.currentSourcePkg = params.sourcePkg || this.currentSourcePkg;
+
 
     // 在构造 Referer 的同时，根据数据库是否存在Cookie决定是否携带
     let cookies: string = '';
@@ -1805,10 +2294,9 @@ export struct MangaReaderPage {
       // [修复] OnlineDownloaded也需要初始化MangaEngine以支持章节切换
       let manga: Manga;
         // 直接使用传递的漫画对象（通常来自WebView图源）
-      let isWebViewSource = params.contentType === MangaReaderContentType.OnlineUndownloaded || 
+      const isWebViewSource = params.contentType === MangaReaderContentType.OnlineUndownloaded ||
                            params.contentType === MangaReaderContentType.OnlineDownloaded;
-      
-      
+
 
       if (params.manga) {
         // [懒加载优化] 对于WebView图源的在线漫画，只加载章节骨架信息，不加载页面数据
@@ -1878,8 +2366,10 @@ export struct MangaReaderPage {
         
         // 如果是WebView图源，初始化MangaSourceEngine
         if (isWebViewSource && params.sourceId) {
-          this.currentSourceId = params.sourceId;
-            logger.info(TAG, `✅ MangaSourceEngine初始化成功`);
+            this.currentSourceId = params.sourceId;
+            this.currentSourcePkg = params.sourcePkg || '';
+              logger.info(TAG, `✅ MangaSourceEngine初始化成功`);
+
           
           try {
             // 加载图源的预加载设置
@@ -1898,6 +2388,15 @@ export struct MangaReaderPage {
               let baseUrl: string = '';
               if (cfg && cfg.metadata && cfg.metadata.baseUrl) {
                 baseUrl = String(cfg.metadata.baseUrl);
+              }
+              const photos18Referer: string = this.isPhotos18Source()
+                ? this.resolvePhotos18ReaderRefererFromParams(params, manga, this.readerState.currentChapter)
+                : '';
+              if (this.isPhotos18Source()) {
+                this.photos18PageCachePartition = this.buildPhotos18CachePartition(photos18Referer);
+                await this.preparePhotos18ImageSession(photos18Referer);
+              } else {
+                await this.ensureHiddenWebViewSourceContextReady(baseUrl);
               }
               
               const ua: string = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -1962,17 +2461,23 @@ export struct MangaReaderPage {
               logger.debug(TAG, '📋 步骤7: 构造请求头对象');
               }
               logger.debug(TAG, '📋 步骤7: 构造请求头对象');
+              const resolvedPhotos18Referer: string = this.isPhotos18Source()
+                ? this.resolvePhotos18ReaderRefererFromParams(params, manga, this.readerState.currentChapter)
+                : '';
               const headers: RequestHeaders = {
-                userAgent: ua,
+                userAgent: this.isPhotos18Source()
+                  ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                  : ua,
                 accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
-                referer: dynamicReferer,
-                origin: dynamicReferer,
+                referer: this.isPhotos18Source() ? resolvedPhotos18Referer : dynamicReferer,
+                origin: this.isPhotos18Source() ? this.getPhotos18Origin() : dynamicReferer,
                 acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
                 cacheControl: 'no-cache',
                 pragma: 'no-cache',
                 secFetchDest: 'image',
                 secFetchMode: 'no-cors',
-                secFetchSite: 'same-origin'
+                secFetchSite: 'same-origin',
+                cachePartition: this.isPhotos18Source() ? this.photos18PageCachePartition : undefined
               } as RequestHeaders;
               
               logger.debug(TAG, '📋 步骤9: CookieManager实例已获取，准备读取Cookie');
@@ -1999,7 +2504,7 @@ export struct MangaReaderPage {
               
               // [修复] 网络配置准备完成，允许Viewer渲染
               this.isNetworkConfigReady = true;
-              logger.debug(TAG, `🌐 网络请求头已准备: UA=${ua.substring(0, Math.min(64, ua.length))}, Referer=${dynamicReferer}`);
+              logger.debug(TAG, `🌐 网络请求头已准备: UA=${ua.substring(0, Math.min(64, ua.length))}, Referer=${this.isPhotos18Source() ? resolvedPhotos18Referer : dynamicReferer}`);
               
               logger.debug(TAG, '📋 步骤15: 网络请求头配置完成，准备退出if块');
               logger.info(TAG, `✅ 网络配置就绪，允许Viewer渲染`);
@@ -2678,7 +3183,7 @@ export struct MangaReaderPage {
       this.reportTransitionLoadingProgress(0.84, 'reading_settings_ready');
 
       // [新增] 此时章节已确定，强制刷新一次 Headers 以确保 Referer 正确
-      this.updateNetworkHeadersForChapter(); 
+      await this.updateNetworkHeadersForChapter(); 
 
       logger.debug(TAG, '🖼️ 开始预加载图片');
       setTimeout(() => {
@@ -2751,6 +3256,9 @@ export struct MangaReaderPage {
   }
 
   private reportTransitionLoadingProgress(progress: number, reason: string): void {
+    if (!this.shouldUseReaderTransition()) {
+      return;
+    }
     const normalized = Math.max(0, Math.min(1, progress > 1 ? progress / 100 : progress));
     if (normalized <= this.transitionLoadingProgress + 0.001) {
       return;
@@ -2761,6 +3269,9 @@ export struct MangaReaderPage {
   }
 
   private notifyTransitionReaderReadyOnce(reason: string): void {
+    if (!this.shouldUseReaderTransition()) {
+      return;
+    }
     if (this.hasNotifiedTransitionReaderReady) {
       logger.debug(TAG, `过渡动画就绪已通知，忽略重复触发: ${reason}`);
       return;
@@ -2773,6 +3284,9 @@ export struct MangaReaderPage {
   }
 
   private waitForTransitionReaderReady(trigger: string): void {
+    if (!this.shouldUseReaderTransition()) {
+      return;
+    }
     if (this.hasNotifiedTransitionReaderReady) {
       return;
     }
@@ -3017,13 +3531,23 @@ export struct MangaReaderPage {
     currentManga.readingSettings = snapshot;
     AppStorage.setOrCreate(settingKey, JSON.stringify(snapshot));
 
+    let savedAnySettings = false;
     try {
       await ComicConverter.saveReadingSettings(mangaId, snapshot);
+      savedAnySettings = true;
       logger.info(TAG, `漫画阅读设置已持久化: key=${settingKey}, 触发源=${trigger}`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `保存漫画阅读设置失败: 触发源=${trigger}, 错误=${errorMessage}`);
-      return;
+    }
+
+    if (this.pageParams && this.isRemoteProviderContentType(this.pageParams.contentType)) {
+      const didPersistRemoteProviderSettings = await this.persistRemoteProviderScopedReadingSettings(mangaId, snapshot, trigger);
+      savedAnySettings = savedAnySettings || didPersistRemoteProviderSettings;
+    }
+
+    if (!savedAnySettings) {
+      logger.warn(TAG, `阅读设置未成功持久化: mangaId=${mangaId}, trigger=${trigger}`);
     }
   }
 
@@ -3053,7 +3577,16 @@ export struct MangaReaderPage {
       const sourceIdStr = this.currentSourceId > 0 ? String(this.currentSourceId) : undefined;
       let settings: ReadingSettings;
       try {
-        settings = await ComicConverter.loadReadingSettings(mangaId, 'default_user', sourceIdStr);
+        if (await this.hasPersistedPerMangaReadingSettings(mangaId)) {
+          settings = await ComicConverter.loadReadingSettings(mangaId, 'default_user', sourceIdStr);
+        } else {
+          const remoteProviderScopedSettings = await this.loadRemoteProviderScopedReadingSettings(mangaId);
+          if (remoteProviderScopedSettings !== null) {
+            settings = remoteProviderScopedSettings;
+          } else {
+            settings = await ComicConverter.loadReadingSettings(mangaId, 'default_user', sourceIdStr);
+          }
+        }
         logger.info(TAG, `✅ 从数据库加载阅读设置成功: mode=${settings.readingMode}, direction=${settings.readingDirection}`);
       } catch (dbError) {
         const dbMsg = dbError instanceof Error ? dbError.message : String(dbError);
@@ -3132,8 +3665,7 @@ export struct MangaReaderPage {
       logger.debug(TAG, `  - 总页数: ${totalPages}`);
       
       // 预加载当前页面和相邻页面
-      const isOnlineReader = this.pageParams?.contentType === MangaReaderContentType.OnlineUndownloaded ||
-        this.pageParams?.contentType === MangaReaderContentType.OnlineDownloaded;
+      const isOnlineReader = this.isOnlineReaderContentType();
       const preloadRange = isOnlineReader ? 8 : 50;// 在线首屏缩小范围，降低初始化阶段压力
       const startIndex = Math.max(0, currentPageIndex - preloadRange);
       const endIndex = Math.min(totalPages - 1, currentPageIndex + preloadRange);
@@ -3531,7 +4063,8 @@ export struct MangaReaderPage {
     
     // 立即更新当前阅读设置
     this.readingSettings = snapshot;
-    
+    void this.persistReadingSettings('handle_settings_change');
+
     // 如果屏幕常亮设置变更，立即应用
     if (keepScreenOnChanged) {
       this.applyKeepScreenOnSetting();
@@ -4375,7 +4908,10 @@ export struct MangaReaderPage {
 
   private isOnlineReaderContentType(): boolean {
     const ct = this.pageParams?.contentType;
-    return ct === 'OnlineUndownloaded' || ct === 'OnlineDownloaded';
+    return ct === 'OnlineUndownloaded' ||
+      ct === 'OnlineDownloaded' ||
+      ct === MangaReaderContentType.Suwayomi ||
+      ct === MangaReaderContentType.Komga;
   }
 
   private getWebtoonSwitchDebounceMs(): number {
@@ -4702,6 +5238,35 @@ export struct MangaReaderPage {
    * @param chapter 要预加载的章节
     */
   private async preloadChapterPages(chapter: MangaChapter, maxPages: number = -1): Promise<void> {
+    if (maxPages === 0) {
+      logger.debug(TAG, '棰勫姞杞介〉鏁颁负0锛岃烦杩囬鍔犺浇');
+      return;
+    }
+
+    const currentManga = this.readerState.currentManga;
+    if (currentManga && this.remoteLibraryBridge.isRemoteProviderManga(currentManga)) {
+      try {
+        const remotePages = await this.remoteLibraryBridge.loadChapterPages(currentManga, chapter);
+        if (remotePages.length <= 0) {
+          throw new Error(`remote provider chapter has no pages: ${chapter.title}`);
+        }
+
+        if (!chapter.totalPages || chapter.totalPages <= 0) {
+          chapter.totalPages = remotePages.length;
+        }
+
+        chapter.pages = maxPages > 0 && maxPages < remotePages.length
+          ? remotePages.slice(0, maxPages)
+          : remotePages;
+        logger.info(TAG, `Remote provider pages loaded: chapter=${chapter.title}, count=${chapter.pages.length}`);
+        return;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(TAG, `Remote provider preload failed: ${errorMessage}`);
+        throw new Error(`棰勫姞杞界珷鑺傞〉闈㈠け璐? ${errorMessage}`);
+      }
+    }
+
     // 如果MangaEngine未初始化，尝试从数据库加载页面信息
     if (!this.mangaEngine) {
       logger.warn(TAG, 'MangaEngine未初始化，尝试从数据库加载页面信息');
@@ -4988,6 +5553,37 @@ export struct MangaReaderPage {
     
     // 累加总阅读时间（转换为分钟）
     manga.readingProgress.totalReadingTime += (duration / 1000 / 60);
+
+    if (this.remoteLibraryBridge.isRemoteProviderManga(manga)) {
+      void this.remoteLibraryBridge.updateCachedReadingProgress(manga.id, chapter.id, pageIndex, duration).catch((error: Error) => {
+        logger.debug(TAG, `更新远程缓存阅读进度失败: ${error.message}`);
+      });
+
+      if (manga.sourceInfo?.providerType === 'suwayomi') {
+        const parsedChapter = RemoteLibraryMangaBridge.parseProviderChapterId(chapter.id);
+        const rawChapterId = chapter.externalId && chapter.externalId.length > 0
+          ? chapter.externalId
+          : (parsedChapter ? parsedChapter.rawChapterId : '');
+        if (rawChapterId.length > 0) {
+          void (async () => {
+            const updated = await this.suwayomiExecutor.updateReadingProgress(rawChapterId, pageIndex);
+            if (!updated) {
+              logger.debug(TAG, `Suwayomi 进度同步失败: chapter=${rawChapterId}`);
+            }
+
+            const totalPages = chapter.totalPages || chapter.pages.length;
+            if (totalPages > 0 && pageIndex >= totalPages - 1) {
+              const marked = await this.suwayomiExecutor.markRead(rawChapterId, true);
+              if (!marked) {
+                logger.debug(TAG, `Suwayomi 已读状态同步失败: chapter=${rawChapterId}`);
+              }
+            }
+          })().catch((error: Error) => {
+            logger.debug(TAG, `同步 Suwayomi 阅读进度失败: ${error.message}`);
+          });
+        }
+      }
+    }
     
     logger.info(TAG, `✅ 阅读进度已更新: 章节=${chapter.title}, 页码=${pageIndex + 1}, 时间=${now}`);
 
@@ -5516,6 +6112,7 @@ export struct MangaReaderPage {
     */
   private async goBack(): Promise<void> {
     try {
+      const shouldUseTransition = this.shouldUseReaderTransition(this.pageParams);
       // Build cover component id used by close animation.
       const mangaId = this.readerState.currentManga?.id || '';
       const coverComponentId = this.pageParams?.coverComponentId || (mangaId ? `cover_manga_lib_${mangaId}` : '');
@@ -5528,6 +6125,12 @@ export struct MangaReaderPage {
         await this.saveReadingProgressInternal('goBack');
       } catch (saveError) {
         logger.error(TAG, '返回前保存阅读进度失败', saveError instanceof Error ? saveError.message : String(saveError));
+      }
+
+      if (!shouldUseTransition) {
+        logger.info(TAG, '远程图源阅读器退出时跳过书籍开合转场');
+        this.pathStack.pop();
+        return;
       }
 
       logger.info(TAG, `触发关闭过渡动画（带截图），封面组件ID: ${coverComponentId}`);
@@ -5543,7 +6146,9 @@ export struct MangaReaderPage {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '返回上一页失败', errorMessage);
       this.isCloseTransitionNavigating = false;
-      cancelTransition();
+      if (this.shouldUseReaderTransition(this.pageParams)) {
+        cancelTransition();
+      }
       this.pathStack.pop();
     }
   }
@@ -6242,7 +6847,7 @@ export struct MangaReaderPage {
         manga: {
           sourceId: this.currentSourceId > 0 ? this.currentSourceId : undefined,
           sourceName: this.pageParams?.sourceName,
-          contentType: this.pageParams?.contentType,
+          contentType: this.normalizeAnnotationCenterMangaContentType(this.pageParams?.contentType),
           chapterId: this.readerState.currentChapter?.id,
           pageIndex: this.readerState.currentPageIndex
         }
@@ -6527,7 +7132,7 @@ export struct MangaReaderPage {
           .height(48)
           .color($r('app.color.accent_primary'))
 
-        Text('章节数据加载失败')
+        Text(this.readerState.loadingMessage || '正在加载章节数据...')
           .fontSize(16)
           .fontColor($r('app.color.text_secondary'))
           .margin({ top: 16 })
@@ -6690,7 +7295,7 @@ export struct MangaReaderPage {
           networkHeadersTick: this.networkHeadersTick,
           chapterTick: this.chapterTick,// [新增] 传递章节切换计数器
           sourceId: this.currentSourceId > 0 ? this.currentSourceId : undefined,
-          mangaId: this.pageParams?.mangaId,
+          mangaId: this.readerState.currentManga ? this.readerState.currentManga.id : this.pageParams?.mangaId,
           preloadCurrentPages: this.sourcePreloadSettings.preloadCurrentPages,
           preloadNextPages: this.sourcePreloadSettings.preloadNextPages,
           contentType: this.pageParams?.contentType,// [新增] 传递内容类型（用于区分在线/本地漫画）
@@ -7941,6 +8546,14 @@ export struct MangaReaderPage {
           .height(0)
           .visibility(Visibility.None)
           .zIndex(-1)
+          .onControllerAttached(() => {
+            this.webViewControllerAttached = true;
+            logger.info(TAG, '隐藏WebView控制器已附加');
+            this.initWebViewController();
+            if (this.mangaEngine && this.pageParams) {
+              this.refreshNetworkUserAgentAsync(this.mangaEngine, this.pageParams);
+            }
+          })
       }
       .width('100%')
       .height('100%')
@@ -7976,6 +8589,7 @@ export struct MangaReaderPage {
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）
       const params = context.pathInfo.param as MangaReaderPageParams;
       if (params) {
+        this.pageParams = params;
         const ctStr: string = String(params.contentType);
         const sidStr: string = params.sourceId !== undefined ? String(params.sourceId) : '未指定';
         const snameStr: string = params.sourceName ? String(params.sourceName) : '未指定';
@@ -8091,5 +8705,7 @@ export struct MangaReaderPage {
 export enum MangaReaderContentType {
   Local = 'Local',
   OnlineUndownloaded = 'OnlineUndownloaded',
-  OnlineDownloaded = 'OnlineDownloaded'
+  OnlineDownloaded = 'OnlineDownloaded',
+  Suwayomi = 'Suwayomi',
+  Komga = 'Komga'
 }

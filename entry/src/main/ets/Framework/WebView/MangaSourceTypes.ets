@@ -583,10 +583,12 @@ export enum WorkflowType {
   SEARCH_BY_ID = 'searchById',
   SEARCH_BY_AUTHOR = 'searchByAuthor',
   SEARCH_BY_SERIES = 'searchBySeries',
+  SEARCH_BY_TAG = 'searchByTag',
   RESOLVE_URL = 'resolveUrl',
   FILTER = 'filter',
   GET_MANGA_LIST = 'getMangaList',
   GET_MANGA_DETAIL = 'getMangaDetail',
+  GET_MANGA_DETAIL_WITH_CHAPTERS = 'getMangaDetailWithChapters',
   GET_CHAPTER_LIST = 'getChapterList',
   GET_PAGE_LIST = 'getPageList',
   LOAD_MORE_PAGES = 'loadMorePages',
@@ -620,10 +622,12 @@ export interface Workflow {
   [WorkflowType.SEARCH_BY_ID]?: Action[];
   [WorkflowType.SEARCH_BY_AUTHOR]?: Action[];
   [WorkflowType.SEARCH_BY_SERIES]?: Action[];
+  [WorkflowType.SEARCH_BY_TAG]?: Action[];
   [WorkflowType.RESOLVE_URL]?: Action[];
   [WorkflowType.FILTER]?: Action[];
   [WorkflowType.GET_MANGA_LIST]?: Action[];
   [WorkflowType.GET_MANGA_DETAIL]?: Action[];
+  [WorkflowType.GET_MANGA_DETAIL_WITH_CHAPTERS]?: Action[];
   [WorkflowType.GET_CHAPTER_LIST]?: Action[];
   [WorkflowType.GET_PAGE_LIST]?: Action[];
   [WorkflowType.LOAD_MORE_PAGES]?: Action[];

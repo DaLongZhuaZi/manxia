@@ -6,7 +6,7 @@
 
 import { image } from '@kit.ImageKit';
 import { logger } from '../../Utils/Logger';
-import { OnlineImageLoader } from '../Cache/OnlineImageLoader';
+import { OnlineImageLoader, OnlineLoadOptions, RequestHeaders } from '../Cache/OnlineImageLoader';
 import { isAvifFormat } from './AvifDecoder';
 
 const TAG = 'CoverImageManager';
@@ -55,7 +55,7 @@ export class CoverImageManager {
    * 预加载封面图片
    * 对于可能是AVIF格式的网络图片，使用OnlineImageLoader加载
    */
-  async preloadCover(url: string): Promise<image.PixelMap | null> {
+  async preloadCover(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
     if (!url || !url.startsWith('http')) {
       return null;
     }
@@ -81,12 +81,60 @@ export class CoverImageManager {
     
     try {
       const loader = OnlineImageLoader.getInstance();
-      const pixelMap = await loader.load(url, {
-        priority: 5,
-        headers: {
-          referer: url.split('/').slice(0, 3).join('/') + '/'
+      const requestHeaders: RequestHeaders = {} as RequestHeaders;
+      if (options && options.headers) {
+        if (options.headers.userAgent) {
+          requestHeaders.userAgent = options.headers.userAgent;
         }
-      });
+        if (options.headers.accept) {
+          requestHeaders.accept = options.headers.accept;
+        }
+        if (options.headers.referer) {
+          requestHeaders.referer = options.headers.referer;
+        }
+        if (options.headers.origin) {
+          requestHeaders.origin = options.headers.origin;
+        }
+        if (options.headers.cookie) {
+          requestHeaders.cookie = options.headers.cookie;
+        }
+        if (options.headers.authorization) {
+          requestHeaders.authorization = options.headers.authorization;
+        }
+        if (options.headers.acceptLanguage) {
+          requestHeaders.acceptLanguage = options.headers.acceptLanguage;
+        }
+        if (options.headers.cacheControl) {
+          requestHeaders.cacheControl = options.headers.cacheControl;
+        }
+        if (options.headers.pragma) {
+          requestHeaders.pragma = options.headers.pragma;
+        }
+        if (options.headers.secFetchDest) {
+          requestHeaders.secFetchDest = options.headers.secFetchDest;
+        }
+        if (options.headers.secFetchMode) {
+          requestHeaders.secFetchMode = options.headers.secFetchMode;
+        }
+        if (options.headers.secFetchSite) {
+          requestHeaders.secFetchSite = options.headers.secFetchSite;
+        }
+        if (options.headers.cachePartition) {
+          requestHeaders.cachePartition = options.headers.cachePartition;
+        }
+      }
+      if (!requestHeaders.referer) {
+        requestHeaders.referer = url.split('/').slice(0, 3).join('/') + '/';
+      }
+      const requestOptions: OnlineLoadOptions = {
+        width: options?.width,
+        height: options?.height,
+        headers: requestHeaders,
+        sourceId: options?.sourceId,
+        priority: options?.priority || 5,
+        partitionKey: options?.partitionKey
+      };
+      const pixelMap = await loader.load(url, requestOptions);
       
       if (pixelMap) {
         // 缓存结果

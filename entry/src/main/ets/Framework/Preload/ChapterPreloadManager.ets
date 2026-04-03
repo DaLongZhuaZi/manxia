@@ -410,7 +410,9 @@ export class ChapterPreloadManager {
     
     const headers: RequestHeaders = {} as RequestHeaders;
     headers.referer = this.currentSourceHeaders['Referer'] || '';
+    headers.origin = this.currentSourceHeaders['Origin'] || '';
     headers.acceptLanguage = this.currentSourceHeaders['Accept-Language'] || 'zh-CN,zh;q=0.9,en;q=0.8';
+
     
     const options: LoadOptions = {} as LoadOptions;
     options.headers = headers;

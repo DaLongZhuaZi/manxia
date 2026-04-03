@@ -40,6 +40,8 @@ import { SourceContentCache } from '../Framework/Cache/SourceContentCache';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
+
 
 const TAG = 'SourceDetailPage';
 
@@ -270,6 +272,9 @@ export struct SourceDetailPage {
   private webViewSourceManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private authManager: WebViewAuthManager = WebViewAuthManager.getInstance();
   private loginUrl: string = '';
+  private photos18CoverBootstrapPromise: Promise<void> | null = null;
+  private photos18CurrentReferer: string = '';
+
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
@@ -696,24 +701,28 @@ export struct SourceDetailPage {
    */
   private async processCoverCacheBackground(comics: ComicInfo[]): Promise<void> {
     try {
+      if (this.isPhotos18Source()) {
+        await this.ensurePhotos18CoverBootstrap();
+      }
       const coverCache = CoverCacheManager.getInstance();
-      const networkHeaders = this.buildCoverHeaders();
-      
-      // 转换RequestHeaders为Record<string, string>
-      const headers: Record<string, string> = {
-        'User-Agent': networkHeaders.userAgent || '',
-        'Accept': networkHeaders.accept || '',
-        'Referer': networkHeaders.referer || '',
-        'Accept-Language': networkHeaders.acceptLanguage || '',
-        'Sec-Fetch-Dest': networkHeaders.secFetchDest || '',
-        'Sec-Fetch-Mode': networkHeaders.secFetchMode || '',
-        'Sec-Fetch-Site': networkHeaders.secFetchSite || ''
-      };
+      if (this.isPhotos18Source()) {
+        ImageCacheManager.getInstance().clearCookieCache(this.sourceId);
+        OnlineImageLoader.getInstance().clearCookieCache(this.sourceId);
+      }
+      const cookieString: string = await CookieManager.getInstance().getCookieString(this.sourceId);
 
       // 过滤有封面URL的漫画
+
       const validComics = comics.filter(c => c.coverUrl);
+      if (this.isPhotos18Source()) {
+        const firstReferer = validComics.length > 0 ? this.resolvePhotos18Referer(validComics[0]) : '';
+        if (firstReferer.length > 0) {
+          this.photos18CurrentReferer = firstReferer;
+        }
+      }
       
       // 批量保存漫画信息（减少数据库操作）
+
       const savePromises = validComics.map((comic: ComicInfo) => {
         const coverUrl: string = comic.coverUrl || '';
         return coverCache.saveTempManga(
@@ -730,15 +739,29 @@ export struct SourceDetailPage {
       await Promise.all(savePromises);
 
       // 批量查询本地缓存路径
-      const externalIds = validComics.map(c => c.id);
-      const localPathsMap = await coverCache.getBatchLocalCoverPaths(
-        this.sourceId,
-        externalIds
-      );
+      const localPathsMap = new Map<string, string | null>();
+      if (this.isPhotos18Source()) {
+        const localPathPromises = validComics.map(async (comic: ComicInfo) => {
+          const referer = this.resolvePhotos18Referer(comic);
+          const localPath = await coverCache.getLocalCoverPathWithReferer(this.sourceId, comic.id, referer);
+          localPathsMap.set(comic.id, localPath);
+        });
+        await Promise.all(localPathPromises);
+      } else {
+        const externalIds = validComics.map(c => c.id);
+        const batchMap = await coverCache.getBatchLocalCoverPaths(
+          this.sourceId,
+          externalIds
+        );
+        batchMap.forEach((value: string | null, key: string) => {
+          localPathsMap.set(key, value);
+        });
+      }
 
       // 筛选需要下载的漫画
       const needDownload = validComics.filter(comic => !localPathsMap.get(comic.id));
       const cachedCount = validComics.length - needDownload.length;
+
 
       logger.info(TAG, `封面缓存状态: ${cachedCount}/${validComics.length} 已缓存，后台下载 ${needDownload.length} 个`);
 
@@ -756,6 +779,24 @@ export struct SourceDetailPage {
       for (let i = 0; i < needDownload.length; i++) {
         const comic = needDownload[i];
         const coverUrl: string = comic.coverUrl || '';
+        const networkHeaders = this.buildCoverHeadersForComic(comic);
+        const headers: Record<string, string> = {
+          'User-Agent': networkHeaders.userAgent || '',
+          'Accept': networkHeaders.accept || '',
+          'Referer': networkHeaders.referer || '',
+          'Accept-Language': networkHeaders.acceptLanguage || '',
+          'Sec-Fetch-Dest': networkHeaders.secFetchDest || '',
+          'Sec-Fetch-Mode': networkHeaders.secFetchMode || '',
+          'Sec-Fetch-Site': networkHeaders.secFetchSite || '',
+          'X-Cache-Referer': networkHeaders.referer || '',
+          'X-Cache-Partition': networkHeaders.cachePartition || ''
+        };
+        if (networkHeaders.origin) {
+          headers['Origin'] = networkHeaders.origin;
+        }
+        if (cookieString.length > 0) {
+          headers['Cookie'] = cookieString;
+        }
         
         // 控制并发：每10个一批
         if (i > 0 && i % MAX_CONCURRENT === 0) {
@@ -769,6 +810,7 @@ export struct SourceDetailPage {
           coverUrl,
           headers
         ).then((savedPath: string | null) => {
+
           if (savedPath) {
             downloadedCount++;
             logger.debug(TAG, `后台封面下载完成 (${downloadedCount}/${needDownload.length}): ${comic.title}`);
@@ -797,7 +839,7 @@ export struct SourceDetailPage {
   private async refreshCoverDisplay(comic: ComicInfo): Promise<void> {
     try {
       const coverCache = CoverCacheManager.getInstance();
-      const localPath = await coverCache.getLocalCoverPath(this.sourceId, comic.id);
+      const localPath = await coverCache.getLocalCoverPathWithReferer(this.sourceId, comic.id, this.resolvePhotos18Referer(comic));
       
       if (localPath) {
         const imageSource = image.createImageSource(localPath);
@@ -1141,33 +1183,131 @@ export struct SourceDetailPage {
         return;
       }
       this.webViewController.loadUrl(baseUrl);
+      if (this.isPhotos18Source()) {
+        this.photos18CurrentReferer = baseUrl;
+      }
       logger.info(TAG, `WebView已预加载图源站点: ${baseUrl}`);
-      setTimeout(async () => {
-        try {
-          const ok: boolean = await CookieManager.getInstance().refreshCookiesIfNeeded(this.sourceId, this.webViewController, baseUrl);
-          logger.debug(TAG, `预加载后Cookie刷新结果: ${ok}`);
-        } catch (e) {
-          const msg: string = e instanceof Error ? e.message : String(e);
-          logger.warn(TAG, `预加载后Cookie刷新失败: ${msg}`);
-        }
-      }, 800);
+
+      if (this.isPhotos18Source()) {
+        this.photos18CoverBootstrapPromise = this.bootstrapPhotos18ImageSession(baseUrl);
+        await this.photos18CoverBootstrapPromise;
+      } else {
+        setTimeout(async () => {
+          try {
+            const ok: boolean = await CookieManager.getInstance().refreshCookiesIfNeeded(this.sourceId, this.webViewController, baseUrl);
+            logger.debug(TAG, `预加载后Cookie刷新结果: ${ok}`);
+          } catch (e) {
+            const msg: string = e instanceof Error ? e.message : String(e);
+            logger.warn(TAG, `预加载后Cookie刷新失败: ${msg}`);
+          }
+        }, 800);
+      }
     } catch (error) {
       logger.warn(TAG, `预加载BaseUrl失败: ${String(error)}`);
     }
   }
 
+  private isPhotos18Source(): boolean {
+    const info = this.sourceInfo;
+    if (info && info.pkg && String(info.pkg) === 'com.manxia.extension.all.photos18') {
+      return true;
+    }
+    if (info && info.baseUrl && String(info.baseUrl).includes('photos18.com')) {
+      return true;
+    }
+    return false;
+  }
+
+  private normalizePhotos18Origin(baseUrl: string): string {
+    if (baseUrl.startsWith('https://www.photos18.com')) {
+      return 'https://www.photos18.com';
+    }
+    if (baseUrl.startsWith('http://www.photos18.com')) {
+      return 'http://www.photos18.com';
+    }
+    if (baseUrl.startsWith('https://photos18.com')) {
+      return 'https://photos18.com';
+    }
+    if (baseUrl.startsWith('http://photos18.com')) {
+      return 'http://photos18.com';
+    }
+    return baseUrl;
+  }
+
+  private resolvePhotos18Referer(comic?: ComicInfo): string {
+    if (comic && comic.url && comic.url.length > 0) {
+      return comic.url;
+    }
+    if (this.photos18CurrentReferer.length > 0) {
+      return this.photos18CurrentReferer;
+    }
+    const baseUrl: string = (this.sourceInfo && this.sourceInfo.baseUrl) ? String(this.sourceInfo.baseUrl) : 'https://www.photos18.com';
+    return this.normalizePhotos18Origin(baseUrl);
+  }
+
+  private buildCoverHeadersForComic(comic?: ComicInfo): RequestHeaders {
+    const base: RequestHeaders = this.buildCoverHeaders();
+    if (!this.isPhotos18Source()) {
+      return base;
+    }
+    const referer = this.resolvePhotos18Referer(comic);
+    base.referer = referer;
+    base.origin = this.normalizePhotos18Origin(referer);
+    base.cachePartition = `photos18_cover_${comic ? comic.id : 'default'}`;
+    return base;
+  }
+
+
+  private async bootstrapPhotos18ImageSession(baseUrl: string): Promise<void> {
+    try {
+      const cookieManager = CookieManager.getInstance();
+      const imageCacheManager = ImageCacheManager.getInstance();
+      const onlineImageLoader = OnlineImageLoader.getInstance();
+      await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+      const refreshed: boolean = await cookieManager.forceCaptureWebViewCookies(this.sourceId, this.webViewController, baseUrl);
+      imageCacheManager.clearCookieCache(this.sourceId);
+      onlineImageLoader.clearCookieCache(this.sourceId);
+      logger.info(TAG, `Photos18图片会话预热完成: refreshed=${refreshed}`);
+    } catch (error) {
+      logger.warn(TAG, `Photos18图片会话预热失败: ${String(error)}`);
+    } finally {
+      this.photos18CoverBootstrapPromise = null;
+    }
+  }
+
+  private async ensurePhotos18CoverBootstrap(): Promise<void> {
+    if (!this.isPhotos18Source()) {
+      return;
+    }
+    if (this.photos18CoverBootstrapPromise) {
+      await this.photos18CoverBootstrapPromise;
+      return;
+    }
+    const baseUrl: string = (this.sourceInfo && (this.sourceInfo as SourceInfo).baseUrl && String((this.sourceInfo as SourceInfo).baseUrl).length > 0)
+      ? String((this.sourceInfo as SourceInfo).baseUrl)
+      : 'https://www.photos18.com';
+    this.photos18CoverBootstrapPromise = this.bootstrapPhotos18ImageSession(baseUrl);
+    await this.photos18CoverBootstrapPromise;
+  }
+
   private buildCoverHeaders(): RequestHeaders {
-    const baseUrl: string = (this.sourceInfo && (this.sourceInfo as SourceInfo).baseUrl && String((this.sourceInfo as SourceInfo).baseUrl).length > 0) ? String((this.sourceInfo as SourceInfo).baseUrl) : 'https://komiic.com';
+    const rawBaseUrl: string = (this.sourceInfo && (this.sourceInfo as SourceInfo).baseUrl && String((this.sourceInfo as SourceInfo).baseUrl).length > 0) ? String((this.sourceInfo as SourceInfo).baseUrl) : 'https://komiic.com';
+    const baseUrl: string = this.isPhotos18Source() ? this.normalizePhotos18Origin(rawBaseUrl) : rawBaseUrl;
     const base: RequestHeaders = {} as RequestHeaders;
-    base.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+    base.userAgent = this.isPhotos18Source() ? this.sourceUserAgent : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
     base.accept = 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5';
     base.referer = baseUrl;
+    if (this.isPhotos18Source()) {
+      base.origin = this.normalizePhotos18Origin(baseUrl);
+    }
+
     base.acceptLanguage = 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7';
     base.secFetchDest = 'image';
     base.secFetchMode = 'no-cors';
     base.secFetchSite = 'same-origin';
     return base;
   }
+
 
   private updateCoverAspectRatio(comicId: string, width: number, height: number): void {
     if (width <= 0 || height <= 0) {
@@ -1282,6 +1422,155 @@ export struct SourceDetailPage {
     return Math.max(8, Math.min(14, surfaceRadius));
   }
 
+  private getSettingsAnalyticsCardBackground(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundColor;
+  }
+
+  private getSettingsAnalyticsCardBlurStyle(): BlurStyle | undefined {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurStyle;
+  }
+
+  private getSettingsAnalyticsCardBlurOptions(): BackgroundBlurStyleOptions {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurOptions;
+  }
+
+  private getSettingsAnalyticsCardBackgroundEffect(): BackgroundEffectOptions | undefined {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundEffect;
+  }
+
+  private getSettingsAnalyticsCardBorderColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderColor;
+  }
+
+  private getSettingsAnalyticsCardBorderWidth(): number {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderWidth;
+  }
+
+  private getSettingsAnalyticsCardShadowColor(): string {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.shadowColor;
+  }
+
+  private getSettingsAnalyticsCardRadius(): number {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius;
+  }
+
+  private getSettingsAnalyticsCardTopEdgeColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.topEdgeColor;
+  }
+
+  private getSettingsAnalyticsCardBottomEdgeColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.bottomEdgeColor;
+  }
+
+  private getSettingsAnalyticsCardSurfaceGradient(): LinearGradient {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.surfaceGradient;
+  }
+
+  private getSettingsAnalyticsCardIconColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.iconColor;
+  }
+
+  private getSettingsAnalyticsCardTitleColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.titleColor;
+  }
+
+  private getSettingsAnalyticsCardSubtitleColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.subtitleColor;
+  }
+
+  private getSettingsAnalyticsCardChevronColor(): ResourceColor {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.chevronColor;
+  }
+
+  private getSettingsAnalyticsCardChevronOpacity(): number {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.chevronOpacity;
+  }
+
+  private getSourceDetailSearchFieldRadius(): number {
+    return Math.max(18, Math.min(22, this.getSettingsAnalyticsCardRadius()));
+  }
+
+  @Builder
+  private buildSettingsAnalyticsCardChrome() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .align(Alignment.Bottom)
+        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private buildSourceDetailGlassSearchField() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.buildSettingsAnalyticsCardChrome()
+
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(16)
+          .fontColor([this.getSettingsAnalyticsCardChevronColor()])
+          .opacity(this.getSettingsAnalyticsCardChevronOpacity())
+
+        TextInput({ placeholder: this.searchPlaceholder, text: this.searchKeyword })
+          .layoutWeight(1)
+          .height(40)
+          .fontFamily(this.appFontFamily)
+          .fontSize(14)
+          .backgroundColor(Color.Transparent)
+          .onChange((value: string) => {
+            this.searchKeyword = value;
+          })
+          .onSubmit(() => {
+            this.performSearch();
+          })
+
+        if (this.searchKeyword.length > 0) {
+          SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            .onClick(() => {
+              this.searchKeyword = '';
+            })
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ left: 14, right: 14 })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .height(44)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSourceDetailSearchFieldRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSourceDetailSearchFieldRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 6
+    })
+  }
+
   @Builder
   private buildComicCoverImage(comic: ComicInfo) {
     Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
@@ -1348,10 +1637,15 @@ export struct SourceDetailPage {
       
       const url: string = comic.coverUrl || '';
       if (url.length === 0) { return; }
+      if (this.isPhotos18Source()) {
+        await this.ensurePhotos18CoverBootstrap();
+      }
+
       
       // 优先使用CoverCacheManager的本地缓存
       const coverCache = CoverCacheManager.getInstance();
-      const localPath = await coverCache.getLocalCoverPath(this.sourceId, comic.id);
+      const localPath = await coverCache.getLocalCoverPathWithReferer(this.sourceId, comic.id, this.resolvePhotos18Referer(comic));
+
       
       // 如果有本地缓存，直接从本地加载
       if (localPath) {
@@ -1371,7 +1665,7 @@ export struct SourceDetailPage {
       // 没有本地缓存，使用ImageCacheManager加载（会自动缓存）
       const cacheMgr: ImageCacheManager = ImageCacheManager.getInstance();
       const cookieMgr: CookieManager = CookieManager.getInstance();
-      const baseHeaders: RequestHeaders = this.buildCoverHeaders();
+      const baseHeaders: RequestHeaders = this.buildCoverHeadersForComic(comic);
       const headers: RequestHeaders = await cookieMgr.buildHeadersWithCookie(baseHeaders, this.sourceId);
       const opts: LoadOptions = {
         headers: headers,
@@ -1379,8 +1673,9 @@ export struct SourceDetailPage {
         height: 220,
         sourceId: this.sourceId,
         loadingMethod: 0,
-        partitionKey: 'covers'
+        partitionKey: headers.cachePartition || 'covers'
       } as LoadOptions;
+
       const pm: image.PixelMap | null = await cacheMgr.loadImage(url, opts);
       if (pm) {
         await this.updateCoverAspectRatioFromPixelMap(comic.id, pm);
@@ -1619,6 +1914,7 @@ export struct SourceDetailPage {
         description: manga.description || '',
         tags: manga.genres || [],
         status: manga.status || '',
+        url: manga.url || '',
         updateTime: 0 // MangaInfo的updated是string，这里简化处理
       };
       return comic;
@@ -2434,6 +2730,7 @@ export struct SourceDetailPage {
     } else {
       const params: MangaDetailPageParams = {
         sourceId: this.sourceId,
+        sourcePkg: this.sourceInfo?.pkg,
         mangaId: manga.id || '',
         cachedTitle: manga.title || undefined,
         cachedCover: manga.cover || undefined
@@ -2524,7 +2821,8 @@ export struct SourceDetailPage {
   private async openComicDetail(comic: ComicInfo): Promise<void> {
     // 获取本地封面路径
     const coverCache = CoverCacheManager.getInstance();
-    const localCoverPath = await coverCache.getLocalCoverPath(this.sourceId, comic.id);
+    const localCoverPath = await coverCache.getLocalCoverPathWithReferer(this.sourceId, comic.id, this.resolvePhotos18Referer(comic));
+
     
     // 根据图源类型导航到不同的详情页
     const sourceType = this.sourceInfo?.type || 'manga';
@@ -2559,6 +2857,7 @@ export struct SourceDetailPage {
       // 漫画源（默认）-> 漫画详情页
       const params: MangaDetailPageParams = {
         sourceId: this.sourceId,
+        sourcePkg: this.sourceInfo?.pkg,
         mangaId: comic.id,
         cachedCoverPath: localCoverPath || undefined,
         cachedTitle: comic.title || undefined,
@@ -3741,14 +4040,7 @@ export struct SourceDetailPage {
           .width('100%')
         }
 
-        Search({ placeholder: this.searchPlaceholder })
-          .width('100%')
-          .onChange((value: string) => {
-            this.searchKeyword = value;
-          })
-          .onSubmit(() => {
-            this.performSearch();
-          })
+        this.buildSourceDetailGlassSearchField()
 
         Row({ space: 12 }) {
           Button('取消')
@@ -3775,16 +4067,22 @@ export struct SourceDetailPage {
       .width('90%')
       .constraintSize({ maxWidth: 560, maxHeight: '86%' })
       .padding(24)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(14)
-      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
-      .shadow({ radius: 16, color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme), offsetY: 6 })
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({ width: this.getSettingsAnalyticsCardBorderWidth(), color: this.getSettingsAnalyticsCardBorderColor() })
+      .shadow({ radius: this.getSettingsAnalyticsCardRadius() + 4, color: this.getSettingsAnalyticsCardShadowColor(), offsetY: 8 })
+      .onClick(() => {})
       .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
         .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
+    .backgroundColor('rgba(14, 20, 31, 0.28)')
     .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
     .onClick(() => {
       this.showSearchDialog = false;
@@ -4360,14 +4658,10 @@ export struct SourceDetailPage {
 
       // 搜索输入框
       Row({ space: 8 }) {
-        Search({ placeholder: this.searchPlaceholder })
-          .layoutWeight(1)
-          .onChange((value: string) => {
-            this.searchKeyword = value;
-          })
-          .onSubmit(() => {
-            this.performSearch();
-          })
+        Column() {
+          this.buildSourceDetailGlassSearchField()
+        }
+        .layoutWeight(1)
 
         Button('搜索')
           .fontSize(14)
@@ -4381,7 +4675,7 @@ export struct SourceDetailPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .backgroundColor(Color.Transparent)
   }
 
   /**
@@ -4868,46 +5162,67 @@ export struct SourceDetailPage {
    */
   @Builder
   buildComicCard(comic: ComicInfo) {
-    Column({ space: 8 }) {
-      // 封面容器 - 使用Stack实现加载动画效果
-      Stack() {
-        this.buildReadingStyleComicCover(comic)
+    Column({ space: 0 }) {
+      Blank()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
+
+      Column({ space: 8 }) {
+        // 封面容器 - 使用Stack实现加载动画效果
+        Stack() {
+          this.buildReadingStyleComicCover(comic)
+        }
+        .width('100%')
+        .aspectRatio(this.getComicCoverAspectRatio(comic))
+        .padding(4)
+
+        // 标题 - 固定高度确保卡片一致
+        Text(comic.title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardTitleColor())
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .height(40)
+          .lineHeight(20)
+
+        // 作者 - 固定高度确保卡片一致
+        Text(comic.author || ' ')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .height(16)
       }
       .width('100%')
-      .aspectRatio(this.getComicCoverAspectRatio(comic))
-      .padding(4)
+      .padding(12)
 
-      // 标题 - 固定高度确保卡片一致
-      Text(comic.title)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Blank()
         .width('100%')
-        .height(40)
-        .lineHeight(20)
-
-      // 作者 - 固定高度确保卡片一致
-      Text(comic.author || ' ')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .height(16)
+        .height(1)
+        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
     }
     .width('100%')
-    .padding(8)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
     .shadow({
-      radius: 8,
-      color: '#10000000',
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
       offsetX: 0,
-      offsetY: 2
+      offsetY: 8
     })
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
@@ -4924,72 +5239,100 @@ export struct SourceDetailPage {
    */
   @Builder
   buildComicListItem(comic: ComicInfo) {
-    Row({ space: 12 }) {
-      // 封面 - 精致的封面卡片
-      Stack() {
-        this.buildReadingStyleComicCover(comic)
-      }
-      .width(72)
-      .aspectRatio(0.72)
-      .padding(3)
+    Column({ space: 0 }) {
+      Blank()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
 
-      // 信息区域
-      Column({ space: 4 }) {
-        // 标题
-        Text(comic.title)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-          .lineHeight(21)
-
-        // 作者
-        if (comic.author) {
-          Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.person_crop_circle_dashed'))
-              .fontSize(12)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-            Text(comic.author)
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-          }
-          .width('100%')
+      Row({ space: 12 }) {
+        // 封面 - 精致的封面卡片
+        Stack() {
+          this.buildReadingStyleComicCover(comic)
         }
+        .width(72)
+        .aspectRatio(0.72)
+        .padding(3)
 
-        // 状态标签
-        if (comic.status) {
-          Row() {
-            Text(String(comic.status))
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-              .borderRadius(4)
+        // 信息区域
+        Column({ space: 4 }) {
+          // 标题
+          Text(comic.title)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getSettingsAnalyticsCardTitleColor())
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .lineHeight(21)
+
+          // 作者
+          if (comic.author) {
+            Row({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.person_crop_circle_dashed'))
+                .fontSize(12)
+                .fontColor([this.getSettingsAnalyticsCardSubtitleColor()])
+              Text(comic.author)
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+            }
+            .width('100%')
+          }
+
+          // 状态标签
+          if (comic.status) {
+            Row() {
+              Text(String(comic.status))
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+                .borderRadius(4)
+            }
           }
         }
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      .justifyContent(FlexAlign.Center)
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .justifyContent(FlexAlign.Center)
 
-      // 右侧箭头
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(16)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        // 右侧箭头
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([this.getSettingsAnalyticsCardChevronColor()])
+          .opacity(this.getSettingsAnalyticsCardChevronOpacity())
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+
+      Blank()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
     .margin({ top: 4, bottom: 4 })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
         .combine(TransitionEffect.translate({ x: -20 }).animation({ duration: 250, curve: Curve.EaseOut })),
@@ -5005,44 +5348,65 @@ export struct SourceDetailPage {
    */
   @Builder
   buildComicLargeCoverCard(comic: ComicInfo) {
-    Column({ space: 10 }) {
-      // 大封面 - 添加加载动画
-      Stack() {
-        this.buildReadingStyleComicCover(comic)
+    Column({ space: 0 }) {
+      Blank()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
+
+      Column({ space: 10 }) {
+        // 大封面 - 添加加载动画
+        Stack() {
+          this.buildReadingStyleComicCover(comic)
+        }
+        .width('100%')
+        .aspectRatio(this.getComicCoverAspectRatio(comic))
+        .padding(4)
+
+        // 标题
+        Text(comic.title)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardTitleColor())
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .lineHeight(22)
+
+        // 作者
+        Text(comic.author || ' ')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
       }
       .width('100%')
-      .aspectRatio(this.getComicCoverAspectRatio(comic))
-      .padding(4)
+      .padding({ left: 14, right: 14, top: 14, bottom: 14 })
 
-      // 标题
-      Text(comic.title)
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Blank()
         .width('100%')
-        .lineHeight(22)
-
-      // 作者
-      Text(comic.author || ' ')
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(16)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
     .shadow({
-      radius: 12,
-      color: '#15000000',
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
       offsetX: 0,
-      offsetY: 4
+      offsetY: 8
     })
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })

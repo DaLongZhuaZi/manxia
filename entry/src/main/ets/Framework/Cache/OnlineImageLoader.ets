@@ -12,6 +12,7 @@
 import { image } from '@kit.ImageKit';
 import { logger } from '../../Utils/Logger';
 import { http } from '@kit.NetworkKit';
+import { webview } from '@kit.ArkWeb';
 import CookieManager from '../Managers/CookieManager';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { DiskCacheManager } from './DiskCacheManager';
@@ -19,6 +20,9 @@ import { DataManager } from '../Data/DataManager';
 import { JinmantiantangDescrambler, JinmantiantangParameters } from '../ImageProcessing/JinmantiantangDescrambler';
 import { UserAgentManager } from '../Managers/UserAgentManager';
 import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
+import { GlobalWebViewContainer, WebViewEventCallbacks } from '../WebView/WebViewContainerPage';
+import { WebViewSourceConfig } from '../WebView/WebViewImageLoader';
+
 
 const TAG = 'OnlineImageLoader';
 
@@ -38,7 +42,9 @@ export interface OnlineLoadOptions {
   headers?: RequestHeaders;
   sourceId?: number;
   priority?: number;  // 优先级：10=当前页，5=下一页，3=下下页，1=其他
+  partitionKey?: string;
 }
+
 
 export interface RequestHeaders {
   userAgent?: string;
@@ -53,9 +59,26 @@ export interface RequestHeaders {
   secFetchDest?: string;
   secFetchMode?: string;
   secFetchSite?: string;
+  cachePartition?: string;
 }
 
+
 interface HttpHeadersObject {
+  userAgent?: string;
+  origin?: string;
+  accept?: string;
+  referer?: string;
+  cookie?: string;
+  authorization?: string;
+  acceptLanguage?: string;
+  cacheControl?: string;
+  pragma?: string;
+  secFetchDest?: string;
+  secFetchMode?: string;
+  secFetchSite?: string;
+}
+
+interface HttpRequestHeadersObject {
   'User-Agent'?: string;
   'Origin'?: string;
   'Accept'?: string;
@@ -101,6 +124,11 @@ interface CacheStatusUpdatePayload {
   fileSize: number;
 }
 
+interface RmcdnWebViewWaiter {
+  resolve: () => void;
+  reject: (reason: Error) => void;
+}
+
 export interface CacheStatsInfo {
   count: number;
   size: number;
@@ -110,8 +138,11 @@ export interface CacheStatsInfo {
 
 export class OnlineImageLoader {
   private static instance: OnlineImageLoader | null = null;
+  private readonly photos18Pkg: string = 'com.manxia.extension.all.photos18';
+  private readonly rmcdnFallbackPrefix: string = 'online_image_rmcdn_fallback';
   
   // 请求队列
+
   private requestQueue: QueuedRequest[] = [];
   private activeRequests: number = 0;
   private readonly MAX_CONCURRENT = 10;  // 【修复】提升到10个并发，加快封面加载速度
@@ -126,6 +157,7 @@ export class OnlineImageLoader {
   private readonly CACHE_STATUS_FLUSH_DELAY = 150;
   
   // 轻量级内存缓存
+
   private memoryCache = new Map<string, CacheEntry>();
   private memoryCacheSize = 0;
   private readonly MAX_CACHE_SIZE = 50 * 1024 * 1024;  // 50MB
@@ -140,6 +172,10 @@ export class OnlineImageLoader {
   private readonly MAX_RETRIES = 2;
   private readonly RETRY_DELAY = 1000;
   private readonly MIN_REQUEST_INTERVAL = 50;  // 50ms最小请求间隔（优化条漫体验）
+  private readonly RMCDN_WEBVIEW_ATTACH_RETRIES = 12;
+  private readonly RMCDN_WEBVIEW_ATTACH_DELAY = 120;
+  private readonly RMCDN_WEBVIEW_LOAD_TIMEOUT = 15000;
+  private readonly RMCDN_WEBVIEW_SETTLE_DELAY = 250;
   private lastRequestTime = 0;
 
   private constructor() {
@@ -160,10 +196,11 @@ export class OnlineImageLoader {
    * 加载在线图片（三级缓存：内存->磁盘->网络）
    */
   public async load(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
-    const cacheKey = this.generateCacheKey(url);
+    const cacheKey = this.generateCacheKey(url, options);
     const priority = options?.priority || 1;
     
     // 1. 检查内存缓存
+
     const cached = this.getFromCache(cacheKey);
     if (cached) {
       logger.info(TAG, `✅ 内存缓存命中: ${url.substring(0, 80)}`);
@@ -175,7 +212,8 @@ export class OnlineImageLoader {
       const diskCache = DiskCacheManager.getInstance();
       // 检查是否已初始化，避免警告日志泛滥
       if (diskCache.isInitialized()) {
-        const diskCached = await diskCache.get(url);
+          const diskCached = await diskCache.get(this.buildDiskCacheUrl(url, options));
+
         if (diskCached) {
           logger.info(TAG, `✅ 磁盘缓存命中: ${url.substring(0, 80)}`);
           // 存入内存缓存
@@ -191,7 +229,8 @@ export class OnlineImageLoader {
     if (this.loadingUrls.has(url)) {
       logger.debug(TAG, `URL已在加载队列中，等待现有加载完成: ${url.substring(0, 80)}`);
       // 等待现有加载完成，然后从缓存返回
-      return this.waitForLoading(url);
+      return this.waitForLoading(url, options);
+
     }
     
     // 4. 标记为正在加载
@@ -221,10 +260,11 @@ export class OnlineImageLoader {
   /**
    * [新增] 等待URL加载完成
    */
-  private async waitForLoading(url: string): Promise<image.PixelMap | null> {
+  private async waitForLoading(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
     const maxWaitTime = 30000; // 最多等待30秒
     const checkInterval = 100; // 每100ms检查一次
     const startTime = Date.now();
+    const cacheKey = this.generateCacheKey(url, options);
     
     while (this.loadingUrls.has(url)) {
       if (Date.now() - startTime > maxWaitTime) {
@@ -236,15 +276,16 @@ export class OnlineImageLoader {
       await new Promise<void>((resolve) => setTimeout(resolve, checkInterval));
       
       // 检查缓存是否已更新
-      const cached = this.getFromCache(this.generateCacheKey(url));
+      const cached = this.getFromCache(cacheKey);
       if (cached) {
         return cached;
       }
     }
     
     // 加载完成，从缓存返回
-    return this.getFromCache(this.generateCacheKey(url));
+    return this.getFromCache(cacheKey);
   }
+
 
   /**
    * 处理请求队列
@@ -272,21 +313,23 @@ export class OnlineImageLoader {
       
       if (pixelMap) {
         // 存入内存缓存
-        this.putToCache(this.generateCacheKey(request.url), pixelMap);
+        this.putToCache(this.generateCacheKey(request.url, request.options), pixelMap);
         
         // [新增] 存入磁盘缓存（仅在已初始化时）
         try {
-          const diskCache = DiskCacheManager.getInstance();
-          if (diskCache.isInitialized()) {
-            await diskCache.put(request.url, pixelMap);
+          const diskCache = await this.getDiskCacheForRequest(request.options);
+          if (diskCache && diskCache.isInitialized()) {
+            const diskCacheUrl = this.buildDiskCacheUrl(request.url, request.options);
+            await diskCache.put(diskCacheUrl, pixelMap);
             logger.debug(TAG, `已保存到磁盘缓存: ${request.url.substring(0, 80)}`);
 
             // [P1] 缓存状态写库异步批量化，避免阻塞主加载链路
-            this.syncCacheStatusToDatabaseAsync(request.url, diskCache);
+            this.syncCacheStatusToDatabaseAsync(diskCacheUrl, diskCache);
           }
         } catch (error) {
           logger.warn(TAG, `保存到磁盘缓存失败: ${String(error)}`);
         }
+
         
         request.resolve(pixelMap);
         
@@ -327,7 +370,35 @@ export class OnlineImageLoader {
     }
   }
 
+  private async getDiskCacheForRequest(_options?: OnlineLoadOptions): Promise<DiskCacheManager | null> {
+    return DiskCacheManager.getInstance();
+  }
+
+  private buildDiskCacheUrl(url: string, options?: OnlineLoadOptions): string {
+    if (!this.isPhotos18Request(options || {} as OnlineLoadOptions, url)) {
+      return url;
+    }
+    const partition = this.resolveCachePartition(options, url);
+    return `${url}#cache_partition=${partition}`;
+  }
+
+  private resolveCachePartition(options?: OnlineLoadOptions, url?: string): string {
+    const explicitPartition = options?.partitionKey;
+    if (explicitPartition && explicitPartition.length > 0) {
+      return explicitPartition;
+    }
+    const headerPartition = options?.headers?.cachePartition;
+    if (headerPartition && headerPartition.length > 0) {
+      return headerPartition;
+    }
+    if (url && url.includes('/cover/')) {
+      return 'detail-cover';
+    }
+    return 'default';
+  }
+
   private syncCacheStatusToDatabaseAsync(url: string, diskCache: DiskCacheManager): void {
+
     (async () => {
       try {
         const filePath = await diskCache.getCacheFilePath(url);
@@ -381,6 +452,7 @@ export class OnlineImageLoader {
     try {
       const dataManager = DataManager.getInstance();
       await dataManager.batchUpdateOnlinePageCacheStatus(updates);
+      logger.debug(TAG, `Flushed cache status updates: count=${updates.length}`);
       logger.debug(TAG, `已批量同步缓存状态到数据库: ${updates.length}条`);
     } catch (error) {
       logger.warn(TAG, `批量同步缓存状态到数据库失败: ${String(error)}`);
@@ -402,8 +474,25 @@ export class OnlineImageLoader {
     } catch (error) {
       const errObj = error as Object;
       const errCode = (errObj as Record<string, Object>)['code'];
+      const errMsg = error instanceof Error ? error.message : String(error);
+      
+      if (this.isPhotos18Request(options, url) && errMsg.includes('HTTP请求失败: 403')) {
+        logger.warn(TAG, `Photos18图片请求403，尝试刷新Cookie后重试: ${url.substring(0, 80)}`);
+        const recovered = await this.retryPhotos18WithFreshCookie(url, options);
+        if (recovered) {
+          return recovered;
+        }
+      }
       
       // 如果是SSL错误(2300060)且URL是HTTPS，尝试降级为HTTP
+      if (this.isRmcdnRequest(url) && this.isHttp403Error(errMsg)) {
+        logger.warn(TAG, `rmcdn鍥剧墖HTTP 403锛屽皾璇昗ebView鍏滃簳鍔犺浇: ${url.substring(0, 80)}`);
+        const recovered = await this.retryRmcdnWithWebView(url, options);
+        if (recovered) {
+          return recovered;
+        }
+      }
+
       if (errCode === 2300060 && url.startsWith('https://')) {
         const httpUrl = url.replace('https://', 'http://');
         logger.info(TAG, `SSL错误，尝试HTTP降级: ${httpUrl.substring(0, 80)}`);
@@ -421,9 +510,261 @@ export class OnlineImageLoader {
     }
   }
 
+  private isPhotos18Request(options: OnlineLoadOptions, url: string): boolean {
+    if (url.includes('photos18.com')) {
+      return true;
+    }
+    const sourceId = options.sourceId;
+    if (!sourceId) {
+      return false;
+    }
+    const headers = options.headers;
+    if (headers && headers.referer && headers.referer.includes('photos18.com')) {
+      return true;
+    }
+    return false;
+  }
+
+  private async retryPhotos18WithFreshCookie(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
+    const sourceId = options.sourceId;
+    if (!sourceId) {
+      return null;
+    }
+    try {
+      this.clearCookieCache(sourceId);
+      const cookieManager = CookieManager.getInstance();
+      const freshCookie = await cookieManager.getCookieString(sourceId);
+      if (!freshCookie || freshCookie.length === 0) {
+        logger.warn(TAG, 'Photos18 refresh cookie returned empty, skip retry');
+        /*
+        logger.warn(TAG, 'Photos18刷新Cookie后仍为空，放弃重试');
+        return null;
+      }
+        */
+        return null;
+      }
+      const retriedHeaders: RequestHeaders = {
+        userAgent: options.headers?.userAgent,
+        accept: options.headers?.accept,
+        referer: options.headers?.referer,
+        origin: options.headers?.origin,
+        cookie: freshCookie,
+        authorization: options.headers?.authorization,
+        acceptLanguage: options.headers?.acceptLanguage,
+        cacheControl: options.headers?.cacheControl,
+        pragma: options.headers?.pragma,
+        secFetchDest: options.headers?.secFetchDest,
+        secFetchMode: options.headers?.secFetchMode,
+        secFetchSite: options.headers?.secFetchSite
+      };
+      const retriedOptions: OnlineLoadOptions = {
+        width: options.width,
+        height: options.height,
+        headers: retriedHeaders,
+        sourceId: options.sourceId,
+        priority: options.priority,
+        partitionKey: options.partitionKey
+      };
+
+      return await this.doHttpRequest(url, retriedOptions);
+    } catch (error) {
+      logger.warn(TAG, `Photos18刷新Cookie重试失败: ${String(error)}`);
+      return null;
+    }
+  }
+
   /**
    * 执行HTTP请求（内部方法）
    */
+  private isRmcdnRequest(url: string): boolean {
+    return url.includes('rmcdn');
+  }
+
+  private isHttp403Error(message: string): boolean {
+    return message.includes('403');
+  }
+
+  private async retryRmcdnWithWebView(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
+    const fallbackSourceId = `${this.rmcdnFallbackPrefix}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const controller = new webview.WebviewController();
+    const headers = await this.buildHeaders(url, options);
+    const userAgent = headers.userAgent ? headers.userAgent : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+    const config: WebViewSourceConfig = {
+      sourceId: fallbackSourceId,
+      userAgent: userAgent,
+      enableJavaScript: true,
+      enableImages: true,
+      cookiePolicy: 'accept_all',
+      timeout: this.TIMEOUT
+    };
+
+    let waiter: RmcdnWebViewWaiter | null = null;
+    const pageLoadPromise = new Promise<void>((resolve, reject) => {
+      waiter = { resolve: resolve, reject: reject };
+    });
+    const callbacks: WebViewEventCallbacks = {
+      onPageEnd: (_loadedUrl: string) => {
+        if (waiter) {
+          waiter.resolve();
+          waiter = null;
+        }
+      },
+      onError: (error: string) => {
+        if (waiter) {
+          waiter.reject(new Error(error));
+          waiter = null;
+        }
+      }
+    };
+
+    GlobalWebViewContainer.addWebView(fallbackSourceId, controller, config, callbacks, 'about:blank');
+
+    try {
+      await this.loadRmcdnUrlWithRetry(controller, url, headers, userAgent);
+      await this.waitForPromiseWithTimeout(pageLoadPromise, this.RMCDN_WEBVIEW_LOAD_TIMEOUT, 'rmcdn WebView load timeout');
+      await this.delay(this.RMCDN_WEBVIEW_SETTLE_DELAY);
+      const imageBuffer = await this.extractRmcdnArrayBuffer(controller);
+      const pixelMap = await this.createPixelMapFromBuffer(imageBuffer, options);
+      logger.info(TAG, `rmcdn WebView鍏滃簳鍔犺浇鎴愬姛: bytes=${imageBuffer.byteLength}`);
+      return pixelMap;
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `rmcdn WebView鍏滃簳鍔犺浇澶辫触: ${errMsg}`);
+      return null;
+    } finally {
+      try {
+        controller.loadUrl('about:blank');
+      } catch (_loadBlankError) {
+      }
+      GlobalWebViewContainer.removeWebView(fallbackSourceId);
+    }
+  }
+
+  private async loadRmcdnUrlWithRetry(
+    controller: webview.WebviewController,
+    url: string,
+    headers: HttpHeadersObject,
+    userAgent: string
+  ): Promise<void> {
+    const webHeaders = this.buildWebHeaders(headers);
+    let attempt = 0;
+    let lastError: Error | null = null;
+
+    while (attempt < this.RMCDN_WEBVIEW_ATTACH_RETRIES) {
+      try {
+        controller.setCustomUserAgent(userAgent);
+        if (webHeaders.length > 0) {
+          controller.loadUrl(url, webHeaders);
+        } else {
+          controller.loadUrl(url);
+        }
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        attempt = attempt + 1;
+        await this.delay(this.RMCDN_WEBVIEW_ATTACH_DELAY);
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+    throw new Error('rmcdn WebView loadUrl failed');
+  }
+
+  private buildWebHeaders(headers: HttpHeadersObject): Array<webview.WebHeader> {
+    const result: Array<webview.WebHeader> = [];
+    const pairs: Array<[string, string | undefined]> = [
+      ['User-Agent', headers.userAgent],
+      ['Origin', headers.origin],
+      ['Accept', headers.accept],
+      ['Referer', headers.referer],
+      ['Cookie', headers.cookie],
+      ['Authorization', headers.authorization],
+      ['Accept-Language', headers.acceptLanguage],
+      ['Cache-Control', headers.cacheControl],
+      ['Pragma', headers.pragma],
+      ['Sec-Fetch-Dest', headers.secFetchDest],
+      ['Sec-Fetch-Mode', headers.secFetchMode],
+      ['Sec-Fetch-Site', headers.secFetchSite]
+    ];
+    let index = 0;
+    while (index < pairs.length) {
+      const pair = pairs[index];
+      const headerValue = pair[1];
+      if (headerValue && headerValue.length > 0) {
+        result.push({
+          headerKey: pair[0],
+          headerValue: headerValue
+        });
+      }
+      index = index + 1;
+    }
+    return result;
+  }
+
+  private async waitForPromiseWithTimeout(task: Promise<void>, timeoutMs: number, message: string): Promise<void> {
+    let timeoutId: number | null = null;
+    return await new Promise<void>((resolve, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(message));
+      }, timeoutMs);
+
+      task.then(() => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
+        resolve();
+      }).catch((error: Error) => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
+        reject(error);
+      });
+    });
+  }
+
+  private async extractRmcdnArrayBuffer(controller: webview.WebviewController): Promise<ArrayBuffer> {
+    const script = `
+      (() => {
+        const imageElement = document.images && document.images.length > 0 ? document.images[0] : null;
+        let requestUrl = '';
+        if (imageElement && imageElement.src) {
+          requestUrl = String(imageElement.src);
+        } else if (window && window.location && window.location.href) {
+          requestUrl = String(window.location.href);
+        }
+        if (!requestUrl) {
+          throw new Error('rmcdn request url missing');
+        }
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', requestUrl, false);
+        xhr.responseType = 'arraybuffer';
+        xhr.send(null);
+        if (xhr.status >= 400) {
+          throw new Error('rmcdn xhr failed with status ' + String(xhr.status));
+        }
+        if (!xhr.response) {
+          throw new Error('rmcdn xhr returned empty buffer');
+        }
+        return xhr.response;
+      })();
+    `;
+    const jsResult = await controller.runJavaScriptExt(script);
+    const resultType = jsResult.getType();
+    if (resultType === webview.JsMessageType.ARRAY_BUFFER) {
+      return jsResult.getArrayBuffer();
+    }
+    if (resultType === webview.JsMessageType.STRING) {
+      throw new Error(`rmcdn WebView script returned string: ${jsResult.getString()}`);
+    }
+    const errorDescription = jsResult.getErrorDescription();
+    if (errorDescription) {
+      throw new Error(errorDescription);
+    }
+    throw new Error(`rmcdn WebView script returned unsupported type: ${resultType}`);
+  }
+
   private async doHttpRequest(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
     try {
       const httpRequest = http.createHttp();
@@ -438,7 +779,7 @@ export class OnlineImageLoader {
         method: http.RequestMethod.GET,
         connectTimeout: this.TIMEOUT,
         readTimeout: this.TIMEOUT,
-        header: headers as Object,
+        header: this.createRequestHeadersObject(headers) as Object,
         expectDataType: http.HttpDataType.ARRAY_BUFFER
       };
       
@@ -512,6 +853,8 @@ export class OnlineImageLoader {
         }
         
         // 创建PixelMap
+        const pixelMap = await this.createPixelMapFromBuffer(finalBuffer, options);
+        /*
         let pixelMap: image.PixelMap | null = null;
         
         // 检查是否为AVIF格式，使用专用解码器
@@ -542,6 +885,7 @@ export class OnlineImageLoader {
           pixelMap = await imageSource.createPixelMap(decodingOptions);
         }
         
+        */
         httpRequest.destroy();
         return pixelMap;
         
@@ -587,7 +931,58 @@ export class OnlineImageLoader {
   /**
    * 构建请求头
    */
+  private async createPixelMapFromBuffer(buffer: ArrayBuffer, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
+    let pixelMap: image.PixelMap | null = null;
+
+    if (isAvifFormat(buffer)) {
+      logger.info(TAG, '妫€娴嬪埌AVIF鏍煎紡鍥剧墖锛屼娇鐢ˋVIF瑙ｇ爜鍣?');
+      const avifDecoder = AvifDecoder.getInstance();
+      if (avifDecoder.isSupported()) {
+        pixelMap = await avifDecoder.decode(buffer);
+        if (pixelMap) {
+          logger.info(TAG, 'AVIF瑙ｇ爜鎴愬姛');
+        } else {
+          logger.warn(TAG, 'AVIF瑙ｇ爜澶辫触锛屽皾璇曠郴缁熻В鐮佸櫒');
+        }
+      } else {
+        logger.warn(TAG, 'AVIF瑙ｇ爜鍣ㄤ笉鍙敤锛坙ibavif鏈畨瑁咃級锛屽皾璇曠郴缁熻В鐮佸櫒');
+      }
+    }
+
+    if (!pixelMap) {
+      const imageSource = image.createImageSource(buffer);
+      const decodingOptions: image.DecodingOptions = {
+        desiredSize: options.width && options.height ?
+          { width: options.width, height: options.height } : undefined,
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+      };
+      pixelMap = await imageSource.createPixelMap(decodingOptions);
+    }
+
+    return pixelMap;
+  }
+
+  private createRequestHeadersObject(headers: HttpHeadersObject): HttpRequestHeadersObject {
+    const requestHeaders: HttpRequestHeadersObject = {
+      'User-Agent': headers.userAgent,
+      'Origin': headers.origin,
+      'Accept': headers.accept,
+      'Referer': headers.referer,
+      'Cookie': headers.cookie,
+      'Authorization': headers.authorization,
+      'Accept-Language': headers.acceptLanguage,
+      'Cache-Control': headers.cacheControl,
+      'Pragma': headers.pragma,
+      'Sec-Fetch-Dest': headers.secFetchDest,
+      'Sec-Fetch-Mode': headers.secFetchMode,
+      'Sec-Fetch-Site': headers.secFetchSite
+    };
+    return requestHeaders;
+  }
+
   private async buildHeaders(url: string, options: OnlineLoadOptions): Promise<HttpHeadersObject> {
+    await this.getDiskCacheForRequest(options);
+
     const defaultUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
     const defaultAccept = 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5';
     const defaultLang = 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7';
@@ -636,18 +1031,18 @@ export class OnlineImageLoader {
     }
     
     const headerObj: HttpHeadersObject = {
-      'User-Agent': ua,
-      'Origin': origin || (referer || undefined),
-      'Accept': accept,
-      'Referer': referer || undefined,
-      'Cookie': cookie || undefined,
-      'Authorization': authorization || undefined,
-      'Accept-Language': acceptLanguage || undefined,
-      'Cache-Control': cacheControl || undefined,
-      'Pragma': pragma || undefined,
-      'Sec-Fetch-Dest': secFetchDest || undefined,
-      'Sec-Fetch-Mode': secFetchMode || undefined,
-      'Sec-Fetch-Site': secFetchSite || undefined
+      userAgent: ua,
+      origin: origin || (referer || undefined),
+      accept: accept,
+      referer: referer || undefined,
+      cookie: cookie || undefined,
+      authorization: authorization || undefined,
+      acceptLanguage: acceptLanguage || undefined,
+      cacheControl: cacheControl || undefined,
+      pragma: pragma || undefined,
+      secFetchDest: secFetchDest || undefined,
+      secFetchMode: secFetchMode || undefined,
+      secFetchSite: secFetchSite || undefined
     };
     
     return headerObj;
@@ -679,6 +1074,16 @@ export class OnlineImageLoader {
     }
     
     return '';
+  }
+
+  public clearCookieCache(sourceId?: number): void {
+    if (sourceId !== undefined) {
+      this.cookieCache.delete(sourceId);
+      logger.debug(TAG, `清除在线图片Cookie缓存: sourceId=${sourceId}`);
+      return;
+    }
+    this.cookieCache.clear();
+    logger.debug(TAG, '清除全部在线图片Cookie缓存');
   }
 
   /**
@@ -714,6 +1119,14 @@ export class OnlineImageLoader {
   /**
    * 队列排序（按优先级降序）
    */
+  private async delay(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, ms);
+    });
+  }
+
   private sortQueue(): void {
     this.requestQueue.sort((a, b) => b.priority - a.priority);
   }
@@ -721,16 +1134,27 @@ export class OnlineImageLoader {
   /**
    * 生成缓存键
    */
-  private generateCacheKey(url: string): string {
+  private generateCacheKey(url: string, options?: OnlineLoadOptions): string {
+    let base = url;
+    if (options?.partitionKey && options.partitionKey.length > 0) {
+      base = `${base}#p=${options.partitionKey}`;
+    }
+    if (options?.headers?.cachePartition && options.headers.cachePartition.length > 0) {
+      base = `${base}#hp=${options.headers.cachePartition}`;
+    }
+    if (options?.headers?.referer && options.headers.referer.length > 0) {
+      base = `${base}#r=${options.headers.referer}`;
+    }
     // 使用URL的hash作为缓存键
     let hash = 0;
-    for (let i = 0; i < url.length; i++) {
-      const char = url.charCodeAt(i);
+    for (let i = 0; i < base.length; i++) {
+      const char = base.charCodeAt(i);
       hash = ((hash << 5) - hash) + char;
       hash = hash & hash;
     }
     return `online_${Math.abs(hash).toString(36)}`;
   }
+
 
   /**
    * 从缓存获取

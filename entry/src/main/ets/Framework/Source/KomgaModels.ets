@@ -1,3 +1,5 @@
+import { ComicDetailInfo, PageInfo } from './SourceExecutor';
+
 export type KomgaAuthMode = 'NONE' | 'BASIC' | 'API_KEY';
 export type KomgaContentType = 'SERIES' | 'READLISTS' | 'BOOKS';
 export type KomgaBrowseMode = 'library' | 'discover';
@@ -97,6 +99,16 @@ export interface KomgaDetailRequest {
   instanceId?: string;
   itemId: string;
   contentType: KomgaContentType;
+}
+
+export interface KomgaDetailCacheEntry {
+  detail: ComicDetailInfo;
+  timestamp: number;
+}
+
+export interface KomgaPagesCacheEntry {
+  pages: PageInfo[];
+  timestamp: number;
 }
 
 export interface KomgaReaderProgress {

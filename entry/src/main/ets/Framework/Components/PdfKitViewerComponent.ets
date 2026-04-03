@@ -32,6 +32,12 @@ export interface PdfViewerCallbacks {
   onLoadError?: (error: string) => void;
 }
 
+export interface PdfViewerController {
+  goToPreviousPage: () => boolean;
+  goToNextPage: () => boolean;
+  isControllerReady: () => boolean;
+}
+
 /**
  * PDF Kit 阅读器组件
  */
@@ -45,6 +51,7 @@ export struct PdfKitViewerComponent {
   @Prop themeBgColor: string = '#FFFFFF';
   // 回调
   callbacks: PdfViewerCallbacks = {};
+  onControllerReady: (controller: PdfViewerController) => void = (_controller: PdfViewerController): void => {};
   
   // 内部状态
   @State isLoading: boolean = true;
@@ -76,6 +83,12 @@ export struct PdfKitViewerComponent {
 
   aboutToAppear(): void {
     logger.info(TAG, 'PdfKitViewerComponent aboutToAppear');
+    const controller: PdfViewerController = {
+      goToPreviousPage: (): boolean => this.goToPrevPage(),
+      goToNextPage: (): boolean => this.goToNextPage(),
+      isControllerReady: (): boolean => this.isDocumentLoaded && this.totalPages > 0 && !this.isLoading && this.errorMessage.length === 0
+    };
+    this.onControllerReady(controller);
     
     // 注册页数变化监听器
     this.pdfController.registerPageCountChangedListener((pageCount: number) => {
@@ -234,21 +247,25 @@ export struct PdfKitViewerComponent {
   /**
    * 上一页
    */
-  private goToPrevPage(): void {
+  private goToPrevPage(): boolean {
     if (this.currentPage > 1) {
       this.setCurrentPage(this.currentPage - 1);
       this.showIndicator();
+      return true;
     }
+    return false;
   }
 
   /**
    * 下一页
    */
-  private goToNextPage(): void {
+  private goToNextPage(): boolean {
     if (this.currentPage < this.totalPages) {
       this.setCurrentPage(this.currentPage + 1);
       this.showIndicator();
+      return true;
     }
+    return false;
   }
 
   /**

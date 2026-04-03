@@ -332,6 +332,10 @@ export interface MangaSourceInfo {
   apiVersion?: string;
   /** 是否为成人内容源（NSFW） */
   isNSFW?: boolean;
+  providerType?: 'suwayomi' | 'komga';
+  providerItemId?: string;
+  providerInstanceId?: string;
+  providerContentType?: 'SERIES' | 'READLISTS' | 'BOOKS';
 }
 
 /**

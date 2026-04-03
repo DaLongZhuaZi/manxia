@@ -401,6 +401,12 @@ export struct MangaViewer {
   @State private pageImageBindings: Map<number, string> = new Map();
   @State private singlePageImageInput: Resource | string | image.PixelMap = $r('app.media.ic_image');
   @State private singlePagePageId: string = '';
+  @State private softTransitionOverlayInput: Resource | string | image.PixelMap = $r('app.media.ic_image');
+  @State private softTransitionOverlayPageId: string = '';
+  @State private softTransitionOverlayOpacity: number = 0;
+  @State private showSoftTransitionOverlay: boolean = false;
+  @State private softTransitionOverlayTranslateX: number = 0;
+  @State private softTransitionOverlayTranslateY: number = 0;
   @State private previewPrevImageInput: Resource | string | image.PixelMap = $r('app.media.ic_image');
   @State private previewPrevPageId: string = '';
   @State private previewNextImageInput: Resource | string | image.PixelMap = $r('app.media.ic_image');
@@ -507,6 +513,10 @@ export struct MangaViewer {
   private readonly PRELOAD_RANGE: number = 8; // 预加载前后页的基础范围
   private readonly CACHE_CLEANUP_THRESHOLD: number = 0.8; // 缓存使用率达到80%时清理
   private pendingLoadTimers: Map<string, number> = new Map();
+  private softTransitionFallbackTimer: number = -1;
+  private softTransitionStartTimer: number = -1;
+  private softTransitionTargetTranslateX: number = 0;
+  private softTransitionTargetTranslateY: number = 0;
 
   // 图源预加载设置（从外部传入）
   @Prop preloadCurrentPages?: number; // 当前章节预加载页数，默认10
@@ -1040,6 +1050,14 @@ export struct MangaViewer {
       const tid = this.pendingLoadTimers.get(k);
       if (typeof tid === 'number') { clearTimeout(tid); }
       this.pendingLoadTimers.delete(k);
+    }
+    if (this.softTransitionStartTimer !== -1) {
+      clearTimeout(this.softTransitionStartTimer);
+      this.softTransitionStartTimer = -1;
+    }
+    if (this.softTransitionFallbackTimer !== -1) {
+      clearTimeout(this.softTransitionFallbackTimer);
+      this.softTransitionFallbackTimer = -1;
     }
 
     // 清理预加载队列定时器
@@ -2043,6 +2061,8 @@ export struct MangaViewer {
       // ========== 卷页动画特殊处理结束 ==========
 
       let pageChanged: boolean = false;
+      const currentSinglePage: MangaPage | null = this.isSinglePageMode() ? this.getCurrentPageData().page : null;
+      const previousSinglePage: MangaPage | undefined = currentSinglePage ? currentSinglePage : undefined;
 
       if (isDoublePage) {
         const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
@@ -2301,6 +2321,17 @@ export struct MangaViewer {
       if (pageChanged) {
         this.pageChangeCommitted = true;
         this.isCommittingPageTurn = true;
+        const newPage: MangaPage | undefined = (this.chapter && this.chapter.pages && this.viewCurrentPageIndex >= 0 && this.viewCurrentPageIndex < this.chapter.pages.length)
+          ? this.chapter.pages[this.viewCurrentPageIndex] : undefined;
+        if (previousSinglePage && this.shouldUseSoftNoneCrossfade()) {
+          this.startSoftTransitionOverlay(previousSinglePage);
+        } else {
+          this.resetSoftTransitionOverlay();
+        }
+        if (newPage) {
+          this.ensurePixelMapLoaded(newPage).catch((_e: Error) => {});
+          this.incrementPixelMapEpoch(newPage.id);
+        }
         if (this.viewCurrentPageIndex !== this.currentPageIndex) {
           this.currentPageIndex = this.viewCurrentPageIndex;
         }
@@ -2320,12 +2351,6 @@ export struct MangaViewer {
             this.updateSinglePagePreview();
           }
         }, 200);
-        const newPage: MangaPage | undefined = (this.chapter && this.chapter.pages && this.viewCurrentPageIndex >= 0 && this.viewCurrentPageIndex < this.chapter.pages.length)
-          ? this.chapter.pages[this.viewCurrentPageIndex] : undefined;
-        if (newPage) {
-          this.ensurePixelMapLoaded(newPage).catch((_e: Error) => {});
-          this.incrementPixelMapEpoch(newPage.id);
-        }
         this.renderEpoch = this.renderEpoch + 1;
         if (isDoublePage) {
           this.ensureDoublePageImagesPreloaded();
@@ -2335,7 +2360,9 @@ export struct MangaViewer {
         logger.debug(TAG, `页面已切换并同步: cur=${this.currentPageIndex}, view=${this.viewCurrentPageIndex}`);
         setTimeout(() => { this.suppressExternalIndex = false; }, 0);
         setTimeout(() => { this.pageChangeCommitted = false; }, this.SWIPE_COOLDOWN_MS);
-        setTimeout(() => { this.isCommittingPageTurn = false; }, 200);
+        if (!this.showSoftTransitionOverlay) {
+          setTimeout(() => { this.isCommittingPageTurn = false; }, this.isSoftNonePageTurn() ? this.getSoftTransitionDuration() : 200);
+        }
       } else {
         this.animateToPosition(0, 0);
         logger.debug(TAG, `未触发翻页: 位移复位, cur=${this.currentPageIndex}, view=${this.viewCurrentPageIndex}`);
@@ -2354,20 +2381,31 @@ export struct MangaViewer {
       return;
     }
 
-    const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
+    const configuredAnimationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
+    const animationType = configuredAnimationType === PageTurnAnimationType.NONE
+      ? PageTurnAnimationType.FADE
+      : configuredAnimationType;
     const isForward = this.pageTurnDirection === 'left' || this.pageTurnDirection === 'up';
     const screenW = this.screenWidth > 0 ? this.screenWidth : 360;
     const screenH = this.screenHeight > 0 ? this.screenHeight : 780;
 
-    logger.info(TAG, `开始执行翻页动画: 类型=${animationType}, 方向=${this.pageTurnDirection}`);
+    logger.info(TAG, `开始执行翻页动画: 类型=${animationType}, 配置=${configuredAnimationType}, 方向=${this.pageTurnDirection}`);
 
-    // 无动画模式
-    if (animationType === PageTurnAnimationType.NONE) {
+    const useSoftNoneTransition = configuredAnimationType === PageTurnAnimationType.NONE;
+    const useSoftNoneCrossfade = useSoftNoneTransition && this.showSoftTransitionOverlay;
+    if (useSoftNoneTransition) {
+      logger.debug(TAG, '关闭动画档位保留轻量淡入过渡，仅禁用图片位移回弹');
       this.isPageTurning = false;
       this.pageTurnDirection = null;
       this.pageTurnProgress = 0;
       this.currentAnimationType = PageTurnAnimationType.NONE;
       this.resetPageTurnAnimationState();
+      const targetPage = this.getCurrentPageData().page;
+      if (useSoftNoneCrossfade && targetPage && this.isPageReadyForDisplay(targetPage)) {
+        this.scheduleSoftTransitionOverlayOut();
+      } else if (!useSoftNoneCrossfade) {
+        this.isCommittingPageTurn = false;
+      }
       return;
     }
 
@@ -2516,6 +2554,7 @@ export struct MangaViewer {
           this.pageTurnDirection = null;
           this.pageTurnProgress = 0;
           this.currentAnimationType = PageTurnAnimationType.NONE;
+          this.resetSoftTransitionOverlay();
           logger.debug(TAG, `翻页动画完成`);
 
           // 【修复】动画完成后刷新UI，确保显示正确的页面
@@ -3465,6 +3504,13 @@ export struct MangaViewer {
       return;
     }
 
+    const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
+    if (animationType === PageTurnAnimationType.NONE && this.currentScale <= 1.0) {
+      this.translateX = targetX;
+      this.translateY = targetY;
+      return;
+    }
+
     const animateOptions: AnimateParam = {
       duration: 200,
       curve: curves.initCurve(Curve.EaseInOut),
@@ -3481,6 +3527,9 @@ export struct MangaViewer {
   private getDoublePrevOverlayOpacity(): number {
     const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
     if (this.isCommittingPageTurn) {
+      if (this.isSoftNonePageTurn()) {
+        return 0.0;
+      }
       return isRTL ? (this.pageTurnDirection === 'left' ? 1.0 : 0.0) : (this.pageTurnDirection === 'right' ? 1.0 : 0.0);
     }
     const thresholdX: number = Math.max(20, Math.floor(this.screenWidth * 0.05));
@@ -3494,6 +3543,9 @@ export struct MangaViewer {
   private getDoubleNextOverlayOpacity(): number {
     const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
     if (this.isCommittingPageTurn) {
+      if (this.isSoftNonePageTurn()) {
+        return 0.0;
+      }
       return isRTL ? (this.pageTurnDirection === 'right' ? 1.0 : 0.0) : (this.pageTurnDirection === 'left' ? 1.0 : 0.0);
     }
     const thresholdX: number = Math.max(20, Math.floor(this.screenWidth * 0.05));
@@ -4044,6 +4096,24 @@ export struct MangaViewer {
       // 普通内容层（始终显示，作为底层）
       this.buildSinglePageContent()
 
+      if (this.showSoftTransitionOverlay && this.softTransitionOverlayPageId.length > 0) {
+        Stack() {
+          Image(this.softTransitionOverlayInput)
+            .key(`soft_none_overlay_${this.softTransitionOverlayPageId}`)
+            .width('100%')
+            .height('100%')
+            .objectFit(this.getSoftTransitionOverlayFitMode())
+            .padding(0)
+            .margin(0)
+            .borderWidth(0)
+        }
+        .width('100%')
+        .height('100%')
+        .translate({ x: this.softTransitionOverlayTranslateX, y: this.softTransitionOverlayTranslateY })
+        .opacity(this.softTransitionOverlayOpacity)
+        .transition(TransitionEffect.IDENTITY)
+      }
+
       // Canvas卷页层（卷页动画时显示）
       if (this.showCanvasCurl) {
         this.buildCanvasCurlLayer()
@@ -4142,7 +4212,7 @@ export struct MangaViewer {
       Stack() {
         this.buildPageImageContent(this.getCurrentPageData().page!)
       }
-      .key(`${this.getCurrentPageData().page!.id}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.getCurrentPageData().page!.id)}`)
+      .key(this.getSinglePageContentKey(this.getCurrentPageData().page!))
       .width('100%')
       .height('100%')
       // 使用matrix4.transform()实现真正的3D变换效果
@@ -5095,7 +5165,7 @@ export struct MangaViewer {
           (page.sourceType === ImageSourceType.NETWORK ||
            (!this.shouldShowLoadingForPage(page) || this.pagePixelMaps.has(page.id)))) {
         Image(this.singlePageImageInput)
-          .key(`${this.singlePagePageId}_${this.renderEpoch}_${this.getPixelMapEpoch(this.singlePagePageId)}_${this.pagePixelMaps.has(this.singlePagePageId) ? 'pm' : 'url'}`)
+          .key(this.getSinglePageContentKey(page))
           .width('100%')
           .height('100%')
           .objectFit(this.getImageFitMode(page))
@@ -5733,11 +5803,195 @@ export struct MangaViewer {
     return 'horizontal';
   }
 
+  private isSoftNonePageTurn(): boolean {
+    return this.readingSettings.pageTurnAnimation === PageTurnAnimationType.NONE;
+  }
+
+  private shouldUseSoftNoneCrossfade(): boolean {
+    return this.isSoftNonePageTurn() && this.isSinglePageMode() && !this.isWebtoonMode() && this.currentScale <= 1.0;
+  }
+
+  private getViewerModeKey(): string {
+    return this.readingSettings && this.readingSettings.readingMode !== undefined
+      ? String(this.readingSettings.readingMode)
+      : 'default';
+  }
+
+  private getViewerContainerKey(): string {
+    const modeKey: string = this.getViewerModeKey();
+    if (this.isWebtoonMode()) {
+      return `webtoon_${modeKey}`;
+    }
+    if (this.shouldUseSoftNoneCrossfade()) {
+      return `single_none_${modeKey}`;
+    }
+    return `${modeKey}_${this.viewCurrentPageIndex}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}`;
+  }
+
+  private getSinglePageContentKey(page: MangaPage): string {
+    const pixelEpoch: number = this.getPixelMapEpoch(page.id);
+    const sourceState: string = this.pagePixelMaps.has(page.id) ? 'pm' : 'url';
+    if (this.shouldUseSoftNoneCrossfade()) {
+      return `${page.id}_${pixelEpoch}_${sourceState}`;
+    }
+    return `${page.id}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${pixelEpoch}_${sourceState}`;
+  }
+
+  private getSoftTransitionHoldDelay(): number {
+    return 24;
+  }
+
+  private getSoftTransitionDuration(): number {
+    return 420;
+  }
+
+  private updateSoftTransitionTargetTranslate(): void {
+    const horizontalOffset: number = Math.max(48, Math.floor(this.screenWidth * 0.22));
+    const verticalOffset: number = Math.max(36, Math.floor(this.screenHeight * 0.12));
+    this.softTransitionTargetTranslateX = 0;
+    this.softTransitionTargetTranslateY = 0;
+
+    if (this.pageTurnDirection === 'left') {
+      this.softTransitionTargetTranslateX = -horizontalOffset;
+      return;
+    }
+    if (this.pageTurnDirection === 'right') {
+      this.softTransitionTargetTranslateX = horizontalOffset;
+      return;
+    }
+    if (this.pageTurnDirection === 'up') {
+      this.softTransitionTargetTranslateY = -verticalOffset;
+      return;
+    }
+    if (this.pageTurnDirection === 'down') {
+      this.softTransitionTargetTranslateY = verticalOffset;
+    }
+  }
+
+  private getSoftTransitionOverlayPage(): MangaPage | null {
+    if (this.softTransitionOverlayPageId.length > 0) {
+      const overlayPage = this.getPageById(this.softTransitionOverlayPageId);
+      if (overlayPage) {
+        return overlayPage;
+      }
+    }
+    const currentPage = this.getCurrentPageData().page;
+    return currentPage ? currentPage : null;
+  }
+
+  private getSoftTransitionOverlayFitMode(): ImageFit {
+    const overlayPage = this.getSoftTransitionOverlayPage();
+    if (overlayPage) {
+      return this.getImageFitMode(overlayPage);
+    }
+    return ImageFit.Contain;
+  }
+
+  private startSoftTransitionOverlay(page: MangaPage): void {
+    if (!this.shouldUseSoftNoneCrossfade()) {
+      this.resetSoftTransitionOverlay();
+      return;
+    }
+    if (this.softTransitionStartTimer !== -1) {
+      clearTimeout(this.softTransitionStartTimer);
+      this.softTransitionStartTimer = -1;
+    }
+    if (this.softTransitionFallbackTimer !== -1) {
+      clearTimeout(this.softTransitionFallbackTimer);
+      this.softTransitionFallbackTimer = -1;
+    }
+    this.softTransitionOverlayPageId = page.id;
+    this.softTransitionOverlayInput = this.singlePageImageInput;
+    this.softTransitionOverlayOpacity = 1.0;
+    this.softTransitionOverlayTranslateX = 0;
+    this.softTransitionOverlayTranslateY = 0;
+    this.updateSoftTransitionTargetTranslate();
+    this.showSoftTransitionOverlay = true;
+    this.softTransitionFallbackTimer = setTimeout(() => {
+      this.softTransitionFallbackTimer = -1;
+      if (this.showSoftTransitionOverlay) {
+        this.animateSoftTransitionOverlayOut();
+      }
+    }, this.getSoftTransitionDuration() + this.getSoftTransitionHoldDelay() + 800);
+  }
+
+  private resetSoftTransitionOverlay(): void {
+    if (this.softTransitionStartTimer !== -1) {
+      clearTimeout(this.softTransitionStartTimer);
+      this.softTransitionStartTimer = -1;
+    }
+    if (this.softTransitionFallbackTimer !== -1) {
+      clearTimeout(this.softTransitionFallbackTimer);
+      this.softTransitionFallbackTimer = -1;
+    }
+    this.showSoftTransitionOverlay = false;
+    this.softTransitionOverlayOpacity = 0;
+    this.softTransitionOverlayTranslateX = 0;
+    this.softTransitionOverlayTranslateY = 0;
+    this.softTransitionOverlayPageId = '';
+    this.softTransitionOverlayInput = $r('app.media.ic_image');
+    this.softTransitionTargetTranslateX = 0;
+    this.softTransitionTargetTranslateY = 0;
+  }
+
+  private scheduleSoftTransitionOverlayOut(): void {
+    if (!this.showSoftTransitionOverlay) {
+      this.isCommittingPageTurn = false;
+      return;
+    }
+    if (this.softTransitionOverlayOpacity < 0.99) {
+      return;
+    }
+    if (this.softTransitionStartTimer !== -1) {
+      return;
+    }
+    this.softTransitionStartTimer = setTimeout(() => {
+      this.softTransitionStartTimer = -1;
+      this.animateSoftTransitionOverlayOut();
+    }, this.getSoftTransitionHoldDelay());
+  }
+
+  private animateSoftTransitionOverlayOut(): void {
+    if (this.softTransitionStartTimer !== -1) {
+      clearTimeout(this.softTransitionStartTimer);
+      this.softTransitionStartTimer = -1;
+    }
+    if (!this.showSoftTransitionOverlay) {
+      this.isCommittingPageTurn = false;
+      return;
+    }
+    if (this.softTransitionOverlayOpacity <= 0.01) {
+      return;
+    }
+    if (!this.uiContext) {
+      this.resetSoftTransitionOverlay();
+      this.isCommittingPageTurn = false;
+      return;
+    }
+    this.uiContext.animateTo({
+      duration: this.getSoftTransitionDuration(),
+      curve: curves.initCurve(Curve.FastOutSlowIn),
+      iterations: 1,
+      playMode: PlayMode.Normal,
+      onFinish: () => {
+        this.resetSoftTransitionOverlay();
+        this.isCommittingPageTurn = false;
+      }
+    }, () => {
+      this.softTransitionOverlayOpacity = 0.0;
+      this.softTransitionOverlayTranslateX = this.softTransitionTargetTranslateX;
+      this.softTransitionOverlayTranslateY = this.softTransitionTargetTranslateY;
+    });
+  }
+
   private getPrevOverlayOpacity(): number {
     const isTTB: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB;
     const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
     if (this.isCommittingPageTurn) {
+      if (this.isSoftNonePageTurn()) {
+        return 0.0;
+      }
       if (isTTB) {
         return this.pageTurnDirection === 'down' ? 1.0 : 0.0;
       }
@@ -5764,6 +6018,9 @@ export struct MangaViewer {
     const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
     if (this.isCommittingPageTurn) {
+      if (this.isSoftNonePageTurn()) {
+        return 0.0;
+      }
       if (isTTB) {
         return this.pageTurnDirection === 'up' ? 1.0 : 0.0;
       }
@@ -6525,20 +6782,17 @@ export struct MangaViewer {
     // 【架构核心】获取显示输入
     // 网络图片：必须有PixelMap才返回，否则返回占位图
     // 本地图片：可以直接使用路径
+    const previousImageInput = this.singlePageImageInput;
     const newImageInput = this.getDisplayImageInput(page);
     
     // 【架构修复】检查PixelMap状态变化
     const hasPm = this.pagePixelMaps.has(page.id);
     const isNetwork = page.sourceType === ImageSourceType.NETWORK;
-    
-    // 判断是否是从占位图切换到PixelMap（关键修复）
-    // 简化判断：如果之前没有PixelMap，现在有了，就需要强制刷新
-    const hadPixelMapBefore = this.pagePixelMaps.has(page.id);
-    const nowHasPixelMap = hasPm && isNetwork;
+    const inputChanged = previousImageInput !== newImageInput;
     
     // 如果从无PixelMap切换到有PixelMap，必须强制递增renderEpoch
     // 否则Image组件的key不变，不会重新渲染，导致黑屏
-    if (!pageChanged && nowHasPixelMap) {
+    if (!pageChanged && isNetwork && hasPm && inputChanged) {
       // 当前页面没变，但PixelMap加载完成，强制刷新
       this.renderEpoch = this.renderEpoch + 1;
       logger.info(TAG, `[架构] PixelMap加载完成，强制递增renderEpoch: ${this.renderEpoch}`);
@@ -6810,7 +7064,8 @@ export struct MangaViewer {
           chapterId: this.chapter.id,
           pageIndex: page.index,
           priority: page.priority || 1,
-          contentType: this.contentType
+          contentType: this.contentType,
+          partitionKey: this.networkHeaders?.cachePartition
         } as LoadOptions;
         const cookieStr: string = (this.networkHeaders && this.networkHeaders.cookie) ? String(this.networkHeaders.cookie) : '';
         const refererStr: string = (this.networkHeaders && this.networkHeaders.referer) ? String(this.networkHeaders.referer) : '';
@@ -6892,7 +7147,8 @@ export struct MangaViewer {
         mangaId: this.mangaId,
         chapterId: this.chapter.id,
         pageIndex: page.index,
-        contentType: this.contentType  // [修复] 传递内容类型
+        contentType: this.contentType,  // [修复] 传递内容类型
+        partitionKey: this.networkHeaders?.cachePartition
       } as LoadOptions;
       const pm: image.PixelMap | null = await cacheManager.loadImage(page.imageUrl, opts);
       if (pm) {
@@ -7123,6 +7379,9 @@ export struct MangaViewer {
       this.updateDoublePageDisplay();
     } else {
       this.updateSinglePageDisplay();
+      if (this.shouldUseSoftNoneCrossfade() && this.showSoftTransitionOverlay && pageIdx === this.viewCurrentPageIndex) {
+        this.scheduleSoftTransitionOverlayOut();
+      }
     }
   }
   
@@ -8383,7 +8642,8 @@ export struct MangaViewer {
       chapterId: chapterIdForCache,
       pageIndex: chapterPageIndex >= 0 ? chapterPageIndex : undefined,
       priority: page.priority || 1,
-      contentType: this.contentType
+      contentType: this.contentType,
+      partitionKey: this.networkHeaders?.cachePartition
     } as LoadOptions;
 
     // [性能修复] 本地图片在条漫模式下不应通过此路径加载
@@ -10518,9 +10778,7 @@ export struct MangaViewer {
         this.buildWebtoonQuickNavigation()
       }
     }
-    .key(this.isWebtoonMode()
-      ? `webtoon_${this.readingSettings && this.readingSettings.readingMode !== undefined ? String(this.readingSettings.readingMode) : 'default'}`
-      : `${this.readingSettings && this.readingSettings.readingMode !== undefined ? String(this.readingSettings.readingMode) : 'default'}_${this.viewCurrentPageIndex}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}`)
+    .key(this.getViewerContainerKey())
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Black)

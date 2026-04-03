@@ -81,6 +81,7 @@ interface Size2D {
  */
 export interface MangaDetailPageParams {
   sourceId?: number;  // 新增：图源ID
+  sourcePkg?: string;
   mangaId: string;
   chapterId?: string;
   fromPage?: string;
@@ -88,6 +89,7 @@ export interface MangaDetailPageParams {
   cachedTitle?: string;      // 新增：已缓存的漫画标题（从列表页面传递）
   cachedCover?: string;      // 新增：已缓存的封面URL（从列表页面传递）
 }
+
 
 /**
  * 导航路径参数接口
@@ -284,6 +286,10 @@ struct MangaDetailPage {
   @State private sourceName: string = '';
   @State private accessDenied: boolean = false;
   @State private coverHttpHeaders: Record<string, string> = {}; // 封面图片加载的HTTP headers
+  private sourcePkg: string = '';
+  private photos18CoverPartition: string = 'photos18_detail_cover';
+
+
 
   // 漫画数据
   @State currentManga: Manga | null = null;
@@ -1331,9 +1337,13 @@ struct MangaDetailPage {
     // 检测图源类型
     if (this.pageParams.sourceId) {
       this.sourceId = this.pageParams.sourceId;
+      if (this.pageParams.sourcePkg) {
+        this.sourcePkg = this.pageParams.sourcePkg;
+      }
       this.useWebView = await this.webViewManager.isWebViewSource(this.sourceId);
       logger.info(TAG, `图源ID: ${this.sourceId}, 是否WebView源: ${this.useWebView}`);
     }
+
 
     // 设置超时机制
     this.loadTimeoutTimerId = setTimeout((): void => {
@@ -1679,9 +1689,13 @@ struct MangaDetailPage {
           const s: ESObject = sources[i] as ESObject;
           if (Number(s.id) === this.sourceId) {
             this.sourceName = String(s.name);
+            if (s.pkg) {
+              this.sourcePkg = String(s.pkg);
+            }
             logger.info(TAG, `图源名称: ${this.sourceName}`);
             
             // 提取网络headers用于封面加载
+
             try {
               const configJson = s.configJson as string;
               if (configJson) {
@@ -1694,12 +1708,26 @@ struct MangaDetailPage {
                   if (headers.Referer) {
                     newHeaders['Referer'] = String(headers.Referer);
                   }
+                  if (headers.Origin) {
+                    newHeaders['Origin'] = String(headers.Origin);
+                  }
                   // 提取其他可能的headers
                   if (headers['Accept-Language']) {
                     newHeaders['Accept-Language'] = String(headers['Accept-Language']);
                   }
+
                   if (Object.keys(newHeaders).length > 0) {
                     this.coverHttpHeaders = newHeaders;
+                    if (newHeaders['Referer'] && newHeaders['Referer'].length > 0) {
+                      let hash = 0;
+                      const referer = newHeaders['Referer'];
+                      for (let i = 0; i < referer.length; i++) {
+                        const char = referer.charCodeAt(i);
+                        hash = ((hash << 5) - hash) + char;
+                        hash = hash & hash;
+                      }
+                      this.photos18CoverPartition = `photos18_detail_${Math.abs(hash).toString(36)}`;
+                    }
                     logger.info(TAG, `封面HTTP headers已设置: ${JSON.stringify(newHeaders)}`);
                   }
                 }
@@ -3406,6 +3434,35 @@ struct MangaDetailPage {
    * 使用OnlineImageLoader加载封面图片（支持自定义headers）
    * 用于加载需要Referer等headers的网络封面图片
    */
+  private isPhotos18Source(): boolean {
+    if (this.sourcePkg === 'com.manxia.extension.all.photos18') {
+      return true;
+    }
+    if (this.sourceName && this.sourceName.toLowerCase().includes('photos18')) {
+      return true;
+    }
+    return false;
+  }
+
+  private getPhotos18SiteOrigin(): string {
+    return 'https://www.photos18.com';
+  }
+
+  private buildPhotos18CoverHeaders(_coverUrl: string): OnlineRequestHeaders {
+    const siteOrigin = this.getPhotos18SiteOrigin();
+    const fallbackReferer = this.coverHttpHeaders['Referer'] || siteOrigin;
+    const headers: OnlineRequestHeaders = {
+      referer: fallbackReferer,
+      origin: siteOrigin,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
+      acceptLanguage: this.coverHttpHeaders['Accept-Language'] || 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      cachePartition: this.photos18CoverPartition
+    };
+    return headers;
+  }
+
+
   private async loadCoverWithHeaders(coverUrl: string): Promise<void> {
     if (!coverUrl || coverUrl.trim() === '') {
       logger.warn(TAG, '封面URL为空，跳过加载');
@@ -3416,17 +3473,30 @@ struct MangaDetailPage {
       logger.info(TAG, `使用OnlineImageLoader加载封面: ${coverUrl}`);
       
       // 构建请求headers - 从coverHttpHeaders获取或使用默认值
-      const headers: OnlineRequestHeaders = {
+      let headers: OnlineRequestHeaders = {
         referer: this.coverHttpHeaders['Referer'] || coverUrl.split('/').slice(0, 3).join('/') + '/',
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       };
+      if (this.coverHttpHeaders['Accept-Language']) {
+        headers.acceptLanguage = this.coverHttpHeaders['Accept-Language'];
+      }
+      if (this.isPhotos18Source()) {
+        headers = this.buildPhotos18CoverHeaders(coverUrl);
+      }
       
       // 使用OnlineImageLoader加载
       const loader = OnlineImageLoader.getInstance();
+      if (this.isPhotos18Source() && this.sourceId > 0) {
+        loader.clearCookieCache(this.sourceId);
+      }
       const pixelMap: image.PixelMap | null = await loader.load(coverUrl, { 
         headers,
-        priority: 10  // 高优先级
+        sourceId: this.sourceId > 0 ? this.sourceId : undefined,
+        priority: 10,  // 高优先级
+        partitionKey: this.isPhotos18Source() ? this.photos18CoverPartition : undefined
       });
+
+
       
       if (pixelMap) {
         this.coverPixelMap = pixelMap;
@@ -3564,8 +3634,11 @@ struct MangaDetailPage {
     if (this.pageParams?.sourceId) {
       readerParams.manga = this.currentManga;
       readerParams.sourceId = this.pageParams.sourceId;
+      readerParams.sourcePkg = this.sourcePkg || this.pageParams.sourcePkg;
       readerParams.mangaId = this.pageParams.mangaId; // 传递外部ID用于API请求
+
       let sn1: string = '';
+
       const dm = DataManager.getInstance();
       const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', 'WebView Source', ''];
       
@@ -3903,7 +3976,9 @@ struct MangaDetailPage {
       logger.debug(TAG, `📚 传递manga对象: chapters数量=${this.currentManga?.chapters?.length || 0}`);
       readerParams.manga = this.currentManga;
       readerParams.sourceId = this.pageParams.sourceId;
+      readerParams.sourcePkg = this.sourcePkg || this.pageParams.sourcePkg;
       let sn2: string = '';
+
       const dm = DataManager.getInstance();
       const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', 'WebView Source', ''];
       

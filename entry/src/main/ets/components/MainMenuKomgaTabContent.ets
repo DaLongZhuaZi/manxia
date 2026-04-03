@@ -33,6 +33,7 @@ const TAG = 'MainMenuKomgaTabContent';
 interface KomgaDetailParams {
   itemId: string;
   contentType: KomgaContentType;
+  instanceId: string;
   title: string;
 }
 
@@ -112,8 +113,13 @@ export struct MainMenuKomgaTabContent {
     return context;
   }
 
+  private buildFilterSummary(filters: KomgaBrowseFilters): string {
+    return `libraries=${filters.selectedLibraryIds.length}, collection=${filters.collectionId || '-'}, readStatus=${filters.readStatusMode}, genres=${filters.selectedGenres.length}, tags=${filters.selectedTags.length}, publishers=${filters.selectedPublishers.length}, authorRole=${filters.selectedAuthorRole || '-'}, authorName=${filters.selectedAuthorName || '-'}, sort=${filters.sortKey}`;
+  }
+
   private async prepare(): Promise<void> {
     try {
+      logger.info(TAG, `准备 Komga 主标签: initialized=${this.initialized}, cachedItems=${this.items.length}, refreshSignal=${this.refreshSignal}`);
       await this.cacheManager.initialize();
       if (!this.initialized) {
         await this.loadPreferences();
@@ -123,6 +129,7 @@ export struct MainMenuKomgaTabContent {
         return;
       }
       if (this.items.length > 0) {
+        logger.debug(TAG, `Komga 主标签准备阶段触发封面缓存检查: itemCount=${this.items.length}`);
         void this.cacheCovers();
       }
       if (!this.executor.isConfigured() || this.currentInstanceId.length <= 0) {
@@ -141,6 +148,7 @@ export struct MainMenuKomgaTabContent {
     this.instances = this.executor.getInstances();
     const currentInstance = this.executor.getCurrentInstance();
     this.currentInstanceId = currentInstance?.id || (this.instances.length > 0 ? this.instances[0].id : '');
+    logger.info(TAG, `初始化 Komga 主标签: configured=${this.executor.isConfigured()}, instances=${this.instances.length}, currentInstance=${this.currentInstanceId || '-'}`);
 
     if (!this.executor.isConfigured()) {
       this.items = [];
@@ -158,6 +166,7 @@ export struct MainMenuKomgaTabContent {
 
   private async refreshContent(): Promise<void> {
     try {
+      logger.info(TAG, `刷新 Komga 主标签: currentInstance=${this.currentInstanceId || '-'}, itemCount=${this.items.length}`);
       await this.executor.initialize(true);
       this.instances = this.executor.getInstances();
       const currentInstance = this.executor.getCurrentInstance();
@@ -197,6 +206,7 @@ export struct MainMenuKomgaTabContent {
       this.filters = filtersText.length > 0
         ? normalizeKomgaBrowseFilters(JSON.parse(filtersText) as ESObject)
         : createDefaultKomgaBrowseFilters();
+      logger.info(TAG, `已读取 Komga 主标签偏好: browseMode=${this.browseMode}, contentType=${this.contentType}, feedType=${this.feedType}, displayMode=${this.displayMode}, queryLength=${this.searchQuery.length}, filters=${this.buildFilterSummary(this.filters)}`);
     } catch (error) {
       logger.warn(TAG, `读取 Komga 主标签偏好失败: ${String(error)}`);
       this.filters = createDefaultKomgaBrowseFilters();
@@ -214,6 +224,7 @@ export struct MainMenuKomgaTabContent {
       store.putSync('showFilters', this.showFilters);
       store.putSync('filters', JSON.stringify(this.filters));
       await store.flush();
+      logger.debug(TAG, `已保存 Komga 主标签偏好: browseMode=${this.browseMode}, contentType=${this.contentType}, feedType=${this.feedType}, displayMode=${this.displayMode}`);
     } catch (error) {
       logger.warn(TAG, `保存 Komga 主标签偏好失败: ${String(error)}`);
     }
@@ -268,8 +279,10 @@ export struct MainMenuKomgaTabContent {
   private async loadFilterOptions(forceRefresh: boolean): Promise<void> {
     try {
       this.filterOptions = await this.executor.getFilterOptions(forceRefresh);
+      logger.info(TAG, `Komga 主标签筛选项已更新: forceRefresh=${forceRefresh}, libraries=${this.filterOptions.libraries.length}, collections=${this.filterOptions.collections.length}, genres=${this.filterOptions.genres.length}, tags=${this.filterOptions.tags.length}, publishers=${this.filterOptions.publishers.length}`);
     } catch (_error) {
       this.filterOptions = createEmptyKomgaFilterOptions();
+      logger.warn(TAG, `Komga 主标签筛选项加载失败，已回退为空集合: forceRefresh=${forceRefresh}`);
     }
   }
 
@@ -318,8 +331,10 @@ export struct MainMenuKomgaTabContent {
         query: query,
         filters: this.buildEffectiveFilters()
       };
+      logger.info(TAG, `加载 Komga 内容: reset=${reset}, preserveExisting=${preserveExisting}, page=${nextPage}, instance=${browseRequest.instanceId || '-'}, mode=${browseRequest.browseMode}, type=${browseRequest.contentType}, feed=${browseRequest.feedType}, query="${query}", filters=${this.buildFilterSummary(browseRequest.filters)}`);
       const result = await this.executor.browse(browseRequest);
       this.items = reset ? result.items : this.items.concat(result.items);
+      logger.info(TAG, `Komga 内容加载完成: page=${nextPage}, received=${result.items.length}, totalItems=${this.items.length}, hasMore=${result.hasMore}`);
       if (reset && preserveExisting && result.items.length > 0) {
         this.showRefreshHint();
       }
@@ -347,6 +362,7 @@ export struct MainMenuKomgaTabContent {
     if (instanceId === this.currentInstanceId) {
       return;
     }
+    logger.info(TAG, `切换 Komga 实例: from=${this.currentInstanceId || '-'} -> to=${instanceId}`);
     if (!await this.executor.setCurrentInstance(instanceId)) {
       this.toast('切换实例失败');
       return;
@@ -394,6 +410,7 @@ export struct MainMenuKomgaTabContent {
 
   private updateFilters(nextFilters: KomgaBrowseFilters): void {
     this.filters = nextFilters;
+    logger.info(TAG, `Komga 主标签筛选已更新: ${this.buildFilterSummary(nextFilters)}`);
     void this.loadItems(true, false);
   }
 
@@ -463,6 +480,7 @@ export struct MainMenuKomgaTabContent {
     if (this.browseMode === mode) {
       return;
     }
+    logger.info(TAG, `Komga 主标签浏览模式切换: ${this.browseMode} -> ${mode}`);
     animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.browseMode = mode;
     });
@@ -473,6 +491,7 @@ export struct MainMenuKomgaTabContent {
     if (this.contentType === contentType) {
       return;
     }
+    logger.info(TAG, `Komga 主标签内容类型切换: ${this.contentType} -> ${contentType}`);
     this.contentType = contentType;
     if (contentType !== 'SERIES' && this.filters.collectionId.length > 0) {
       const nextFilters = this.copyFilters(this.filters);
@@ -486,6 +505,7 @@ export struct MainMenuKomgaTabContent {
     if (this.feedType === feedType) {
       return;
     }
+    logger.info(TAG, `Komga 主标签信息流切换: ${this.feedType} -> ${feedType}`);
     this.feedType = feedType;
     void this.loadItems(true, false);
   }
@@ -494,6 +514,7 @@ export struct MainMenuKomgaTabContent {
     if (this.displayMode === displayMode) {
       return;
     }
+    logger.info(TAG, `Komga 主标签显示模式切换: ${this.displayMode} -> ${displayMode}`);
     animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.displayMode = displayMode;
     });
@@ -554,7 +575,8 @@ export struct MainMenuKomgaTabContent {
   }
 
   private getItemCacheKey(item: ComicInfo): string {
-    return `${this.currentInstanceId}_${this.getItemContentType(item)}_${item.id}`;
+    const instanceId = item.instanceId !== undefined && item.instanceId.length > 0 ? item.instanceId : this.currentInstanceId;
+    return `${instanceId}_${this.getItemContentType(item)}_${item.id}`;
   }
 
   private getItemTypeLabel(item: ComicInfo): string {
@@ -628,32 +650,42 @@ export struct MainMenuKomgaTabContent {
   }
 
   private async cacheCovers(): Promise<void> {
-    const headers = this.executor.getImageHeaders();
+    let cacheHitCount: number = 0;
+    let scheduledCount: number = 0;
+    let skippedCount: number = 0;
     for (const item of this.items) {
       if (!item.coverUrl) {
+        skippedCount++;
         continue;
       }
       const cacheKey = this.getItemCacheKey(item);
       if (this.coverCachePaths.has(cacheKey)) {
+        skippedCount++;
         continue;
       }
       const cachedPath = KomgaCacheManager.getCachedCoverPath(cacheKey, item.coverUrl);
       if (cachedPath) {
         this.setCoverCachePath(cacheKey, cachedPath);
+        cacheHitCount++;
         continue;
       }
+      const headers = this.executor.getImageHeaders(item.instanceId);
+      scheduledCount++;
+      logger.debug(TAG, `Komga 封面缓存未命中，开始预缓存: cacheKey=${cacheKey}, title=${item.title}`);
       KomgaCacheManager.cacheCover(cacheKey, item.coverUrl, headers).then((path: string | null) => {
         if (path) {
           this.setCoverCachePath(cacheKey, path);
+          logger.debug(TAG, `Komga 封面预缓存完成: cacheKey=${cacheKey}, title=${item.title}`);
         }
       }).catch((_error: Object | string | number | boolean) => {
+        logger.warn(TAG, `Komga 封面预缓存失败: cacheKey=${cacheKey}, title=${item.title}`);
       });
     }
+    logger.info(TAG, `Komga 封面缓存检查完成: items=${this.items.length}, cacheHit=${cacheHitCount}, scheduled=${scheduledCount}, skipped=${skippedCount}`);
   }
 
   private getCoverUrl(item: ComicInfo): string {
-    const cachedPath = this.coverCachePaths.get(this.getItemCacheKey(item));
-    return cachedPath ? `file://${cachedPath}` : (item.coverUrl || '');
+    return item.coverUrl || '';
   }
 
   private openSettings(): void {
@@ -664,10 +696,13 @@ export struct MainMenuKomgaTabContent {
     const params: KomgaDetailParams = {
       itemId: item.id,
       contentType: this.getItemContentType(item),
+      instanceId: item.instanceId !== undefined && item.instanceId.length > 0 ? item.instanceId : this.currentInstanceId,
       title: item.title
     };
+    logger.info(TAG, `打开 Komga 详情: itemId=${item.id}, title=${item.title}, contentType=${params.contentType}, instanceId=${params.instanceId}`);
     this.pathStack.pushPathByName('KomgaMangaDetailPage', params);
   }
+
 
   private getBrowseModeLabel(): string {
     return this.browseMode === 'library' ? '库模式' : '发现模式';
@@ -816,7 +851,15 @@ export struct MainMenuKomgaTabContent {
   private buildGridItem(item: ComicInfo) {
     Column({ space: 6 }) {
       Stack({ alignContent: Alignment.BottomStart }) {
-        KomgaImage({ src: this.getCoverUrl(item), imageWidth: '100%', imageHeight: 168, objectFit: ImageFit.Cover, imgBorderRadius: 10 })
+        KomgaImage({
+          src: this.getCoverUrl(item),
+          imageWidth: '100%',
+          imageHeight: 168,
+          objectFit: ImageFit.Cover,
+          imgBorderRadius: 10,
+          requestHeaders: this.executor.getImageHeaders(item.instanceId),
+          cacheKey: this.getItemCacheKey(item)
+        })
         Text(this.getItemTypeLabel(item))
           .fontSize(10)
           .fontFamily(this.appFontFamily)
@@ -850,7 +893,15 @@ export struct MainMenuKomgaTabContent {
   @Builder
   private buildListItem(item: ComicInfo) {
     Row({ space: 12 }) {
-      KomgaImage({ src: this.getCoverUrl(item), imageWidth: 60, imageHeight: 84, objectFit: ImageFit.Cover, imgBorderRadius: 8 })
+      KomgaImage({
+        src: this.getCoverUrl(item),
+        imageWidth: 60,
+        imageHeight: 84,
+        objectFit: ImageFit.Cover,
+        imgBorderRadius: 8,
+        requestHeaders: this.executor.getImageHeaders(item.instanceId),
+        cacheKey: this.getItemCacheKey(item)
+      })
       Column({ space: 4 }) {
         Text(item.title)
           .fontSize(15)

@@ -22,6 +22,7 @@ const TAG = 'ReaderKitViewerComponent';
 export interface ReaderKitViewerController {
   goToChapter: (chapterIndex: number, domPos?: string) => Promise<void>;
   applyReadingSettings: (settings: EBookReadingSettings, force?: boolean) => void;
+  flipPage: (forward: boolean) => boolean;
   isControllerReady: () => boolean;
 }
 
@@ -834,6 +835,20 @@ export struct ReaderKitViewerComponent {
     }
   }
 
+  private flipPage(forward: boolean): boolean {
+    if (!this.controllerReady) {
+      logger.warn(TAG, `Reader Kit 鎺у埗鍣ㄦ湭灏辩华锛屾棤娉曠炕椤? direction=${forward ? 'next' : 'prev'}`);
+      return false;
+    }
+    try {
+      this.readerController.flipPage(forward);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `Reader Kit 缈婚〉澶辫触: ${String(error)}`);
+      return false;
+    }
+  }
+
   /**
    * 尝试启动 Reader Kit 阅读器
    */
@@ -1021,6 +1036,7 @@ export struct ReaderKitViewerComponent {
         const controller: ReaderKitViewerController = {
           goToChapter: (chapterIndex: number, domPos?: string) => this.goToChapter(chapterIndex, domPos || ''),
           applyReadingSettings: (settings: EBookReadingSettings, force?: boolean) => this.applyReadingSettings(settings, force || false),
+          flipPage: (forward: boolean): boolean => this.flipPage(forward),
           isControllerReady: () => this.controllerReady
         };
         this.onControllerReady(controller);

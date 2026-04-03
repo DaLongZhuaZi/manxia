@@ -46,6 +46,8 @@ interface FieldSelectorParseResult {
 }
 
 const TAG = 'MangaSourceActionEngine';
+const ACTION_QUEUE_OWNER_KEY = '__actionQueueOwner';
+const SCRIPT_EXECUTION_TIMEOUT_MS = 8000;
 
 /**
  * 操作执行上下文
@@ -95,6 +97,9 @@ export class MangaSourceActionEngine {
   private selectorEngine: MangaSourceSelectorEngine;
   private antiCrawler: MangaSourceAntiCrawler;
   private apiEngine: MangaSourceAPIEngine;
+  private actionExecutionTail: Promise<void> = Promise.resolve();
+  private actionExecutionSequence: number = 0;
+  private activeActionOwnerToken: string = '';
 
   constructor(webviewController: webview.WebviewController, antiCrawlerConfig: AntiCrawlerConfig) {
     this.webviewController = webviewController;
@@ -122,6 +127,50 @@ export class MangaSourceActionEngine {
    * 执行单个操作
    */
   async executeAction(action: Action, context: ActionContext): Promise<ActionResult> {
+    const currentOwnerToken = context.variables[ACTION_QUEUE_OWNER_KEY] || '';
+    if (currentOwnerToken !== '' && currentOwnerToken === this.activeActionOwnerToken) {
+      return await this.executeActionInternal(action, context);
+    }
+
+    const previousTail = this.actionExecutionTail.catch((): void => {});
+    const releaseResolvers: Array<() => void> = [];
+    const gate = new Promise<void>((resolve: () => void) => {
+      releaseResolvers.push(resolve);
+    });
+    this.actionExecutionTail = previousTail.then((): Promise<void> => gate);
+
+    const sequence = this.actionExecutionSequence + 1;
+    this.actionExecutionSequence = sequence;
+    const queueWaitStart = Date.now();
+    await previousTail;
+    const queueWaitDuration = Date.now() - queueWaitStart;
+    if (queueWaitDuration > 5) {
+      logger.debug(TAG, `动作排队等待完成: #${sequence}, type=${action.type}, wait=${queueWaitDuration}ms`);
+    }
+
+    const ownerToken = `${sequence}_${Date.now()}`;
+    const previousOwnerToken = context.variables[ACTION_QUEUE_OWNER_KEY] || '';
+    context.variables[ACTION_QUEUE_OWNER_KEY] = ownerToken;
+    this.activeActionOwnerToken = ownerToken;
+
+    try {
+      return await this.executeActionInternal(action, context);
+    } finally {
+      this.activeActionOwnerToken = '';
+      if (previousOwnerToken !== '') {
+        context.variables[ACTION_QUEUE_OWNER_KEY] = previousOwnerToken;
+      } else {
+        context.variables[ACTION_QUEUE_OWNER_KEY] = '';
+      }
+
+      const release = releaseResolvers[0];
+      if (release) {
+        release();
+      }
+    }
+  }
+
+  private async executeActionInternal(action: Action, context: ActionContext): Promise<ActionResult> {
     const startTime = Date.now();
     
     try {
@@ -747,7 +796,7 @@ export class MangaSourceActionEngine {
     // 输出关键筛选变量
     logger.debug(TAG, `脚本变量: category=${context.variables['category']}, sort=${context.variables['sort']}, time=${context.variables['time']}, timeType=${context.variables['timeType']}, page=${context.variables['page']}`);
 
-    return await this.executeJavaScript<string>(code);
+    return await this.executeJavaScriptWithTimeout<string>(code, SCRIPT_EXECUTION_TIMEOUT_MS);
   }
 
   /**
@@ -930,6 +979,7 @@ export class MangaSourceActionEngine {
       const timerId: number = setTimeout(() => {
         if (!finished) {
           finished = true;
+          logger.warn(TAG, `JavaScript执行超时(${timeoutMs}ms)，可能是WebView未附加或页面上下文已切换: ${code.substring(0, 120)}`);
           reject(new MangaSourceError(
             MangaSourceErrorCode.TIMEOUT_ERROR,
             `JavaScript执行超时(${timeoutMs}ms)`
@@ -952,13 +1002,19 @@ export class MangaSourceActionEngine {
             return;
           }
           try {
-            if (result && (result.trim().startsWith('{') || result.trim().startsWith('['))) {
+            if (!result || result === 'undefined' || result === 'null') {
+              logger.debug(TAG, `JavaScript返回空值: ${result}`);
+              resolve('' as T);
+              return;
+            }
+            if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
               const parsed = JSON.parse(result) as T;
               resolve(parsed);
             } else {
               resolve(result as T);
             }
           } catch (parseError) {
+            logger.warn(TAG, `JSON解析失败，返回原始字符串: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
             resolve(result as T);
           }
         });

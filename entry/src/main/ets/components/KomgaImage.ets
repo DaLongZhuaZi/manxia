@@ -1,6 +1,8 @@
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
+import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
+import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
 import { getKomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 
 const TAG = 'KomgaImage';
@@ -13,6 +15,8 @@ export struct KomgaImage {
   @Prop objectFit: ImageFit = ImageFit.Cover;
   @Prop imgBorderRadius: Length = 0;
   @Prop placeholderColor: ResourceColor = '#2A2A2A';
+  @Prop requestHeaders: Record<string, string> = {};
+  @Prop cacheKey: string = '';
 
   @State private pixelMap: image.PixelMap | null = null;
   @State private isLoading: boolean = false;
@@ -44,7 +48,17 @@ export struct KomgaImage {
     }
   }
 
+  private previewUrl(url: string): string {
+    if (url.length <= 96) {
+      return url;
+    }
+    return `${url.substring(0, 96)}...`;
+  }
+
   private getHeaders(): Record<string, string> {
+    if (Object.keys(this.requestHeaders).length > 0) {
+      return this.requestHeaders;
+    }
     try {
       return getKomgaSourceExecutor().getImageHeaders();
     } catch (_error) {
@@ -104,6 +118,58 @@ export struct KomgaImage {
     return `${serverUrl}/${url}`;
   }
 
+  private isHttpImageUrl(url: string): boolean {
+    return url.startsWith('http://') || url.startsWith('https://');
+  }
+
+  private isLocalFileSource(url: string): boolean {
+    return url.startsWith('file://') || url.startsWith('/');
+  }
+
+  private normalizeLocalFilePath(url: string): string {
+    const trimmed = url.trim();
+    if (trimmed.startsWith('file://')) {
+      return trimmed.substring('file://'.length);
+    }
+    return trimmed;
+  }
+
+  private async decodeLocalFileToPixelMap(url: string): Promise<image.PixelMap | null> {
+    if (!this.isLocalFileSource(url)) {
+      return null;
+    }
+
+    const normalizedPath = this.normalizeLocalFilePath(url);
+    if (!normalizedPath.startsWith('/')) {
+      return null;
+    }
+
+    let file: fs.File | null = null;
+    let imageSource: image.ImageSource | null = null;
+    try {
+      fs.accessSync(normalizedPath);
+      file = fs.openSync(normalizedPath, fs.OpenMode.READ_ONLY);
+      imageSource = image.createImageSource(file.fd);
+      return await imageSource.createPixelMap({
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+      });
+    } catch (error) {
+      logger.warn(TAG, `KomgaImage local decode failed: path=${this.previewUrl(normalizedPath)}, error=${String(error)}`);
+      return null;
+    } finally {
+      try {
+        imageSource?.release();
+      } catch (_error) {
+      }
+      try {
+        if (file !== null) {
+          fs.closeSync(file);
+        }
+      } catch (_error) {
+      }
+    }
+  }
+
   private releasePixelMap(): void {
     if (!this.pixelMap) {
       return;
@@ -124,7 +190,8 @@ export struct KomgaImage {
     }
 
     this.currentSrc = this.src;
-    this.effectiveSrc = this.resolveImageUrl(this.src) || this.src;
+    const resolvedSrc = this.resolveImageUrl(this.src) || this.src;
+    this.effectiveSrc = resolvedSrc;
     this.isLoading = true;
     this.loadError = false;
     this.useDirectImage = false;
@@ -132,20 +199,52 @@ export struct KomgaImage {
     this.loadingAborted = false;
 
     try {
-      if (!this.effectiveSrc.startsWith('http://') && !this.effectiveSrc.startsWith('https://')) {
+      if (!this.isHttpImageUrl(resolvedSrc)) {
+        const localPixelMap = await this.decodeLocalFileToPixelMap(resolvedSrc);
+        if (this.loadingAborted) {
+          localPixelMap?.release();
+          return;
+        }
+        if (localPixelMap !== null) {
+          this.pixelMap = localPixelMap;
+          logger.debug(TAG, `KomgaImage local cover decoded: ${this.previewUrl(resolvedSrc)}`);
+          return;
+        }
+        logger.debug(TAG, `KomgaImage fallback to direct local source: ${this.previewUrl(resolvedSrc)}`);
         this.useDirectImage = true;
         return;
       }
 
       const headers = this.getHeaders();
+      const cachedFileUrl = await this.resolveCachedFileUrl(resolvedSrc, headers);
+      if (this.loadingAborted) {
+        return;
+      }
+      if (cachedFileUrl.length > 0) {
+        const cachedPixelMap = await this.decodeLocalFileToPixelMap(cachedFileUrl);
+        if (this.loadingAborted) {
+          cachedPixelMap?.release();
+          return;
+        }
+        if (cachedPixelMap !== null) {
+          this.pixelMap = cachedPixelMap;
+          logger.debug(TAG, `KomgaImage cached cover decoded: ${this.previewUrl(cachedFileUrl)}`);
+          return;
+        }
+        logger.warn(TAG, `KomgaImage cached file decode failed, retry remote source: ${this.previewUrl(cachedFileUrl)}`);
+      }
+
       if (Object.keys(headers).length <= 0) {
+        this.effectiveSrc = resolvedSrc;
+        logger.debug(TAG, `KomgaImage fallback to direct remote source: ${this.previewUrl(resolvedSrc)}`);
         this.useDirectImage = true;
         return;
       }
 
-      const buffer = await this.downloadImage(this.effectiveSrc, headers);
+      this.effectiveSrc = resolvedSrc;
+      const buffer = await this.downloadImage(resolvedSrc, headers);
       if (!buffer) {
-        throw new Error('下载图片失败');
+        throw new Error('Failed to download Komga image');
       }
       if (this.loadingAborted) {
         return;
@@ -160,12 +259,30 @@ export struct KomgaImage {
       }
       this.pixelMap = pixelMap;
     } catch (error) {
-      logger.error(TAG, `加载 Komga 图片失败: ${String(error)}`);
+      logger.error(TAG, `Failed to load Komga image: ${String(error)}`);
       this.loadError = true;
       this.useDirectImage = true;
     } finally {
       this.isLoading = false;
     }
+  }
+
+  private async resolveCachedFileUrl(url: string, headers: Record<string, string>): Promise<string> {
+    if (this.cacheKey.length <= 0) {
+      return '';
+    }
+    const cachedPath = KomgaCacheManager.getCachedCoverPath(this.cacheKey, url);
+    if (cachedPath !== null && cachedPath.length > 0) {
+      logger.debug(TAG, `KomgaImage cache hit: cacheKey=${this.cacheKey}`);
+      return `file://${cachedPath}`;
+    }
+    logger.debug(TAG, `KomgaImage cache miss, downloading cover: cacheKey=${this.cacheKey}`);
+    const downloadedPath = await KomgaCacheManager.cacheCover(this.cacheKey, url, headers);
+    if (downloadedPath !== null && downloadedPath.length > 0) {
+      logger.debug(TAG, `KomgaImage cache write complete: cacheKey=${this.cacheKey}`);
+      return `file://${downloadedPath}`;
+    }
+    return '';
   }
 
   private async downloadImage(url: string, headers: Record<string, string>): Promise<ArrayBuffer | null> {
@@ -203,6 +320,11 @@ export struct KomgaImage {
           .height(this.imageHeight)
           .objectFit(this.objectFit)
           .borderRadius(this.imgBorderRadius)
+          .onError(() => {
+            logger.warn(TAG, `KomgaImage direct render failed: ${this.previewUrl(this.effectiveSrc)}`);
+            this.useDirectImage = false;
+            this.loadError = true;
+          })
       } else {
         Column({ space: 8 }) {
           if (this.isLoading) {

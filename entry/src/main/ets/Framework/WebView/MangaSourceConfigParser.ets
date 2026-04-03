@@ -253,8 +253,20 @@ export class MangaSourceConfigParser {
     switch (workflowName) {
       case 'search':
         return this.getWorkflowByType(workflow, WorkflowType.SEARCH);
+      case 'searchById':
+        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_ID);
+      case 'searchByAuthor':
+        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_AUTHOR);
+      case 'searchBySeries':
+        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_SERIES);
+      case 'searchByTag':
+        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_TAG);
+      case 'resolveUrl':
+        return this.getWorkflowByType(workflow, WorkflowType.RESOLVE_URL);
       case 'getMangaDetail':
         return this.getWorkflowByType(workflow, WorkflowType.GET_MANGA_DETAIL);
+      case 'getMangaDetailWithChapters':
+        return this.getWorkflowByType(workflow, WorkflowType.GET_MANGA_DETAIL_WITH_CHAPTERS);
       case 'getChapterList':
         return this.getWorkflowByType(workflow, WorkflowType.GET_CHAPTER_LIST);
       case 'getPageList':
@@ -277,6 +289,8 @@ export class MangaSourceConfigParser {
         return this.getWorkflowByType(workflow, WorkflowType.INITIALIZE);
       case 'login':
         return this.getWorkflowByType(workflow, WorkflowType.LOGIN);
+      case 'getUserAvatar':
+        return this.getWorkflowByType(workflow, WorkflowType.GET_USER_AVATAR);
       case 'getLeaderboard':
         return this.getWorkflowByType(workflow, WorkflowType.GET_LEADERBOARD);
       case 'getCategory':
@@ -285,15 +299,14 @@ export class MangaSourceConfigParser {
         return this.getWorkflowByType(workflow, WorkflowType.GET_BOOK_DETAIL);
       case 'getDownloadUrl':
         return this.getWorkflowByType(workflow, WorkflowType.GET_DOWNLOAD_URL);
-      // ========== 搜索增强工作流 ==========
-      case 'searchById':
-        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_ID);
-      case 'searchByAuthor':
-        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_AUTHOR);
-      case 'searchBySeries':
-        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_SERIES);
-      case 'resolveUrl':
-        return this.getWorkflowByType(workflow, WorkflowType.RESOLVE_URL);
+      case 'clickSearchButton':
+        return this.getWorkflowByType(workflow, WorkflowType.CLICK_SEARCH_BUTTON);
+      case 'waitForDownloadSources':
+        return this.getWorkflowByType(workflow, WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES);
+      case 'selectDownloadSource':
+        return this.getWorkflowByType(workflow, WorkflowType.SELECT_DOWNLOAD_SOURCE);
+      case 'extractFileList':
+        return this.getWorkflowByType(workflow, WorkflowType.EXTRACT_FILE_LIST);
       case 'directSearch':
         return this.getWorkflowByType(workflow, WorkflowType.DIRECT_SEARCH);
       default:
@@ -308,8 +321,20 @@ export class MangaSourceConfigParser {
     switch (type) {
       case WorkflowType.SEARCH:
         return workflow.search;
+      case WorkflowType.SEARCH_BY_ID:
+        return workflow.searchById;
+      case WorkflowType.SEARCH_BY_AUTHOR:
+        return workflow.searchByAuthor;
+      case WorkflowType.SEARCH_BY_SERIES:
+        return workflow.searchBySeries;
+      case WorkflowType.SEARCH_BY_TAG:
+        return workflow.searchByTag;
+      case WorkflowType.RESOLVE_URL:
+        return workflow.resolveUrl;
       case WorkflowType.GET_MANGA_DETAIL:
         return workflow.getMangaDetail;
+      case WorkflowType.GET_MANGA_DETAIL_WITH_CHAPTERS:
+        return workflow.getMangaDetailWithChapters;
       case WorkflowType.GET_CHAPTER_LIST:
         return workflow.getChapterList;
       case WorkflowType.GET_PAGE_LIST:
@@ -334,6 +359,8 @@ export class MangaSourceConfigParser {
         return workflow.getMangaList;
       case WorkflowType.LOGIN:
         return workflow.login;
+      case WorkflowType.GET_USER_AVATAR:
+        return workflow.getUserAvatar;
       case WorkflowType.GET_LEADERBOARD:
         return workflow.getLeaderboard;
       case WorkflowType.GET_CATEGORY:
@@ -342,15 +369,14 @@ export class MangaSourceConfigParser {
         return workflow.getBookDetail;
       case WorkflowType.GET_DOWNLOAD_URL:
         return workflow.getDownloadUrl;
-      // ========== 搜索增强工作流 ==========
-      case WorkflowType.SEARCH_BY_ID:
-        return workflow.searchById;
-      case WorkflowType.SEARCH_BY_AUTHOR:
-        return workflow.searchByAuthor;
-      case WorkflowType.SEARCH_BY_SERIES:
-        return workflow.searchBySeries;
-      case WorkflowType.RESOLVE_URL:
-        return workflow.resolveUrl;
+      case WorkflowType.CLICK_SEARCH_BUTTON:
+        return workflow.clickSearchButton;
+      case WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES:
+        return workflow.waitForDownloadSources;
+      case WorkflowType.SELECT_DOWNLOAD_SOURCE:
+        return workflow.selectDownloadSource;
+      case WorkflowType.EXTRACT_FILE_LIST:
+        return workflow.extractFileList;
       case WorkflowType.DIRECT_SEARCH:
         return workflow.directSearch;
       default:
@@ -366,8 +392,26 @@ export class MangaSourceConfigParser {
       case WorkflowType.SEARCH:
         workflow.search = actions;
         break;
+      case WorkflowType.SEARCH_BY_ID:
+        workflow.searchById = actions;
+        break;
+      case WorkflowType.SEARCH_BY_AUTHOR:
+        workflow.searchByAuthor = actions;
+        break;
+      case WorkflowType.SEARCH_BY_SERIES:
+        workflow.searchBySeries = actions;
+        break;
+      case WorkflowType.SEARCH_BY_TAG:
+        workflow.searchByTag = actions;
+        break;
+      case WorkflowType.RESOLVE_URL:
+        workflow.resolveUrl = actions;
+        break;
       case WorkflowType.GET_MANGA_DETAIL:
         workflow.getMangaDetail = actions;
+        break;
+      case WorkflowType.GET_MANGA_DETAIL_WITH_CHAPTERS:
+        workflow.getMangaDetailWithChapters = actions;
         break;
       case WorkflowType.GET_CHAPTER_LIST:
         workflow.getChapterList = actions;
@@ -405,6 +449,9 @@ export class MangaSourceConfigParser {
       case WorkflowType.LOGIN:
         workflow.login = actions;
         break;
+      case WorkflowType.GET_USER_AVATAR:
+        workflow.getUserAvatar = actions;
+        break;
       case WorkflowType.GET_LEADERBOARD:
         workflow.getLeaderboard = actions;
         break;
@@ -416,6 +463,18 @@ export class MangaSourceConfigParser {
         break;
       case WorkflowType.GET_DOWNLOAD_URL:
         workflow.getDownloadUrl = actions;
+        break;
+      case WorkflowType.CLICK_SEARCH_BUTTON:
+        workflow.clickSearchButton = actions;
+        break;
+      case WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES:
+        workflow.waitForDownloadSources = actions;
+        break;
+      case WorkflowType.SELECT_DOWNLOAD_SOURCE:
+        workflow.selectDownloadSource = actions;
+        break;
+      case WorkflowType.EXTRACT_FILE_LIST:
+        workflow.extractFileList = actions;
         break;
       case WorkflowType.DIRECT_SEARCH:
         workflow.directSearch = actions;
@@ -1351,6 +1410,9 @@ export class MangaSourceConfigParser {
           case 'searchBySeries':
             this.setWorkflowByType(config.workflows, WorkflowType.SEARCH_BY_SERIES, actions);
             break;
+          case 'searchByTag':
+            this.setWorkflowByType(config.workflows, WorkflowType.SEARCH_BY_TAG, actions);
+            break;
           case 'resolveUrl':
             this.setWorkflowByType(config.workflows, WorkflowType.RESOLVE_URL, actions);
             break;
@@ -1359,6 +1421,9 @@ export class MangaSourceConfigParser {
             break;
           case 'getMangaDetail':
             this.setWorkflowByType(config.workflows, WorkflowType.GET_MANGA_DETAIL, actions);
+            break;
+          case 'getMangaDetailWithChapters':
+            this.setWorkflowByType(config.workflows, WorkflowType.GET_MANGA_DETAIL_WITH_CHAPTERS, actions);
             break;
           case 'getChapterList':
             this.setWorkflowByType(config.workflows, WorkflowType.GET_CHAPTER_LIST, actions);
@@ -1383,6 +1448,9 @@ export class MangaSourceConfigParser {
             break;
           case 'login':
             this.setWorkflowByType(config.workflows, WorkflowType.LOGIN, actions);
+            break;
+          case 'getUserAvatar':
+            this.setWorkflowByType(config.workflows, WorkflowType.GET_USER_AVATAR, actions);
             break;
           case 'getLeaderboard':
             this.setWorkflowByType(config.workflows, WorkflowType.GET_LEADERBOARD, actions);
@@ -1607,8 +1675,16 @@ export class MangaSourceConfigParser {
    */
   private getWorkflowCount(workflows: Workflow): number {
     let count = 0;
+    if (this.getWorkflowByType(workflows, WorkflowType.INITIALIZE)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.LOGIN)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.SEARCH)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.SEARCH_BY_ID)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.SEARCH_BY_AUTHOR)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.SEARCH_BY_SERIES)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.SEARCH_BY_TAG)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.RESOLVE_URL)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.GET_MANGA_DETAIL)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_MANGA_DETAIL_WITH_CHAPTERS)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.GET_CHAPTER_LIST)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.GET_PAGE_LIST)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.LOAD_MORE_PAGES)) count++;
@@ -1618,8 +1694,9 @@ export class MangaSourceConfigParser {
     if (this.getWorkflowByType(workflows, WorkflowType.FILTER)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.FAVORITES)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.HISTORY)) count++;
-    if (this.getWorkflowByType(workflows, WorkflowType.INITIALIZE)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.GET_MANGA_LIST)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_USER_AVATAR)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_LEADERBOARD)) count++;
     // 电子书相关工作流
     if (this.getWorkflowByType(workflows, WorkflowType.GET_CATEGORY)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.GET_BOOK_DETAIL)) count++;
@@ -1629,6 +1706,7 @@ export class MangaSourceConfigParser {
     if (this.getWorkflowByType(workflows, WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.SELECT_DOWNLOAD_SOURCE)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.EXTRACT_FILE_LIST)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.DIRECT_SEARCH)) count++;
     return count;
   }
 
@@ -1637,8 +1715,16 @@ export class MangaSourceConfigParser {
    */
   private getWorkflowNames(workflows: Workflow): string[] {
     const names: string[] = [];
+    if (this.getWorkflowByType(workflows, WorkflowType.INITIALIZE)) names.push('initialize');
+    if (this.getWorkflowByType(workflows, WorkflowType.LOGIN)) names.push('login');
     if (this.getWorkflowByType(workflows, WorkflowType.SEARCH)) names.push('search');
+    if (this.getWorkflowByType(workflows, WorkflowType.SEARCH_BY_ID)) names.push('searchById');
+    if (this.getWorkflowByType(workflows, WorkflowType.SEARCH_BY_AUTHOR)) names.push('searchByAuthor');
+    if (this.getWorkflowByType(workflows, WorkflowType.SEARCH_BY_SERIES)) names.push('searchBySeries');
+    if (this.getWorkflowByType(workflows, WorkflowType.SEARCH_BY_TAG)) names.push('searchByTag');
+    if (this.getWorkflowByType(workflows, WorkflowType.RESOLVE_URL)) names.push('resolveUrl');
     if (this.getWorkflowByType(workflows, WorkflowType.GET_MANGA_DETAIL)) names.push('getMangaDetail');
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_MANGA_DETAIL_WITH_CHAPTERS)) names.push('getMangaDetailWithChapters');
     if (this.getWorkflowByType(workflows, WorkflowType.GET_CHAPTER_LIST)) names.push('getChapterList');
     if (this.getWorkflowByType(workflows, WorkflowType.GET_PAGE_LIST)) names.push('getPageList');
     if (this.getWorkflowByType(workflows, WorkflowType.LOAD_MORE_PAGES)) names.push('loadMorePages');
@@ -1648,8 +1734,9 @@ export class MangaSourceConfigParser {
     if (this.getWorkflowByType(workflows, WorkflowType.FAVORITES)) names.push('favorites');
     if (this.getWorkflowByType(workflows, WorkflowType.HISTORY)) names.push('history');
     if (this.getWorkflowByType(workflows, WorkflowType.FILTER)) names.push('filter');
-    if (this.getWorkflowByType(workflows, WorkflowType.INITIALIZE)) names.push('initialize');
     if (this.getWorkflowByType(workflows, WorkflowType.GET_MANGA_LIST)) names.push('getMangaList');
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_USER_AVATAR)) names.push('getUserAvatar');
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_LEADERBOARD)) names.push('getLeaderboard');
     // 电子书相关工作流
     if (this.getWorkflowByType(workflows, WorkflowType.GET_CATEGORY)) names.push('getCategory');
     if (this.getWorkflowByType(workflows, WorkflowType.GET_BOOK_DETAIL)) names.push('getBookDetail');
@@ -1659,6 +1746,7 @@ export class MangaSourceConfigParser {
     if (this.getWorkflowByType(workflows, WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES)) names.push('waitForDownloadSources');
     if (this.getWorkflowByType(workflows, WorkflowType.SELECT_DOWNLOAD_SOURCE)) names.push('selectDownloadSource');
     if (this.getWorkflowByType(workflows, WorkflowType.EXTRACT_FILE_LIST)) names.push('extractFileList');
+    if (this.getWorkflowByType(workflows, WorkflowType.DIRECT_SEARCH)) names.push('directSearch');
     return names;
   }
 

@@ -218,6 +218,10 @@ export struct VisualEffectsSettingsSubPage {
     this.capabilityDetectError = state.capability.detectError;
   }
 
+  private syncStateFromManager(): void {
+    this.applyState(this.visualEffectsManager.getState());
+  }
+
   private getModeOptions(): Array<SelectOption> {
     return [
       { value: this.visualEffectsManager.getMaterialModeLabel(VisualEffectsMaterialMode.ADAPTIVE) },
@@ -326,6 +330,7 @@ export struct VisualEffectsSettingsSubPage {
     this.isSavingSettings = true;
     try {
       await this.visualEffectsManager.setMaterialMode(nextMode);
+      this.syncStateFromManager();
     } catch (error) {
       logger.error(TAG, 'Failed to update material mode', String(error));
       promptAction.showToast({
@@ -346,6 +351,7 @@ export struct VisualEffectsSettingsSubPage {
     this.isSavingSettings = true;
     try {
       await this.visualEffectsManager.setManualMaterialLevel(targetLevel);
+      this.syncStateFromManager();
     } catch (error) {
       logger.error(TAG, 'Failed to update manual material level', String(error));
       promptAction.showToast({
@@ -361,6 +367,7 @@ export struct VisualEffectsSettingsSubPage {
     this.isRefreshingCapability = true;
     try {
       await this.visualEffectsManager.refreshCapability();
+      this.syncStateFromManager();
       promptAction.showToast({
         message: this.capabilityDetectError.length > 0 ? '已完成检测，当前使用保守配置' : '设备材质能力已更新',
         duration: 1800
@@ -380,6 +387,7 @@ export struct VisualEffectsSettingsSubPage {
     this.isSavingSettings = true;
     try {
       await this.visualEffectsManager.resetToRecommended();
+      this.syncStateFromManager();
       promptAction.showToast({
         message: '已恢复推荐设置',
         duration: 1600

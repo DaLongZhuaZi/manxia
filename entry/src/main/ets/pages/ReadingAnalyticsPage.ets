@@ -32,6 +32,7 @@ import { UnifiedAnnotationRecord, UnifiedAnnotationType } from '../Models/Annota
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
 
 const TAG = 'ReadingAnalyticsPage';
 const USER_MANUAL_TITLE = '漫匣使用手册'; // 需要过滤掉的使用手册标题
@@ -2208,10 +2209,13 @@ struct ReadingAnalyticsPage {
     .width('100%')
     .padding(16)
     .backgroundColor(this.getBlurPanelBackground())
-    .borderRadius(12)
-    .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-    .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-    .border({ width: 1, color: this.getBlurPanelBorder() })
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(this.getBlurPanelRadius())
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     .margin({ left: 16, right: 16 })
   }
 
@@ -2473,10 +2477,13 @@ struct ReadingAnalyticsPage {
       .width('100%')
       .padding(16)
       .backgroundColor(this.getBlurPanelBackground())
-      .borderRadius(12)
-      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-      .border({ width: 1, color: this.getBlurPanelBorder() })
+      .linearGradient(this.getBlurPanelSurfaceGradient())
+      .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+      .backgroundEffect(this.getBlurPanelBackgroundEffect())
+      .borderRadius(this.getBlurPanelRadius())
+      .clip(true)
+      .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
       .margin({ left: 16, right: 16 })
 
       this.buildDailyInspirationSection()
@@ -2498,10 +2505,13 @@ struct ReadingAnalyticsPage {
         .width('100%')
         .padding(16)
         .backgroundColor(this.getBlurPanelBackground())
-        .borderRadius(12)
-        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .linearGradient(this.getBlurPanelSurfaceGradient())
+        .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+        .backgroundEffect(this.getBlurPanelBackgroundEffect())
+        .borderRadius(this.getBlurPanelRadius())
+        .clip(true)
+        .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
         .margin({ left: 16, right: 16 })
       }
       
@@ -2522,10 +2532,13 @@ struct ReadingAnalyticsPage {
         .width('100%')
         .padding(16)
         .backgroundColor(this.getBlurPanelBackground())
-        .borderRadius(12)
-        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .linearGradient(this.getBlurPanelSurfaceGradient())
+        .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+        .backgroundEffect(this.getBlurPanelBackgroundEffect())
+        .borderRadius(this.getBlurPanelRadius())
+        .clip(true)
+        .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
         .margin({ left: 16, right: 16 })
       }
       
@@ -2546,10 +2559,13 @@ struct ReadingAnalyticsPage {
         .width('100%')
         .padding(16)
         .backgroundColor(this.getBlurPanelBackground())
-        .borderRadius(12)
-        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .linearGradient(this.getBlurPanelSurfaceGradient())
+        .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+        .backgroundEffect(this.getBlurPanelBackgroundEffect())
+        .borderRadius(this.getBlurPanelRadius())
+        .clip(true)
+        .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
         .margin({ left: 16, right: 16 })
       }
     }
@@ -2568,7 +2584,7 @@ struct ReadingAnalyticsPage {
         .height(80)
         .borderRadius(6)
         .objectFit(ImageFit.Cover)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .backgroundColor(this.getBlurPanelBackground())
       
       // 漫画信息
       Column({ space: 4 }) {
@@ -2601,8 +2617,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     .onClick(() => {
       // 点击跳转到漫画详情页（根据设置选择详情页类型）
       this.openMangaDetail(item.comicId, item.title, item.coverPath);
@@ -2621,7 +2643,7 @@ struct ReadingAnalyticsPage {
         .height(80)
         .borderRadius(6)
         .objectFit(ImageFit.Cover)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .backgroundColor(this.getBlurPanelBackground())
       
       // 电子书信息
       Column({ space: 4 }) {
@@ -2650,8 +2672,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     .onClick(() => {
       // 点击跳转到电子书详情页（根据设置选择详情页类型）
       this.openEBookDetail(item.ebookId, item.title, item.coverPath);
@@ -2745,10 +2773,13 @@ struct ReadingAnalyticsPage {
     .width('100%')
     .padding(16)
     .backgroundColor(this.getBlurPanelBackground())
-    .borderRadius(12)
-    .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-    .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-    .border({ width: 1, color: this.getBlurPanelBorder() })
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(this.getBlurPanelRadius())
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     .margin({ left: 16, right: 16 })
   }
   
@@ -2824,8 +2855,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
   }
   
   /**
@@ -2886,8 +2923,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
   }
   
   /**
@@ -2948,8 +2991,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
   }
   
   /**
@@ -2998,7 +3047,7 @@ struct ReadingAnalyticsPage {
           .height(80)
           .borderRadius(6)
           .objectFit(ImageFit.Cover)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .backgroundColor(this.getBlurPanelBackground())
       } else {
         // 无封面时显示默认图标
         Column() {
@@ -3009,7 +3058,7 @@ struct ReadingAnalyticsPage {
         .width(60)
         .height(80)
         .borderRadius(6)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .backgroundColor(this.getBlurPanelBackground())
         .justifyContent(FlexAlign.Center)
       }
       
@@ -3061,8 +3110,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     .onClick(() => {
       // 点击跳转到小说详情页（根据设置选择详情页类型）
       // 使用 bookUrl 作为 contentId，而不是 novelId
@@ -3160,26 +3215,21 @@ struct ReadingAnalyticsPage {
     .width('100%')
     .height(120)
     .padding(16)
-    .borderRadius(16)
-    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK 
-      ? 'rgba(30, 30, 35, 0.85)'   // 深色模式：深色半透明背景
-      : 'rgba(255, 255, 255, 0.85)') // 浅色模式：白色半透明背景
-    .backdropBlur(this.themeState.currentTheme === ThemeType.DARK 
-      ? BlurStyle.BACKGROUND_THICK   // 深色模式：厚模糊
-      : BlurStyle.BACKGROUND_THIN)   // 浅色模式：薄模糊
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(this.getBlurPanelRadius())
+    .clip(true)
     .shadow({
-      radius: 16,
-      color: this.themeState.currentTheme === ThemeType.DARK 
-        ? 'rgba(0, 0, 0, 0.4)'      // 深色模式：深色阴影
-        : 'rgba(0, 0, 0, 0.06)',    // 浅色模式：浅色阴影
+      radius: this.getBlurPanelRadius() + 2,
+      color: this.getBlurPanelShadowColor(),
       offsetX: 0,
       offsetY: 4
     })
     .border({
-      width: 1,
-      color: this.themeState.currentTheme === ThemeType.DARK 
-        ? 'rgba(255, 255, 255, 0.08)' // 深色模式：微弱白色边框
-        : 'rgba(0, 0, 0, 0.04)'       // 浅色模式：微弱黑色边框
+      width: this.getBlurPanelBorderWidth(),
+      color: this.getBlurPanelBorder()
     })
   }
 
@@ -3367,10 +3417,13 @@ struct ReadingAnalyticsPage {
       .width('100%')
       .padding(16)
       .backgroundColor(this.getBlurPanelBackground())
-      .borderRadius(12)
-      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-      .border({ width: 1, color: this.getBlurPanelBorder() })
+      .linearGradient(this.getBlurPanelSurfaceGradient())
+      .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+      .backgroundEffect(this.getBlurPanelBackgroundEffect())
+      .borderRadius(this.getBlurPanelRadius())
+      .clip(true)
+      .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     }
     .width('100%')
     .padding(16)
@@ -3429,10 +3482,13 @@ struct ReadingAnalyticsPage {
       .width('100%')
       .padding(16)
       .backgroundColor(this.getBlurPanelBackground())
-      .borderRadius(12)
-      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-      .border({ width: 1, color: this.getBlurPanelBorder() })
+      .linearGradient(this.getBlurPanelSurfaceGradient())
+      .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+      .backgroundEffect(this.getBlurPanelBackgroundEffect())
+      .borderRadius(this.getBlurPanelRadius())
+      .clip(true)
+      .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     }
     .width('100%')
     .padding(16)
@@ -3442,27 +3498,45 @@ struct ReadingAnalyticsPage {
    * 获取模糊面板背景色
    */
   private getBlurPanelBackground(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK 
-      ? 'rgba(30, 30, 35, 0.85)' 
-      : 'rgba(255, 255, 255, 0.85)';
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).backgroundColor;
+  }
+
+  private getBlurPanelBlurStyle(): BlurStyle | undefined {
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).blurStyle;
+  }
+
+  private getBlurPanelBlurOptions(): BackgroundBlurStyleOptions {
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).blurOptions;
+  }
+
+  private getBlurPanelBackgroundEffect(): BackgroundEffectOptions | undefined {
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).backgroundEffect;
+  }
+
+  private getBlurPanelRadius(): number {
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).radius;
+  }
+
+  private getBlurPanelBorderWidth(): number {
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).borderWidth;
+  }
+
+  private getBlurPanelSurfaceGradient(): LinearGradient {
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).surfaceGradient;
   }
 
   /**
    * 获取模糊面板边框色
    */
   private getBlurPanelBorder(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK 
-      ? 'rgba(255, 255, 255, 0.08)' 
-      : 'rgba(0, 0, 0, 0.04)';
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).borderColor;
   }
 
   /**
    * 获取模糊面板阴影色
    */
-  private getBlurPanelShadowColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK 
-      ? 'rgba(0, 0, 0, 0.4)' 
-      : 'rgba(0, 0, 0, 0.06)';
+  private getBlurPanelShadowColor(): string {
+    return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme).shadowColor;
   }
 
   /**
@@ -3508,10 +3582,13 @@ struct ReadingAnalyticsPage {
       .width('100%')
       .padding(16)
       .backgroundColor(this.getBlurPanelBackground())
-      .borderRadius(12)
-      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-      .border({ width: 1, color: this.getBlurPanelBorder() })
+      .linearGradient(this.getBlurPanelSurfaceGradient())
+      .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+      .backgroundEffect(this.getBlurPanelBackgroundEffect())
+      .borderRadius(this.getBlurPanelRadius())
+      .clip(true)
+      .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
 
       // 最后阅读时间
       if (this.statistics.lastReadTime > 0) {
@@ -3539,10 +3616,13 @@ struct ReadingAnalyticsPage {
         .width('100%')
         .padding(16)
         .backgroundColor(this.getBlurPanelBackground())
-        .borderRadius(12)
-        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .linearGradient(this.getBlurPanelSurfaceGradient())
+        .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+        .backgroundEffect(this.getBlurPanelBackgroundEffect())
+        .borderRadius(this.getBlurPanelRadius())
+        .clip(true)
+        .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
       }
 
       // 阅读最多的漫画
@@ -3573,10 +3653,13 @@ struct ReadingAnalyticsPage {
         .width('100%')
         .padding(16)
         .backgroundColor(this.getBlurPanelBackground())
-        .borderRadius(12)
-        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .linearGradient(this.getBlurPanelSurfaceGradient())
+        .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+        .backgroundEffect(this.getBlurPanelBackgroundEffect())
+        .borderRadius(this.getBlurPanelRadius())
+        .clip(true)
+        .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
         .alignItems(HorizontalAlign.Start)
       }
 
@@ -3608,10 +3691,13 @@ struct ReadingAnalyticsPage {
         .width('100%')
         .padding(16)
         .backgroundColor(this.getBlurPanelBackground())
-        .borderRadius(12)
-        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .linearGradient(this.getBlurPanelSurfaceGradient())
+        .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+        .backgroundEffect(this.getBlurPanelBackgroundEffect())
+        .borderRadius(this.getBlurPanelRadius())
+        .clip(true)
+        .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
         .alignItems(HorizontalAlign.Start)
       }
     }
@@ -3668,10 +3754,13 @@ struct ReadingAnalyticsPage {
             .width('100%')
             .padding(12)
             .backgroundColor(this.getBlurPanelBackground())
-            .borderRadius(8)
-            .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-            .shadow({ radius: 8, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 2 })
-            .border({ width: 1, color: this.getBlurPanelBorder() })
+            .linearGradient(this.getBlurPanelSurfaceGradient())
+            .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+            .backgroundEffect(this.getBlurPanelBackgroundEffect())
+            .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+            .clip(true)
+            .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 2 })
+            .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
           }, (data: DailyReadingData, index: number) => `${data.date}-${index}`)
         }
         .width('100%')
@@ -3726,10 +3815,13 @@ struct ReadingAnalyticsPage {
         .width('100%')
         .padding(16)
         .backgroundColor(this.getBlurPanelBackground())
-        .borderRadius(12)
-        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .linearGradient(this.getBlurPanelSurfaceGradient())
+        .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+        .backgroundEffect(this.getBlurPanelBackgroundEffect())
+        .borderRadius(this.getBlurPanelRadius())
+        .clip(true)
+        .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
       }
       .width('100%')
       .padding(16)
@@ -3778,13 +3870,13 @@ struct ReadingAnalyticsPage {
                       SymbolGlyph($r('sys.symbol.book'))
                         .fontSize(32)
                         .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
-                    }
-                    .width('100%')
-                    .aspectRatio(0.7)
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                    .borderRadius(8)
-                    .justifyContent(FlexAlign.Center)
                   }
+                  .width('100%')
+                  .aspectRatio(0.7)
+                  .backgroundColor(this.getBlurPanelBackground())
+                  .borderRadius(8)
+                  .justifyContent(FlexAlign.Center)
+                }
                   
                   // 排名标签
                   Text(`${index + 1}`)
@@ -3868,10 +3960,13 @@ struct ReadingAnalyticsPage {
       .width('100%')
       .padding(16)
       .backgroundColor(this.getBlurPanelBackground())
-      .borderRadius(12)
-      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-      .border({ width: 1, color: this.getBlurPanelBorder() })
+      .linearGradient(this.getBlurPanelSurfaceGradient())
+      .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+      .backgroundEffect(this.getBlurPanelBackgroundEffect())
+      .borderRadius(this.getBlurPanelRadius())
+      .clip(true)
+      .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
       .onClick(() => {
         this.showRetentionDaysPicker();
       })
@@ -3906,10 +4001,13 @@ struct ReadingAnalyticsPage {
       .width('100%')
       .padding(16)
       .backgroundColor(this.getBlurPanelBackground())
-      .borderRadius(12)
-      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
-      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
-      .border({ width: 1, color: this.getBlurPanelBorder() })
+      .linearGradient(this.getBlurPanelSurfaceGradient())
+      .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+      .backgroundEffect(this.getBlurPanelBackgroundEffect())
+      .borderRadius(this.getBlurPanelRadius())
+      .clip(true)
+      .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
 
       Text('关闭后将停止收集阅读数据，但不会删除已有数据')
         .fontSize(12)
@@ -4010,8 +4108,14 @@ struct ReadingAnalyticsPage {
         }
         .width('100%')
         .padding(16)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-        .borderRadius(12)
+        .backgroundColor(this.getBlurPanelBackground())
+        .linearGradient(this.getBlurPanelSurfaceGradient())
+        .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+        .backgroundEffect(this.getBlurPanelBackgroundEffect())
+        .borderRadius(this.getBlurPanelRadius())
+        .clip(true)
+        .shadow({ radius: this.getBlurPanelRadius() + 2, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
         
         Text('这些数据仅存储在本地，不会上传到任何服务器。您可以随时在设置中关闭此功能或清除数据。')
           .fontSize(12)
@@ -4208,8 +4312,14 @@ struct ReadingAnalyticsPage {
     .width('85%')
     .constraintSize({ maxWidth: 400 })
     .padding(24)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(16)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(this.getBlurPanelRadius())
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius() + 4, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 6 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     .position({ x: '50%', y: '50%' })
     .translate({ x: '-50%', y: '-50%' })
     .scale({ x: this.goalDialogVisible ? 1 : 0.9, y: this.goalDialogVisible ? 1 : 0.9 })
@@ -4280,8 +4390,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
   }
   
   /**
@@ -4347,8 +4463,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
   }
   
   /**
@@ -4414,8 +4536,14 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(Math.max(10, this.getBlurPanelRadius() - 4))
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius(), color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 3 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
   }
 
   /**
@@ -4542,8 +4670,14 @@ struct ReadingAnalyticsPage {
     .width('85%')
     .constraintSize({ maxWidth: 400 })
     .padding(24)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(16)
+    .backgroundColor(this.getBlurPanelBackground())
+    .linearGradient(this.getBlurPanelSurfaceGradient())
+    .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+    .backgroundEffect(this.getBlurPanelBackgroundEffect())
+    .borderRadius(this.getBlurPanelRadius())
+    .clip(true)
+    .shadow({ radius: this.getBlurPanelRadius() + 4, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 6 })
+    .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
     .position({ x: '50%', y: '50%' })
     .translate({ x: '-50%', y: '-50%' })
   }
@@ -4684,7 +4818,7 @@ struct ReadingAnalyticsPage {
         id: 'viewMode',
         label: this.isLongTermView ? '日视图' : '长期视图',
         symbol: this.isLongTermView ? $r('sys.symbol.calendar_01_a') : $r('sys.symbol.calendar_badge_clock'),
-        enabled: this.hasAskedPermission && !this.isLoading,
+        enabled: true,
         onClick: () => {
           this.toggleViewMode();
         }
@@ -4693,7 +4827,7 @@ struct ReadingAnalyticsPage {
         id: 'clearData',
         label: '清除数据',
         symbol: $r('sys.symbol.trash'),
-        enabled: this.hasAskedPermission && !this.isLoading,
+        enabled: true,
         onClick: () => {
           this.showClearDataConfirmDialog();
         }
@@ -4837,8 +4971,14 @@ struct ReadingAnalyticsPage {
           }
           .width('100%')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .borderRadius({ topLeft: 16, topRight: 16 })
+          .backgroundColor(this.getBlurPanelBackground())
+          .linearGradient(this.getBlurPanelSurfaceGradient())
+          .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())
+          .backgroundEffect(this.getBlurPanelBackgroundEffect())
+          .borderRadius({ topLeft: this.getBlurPanelRadius(), topRight: this.getBlurPanelRadius() })
+          .clip(true)
+          .shadow({ radius: this.getBlurPanelRadius() + 4, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: -2 })
+          .border({ width: this.getBlurPanelBorderWidth(), color: this.getBlurPanelBorder() })
           .position({ x: 0, y: '100%' })
           .translate({ y: -280 })
         }
