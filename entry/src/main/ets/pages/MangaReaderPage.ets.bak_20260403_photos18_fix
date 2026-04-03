@@ -1416,110 +1416,14 @@ export struct MangaReaderPage {
     return 'https://www.photos18.com';
   }
 
-  private isInvalidPhotos18RefererCandidate(value: string): boolean {
-    const trimmed = value.trim();
-    return trimmed.length === 0 || trimmed.startsWith('id_') || trimmed.startsWith('local_');
-  }
-
-  private buildPhotos18GalleryUrl(rawValue: string): string {
-    let candidate = rawValue.trim();
-    if (candidate.length === 0) {
-      return '';
-    }
-    const schemeIndex = candidate.indexOf('://');
-    if (schemeIndex >= 0) {
-      const pathIndex = candidate.indexOf('/', schemeIndex + 3);
-      candidate = pathIndex >= 0 ? candidate.substring(pathIndex) : '';
-    }
-    const queryIndex = candidate.indexOf('?');
-    if (queryIndex >= 0) {
-      candidate = candidate.substring(0, queryIndex);
-    }
-    const hashIndex = candidate.indexOf('#');
-    if (hashIndex >= 0) {
-      candidate = candidate.substring(0, hashIndex);
-    }
-    if (candidate.startsWith('/zh-hans/')) {
-      candidate = candidate.substring('/zh-hans/'.length);
-    } else if (candidate === '/zh-hans') {
-      candidate = '';
-    }
-    candidate = candidate.replace(/^\/+/, '').replace(/\/+$/, '');
-    if (candidate.startsWith('v/')) {
-      candidate = candidate.substring(2);
-    }
-    if (candidate.length === 0) {
-      return '';
-    }
-    return `${this.getPhotos18Origin()}/v/${candidate}`;
-  }
-
-  private buildPhotos18CachePartition(referer: string): string {
-    const normalizedReferer = referer.trim().length > 0 ? referer.trim() : this.getPhotos18Origin();
-    let hash = 0;
-    for (let i = 0; i < normalizedReferer.length; i++) {
-      const charCode = normalizedReferer.charCodeAt(i);
-      hash = ((hash << 5) - hash) + charCode;
-      hash = hash & hash;
-    }
-    return `photos18_reader_${Math.abs(hash).toString(36)}`;
-  }
-
-  private resolvePhotos18ReaderReferer(manga?: Manga | null, chapter?: MangaChapter | null): string {
-    let candidate = '';
-    if (chapter) {
-      const chapterWithExternalId = chapter as ChapterInfoToMangaChapterConverter;
-      if (chapterWithExternalId.externalId && !this.isInvalidPhotos18RefererCandidate(chapterWithExternalId.externalId)) {
-        candidate = chapterWithExternalId.externalId;
-      } else if (!this.isInvalidPhotos18RefererCandidate(chapter.id)) {
-        candidate = chapter.id;
-      }
-    }
-    if (candidate.length === 0 && manga && manga.sourceInfo && !this.isInvalidPhotos18RefererCandidate(manga.sourceInfo.sourceUrl)) {
-      candidate = manga.sourceInfo.sourceUrl;
-    }
-    const referer = this.buildPhotos18GalleryUrl(candidate);
-    return referer.length > 0 ? referer : this.getPhotos18Origin();
-  }
-
-  private resolvePhotos18ReaderRefererFromParams(
-    params: MangaReaderPageParams,
-    manga?: Manga | null,
-    chapter?: MangaChapter | null
-  ): string {
-    const resolvedFromState = this.resolvePhotos18ReaderReferer(manga, chapter);
-    if (resolvedFromState !== this.getPhotos18Origin()) {
-      return resolvedFromState;
-    }
-
-    let candidate = '';
-    if (params.chapterId && !this.isInvalidPhotos18RefererCandidate(params.chapterId)) {
-      candidate = params.chapterId;
-    }
-
-    if (candidate.length === 0 && params.manga && params.manga.sourceInfo &&
-      !this.isInvalidPhotos18RefererCandidate(params.manga.sourceInfo.sourceUrl)) {
-      candidate = params.manga.sourceInfo.sourceUrl;
-    }
-
-    if (candidate.length === 0 && params.mangaId && !this.isInvalidPhotos18RefererCandidate(params.mangaId)) {
-      candidate = params.mangaId;
-    }
-
-    const referer = this.buildPhotos18GalleryUrl(candidate);
-    return referer.length > 0 ? referer : this.getPhotos18Origin();
-  }
-
   private async preparePhotos18ImageSession(baseUrl: string): Promise<void> {
     if (!this.isPhotos18Source() || this.currentSourceId <= 0) {
       return;
     }
-    const contextUrl = baseUrl.trim().length > 0 ? baseUrl.trim() : this.getPhotos18Origin();
     try {
       await new Promise<void>((resolve) => setTimeout(resolve, 1200));
-      await this.ensureHiddenWebViewSourceContextReady(contextUrl);
       const cookieManager = CookieManager.getInstance();
-      const refreshed: boolean = await cookieManager.forceCaptureWebViewCookies(this.currentSourceId, this.webviewController, contextUrl);
+      const refreshed: boolean = await cookieManager.forceCaptureWebViewCookies(this.currentSourceId, this.webviewController, baseUrl);
       ImageCacheManager.getInstance().clearCookieCache(this.currentSourceId);
       OnlineImageLoader.getInstance().clearCookieCache(this.currentSourceId);
       logger.info(TAG, `Photos18阅读器图片会话预热完成: refreshed=${refreshed}`);
@@ -1528,7 +1432,8 @@ export struct MangaReaderPage {
     }
   }
 
-  private async updateNetworkHeadersForChapter(): Promise<void> {
+  private updateNetworkHeadersForChapter(): void {
+    const engine = this.mangaEngine;
     const manga = this.readerState.currentManga;
     const chapter = this.readerState.currentChapter;
 
@@ -1537,15 +1442,12 @@ export struct MangaReaderPage {
     }
 
     if (this.isPhotos18Source()) {
-      try {
-        const cm = CookieManager.getInstance();
-        const cookieStr = await cm.getCookieString(this.currentSourceId);
-        const referer = this.resolvePhotos18ReaderReferer(manga, chapter);
-        this.photos18PageCachePartition = this.buildPhotos18CachePartition(referer);
+      const cm = CookieManager.getInstance();
+      cm.getCookieString(this.currentSourceId).then((cookieStr: string) => {
         const photos18Headers: RequestHeaders = {
           userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
-          referer: referer,
+          referer: this.getPhotos18Origin(),
           origin: this.getPhotos18Origin(),
           acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
           cacheControl: 'no-cache',
@@ -1559,11 +1461,10 @@ export struct MangaReaderPage {
 
         this.networkHeaders = photos18Headers;
         this.networkHeadersTick = this.networkHeadersTick + 1;
-        logger.info(TAG, `Photos18章节图片请求头已刷新: referer=${referer}, cookieLen=${cookieStr.length}`);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.warn(TAG, `Photos18章节Cookie获取失败: ${errorMessage}`);
-      }
+        logger.info(TAG, `Photos18章节图片请求头已刷新, cookieLen=${cookieStr.length}`);
+      }).catch((error: Error) => {
+        logger.warn(TAG, `Photos18章节Cookie获取失败: ${error.message}`);
+      });
       return;
     }
 
@@ -2389,15 +2290,7 @@ export struct MangaReaderPage {
               if (cfg && cfg.metadata && cfg.metadata.baseUrl) {
                 baseUrl = String(cfg.metadata.baseUrl);
               }
-              const photos18Referer: string = this.isPhotos18Source()
-                ? this.resolvePhotos18ReaderRefererFromParams(params, manga, this.readerState.currentChapter)
-                : '';
-              if (this.isPhotos18Source()) {
-                this.photos18PageCachePartition = this.buildPhotos18CachePartition(photos18Referer);
-                await this.preparePhotos18ImageSession(photos18Referer);
-              } else {
-                await this.ensureHiddenWebViewSourceContextReady(baseUrl);
-              }
+              await this.ensureHiddenWebViewSourceContextReady(baseUrl);
               
               const ua: string = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
               logger.debug(TAG, `📋 步骤3: 使用快速默认UserAgent，长度=${ua.length}`);
@@ -2461,23 +2354,19 @@ export struct MangaReaderPage {
               logger.debug(TAG, '📋 步骤7: 构造请求头对象');
               }
               logger.debug(TAG, '📋 步骤7: 构造请求头对象');
-              const resolvedPhotos18Referer: string = this.isPhotos18Source()
-                ? this.resolvePhotos18ReaderRefererFromParams(params, manga, this.readerState.currentChapter)
-                : '';
               const headers: RequestHeaders = {
                 userAgent: this.isPhotos18Source()
                   ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                   : ua,
                 accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
-                referer: this.isPhotos18Source() ? resolvedPhotos18Referer : dynamicReferer,
+                referer: this.isPhotos18Source() ? this.getPhotos18Origin() : dynamicReferer,
                 origin: this.isPhotos18Source() ? this.getPhotos18Origin() : dynamicReferer,
                 acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
                 cacheControl: 'no-cache',
                 pragma: 'no-cache',
                 secFetchDest: 'image',
                 secFetchMode: 'no-cors',
-                secFetchSite: 'same-origin',
-                cachePartition: this.isPhotos18Source() ? this.photos18PageCachePartition : undefined
+                secFetchSite: 'same-origin'
               } as RequestHeaders;
               
               logger.debug(TAG, '📋 步骤9: CookieManager实例已获取，准备读取Cookie');
@@ -2500,11 +2389,24 @@ export struct MangaReaderPage {
               this.networkHeaders = headers;
               this.networkHeadersTick++;
               logger.debug(TAG, '📋 步骤14: isNetworkConfigReady已设置为true');
+              if (this.isPhotos18Source()) {
+                void this.preparePhotos18ImageSession(baseUrl).then(() => {
+                  let hash = 0;
+                  for (let i = 0; i < baseUrl.length; i++) {
+                    const char = baseUrl.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash;
+                  }
+                  this.photos18PageCachePartition = `photos18_reader_${Math.abs(hash).toString(36)}`;
+                  this.updateNetworkHeadersForChapter();
+                });
+
+              }
               this.refreshNetworkUserAgentAsync(engine, params);
               
               // [修复] 网络配置准备完成，允许Viewer渲染
               this.isNetworkConfigReady = true;
-              logger.debug(TAG, `🌐 网络请求头已准备: UA=${ua.substring(0, Math.min(64, ua.length))}, Referer=${this.isPhotos18Source() ? resolvedPhotos18Referer : dynamicReferer}`);
+              logger.debug(TAG, `🌐 网络请求头已准备: UA=${ua.substring(0, Math.min(64, ua.length))}, Referer=${dynamicReferer}`);
               
               logger.debug(TAG, '📋 步骤15: 网络请求头配置完成，准备退出if块');
               logger.info(TAG, `✅ 网络配置就绪，允许Viewer渲染`);
@@ -3183,7 +3085,7 @@ export struct MangaReaderPage {
       this.reportTransitionLoadingProgress(0.84, 'reading_settings_ready');
 
       // [新增] 此时章节已确定，强制刷新一次 Headers 以确保 Referer 正确
-      await this.updateNetworkHeadersForChapter(); 
+      this.updateNetworkHeadersForChapter(); 
 
       logger.debug(TAG, '🖼️ 开始预加载图片');
       setTimeout(() => {

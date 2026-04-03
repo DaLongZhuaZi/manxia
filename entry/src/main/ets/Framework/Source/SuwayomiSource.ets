@@ -633,7 +633,8 @@ export class SuwayomiSource {
       case 'UNREAD_COUNT':
         return sortDirection === 'ASC' ? 'UNREAD_COUNT_ASC' : 'UNREAD_COUNT_DESC';
       case 'LAST_READ_AT':
-        return sortDirection === 'ASC' ? 'LAST_READ_AT_ASC' : 'LAST_READ_AT_DESC';
+        logger.warn(TAG, 'Suwayomi current compatibility path falls back from LAST_READ_AT to IN_LIBRARY_AT.');
+        return sortDirection === 'ASC' ? 'IN_LIBRARY_AT_ASC' : 'IN_LIBRARY_AT_DESC';
       default:
         return sortDirection === 'ASC' ? 'ID_ASC' : 'ID_DESC';
     }
@@ -754,7 +755,6 @@ export class SuwayomiSource {
               description
               genre
               status
-              lastReadAt
               inLibraryAt
               unreadCount
               lastFetchedAt
@@ -786,7 +786,7 @@ export class SuwayomiSource {
           tags: manga.genre,
           url: `${serverUrl}/manga/${manga.id}`,
           // 排序字段
-          lastReadAt: manga.lastReadAt || 0,
+          lastReadAt: 0,
           inLibraryAt: manga.inLibraryAt || 0,
           unreadCount: manga.unreadCount || 0,
           lastFetchedAt: manga.lastFetchedAt || 0

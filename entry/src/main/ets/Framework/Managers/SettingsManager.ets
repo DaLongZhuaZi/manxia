@@ -172,6 +172,9 @@ export class SettingKeys {
   // 视觉效果与材质设置
   static readonly VISUAL_EFFECTS_MATERIAL_MODE = 'visual_effects_material_mode'; // 材质等级策略: adaptive | manual
   static readonly VISUAL_EFFECTS_MANUAL_MATERIAL_LEVEL = 'visual_effects_manual_material_level'; // 手动材质等级（MaterialLevel枚举值）
+  static readonly VISUAL_EFFECTS_SUPPORTED_MATERIAL_TYPES = 'visual_effects_supported_material_types'; // 最近一次检测到的材质类型列表（CSV）
+  static readonly VISUAL_EFFECTS_CAPABILITY_LAST_CHECKED_AT = 'visual_effects_capability_last_checked_at'; // 最近一次检测时间戳
+  static readonly VISUAL_EFFECTS_CAPABILITY_DETECT_ERROR = 'visual_effects_capability_detect_error'; // 最近一次检测错误信息
   
   // 日志设置
   static readonly LOG_OUTPUT_LEVEL = 'log_output_level'; // hilog日志输出等级: 0=关闭, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL

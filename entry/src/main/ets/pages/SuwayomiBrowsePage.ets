@@ -389,10 +389,6 @@ export struct SuwayomiBrowsePage {
    * 获取漫画封面显示路径（优先使用缓存）
    */
   private getMangaCoverUrl(manga: ComicInfo): string {
-    const cachedPath = this.coverCachePaths.get(manga.id);
-    if (cachedPath) {
-      return `file://${cachedPath}`;
-    }
     return manga.coverUrl || '';
   }
 

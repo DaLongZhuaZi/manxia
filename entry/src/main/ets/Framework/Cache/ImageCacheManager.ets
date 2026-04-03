@@ -13,6 +13,8 @@ import { CacheStats, MemoryCacheStats, DiskCacheStats } from '../Data/DataManage
 import CookieManager from '../Managers/CookieManager';
 import { PermanentImageCacheManager } from './PermanentImageCacheManager';
 import { OnlineImageLoader, OnlineLoadOptions, RequestHeaders as OnlineRequestHeaders } from './OnlineImageLoader';
+import { SuwayomiCacheManager } from '../Source/SuwayomiCacheManager';
+import { KomgaCacheManager } from '../Source/KomgaCacheManager';
 import fs from '@ohos.file.fs';
 
 const TAG = 'ImageCacheManager';
@@ -112,6 +114,7 @@ export interface RequestHeaders {
   secFetchDest?: string;
   secFetchMode?: string;
   secFetchSite?: string;
+  cachePartition?: string;
 }
 
 interface HttpHeadersObject {
@@ -128,6 +131,8 @@ interface HttpHeadersObject {
   'Sec-Fetch-Mode'?: string;
   'Sec-Fetch-Site'?: string;
 }
+
+type RemoteProviderCacheType = 'suwayomi' | 'komga' | '';
 
 
 export class ImageCacheManager {
@@ -249,6 +254,11 @@ export class ImageCacheManager {
         logger.debug(TAG, `直接从本地文件加载: ${url.substring(0, 80)}`);
         return await this.loadLocalFile(url, cacheKey, options);
       }
+
+      const remoteProviderResult = await this.loadFromRemoteProviderCache(url, cacheKey, options);
+      if (remoteProviderResult) {
+        return remoteProviderResult;
+      }
       
       // 判断是否为在线漫画
       const isOnlineManga = this.isOnlineManga(options);
@@ -273,17 +283,20 @@ export class ImageCacheManager {
             pragma: options.headers.pragma,
             secFetchDest: options.headers.secFetchDest,
             secFetchMode: options.headers.secFetchMode,
-            secFetchSite: options.headers.secFetchSite
+            secFetchSite: options.headers.secFetchSite,
+            cachePartition: options.headers.cachePartition
           };
         }
         
-        const onlineOptions: OnlineLoadOptions = {
-          width: options?.width,
-          height: options?.height,
-          headers: onlineHeaders,
-          sourceId: options?.sourceId,
-          priority: options?.priority || 1
-        };
+         const onlineOptions: OnlineLoadOptions = {
+           width: options?.width,
+           height: options?.height,
+           headers: onlineHeaders,
+           sourceId: options?.sourceId,
+           priority: options?.priority || 1,
+           partitionKey: options?.partitionKey
+         };
+
         return await onlineLoader.load(url, onlineOptions);
       }
       
@@ -373,6 +386,135 @@ export class ImageCacheManager {
       return false;
     }
     return false;
+  }
+
+  private resolveRemoteProviderCacheType(options?: LoadOptions): RemoteProviderCacheType {
+    if (!options?.contentType) {
+      return '';
+    }
+    if (options.contentType === 'Suwayomi') {
+      return 'suwayomi';
+    }
+    if (options.contentType === 'Komga') {
+      return 'komga';
+    }
+    return '';
+  }
+
+  private hasRemoteProviderCacheContext(options?: LoadOptions): boolean {
+    return this.resolveRemoteProviderCacheType(options) !== '' &&
+      !!options?.mangaId &&
+      !!options?.chapterId &&
+      options?.pageIndex !== undefined;
+  }
+
+  private buildRemoteProviderHeaders(headers?: RequestHeaders): Record<string, string> {
+    const result: Record<string, string> = {};
+    if (!headers) {
+      return result;
+    }
+
+    if (headers.userAgent) {
+      result['User-Agent'] = String(headers.userAgent);
+    }
+    if (headers.accept) {
+      result['Accept'] = String(headers.accept);
+    }
+    if (headers.referer) {
+      result['Referer'] = String(headers.referer);
+    }
+    if (headers.origin) {
+      result['Origin'] = String(headers.origin);
+    }
+    if (headers.cookie) {
+      result['Cookie'] = String(headers.cookie);
+    }
+    if (headers.authorization) {
+      result['Authorization'] = String(headers.authorization);
+    }
+    if (headers.acceptLanguage) {
+      result['Accept-Language'] = String(headers.acceptLanguage);
+    }
+    if (headers.cacheControl) {
+      result['Cache-Control'] = String(headers.cacheControl);
+    }
+    if (headers.pragma) {
+      result['Pragma'] = String(headers.pragma);
+    }
+    if (headers.secFetchDest) {
+      result['Sec-Fetch-Dest'] = String(headers.secFetchDest);
+    }
+    if (headers.secFetchMode) {
+      result['Sec-Fetch-Mode'] = String(headers.secFetchMode);
+    }
+    if (headers.secFetchSite) {
+      result['Sec-Fetch-Site'] = String(headers.secFetchSite);
+    }
+    return result;
+  }
+
+  private async loadFromRemoteProviderCache(
+    url: string,
+    cacheKey: string,
+    options?: LoadOptions
+  ): Promise<image.PixelMap | null> {
+    const cachedPath = await this.ensureRemoteProviderPageCached(url, options);
+    if (!cachedPath || cachedPath.length <= 0) {
+      return null;
+    }
+
+    logger.debug(TAG, `使用远程源章节缓存加载图片: ${cachedPath.substring(0, 120)}`);
+    return await this.loadLocalFile(cachedPath, cacheKey, options);
+  }
+
+  private async ensureRemoteProviderPageCached(url: string, options?: LoadOptions): Promise<string | null> {
+    if (!this.hasRemoteProviderCacheContext(options)) {
+      return null;
+    }
+
+    const mangaKey = String(options?.mangaId || '').trim();
+    const chapterKey = String(options?.chapterId || '').trim();
+    const pageIndex = options?.pageIndex;
+    if (mangaKey.length <= 0 || chapterKey.length <= 0 || pageIndex === undefined) {
+      return null;
+    }
+
+    const providerType = this.resolveRemoteProviderCacheType(options);
+    const headers = this.buildRemoteProviderHeaders(options?.headers);
+
+    try {
+      if (providerType === 'suwayomi') {
+        const cacheManager = SuwayomiCacheManager.getInstance();
+        if (!options?.forceRefresh) {
+          const cachedPath = cacheManager.getCachedPagePath(mangaKey, chapterKey, pageIndex);
+          if (cachedPath && cachedPath.length > 0) {
+            return cachedPath;
+          }
+        }
+
+        const cached = await cacheManager.cachePage(mangaKey, chapterKey, pageIndex, url, headers);
+        if (!cached) {
+          return null;
+        }
+        const cachedPath = cacheManager.getCachedPagePath(mangaKey, chapterKey, pageIndex);
+        return cachedPath && cachedPath.length > 0 ? cachedPath : null;
+      }
+
+      if (providerType === 'komga') {
+        const cacheManager = KomgaCacheManager.getInstance();
+        if (!options?.forceRefresh) {
+          const cachedPath = cacheManager.getCachedPagePath(mangaKey, chapterKey, pageIndex);
+          if (cachedPath && cachedPath.length > 0) {
+            return cachedPath;
+          }
+        }
+        return await cacheManager.cachePage(mangaKey, chapterKey, pageIndex, url, headers);
+      }
+    } catch (error) {
+      logger.warn(TAG, `访问远程源章节缓存失败: ${String(error)}`);
+    }
+
+    return null;
   }
 
   /**
@@ -1056,6 +1198,18 @@ export class ImageCacheManager {
     if (options && options.partitionKey && options.partitionKey.length > 0) {
       base = base + `_p${options.partitionKey}`;
     }
+    if (options && options.contentType) {
+      base = base + `_t${options.contentType}`;
+    }
+    if (options && options.mangaId) {
+      base = base + `_mg${this.simpleHash(String(options.mangaId))}`;
+    }
+    if (options && options.chapterId) {
+      base = base + `_ch${this.simpleHash(String(options.chapterId))}`;
+    }
+    if (options && options.pageIndex !== undefined) {
+      base = base + `_pg${String(options.pageIndex)}`;
+    }
     if (options && options.headers && options.headers.referer) {
       base = base + `_r${this.simpleHash(String(options.headers.referer))}`;
     }
@@ -1386,6 +1540,14 @@ export class ImageCacheManager {
         logger.debug(TAG, `跳过本地文件预加载: ${url.substring(0, 80)}`);
         return;
       }
+
+      if (this.hasRemoteProviderCacheContext(options)) {
+        const cachedPath = await this.ensureRemoteProviderPageCached(url, options);
+        if (cachedPath && cachedPath.length > 0) {
+          logger.debug(TAG, `远程源章节缓存预热完成: ${cachedPath.substring(0, 120)}`);
+        }
+        return;
+      }
       
       logger.debug(TAG, `开始预加载图片: ${url.substring(0, 80)}`);
       
@@ -1395,20 +1557,26 @@ export class ImageCacheManager {
       // 构建请求头
       let onlineHeaders: OnlineRequestHeaders | undefined = undefined;
       if (options?.headers) {
-        const headers: OnlineRequestHeaders = {
-          userAgent: options.headers.userAgent || '',
-          referer: options.headers.referer || '',
-          cookie: options.headers.cookie || '',
-          accept: options.headers.accept || 'image/webp,image/apng,image/*,*/*;q=0.8',
-          acceptLanguage: options.headers.acceptLanguage || 'zh-CN,zh;q=0.9,en;q=0.8'
-        };
+          const headers: OnlineRequestHeaders = {
+            userAgent: options.headers.userAgent || '',
+            referer: options.headers.referer || '',
+            origin: options.headers.origin || '',
+            cookie: options.headers.cookie || '',
+            accept: options.headers.accept || 'image/webp,image/apng,image/*,*/*;q=0.8',
+            acceptLanguage: options.headers.acceptLanguage || 'zh-CN,zh;q=0.9,en;q=0.8',
+            cachePartition: options.headers.cachePartition || ''
+          };
+
         onlineHeaders = headers;
       }
       
-      const loadOptions: OnlineLoadOptions = {
-        headers: onlineHeaders,
-        priority: 0  // 低优先级，不影响正常加载
-      };
+       const loadOptions: OnlineLoadOptions = {
+         headers: onlineHeaders,
+         sourceId: options?.sourceId,
+         priority: 0,  // 低优先级，不影响正常加载
+         partitionKey: options?.partitionKey
+       };
+
       
       // 下载图片（会自动缓存）
       await onlineLoader.load(url, loadOptions);

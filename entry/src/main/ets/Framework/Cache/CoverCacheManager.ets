@@ -21,15 +21,24 @@ export interface CoverStats {
   size: number;
 }
 
+interface CoverCacheRecord {
+  localPath?: string;
+  referer?: string;
+}
+
 export class CoverCacheManager {
   private static instance: CoverCacheManager;
   private dbManager: DatabaseManager;
+
   private coverBasePath: string = '';
   private downloadQueue: Map<string, Promise<string>> = new Map();
   private failedDownloads: Set<string> = new Set(); // 记录失败的下载，避免重复尝试
   private isPathInitialized: boolean = false;
   private initializationPromise: Promise<void> | null = null;
   private sourcePkgCache: Map<number, string> = new Map(); // sourceId -> pkg 缓存
+  private readonly photos18Pkg: string = 'com.manxia.extension.all.photos18';
+  private photos18CoverRecords: Map<string, CoverCacheRecord> = new Map();
+
 
   private constructor() {
     this.dbManager = DatabaseManager.getInstance();
@@ -301,11 +310,39 @@ export class CoverCacheManager {
    * 获取本地封面路径（如果存在）
    */
   async getLocalCoverPath(sourceId: number, externalId: string): Promise<string | null> {
+    return this.getLocalCoverPathWithReferer(sourceId, externalId, '');
+  }
+
+  async getLocalCoverPathWithReferer(sourceId: number, externalId: string, referer: string): Promise<string | null> {
     try {
+      const isPhotos18 = await this.isPhotos18Source(sourceId);
+      const normalizedReferer = referer && referer.length > 0 ? referer : '';
+      const recordKey = this.getCoverRecordKey(sourceId, externalId);
+      if (isPhotos18) {
+        const cachedRecord = this.photos18CoverRecords.get(recordKey);
+        if (cachedRecord && cachedRecord.localPath && fs.accessSync(cachedRecord.localPath)) {
+          if (!cachedRecord.referer || cachedRecord.referer === normalizedReferer || normalizedReferer.length === 0) {
+            return cachedRecord.localPath;
+          }
+        }
+      }
       const tempManga = await this.getTempManga(sourceId, externalId);
       if (tempManga && tempManga.localCoverPath) {
         // 检查文件是否存在
         if (fs.accessSync(tempManga.localCoverPath)) {
+          if (isPhotos18) {
+            const cacheRecord: CoverCacheRecord = {
+              localPath: tempManga.localCoverPath,
+              referer: normalizedReferer
+            };
+            this.photos18CoverRecords.set(recordKey, cacheRecord);
+            if (normalizedReferer.length > 0) {
+              const expectedPartition = this.buildPhotos18CoverPartition(externalId, normalizedReferer);
+              if (tempManga.localCoverPath.indexOf(expectedPartition) < 0) {
+                return null;
+              }
+            }
+          }
           return tempManga.localCoverPath;
         } else {
           // 文件不存在，清除数据库记录
@@ -318,6 +355,7 @@ export class CoverCacheManager {
       return null;
     }
   }
+
 
   /**
    * 清除本地封面路径记录
@@ -332,6 +370,50 @@ export class CoverCacheManager {
     }
   }
 
+  private async isPhotos18Source(sourceId: number): Promise<boolean> {
+    const pkg: string | null = await this.ensureSourcePkg(sourceId);
+    if (!pkg) {
+      return false;
+    }
+    return pkg === this.photos18Pkg;
+  }
+
+  private getCoverRecordKey(sourceId: number, externalId: string): string {
+    return `${sourceId}_${externalId}`;
+  }
+
+  private sanitizePartition(value: string): string {
+    return value.replace(/[^a-zA-Z0-9_-]/g, '_');
+  }
+
+  private buildPhotos18CoverPartition(externalId: string, referer: string): string {
+    const safeExternalId = this.sanitizePartition(externalId);
+    if (!referer || referer.length === 0) {
+      return `photos18_cover_${safeExternalId}`;
+    }
+    let hash = 0;
+    for (let i = 0; i < referer.length; i++) {
+      const char = referer.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return `photos18_cover_${safeExternalId}_${Math.abs(hash).toString(36)}`;
+  }
+
+  private resolvePhotos18Referer(headers?: Record<string, string>): string {
+    if (!headers) {
+      return '';
+    }
+    if (headers['X-Cache-Referer'] && headers['X-Cache-Referer'].length > 0) {
+      return headers['X-Cache-Referer'];
+    }
+    if (headers['Referer'] && headers['Referer'].length > 0) {
+      return headers['Referer'];
+    }
+    return '';
+  }
+
+
   /**
    * 下载并缓存封面
    */
@@ -341,13 +423,16 @@ export class CoverCacheManager {
     coverUrl: string,
     headers?: Record<string, string>
   ): Promise<string | null> {
-    const cacheKey = `${sourceId}_${externalId}`;
+    const isPhotos18 = await this.isPhotos18Source(sourceId);
+    const referer = this.resolvePhotos18Referer(headers);
+    const cacheKey = isPhotos18 ? `${sourceId}_${externalId}_${referer}` : `${sourceId}_${externalId}`;
     
     // 如果之前下载失败过，不再重试
     if (this.failedDownloads.has(cacheKey)) {
       logger.debug(TAG, `跳过已失败的封面: ${externalId}`);
       return null;
     }
+
     
     // 如果正在下载，返回现有的Promise
     const existingPromise = this.downloadQueue.get(cacheKey);
@@ -366,10 +451,21 @@ export class CoverCacheManager {
     try {
       const result = await downloadPromise;
       if (!result) {
-        // 下载失败，记录到失败集合
-        this.failedDownloads.add(cacheKey);
+        if (!isPhotos18) {
+          // 下载失败，记录到失败集合
+          this.failedDownloads.add(cacheKey);
+        } else {
+          logger.warn(TAG, `Photos18封面下载失败，不写入失败黑名单: ${externalId}`);
+        }
+      } else if (isPhotos18) {
+        const recordKey = this.getCoverRecordKey(sourceId, externalId);
+        this.photos18CoverRecords.set(recordKey, {
+          localPath: result,
+          referer: referer
+        });
       }
       return result;
+
     } finally {
       this.downloadQueue.delete(cacheKey);
     }
@@ -393,8 +489,15 @@ export class CoverCacheManager {
       }
       
       // 生成本地文件路径
-      const fileName = this.generateCoverFileName(externalId, coverUrl);
+      const isPhotos18 = await this.isPhotos18Source(sourceId);
+      const referer = this.resolvePhotos18Referer(headers);
+      let fileName = this.generateCoverFileName(externalId, coverUrl);
+      if (isPhotos18) {
+        const partition = this.buildPhotos18CoverPartition(externalId, referer);
+        fileName = `${partition}${fileName.substring(fileName.lastIndexOf('.'))}`;
+      }
       const localPath = `${this.getSourceCoverDir(sourceId)}/${fileName}`;
+
       
       // 如果文件已存在，直接返回
       if (fs.accessSync(localPath)) {
@@ -405,6 +508,7 @@ export class CoverCacheManager {
       
       // 下载封面（支持SSL错误时自动降级为HTTP）
       logger.info(TAG, `开始下载封面: ${coverUrl}`);
+
       
       // 构建请求头，添加Referer和User-Agent以解决防盗链和SSL问题
       const finalHeaders: Record<string, string> = {};
@@ -417,9 +521,13 @@ export class CoverCacheManager {
         const headerKeys = Object.keys(headers);
         for (let i = 0; i < headerKeys.length; i++) {
           const key = headerKeys[i];
+          if (key === 'X-Cache-Referer' || key === 'X-Cache-Partition') {
+            continue;
+          }
           finalHeaders[key] = headers[key];
         }
       }
+
       
       // 根据图片URL自动添加Referer（解决防盗链问题）
       if (coverUrl.includes('amh1234.wszwhg.net') || coverUrl.includes('gmh1234.wszwhg.net')) {
@@ -431,6 +539,9 @@ export class CoverCacheManager {
       // result: [success, sslError]
       let downloadUrl = coverUrl;
       let result = await this.tryDownloadCover(downloadUrl, finalHeaders, localPath);
+      if (!result[0] && isPhotos18) {
+        logger.warn(TAG, `Photos18封面下载失败，允许后续重新尝试: ${coverUrl}`);
+      }
       
       // 如果SSL错误且是HTTPS，尝试HTTP降级
       if (result[1] && downloadUrl.startsWith('https://')) {

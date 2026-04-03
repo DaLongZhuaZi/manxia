@@ -27,7 +27,7 @@ import {
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
-import { PdfKitViewerComponent, PdfViewerCallbacks } from '../Framework/Components/PdfKitViewerComponent';
+import { PdfKitViewerComponent, PdfViewerCallbacks, PdfViewerController } from '../Framework/Components/PdfKitViewerComponent';
 import { ReaderKitViewerComponent, ReaderKitViewerController } from '../Framework/Components/ReaderKitViewerComponent';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
@@ -255,6 +255,7 @@ struct EBookReaderPage {
   
   // 阅读时间记录相关
   private readerKitController: ReaderKitViewerController | null = null;
+  private pdfViewerController: PdfViewerController | null = null;
   private readerKitStartupGuardActive: boolean = false;
   private readerKitStartupGuardStartTime: number = 0;
   private readerKitStartupExpectedChapterIndex: number = -1;
@@ -328,7 +329,79 @@ struct EBookReaderPage {
     this.registerVolumeKeyListener();
     void this.refreshPageGuide('aboutToAppear');
   }
-  
+
+  private areReaderMenusVisible(): boolean {
+    return this.showTopToolbar || this.showBottomToolbar || this.hasReaderOverlayVisible();
+  }
+
+  private turnEBookPageByVolume(forward: boolean): boolean {
+    if (!this.ebook) {
+      return false;
+    }
+
+    if (this.isUsingImagePageReader()) {
+      if (forward) {
+        this.nextChapter();
+      } else {
+        this.previousChapter();
+      }
+      return true;
+    }
+
+    if (this.ebook.format === EBookFormat.PDF) {
+      if (!this.pdfViewerController || !this.pdfViewerController.isControllerReady()) {
+        logger.warn(TAG, 'PDF viewer controller not ready for volume page turn');
+        return false;
+      }
+      return forward ? this.pdfViewerController.goToNextPage() : this.pdfViewerController.goToPreviousPage();
+    }
+
+    if (!this.isUsingTextReader()) {
+      if (!this.readerKitController || !this.readerKitController.isControllerReady()) {
+        logger.warn(TAG, 'ReaderKit controller not ready for volume page turn');
+        return false;
+      }
+      return this.readerKitController.flipPage(forward);
+    }
+
+    if (forward) {
+      this.textCurrentPageIndex++;
+      return true;
+    }
+
+    if (this.textCurrentPageIndex <= 0) {
+      return false;
+    }
+    this.textCurrentPageIndex--;
+    return true;
+  }
+
+  private handleVolumeKeyPageTurn(keyCode: number): boolean {
+    const volumeKeyEnabled = this.textReaderSettings.volumeKeyNavigation ?? true;
+    logger.debug(TAG, `Volume key event: keyCode=${keyCode}, volumeKeyNavigation=${volumeKeyEnabled}`);
+
+    if (!volumeKeyEnabled || this.isLoading || this.errorMessage.length > 0) {
+      return false;
+    }
+
+    if (this.areReaderMenusVisible()) {
+      logger.debug(TAG, 'Reader overlays visible, skip volume page turn');
+      return false;
+    }
+
+    if (keyCode === KeyCode.KEYCODE_VOLUME_UP || keyCode === 16) {
+      logger.info(TAG, 'Volume key page turn: previous');
+      return this.turnEBookPageByVolume(false);
+    }
+
+    if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN || keyCode === 17) {
+      logger.info(TAG, 'Volume key page turn: next');
+      return this.turnEBookPageByVolume(true);
+    }
+
+    return false;
+  }
+
   /**
   * 更新屏幕方向状态
   */
@@ -713,22 +786,20 @@ struct EBookReaderPage {
       };
 
         // 只在 TXT 格式时处理
-      this.volumeUpCallback = (event: InputKeyEvent) => {
+      this.volumeUpCallback = (_event: InputKeyEvent) => {
         logger.info(TAG, '音量键翻页: 上一页 (inputConsumer)');
         // 只在 TXT 格式时处理
-        if (this.ebook?.format === EBookFormat.TXT) {
-          if (this.textCurrentPageIndex > 0) {
-            this.textCurrentPageIndex--;
-          }
+        if (!this.isUsingTextReader()) {
+          this.handleVolumeKeyPageTurn(KeyCode.KEYCODE_VOLUME_UP);
         }
       };
 
         // 只在 TXT 格式时处理
-      this.volumeDownCallback = (event: InputKeyEvent) => {
+      this.volumeDownCallback = (_event: InputKeyEvent) => {
         logger.info(TAG, '音量键翻页: 下一页 (inputConsumer)');
       // 注册监听
-        if (this.ebook?.format === EBookFormat.TXT) {
-          this.textCurrentPageIndex++;
+        if (!this.isUsingTextReader()) {
+          this.handleVolumeKeyPageTurn(KeyCode.KEYCODE_VOLUME_DOWN);
         }
       };
 
@@ -2851,6 +2922,8 @@ struct EBookReaderPage {
       .width('100%')
       .height('100%')
       .id('ebook_reader_root')
+      .focusable(true)
+      .defaultFocus(true)
       .onAreaChange((oldValue: Area, newValue: Area) => {
         // 检测屏幕方向变化
         const newWidth = Number(newValue.width);
@@ -2871,6 +2944,14 @@ struct EBookReaderPage {
           this.scheduleFullscreenRestore('area_change', 120);
           if (this.isUsingTextReader()) {
             this.tryShowQueuedInteractionHint('area_change', 180);
+          }
+        }
+      })
+      .onKeyEvent((event: KeyEvent) => {
+        if (event.type === KeyType.Up) {
+          const consumed = this.handleVolumeKeyPageTurn(event.keyCode);
+          if (consumed) {
+            event.stopPropagation();
           }
         }
       })
@@ -3249,6 +3330,10 @@ struct EBookReaderPage {
         ebook: this.ebook,
         readingSettings: this.ebook.readingSettings,
         themeBgColor: this.bgColor,// 传递背景色，响应主题
+        onControllerReady: (controller: PdfViewerController): void => {
+          this.pdfViewerController = controller;
+          logger.info(TAG, 'PDF viewer controller is ready');
+        },
         callbacks: {
           onPageChange: (currentPage: number, totalPages: number) => {
             logger.info(TAG, `PDF 页面变化: ${currentPage}/${totalPages}`);

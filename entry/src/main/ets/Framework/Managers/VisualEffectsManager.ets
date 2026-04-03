@@ -77,9 +77,20 @@ export class VisualEffectsManager {
       return;
     }
 
-    await this.refreshCapabilityInternal();
+    const hasPersistedCapability = this.loadCapabilityFromStorage();
+    let capabilityPersistNeeded = false;
+
+    if (!hasPersistedCapability) {
+      await this.refreshCapabilityInternal();
+      capabilityPersistNeeded = true;
+    }
+
     const normalized = this.loadSettingsFromStorage();
     this.recalculateEffectiveMaterialLevel();
+
+    if (capabilityPersistNeeded) {
+      await this.persistCapability();
+    }
 
     if (normalized) {
       await this.persistSettings();
@@ -89,7 +100,7 @@ export class VisualEffectsManager {
     this.initialized = true;
     logger.info(
       TAG,
-      `Initialized visual effects manager: mode=${this.currentState.settings.materialMode}, effective=${this.currentState.effectiveMaterialLevel}`
+      `Initialized visual effects manager: mode=${this.currentState.settings.materialMode}, effective=${this.currentState.effectiveMaterialLevel}, capabilitySource=${hasPersistedCapability ? 'storage' : 'system'}`
     );
   }
 
@@ -97,6 +108,7 @@ export class VisualEffectsManager {
     await this.refreshCapabilityInternal();
     const normalized = this.sanitizeSettingsByCapability();
     this.recalculateEffectiveMaterialLevel();
+    await this.persistCapability();
 
     if (normalized) {
       await this.persistSettings();
@@ -227,47 +239,56 @@ export class VisualEffectsManager {
     };
   }
 
+  private createCapability(
+    materialTypes: Array<hdsMaterial.MaterialType>,
+    checkedAt: number,
+    detectError: string
+  ): VisualEffectsCapability {
+    const normalizedTypes = this.normalizeMaterialTypes(materialTypes);
+    const supportsImmersive = this.hasMaterialType(normalizedTypes, hdsMaterial.MaterialType.IMMERSIVE);
+    const supportsAdaptive = this.hasMaterialType(normalizedTypes, hdsMaterial.MaterialType.ADAPTIVE);
+    const availableManualLevels = this.buildAvailableManualLevels(supportsImmersive);
+    const recommendedManualLevel = supportsImmersive
+      ? hdsMaterial.MaterialLevel.GENTLE
+      : hdsMaterial.MaterialLevel.SMOOTH;
+
+    return {
+      supportedMaterialTypes: normalizedTypes,
+      supportsImmersiveMaterial: supportsImmersive,
+      supportsAdaptiveMaterial: supportsAdaptive,
+      availableManualLevels,
+      recommendedManualLevel,
+      lastCheckedAt: checkedAt,
+      detectError
+    };
+  }
+
   private async refreshCapabilityInternal(): Promise<void> {
     const checkedAt = Date.now();
     try {
       const queriedTypes = hdsMaterial.getSystemMaterialTypes();
       const normalizedTypes = this.normalizeMaterialTypes(queriedTypes);
-      const supportsImmersive = this.hasMaterialType(normalizedTypes, hdsMaterial.MaterialType.IMMERSIVE);
-      const supportsAdaptive = this.hasMaterialType(normalizedTypes, hdsMaterial.MaterialType.ADAPTIVE);
-      const availableManualLevels = this.buildAvailableManualLevels(supportsImmersive);
-      const recommendedManualLevel = supportsImmersive
-        ? hdsMaterial.MaterialLevel.GENTLE
-        : hdsMaterial.MaterialLevel.SMOOTH;
-
-      this.currentState.capability = {
-        supportedMaterialTypes: normalizedTypes,
-        supportsImmersiveMaterial: supportsImmersive,
-        supportsAdaptiveMaterial: supportsAdaptive,
-        availableManualLevels,
-        recommendedManualLevel,
-        lastCheckedAt: checkedAt,
-        detectError: ''
-      };
+      const capability = this.createCapability(normalizedTypes, checkedAt, '');
+      this.currentState.capability = capability;
       logger.info(
         TAG,
-        `Capability detected: supportsImmersive=${supportsImmersive}, supportsAdaptive=${supportsAdaptive}, types=${JSON.stringify(normalizedTypes)}`
+        `Capability detected: supportsImmersive=${capability.supportsImmersiveMaterial}, supportsAdaptive=${capability.supportsAdaptiveMaterial}, types=${JSON.stringify(normalizedTypes)}`
       );
     } catch (error) {
       const businessError = error as BusinessError;
       const code = typeof businessError.code === 'number' ? businessError.code : -1;
       const message = typeof businessError.message === 'string' ? businessError.message : String(error);
       const detectError = `code=${code}, message=${message}`;
+      const hasPreviousCapability = this.currentState.capability.lastCheckedAt > 0;
+      const fallbackTypes = hasPreviousCapability
+        ? this.currentState.capability.supportedMaterialTypes.slice()
+        : DEFAULT_VISUAL_EFFECTS_CAPABILITY.supportedMaterialTypes.slice();
 
-      this.currentState.capability = {
-        supportedMaterialTypes: DEFAULT_VISUAL_EFFECTS_CAPABILITY.supportedMaterialTypes.slice(),
-        supportsImmersiveMaterial: DEFAULT_VISUAL_EFFECTS_CAPABILITY.supportsImmersiveMaterial,
-        supportsAdaptiveMaterial: DEFAULT_VISUAL_EFFECTS_CAPABILITY.supportsAdaptiveMaterial,
-        availableManualLevels: DEFAULT_VISUAL_EFFECTS_CAPABILITY.availableManualLevels.slice(),
-        recommendedManualLevel: DEFAULT_VISUAL_EFFECTS_CAPABILITY.recommendedManualLevel,
-        lastCheckedAt: checkedAt,
-        detectError
-      };
-      logger.warn(TAG, `Capability detection failed, fallback to conservative defaults: ${detectError}`);
+      this.currentState.capability = this.createCapability(fallbackTypes, checkedAt, detectError);
+      logger.warn(
+        TAG,
+        `Capability detection failed, ${hasPreviousCapability ? 'preserved previous capability snapshot' : 'fallback to conservative defaults'}: ${detectError}`
+      );
     }
   }
 
@@ -303,6 +324,38 @@ export class VisualEffectsManager {
     }
 
     return [hdsMaterial.MaterialLevel.SMOOTH];
+  }
+
+  private loadCapabilityFromStorage(): boolean {
+    const rawMaterialTypes = this.settingsManager.getString(
+      SettingKeys.VISUAL_EFFECTS_SUPPORTED_MATERIAL_TYPES,
+      ''
+    );
+    const checkedAt = this.settingsManager.getNumber(
+      SettingKeys.VISUAL_EFFECTS_CAPABILITY_LAST_CHECKED_AT,
+      0
+    );
+    const detectError = this.settingsManager.getString(
+      SettingKeys.VISUAL_EFFECTS_CAPABILITY_DETECT_ERROR,
+      ''
+    );
+    const hasPersistedCapability = rawMaterialTypes.length > 0 || checkedAt > 0 || detectError.length > 0;
+
+    if (!hasPersistedCapability) {
+      return false;
+    }
+
+    const materialTypes = this.parsePersistedMaterialTypes(rawMaterialTypes);
+    const normalizedTypes = materialTypes.length > 0
+      ? materialTypes
+      : DEFAULT_VISUAL_EFFECTS_CAPABILITY.supportedMaterialTypes.slice();
+
+    this.currentState.capability = this.createCapability(normalizedTypes, checkedAt, detectError);
+    logger.info(
+      TAG,
+      `Loaded persisted material capability snapshot: checkedAt=${checkedAt}, hasError=${detectError.length > 0}, types=${JSON.stringify(normalizedTypes)}`
+    );
+    return true;
   }
 
   private loadSettingsFromStorage(): boolean {
@@ -369,6 +422,51 @@ export class VisualEffectsManager {
       : VisualEffectsMaterialMode.ADAPTIVE;
   }
 
+  private parsePersistedMaterialTypes(raw: string): Array<hdsMaterial.MaterialType> {
+    const parsedTypes: Array<hdsMaterial.MaterialType> = [];
+    if (raw.length === 0) {
+      return parsedTypes;
+    }
+
+    raw.split(',').forEach((segment: string) => {
+      this.appendPersistedMaterialType(segment, parsedTypes);
+    });
+    return this.normalizeMaterialTypes(parsedTypes);
+  }
+
+  private appendPersistedMaterialType(
+    rawValue: string,
+    target: Array<hdsMaterial.MaterialType>
+  ): void {
+    const trimmed = rawValue.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    const numericValue = Number(trimmed);
+    if (Number.isNaN(numericValue)) {
+      return;
+    }
+
+    switch (numericValue) {
+      case hdsMaterial.MaterialType.NONE:
+        target.push(hdsMaterial.MaterialType.NONE);
+        return;
+      case hdsMaterial.MaterialType.ADAPTIVE:
+        target.push(hdsMaterial.MaterialType.ADAPTIVE);
+        return;
+      case hdsMaterial.MaterialType.IMMERSIVE:
+        target.push(hdsMaterial.MaterialType.IMMERSIVE);
+        return;
+      default:
+        return;
+    }
+  }
+
+  private serializeMaterialTypes(types: Array<hdsMaterial.MaterialType>): string {
+    return types.map((type: hdsMaterial.MaterialType) => String(type)).join(',');
+  }
+
   private parseMaterialLevel(raw: number): hdsMaterial.MaterialLevel {
     switch (raw) {
       case hdsMaterial.MaterialLevel.EXQUISITE:
@@ -403,6 +501,21 @@ export class VisualEffectsManager {
     await this.settingsManager.setNumber(
       SettingKeys.VISUAL_EFFECTS_MANUAL_MATERIAL_LEVEL,
       this.currentState.settings.manualMaterialLevel
+    );
+  }
+
+  private async persistCapability(): Promise<void> {
+    await this.settingsManager.setString(
+      SettingKeys.VISUAL_EFFECTS_SUPPORTED_MATERIAL_TYPES,
+      this.serializeMaterialTypes(this.currentState.capability.supportedMaterialTypes)
+    );
+    await this.settingsManager.setNumber(
+      SettingKeys.VISUAL_EFFECTS_CAPABILITY_LAST_CHECKED_AT,
+      this.currentState.capability.lastCheckedAt
+    );
+    await this.settingsManager.setString(
+      SettingKeys.VISUAL_EFFECTS_CAPABILITY_DETECT_ERROR,
+      this.currentState.capability.detectError
     );
   }
 

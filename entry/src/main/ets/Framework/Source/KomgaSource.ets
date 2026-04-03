@@ -163,6 +163,7 @@ export class KomgaSource {
     if (forceReload) {
       this.filterCache.clear();
     }
+    logger.info(TAG, `KomgaSource 配置已加载: forceReload=${forceReload}, instances=${this.getConfig().instances.length}, currentInstance=${this.getConfig().currentInstanceId || '-'}`);
   }
 
   public async reloadConfig(): Promise<void> {
@@ -229,9 +230,11 @@ export class KomgaSource {
 
     const cacheKey = instance.id;
     if (!forceRefresh && this.filterCache.has(cacheKey)) {
+      logger.debug(TAG, `KomgaSource 筛选项缓存命中: instanceId=${cacheKey}`);
       return this.filterCache.get(cacheKey)!;
     }
 
+    logger.info(TAG, `KomgaSource 加载筛选项: instanceId=${instance.id}, forceRefresh=${forceRefresh}`);
     const libraries = await this.requestJson<KomgaLibraryOption[]>('/api/v1/libraries', instance);
     const collectionsResponse = await this.requestJson<KomgaPageWrapperDto<KomgaCollectionDto>>('/api/v1/collections?unpaged=true', instance);
     const genres = await this.requestJson<string[]>('/api/v1/genres', instance);
@@ -257,6 +260,7 @@ export class KomgaSource {
     };
 
     this.filterCache.set(cacheKey, options);
+    logger.info(TAG, `KomgaSource 筛选项加载完成: instanceId=${instance.id}, libraries=${options.libraries.length}, collections=${options.collections.length}, genres=${options.genres.length}, tags=${options.tags.length}, publishers=${options.publishers.length}`);
     return options;
   }
 
@@ -281,13 +285,16 @@ export class KomgaSource {
 
     const queryText = queryParts.join('&');
     const separator = path.includes('?') ? '&' : '?';
+    logger.info(TAG, `KomgaSource 浏览请求: instanceId=${instance.id}, path=${path}, contentType=${request.contentType}, feed=${request.feedType}, page=${request.page}, query="${request.query}", queryText=${queryText}`);
     const response = await this.requestJson<KomgaPageWrapperDto<KomgaItemDto>>(`${path}${separator}${queryText}`, instance);
     if (!response) {
+      logger.warn(TAG, `KomgaSource 浏览结果为空: instanceId=${instance.id}, path=${path}`);
       return { items: [], totalCount: 0, hasMore: false };
     }
 
     const wrapper: KomgaPageWrapperDto<KomgaItemDto> = response;
     const items = (wrapper.content || []).map((item: KomgaItemDto) => this.toComicInfo(item, request.contentType, instance.id, instance));
+    logger.info(TAG, `KomgaSource 浏览响应: instanceId=${instance.id}, received=${items.length}, total=${wrapper.totalElements || items.length}, hasMore=${wrapper.last === false}`);
     return {
       items: items,
       totalCount: wrapper.totalElements || items.length,
@@ -302,13 +309,16 @@ export class KomgaSource {
       return null;
     }
 
+    logger.info(TAG, `KomgaSource 加载详情: instanceId=${instance.id}, itemId=${itemId}, contentType=${contentType}`);
     const detailResponse = await this.requestJson<KomgaItemDto>(this.buildItemPath(contentType, itemId), instance);
     if (!detailResponse) {
+      logger.warn(TAG, `KomgaSource 详情为空: instanceId=${instance.id}, itemId=${itemId}, contentType=${contentType}`);
       return null;
     }
 
     const detail = this.toComicDetail(detailResponse, contentType, instance.id, instance);
     detail.chapters = await this.getChaptersForItem(itemId, contentType, instance);
+    logger.info(TAG, `KomgaSource 详情加载完成: instanceId=${instance.id}, itemId=${itemId}, chapters=${detail.chapters ? detail.chapters.length : 0}`);
     return detail;
   }
 
@@ -319,14 +329,16 @@ export class KomgaSource {
       return [];
     }
 
+    logger.info(TAG, `KomgaSource 加载页面列表: instanceId=${instance.id}, bookId=${bookId}`);
     const response = await this.requestJson<KomgaPageDto[]>(`/api/v1/books/${bookId}/pages`, instance);
     if (!response || response.length <= 0) {
+      logger.warn(TAG, `KomgaSource 页面列表为空: instanceId=${instance.id}, bookId=${bookId}`);
       return [];
     }
 
     const headers = this.buildHeaders(instance, true);
     const serverUrl = this.normalizeServerUrl(instance.serverUrl);
-    return response.map(page => {
+    const pages = response.map(page => {
       const needsConvert = !SUPPORTED_IMAGE_TYPES.includes(page.mediaType);
       const url = `${serverUrl}/api/v1/books/${bookId}/pages/${page.number}${needsConvert ? '?convert=png' : ''}`;
       const result: PageInfo = {
@@ -335,6 +347,8 @@ export class KomgaSource {
       (result as ESObject)['headers'] = headers;
       return result;
     });
+    logger.info(TAG, `KomgaSource 页面列表加载完成: instanceId=${instance.id}, bookId=${bookId}, count=${pages.length}`);
+    return pages;
   }
 
   private async getChaptersForItem(itemId: string, contentType: KomgaContentType, instance: KomgaInstanceConfig): Promise<ChapterInfo[]> {
@@ -377,8 +391,10 @@ export class KomgaSource {
         description: dto.summary,
         coverUrl: `${serverUrl}/api/v1/readlists/${dto.id}/thumbnail`,
         status: 'UNKNOWN',
-        url: `${serverUrl}/api/v1/readlists/${dto.id}`
+        url: `${serverUrl}/api/v1/readlists/${dto.id}`,
+        instanceId: instanceId
       };
+
       (result as ESObject)['contentType'] = 'READLISTS';
       (result as ESObject)['instanceId'] = instanceId;
       (result as ESObject)['bookCount'] = dto.bookIds?.length || 0;
@@ -396,8 +412,10 @@ export class KomgaSource {
         coverUrl: `${serverUrl}/api/v1/books/${dto.id}/thumbnail`,
         status: 'UNKNOWN',
         tags: this.uniqueStrings(metadata.tags || []),
-        url: `${serverUrl}/api/v1/books/${dto.id}`
+        url: `${serverUrl}/api/v1/books/${dto.id}`,
+        instanceId: instanceId
       };
+
       (result as ESObject)['contentType'] = 'BOOKS';
       (result as ESObject)['instanceId'] = instanceId;
       (result as ESObject)['seriesTitle'] = dto.seriesTitle || '';
@@ -420,8 +438,10 @@ export class KomgaSource {
       coverUrl: `${serverUrl}/api/v1/series/${dto.id}/thumbnail`,
       status: this.mapSeriesStatus(metadata.status, dto.booksCount, metadata.totalBookCount),
       tags: tags,
-      url: `${serverUrl}/api/v1/series/${dto.id}`
+      url: `${serverUrl}/api/v1/series/${dto.id}`,
+      instanceId: instanceId
     };
+
     (result as ESObject)['contentType'] = 'SERIES';
     (result as ESObject)['instanceId'] = instanceId;
     (result as ESObject)['publisher'] = metadata.publisher || '';
@@ -474,11 +494,15 @@ export class KomgaSource {
   private toChapterInfo(book: KomgaBookDto, isReadList: boolean, index: number, instance: KomgaInstanceConfig): ChapterInfo {
     const metadata = this.getBookMetadata(book);
 
+    const serverUrl = this.normalizeServerUrl(instance.serverUrl);
     const chapterInfo: ChapterInfo = {
       id: book.id,
       title: this.formatChapterName(book, metadata, isReadList, instance.chapterTitleTemplate || KOMGA_DEFAULT_CHAPTER_TEMPLATE),
-      updateTime: this.parseDateValue(metadata.releaseDate) || this.parseDateValue(book.created) || this.parseDateValue(book.fileLastModified)
+      updateTime: this.parseDateValue(metadata.releaseDate) || this.parseDateValue(book.created) || this.parseDateValue(book.fileLastModified),
+      coverUrl: `${serverUrl}/api/v1/books/${book.id}/thumbnail`,
+      instanceId: instance.id
     };
+
     (chapterInfo as ESObject)['chapterNumber'] = isReadList ? index + 1 : (metadata.numberSort || 0);
     (chapterInfo as ESObject)['seriesTitle'] = book.seriesTitle;
     (chapterInfo as ESObject)['pageCount'] = book.media?.pagesCount || 0;
@@ -656,6 +680,7 @@ export class KomgaSource {
   private async requestJson<T>(pathOrUrl: string, instance: KomgaInstanceConfig): Promise<T | null> {
     const serverUrl = this.normalizeServerUrl(instance.serverUrl);
     if (serverUrl.length <= 0) {
+      logger.warn(TAG, `Komga 请求被跳过，服务器地址为空: instanceId=${instance.id}`);
       return null;
     }
 
@@ -665,6 +690,7 @@ export class KomgaSource {
 
     const request = http.createHttp();
     try {
+      logger.debug(TAG, `Komga 请求开始: instanceId=${instance.id}, url=${requestUrl}`);
       const response = await request.request(requestUrl, {
         method: http.RequestMethod.GET,
         header: this.buildHeaders(instance),
@@ -677,6 +703,7 @@ export class KomgaSource {
         return null;
       }
 
+      logger.debug(TAG, `Komga 请求成功: code=${response.responseCode}, url=${requestUrl}`);
       if (typeof response.result === 'string') {
         return JSON.parse(response.result) as T;
       }

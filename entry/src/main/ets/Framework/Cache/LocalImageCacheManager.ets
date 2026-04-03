@@ -181,6 +181,8 @@ export class LocalImageCacheManager {
    */
   private async doLoadImage(pageId: string, filePath: string, config?: LocalLoadConfig): Promise<image.PixelMap | null> {
     this.loadingTasks.add(pageId);
+    let file: fs.File | null = null;
+    let imageSource: image.ImageSource | null = null;
     
     try {
       // 处理文件路径
@@ -200,15 +202,13 @@ export class LocalImageCacheManager {
       }
 
       // 读取文件
-      const file = await fs.open(actualPath, fs.OpenMode.READ_ONLY);
-      const stat = await fs.stat(actualPath);
-      const buffer = new ArrayBuffer(stat.size);
-      await fs.read(file.fd, buffer);
-      await fs.close(file);
+      file = await fs.open(actualPath, fs.OpenMode.READ_ONLY);
 
       // 创建ImageSource
-      const imageSource = image.createImageSource(buffer);
+      imageSource = image.createImageSource(file.fd);
       if (!imageSource) {
+        await fs.close(file);
+        file = null;
         logger.error(TAG, `创建ImageSource失败: ${pageId}`);
         this.loadingTasks.delete(pageId);
         this.notifyLoadComplete(pageId, null);
@@ -237,7 +237,9 @@ export class LocalImageCacheManager {
       // 解码为PixelMap
       const pixelMap = await imageSource.createPixelMap(decodingOptions);
       imageSource.release();
-
+      imageSource = null;
+      await fs.close(file);
+      file = null;
       if (!pixelMap) {
         logger.error(TAG, `创建PixelMap失败: ${pageId}`);
         this.loadingTasks.delete(pageId);
@@ -277,6 +279,20 @@ export class LocalImageCacheManager {
       
       return pixelMap;
     } catch (error) {
+      try {
+        if (imageSource !== null) {
+          imageSource.release();
+          imageSource = null;
+        }
+      } catch (_releaseError) {
+      }
+      try {
+        if (file !== null) {
+          await fs.close(file);
+          file = null;
+        }
+      } catch (_closeError) {
+      }
       logger.error(TAG, `加载图片失败: ${pageId}, error=${String(error)}`);
       this.loadingTasks.delete(pageId);
       this.notifyLoadComplete(pageId, null);

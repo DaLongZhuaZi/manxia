@@ -9041,17 +9041,6 @@ struct MainMenuPage {
         };
       }
       this.ensureLocalLibraryCoverPrepared(normalizedLocalPath);
-      if (this.hasAccessibleLocalLibraryCover(normalizedLocalPath)) {
-        return {
-          source: displayPath,
-          rawPath: normalizedLocalPath,
-          displayPath: displayPath,
-          isNetwork: false,
-          useAvifRenderer: false,
-          hasRealCover: true,
-          fallbackSource: fallbackSource
-        };
-      }
       logger.debug(TAG, `[封面修复] 本地封面等待 PixelMap 预解码: path='${normalizedLocalPath}'`);
       return {
         source: fallbackSource,

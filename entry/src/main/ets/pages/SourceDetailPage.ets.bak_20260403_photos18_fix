@@ -1422,155 +1422,6 @@ export struct SourceDetailPage {
     return Math.max(8, Math.min(14, surfaceRadius));
   }
 
-  private getSettingsAnalyticsCardBackground(): ResourceColor {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundColor;
-  }
-
-  private getSettingsAnalyticsCardBlurStyle(): BlurStyle | undefined {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurStyle;
-  }
-
-  private getSettingsAnalyticsCardBlurOptions(): BackgroundBlurStyleOptions {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurOptions;
-  }
-
-  private getSettingsAnalyticsCardBackgroundEffect(): BackgroundEffectOptions | undefined {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundEffect;
-  }
-
-  private getSettingsAnalyticsCardBorderColor(): ResourceColor {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderColor;
-  }
-
-  private getSettingsAnalyticsCardBorderWidth(): number {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderWidth;
-  }
-
-  private getSettingsAnalyticsCardShadowColor(): string {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.shadowColor;
-  }
-
-  private getSettingsAnalyticsCardRadius(): number {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius;
-  }
-
-  private getSettingsAnalyticsCardTopEdgeColor(): ResourceColor {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.topEdgeColor;
-  }
-
-  private getSettingsAnalyticsCardBottomEdgeColor(): ResourceColor {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.bottomEdgeColor;
-  }
-
-  private getSettingsAnalyticsCardSurfaceGradient(): LinearGradient {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.surfaceGradient;
-  }
-
-  private getSettingsAnalyticsCardIconColor(): ResourceColor {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.iconColor;
-  }
-
-  private getSettingsAnalyticsCardTitleColor(): ResourceColor {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.titleColor;
-  }
-
-  private getSettingsAnalyticsCardSubtitleColor(): ResourceColor {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.subtitleColor;
-  }
-
-  private getSettingsAnalyticsCardChevronColor(): ResourceColor {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.chevronColor;
-  }
-
-  private getSettingsAnalyticsCardChevronOpacity(): number {
-    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.chevronOpacity;
-  }
-
-  private getSourceDetailSearchFieldRadius(): number {
-    return Math.max(18, Math.min(22, this.getSettingsAnalyticsCardRadius()));
-  }
-
-  @Builder
-  private buildSettingsAnalyticsCardChrome() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
-
-      Column()
-        .width('100%')
-        .height(1)
-        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
-
-      Column()
-        .width('100%')
-        .height(1)
-        .align(Alignment.Bottom)
-        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
-    }
-    .width('100%')
-    .height('100%')
-    .hitTestBehavior(HitTestMode.None)
-  }
-
-  @Builder
-  private buildSourceDetailGlassSearchField() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      this.buildSettingsAnalyticsCardChrome()
-
-      Row({ space: 8 }) {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(16)
-          .fontColor([this.getSettingsAnalyticsCardChevronColor()])
-          .opacity(this.getSettingsAnalyticsCardChevronOpacity())
-
-        TextInput({ placeholder: this.searchPlaceholder, text: this.searchKeyword })
-          .layoutWeight(1)
-          .height(40)
-          .fontFamily(this.appFontFamily)
-          .fontSize(14)
-          .backgroundColor(Color.Transparent)
-          .onChange((value: string) => {
-            this.searchKeyword = value;
-          })
-          .onSubmit(() => {
-            this.performSearch();
-          })
-
-        if (this.searchKeyword.length > 0) {
-          SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-            .fontSize(16)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-            .onClick(() => {
-              this.searchKeyword = '';
-            })
-        }
-      }
-      .width('100%')
-      .height('100%')
-      .padding({ left: 14, right: 14 })
-      .alignItems(VerticalAlign.Center)
-    }
-    .width('100%')
-    .height(44)
-    .backgroundColor(this.getSettingsAnalyticsCardBackground())
-    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-    .borderRadius(this.getSourceDetailSearchFieldRadius())
-    .clip(true)
-    .border({
-      width: this.getSettingsAnalyticsCardBorderWidth(),
-      color: this.getSettingsAnalyticsCardBorderColor()
-    })
-    .shadow({
-      radius: this.getSourceDetailSearchFieldRadius() + 4,
-      color: this.getSettingsAnalyticsCardShadowColor(),
-      offsetX: 0,
-      offsetY: 6
-    })
-  }
-
   @Builder
   private buildComicCoverImage(comic: ComicInfo) {
     Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
@@ -1914,7 +1765,6 @@ export struct SourceDetailPage {
         description: manga.description || '',
         tags: manga.genres || [],
         status: manga.status || '',
-        url: manga.url || '',
         updateTime: 0 // MangaInfo的updated是string，这里简化处理
       };
       return comic;
@@ -4040,7 +3890,14 @@ export struct SourceDetailPage {
           .width('100%')
         }
 
-        this.buildSourceDetailGlassSearchField()
+        Search({ placeholder: this.searchPlaceholder })
+          .width('100%')
+          .onChange((value: string) => {
+            this.searchKeyword = value;
+          })
+          .onSubmit(() => {
+            this.performSearch();
+          })
 
         Row({ space: 12 }) {
           Button('取消')
@@ -4067,22 +3924,16 @@ export struct SourceDetailPage {
       .width('90%')
       .constraintSize({ maxWidth: 560, maxHeight: '86%' })
       .padding(24)
-      .backgroundColor(this.getSettingsAnalyticsCardBackground())
-      .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
-      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-      .borderRadius(this.getSettingsAnalyticsCardRadius())
-      .clip(true)
-      .border({ width: this.getSettingsAnalyticsCardBorderWidth(), color: this.getSettingsAnalyticsCardBorderColor() })
-      .shadow({ radius: this.getSettingsAnalyticsCardRadius() + 4, color: this.getSettingsAnalyticsCardShadowColor(), offsetY: 8 })
-      .onClick(() => {})
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(14)
+      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+      .shadow({ radius: 16, color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme), offsetY: 6 })
       .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
         .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(14, 20, 31, 0.28)')
     .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
     .onClick(() => {
       this.showSearchDialog = false;
@@ -4658,10 +4509,14 @@ export struct SourceDetailPage {
 
       // 搜索输入框
       Row({ space: 8 }) {
-        Column() {
-          this.buildSourceDetailGlassSearchField()
-        }
-        .layoutWeight(1)
+        Search({ placeholder: this.searchPlaceholder })
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.searchKeyword = value;
+          })
+          .onSubmit(() => {
+            this.performSearch();
+          })
 
         Button('搜索')
           .fontSize(14)
@@ -4675,7 +4530,7 @@ export struct SourceDetailPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(Color.Transparent)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
   }
 
   /**
@@ -5162,67 +5017,46 @@ export struct SourceDetailPage {
    */
   @Builder
   buildComicCard(comic: ComicInfo) {
-    Column({ space: 0 }) {
-      Blank()
-        .width('100%')
-        .height(1)
-        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
-
-      Column({ space: 8 }) {
-        // 封面容器 - 使用Stack实现加载动画效果
-        Stack() {
-          this.buildReadingStyleComicCover(comic)
-        }
-        .width('100%')
-        .aspectRatio(this.getComicCoverAspectRatio(comic))
-        .padding(4)
-
-        // 标题 - 固定高度确保卡片一致
-        Text(comic.title)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getSettingsAnalyticsCardTitleColor())
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-          .height(40)
-          .lineHeight(20)
-
-        // 作者 - 固定高度确保卡片一致
-        Text(comic.author || ' ')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-          .height(16)
+    Column({ space: 8 }) {
+      // 封面容器 - 使用Stack实现加载动画效果
+      Stack() {
+        this.buildReadingStyleComicCover(comic)
       }
       .width('100%')
-      .padding(12)
+      .aspectRatio(this.getComicCoverAspectRatio(comic))
+      .padding(4)
 
-      Blank()
+      // 标题 - 固定高度确保卡片一致
+      Text(comic.title)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
-        .height(1)
-        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
+        .height(40)
+        .lineHeight(20)
+
+      // 作者 - 固定高度确保卡片一致
+      Text(comic.author || ' ')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .height(16)
     }
     .width('100%')
-    .backgroundColor(this.getSettingsAnalyticsCardBackground())
-    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
-    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-    .borderRadius(this.getSettingsAnalyticsCardRadius())
-    .clip(true)
-    .border({
-      width: this.getSettingsAnalyticsCardBorderWidth(),
-      color: this.getSettingsAnalyticsCardBorderColor()
-    })
+    .padding(8)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
     .shadow({
-      radius: this.getSettingsAnalyticsCardRadius() + 4,
-      color: this.getSettingsAnalyticsCardShadowColor(),
+      radius: 8,
+      color: '#10000000',
       offsetX: 0,
-      offsetY: 8
+      offsetY: 2
     })
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
@@ -5239,100 +5073,72 @@ export struct SourceDetailPage {
    */
   @Builder
   buildComicListItem(comic: ComicInfo) {
-    Column({ space: 0 }) {
-      Blank()
-        .width('100%')
-        .height(1)
-        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
-
-      Row({ space: 12 }) {
-        // 封面 - 精致的封面卡片
-        Stack() {
-          this.buildReadingStyleComicCover(comic)
-        }
-        .width(72)
-        .aspectRatio(0.72)
-        .padding(3)
-
-        // 信息区域
-        Column({ space: 4 }) {
-          // 标题
-          Text(comic.title)
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(this.getSettingsAnalyticsCardTitleColor())
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-            .lineHeight(21)
-
-          // 作者
-          if (comic.author) {
-            Row({ space: 4 }) {
-              SymbolGlyph($r('sys.symbol.person_crop_circle_dashed'))
-                .fontSize(12)
-                .fontColor([this.getSettingsAnalyticsCardSubtitleColor()])
-              Text(comic.author)
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
-            }
-            .width('100%')
-          }
-
-          // 状态标签
-          if (comic.status) {
-            Row() {
-              Text(String(comic.status))
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-                .borderRadius(4)
-            }
-          }
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        .justifyContent(FlexAlign.Center)
-
-        // 右侧箭头
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([this.getSettingsAnalyticsCardChevronColor()])
-          .opacity(this.getSettingsAnalyticsCardChevronOpacity())
+    Row({ space: 12 }) {
+      // 封面 - 精致的封面卡片
+      Stack() {
+        this.buildReadingStyleComicCover(comic)
       }
-      .width('100%')
-      .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+      .width(72)
+      .aspectRatio(0.72)
+      .padding(3)
 
-      Blank()
-        .width('100%')
-        .height(1)
-        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
+      // 信息区域
+      Column({ space: 4 }) {
+        // 标题
+        Text(comic.title)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .lineHeight(21)
+
+        // 作者
+        if (comic.author) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.person_crop_circle_dashed'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(comic.author)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
+          .width('100%')
+        }
+
+        // 状态标签
+        if (comic.status) {
+          Row() {
+            Text(String(comic.status))
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+              .borderRadius(4)
+          }
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.Center)
+
+      // 右侧箭头
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
     }
     .width('100%')
-    .backgroundColor(this.getSettingsAnalyticsCardBackground())
-    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
-    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-    .borderRadius(this.getSettingsAnalyticsCardRadius())
-    .clip(true)
-    .border({
-      width: this.getSettingsAnalyticsCardBorderWidth(),
-      color: this.getSettingsAnalyticsCardBorderColor()
-    })
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
     .margin({ top: 4, bottom: 4 })
-    .shadow({
-      radius: this.getSettingsAnalyticsCardRadius() + 4,
-      color: this.getSettingsAnalyticsCardShadowColor(),
-      offsetX: 0,
-      offsetY: 8
-    })
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
         .combine(TransitionEffect.translate({ x: -20 }).animation({ duration: 250, curve: Curve.EaseOut })),
@@ -5348,65 +5154,44 @@ export struct SourceDetailPage {
    */
   @Builder
   buildComicLargeCoverCard(comic: ComicInfo) {
-    Column({ space: 0 }) {
-      Blank()
-        .width('100%')
-        .height(1)
-        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
-
-      Column({ space: 10 }) {
-        // 大封面 - 添加加载动画
-        Stack() {
-          this.buildReadingStyleComicCover(comic)
-        }
-        .width('100%')
-        .aspectRatio(this.getComicCoverAspectRatio(comic))
-        .padding(4)
-
-        // 标题
-        Text(comic.title)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getSettingsAnalyticsCardTitleColor())
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-          .lineHeight(22)
-
-        // 作者
-        Text(comic.author || ' ')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
+    Column({ space: 10 }) {
+      // 大封面 - 添加加载动画
+      Stack() {
+        this.buildReadingStyleComicCover(comic)
       }
       .width('100%')
-      .padding({ left: 14, right: 14, top: 14, bottom: 14 })
+      .aspectRatio(this.getComicCoverAspectRatio(comic))
+      .padding(4)
 
-      Blank()
+      // 标题
+      Text(comic.title)
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
-        .height(1)
-        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
+        .lineHeight(22)
+
+      // 作者
+      Text(comic.author || ' ')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
     }
     .width('100%')
-    .backgroundColor(this.getSettingsAnalyticsCardBackground())
-    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
-    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-    .borderRadius(this.getSettingsAnalyticsCardRadius())
-    .clip(true)
-    .border({
-      width: this.getSettingsAnalyticsCardBorderWidth(),
-      color: this.getSettingsAnalyticsCardBorderColor()
-    })
+    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(16)
     .shadow({
-      radius: this.getSettingsAnalyticsCardRadius() + 4,
-      color: this.getSettingsAnalyticsCardShadowColor(),
+      radius: 12,
+      color: '#15000000',
       offsetX: 0,
-      offsetY: 8
+      offsetY: 4
     })
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })

@@ -242,6 +242,7 @@ export class CookieManager {
       if (base.userAgent) { result.userAgent = String(base.userAgent); }
       if (base.accept) { result.accept = String(base.accept); }
       if (base.referer) { result.referer = String(base.referer); }
+      if (base.origin) { result.origin = String(base.origin); }
       if (base.authorization) { result.authorization = String(base.authorization); }
       if (base.acceptLanguage) { result.acceptLanguage = String(base.acceptLanguage); }
       if (base.cacheControl) { result.cacheControl = String(base.cacheControl); }
@@ -249,7 +250,10 @@ export class CookieManager {
       if (base.secFetchDest) { result.secFetchDest = String(base.secFetchDest); }
       if (base.secFetchMode) { result.secFetchMode = String(base.secFetchMode); }
       if (base.secFetchSite) { result.secFetchSite = String(base.secFetchSite); }
+      if (base.cachePartition) { result.cachePartition = String(base.cachePartition); }
     }
+
+
     const cookieStr: string = await this.getCookieString(sourceId);
     if (cookieStr.length > 0) {
       result.cookie = cookieStr;

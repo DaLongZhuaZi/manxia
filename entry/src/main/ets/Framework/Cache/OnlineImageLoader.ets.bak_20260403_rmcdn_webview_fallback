@@ -12,7 +12,6 @@
 import { image } from '@kit.ImageKit';
 import { logger } from '../../Utils/Logger';
 import { http } from '@kit.NetworkKit';
-import { webview } from '@kit.ArkWeb';
 import CookieManager from '../Managers/CookieManager';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { DiskCacheManager } from './DiskCacheManager';
@@ -20,8 +19,6 @@ import { DataManager } from '../Data/DataManager';
 import { JinmantiantangDescrambler, JinmantiantangParameters } from '../ImageProcessing/JinmantiantangDescrambler';
 import { UserAgentManager } from '../Managers/UserAgentManager';
 import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
-import { GlobalWebViewContainer, WebViewEventCallbacks } from '../WebView/WebViewContainerPage';
-import { WebViewSourceConfig } from '../WebView/WebViewImageLoader';
 
 
 const TAG = 'OnlineImageLoader';
@@ -64,21 +61,6 @@ export interface RequestHeaders {
 
 
 interface HttpHeadersObject {
-  userAgent?: string;
-  origin?: string;
-  accept?: string;
-  referer?: string;
-  cookie?: string;
-  authorization?: string;
-  acceptLanguage?: string;
-  cacheControl?: string;
-  pragma?: string;
-  secFetchDest?: string;
-  secFetchMode?: string;
-  secFetchSite?: string;
-}
-
-interface HttpRequestHeadersObject {
   'User-Agent'?: string;
   'Origin'?: string;
   'Accept'?: string;
@@ -124,11 +106,6 @@ interface CacheStatusUpdatePayload {
   fileSize: number;
 }
 
-interface RmcdnWebViewWaiter {
-  resolve: () => void;
-  reject: (reason: Error) => void;
-}
-
 export interface CacheStatsInfo {
   count: number;
   size: number;
@@ -139,7 +116,6 @@ export interface CacheStatsInfo {
 export class OnlineImageLoader {
   private static instance: OnlineImageLoader | null = null;
   private readonly photos18Pkg: string = 'com.manxia.extension.all.photos18';
-  private readonly rmcdnFallbackPrefix: string = 'online_image_rmcdn_fallback';
   
   // 请求队列
 
@@ -172,10 +148,6 @@ export class OnlineImageLoader {
   private readonly MAX_RETRIES = 2;
   private readonly RETRY_DELAY = 1000;
   private readonly MIN_REQUEST_INTERVAL = 50;  // 50ms最小请求间隔（优化条漫体验）
-  private readonly RMCDN_WEBVIEW_ATTACH_RETRIES = 12;
-  private readonly RMCDN_WEBVIEW_ATTACH_DELAY = 120;
-  private readonly RMCDN_WEBVIEW_LOAD_TIMEOUT = 15000;
-  private readonly RMCDN_WEBVIEW_SETTLE_DELAY = 250;
   private lastRequestTime = 0;
 
   private constructor() {
@@ -452,7 +424,6 @@ export class OnlineImageLoader {
     try {
       const dataManager = DataManager.getInstance();
       await dataManager.batchUpdateOnlinePageCacheStatus(updates);
-      logger.debug(TAG, `Flushed cache status updates: count=${updates.length}`);
       logger.debug(TAG, `已批量同步缓存状态到数据库: ${updates.length}条`);
     } catch (error) {
       logger.warn(TAG, `批量同步缓存状态到数据库失败: ${String(error)}`);
@@ -485,14 +456,6 @@ export class OnlineImageLoader {
       }
       
       // 如果是SSL错误(2300060)且URL是HTTPS，尝试降级为HTTP
-      if (this.isRmcdnRequest(url) && this.isHttp403Error(errMsg)) {
-        logger.warn(TAG, `rmcdn鍥剧墖HTTP 403锛屽皾璇昗ebView鍏滃簳鍔犺浇: ${url.substring(0, 80)}`);
-        const recovered = await this.retryRmcdnWithWebView(url, options);
-        if (recovered) {
-          return recovered;
-        }
-      }
-
       if (errCode === 2300060 && url.startsWith('https://')) {
         const httpUrl = url.replace('https://', 'http://');
         logger.info(TAG, `SSL错误，尝试HTTP降级: ${httpUrl.substring(0, 80)}`);
@@ -535,12 +498,7 @@ export class OnlineImageLoader {
       const cookieManager = CookieManager.getInstance();
       const freshCookie = await cookieManager.getCookieString(sourceId);
       if (!freshCookie || freshCookie.length === 0) {
-        logger.warn(TAG, 'Photos18 refresh cookie returned empty, skip retry');
-        /*
         logger.warn(TAG, 'Photos18刷新Cookie后仍为空，放弃重试');
-        return null;
-      }
-        */
         return null;
       }
       const retriedHeaders: RequestHeaders = {
@@ -576,195 +534,6 @@ export class OnlineImageLoader {
   /**
    * 执行HTTP请求（内部方法）
    */
-  private isRmcdnRequest(url: string): boolean {
-    return url.includes('rmcdn');
-  }
-
-  private isHttp403Error(message: string): boolean {
-    return message.includes('403');
-  }
-
-  private async retryRmcdnWithWebView(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
-    const fallbackSourceId = `${this.rmcdnFallbackPrefix}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const controller = new webview.WebviewController();
-    const headers = await this.buildHeaders(url, options);
-    const userAgent = headers.userAgent ? headers.userAgent : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
-    const config: WebViewSourceConfig = {
-      sourceId: fallbackSourceId,
-      userAgent: userAgent,
-      enableJavaScript: true,
-      enableImages: true,
-      cookiePolicy: 'accept_all',
-      timeout: this.TIMEOUT
-    };
-
-    let waiter: RmcdnWebViewWaiter | null = null;
-    const pageLoadPromise = new Promise<void>((resolve, reject) => {
-      waiter = { resolve: resolve, reject: reject };
-    });
-    const callbacks: WebViewEventCallbacks = {
-      onPageEnd: (_loadedUrl: string) => {
-        if (waiter) {
-          waiter.resolve();
-          waiter = null;
-        }
-      },
-      onError: (error: string) => {
-        if (waiter) {
-          waiter.reject(new Error(error));
-          waiter = null;
-        }
-      }
-    };
-
-    GlobalWebViewContainer.addWebView(fallbackSourceId, controller, config, callbacks, 'about:blank');
-
-    try {
-      await this.loadRmcdnUrlWithRetry(controller, url, headers, userAgent);
-      await this.waitForPromiseWithTimeout(pageLoadPromise, this.RMCDN_WEBVIEW_LOAD_TIMEOUT, 'rmcdn WebView load timeout');
-      await this.delay(this.RMCDN_WEBVIEW_SETTLE_DELAY);
-      const imageBuffer = await this.extractRmcdnArrayBuffer(controller);
-      const pixelMap = await this.createPixelMapFromBuffer(imageBuffer, options);
-      logger.info(TAG, `rmcdn WebView鍏滃簳鍔犺浇鎴愬姛: bytes=${imageBuffer.byteLength}`);
-      return pixelMap;
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      logger.warn(TAG, `rmcdn WebView鍏滃簳鍔犺浇澶辫触: ${errMsg}`);
-      return null;
-    } finally {
-      try {
-        controller.loadUrl('about:blank');
-      } catch (_loadBlankError) {
-      }
-      GlobalWebViewContainer.removeWebView(fallbackSourceId);
-    }
-  }
-
-  private async loadRmcdnUrlWithRetry(
-    controller: webview.WebviewController,
-    url: string,
-    headers: HttpHeadersObject,
-    userAgent: string
-  ): Promise<void> {
-    const webHeaders = this.buildWebHeaders(headers);
-    let attempt = 0;
-    let lastError: Error | null = null;
-
-    while (attempt < this.RMCDN_WEBVIEW_ATTACH_RETRIES) {
-      try {
-        controller.setCustomUserAgent(userAgent);
-        if (webHeaders.length > 0) {
-          controller.loadUrl(url, webHeaders);
-        } else {
-          controller.loadUrl(url);
-        }
-        return;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        attempt = attempt + 1;
-        await this.delay(this.RMCDN_WEBVIEW_ATTACH_DELAY);
-      }
-    }
-
-    if (lastError) {
-      throw lastError;
-    }
-    throw new Error('rmcdn WebView loadUrl failed');
-  }
-
-  private buildWebHeaders(headers: HttpHeadersObject): Array<webview.WebHeader> {
-    const result: Array<webview.WebHeader> = [];
-    const pairs: Array<[string, string | undefined]> = [
-      ['User-Agent', headers.userAgent],
-      ['Origin', headers.origin],
-      ['Accept', headers.accept],
-      ['Referer', headers.referer],
-      ['Cookie', headers.cookie],
-      ['Authorization', headers.authorization],
-      ['Accept-Language', headers.acceptLanguage],
-      ['Cache-Control', headers.cacheControl],
-      ['Pragma', headers.pragma],
-      ['Sec-Fetch-Dest', headers.secFetchDest],
-      ['Sec-Fetch-Mode', headers.secFetchMode],
-      ['Sec-Fetch-Site', headers.secFetchSite]
-    ];
-    let index = 0;
-    while (index < pairs.length) {
-      const pair = pairs[index];
-      const headerValue = pair[1];
-      if (headerValue && headerValue.length > 0) {
-        result.push({
-          headerKey: pair[0],
-          headerValue: headerValue
-        });
-      }
-      index = index + 1;
-    }
-    return result;
-  }
-
-  private async waitForPromiseWithTimeout(task: Promise<void>, timeoutMs: number, message: string): Promise<void> {
-    let timeoutId: number | null = null;
-    return await new Promise<void>((resolve, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(message));
-      }, timeoutMs);
-
-      task.then(() => {
-        if (timeoutId !== null) {
-          clearTimeout(timeoutId);
-        }
-        resolve();
-      }).catch((error: Error) => {
-        if (timeoutId !== null) {
-          clearTimeout(timeoutId);
-        }
-        reject(error);
-      });
-    });
-  }
-
-  private async extractRmcdnArrayBuffer(controller: webview.WebviewController): Promise<ArrayBuffer> {
-    const script = `
-      (() => {
-        const imageElement = document.images && document.images.length > 0 ? document.images[0] : null;
-        let requestUrl = '';
-        if (imageElement && imageElement.src) {
-          requestUrl = String(imageElement.src);
-        } else if (window && window.location && window.location.href) {
-          requestUrl = String(window.location.href);
-        }
-        if (!requestUrl) {
-          throw new Error('rmcdn request url missing');
-        }
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', requestUrl, false);
-        xhr.responseType = 'arraybuffer';
-        xhr.send(null);
-        if (xhr.status >= 400) {
-          throw new Error('rmcdn xhr failed with status ' + String(xhr.status));
-        }
-        if (!xhr.response) {
-          throw new Error('rmcdn xhr returned empty buffer');
-        }
-        return xhr.response;
-      })();
-    `;
-    const jsResult = await controller.runJavaScriptExt(script);
-    const resultType = jsResult.getType();
-    if (resultType === webview.JsMessageType.ARRAY_BUFFER) {
-      return jsResult.getArrayBuffer();
-    }
-    if (resultType === webview.JsMessageType.STRING) {
-      throw new Error(`rmcdn WebView script returned string: ${jsResult.getString()}`);
-    }
-    const errorDescription = jsResult.getErrorDescription();
-    if (errorDescription) {
-      throw new Error(errorDescription);
-    }
-    throw new Error(`rmcdn WebView script returned unsupported type: ${resultType}`);
-  }
-
   private async doHttpRequest(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
     try {
       const httpRequest = http.createHttp();
@@ -779,7 +548,7 @@ export class OnlineImageLoader {
         method: http.RequestMethod.GET,
         connectTimeout: this.TIMEOUT,
         readTimeout: this.TIMEOUT,
-        header: this.createRequestHeadersObject(headers) as Object,
+        header: headers as Object,
         expectDataType: http.HttpDataType.ARRAY_BUFFER
       };
       
@@ -853,8 +622,6 @@ export class OnlineImageLoader {
         }
         
         // 创建PixelMap
-        const pixelMap = await this.createPixelMapFromBuffer(finalBuffer, options);
-        /*
         let pixelMap: image.PixelMap | null = null;
         
         // 检查是否为AVIF格式，使用专用解码器
@@ -885,7 +652,6 @@ export class OnlineImageLoader {
           pixelMap = await imageSource.createPixelMap(decodingOptions);
         }
         
-        */
         httpRequest.destroy();
         return pixelMap;
         
@@ -931,55 +697,6 @@ export class OnlineImageLoader {
   /**
    * 构建请求头
    */
-  private async createPixelMapFromBuffer(buffer: ArrayBuffer, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
-    let pixelMap: image.PixelMap | null = null;
-
-    if (isAvifFormat(buffer)) {
-      logger.info(TAG, '妫€娴嬪埌AVIF鏍煎紡鍥剧墖锛屼娇鐢ˋVIF瑙ｇ爜鍣?');
-      const avifDecoder = AvifDecoder.getInstance();
-      if (avifDecoder.isSupported()) {
-        pixelMap = await avifDecoder.decode(buffer);
-        if (pixelMap) {
-          logger.info(TAG, 'AVIF瑙ｇ爜鎴愬姛');
-        } else {
-          logger.warn(TAG, 'AVIF瑙ｇ爜澶辫触锛屽皾璇曠郴缁熻В鐮佸櫒');
-        }
-      } else {
-        logger.warn(TAG, 'AVIF瑙ｇ爜鍣ㄤ笉鍙敤锛坙ibavif鏈畨瑁咃級锛屽皾璇曠郴缁熻В鐮佸櫒');
-      }
-    }
-
-    if (!pixelMap) {
-      const imageSource = image.createImageSource(buffer);
-      const decodingOptions: image.DecodingOptions = {
-        desiredSize: options.width && options.height ?
-          { width: options.width, height: options.height } : undefined,
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
-      };
-      pixelMap = await imageSource.createPixelMap(decodingOptions);
-    }
-
-    return pixelMap;
-  }
-
-  private createRequestHeadersObject(headers: HttpHeadersObject): HttpRequestHeadersObject {
-    const requestHeaders: HttpRequestHeadersObject = {
-      'User-Agent': headers.userAgent,
-      'Origin': headers.origin,
-      'Accept': headers.accept,
-      'Referer': headers.referer,
-      'Cookie': headers.cookie,
-      'Authorization': headers.authorization,
-      'Accept-Language': headers.acceptLanguage,
-      'Cache-Control': headers.cacheControl,
-      'Pragma': headers.pragma,
-      'Sec-Fetch-Dest': headers.secFetchDest,
-      'Sec-Fetch-Mode': headers.secFetchMode,
-      'Sec-Fetch-Site': headers.secFetchSite
-    };
-    return requestHeaders;
-  }
-
   private async buildHeaders(url: string, options: OnlineLoadOptions): Promise<HttpHeadersObject> {
     await this.getDiskCacheForRequest(options);
 
@@ -1031,18 +748,18 @@ export class OnlineImageLoader {
     }
     
     const headerObj: HttpHeadersObject = {
-      userAgent: ua,
-      origin: origin || (referer || undefined),
-      accept: accept,
-      referer: referer || undefined,
-      cookie: cookie || undefined,
-      authorization: authorization || undefined,
-      acceptLanguage: acceptLanguage || undefined,
-      cacheControl: cacheControl || undefined,
-      pragma: pragma || undefined,
-      secFetchDest: secFetchDest || undefined,
-      secFetchMode: secFetchMode || undefined,
-      secFetchSite: secFetchSite || undefined
+      'User-Agent': ua,
+      'Origin': origin || (referer || undefined),
+      'Accept': accept,
+      'Referer': referer || undefined,
+      'Cookie': cookie || undefined,
+      'Authorization': authorization || undefined,
+      'Accept-Language': acceptLanguage || undefined,
+      'Cache-Control': cacheControl || undefined,
+      'Pragma': pragma || undefined,
+      'Sec-Fetch-Dest': secFetchDest || undefined,
+      'Sec-Fetch-Mode': secFetchMode || undefined,
+      'Sec-Fetch-Site': secFetchSite || undefined
     };
     
     return headerObj;
@@ -1119,14 +836,6 @@ export class OnlineImageLoader {
   /**
    * 队列排序（按优先级降序）
    */
-  private async delay(ms: number): Promise<void> {
-    await new Promise<void>((resolve) => {
-      setTimeout(() => {
-        resolve();
-      }, ms);
-    });
-  }
-
   private sortQueue(): void {
     this.requestQueue.sort((a, b) => b.priority - a.priority);
   }

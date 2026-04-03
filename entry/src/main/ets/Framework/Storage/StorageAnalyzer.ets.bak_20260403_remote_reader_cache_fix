@@ -37,8 +37,6 @@ export enum StorageType {
   SUWAYOMI_COVERS = 'SUWAYOMI_COVERS',           // Suwayomi封面缓存 (suwayomi/covers)
   SUWAYOMI_SOURCE_ICONS = 'SUWAYOMI_SOURCE_ICONS', // Suwayomi图源图标 (suwayomi/source_icons)
   SUWAYOMI_CHAPTERS = 'SUWAYOMI_CHAPTERS',       // Suwayomi章节页面 (suwayomi/chapters)
-  KOMGA_COVERS = 'KOMGA_COVERS',                 // Komga封面缓存 (filesDir/komga_cache/covers)
-  KOMGA_CHAPTERS = 'KOMGA_CHAPTERS',             // Komga章节页面 (filesDir/komga_cache/chapters)
   DOWNLOAD_MANGA = 'DOWNLOAD_MANGA'              // 下载的漫画 (manga/)
 }
 
@@ -204,12 +202,6 @@ export class StorageAnalyzer {
       // 14. 分析Suwayomi章节页面缓存
       const suwayomiChaptersItem = await this.analyzeSuwayomiChapters();
       items.push(suwayomiChaptersItem);
-
-      const komgaCoversItem = await this.analyzeKomgaCovers();
-      items.push(komgaCoversItem);
-
-      const komgaChaptersItem = await this.analyzeKomgaChapters();
-      items.push(komgaChaptersItem);
       
       // 15. 分析Download漫画文件
       const downloadMangaItem = await this.analyzeDownloadManga();
@@ -680,56 +672,6 @@ export class StorageAnalyzer {
     }
   }
 
-  private async analyzeKomgaCovers(): Promise<StorageItem> {
-    try {
-      const context = uiContextManager.getAbilityContext();
-      if (!context) {
-        return this.createEmptyItem(StorageType.KOMGA_COVERS, 'Komga封面缓存');
-      }
-
-      const basePath = `${context.filesDir}/komga_cache/covers`;
-      const dirInfo = await this.getDirectoryInfo(basePath);
-      return {
-        type: StorageType.KOMGA_COVERS,
-        name: 'Komga封面缓存',
-        description: 'Komga封面图片缓存 (filesDir/komga_cache/covers/)',
-        size: dirInfo.size,
-        fileCount: dirInfo.count,
-        path: basePath,
-        canClear: true,
-        lastModified: Date.now()
-      };
-    } catch (error) {
-      logger.error(TAG, `分析Komga封面缓存失败: ${error}`);
-      return this.createEmptyItem(StorageType.KOMGA_COVERS, 'Komga封面缓存');
-    }
-  }
-
-  private async analyzeKomgaChapters(): Promise<StorageItem> {
-    try {
-      const context = uiContextManager.getAbilityContext();
-      if (!context) {
-        return this.createEmptyItem(StorageType.KOMGA_CHAPTERS, 'Komga章节缓存');
-      }
-
-      const basePath = `${context.filesDir}/komga_cache/chapters`;
-      const dirInfo = await this.getDirectoryInfo(basePath);
-      return {
-        type: StorageType.KOMGA_CHAPTERS,
-        name: 'Komga章节缓存',
-        description: 'Komga章节页面缓存 (filesDir/komga_cache/chapters/)',
-        size: dirInfo.size,
-        fileCount: dirInfo.count,
-        path: basePath,
-        canClear: true,
-        lastModified: Date.now()
-      };
-    } catch (error) {
-      logger.error(TAG, `分析Komga章节缓存失败: ${error}`);
-      return this.createEmptyItem(StorageType.KOMGA_CHAPTERS, 'Komga章节缓存');
-    }
-  }
-
   /**
    * 分析Download漫画文件
    * 路径: /Download/com.dlzz.manxia/manga/
@@ -953,26 +895,6 @@ export class StorageAnalyzer {
           const chaptersResult = await this.clearDownloadDirectory(suwayomiChaptersPath);
           result.clearedSize = chaptersResult.clearedSize;
           result.clearedCount = chaptersResult.clearedCount;
-        }
-        break;
-
-      case StorageType.KOMGA_COVERS:
-        const context3 = uiContextManager.getAbilityContext();
-        if (context3) {
-          const komgaCoversPath = `${context3.filesDir}/komga_cache/covers`;
-          const komgaCoversResult = await this.clearDirectory(komgaCoversPath, options);
-          result.clearedSize = komgaCoversResult.clearedSize;
-          result.clearedCount = komgaCoversResult.clearedCount;
-        }
-        break;
-
-      case StorageType.KOMGA_CHAPTERS:
-        const context4 = uiContextManager.getAbilityContext();
-        if (context4) {
-          const komgaChaptersPath = `${context4.filesDir}/komga_cache/chapters`;
-          const komgaChaptersResult = await this.clearDirectory(komgaChaptersPath, options);
-          result.clearedSize = komgaChaptersResult.clearedSize;
-          result.clearedCount = komgaChaptersResult.clearedCount;
         }
         break;
 

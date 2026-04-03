@@ -47,7 +47,6 @@ interface FieldSelectorParseResult {
 
 const TAG = 'MangaSourceActionEngine';
 const ACTION_QUEUE_OWNER_KEY = '__actionQueueOwner';
-const SCRIPT_EXECUTION_TIMEOUT_MS = 8000;
 
 /**
  * 操作执行上下文
@@ -796,7 +795,7 @@ export class MangaSourceActionEngine {
     // 输出关键筛选变量
     logger.debug(TAG, `脚本变量: category=${context.variables['category']}, sort=${context.variables['sort']}, time=${context.variables['time']}, timeType=${context.variables['timeType']}, page=${context.variables['page']}`);
 
-    return await this.executeJavaScriptWithTimeout<string>(code, SCRIPT_EXECUTION_TIMEOUT_MS);
+    return await this.executeJavaScript<string>(code);
   }
 
   /**
@@ -979,7 +978,6 @@ export class MangaSourceActionEngine {
       const timerId: number = setTimeout(() => {
         if (!finished) {
           finished = true;
-          logger.warn(TAG, `JavaScript执行超时(${timeoutMs}ms)，可能是WebView未附加或页面上下文已切换: ${code.substring(0, 120)}`);
           reject(new MangaSourceError(
             MangaSourceErrorCode.TIMEOUT_ERROR,
             `JavaScript执行超时(${timeoutMs}ms)`
@@ -1002,19 +1000,13 @@ export class MangaSourceActionEngine {
             return;
           }
           try {
-            if (!result || result === 'undefined' || result === 'null') {
-              logger.debug(TAG, `JavaScript返回空值: ${result}`);
-              resolve('' as T);
-              return;
-            }
-            if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
+            if (result && (result.trim().startsWith('{') || result.trim().startsWith('['))) {
               const parsed = JSON.parse(result) as T;
               resolve(parsed);
             } else {
               resolve(result as T);
             }
           } catch (parseError) {
-            logger.warn(TAG, `JSON解析失败，返回原始字符串: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
             resolve(result as T);
           }
         });

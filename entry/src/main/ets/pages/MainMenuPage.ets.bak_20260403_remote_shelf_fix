@@ -71,7 +71,6 @@ import { SuwayomiReaderPage } from './SuwayomiReaderPage';
 import { KomgaMangaDetailPage } from './KomgaMangaDetailPage';
 import { KomgaReaderPage } from './KomgaReaderPage';
 import { MainMenuKomgaTabContent } from '../components/MainMenuKomgaTabContent';
-import { KomgaImage } from '../components/KomgaImage';
 import { ZLibraryReaderPage } from './ZLibraryReaderPage';
 import { DownloadManagerPage } from './DownloadManagerPage';
 import { AboutPage } from './AboutPage';
@@ -199,10 +198,7 @@ import { AppGuideFlowDefinition, AppGuideFlowId, AppGuideManager, AppGuidePageId
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Framework/Source/SuwayomiSourceExecutor';
 import { SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaSortOption, MANGA_SORT_OPTIONS } from '../Framework/Source/SuwayomiSource';
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
-import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
-import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Framework/Source/RemoteLibraryShelfManager';
-import { getKomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 import { TabContentCacheManager } from '../Framework/Cache/TabContentCacheManager';
 import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
 import { ComicInfo as SuwayomiComicInfo } from '../Framework/Source/SourceExecutor';
@@ -513,12 +509,6 @@ interface LibraryResolvedCoverAsset {
   fallbackSource: ResourceStr;
 }
 
-interface KomgaLibraryCoverInfo {
-  src: string;
-  cacheKey: string;
-  headers: Record<string, string>;
-}
-
 @Entry
 @Component
 struct MainMenuPage {
@@ -587,7 +577,6 @@ struct MainMenuPage {
   private dataService: DataService = DataService.getInstance();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
   private remoteLibraryBridge: RemoteLibraryMangaBridge = RemoteLibraryMangaBridge.getInstance();
-  private remoteLibraryShelfManager: RemoteLibraryShelfManager = getRemoteLibraryShelfManager();
   private isRefreshingRemoteLibrary: boolean = false;
   private pendingRemoteLibraryRefresh: boolean = false;
   @State recentCoverAspectInfos: CoverAspectInfo[] = [];
@@ -8300,6 +8289,7 @@ struct MainMenuPage {
 
       const mangaIds = Array.from(this.selectedMangaIds);
       const localMangaIds: string[] = [];
+      let komgaBlockedCount = 0;
       for (let index = 0; index < mangaIds.length; index++) {
         const mangaId = mangaIds[index];
         let manga = this.findLibraryMangaById(mangaId);
@@ -8308,19 +8298,18 @@ struct MainMenuPage {
         }
 
         if (manga !== null && this.isRemoteProviderManga(manga)) {
-          try {
-            await this.removeRemoteProviderMangaFromLocalShelf(manga);
-            successCount++;
-          } catch (error) {
+          if (manga.sourceInfo?.providerType === 'komga') {
             failedCount++;
-            logger.error(TAG, `从本地书架移除远程漫画失败: ${manga.id}, ${String(error)}`);
+            komgaBlockedCount++;
+            continue;
           }
-          continue;
-        }
 
-        if (manga === null && mangaId.startsWith('provider:')) {
-          failedCount++;
-          logger.warn(TAG, `批量删除时未找到远程漫画缓存: ${mangaId}`);
+          const removed = await this.remoteLibraryBridge.removeFromLibrary(manga);
+          if (removed) {
+            successCount++;
+          } else {
+            failedCount++;
+          }
           continue;
         }
 
@@ -8354,6 +8343,9 @@ struct MainMenuPage {
       }
 
       logger.info(TAG, `书库混合批量删除完成: 成功=${successCount}, 失败=${failedCount}`);
+      if (komgaBlockedCount > 0) {
+        this.showToast(`Komga 内容需在服务器侧管理，已跳过 ${komgaBlockedCount} 项`);
+      }
       if (failedCount > 0) {
         this.showToast(`删除完成，成功${successCount}项，失败${failedCount}项`);
       } else {
@@ -8390,6 +8382,7 @@ struct MainMenuPage {
       const localMangaIds: string[] = [];
       let successCount = 0;
       let failedCount = 0;
+      let komgaBlockedCount = 0;
       for (let index = 0; index < mangaIds.length; index++) {
         const mangaId = mangaIds[index];
         let manga = this.findLibraryMangaById(mangaId);
@@ -8398,19 +8391,18 @@ struct MainMenuPage {
         }
 
         if (manga !== null && this.isRemoteProviderManga(manga)) {
-          try {
-            await this.removeRemoteProviderMangaFromLocalShelf(manga);
-            successCount++;
-          } catch (error) {
+          if (manga.sourceInfo?.providerType === 'komga') {
             failedCount++;
-            logger.error(TAG, `批量从本地书架移除远程漫画失败: ${manga.id}, ${String(error)}`);
+            komgaBlockedCount++;
+            continue;
           }
-          continue;
-        }
 
-        if (manga === null && mangaId.startsWith('provider:')) {
-          failedCount++;
-          logger.warn(TAG, `批量删除时未找到远程漫画缓存: ${mangaId}`);
+          const removed = await this.remoteLibraryBridge.removeFromLibrary(manga);
+          if (removed) {
+            successCount++;
+          } else {
+            failedCount++;
+          }
           continue;
         }
 
@@ -8423,7 +8415,11 @@ struct MainMenuPage {
         failedCount += result.failedCount;
       }
 
-      logger.info(TAG, `批量删除完成: 成功=${successCount}, 失败=${failedCount}`);
+      logger.info(TAG, `批量删除完成: 成功=${successCount}, 失败=${failedCount}, blocked=${komgaBlockedCount}`);
+
+      if (komgaBlockedCount > 0) {
+        this.showToast(`Komga 内容需在服务器侧管理，已跳过 ${komgaBlockedCount} 项`);
+      }
 
       if (failedCount > 0) {
         this.showToast(`删除完成，成功${successCount}个，失败${failedCount}个`);
@@ -8888,10 +8884,10 @@ struct MainMenuPage {
    * 规范化封面显示路径：本地文件统一补充 file:// 前缀，便于 Image 组件正确解析
    */
   private normalizeDisplayPathForManga(mg: Manga): string {
-    const raw = this.getPreferredMangaCoverPath(mg);
-    if (!raw) {
+    if (!mg || !mg.coverImagePath) {
       return '';
     }
+    const raw: string = mg.coverImagePath;
 
     // [修复] 检查是否为资源引用字符串（如 'app.media.mangabook'），这种情况返回空字符串让调用方使用 $r() 资源引用
     if (raw.indexOf('app.media.') === 0 || raw.indexOf('$r(') === 0) {
@@ -8899,63 +8895,14 @@ struct MainMenuPage {
       return '';
     }
 
-    if (!this.isNetworkUrl(raw)) {
-      const normalizedLocalPath = LibraryCoverManager.normalizeLocalPath(raw);
-      const hasScheme: boolean = normalizedLocalPath.indexOf('file://') === 0;
-      const normalized: string = hasScheme ? normalizedLocalPath : 'file://' + normalizedLocalPath;
-      logger.debug('MainMenuPage', `封面路径规范化: raw='${raw}', display='${normalized}', source=local`);
+    const type: ImageSourceType = mg.coverSourceType !== undefined ? mg.coverSourceType as ImageSourceType : ImageSourceType.LOCAL;
+    if (type === ImageSourceType.LOCAL) {
+      const hasScheme: boolean = raw.indexOf('file://') === 0;
+      const normalized: string = hasScheme ? raw : 'file://' + raw;
+      logger.debug('MainMenuPage', `封面路径规范化: raw='${raw}', display='${normalized}', source=${type}`);
       return normalized;
     }
     return raw;
-  }
-
-  private getPreferredMangaCoverPath(manga: Manga): string {
-    if (!manga || !manga.coverImagePath) {
-      return '';
-    }
-
-    const rawCoverPath = String(manga.coverImagePath || '').trim();
-    if (rawCoverPath.length <= 0) {
-      return '';
-    }
-
-    if (!this.isNetworkUrl(rawCoverPath)) {
-      return rawCoverPath;
-    }
-
-    const providerCachedCoverPath = this.getRemoteProviderCachedCoverPath(manga, rawCoverPath);
-    return providerCachedCoverPath.length > 0 ? providerCachedCoverPath : rawCoverPath;
-  }
-
-  private getRemoteProviderCachedCoverPath(manga: Manga, coverUrl: string): string {
-    if (!manga || !this.isNetworkUrl(coverUrl)) {
-      return '';
-    }
-
-    const parsedMangaId = RemoteLibraryMangaBridge.parseProviderMangaId(manga.id);
-    const providerType = manga.sourceInfo?.providerType || parsedMangaId?.providerType;
-    if (providerType === 'suwayomi') {
-      const rawMangaId = manga.sourceInfo?.providerItemId || parsedMangaId?.rawMangaId || '';
-      if (rawMangaId.length <= 0) {
-        return '';
-      }
-      const cachedCoverPath = SuwayomiCacheManager.getCachedCoverPath(rawMangaId, coverUrl);
-      return cachedCoverPath ? cachedCoverPath : '';
-    }
-
-    if (providerType === 'komga') {
-      const rawMangaId = manga.sourceInfo?.providerItemId || parsedMangaId?.rawMangaId || '';
-      const instanceId = manga.sourceInfo?.providerInstanceId || parsedMangaId?.instanceId || '';
-      const contentType = manga.sourceInfo?.providerContentType || parsedMangaId?.contentType || 'SERIES';
-      if (rawMangaId.length <= 0 || instanceId.length <= 0) {
-        return '';
-      }
-      const cacheKey = `${instanceId}_${contentType}_${rawMangaId}`;
-      const cachedCoverPath = KomgaCacheManager.getCachedCoverPath(cacheKey, coverUrl);
-      return cachedCoverPath ? cachedCoverPath : '';
-    }
-
-    return '';
   }
 
   private buildLibraryResolvedCoverAsset(
@@ -9041,25 +8988,13 @@ struct MainMenuPage {
         };
       }
       this.ensureLocalLibraryCoverPrepared(normalizedLocalPath);
-      if (this.hasAccessibleLocalLibraryCover(normalizedLocalPath)) {
-        return {
-          source: displayPath,
-          rawPath: normalizedLocalPath,
-          displayPath: displayPath,
-          isNetwork: false,
-          useAvifRenderer: false,
-          hasRealCover: true,
-          fallbackSource: fallbackSource
-        };
-      }
-      logger.debug(TAG, `[封面修复] 本地封面等待 PixelMap 预解码: path='${normalizedLocalPath}'`);
       return {
-        source: fallbackSource,
+        source: displayPath,
         rawPath: normalizedLocalPath,
         displayPath: displayPath,
         isNetwork: false,
         useAvifRenderer: false,
-        hasRealCover: false,
+        hasRealCover: true,
         fallbackSource: fallbackSource
       };
     }
@@ -9089,7 +9024,7 @@ struct MainMenuPage {
   }
 
   private resolveMangaCoverAsset(manga: Manga): LibraryResolvedCoverAsset {
-    const raw = this.getPreferredMangaCoverPath(manga);
+    const raw = manga?.coverImagePath || '';
     const cachedNetworkPixelMap = this.isNetworkUrl(raw)
       ? getCoverImageManager().getCachedPixelMap(raw)
       : null;
@@ -11157,9 +11092,7 @@ struct MainMenuPage {
         // 封面图片
         Stack() {
           Column() {
-            if (this.isKomgaRemoteProviderManga(manga)) {
-              this.buildKomgaLibraryCoverImage(manga)
-            } else if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+            if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
               AvifImage({
                 src: manga.coverImagePath,
                 imageWidth: '100%',
@@ -12407,7 +12340,7 @@ struct MainMenuPage {
                   .zIndex(index === 0 ? 10 : 5)
                 }
               } else {
-                Image(this.getPreparedLocalPreviewCoverSource(coverPath, $r('app.media.mangabook')))
+                Image(coverPath)
                   .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
                   .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                   .objectFit(ImageFit.Cover)
@@ -13174,7 +13107,7 @@ struct MainMenuPage {
                   .zIndex(index === 0 ? 10 : 5)
                 }
               } else {
-                Image(this.getPreparedLocalPreviewCoverSource(coverPath, $r('app.media.mangabook')))
+                Image(coverPath)
                   .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
                   .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                   .objectFit(ImageFit.Cover)
@@ -13300,7 +13233,7 @@ struct MainMenuPage {
                 .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                 .zIndex(index === 0 ? 10 : 5)
               } else {
-                Image(this.getPreparedLocalPreviewCoverSource(this.normalizeCoverPath(coverPath), $r('app.media.mangabook')))
+                Image(this.normalizeCoverPath(coverPath))
                   .width(index === 0 ? 40 : 30)
                   .height(index === 0 ? 56 : 42)
                   .objectFit(ImageFit.Cover)
@@ -13444,11 +13377,6 @@ struct MainMenuPage {
     return normalized;
   }
 
-  private getPreparedLocalPreviewCoverSource(coverPath: string, fallbackSource: ResourceStr): ResourceStr | image.PixelMap | string {
-    const asset = this.buildLibraryResolvedCoverAsset(coverPath, fallbackSource);
-    return asset.hasRealCover ? asset.source : fallbackSource;
-  }
-
   /**
    * 标准化小说封面路径（别名方法）
    */
@@ -13575,118 +13503,6 @@ struct MainMenuPage {
 
   private isRemoteProviderManga(manga: Manga): boolean {
     return this.remoteLibraryBridge.isRemoteProviderManga(manga);
-  }
-
-  private isKomgaRemoteProviderManga(manga: Manga): boolean {
-    if (!this.isRemoteProviderManga(manga)) {
-      return false;
-    }
-    const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(manga.id);
-    const providerType = manga.sourceInfo?.providerType || parsed?.providerType;
-    return providerType === 'komga';
-  }
-
-  private normalizeKomgaLibraryContentType(contentType: string | undefined): 'SERIES' | 'READLISTS' | 'BOOKS' {
-    if (contentType === 'READLISTS' || contentType === 'BOOKS') {
-      return contentType;
-    }
-    return 'SERIES';
-  }
-
-  private buildKomgaLibraryRemoteCoverUrl(
-    manga: Manga,
-    instanceId: string,
-    contentType: 'SERIES' | 'READLISTS' | 'BOOKS',
-    rawMangaId: string
-  ): string {
-    if (instanceId.length <= 0 || rawMangaId.length <= 0) {
-      return '';
-    }
-
-    let serverUrl: string = '';
-    try {
-      serverUrl = String(getKomgaSourceExecutor().getServerUrl(instanceId) || '').trim();
-    } catch (_error) {
-      serverUrl = '';
-    }
-
-    if (serverUrl.length <= 0) {
-      const sourceUrl = String(manga.sourceInfo?.sourceUrl || '').trim();
-      if (sourceUrl.length > 0) {
-        const apiPathIndex = sourceUrl.indexOf('/api/v1/');
-        serverUrl = apiPathIndex > 0 ? sourceUrl.substring(0, apiPathIndex) : sourceUrl;
-      }
-    }
-
-    if (serverUrl.length <= 0) {
-      return '';
-    }
-
-    const normalizedServerUrl = serverUrl.endsWith('/')
-      ? serverUrl.substring(0, serverUrl.length - 1)
-      : serverUrl;
-    if (contentType === 'READLISTS') {
-      return `${normalizedServerUrl}/api/v1/readlists/${rawMangaId}/thumbnail`;
-    }
-    if (contentType === 'BOOKS') {
-      return `${normalizedServerUrl}/api/v1/books/${rawMangaId}/thumbnail`;
-    }
-    return `${normalizedServerUrl}/api/v1/series/${rawMangaId}/thumbnail`;
-  }
-
-  private getKomgaLibraryCoverInfo(manga: Manga): KomgaLibraryCoverInfo | null {
-    if (!this.isKomgaRemoteProviderManga(manga)) {
-      return null;
-    }
-
-    const parsed = RemoteLibraryMangaBridge.parseProviderMangaId(manga.id);
-    const rawMangaId = manga.sourceInfo?.providerItemId || parsed?.rawMangaId || '';
-    const instanceId = manga.sourceInfo?.providerInstanceId || parsed?.instanceId || '';
-    const contentType = this.normalizeKomgaLibraryContentType(
-      manga.sourceInfo?.providerContentType || parsed?.contentType
-    );
-    const remoteCoverUrl = this.buildKomgaLibraryRemoteCoverUrl(manga, instanceId, contentType, rawMangaId);
-    const rawCoverPath = String(manga.coverImagePath || '').trim();
-    const src = remoteCoverUrl.length > 0
-      ? remoteCoverUrl
-      : (this.isNetworkUrl(rawCoverPath) ? rawCoverPath : '');
-    if (src.length <= 0 || rawMangaId.length <= 0 || instanceId.length <= 0) {
-      return null;
-    }
-
-    let headers: Record<string, string> = {};
-    try {
-      headers = getKomgaSourceExecutor().getImageHeaders(instanceId);
-    } catch (_error) {
-      headers = {};
-    }
-
-    return {
-      src: src,
-      cacheKey: `${instanceId}_${contentType}_${rawMangaId}`,
-      headers: headers
-    };
-  }
-
-  @Builder
-  private buildKomgaLibraryCoverImage(manga: Manga, imgBorderRadius: Length = 0) {
-    if (this.getKomgaLibraryCoverInfo(manga) !== null) {
-      KomgaImage({
-        src: this.getKomgaLibraryCoverInfo(manga)?.src || '',
-        imageWidth: '100%',
-        imageHeight: '100%',
-        objectFit: ImageFit.Cover,
-        imgBorderRadius: imgBorderRadius,
-        requestHeaders: this.getKomgaLibraryCoverInfo(manga)?.headers || {},
-        cacheKey: this.getKomgaLibraryCoverInfo(manga)?.cacheKey || ''
-      })
-    } else {
-      Image($r('app.media.mangabook'))
-        .width('100%')
-        .height('100%')
-        .objectFit(ImageFit.Cover)
-        .borderRadius(imgBorderRadius)
-    }
   }
 
   private findLibraryMangaById(mangaId: string): Manga | null {
@@ -17156,13 +16972,10 @@ struct MainMenuPage {
     selected: boolean,
     showSelection: boolean,
     badgeText: string = '',
-    badgeBackgroundColor: ResourceColor = Color.Transparent,
-    manga?: Manga
+    badgeBackgroundColor: ResourceColor = Color.Transparent
   ) {
     Stack() {
-      if (manga !== undefined && this.isKomgaRemoteProviderManga(manga)) {
-        this.buildKomgaLibraryCoverImage(manga, this.getCoverImageRadius())
-      } else if (asset.useAvifRenderer && asset.displayPath.length > 0) {
+      if (asset.useAvifRenderer && asset.displayPath.length > 0) {
         AvifImage({
           src: asset.displayPath,
           imageWidth: '100%',
@@ -17250,10 +17063,7 @@ struct MainMenuPage {
         this.buildLibraryDirectCoverSurface(
           this.resolveMangaCoverAsset(manga),
           this.selectedMangaIds.has(manga.id),
-          this.isMultiSelectMode,
-          '',
-          Color.Transparent,
-          manga
+          this.isMultiSelectMode
         )
       }
       .width('100%')
@@ -17607,20 +17417,7 @@ struct MainMenuPage {
       Column({ space: 8 }) {
       // 封面图片
       Stack() {
-        if (this.isKomgaRemoteProviderManga(manga)) {
-          Column() {
-            this.buildKomgaLibraryCoverImage(manga, this.getCoverImageRadius())
-          }
-          .width('100%')
-          .aspectRatio(0.7)
-          .backgroundColor(this.getLibraryCoverBackgroundColor('background_secondary'))
-          .shadow({
-            radius: 8,
-            color: AppColors.getShadowColor(4),
-            offsetY: 4
-          })
-          .id(`library_manga_${manga.id}`)
-        } else if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+        if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
           AvifImage({
             src: manga.coverImagePath,
             imageWidth: '100%',
@@ -19411,29 +19208,6 @@ struct MainMenuPage {
     this.swipeOffset = 0;
   }
 
-  private getLibraryFilesDir(): string {
-    const uiContext = this.getUIContext();
-    if (uiContext === undefined || uiContext === null) {
-      return '';
-    }
-
-    const hostContext = uiContext.getHostContext() as common.UIAbilityContext;
-    if (hostContext === undefined || hostContext === null) {
-      return '';
-    }
-
-    return typeof hostContext.filesDir === 'string' ? String(hostContext.filesDir) : '';
-  }
-
-  private async removeRemoteProviderMangaFromLocalShelf(manga: Manga): Promise<void> {
-    const filesDir = this.getLibraryFilesDir();
-    if (filesDir.length <= 0) {
-      throw new Error('无法获取本地书架目录');
-    }
-
-    await this.remoteLibraryShelfManager.removeFromLocalLibrary(manga, filesDir);
-  }
-
   private getItemSwipeOffset(mangaId: string): number {
     return (this.activeSwipeId === mangaId && this.isSwipeActive) ? this.swipeOffset : 0;
   }
@@ -19463,9 +19237,15 @@ struct MainMenuPage {
     }
 
     if (this.isRemoteProviderManga(manga)) {
+      if (manga.sourceInfo?.providerType === 'komga') {
+        this.showToast('Komga 内容需在服务器侧管理，当前不支持从主书库删除');
+        this.resetSwipeState();
+        return;
+      }
+
       this.getUIContext().showAlertDialog({
-        title: '从本地书架移除',
-        message: `确定要将《${manga.title}》从本地书架移除吗？`,
+        title: '移除远程漫画',
+        message: `确定要将《${manga.title}》从 Suwayomi 书库移除吗？`,
         autoCancel: true,
         alignment: DialogAlignment.Center,
         primaryButton: {
@@ -19479,12 +19259,18 @@ struct MainMenuPage {
           fontColor: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme),
           action: async () => {
             try {
-              await this.removeRemoteProviderMangaFromLocalShelf(manga);
+              const removed = await this.remoteLibraryBridge.removeFromLibrary(manga);
+              if (!removed) {
+                this.showToast('移除失败');
+                this.resetSwipeState();
+                return;
+              }
+
               await this.silentRefreshLibrary(true);
-              this.showToast('已从本地书架移除');
+              this.showToast('已从远程书库移除');
               this.resetSwipeState();
             } catch (error) {
-              logger.error(TAG, '从本地书架移除远程漫画失败', String(error));
+              logger.error(TAG, '移除远程漫画失败', String(error));
               this.showToast('移除失败');
               this.resetSwipeState();
             }
@@ -23772,6 +23558,8 @@ struct MainMenuPage {
    * 获取漫画封面URL
    */
   private getSuwayomiCoverUrl(manga: SuwayomiComicInfo): string {
+    const cachedPath = this.suwayomiCoverCachePaths.get(manga.id);
+    if (cachedPath) return `file://${cachedPath}`;
     return manga.coverUrl || '';
   }
 

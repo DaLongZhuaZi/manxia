@@ -5,8 +5,10 @@ import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { TabContentCacheManager, KomgaCacheData } from '../Framework/Cache/TabContentCacheManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
+
 import { getKomgaSourceExecutor, KomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 import {
   KomgaAuthorOption,
@@ -34,6 +36,7 @@ const PAGE_BOTTOM_SPACER: number = 32;
 interface KomgaDetailParams {
   itemId: string;
   contentType: KomgaContentType;
+  instanceId: string;
   title: string;
 }
 
@@ -75,8 +78,10 @@ export struct KomgaBrowsePage {
   @State errorMessage: string = '';
 
   private executor: KomgaSourceExecutor = getKomgaSourceExecutor();
+  private cacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
   private componentId: string = 'KomgaBrowsePage';
   private readonly prefsName: string = 'komga_browse_prefs';
+  private initialized: boolean = false;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (_newTheme: ThemeType) => {
@@ -84,7 +89,7 @@ export struct KomgaBrowsePage {
     FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
       this.fontState = newState;
     });
-    void this.initializePage();
+    void this.prepare();
   }
 
   aboutToDisappear(): void {
@@ -117,21 +122,48 @@ export struct KomgaBrowsePage {
     return context;
   }
 
+  private async prepare(): Promise<void> {
+    try {
+      await this.cacheManager.initialize();
+      if (!this.initialized) {
+        await this.loadPreferences();
+        this.restoreFromCache();
+        this.initialized = true;
+        await this.initializePage();
+        return;
+      }
+      if (this.items.length > 0) {
+        void this.cacheCovers();
+      }
+      if (!this.executor.isConfigured() || this.currentInstanceId.length <= 0) {
+        await this.initializePage();
+      }
+    } catch (error) {
+      logger.error(TAG, `准备 Komga 浏览页失败: ${String(error)}`);
+      this.errorMessage = `加载失败：${String(error)}`;
+      this.isLoading = false;
+    }
+  }
+
   private async initializePage(): Promise<void> {
-    await this.loadPreferences();
-    await this.executor.initialize(true);
+    this.errorMessage = '';
+    await this.executor.initialize();
     this.instances = this.executor.getInstances();
-    this.currentInstanceId = this.executor.getCurrentInstance()?.id || '';
+    const currentInstance = this.executor.getCurrentInstance();
+    this.currentInstanceId = currentInstance?.id || (this.instances.length > 0 ? this.instances[0].id : '');
     if (!this.executor.isConfigured()) {
       this.items = [];
       this.hasMore = false;
+      this.currentPage = 1;
       this.errorMessage = '';
       this.isLoading = false;
+      this.saveToCache();
       return;
     }
     await this.loadFilterOptions(false);
-    await this.loadItems(true);
+    await this.loadItems(true, this.items.length > 0);
   }
+
 
   private async loadPreferences(): Promise<void> {
     try {
@@ -179,6 +211,52 @@ export struct KomgaBrowsePage {
     }
   }
 
+  private restoreFromCache(): void {
+    if (!this.cacheManager.hasKomgaCache()) {
+      return;
+    }
+    const cache = this.cacheManager.getKomgaCache();
+    if (cache === null) {
+      return;
+    }
+    this.items = cache.items;
+    this.instances = cache.instances.concat();
+    this.currentInstanceId = cache.currentInstanceId;
+    this.browseMode = cache.browseMode;
+    this.contentType = cache.contentType;
+    this.feedType = cache.feedType;
+    this.displayMode = cache.displayMode;
+    this.searchQuery = cache.searchQuery;
+    this.filters = this.copyFilters(cache.filters);
+    this.filterOptions = cache.filterOptions;
+    this.showFilters = cache.showFilters;
+    this.hasMore = cache.hasMore;
+    this.currentPage = cache.currentPage > 0 ? cache.currentPage : 1;
+    this.errorMessage = cache.errorMessage;
+    logger.info(TAG, `已恢复 Komga 浏览缓存: ${this.items.length} 项内容, ${this.instances.length} 个实例`);
+  }
+
+  private saveToCache(): void {
+    const cacheData: KomgaCacheData = {
+      items: this.items,
+      instances: this.instances,
+      currentInstanceId: this.currentInstanceId,
+      browseMode: this.browseMode,
+      contentType: this.contentType,
+      feedType: this.feedType,
+      displayMode: this.displayMode,
+      searchQuery: this.searchQuery,
+      filters: this.copyFilters(this.filters),
+      filterOptions: this.filterOptions,
+      showFilters: this.showFilters,
+      hasMore: this.hasMore,
+      currentPage: this.currentPage,
+      errorMessage: this.errorMessage,
+      timestamp: Date.now()
+    };
+    void this.cacheManager.saveKomgaCache(cacheData);
+  }
+
   private async loadFilterOptions(forceRefresh: boolean): Promise<void> {
     try {
       this.filterOptions = await this.executor.getFilterOptions(forceRefresh);
@@ -198,14 +276,19 @@ export struct KomgaBrowsePage {
     return this.copyFilters(this.filters);
   }
 
-  private async loadItems(reset: boolean): Promise<void> {
+  private async loadItems(reset: boolean, preserveExisting: boolean = false): Promise<void> {
     if (!this.executor.isConfigured()) {
       this.isLoading = false;
+      this.isLoadingMore = false;
       return;
     }
     if (reset) {
-      this.isLoading = true;
-      this.currentPage = 1;
+      this.currentPage = 0;
+      if (!preserveExisting) {
+        this.items = [];
+      }
+      this.isLoading = !preserveExisting;
+      this.isLoadingMore = false;
     } else {
       if (!this.hasMore || this.isLoadingMore) {
         return;
@@ -224,18 +307,22 @@ export struct KomgaBrowsePage {
         query: this.searchQuery.trim(),
         filters: this.buildEffectiveFilters()
       };
+      logger.info(TAG, `加载 Komga 浏览内容: reset=${reset}, preserveExisting=${preserveExisting}, page=${page}, instance=${browseRequest.instanceId || '-'}, mode=${browseRequest.browseMode}, type=${browseRequest.contentType}, feed=${browseRequest.feedType}, query="${browseRequest.query}"`);
       const result = await this.executor.browse(browseRequest);
       this.items = reset ? result.items : this.items.concat(result.items);
+      logger.info(TAG, `Komga 浏览内容加载完成: page=${page}, received=${result.items.length}, totalItems=${this.items.length}, hasMore=${result.hasMore}`);
       this.currentPage = page;
       this.hasMore = result.hasMore;
       this.errorMessage = '';
       void this.cacheCovers();
+      this.saveToCache();
     } catch (error) {
       logger.error(TAG, `加载 Komga 列表失败: ${String(error)}`);
       this.errorMessage = `加载失败：${String(error)}`;
-      if (reset) {
+      if (!preserveExisting) {
         this.items = [];
       }
+      this.saveToCache();
     } finally {
       this.isLoading = false;
       this.isLoadingMore = false;
@@ -251,15 +338,17 @@ export struct KomgaBrowsePage {
     try {
       await this.executor.initialize(true);
       this.instances = this.executor.getInstances();
-      this.currentInstanceId = this.executor.getCurrentInstance()?.id || '';
+      this.currentInstanceId = this.executor.getCurrentInstance()?.id || this.currentInstanceId;
       if (!this.executor.isConfigured()) {
         this.items = [];
         this.hasMore = false;
+        this.currentPage = 1;
         this.errorMessage = '';
+        this.saveToCache();
         return;
       }
       await this.loadFilterOptions(true);
-      await this.loadItems(true);
+      await this.loadItems(true, this.items.length > 0);
     } finally {
       this.isRefreshing = false;
     }
@@ -454,41 +543,58 @@ export struct KomgaBrowsePage {
   }
 
   private getItemCacheKey(item: ComicInfo): string {
-    return `${this.currentInstanceId}_${this.getItemContentType(item)}_${item.id}`;
+    const instanceId = item.instanceId !== undefined && item.instanceId.length > 0 ? item.instanceId : this.currentInstanceId;
+    return `${instanceId}_${this.getItemContentType(item)}_${item.id}`;
   }
 
   private async cacheCovers(): Promise<void> {
-    const headers = this.executor.getImageHeaders();
+    let cacheHitCount: number = 0;
+    let scheduledCount: number = 0;
+    let skippedCount: number = 0;
     for (const item of this.items) {
       if (!item.coverUrl) {
+        skippedCount++;
         continue;
       }
       const cacheKey: string = this.getItemCacheKey(item);
       if (this.coverCachePaths.has(cacheKey)) {
+        skippedCount++;
         continue;
       }
       const cachedPath: string | null = KomgaCacheManager.getCachedCoverPath(cacheKey, item.coverUrl);
       if (cachedPath) {
         this.setCoverCachePath(cacheKey, cachedPath);
+        cacheHitCount++;
         continue;
       }
+      const headers = this.executor.getImageHeaders(item.instanceId);
+      scheduledCount++;
+      logger.debug(TAG, `Komga 浏览封面缓存未命中，开始预缓存: cacheKey=${cacheKey}, title=${item.title}`);
       KomgaCacheManager.cacheCover(cacheKey, item.coverUrl, headers).then((path: string | null) => {
         if (path) {
           this.setCoverCachePath(cacheKey, path);
+          logger.debug(TAG, `Komga 浏览封面预缓存完成: cacheKey=${cacheKey}, title=${item.title}`);
         }
       }).catch((_error: Object | string | number | boolean) => {
+        logger.warn(TAG, `Komga 浏览封面预缓存失败: cacheKey=${cacheKey}, title=${item.title}`);
       });
     }
+    logger.info(TAG, `Komga 浏览封面缓存检查完成: items=${this.items.length}, cacheHit=${cacheHitCount}, scheduled=${scheduledCount}, skipped=${skippedCount}`);
   }
 
   private getCoverUrl(item: ComicInfo): string {
-    const cachedPath: string | undefined = this.coverCachePaths.get(this.getItemCacheKey(item));
-    return cachedPath ? `file://${cachedPath}` : (item.coverUrl || '');
+    return item.coverUrl || '';
   }
 
   private openDetail(item: ComicInfo): void {
     const contentType: KomgaContentType = this.getItemContentType(item);
-    const params: KomgaDetailParams = { itemId: item.id, contentType: contentType, title: item.title };
+    const params: KomgaDetailParams = {
+      itemId: item.id,
+      contentType: contentType,
+      instanceId: item.instanceId !== undefined && item.instanceId.length > 0 ? item.instanceId : this.currentInstanceId,
+      title: item.title
+    };
+    logger.info(TAG, `打开 Komga 浏览详情: itemId=${item.id}, title=${item.title}, contentType=${params.contentType}, instanceId=${params.instanceId}`);
     this.pathStack.pushPathByName('KomgaMangaDetailPage', params);
   }
 
@@ -676,7 +782,15 @@ export struct KomgaBrowsePage {
   private buildGridItem(item: ComicInfo) {
     Column({ space: 10 }) {
       Stack({ alignContent: Alignment.TopEnd }) {
-        KomgaImage({ src: this.getCoverUrl(item), imageWidth: '100%', imageHeight: 190, objectFit: ImageFit.Cover, imgBorderRadius: 14 })
+        KomgaImage({
+          src: this.getCoverUrl(item),
+          imageWidth: '100%',
+          imageHeight: 190,
+          objectFit: ImageFit.Cover,
+          imgBorderRadius: 14,
+          requestHeaders: this.executor.getImageHeaders(item.instanceId),
+          cacheKey: this.getItemCacheKey(item)
+        })
         Text(this.getItemTypeLabel(item))
           .fontSize(11)
           .fontColor(Color.White)
@@ -713,7 +827,15 @@ export struct KomgaBrowsePage {
   @Builder
   private buildListItem(item: ComicInfo) {
     Row({ space: 12 }) {
-      KomgaImage({ src: this.getCoverUrl(item), imageWidth: 92, imageHeight: 132, objectFit: ImageFit.Cover, imgBorderRadius: 14 })
+      KomgaImage({
+        src: this.getCoverUrl(item),
+        imageWidth: 92,
+        imageHeight: 132,
+        objectFit: ImageFit.Cover,
+        imgBorderRadius: 14,
+        requestHeaders: this.executor.getImageHeaders(item.instanceId),
+        cacheKey: this.getItemCacheKey(item)
+      })
       Column({ space: 8 }) {
         Text(item.title)
           .fontSize(15)

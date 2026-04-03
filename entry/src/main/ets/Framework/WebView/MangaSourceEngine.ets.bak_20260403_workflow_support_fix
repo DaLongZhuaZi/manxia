@@ -23,6 +23,8 @@ import {
   MangaSourceError,
   MangaSourceErrorCode,
   AntiCrawlerConfig,
+  Workflow,
+  WorkflowType,
   TaskDefinition,
   TaskResult,
   DirectSearchResult,
@@ -900,118 +902,6 @@ export class MangaSourceEngine {
     }
 
     return [];
-  }
-
-  /**
-   * 解析脚本返回的数据，兼容普通 JSON 与双重字符串化 JSON
-   */
-  private parseStructuredScriptResult(scriptData: string): string | Object | undefined {
-    const trimmedData = scriptData.trim();
-    if (!trimmedData) {
-      logger.debug(TAG, 'script返回空字符串，跳过JSON解析');
-      return undefined;
-    }
-
-    const looksLikeJsonObject = trimmedData.startsWith('{') && trimmedData.endsWith('}');
-    const looksLikeJsonArray = trimmedData.startsWith('[') && trimmedData.endsWith(']');
-    const looksLikeJsonString = trimmedData.startsWith('"') && trimmedData.endsWith('"');
-    if (!looksLikeJsonObject && !looksLikeJsonArray && !looksLikeJsonString) {
-      logger.debug(TAG, `script返回原始字符串，跳过JSON解析: ${trimmedData.substring(0, 120)}`);
-      return trimmedData;
-    }
-
-    try {
-      let parsedResult: string | Object = JSON.parse(trimmedData) as string | Object;
-      logger.debug(TAG, `第一次JSON解析完成，类型: ${typeof parsedResult}`);
-
-      if (typeof parsedResult === 'string') {
-        const nestedData = parsedResult.trim();
-        const nestedLooksLikeJsonObject = nestedData.startsWith('{') && nestedData.endsWith('}');
-        const nestedLooksLikeJsonArray = nestedData.startsWith('[') && nestedData.endsWith(']');
-        if (nestedLooksLikeJsonObject || nestedLooksLikeJsonArray) {
-          logger.debug(TAG, '检测到双重字符串化，进行第二次解析');
-          parsedResult = JSON.parse(parsedResult) as Object;
-          logger.debug(TAG, `第二次JSON解析完成，类型: ${typeof parsedResult}`);
-        }
-      }
-
-      return parsedResult;
-    } catch (e) {
-      logger.error(TAG, `script返回数据JSON解析失败: ${e}`);
-      return undefined;
-    }
-  }
-
-  /**
-   * 判断脚本结果是否为漫画详情对象
-   */
-  private isMangaDetailPayload(data: Object): boolean {
-    if (Array.isArray(data) || typeof data !== 'object') {
-      return false;
-    }
-
-    const item = data as Record<string, Object>;
-    const itemKeys = Object.keys(item);
-    const detailKeys: string[] = [
-      'id',
-      'title',
-      'url',
-      'cover',
-      'author',
-      'description',
-      'status',
-      'genre',
-      'genres',
-      'updated'
-    ];
-
-    for (let i = 0; i < detailKeys.length; i++) {
-      if (itemKeys.includes(detailKeys[i])) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * 从脚本结果中提取漫画详情
-   */
-  private extractMangaDetailFromScriptResult(scriptResult: string | Object): MangaInfo | undefined {
-    let parsedResult: string | Object | undefined = scriptResult;
-    if (typeof scriptResult === 'string') {
-      parsedResult = this.parseStructuredScriptResult(scriptResult);
-    }
-
-    if (!parsedResult || typeof parsedResult === 'string') {
-      return undefined;
-    }
-
-    if (!this.isMangaDetailPayload(parsedResult)) {
-      logger.debug(TAG, 'script返回数据不是漫画详情对象，跳过详情转换');
-      return undefined;
-    }
-
-    logger.debug(TAG, `script返回数据已解析: ${JSON.stringify(parsedResult).substring(0, 200)}`);
-    return this.transformToMangaInfo(parsedResult);
-  }
-
-  /**
-   * 从脚本结果中提取章节列表
-   */
-  private extractChapterListFromScriptResult(scriptResult: string | Object): ChapterInfo[] {
-    let parsedResult: string | Object | undefined = scriptResult;
-    if (typeof scriptResult === 'string') {
-      parsedResult = this.parseStructuredScriptResult(scriptResult);
-    }
-
-    if (!parsedResult || typeof parsedResult === 'string' || !Array.isArray(parsedResult)) {
-      return [];
-    }
-
-    return (parsedResult as Array<Record<string, Object>>).map((item: Record<string, Object>) =>
-      this.transformToChapterInfo(item)
-    );
   }
 
   /**
@@ -2316,16 +2206,27 @@ export class MangaSourceEngine {
           );
         }
 
-        if ((action.type === 'extract' || action.type === 'api') && result.data) {
-          const dataObj = result.data as Record<string, Object>;
-          mangaDetail = this.transformToMangaInfo(dataObj);
-        }
-
-        if (action.type === 'script' && result.data) {
-          const detailFromScript = this.extractMangaDetailFromScriptResult(result.data as string | Object);
-          if (detailFromScript) {
-            mangaDetail = detailFromScript;
+        if ((action.type === 'extract' || action.type === 'api' || action.type === 'script') && result.data) {
+          // script操作返回的是JSON字符串，需要先解析
+          let dataObj = result.data;
+          if (action.type === 'script' && typeof result.data === 'string') {
+            try {
+              dataObj = JSON.parse(result.data as string);
+              logger.debug(TAG, `第一次JSON解析完成，类型: ${typeof dataObj}`);
+              
+              // 检测双重字符串化：如果解析后仍是字符串，再解析一次
+              if (typeof dataObj === 'string') {
+                logger.debug(TAG, `检测到双重字符串化，进行第二次解析`);
+                dataObj = JSON.parse(dataObj as string);
+                logger.debug(TAG, `第二次JSON解析完成，类型: ${typeof dataObj}`);
+              }
+              
+              logger.debug(TAG, `script返回数据已解析: ${JSON.stringify(dataObj).substring(0, 200)}`);
+            } catch (e) {
+              logger.error(TAG, `script返回数据JSON解析失败: ${e}`);
+            }
           }
+          mangaDetail = this.transformToMangaInfo(dataObj);
         }
       }
 
@@ -2570,7 +2471,8 @@ export class MangaSourceEngine {
     const startTime = Date.now();
     
     // 检查是否有合并工作流
-    const workflowActions = this.configParser.getWorkflow(this.config, 'getMangaDetailWithChapters');
+    const workflows = this.config.workflows as Workflow;
+    const workflowActions: Action[] | undefined = (workflows as ESObject)['getMangaDetailWithChapters'] as Action[] | undefined;
     if (!workflowActions) {
       logger.info(TAG, '未找到合并工作流，使用独立调用');
       // 降级：分别调用
@@ -2653,21 +2555,44 @@ export class MangaSourceEngine {
 
         // 提取详情（第一个返回数据的script）
         if (action.type === 'script' && result.data && !mangaDetail) {
-          const detailFromScript = this.extractMangaDetailFromScriptResult(result.data as string | Object);
-          if (detailFromScript) {
-            mangaDetail = detailFromScript;
-            detailActionIndex = i;
-            logger.debug(TAG, `合并工作流：提取到详情 (action ${i})`);
+          if (typeof result.data === 'string') {
+            try {
+              let dataObj: ESObject = JSON.parse(result.data as string) as ESObject;
+              if (typeof dataObj === 'string') {
+                dataObj = JSON.parse(dataObj as string);
+              }
+              
+              // 判断是详情还是章节（详情有title字段，章节是数组）
+              if (!Array.isArray(dataObj) && dataObj.title) {
+                mangaDetail = this.transformToMangaInfo(dataObj);
+                detailActionIndex = i;
+                logger.debug(TAG, `合并工作流：提取到详情 (action ${i})`);
+              }
+            } catch (e) {
+              logger.error(TAG, `合并工作流：解析详情失败 ${e}`);
+            }
           }
         }
         
         // 提取章节（第二个返回数据的script，且是数组）
         if (action.type === 'script' && result.data && mangaDetail && chapters.length === 0) {
-          const chapterListFromScript = this.extractChapterListFromScriptResult(result.data as string | Object);
-          if (chapterListFromScript.length > 0) {
-            chapters = chapterListFromScript;
-            chapterActionIndex = i;
-            logger.debug(TAG, `合并工作流：提取到 ${chapters.length} 个章节 (action ${i})`);
+          if (typeof result.data === 'string') {
+            try {
+              let parsed: ESObject = JSON.parse(result.data as string) as ESObject;
+              if (typeof parsed === 'string') {
+                parsed = JSON.parse(parsed as string);
+              }
+              
+              if (Array.isArray(parsed)) {
+                chapters = (parsed as Array<Record<string, Object>>).map(item => 
+                  this.transformToChapterInfo(item)
+                );
+                chapterActionIndex = i;
+                logger.debug(TAG, `合并工作流：提取到 ${chapters.length} 个章节 (action ${i})`);
+              }
+            } catch (e) {
+              logger.error(TAG, `合并工作流：解析章节失败 ${e}`);
+            }
           }
         }
       }
