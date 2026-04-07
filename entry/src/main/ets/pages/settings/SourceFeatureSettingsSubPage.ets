@@ -9,6 +9,7 @@ import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBack
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 
 const TAG = 'SourceFeatureSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -81,9 +82,19 @@ export struct SourceFeatureSettingsSubPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   build() {

@@ -20,6 +20,10 @@ import { SourceManager, getSourceManager } from '../Framework/Source/SourceManag
 import { SourceTester, TestResult, TestItemResult } from '../Framework/Source/SourceTester';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
 
 const TAG = 'SourceManagementPage';
 
@@ -43,6 +47,7 @@ interface SourceInfo {
   lastUpdateTime: number;
   createTime: number;
   iconPath?: string;
+  isDebugMode?: boolean;
   isPinned?: boolean;  // 是否置顶
   isNSFW?: boolean;    // 是否为NSFW图源
 }
@@ -64,6 +69,7 @@ export struct SourceManagementPage {
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   // 所有图源（内存中完整列表）
   private allSources: SourceInfo[] = [];
   // 当前显示的图源（分页加载）
@@ -80,12 +86,12 @@ export struct SourceManagementPage {
   @State disabledCount: number = 0;  // 已关闭图源数
   @State nsfwCount: number = 0;  // NSFW图源数
   @State testingSourceId: number = -1;  // 正在测试的图源ID
-  
+
   // 分页加载状态
   private currentPage: number = 0;
   private hasMoreData: boolean = true;
   private isLoadingMore: boolean = false;
-  
+
   private componentId: string = `SourceManagementPage_${Date.now()}`;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private webViewSourceManager: WebViewSourceManager = WebViewSourceManager.getInstance();
@@ -99,7 +105,7 @@ export struct SourceManagementPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
-    
+
     // 初始化字体感知
     FontAwareHelper.initializeFontAware(
       this.componentId,
@@ -108,7 +114,7 @@ export struct SourceManagementPage {
         this.fontState = newState;
       }
     );
-    
+
     // 初始化代理管理器并加载配置
     this.proxyManager.initialize().then(() => {
       this.proxyConfig = this.proxyManager.getConfig();
@@ -130,12 +136,12 @@ export struct SourceManagementPage {
   private async loadSourceList(): Promise<void> {
     try {
       this.isLoading = true;
-      
+
       // 使用 SourceManager 加载图源（包含置顶状态）
       const sources = await this.sourceManager.getAllSourcesSortedByPinned();
       const repoManager = SourceRepositoryManager.getInstance();
-      
-      this.allSources = sources.map((source) => {
+
+      const mappedSources: SourceInfo[] = sources.map((source) => {
         const pkg = source.pkg || '';
         // 尝试获取图源图标路径
         let iconPath: string | undefined = source.iconPath;
@@ -145,7 +151,7 @@ export struct SourceManagementPage {
             iconPath = iconFile;
           }
         }
-        
+
         const info: SourceInfo = {
           id: source.id,
           name: source.name,
@@ -159,15 +165,18 @@ export struct SourceManagementPage {
           lastUpdateTime: source.lastUpdateTime || 0,
           createTime: source.createTime,
           iconPath: iconPath,
+          isDebugMode: false,
           isPinned: source.isPinned || false,
           isNSFW: source.isNSFW || false
         };
         return info;
       });
-      
+      await this.loadSourceDebugModes(mappedSources);
+      this.allSources = mappedSources;
+
       this.applyFilter();
       this.updateCounts();
-      
+
       logger.info(TAG, `✅ 加载了${this.allSources.length}个图源，置顶${this.pinnedCount}个`);
     } catch (error) {
       logger.error(TAG, '加载图源列表失败', String(error));
@@ -176,12 +185,29 @@ export struct SourceManagementPage {
     }
   }
 
+  private async loadSourceDebugModes(sources: SourceInfo[]): Promise<void> {
+    const tasks: Promise<void>[] = [];
+    for (let i = 0; i < sources.length; i++) {
+      tasks.push(this.loadSourceDebugModeForItem(sources[i]));
+    }
+    await Promise.all(tasks);
+  }
+
+  private async loadSourceDebugModeForItem(source: SourceInfo): Promise<void> {
+    try {
+      source.isDebugMode = await sourceDebugLogManager.isDebugModeEnabled(source.id);
+    } catch (error) {
+      source.isDebugMode = false;
+      logger.warn(TAG, `加载图源调试模式失败: ${source.name}`, String(error));
+    }
+  }
+
   /**
    * 应用筛选
    */
   private applyFilter(): void {
     let filtered = [...this.allSources];
-    
+
     // 应用类型筛选
     if (this.currentFilter === SourceFilterType.PINNED) {
       filtered = filtered.filter((s: SourceInfo) => s.isPinned);
@@ -190,7 +216,7 @@ export struct SourceManagementPage {
     } else if (this.currentFilter === SourceFilterType.NSFW) {
       filtered = filtered.filter((s: SourceInfo) => s.isNSFW);
     }
-    
+
     // 应用搜索筛选
     if (this.searchText.trim()) {
       const lowerKeyword = this.searchText.toLowerCase();
@@ -200,7 +226,7 @@ export struct SourceManagementPage {
                source.description.toLowerCase().includes(lowerKeyword);
       });
     }
-    
+
     this.filteredSourceList = filtered;
     // 重置分页状态
     this.currentPage = 0;
@@ -208,7 +234,7 @@ export struct SourceManagementPage {
     // 加载第一页
     this.loadMoreSources(true);
   }
-  
+
   /**
    * 加载更多图源（分页）
    * @param reset 是否重置列表
@@ -216,13 +242,13 @@ export struct SourceManagementPage {
   private loadMoreSources(reset: boolean = false): void {
     if (this.isLoadingMore && !reset) return;
     if (!this.hasMoreData && !reset) return;
-    
+
     this.isLoadingMore = true;
-    
+
     const startIndex = reset ? 0 : this.currentPage * PAGE_SIZE;
     const endIndex = startIndex + PAGE_SIZE;
     const newSources = this.filteredSourceList.slice(startIndex, endIndex);
-    
+
     if (reset) {
       this.displayedSources = newSources;
       this.currentPage = 1;
@@ -233,13 +259,13 @@ export struct SourceManagementPage {
       }
       this.currentPage++;
     }
-    
+
     this.hasMoreData = endIndex < this.filteredSourceList.length;
     this.isLoadingMore = false;
-    
+
     logger.debug(TAG, `加载图源: 显示${this.displayedSources.length}/${this.filteredSourceList.length}`);
   }
-  
+
   /**
    * 检查是否需要预加载
    */
@@ -277,14 +303,14 @@ export struct SourceManagementPage {
     try {
       const newNSFWState = !source.isNSFW;
       await this.dataManager.updateSourceNSFW(source.id, newNSFWState);
-      
+
       // 更新本地状态
       source.isNSFW = newNSFWState;
-      
+
       // 重新应用筛选
       this.applyFilter();
       this.updateCounts();
-      
+
       logger.info(TAG, `图源"${source.name}"已${newNSFWState ? '标记' : '取消'}NSFW`);
       this.showToast(`图源"${source.name}"已${newNSFWState ? '标记为NSFW' : '取消NSFW标记'}`);
     } catch (error) {
@@ -299,15 +325,15 @@ export struct SourceManagementPage {
   private async togglePinSource(source: SourceInfo): Promise<void> {
     try {
       const newPinnedState = await this.sourceManager.togglePinSource(source.id);
-      
+
       // 更新本地状态
       source.isPinned = newPinnedState;
-      
+
       // 重新排序并应用筛选
       this.allSources = this.sortSourcesByPinned(this.allSources);
       this.applyFilter();
       this.updateCounts();
-      
+
       logger.info(TAG, `图源"${source.name}"已${newPinnedState ? '置顶' : '取消置顶'}`);
     } catch (error) {
       logger.error(TAG, `切换置顶状态失败: ${source.name}`, String(error));
@@ -317,6 +343,23 @@ export struct SourceManagementPage {
   /**
    * 按置顶状态排序
    */
+  private async toggleSourceDebugMode(source: SourceInfo): Promise<void> {
+    try {
+      const newDebugMode = !(source.isDebugMode === true);
+      await sourceDebugLogManager.setDebugModeEnabled(source.id, newDebugMode);
+      source.isDebugMode = newDebugMode;
+      if (!newDebugMode) {
+        sourceDebugLogManager.clearDetailEntry(source.id);
+      }
+
+      logger.info(TAG, `图源"${source.name}"调试模式已${newDebugMode ? '开启' : '关闭'}`);
+      this.showToast(`图源"${source.name}"调试模式已${newDebugMode ? '开启' : '关闭'}`);
+    } catch (error) {
+      logger.error(TAG, `切换图源调试模式失败: ${source.name}`, String(error));
+      this.showToast('调试模式切换失败');
+    }
+  }
+
   private sortSourcesByPinned(sources: SourceInfo[]): SourceInfo[] {
     const pinned = sources.filter(s => s.isPinned);
     const unpinned = sources.filter(s => !s.isPinned);
@@ -330,10 +373,10 @@ export struct SourceManagementPage {
     try {
       const newState = !source.isEnabled;
       await this.dataManager.updateComicSource(source.id, { isEnabled: newState });
-      
+
       // 更新本地状态
       source.isEnabled = newState;
-      
+
       logger.info(TAG, `图源"${source.name}"已${newState ? '启用' : '禁用'}`);
     } catch (error) {
       logger.error(TAG, `切换图源状态失败: ${source.name}`, String(error));
@@ -354,7 +397,7 @@ export struct SourceManagementPage {
           logger.warn(TAG, `删除图源文件失败: ${e}`);
         }
       }
-      
+
       // 【关键】清理WebView引擎缓存（必须在删除数据库记录之前）
       try {
         this.webViewSourceManager.removeSource(String(source.id), source.name);
@@ -363,23 +406,23 @@ export struct SourceManagementPage {
       } catch (e) {
         logger.warn(TAG, `清理WebView引擎缓存失败: ${e}`);
       }
-      
+
       // 如果是置顶图源，从置顶列表中移除
       if (source.isPinned) {
         await this.sourceManager.unpinSource(source.id);
       }
-      
+
       await this.dataManager.deleteComicSource(source.id);
-      
+
       // 从列表中移除
       const index = this.allSources.findIndex((s: SourceInfo) => s.id === source.id);
       if (index !== -1) {
         this.allSources.splice(index, 1);
       }
-      
+
       this.applyFilter();
       this.updateCounts();
-      
+
       logger.info(TAG, `图源"${source.name}"已删除`);
       this.showToast(`图源"${source.name}"已删除`);
     } catch (error) {
@@ -396,10 +439,10 @@ export struct SourceManagementPage {
       this.testingSourceId = source.id;
       this.showToast(`正在测试图源: ${source.name}...`);
       logger.info(TAG, `开始测试图源: ${source.name}`);
-      
+
       const tester = new SourceTester();
       const result: TestResult = await tester.testSource(source.id, source.name);
-      
+
       if (result.success) {
         this.showToast(`✅ ${source.name} 测试成功\n通过: ${result.passedTests}/${result.totalTests}, 耗时: ${result.duration}ms`);
         logger.info(TAG, `图源测试成功: ${source.name}, 通过: ${result.passedTests}/${result.totalTests}, 耗时: ${result.duration}ms`);
@@ -431,20 +474,22 @@ export struct SourceManagementPage {
     HdsNavDestination() {
       Stack() {
         // 背景层：扩展到系统栏区域
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        
+
         // 内容层
         Column() {
           // 标题栏占位
           Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
-          
+
           // 搜索栏
           this.buildSearchBar()
-          
+
           // 图源列表
           if (this.isLoading) {
             this.buildLoadingView()
@@ -457,7 +502,7 @@ export struct SourceManagementPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        
+
         // 代理配置对话框
         if (this.showProxyDialog) {
           ProxyConfigDialog({
@@ -506,12 +551,12 @@ export struct SourceManagementPage {
           .onChange((value: string) => {
             this.searchSources(value);
           })
-        
+
         // 代理按钮
         Button() {
           SymbolGlyph($r('sys.symbol.satellite'))
             .fontSize(20)
-            .fontColor([this.proxyConfig.enabled ? 
+            .fontColor([this.proxyConfig.enabled ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) :
               ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
         }
@@ -524,7 +569,7 @@ export struct SourceManagementPage {
         })
       }
       .width('100%')
-      
+
       // 筛选Tab
       Row({ space: 4 }) {
         this.buildFilterTab('全部', SourceFilterType.ALL)
@@ -536,6 +581,25 @@ export struct SourceManagementPage {
     }
     .width('100%')
     .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   /**
@@ -550,7 +614,7 @@ export struct SourceManagementPage {
         .fontColor(this.currentFilter === filterType ?
           ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
           ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-      
+
       Text(`${this.getFilterCount(filterType)}`)
         .fontSize(11)
         .fontFamily(this.appFontFamily)
@@ -602,7 +666,7 @@ export struct SourceManagementPage {
         .width(48)
         .height(48)
         .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-      
+
       Text('加载中...')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
@@ -623,7 +687,7 @@ export struct SourceManagementPage {
         .width(80)
         .height(80)
         .opacity(0.3)
-      
+
       Text(this.getEmptyViewText())
         .fontSize(16)
         .fontFamily(this.appFontFamily)
@@ -665,7 +729,7 @@ export struct SourceManagementPage {
           this.buildSourceCard(source)
         }
       }, (source: SourceInfo) => String(source.id))
-      
+
       // 加载更多指示器
       if (this.hasMoreData) {
         ListItem() {
@@ -685,11 +749,17 @@ export struct SourceManagementPage {
           .justifyContent(FlexAlign.Center)
         }
       }
+
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(24 + this.navigationBarHeight)
+      }
     }
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .layoutWeight(1)
-    .padding({ left: 16, right: 16, bottom: 16 })
+    .padding({ left: 16, right: 16, bottom: 8 })
     .scrollBar(BarState.Auto)
     .edgeEffect(EdgeEffect.Spring)
     .onScrollIndex((start: number, end: number) => {
@@ -731,7 +801,7 @@ export struct SourceManagementPage {
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
           }
-          
+
           // 置顶标记
           if (source.isPinned) {
             SymbolGlyph($r('sys.symbol.pin_fill'))
@@ -742,7 +812,7 @@ export struct SourceManagementPage {
         }
         .width(48)
         .height(48)
-        
+
         Column({ space: 4 }) {
           Row({ space: 6 }) {
             Text(source.name)
@@ -750,7 +820,7 @@ export struct SourceManagementPage {
               .fontWeight(FontWeight.Medium)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            
+
             if (source.isPinned) {
               Text('已置顶')
                 .fontSize(10)
@@ -760,7 +830,7 @@ export struct SourceManagementPage {
                 .borderRadius(4)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '20')
             }
-            
+
             if (source.isNSFW) {
               Text('NSFW')
                 .fontSize(10)
@@ -770,8 +840,18 @@ export struct SourceManagementPage {
                 .borderRadius(4)
                 .backgroundColor('#FF444420')
             }
+
+            if (source.isDebugMode) {
+              Text('调试')
+                .fontSize(10)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                .borderRadius(4)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '20')
+            }
           }
-          
+
           Text(source.baseUrl)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
@@ -781,7 +861,7 @@ export struct SourceManagementPage {
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
-        
+
         Toggle({ type: ToggleType.Switch, isOn: source.isEnabled })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
           .onChange(async (isOn: boolean) => {
@@ -789,7 +869,7 @@ export struct SourceManagementPage {
           })
       }
       .width('100%')
-      
+
       // 描述
       if (source.description) {
         Text(source.description)
@@ -799,26 +879,26 @@ export struct SourceManagementPage {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
-      
+
       // 信息行
       Row({ space: 16 }) {
         Text(`版本: ${source.version}`)
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        
+
         Text(`语言: ${source.language}`)
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        
+
         Text(`优先级: ${source.priority}`)
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .width('100%')
-      
+
       // 操作按钮
       Row({ space: 8 }) {
         Button(source.isPinned ? '取消置顶' : '置顶')
@@ -831,7 +911,7 @@ export struct SourceManagementPage {
           .onClick(async () => {
             await this.togglePinSource(source);
           })
-        
+
         Button(source.isNSFW ? '取消NSFW' : 'NSFW')
           .fontSize(12)
           .layoutWeight(1)
@@ -844,17 +924,23 @@ export struct SourceManagementPage {
           .onClick(async () => {
             await this.toggleSourceNSFW(source);
           })
-        
-        // Button(this.testingSourceId === source.id ? '测试中...' : '测试')
-        //   .fontSize(12)
-        //   .layoutWeight(1)
-        //   .fontFamily(this.appFontFamily)
-        //   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-        //   .enabled(this.testingSourceId === -1)
-        //   .onClick(async () => {
-        //     await this.testSource(source);
-        //   })
-        
+
+        // Debug mode toggle
+        Button(source.isDebugMode ? '\u5173\u95ed\u8c03\u8bd5' : '\u5f00\u542f\u8c03\u8bd5')
+          .fontSize(12)
+          .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(source.isDebugMode ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .fontColor(source.isDebugMode ? Color.White :
+            ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .onClick(async () => {
+            await this.toggleSourceDebugMode(source);
+          })
+
+
+
         Button('删除')
           .fontSize(12)
           .layoutWeight(1)
@@ -868,11 +954,24 @@ export struct SourceManagementPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
     .border({
-      width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
     })
   }
 }

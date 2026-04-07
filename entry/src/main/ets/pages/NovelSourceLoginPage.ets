@@ -8,26 +8,29 @@
  * 文件路径: entry/src/main/ets/pages/NovelSourceLoginPage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { webview } from '@kit.ArkWeb';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { getNovelLoginManager, LoginUiItem, LoginUiItemStyle } from '../Framework/Novel/NovelLoginManager';
+import { getNovelLoginManager, LoginUiItem } from '../Framework/Novel/NovelLoginManager';
 import { getLegadoRhinoEngine } from '../Framework/Novel/LegadoRhinoEngine';
 import { LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelSourceLoginPage';
 
 export interface NovelSourceLoginPageParams {
   sourceId: string;
 }
-
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 @Component
 export struct NovelSourceLoginPage {
@@ -200,14 +203,51 @@ export struct NovelSourceLoginPage {
     }
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    if (this.useWebView) {
+      return [
+        {
+          id: 'refresh',
+          label: '刷新',
+          symbol: $r('sys.symbol.arrow_clockwise'),
+          onClick: () => {
+            this.webViewController.refresh();
+          }
+        },
+        {
+          id: 'complete',
+          label: '完成登录',
+          symbol: $r('sys.symbol.checkmark'),
+          onClick: () => {
+            void this.onWebViewLoginComplete();
+          }
+        }
+      ];
+    }
+
+    return [
+      {
+        id: 'save',
+        label: '保存',
+        symbol: $r('sys.symbol.checkmark'),
+        enabled: !this.isLoading,
+        onClick: () => {
+          void this.saveFormData();
+        }
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
         // 背景层：扩展到系统栏区域，实现完全沉浸式背景
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
         
@@ -249,6 +289,7 @@ export struct NovelSourceLoginPage {
         
         // 内容层：预留标题栏高度
         Column() {
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           
           if (!this.source) {
             this.buildError()
@@ -261,59 +302,20 @@ export struct NovelSourceLoginPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
+        .padding({ bottom: this.navigationBarHeight })
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: this.useWebView ? (this.webViewTitle || '鐧诲綍') : '涔︽簮鐧诲綍',
+          appFontFamily: this.appFontFamily,
+          actions: this.getTitleBarActions()
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: this.useWebView ? (this.webViewTitle || '登录') : '书源登录'
-        },
-        menu: this.useWebView ? {
-          value: [{
-            content: {
-              label: '刷新',
-              icon: $r('app.media.ic_refresh'),
-              isEnabled: true,
-              action: () => {
-                this.webViewController.refresh();
-              }
-            }
-          }, {
-            content: {
-              label: '完成登录',
-              icon: $r('app.media.ic_check'),
-              isEnabled: true,
-              action: () => this.onWebViewLoginComplete()
-            }
-          }]
-        } : {
-          value: [{
-            content: {
-              label: '保存',
-              icon: $r('app.media.ic_check'),
-              isEnabled: !this.isLoading,
-              action: () => this.saveFormData()
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       const param = context.pathInfo.param as NovelSourceLoginPageParams | null;
@@ -465,6 +467,25 @@ export struct NovelSourceLoginPage {
     }
     .width('100%')
     .layoutWeight(1)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -478,6 +499,26 @@ export struct NovelSourceLoginPage {
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+    .padding(24)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -525,6 +566,25 @@ export struct NovelSourceLoginPage {
         .padding({ left: 20, right: 20, bottom: 20 })
       }
       .width('100%')
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .layoutWeight(1)

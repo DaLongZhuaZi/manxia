@@ -88,12 +88,105 @@ function toPageTurnAnimation(value: string | undefined, fallback: TextPageTurnAn
   return fallback;
 }
 
+function resolveOptionalNumber(value: number | undefined, fallback: number): number {
+  return value !== undefined ? value : fallback;
+}
+
+function resolveOptionalString(value: string | undefined, fallback: string): string {
+  return value !== undefined ? value : fallback;
+}
+
+function resolveOptionalBoolean(value: boolean | undefined, fallback: boolean): boolean {
+  return value !== undefined ? value : fallback;
+}
+
+function buildComparableEBookReadingSettings(settings: EBookReadingSettings): EBookReadingSettings {
+  return {
+    fontSize: settings.fontSize,
+    fontFamily: settings.fontFamily,
+    fontPath: settings.fontPath,
+    fontWeight: settings.fontWeight,
+    lineHeight: settings.lineHeight,
+    backgroundColor: settings.backgroundColor,
+    textColor: settings.textColor,
+    themeBgImage: settings.themeBgImage,
+    nightMode: settings.nightMode,
+    followSystemTheme: settings.followSystemTheme,
+    pageMargin: settings.pageMargin,
+    pageMode: settings.pageMode,
+    brightness: settings.brightness,
+    autoSave: settings.autoSave,
+    saveInterval: settings.saveInterval,
+    letterSpacing: resolveOptionalNumber(settings.letterSpacing, DEFAULT_TEXT_READER_SETTINGS.textStyle.letterSpacing),
+    paragraphSpacing: resolveOptionalNumber(settings.paragraphSpacing, DEFAULT_TEXT_READER_SETTINGS.textStyle.paragraphSpacing),
+    firstLineIndent: resolveOptionalNumber(settings.firstLineIndent, DEFAULT_TEXT_READER_SETTINGS.textStyle.firstLineIndent),
+    textAlignment: resolveOptionalString(settings.textAlignment, DEFAULT_TEXT_READER_SETTINGS.textStyle.textAlignment),
+    pageTurnAnimation: resolveOptionalString(settings.pageTurnAnimation, DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation),
+    tapToTurn: resolveOptionalBoolean(settings.tapToTurn, DEFAULT_TEXT_READER_SETTINGS.tapToTurn),
+    volumeKeyNavigation: resolveOptionalBoolean(settings.volumeKeyNavigation, DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation),
+    keepScreenOn: resolveOptionalBoolean(settings.keepScreenOn, DEFAULT_TEXT_READER_SETTINGS.keepScreenOn),
+    showPageNumber: resolveOptionalBoolean(settings.showPageNumber, DEFAULT_TEXT_READER_SETTINGS.showPageNumber),
+    showProgress: resolveOptionalBoolean(settings.showProgress, DEFAULT_TEXT_READER_SETTINGS.showProgress),
+    showTime: resolveOptionalBoolean(settings.showTime, DEFAULT_TEXT_READER_SETTINGS.showTime),
+    showBattery: resolveOptionalBoolean(settings.showBattery, DEFAULT_TEXT_READER_SETTINGS.showBattery),
+    backgroundType: resolveOptionalString(settings.backgroundType, DEFAULT_TEXT_READER_SETTINGS.background.type),
+    backgroundImagePath: resolveOptionalString(settings.backgroundImagePath, ''),
+    backgroundImageOpacity: resolveOptionalNumber(
+      settings.backgroundImageOpacity,
+      DEFAULT_TEXT_READER_SETTINGS.background.imageOpacity ?? 1.0
+    )
+  };
+}
+
+const DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS: EBookReadingSettings =
+  buildComparableEBookReadingSettings(DEFAULT_EBOOK_READING_SETTINGS);
+
 export function buildLocalTextNovelBookId(ebookId: string): string {
   return `${LOCAL_TXT_NOVEL_BOOK_ID_PREFIX}${ebookId}`;
 }
 
 export function isLocalTxtNovelReaderSource(sourceId: string): boolean {
   return sourceId === LOCAL_TXT_NOVEL_SOURCE_ID;
+}
+
+export function hasCustomLocalTextNovelReadingSettings(
+  ebookSettings: EBookReadingSettings | null | undefined
+): boolean {
+  if (!ebookSettings) {
+    return false;
+  }
+
+  const comparable = buildComparableEBookReadingSettings(ebookSettings);
+  return comparable.fontSize !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.fontSize
+    || comparable.fontFamily !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.fontFamily
+    || comparable.fontPath !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.fontPath
+    || comparable.fontWeight !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.fontWeight
+    || comparable.lineHeight !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.lineHeight
+    || comparable.backgroundColor !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.backgroundColor
+    || comparable.textColor !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.textColor
+    || comparable.themeBgImage !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.themeBgImage
+    || comparable.nightMode !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.nightMode
+    || comparable.followSystemTheme !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.followSystemTheme
+    || comparable.pageMargin !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.pageMargin
+    || comparable.pageMode !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.pageMode
+    || comparable.brightness !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.brightness
+    || comparable.autoSave !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.autoSave
+    || comparable.saveInterval !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.saveInterval
+    || comparable.letterSpacing !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.letterSpacing
+    || comparable.paragraphSpacing !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.paragraphSpacing
+    || comparable.firstLineIndent !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.firstLineIndent
+    || comparable.textAlignment !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.textAlignment
+    || comparable.pageTurnAnimation !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.pageTurnAnimation
+    || comparable.tapToTurn !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.tapToTurn
+    || comparable.volumeKeyNavigation !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.volumeKeyNavigation
+    || comparable.keepScreenOn !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.keepScreenOn
+    || comparable.showPageNumber !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.showPageNumber
+    || comparable.showProgress !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.showProgress
+    || comparable.showTime !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.showTime
+    || comparable.showBattery !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.showBattery
+    || comparable.backgroundType !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.backgroundType
+    || comparable.backgroundImagePath !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.backgroundImagePath
+    || comparable.backgroundImageOpacity !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.backgroundImageOpacity;
 }
 
 export function buildNovelReaderParamsFromTxtEBook(ebook: EBook, coverComponentId?: string): NovelReaderPageParams {

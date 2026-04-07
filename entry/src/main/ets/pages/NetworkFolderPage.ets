@@ -6,6 +6,9 @@ import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/Theme
 import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Network/NetworkFolderManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import {
   NetworkFolderCacheDetail,
   NetworkFolderDirectoryCacheDetail,
@@ -58,6 +61,7 @@ export struct NetworkFolderPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @State connections: NetworkFolderConnection[] = [];
   @State selectedConnectionId: string = '';
   @State currentPath: string = '/';
@@ -1319,8 +1323,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(18)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 18,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .opacity(this.pageReady ? 1 : 0)
     .translate({ y: this.pageReady ? 0 : 10 })
     .animation({ duration: 260, curve: Curve.EaseOut })
@@ -1365,8 +1386,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding({ left: 14, right: 14, top: 12, bottom: 12 })
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(18)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 18,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .opacity(this.pageReady ? 1 : 0)
     .translate({ y: this.pageReady ? 0 : 10 })
     .animation({ duration: 260, curve: Curve.EaseOut })
@@ -1465,8 +1503,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(20)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 20,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder private buildConnectionsEmptyState() {
@@ -1499,8 +1554,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding({ top: 56, bottom: 56, left: 24, right: 24 })
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(24)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 24,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .alignItems(HorizontalAlign.Center)
   }
 
@@ -1584,11 +1656,24 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(22)
+    .clip(true)
     .border({
-      width: this.isConnectionSelected(connection) ? 1.5 : 1,
-      color: this.isConnectionSelected(connection) ? ACCENT_COLOR : this.color('comp_background_tertiary')
+      width: this.isConnectionSelected(connection) ? 1.5 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: this.isConnectionSelected(connection) ? ACCENT_COLOR : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 22,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
     })
     .opacity(this.pageReady ? 1 : 0)
     .translate({ y: this.pageReady ? 0 : 12 })
@@ -1626,7 +1711,7 @@ export struct NetworkFolderPage {
         Blank().height(24)
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+      .padding({ left: 16, right: 16, top: 8, bottom: 24 + this.navigationBarHeight })
     }
     .width('100%')
     .layoutWeight(1)
@@ -1666,7 +1751,7 @@ export struct NetworkFolderPage {
           Blank().height(24)
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+        .padding({ left: 16, right: 16, top: 8, bottom: 24 + this.navigationBarHeight })
       }
       .width('100%')
       .height('100%')
@@ -1713,8 +1798,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding({ top: 32, bottom: 32, left: 20, right: 20 })
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(24)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 24,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .alignItems(HorizontalAlign.Center)
   }
 
@@ -1760,8 +1862,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(18)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 18,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder private buildFileCacheCard(detail: NetworkFolderDownloadCacheDetail) {
@@ -1818,8 +1937,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(18)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 18,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder private buildCacheDetailView() {
@@ -1871,8 +2007,25 @@ export struct NetworkFolderPage {
         }
         .width('100%')
         .padding(16)
-        .backgroundColor(this.color('panel_background'))
+        .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+        .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+        .backgroundBlurStyle(
+          SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+          SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+        )
+        .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
         .borderRadius(22)
+        .clip(true)
+        .border({
+          width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+          color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+        })
+        .shadow({
+          radius: 22,
+          color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+          offsetX: 0,
+          offsetY: 8
+        })
 
         Column({ space: 10 }) {
           Row() {
@@ -1933,7 +2086,7 @@ export struct NetworkFolderPage {
         Blank().height(24)
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+      .padding({ left: 16, right: 16, top: 8, bottom: 24 + this.navigationBarHeight })
     }
     .width('100%')
     .layoutWeight(1)
@@ -1950,7 +2103,7 @@ export struct NetworkFolderPage {
           Blank().height(24)
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+        .padding({ left: 16, right: 16, top: 8, bottom: 24 + this.navigationBarHeight })
       }
       .width('100%')
       .height('100%')
@@ -2033,8 +2186,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(18)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(22)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 22,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder private buildCompactBrowserToolbar(connection: NetworkFolderConnection) {
@@ -2068,8 +2238,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(22)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 22,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder private buildMergedBrowserToolbar(connection: NetworkFolderConnection) {
@@ -2149,8 +2336,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding({ left: 14, right: 14, top: 12, bottom: 12 })
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(18)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 18,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder private buildBreadcrumbBar() {
@@ -2200,8 +2404,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(20)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 20,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder private buildDirectoryEmptyState(connection: NetworkFolderConnection) {
@@ -2240,8 +2461,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding({ top: 56, bottom: 56, left: 20, right: 20 })
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(24)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 24,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .alignItems(HorizontalAlign.Center)
   }
 
@@ -2317,8 +2555,25 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(this.color('panel_background'))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(20)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 20,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .stateStyles({
       pressed: {
         .scale({ x: 0.985, y: 0.985 })
@@ -2393,7 +2648,7 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+    .padding({ left: 16, right: 16, top: 8, bottom: 24 + this.navigationBarHeight })
   }
   @Builder private buildDialogField(icon: Resource, label: string, placeholder: string, value: string,
     onChange: (value: string) => void, type: InputType = InputType.Normal) {
@@ -2735,8 +2990,25 @@ export struct NetworkFolderPage {
       .width('92%')
       .height('84%')
       .padding({ left: 20, right: 20, top: 20, bottom: 20 })
-      .backgroundColor(this.color('panel_background'))
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
       .borderRadius(26)
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: 26,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 10
+      })
       .opacity(this.dialogOpacity)
       .scale({ x: this.dialogScale, y: this.dialogScale })
       .translate({ x: 0, y: this.dialogTranslateY })
@@ -2748,10 +3020,12 @@ export struct NetworkFolderPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: this.color('background'),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(this.color('background'))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column({ space: 0 }) {

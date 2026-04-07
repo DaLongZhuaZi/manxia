@@ -6,8 +6,8 @@
  * 文件路径: entry/src/main/ets/pages/NovelSearchPage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
@@ -21,6 +21,11 @@ import { DeviceAdaptationManager, DeviceChangeListener } from '../Framework/Mana
 import { AppColors } from '../Framework/Theme/AppColors';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 /**
  * 书源搜索结果分组
@@ -46,7 +51,6 @@ interface SourceGroupInfo {
 }
 
 const TAG = 'NovelSearchPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 // 书源选择弹窗分页常量
 const SOURCE_SELECTOR_PAGE_SIZE = 100;
@@ -729,16 +733,18 @@ export struct NovelSearchPage {
     HdsNavDestination() {
       Stack() {
         // 背景层
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
           // 搜索栏
           Row({ space: 12 }) {
@@ -773,6 +779,25 @@ export struct NovelSearchPage {
           .width('100%')
           .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
           .padding(this.responsive_contentPadding)
+          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+          .backgroundBlurStyle(
+            SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+            SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+          )
+          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+          .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+          .clip(true)
+          .border({
+            width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+            color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+          })
+          .shadow({
+            radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+            color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+            offsetX: 0,
+            offsetY: 8
+          })
 
           // 搜索设置按钮（仅在非单书源模式下显示）
           if (!this.singleSourceId) {
@@ -836,6 +861,25 @@ export struct NovelSearchPage {
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
             .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 12 })
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(
+              SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+              SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+            )
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({
+              width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+              color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+            })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
           }
 
           // 搜索结果或历史记录
@@ -985,15 +1029,24 @@ export struct NovelSearchPage {
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .alignItems(this.responsive_isLandscape ? HorizontalAlign.Center : HorizontalAlign.Start)
+        .padding({ bottom: this.navigationBarHeight })
         
         // 书源选择弹窗
         if (this.showSourceSelector) {
           this.buildSourceSelectorDialog()
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: this.singleSourceId ? this.singleSourceName : '小说搜索',
+          appFontFamily: this.appFontFamily
+        })
       }
       .width('100%')
       .height('100%')
     }
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
       const param = context.pathInfo.param as NovelSearchPageParams | null;
@@ -1007,24 +1060,6 @@ export struct NovelSearchPage {
           this.keyword = param.keyword;
           this.doSearch();
         }
-      }
-    })
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: this.singleSourceId ? this.singleSourceName : '小说搜索' }
       }
     })
     .backgroundColor(Color.Transparent)
@@ -1230,11 +1265,24 @@ export struct NovelSearchPage {
     }
     .width('100%')
     .padding(10)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(10)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
     .border({
-      width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
     })
     .onClick(() => this.openBookDetail(book))
   }
@@ -1318,11 +1366,24 @@ export struct NovelSearchPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
     .border({
-      width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
     })
     .onClick(() => this.openBookDetail(book))
   }
@@ -1520,20 +1581,28 @@ export struct NovelSearchPage {
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 12, bottom: 16 })
-      }
-      .width('90%')
-      .constraintSize({ maxWidth: 480, maxHeight: '85%' })
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(14)
-      .border({
-        width: 1,
-        color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-      })
-      .shadow({
-        radius: 16,
-        color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme),
-        offsetY: 6
-      })
+        }
+        .width('90%')
+        .constraintSize({ maxWidth: 480, maxHeight: '85%' })
+        .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+        .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+        .backgroundBlurStyle(
+          SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+          SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+        )
+        .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+        .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+        .clip(true)
+        .border({
+          width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+          color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+        })
+        .shadow({
+          radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+          color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+          offsetX: 0,
+          offsetY: 6
+        })
       .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
         .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
       .onClick(() => {})  // 阻止点击事件冒泡

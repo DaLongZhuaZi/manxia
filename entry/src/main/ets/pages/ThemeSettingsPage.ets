@@ -22,11 +22,11 @@ import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
-import { SettingsGlassStyleHelper } from './settings/SettingsGlassStyleHelper';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'ThemeSettingsPage';
 
@@ -2158,8 +2158,25 @@ export struct ThemeSettingsPage {
                           }
                           .width('100%')
                           .padding(12)
-                          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                          .borderRadius(12)
+                          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                          .backgroundBlurStyle(
+                            SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                            SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                          )
+                          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                          .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                          .clip(true)
+                          .border({
+                            width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                            color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                          })
+                          .shadow({
+                            radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                            color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                            offsetX: 0,
+                            offsetY: 8
+                          })
                           // 长按进入/切换选择，点击在选择模式下也切换选中
                           .gesture(LongPressGesture().onAction(() => { this.toggleThemeSelection(theme.id); }))
                           .onClick(() => {
@@ -2197,24 +2214,42 @@ export struct ThemeSettingsPage {
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
                 .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_custom') ? 2 : 1,
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_custom')
+                    ? 2
+                    : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
                   color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_custom')
                     ? SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'theme_custom')
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                    : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
                 })
                 .scale({
                   x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_custom', this.searchHighlightPulse),
                   y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_custom', this.searchHighlightPulse)
                 })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_custom',
-                  this.searchHighlightPulse
-                ))
+                .shadow(
+                  SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_custom')
+                    ? SettingsSearchSupport.getHighlightOverlayShadow(
+                        this.themeState.currentTheme,
+                        this.activeSearchAnchorId,
+                        'theme_custom',
+                        this.searchHighlightPulse
+                      )
+                    : {
+                        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                        offsetX: 0,
+                        offsetY: 8
+                      }
+                )
                 .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
                 
@@ -2254,8 +2289,19 @@ export struct ThemeSettingsPage {
                       .width(60)
                       .height(40)
                       .justifyContent(FlexAlign.Center)
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                      .backgroundBlurStyle(
+                        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                      )
+                      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
                       .borderRadius(this.componentCornerRadius)
+                      .clip(true)
+                      .border({
+                        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                      })
                       .opacity(this.cardOpacity)
                       .shadow(this.shadowEnabled ? { radius: 4, color: 'rgba(0,0,0,0.2)', offsetY: 2 } : undefined)
                       
@@ -2408,28 +2454,46 @@ export struct ThemeSettingsPage {
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
                 .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_transparency') ? 2 : 1,
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_transparency')
+                    ? 2
+                    : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
                   color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_transparency')
                     ? SettingsSearchSupport.getHighlightOverlayBorder(
                       this.themeState.currentTheme,
                       this.activeSearchAnchorId,
                       'theme_transparency'
                     )
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                    : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
                 })
                 .scale({
                   x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_transparency', this.searchHighlightPulse),
                   y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_transparency', this.searchHighlightPulse)
                 })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_transparency',
-                  this.searchHighlightPulse
-                ))
+                .shadow(
+                  SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_transparency')
+                    ? SettingsSearchSupport.getHighlightOverlayShadow(
+                        this.themeState.currentTheme,
+                        this.activeSearchAnchorId,
+                        'theme_transparency',
+                        this.searchHighlightPulse
+                      )
+                    : {
+                        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                        offsetX: 0,
+                        offsetY: 8
+                      }
+                )
                 .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
                 
@@ -2622,24 +2686,42 @@ export struct ThemeSettingsPage {
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
                 .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_effects') ? 2 : 1,
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_effects')
+                    ? 2
+                    : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
                   color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_effects')
                     ? SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'theme_effects')
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                    : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
                 })
                 .scale({
                   x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_effects', this.searchHighlightPulse),
                   y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_effects', this.searchHighlightPulse)
                 })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_effects',
-                  this.searchHighlightPulse
-                ))
+                .shadow(
+                  SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_effects')
+                    ? SettingsSearchSupport.getHighlightOverlayShadow(
+                        this.themeState.currentTheme,
+                        this.activeSearchAnchorId,
+                        'theme_effects',
+                        this.searchHighlightPulse
+                      )
+                    : {
+                        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                        offsetX: 0,
+                        offsetY: 8
+                      }
+                )
                 .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
@@ -2687,9 +2769,25 @@ export struct ThemeSettingsPage {
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
-                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
+                .border({
+                  width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                  color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                })
+                .shadow({
+                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                  offsetX: 0,
+                  offsetY: 8
+                })
                 .margin({ bottom: 16 })
               } else if (this.isCreatingCustomTheme && this.selectedImagePixelMap) {
                 Column() {
@@ -2709,9 +2807,25 @@ export struct ThemeSettingsPage {
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
-                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
+                .border({
+                  width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                  color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                })
+                .shadow({
+                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                  offsetX: 0,
+                  offsetY: 8
+                })
                 .margin({ bottom: 16 })
               }
 
@@ -2745,17 +2859,26 @@ export struct ThemeSettingsPage {
                 .id('theme_create_background')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
                 .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_background') ? 2 : 1,
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_background')
+                    ? 2
+                    : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
                   color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_background')
                     ? SettingsSearchSupport.getHighlightOverlayBorder(
                       this.themeState.currentTheme,
                       this.activeSearchAnchorId,
                       'theme_create_background'
                     )
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                    : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
                 })
                 .scale({
                   x: SettingsSearchSupport.getHighlightScale(
@@ -2769,12 +2892,21 @@ export struct ThemeSettingsPage {
                     this.searchHighlightPulse
                   )
                 })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_create_background',
-                  this.searchHighlightPulse
-                ))
+                .shadow(
+                  SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_background')
+                    ? SettingsSearchSupport.getHighlightOverlayShadow(
+                        this.themeState.currentTheme,
+                        this.activeSearchAnchorId,
+                        'theme_create_background',
+                        this.searchHighlightPulse
+                      )
+                    : {
+                        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                        offsetX: 0,
+                        offsetY: 8
+                      }
+                )
                 .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
@@ -2855,9 +2987,25 @@ export struct ThemeSettingsPage {
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
-                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
+                .border({
+                  width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                  color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                })
+                .shadow({
+                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                  offsetX: 0,
+                  offsetY: 8
+                })
                 .margin({ bottom: 16 })
               }
 
@@ -2880,9 +3028,25 @@ export struct ThemeSettingsPage {
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
-                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
+                .border({
+                  width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                  color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                })
+                .shadow({
+                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                  offsetX: 0,
+                  offsetY: 8
+                })
                 .margin({ bottom: 16 })
               }
 
@@ -3019,28 +3183,46 @@ export struct ThemeSettingsPage {
                 .id('theme_create_colors')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
                 .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_colors') ? 2 : 1,
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_colors')
+                    ? 2
+                    : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
                   color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_colors')
                     ? SettingsSearchSupport.getHighlightOverlayBorder(
                       this.themeState.currentTheme,
                       this.activeSearchAnchorId,
                       'theme_create_colors'
                     )
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                    : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
                 })
                 .scale({
                   x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_create_colors', this.searchHighlightPulse),
                   y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_create_colors', this.searchHighlightPulse)
                 })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_create_colors',
-                  this.searchHighlightPulse
-                ))
+                .shadow(
+                  SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_colors')
+                    ? SettingsSearchSupport.getHighlightOverlayShadow(
+                        this.themeState.currentTheme,
+                        this.activeSearchAnchorId,
+                        'theme_create_colors',
+                        this.searchHighlightPulse
+                      )
+                    : {
+                        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                        offsetX: 0,
+                        offsetY: 8
+                      }
+                )
                 .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
@@ -3126,8 +3308,25 @@ export struct ThemeSettingsPage {
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(24)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
+                .border({
+                  width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                  color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                })
+                .shadow({
+                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                  offsetX: 0,
+                  offsetY: 8
+                })
                 .justifyContent(FlexAlign.Center)
                 .alignItems(HorizontalAlign.Center)
                 .margin({ bottom: 16 })

@@ -22,6 +22,7 @@ import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPage
 import { PageWindowCoordinator } from '../../Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle, SettingsPageRowVisualStyle } from './SettingsPageSurfaceManager';
 
 const TAG = 'GlobalSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -526,6 +527,78 @@ export struct GlobalSettingsPage {
     return this.getGlassToken(level).shadowColor;
   }
 
+  private getSettingsCardSurfaceStyle(): SettingsPageSurfaceStyle {
+    return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface;
+  }
+
+  private getSettingsCardRowStyle(): SettingsPageRowVisualStyle {
+    return SettingsPageSurfaceManager.getManagementListItemStyle(this.themeState.currentTheme);
+  }
+
+  private getSettingsCardBackground(): ResourceColor {
+    return this.getSettingsCardSurfaceStyle().backgroundColor;
+  }
+
+  private getSettingsCardBlurStyle(): BlurStyle | undefined {
+    return this.getSettingsCardSurfaceStyle().blurStyle;
+  }
+
+  private getSettingsCardBlurOptions(): BackgroundBlurStyleOptions {
+    return this.getSettingsCardSurfaceStyle().blurOptions;
+  }
+
+  private getSettingsCardBackgroundEffect(): BackgroundEffectOptions | undefined {
+    return this.getSettingsCardSurfaceStyle().backgroundEffect;
+  }
+
+  private getSettingsCardRadius(): number {
+    return this.getSettingsCardSurfaceStyle().radius;
+  }
+
+  private getSettingsCardBorderColor(): ResourceColor {
+    return this.getSettingsCardSurfaceStyle().borderColor;
+  }
+
+  private getSettingsCardBorderWidth(): number {
+    return this.getSettingsCardSurfaceStyle().borderWidth;
+  }
+
+  private getSettingsCardShadowColor(): string {
+    return this.getSettingsCardSurfaceStyle().shadowColor;
+  }
+
+  private getSettingsCardTopEdgeColor(): ResourceColor {
+    return this.getSettingsCardSurfaceStyle().topEdgeColor;
+  }
+
+  private getSettingsCardBottomEdgeColor(): ResourceColor {
+    return this.getSettingsCardSurfaceStyle().bottomEdgeColor;
+  }
+
+  private getSettingsCardSurfaceGradient(): LinearGradient {
+    return this.getSettingsCardSurfaceStyle().surfaceGradient;
+  }
+
+  private getSettingsRowIconColor(): ResourceColor {
+    return this.getSettingsCardRowStyle().iconColor;
+  }
+
+  private getSettingsRowTitleColor(): ResourceColor {
+    return this.getSettingsCardRowStyle().titleColor;
+  }
+
+  private getSettingsRowSubtitleColor(): ResourceColor {
+    return this.getSettingsCardRowStyle().subtitleColor;
+  }
+
+  private getSettingsRowChevronColor(): ResourceColor {
+    return this.getSettingsCardRowStyle().chevronColor;
+  }
+
+  private getSettingsRowChevronOpacity(): number {
+    return this.getSettingsCardRowStyle().chevronOpacity;
+  }
+
   private getStatusBarInset(): number {
     return this.statusBarHeight > 0 ? this.statusBarHeight : 24;
   }
@@ -980,13 +1053,25 @@ export struct GlobalSettingsPage {
 
   @Builder
   buildSearchResultItem(item: SettingsSearchResult, index: number) {
-    Column({ space: 8 }) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsCardTopEdgeColor())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .align(Alignment.Bottom)
+        .backgroundColor(this.getSettingsCardBottomEdgeColor())
+
+      Column({ space: 8 }) {
       Row({ space: 8 }) {
         Text(item.title)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsRowTitleColor())
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1001,24 +1086,35 @@ export struct GlobalSettingsPage {
       Text(item.description)
         .fontSize(12)
         .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .fontColor(this.getSettingsRowSubtitleColor())
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(`匹配：${item.matchedKeyword}`)
         .fontSize(11)
         .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+        .fontColor(this.getSettingsRowChevronColor())
+        .opacity(this.getSettingsRowChevronOpacity())
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .padding(14)
     }
     .width('100%')
-    .padding(14)
-    .backgroundColor(this.getGlassBackground(GlassLevel.CARD))
-    .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.CARD), this.getGlassBlurOptions(GlassLevel.CARD))
-    .borderRadius(this.getGlassRadius(GlassLevel.CARD))
-    .border({ width: this.getGlassBorderWidth(GlassLevel.CARD), color: this.getGlassBorderColor(GlassLevel.CARD) })
-    .shadow({ radius: this.getGlassRadius(GlassLevel.CARD), color: this.getGlassShadowColor(GlassLevel.CARD) })
+    .backgroundColor(this.getSettingsCardBackground())
+    .linearGradient(this.getSettingsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsCardBlurStyle(), this.getSettingsCardBlurOptions())
+    .backgroundEffect(this.getSettingsCardBackgroundEffect())
+    .borderRadius(this.getSettingsCardRadius())
+    .clip(true)
+    .border({ width: this.getSettingsCardBorderWidth(), color: this.getSettingsCardBorderColor() })
+    .shadow({
+      radius: this.getSettingsCardRadius() + 4,
+      color: this.getSettingsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut, delay: Math.min(index, 6) * 28 })
         .combine(TransitionEffect.translate({ y: 10 }).animation({ duration: 220, curve: Curve.EaseOut, delay: Math.min(index, 6) * 28 })),
@@ -1032,7 +1128,19 @@ export struct GlobalSettingsPage {
 
   @Builder
   buildSearchBar() {
-    Column({ space: 8 }) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsCardTopEdgeColor())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .align(Alignment.Bottom)
+        .backgroundColor(this.getSettingsCardBottomEdgeColor())
+
+      Column({ space: 8 }) {
       Search({ value: this.searchKeyword, placeholder: '搜索设置项（如：翻页动画、主导航栏）' })
         .searchButton('搜索')
         .onChange((value: string) => {
@@ -1047,7 +1155,7 @@ export struct GlobalSettingsPage {
           Text(`找到 ${this.searchResults.length} 项`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .fontColor(this.getSettingsRowSubtitleColor())
 
           Blank()
 
@@ -1069,14 +1177,24 @@ export struct GlobalSettingsPage {
         .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
           .combine(TransitionEffect.translate({ y: -6 })))
       }
+      }
+      .width('100%')
+      .padding(14)
     }
     .width('100%')
-    .padding(14)
-    .backgroundColor(this.getGlassBackground(GlassLevel.NAVIGATION))
-    .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.NAVIGATION), this.getGlassBlurOptions(GlassLevel.NAVIGATION))
-    .borderRadius(this.getGlassRadius(GlassLevel.NAVIGATION))
-    .border({ width: this.getGlassBorderWidth(GlassLevel.NAVIGATION), color: this.getGlassBorderColor(GlassLevel.NAVIGATION) })
-    .shadow({ radius: this.getGlassRadius(GlassLevel.NAVIGATION), color: this.getGlassShadowColor(GlassLevel.NAVIGATION) })
+    .backgroundColor(this.getSettingsCardBackground())
+    .linearGradient(this.getSettingsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsCardBlurStyle(), this.getSettingsCardBlurOptions())
+    .backgroundEffect(this.getSettingsCardBackgroundEffect())
+    .borderRadius(this.getSettingsCardRadius())
+    .clip(true)
+    .border({ width: this.getSettingsCardBorderWidth(), color: this.getSettingsCardBorderColor() })
+    .shadow({
+      radius: this.getSettingsCardRadius() + 4,
+      color: this.getSettingsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
     .id('guide_global_settings_search')
   }
 
@@ -1084,25 +1202,47 @@ export struct GlobalSettingsPage {
   buildSearchResultList() {
     Column({ space: 10 }) {
       if (this.searchResults.length === 0) {
-        Column({ space: 8 }) {
+        Stack({ alignContent: Alignment.TopStart }) {
+          Column()
+            .width('100%')
+            .height(1)
+            .backgroundColor(this.getSettingsCardTopEdgeColor())
+
+          Column()
+            .width('100%')
+            .height(1)
+            .align(Alignment.Bottom)
+            .backgroundColor(this.getSettingsCardBottomEdgeColor())
+
+          Column({ space: 8 }) {
           Text('未找到匹配的设置项')
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .fontColor(this.getSettingsRowTitleColor())
           Text('可尝试搜索：阅读模式、翻页动画、主导航栏、备份、日志')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .fontColor(this.getSettingsRowSubtitleColor())
             .textAlign(TextAlign.Center)
+          }
+          .width('100%')
+          .padding(16)
         }
         .width('100%')
-        .padding(16)
-        .backgroundColor(this.getGlassBackground(GlassLevel.CARD))
-        .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.CARD), this.getGlassBlurOptions(GlassLevel.CARD))
-        .borderRadius(this.getGlassRadius(GlassLevel.CARD))
-        .border({ width: this.getGlassBorderWidth(GlassLevel.CARD), color: this.getGlassBorderColor(GlassLevel.CARD) })
-        .shadow({ radius: this.getGlassRadius(GlassLevel.CARD), color: this.getGlassShadowColor(GlassLevel.CARD) })
+        .backgroundColor(this.getSettingsCardBackground())
+        .linearGradient(this.getSettingsCardSurfaceGradient())
+        .backgroundBlurStyle(this.getSettingsCardBlurStyle(), this.getSettingsCardBlurOptions())
+        .backgroundEffect(this.getSettingsCardBackgroundEffect())
+        .borderRadius(this.getSettingsCardRadius())
+        .clip(true)
+        .border({ width: this.getSettingsCardBorderWidth(), color: this.getSettingsCardBorderColor() })
+        .shadow({
+          radius: this.getSettingsCardRadius() + 4,
+          color: this.getSettingsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 8
+        })
         .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
           .combine(TransitionEffect.translate({ y: 10 })))
       } else {
@@ -1129,11 +1269,23 @@ export struct GlobalSettingsPage {
    */
   @Builder
   buildSettingsGroupItem(item: SettingsGroupItem) {
-    Row() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getSettingsCardTopEdgeColor())
+
+      Column()
+        .width('100%')
+        .height(1)
+        .align(Alignment.Bottom)
+        .backgroundColor(this.getSettingsCardBottomEdgeColor())
+
+      Row() {
       // 图标
       SymbolGlyph(item.icon as Resource)
         .fontSize(24)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+        .fontColor([this.getSettingsRowIconColor()])
         .margin({ right: 16 })
 
       // 标题和副标题
@@ -1142,11 +1294,11 @@ export struct GlobalSettingsPage {
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsRowTitleColor())
         Text(item.subtitle)
           .fontSize(13)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.getSettingsRowSubtitleColor())
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
@@ -1156,15 +1308,26 @@ export struct GlobalSettingsPage {
       // 箭头
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(18)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
+        .fontColor([this.getSettingsRowChevronColor()])
+        .opacity(this.getSettingsRowChevronOpacity())
+      }
+      .width('100%')
+      .padding(16)
     }
     .width('100%')
-    .padding(16)
-    .backgroundColor(this.getGlassBackground(GlassLevel.CARD))
-    .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.CARD), this.getGlassBlurOptions(GlassLevel.CARD))
-    .borderRadius(this.getGlassRadius(GlassLevel.CARD))
-    .border({ width: this.getGlassBorderWidth(GlassLevel.CARD), color: this.getGlassBorderColor(GlassLevel.CARD) })
-    .shadow({ radius: this.getGlassRadius(GlassLevel.CARD), color: this.getGlassShadowColor(GlassLevel.CARD) })
+    .backgroundColor(this.getSettingsCardBackground())
+    .linearGradient(this.getSettingsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsCardBlurStyle(), this.getSettingsCardBlurOptions())
+    .backgroundEffect(this.getSettingsCardBackgroundEffect())
+    .borderRadius(this.getSettingsCardRadius())
+    .clip(true)
+    .border({ width: this.getSettingsCardBorderWidth(), color: this.getSettingsCardBorderColor() })
+    .shadow({
+      radius: this.getSettingsCardRadius() + 4,
+      color: this.getSettingsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
     .onClick(() => {
       this.navigateToSubPage(item.targetPage);
     })

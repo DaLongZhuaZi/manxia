@@ -6,7 +6,7 @@ import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType, CUSTOM_THEME_KEYS } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
-import { WindowManager } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { common } from '@kit.AbilityKit';
 import { colorMap } from '../Data/ResourceMap';
 import { deviceInfo } from '@kit.BasicServicesKit';
@@ -62,6 +62,8 @@ struct SplashPage {
       logger.error('SplashPage', '获取UIContext失败');
       return;
     }
+
+    WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.uiContext);
 
     // 检测窗口实际方向（根据窗口尺寸判断，而非物理方向）
     this.detectWindowOrientation();
@@ -453,6 +455,7 @@ struct SplashPage {
     .width('100%')
     .height('100%')
     .backgroundColor(this.getSplashBaseBackgroundColor())
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
   }
 
   // 页面过渡动画

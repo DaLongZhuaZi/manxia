@@ -1359,7 +1359,7 @@ export struct MangaReaderSettings {
       if (this.currentSettings.pageTurnAnimation === PageTurnAnimationType.CURL) {
         Column() {
           Row() {
-            Text('卷页背面透明度')
+            Text('卷页不透明度')
               .fontSize(14)
               .fontColor($r('app.color.text_secondary'))
             Text(`${this.currentSettings.curlBackOpacity ?? 90}%`)

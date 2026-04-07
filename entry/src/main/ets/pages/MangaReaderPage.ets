@@ -16,7 +16,8 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { UIContext, curves, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { DataManager, PageInfo, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, OnlinePageInfoInput } from '../Framework/Data/DataManager';
+import { DataManager, PageInfo, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, OnlinePageInfoInput, UserSettingsDatabaseRecord } from '../Framework/Data/DataManager';
+import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
 import CookieManager from '../Framework/Managers/CookieManager';
 import { DataService } from '../Framework/Services/DataService';
@@ -40,7 +41,7 @@ import {
 } from '../Models/MangaModels';
 import { MangaViewer } from '../components/MangaViewer';
 import { MangaReaderSettings } from '../components/MangaReaderSettings';
-import { ImageCacheManager, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
+import { ImageCacheManager, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
 import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
 import { PreloadDebugOverlay, PreloadDebugInfo } from '../components/PreloadDebugOverlay';
 import fs from '@ohos.file.fs';
@@ -251,6 +252,42 @@ interface SourcePreloadSettings {
   preloadNextPages: number;
 }
 
+interface SourceConfigDefaultSetting {
+  default?: string;
+}
+
+type SourceConfigHeaderMap = Record<string, string>;
+
+interface SourceConfigNetworkLike {
+  userAgent?: string;
+  headers?: SourceConfigHeaderMap;
+}
+
+interface SourceConfigMetadataLike {
+  baseUrl?: string;
+  alternativeUrls?: Record<string, string>;
+}
+
+interface SourceConfigSettingsLike {
+  domain?: SourceConfigDefaultSetting;
+  apiDomain?: SourceConfigDefaultSetting;
+}
+
+interface SourceConfigJsonLike {
+  metadata?: SourceConfigMetadataLike;
+  settings?: SourceConfigSettingsLike;
+  network?: SourceConfigNetworkLike;
+  imageHeaders?: SourceConfigHeaderMap;
+}
+
+interface SourceRequestContext {
+  requestBaseUrl: string;
+  refererHint: string;
+  originHint: string;
+  headerTemplate: RequestHeaders;
+  userAgentLocked: boolean;
+}
+
 interface WebtoonAdjacentChapterLoadTarget {
   direction: 'prev' | 'next';
   chapter: MangaChapter;
@@ -318,6 +355,7 @@ export struct MangaReaderPage {
   private currentSourceId: number = -1;
   private currentSourcePkg: string = '';
   private photos18PageCachePartition: string = 'photos18_reader';
+  private shouldKeepConfiguredImageUserAgent: boolean = false;
 
   @State private dailyLimitReached: boolean = false;
   @State private dailyLimitPromptVisible: boolean = false;
@@ -1412,6 +1450,384 @@ export struct MangaReaderPage {
     return false;
   }
 
+  private trimTrailingSlash(url: string): string {
+    const trimmed = url.trim();
+    if (trimmed.endsWith('/')) {
+      return trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
+  }
+
+  private isHttpUrl(value: string): boolean {
+    return value.startsWith('https://') || value.startsWith('http://');
+  }
+
+  private extractUrlOrigin(value: string): string {
+    const trimmed = value.trim();
+    const match = trimmed.match(/^(https?:\/\/[^\/]+)/);
+    if (match && match[1]) {
+      return match[1];
+    }
+    return '';
+  }
+
+  private extractUrlHost(value: string): string {
+    const origin = this.extractUrlOrigin(value);
+    const match = origin.match(/^https?:\/\/(.+)$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+    return '';
+  }
+
+  private isApiLikeUrl(value: string): boolean {
+    const normalized = this.trimTrailingSlash(value);
+    const host = this.extractUrlHost(normalized);
+    if (host.startsWith('api.') || host.startsWith('mapi.')) {
+      return true;
+    }
+    return normalized.includes('/api/');
+  }
+
+  private buildRequestOrigin(referer: string, explicitOrigin?: string): string {
+    if (explicitOrigin && explicitOrigin.trim().length > 0) {
+      const explicitValue = this.extractUrlOrigin(explicitOrigin);
+      if (explicitValue.length > 0) {
+        return explicitValue;
+      }
+    }
+    return this.extractUrlOrigin(referer);
+  }
+
+  private getDefaultReaderRequestUserAgent(): string {
+    return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+  }
+
+  private getPhotos18RequestUserAgent(): string {
+    return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  }
+
+  private normalizeUserAgentValue(userAgent?: string): string {
+    return userAgent ? userAgent.trim() : '';
+  }
+
+  private syncHiddenWebViewUserAgent(expectedUserAgent?: string): boolean {
+    const normalizedExpected = this.normalizeUserAgentValue(expectedUserAgent);
+    if (normalizedExpected.length === 0) {
+      return false;
+    }
+
+    try {
+      const currentCustomUserAgent = this.normalizeUserAgentValue(this.webviewController.getCustomUserAgent());
+      if (currentCustomUserAgent === normalizedExpected) {
+        return false;
+      }
+    } catch (error) {
+      logger.debug(TAG, `Hidden WebView getCustomUserAgent failed, force sync continues: ${String(error)}`);
+    }
+
+    this.webviewController.setCustomUserAgent(normalizedExpected);
+    logger.info(TAG, `Hidden WebView user agent synced: length=${normalizedExpected.length}`);
+    return true;
+  }
+
+  private cloneRequestHeaderEntries(entries?: RequestHeaderEntry[]): RequestHeaderEntry[] | undefined {
+    if (!entries || entries.length === 0) {
+      return undefined;
+    }
+    const clonedEntries: RequestHeaderEntry[] = [];
+    let index = 0;
+    while (index < entries.length) {
+      const entry = entries[index];
+      if (entry && entry.name && entry.value) {
+        clonedEntries.push({
+          name: String(entry.name),
+          value: String(entry.value)
+        } as RequestHeaderEntry);
+      }
+      index = index + 1;
+    }
+    return clonedEntries.length > 0 ? clonedEntries : undefined;
+  }
+
+  private cloneRequestHeaders(headers?: RequestHeaders): RequestHeaders {
+    const clonedHeaders: RequestHeaders = {} as RequestHeaders;
+    if (!headers) {
+      return clonedHeaders;
+    }
+    if (headers.userAgent) { clonedHeaders.userAgent = String(headers.userAgent); }
+    if (headers.accept) { clonedHeaders.accept = String(headers.accept); }
+    if (headers.referer) { clonedHeaders.referer = String(headers.referer); }
+    if (headers.origin) { clonedHeaders.origin = String(headers.origin); }
+    if (headers.cookie) { clonedHeaders.cookie = String(headers.cookie); }
+    if (headers.authorization) { clonedHeaders.authorization = String(headers.authorization); }
+    if (headers.acceptLanguage) { clonedHeaders.acceptLanguage = String(headers.acceptLanguage); }
+    if (headers.cacheControl) { clonedHeaders.cacheControl = String(headers.cacheControl); }
+    if (headers.pragma) { clonedHeaders.pragma = String(headers.pragma); }
+    if (headers.secFetchDest) { clonedHeaders.secFetchDest = String(headers.secFetchDest); }
+    if (headers.secFetchMode) { clonedHeaders.secFetchMode = String(headers.secFetchMode); }
+    if (headers.secFetchSite) { clonedHeaders.secFetchSite = String(headers.secFetchSite); }
+    if (headers.cachePartition) { clonedHeaders.cachePartition = String(headers.cachePartition); }
+    const extraHeaders = this.cloneRequestHeaderEntries(headers.extraHeaders);
+    if (extraHeaders) {
+      clonedHeaders.extraHeaders = extraHeaders;
+    }
+    return clonedHeaders;
+  }
+
+  private appendExtraRequestHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
+    const normalizedName = headerName.trim();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    if (!target.extraHeaders) {
+      target.extraHeaders = [];
+    }
+    let index = 0;
+    while (index < target.extraHeaders.length) {
+      const entry = target.extraHeaders[index];
+      if (entry.name.toLowerCase() === normalizedName.toLowerCase()) {
+        entry.value = normalizedValue;
+        return;
+      }
+      index = index + 1;
+    }
+    target.extraHeaders.push({
+      name: normalizedName,
+      value: normalizedValue
+    } as RequestHeaderEntry);
+  }
+
+  private applyConfiguredRequestHeader(
+    target: RequestHeaders,
+    headerName: string,
+    headerValue: string,
+    allowExtraHeaders: boolean,
+    includeExtendedFields: boolean
+  ): void {
+    const normalizedName = headerName.trim().toLowerCase();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    switch (normalizedName) {
+      case 'user-agent':
+        target.userAgent = normalizedValue;
+        return;
+      case 'referer':
+        target.referer = normalizedValue;
+        return;
+      case 'origin':
+        target.origin = this.buildRequestOrigin('', normalizedValue);
+        return;
+      case 'authorization':
+        target.authorization = normalizedValue;
+        return;
+      case 'cookie':
+        target.cookie = normalizedValue;
+        return;
+      case 'accept-language':
+        target.acceptLanguage = normalizedValue;
+        return;
+      case 'accept':
+        if (includeExtendedFields) {
+          target.accept = normalizedValue;
+        }
+        return;
+      case 'cache-control':
+        if (includeExtendedFields) {
+          target.cacheControl = normalizedValue;
+        }
+        return;
+      case 'pragma':
+        if (includeExtendedFields) {
+          target.pragma = normalizedValue;
+        }
+        return;
+      case 'sec-fetch-dest':
+        if (includeExtendedFields) {
+          target.secFetchDest = normalizedValue;
+        }
+        return;
+      case 'sec-fetch-mode':
+        if (includeExtendedFields) {
+          target.secFetchMode = normalizedValue;
+        }
+        return;
+      case 'sec-fetch-site':
+        if (includeExtendedFields) {
+          target.secFetchSite = normalizedValue;
+        }
+        return;
+      case 'cache-partition':
+        if (includeExtendedFields) {
+          target.cachePartition = normalizedValue;
+        }
+        return;
+      default:
+        if (allowExtraHeaders) {
+          this.appendExtraRequestHeader(target, headerName, normalizedValue);
+        }
+        return;
+    }
+  }
+
+  private applyConfiguredRequestHeaderMap(
+    target: RequestHeaders,
+    headerMap?: SourceConfigHeaderMap,
+    allowExtraHeaders: boolean = true,
+    includeExtendedFields: boolean = true
+  ): void {
+    if (!headerMap) {
+      return;
+    }
+    const headerKeys = Object.keys(headerMap);
+    let index = 0;
+    while (index < headerKeys.length) {
+      const headerKey = headerKeys[index];
+      const headerValue = String(headerMap[headerKey]).trim();
+      if (headerValue.length > 0) {
+        this.applyConfiguredRequestHeader(target, headerKey, headerValue, allowExtraHeaders, includeExtendedFields);
+      }
+      index = index + 1;
+    }
+  }
+
+  private normalizeConfiguredDomainValue(value: string, sourceConfig: SourceConfigJsonLike | null): string {
+    const trimmedValue = this.trimTrailingSlash(value);
+    if (trimmedValue.length === 0) {
+      return '';
+    }
+    if (this.isHttpUrl(trimmedValue)) {
+      return trimmedValue;
+    }
+    if (sourceConfig && sourceConfig.metadata && sourceConfig.metadata.alternativeUrls) {
+      const alternativeUrls = sourceConfig.metadata.alternativeUrls;
+      const keys = Object.keys(alternativeUrls);
+      let index = 0;
+      while (index < keys.length) {
+        const key = keys[index];
+        if (key === trimmedValue) {
+          const resolvedUrl = alternativeUrls[key];
+          if (resolvedUrl && this.isHttpUrl(String(resolvedUrl))) {
+            return this.trimTrailingSlash(String(resolvedUrl));
+          }
+        }
+        index++;
+      }
+    }
+    return '';
+  }
+
+  private buildSourceReferer(baseUrl: string, originHint: string, refererHint: string): string {
+    const normalizedRefererHint = this.trimTrailingSlash(refererHint);
+    if (normalizedRefererHint.length > 0) {
+      return normalizedRefererHint;
+    }
+    const normalizedOriginHint = this.trimTrailingSlash(originHint);
+    const normalizedBaseUrl = this.trimTrailingSlash(baseUrl);
+    if (normalizedBaseUrl.length === 0) {
+      return normalizedOriginHint.length > 0 ? `${normalizedOriginHint}/` : '';
+    }
+    if (normalizedOriginHint.length > 0 && this.isApiLikeUrl(normalizedBaseUrl)) {
+      return `${normalizedOriginHint}/`;
+    }
+    return normalizedBaseUrl;
+  }
+
+  private parseSourceConfigJson(configJson: string): SourceConfigJsonLike | null {
+    try {
+      return JSON.parse(configJson) as SourceConfigJsonLike;
+    } catch (error) {
+      logger.warn(TAG, `解析图源配置失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async resolveSourceRequestContext(sourceId: number, fallbackBaseUrl: string): Promise<SourceRequestContext> {
+    const requestContext: SourceRequestContext = {
+      requestBaseUrl: this.trimTrailingSlash(fallbackBaseUrl),
+      refererHint: '',
+      originHint: '',
+      headerTemplate: {} as RequestHeaders,
+      userAgentLocked: false
+    } as SourceRequestContext;
+
+    let sourceConfig: SourceConfigJsonLike | null = null;
+    try {
+      const sourceRecord: ComicSourceDatabaseRecord | null = await DataManager.getInstance().getComicSourceById(sourceId);
+      if (sourceRecord && sourceRecord.configJson) {
+        sourceConfig = this.parseSourceConfigJson(String(sourceRecord.configJson));
+      }
+      if (sourceConfig && sourceConfig.network) {
+        if (sourceConfig.network.userAgent) {
+          const configuredUserAgent = String(sourceConfig.network.userAgent).trim();
+          if (configuredUserAgent.length > 0) {
+            requestContext.headerTemplate.userAgent = configuredUserAgent;
+            requestContext.userAgentLocked = true;
+          }
+        }
+        this.applyConfiguredRequestHeaderMap(requestContext.headerTemplate, sourceConfig.network.headers, false, false);
+      }
+      if (sourceConfig && sourceConfig.imageHeaders) {
+        this.applyConfiguredRequestHeaderMap(requestContext.headerTemplate, sourceConfig.imageHeaders, true, true);
+      }
+      if (requestContext.headerTemplate.referer && requestContext.headerTemplate.referer.length > 0) {
+        requestContext.refererHint = String(requestContext.headerTemplate.referer);
+      }
+      if (requestContext.headerTemplate.origin && requestContext.headerTemplate.origin.length > 0) {
+        requestContext.originHint = this.buildRequestOrigin('', String(requestContext.headerTemplate.origin));
+      }
+      if (requestContext.headerTemplate.userAgent && requestContext.headerTemplate.userAgent.length > 0) {
+        requestContext.userAgentLocked = true;
+      }
+      if (sourceConfig && sourceConfig.settings) {
+        const defaultDomain = sourceConfig.settings.domain && sourceConfig.settings.domain.default
+          ? this.normalizeConfiguredDomainValue(String(sourceConfig.settings.domain.default), sourceConfig)
+          : '';
+        if (defaultDomain.length > 0) {
+          requestContext.requestBaseUrl = defaultDomain;
+        }
+        if (requestContext.requestBaseUrl.length === 0) {
+          const defaultApiDomain = sourceConfig.settings.apiDomain && sourceConfig.settings.apiDomain.default
+            ? this.normalizeConfiguredDomainValue(String(sourceConfig.settings.apiDomain.default), sourceConfig)
+            : '';
+          if (defaultApiDomain.length > 0) {
+            requestContext.requestBaseUrl = defaultApiDomain;
+          }
+        }
+      }
+
+      const domainSetting: UserSettingsDatabaseRecord | null = await DataManager.getInstance().getSourceUserSetting(sourceId, 'domain');
+      if (domainSetting && domainSetting.settingValue) {
+        const resolvedDomain = this.normalizeConfiguredDomainValue(String(domainSetting.settingValue), sourceConfig);
+        if (resolvedDomain.length > 0) {
+          requestContext.requestBaseUrl = resolvedDomain;
+        }
+      }
+      const apiDomainSetting: UserSettingsDatabaseRecord | null = await DataManager.getInstance().getSourceUserSetting(sourceId, 'apiDomain');
+      if (apiDomainSetting && apiDomainSetting.settingValue) {
+        const resolvedApiDomain = this.normalizeConfiguredDomainValue(String(apiDomainSetting.settingValue), sourceConfig);
+        if (resolvedApiDomain.length > 0) {
+          requestContext.requestBaseUrl = resolvedApiDomain;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `读取图源请求上下文失败: sourceId=${sourceId}, error=${String(error)}`);
+    }
+
+    if (requestContext.originHint.length === 0) {
+      requestContext.originHint = this.buildRequestOrigin(requestContext.refererHint, requestContext.requestBaseUrl);
+    }
+    requestContext.refererHint = this.buildSourceReferer(
+      requestContext.requestBaseUrl,
+      requestContext.originHint,
+      requestContext.refererHint
+    );
+    return requestContext;
+  }
+
   private getPhotos18Origin(): string {
     return 'https://www.photos18.com';
   }
@@ -1515,14 +1931,16 @@ export struct MangaReaderPage {
       return;
     }
     const contextUrl = baseUrl.trim().length > 0 ? baseUrl.trim() : this.getPhotos18Origin();
+    const requestUserAgent = this.getPhotos18RequestUserAgent();
     try {
       await new Promise<void>((resolve) => setTimeout(resolve, 1200));
-      await this.ensureHiddenWebViewSourceContextReady(contextUrl);
+      await this.ensureHiddenWebViewSourceContextReady(contextUrl, requestUserAgent);
       const cookieManager = CookieManager.getInstance();
       const refreshed: boolean = await cookieManager.forceCaptureWebViewCookies(this.currentSourceId, this.webviewController, contextUrl);
+      const cookieStr: string = await cookieManager.getCookieString(this.currentSourceId);
       ImageCacheManager.getInstance().clearCookieCache(this.currentSourceId);
       OnlineImageLoader.getInstance().clearCookieCache(this.currentSourceId);
-      logger.info(TAG, `Photos18阅读器图片会话预热完成: refreshed=${refreshed}`);
+      logger.info(TAG, `Photos18阅读器图片会话预热完成: refreshed=${refreshed}, cookieLen=${cookieStr.length}, contextUrl=${contextUrl}`);
     } catch (error) {
       logger.warn(TAG, `Photos18阅读器图片会话预热失败: ${String(error)}`);
     }
@@ -1543,7 +1961,7 @@ export struct MangaReaderPage {
         const referer = this.resolvePhotos18ReaderReferer(manga, chapter);
         this.photos18PageCachePartition = this.buildPhotos18CachePartition(referer);
         const photos18Headers: RequestHeaders = {
-          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          userAgent: this.getPhotos18RequestUserAgent(),
           accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
           referer: referer,
           origin: this.getPhotos18Origin(),
@@ -1627,19 +2045,13 @@ export struct MangaReaderPage {
         if (this.networkHeaders.referer !== newReferer) {
            const prev: RequestHeaders = this.networkHeaders;
            // 创建新对象，保留旧属性 (不使用 ... 语法，明确赋值)
-           const updated: RequestHeaders = {
-             userAgent: prev?.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-             accept: prev?.accept || 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
-             referer: newReferer,// 更新 Referer
-             origin: newReferer,
-             acceptLanguage: prev && prev.acceptLanguage ? prev.acceptLanguage : 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-             cacheControl: prev.cacheControl,
-             pragma: prev.pragma,
-             secFetchDest: prev.secFetchDest,
-             secFetchMode: prev.secFetchMode,
-             secFetchSite: prev.secFetchSite,
-             cookie: prev?.cookie
-           } as RequestHeaders;
+           const updated: RequestHeaders = this.cloneRequestHeaders(prev);
+           updated.userAgent = prev?.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+           updated.accept = prev?.accept || 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5';
+           updated.referer = newReferer;
+           updated.origin = this.buildRequestOrigin(newReferer, prev.origin);
+           updated.acceptLanguage = prev && prev.acceptLanguage ? prev.acceptLanguage : 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7';
+           updated.cookie = prev?.cookie;
            
            this.networkHeaders = updated;
            this.networkHeadersTick = this.networkHeadersTick + 1;// 递增 Tick
@@ -1651,7 +2063,7 @@ export struct MangaReaderPage {
         const updated: RequestHeaders = {
           userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
           referer: newReferer,
-          origin: this.isPhotos18Source() ? this.getPhotos18Origin() : newReferer,
+          origin: this.isPhotos18Source() ? this.getPhotos18Origin() : this.buildRequestOrigin(newReferer),
           accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
           acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7'
         } as RequestHeaders;
@@ -1915,6 +2327,7 @@ export struct MangaReaderPage {
     this.currentSourceId = -1;
     this.currentSourcePkg = '';
     this.mangaEngine = null;
+    this.shouldKeepConfiguredImageUserAgent = false;
     this.networkHeaders = undefined;
     this.readerState.isLoading = true;
     this.readerState.errorMessage = '';
@@ -1956,6 +2369,7 @@ export struct MangaReaderPage {
       chapter.totalPages = chapter.pages.length;
     }
 
+    this.shouldKeepConfiguredImageUserAgent = false;
     this.networkHeaders = await this.remoteLibraryBridge.getRequestHeaders(manga);
     this.networkHeadersTick = this.networkHeadersTick + 1;
     this.isNetworkConfigReady = true;
@@ -1998,6 +2412,10 @@ export struct MangaReaderPage {
     if (this.isPhotos18Source()) {
       return;
     }
+    if (this.shouldKeepConfiguredImageUserAgent) {
+      logger.debug(TAG, '图源已锁定图片请求 User-Agent，跳过 WebView User-Agent 覆盖');
+      return;
+    }
     if (!this.webViewControllerAttached) {
       logger.debug(TAG, '隐藏WebView控制器尚未附加，跳过异步刷新WebView UserAgent');
       return;
@@ -2018,20 +2436,8 @@ export struct MangaReaderPage {
         return;
       }
       const prevHeaders: RequestHeaders = this.networkHeaders;
-      const refreshedHeaders: RequestHeaders = {
-        userAgent: normalizedUa,
-        accept: prevHeaders.accept,
-        referer: prevHeaders.referer,
-        origin: prevHeaders.origin,
-        cookie: prevHeaders.cookie,
-        authorization: prevHeaders.authorization,
-        acceptLanguage: prevHeaders.acceptLanguage,
-        cacheControl: prevHeaders.cacheControl,
-        pragma: prevHeaders.pragma,
-        secFetchDest: prevHeaders.secFetchDest,
-        secFetchMode: prevHeaders.secFetchMode,
-        secFetchSite: prevHeaders.secFetchSite
-      } as RequestHeaders;
+      const refreshedHeaders: RequestHeaders = this.cloneRequestHeaders(prevHeaders);
+      refreshedHeaders.userAgent = normalizedUa;
       this.networkHeaders = refreshedHeaders;
       this.networkHeadersTick++;
       logger.debug(TAG, `异步刷新WebView UserAgent完成，长度=${normalizedUa.length}`);
@@ -2082,13 +2488,14 @@ export struct MangaReaderPage {
     throw new Error(`隐藏WebView未进入图源上下文: ${baseUrl}`);
   }
 
-  private async ensureHiddenWebViewSourceContextReady(baseUrl: string): Promise<void> {
+  private async ensureHiddenWebViewSourceContextReady(baseUrl: string, expectedUserAgent?: string): Promise<void> {
     const normalizedBaseUrl: string = baseUrl.trim();
     if (normalizedBaseUrl.length === 0) {
       return;
     }
 
     await this.waitForHiddenWebViewAttached();
+    const userAgentChanged: boolean = this.syncHiddenWebViewUserAgent(expectedUserAgent);
 
     if (!this.mangaEngine) {
       return;
@@ -2102,7 +2509,7 @@ export struct MangaReaderPage {
       logger.debug(TAG, `读取隐藏WebView当前URL失败，将直接预热图源上下文: ${message}`);
     }
 
-    if (currentUrl.startsWith(normalizedBaseUrl)) {
+    if (currentUrl.startsWith(normalizedBaseUrl) && !userAgentChanged) {
       logger.debug(TAG, `隐藏WebView已处于图源上下文: ${currentUrl}`);
       return;
     }
@@ -2178,6 +2585,7 @@ export struct MangaReaderPage {
     if (await this.initializeRemoteProviderReaderSafe(params)) {
       return;
     }
+    this.shouldKeepConfiguredImageUserAgent = false;
 
     // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
     // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
@@ -2274,7 +2682,7 @@ export struct MangaReaderPage {
       this.networkHeaders = {
         userAgent: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
         referer: referer,
-        origin: referer,
+        origin: this.buildRequestOrigin(referer),
         accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
         acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
         cookie: cookies
@@ -2389,22 +2797,40 @@ export struct MangaReaderPage {
               if (cfg && cfg.metadata && cfg.metadata.baseUrl) {
                 baseUrl = String(cfg.metadata.baseUrl);
               }
+              const effectiveSourceId: number = params.sourceId && params.sourceId > 0 ? params.sourceId : this.currentSourceId;
+              const sourceRequestContext: SourceRequestContext = effectiveSourceId > 0
+                ? await this.resolveSourceRequestContext(effectiveSourceId, baseUrl)
+                : {
+                    requestBaseUrl: this.trimTrailingSlash(baseUrl),
+                    refererHint: this.trimTrailingSlash(baseUrl),
+                    originHint: this.buildRequestOrigin('', baseUrl),
+                    headerTemplate: {} as RequestHeaders,
+                    userAgentLocked: false
+                  } as SourceRequestContext;
               const photos18Referer: string = this.isPhotos18Source()
                 ? this.resolvePhotos18ReaderRefererFromParams(params, manga, this.readerState.currentChapter)
                 : '';
+              const ua: string = this.isPhotos18Source()
+                ? this.getPhotos18RequestUserAgent()
+                : this.getDefaultReaderRequestUserAgent();
               if (this.isPhotos18Source()) {
                 this.photos18PageCachePartition = this.buildPhotos18CachePartition(photos18Referer);
                 await this.preparePhotos18ImageSession(photos18Referer);
               } else {
-                await this.ensureHiddenWebViewSourceContextReady(baseUrl);
+                const preheatUserAgent: string = sourceRequestContext.headerTemplate.userAgent &&
+                  sourceRequestContext.headerTemplate.userAgent.length > 0
+                  ? sourceRequestContext.headerTemplate.userAgent
+                  : ua;
+                await this.ensureHiddenWebViewSourceContextReady(sourceRequestContext.requestBaseUrl, preheatUserAgent);
               }
-              
-              const ua: string = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+
               logger.debug(TAG, `📋 步骤3: 使用快速默认UserAgent，长度=${ua.length}`);
               logger.debug(TAG, '📋 步骤5: 准备构造Referer');
               
-              logger.debug(TAG, `🔍 准备构造Referer: isKomiic=${isKomiic}, baseUrl=${baseUrl}`);
-              let dynamicReferer: string = baseUrl;
+              logger.debug(TAG, `🔍 准备构造Referer: isKomiic=${isKomiic}, baseUrl=${baseUrl}, requestBase=${sourceRequestContext.requestBaseUrl}, originHint=${sourceRequestContext.originHint}`);
+              let dynamicReferer: string = sourceRequestContext.refererHint.length > 0
+                ? sourceRequestContext.refererHint
+                : sourceRequestContext.requestBaseUrl;
                 logger.debug(TAG, '📋 步骤6: Komiic图源，构造特定Referer');
               
                 // [修复] 确保使用外部ID而不是内部ID
@@ -2464,21 +2890,30 @@ export struct MangaReaderPage {
               const resolvedPhotos18Referer: string = this.isPhotos18Source()
                 ? this.resolvePhotos18ReaderRefererFromParams(params, manga, this.readerState.currentChapter)
                 : '';
-              const headers: RequestHeaders = {
-                userAgent: this.isPhotos18Source()
-                  ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                  : ua,
-                accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
-                referer: this.isPhotos18Source() ? resolvedPhotos18Referer : dynamicReferer,
-                origin: this.isPhotos18Source() ? this.getPhotos18Origin() : dynamicReferer,
-                acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-                cacheControl: 'no-cache',
-                pragma: 'no-cache',
-                secFetchDest: 'image',
-                secFetchMode: 'no-cors',
-                secFetchSite: 'same-origin',
-                cachePartition: this.isPhotos18Source() ? this.photos18PageCachePartition : undefined
-              } as RequestHeaders;
+              const headers: RequestHeaders = this.cloneRequestHeaders(sourceRequestContext.headerTemplate);
+              headers.userAgent = this.isPhotos18Source()
+                ? this.getPhotos18RequestUserAgent()
+                : (headers.userAgent && headers.userAgent.length > 0 ? headers.userAgent : ua);
+              headers.accept = headers.accept && headers.accept.length > 0
+                ? headers.accept
+                : 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5';
+              headers.referer = this.isPhotos18Source() ? resolvedPhotos18Referer : dynamicReferer;
+              headers.origin = this.isPhotos18Source()
+                ? this.getPhotos18Origin()
+                : this.buildRequestOrigin(headers.referer, sourceRequestContext.originHint.length > 0 ? sourceRequestContext.originHint : headers.origin);
+              headers.acceptLanguage = headers.acceptLanguage && headers.acceptLanguage.length > 0
+                ? headers.acceptLanguage
+                : 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7';
+              headers.cacheControl = headers.cacheControl && headers.cacheControl.length > 0
+                ? headers.cacheControl
+                : 'no-cache';
+              headers.pragma = headers.pragma && headers.pragma.length > 0 ? headers.pragma : 'no-cache';
+              headers.secFetchDest = headers.secFetchDest && headers.secFetchDest.length > 0 ? headers.secFetchDest : 'image';
+              headers.secFetchMode = headers.secFetchMode && headers.secFetchMode.length > 0 ? headers.secFetchMode : 'no-cors';
+              if (this.isPhotos18Source()) {
+                headers.secFetchSite = 'same-origin';
+                headers.cachePartition = this.photos18PageCachePartition;
+              }
               
               logger.debug(TAG, '📋 步骤9: CookieManager实例已获取，准备读取Cookie');
               try {
@@ -2497,6 +2932,7 @@ export struct MangaReaderPage {
                 logger.warn(TAG, `读取Cookie失败: ${msg}`);
               }
               logger.debug(TAG, `📋 步骤13: networkHeadersTick=${this.networkHeadersTick}`);
+              this.shouldKeepConfiguredImageUserAgent = sourceRequestContext.userAgentLocked;
               this.networkHeaders = headers;
               this.networkHeadersTick++;
               logger.debug(TAG, '📋 步骤14: isNetworkConfigReady已设置为true');

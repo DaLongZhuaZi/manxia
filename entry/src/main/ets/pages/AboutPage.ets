@@ -20,6 +20,9 @@ import { common } from '@kit.AbilityKit';
 import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -32,6 +35,7 @@ const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?task
 struct AboutPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
 
   // 主题相关状态
@@ -239,9 +243,29 @@ struct AboutPage {
         .width('80%')
     }
     .width('100%')
-    .padding({ top: 40, bottom: 40 })
+    .padding({ left: 24, right: 24, top: 32, bottom: 32 })
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .margin({ left: 16, right: 16, bottom: 16 })
   }
 
   /**
@@ -280,15 +304,31 @@ struct AboutPage {
   @Builder
   buildAppInfo() {
     Column() {
-      this.buildInfoItem('应用名称', this.getDisplayAppName())
+      this.buildInfoItem('应用包名', this.getDisplayAppName())
       this.buildInfoItem('版本号', this.getDisplayAppVersion())
       this.buildInfoItem('构建号', this.getDisplayBuildNumber())
       this.buildInfoItem('开发者', this.developer, false)
     }
     .width('100%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .margin({ left: 16, right: 16, bottom: 16 })
   }
 
@@ -311,9 +351,25 @@ struct AboutPage {
     .width('100%')
     .height(56)
     .padding({ left: 16, right: 16 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .margin({ left: 16, right: 16, bottom: 12 })
     .onClick(onClick)
   }
@@ -506,10 +562,12 @@ struct AboutPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         if (this.responsive_isLandscape) {
@@ -521,6 +579,7 @@ struct AboutPage {
                 Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
                 this.buildAppHeader()
                 this.buildAppInfo()
+                Blank().height(24 + this.navigationBarHeight)
               }
               .width('100%')
             }
@@ -537,6 +596,7 @@ struct AboutPage {
                 Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
                 this.buildActionButtons()
                 this.buildCopyright()
+                Blank().height(24 + this.navigationBarHeight)
               }
               .width('100%')
             }
@@ -560,6 +620,7 @@ struct AboutPage {
               this.buildAppInfo()
               this.buildActionButtons()
               this.buildCopyright()
+              Blank().height(24 + this.navigationBarHeight)
             }
             .width('100%')
             .constraintSize({ maxWidth: this.responsive_maxContentWidth })

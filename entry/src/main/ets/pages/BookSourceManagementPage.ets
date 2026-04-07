@@ -16,6 +16,9 @@ import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 // 大文件导入阈值（5MB）
 const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024;
@@ -48,6 +51,7 @@ interface BookSourceInfo {
 @Component
 export struct BookSourceManagementPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   
   // 所有书源（内存中完整列表）
   private allSources: BookSourceInfo[] = [];
@@ -566,33 +570,44 @@ export struct BookSourceManagementPage {
   }
 
   build() {
-    Column() {
-      this.buildSearchBar()
-      
-      if (this.isLoading) {
-        this.buildLoadingView()
-      } else if (this.displayedSources.length === 0) {
-        this.buildEmptyView()
-      } else {
-        this.buildSourceList()
+    Stack() {
+      SharedPageBackgroundLayer({
+        defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+        mode: GlobalBackgroundLayerMode.IMMERSIVE
+      })
+        .width('100%')
+        .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      Column() {
+        this.buildSearchBar()
+
+        if (this.isLoading) {
+          this.buildLoadingView()
+        } else if (this.displayedSources.length === 0) {
+          this.buildEmptyView()
+        } else {
+          this.buildSourceList()
+        }
+
+        if (this.isMultiSelectMode) {
+          this.buildMultiSelectToolbar()
+        }
+
+        if (this.showImportDialog) {
+          this.buildImportDialog()
+        }
+
+        if (this.showProgressDialog) {
+          this.buildProgressDialog()
+        }
       }
-      
-      if (this.isMultiSelectMode) {
-        this.buildMultiSelectToolbar()
-      }
-      
-      if (this.showImportDialog) {
-        this.buildImportDialog()
-      }
-      
-      if (this.showProgressDialog) {
-        this.buildProgressDialog()
-      }
+      .width('100%')
+      .height('100%')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -645,6 +660,25 @@ export struct BookSourceManagementPage {
     }
     .width('100%')
     .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -704,9 +738,10 @@ export struct BookSourceManagementPage {
             this.checkPreload(index);
           })
         }, (source: BookSourceInfo) => source.id)
+        Blank().height(24 + this.navigationBarHeight)
       }
       .width('100%')
-      .padding({ left: 16, right: 16, bottom: 16 })
+      .padding({ left: 16, right: 16, bottom: 8 })
     }
     .width('100%')
     .layoutWeight(1)
@@ -835,11 +870,24 @@ export struct BookSourceManagementPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
     .border({
-      width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
     })
   }
 
@@ -872,11 +920,25 @@ export struct BookSourceManagementPage {
         })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 16 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .padding({ left: 16, right: 16, top: 12, bottom: 16 + this.navigationBarHeight })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
     .border({
-      width: { top: 1 },
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: -4
     })
   }
 

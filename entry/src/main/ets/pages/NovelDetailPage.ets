@@ -6,8 +6,8 @@
  * 文件路径: entry/src/main/ets/pages/NovelDetailPage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { curves, LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { curves, promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
@@ -29,10 +29,13 @@ import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsMana
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { AppColors } from '../Framework/Theme/AppColors';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelDetailPage';
-
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 @Component
 export struct NovelDetailPage {
@@ -142,6 +145,14 @@ export struct NovelDetailPage {
     }
 
     try {
+      /* if (this.bookId) {
+        const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
+        await this.settingsManager.setJSON<TextReaderSettings>(settingsKey, settings);
+        this.novelSettings = settings;
+        logger.info(TAG, `淇濆瓨涔︾睄涓撳睘璁剧疆: ${this.bookId}`);
+        promptAction.showToast({ message: '璁剧疆宸蹭繚瀛? });
+        return;
+      } */
       // 尝试获取书籍详情
       this.book = await this.sourceManager.getBookInfo(this.sourceId, this.bookUrl);
       
@@ -286,10 +297,12 @@ export struct NovelDetailPage {
     HdsNavDestination() {
       Stack({ alignContent: Alignment.Bottom }) {
         // 背景层：扩展到系统栏区域，实现完全沉浸式背景
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
         
@@ -297,7 +310,7 @@ export struct NovelDetailPage {
         Scroll() {
           Column() {
             // 标题栏占位
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
             
             if (this.isLoading) {
               this.buildLoading()
@@ -317,6 +330,7 @@ export struct NovelDetailPage {
             Blank().height(20)
           }
           .width('100%')
+          .padding({ bottom: 24 + this.navigationBarHeight })
         }
         .width('100%')
         .height('100%')
@@ -425,30 +439,19 @@ export struct NovelDetailPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .alignContent(Alignment.Center)
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: this.book?.name || '涔︾睄璇︽儏',
+          appFontFamily: this.appFontFamily
+        })
+        .align(Alignment.TopStart)
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: this.book?.name || '书籍详情'
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
@@ -604,7 +607,25 @@ export struct NovelDetailPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
 
     // 简介
     if (this.book?.intro) {
@@ -638,7 +659,25 @@ export struct NovelDetailPage {
       }
       .width('100%')
       .padding(16)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 8
+      })
       .margin({ top: 8 })
       .alignItems(HorizontalAlign.Start)
     }
@@ -740,7 +779,25 @@ export struct NovelDetailPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .margin({ top: 8 })
   }
 
@@ -838,7 +895,25 @@ export struct NovelDetailPage {
       }
     }
     .width('100%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .margin({ top: 8 })
     .alignItems(HorizontalAlign.Start)
   }
@@ -1287,6 +1362,14 @@ export struct NovelDetailPage {
    */
   async saveNovelSettings(settings: TextReaderSettings): Promise<void> {
     try {
+      if (this.bookId) {
+        const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
+        await this.settingsManager.setJSON<TextReaderSettings>(settingsKey, settings);
+        this.novelSettings = settings;
+        logger.info(TAG, `Saved book-specific novel settings: ${this.bookId}`);
+        promptAction.showToast({ message: '设置已保存' });
+        return;
+      }
       // 保存为全局设置
       await this.settingsManager.setJSON<TextReaderSettings>(
         SettingKeys.NOVEL_READER_SETTINGS, 
@@ -1470,8 +1553,28 @@ export struct NovelDetailPage {
       .padding(16)
     }
     .width('100%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-    .borderRadius({ topLeft: 16, topRight: 16 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius({
+      topLeft: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme),
+      topRight: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme)
+    })
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: -6
+    })
   }
 
   @Builder
@@ -1560,8 +1663,28 @@ export struct NovelDetailPage {
     }
     .width('100%')
     .height('80%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
-    .borderRadius({ topLeft: 16, topRight: 16 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius({
+      topLeft: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme),
+      topRight: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme)
+    })
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: -6
+    })
   }
 
   @Builder
@@ -1760,8 +1883,28 @@ export struct NovelDetailPage {
     }
     .width('100%')
     .height('70%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
-    .borderRadius({ topLeft: 16, topRight: 16 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius({
+      topLeft: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme),
+      topRight: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme)
+    })
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: -6
+    })
   }
 
   // 封面生成器常量

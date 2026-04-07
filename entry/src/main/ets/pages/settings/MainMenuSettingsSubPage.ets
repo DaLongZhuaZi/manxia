@@ -24,7 +24,7 @@ import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Frame
 import { getKomgaTracker, KomgaTracker } from '../../Framework/Tracking/trackers/KomgaTracker';
 import { KomgaConfig } from '../../Framework/Source/KomgaModels';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
+import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
@@ -882,9 +882,19 @@ export struct MainMenuSettingsSubPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 4, bottom: 12 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -968,9 +978,19 @@ export struct MainMenuSettingsSubPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -1119,8 +1139,13 @@ export struct MainMenuSettingsSubPage {
           }
           .width('100%')
           .padding(8)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .borderRadius(12)
+          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+          .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+          .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+          .clip(true)
+          .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
         }
         .width('100%')
       }
@@ -1144,8 +1169,13 @@ export struct MainMenuSettingsSubPage {
           }
           .width('100%')
           .padding(8)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .borderRadius(12)
+          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+          .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+          .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+          .clip(true)
+          .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
         }
       }
       .width('100%')
@@ -1184,9 +1214,19 @@ export struct MainMenuSettingsSubPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -1243,9 +1283,19 @@ export struct MainMenuSettingsSubPage {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -1302,9 +1352,19 @@ export struct MainMenuSettingsSubPage {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   build() {
@@ -1374,9 +1434,19 @@ export struct MainMenuSettingsSubPage {
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .borderRadius(12)
-              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
 
               Row() {
                 Column({ space: 4 }) {
@@ -1405,9 +1475,19 @@ export struct MainMenuSettingsSubPage {
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .borderRadius(12)
-              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
 
               Row() {
                 Column({ space: 4 }) {
@@ -1436,9 +1516,19 @@ export struct MainMenuSettingsSubPage {
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .borderRadius(12)
-              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
 
               Row() {
                 Column({ space: 4 }) {
@@ -1467,9 +1557,19 @@ export struct MainMenuSettingsSubPage {
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .borderRadius(12)
-              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')
             .alignItems(HorizontalAlign.Start)

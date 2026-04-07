@@ -101,6 +101,11 @@ export interface LoadOptions {
   contentType?: string;
 }
 
+export interface RequestHeaderEntry {
+  name: string;
+  value: string;
+}
+
 export interface RequestHeaders {
   userAgent?: string;
   accept?: string;
@@ -115,6 +120,7 @@ export interface RequestHeaders {
   secFetchMode?: string;
   secFetchSite?: string;
   cachePartition?: string;
+  extraHeaders?: RequestHeaderEntry[];
 }
 
 interface HttpHeadersObject {
@@ -267,35 +273,7 @@ export class ImageCacheManager {
       if (isOnlineManga) {
         logger.debug(TAG, `使用OnlineImageLoader加载在线图片: ${url.substring(0, 80)}`);
         const onlineLoader = OnlineImageLoader.getInstance();
-        
-        // 构建OnlineLoadOptions（类型兼容）
-        let onlineHeaders: OnlineRequestHeaders | undefined = undefined;
-        if (options?.headers) {
-          onlineHeaders = {
-            userAgent: options.headers.userAgent,
-            accept: options.headers.accept,
-            referer: options.headers.referer,
-            origin: options.headers.origin,
-            cookie: options.headers.cookie,
-            authorization: options.headers.authorization,
-            acceptLanguage: options.headers.acceptLanguage,
-            cacheControl: options.headers.cacheControl,
-            pragma: options.headers.pragma,
-            secFetchDest: options.headers.secFetchDest,
-            secFetchMode: options.headers.secFetchMode,
-            secFetchSite: options.headers.secFetchSite,
-            cachePartition: options.headers.cachePartition
-          };
-        }
-        
-         const onlineOptions: OnlineLoadOptions = {
-           width: options?.width,
-           height: options?.height,
-           headers: onlineHeaders,
-           sourceId: options?.sourceId,
-           priority: options?.priority || 1,
-           partitionKey: options?.partitionKey
-         };
+        const onlineOptions: OnlineLoadOptions = this.buildOnlineLoadOptions(options);
 
         return await onlineLoader.load(url, onlineOptions);
       }
@@ -450,7 +428,74 @@ export class ImageCacheManager {
     if (headers.secFetchSite) {
       result['Sec-Fetch-Site'] = String(headers.secFetchSite);
     }
+    this.appendExtraHeaders(result, headers.extraHeaders);
     return result;
+  }
+
+  private buildOnlineHeaders(headers?: RequestHeaders): OnlineRequestHeaders | undefined {
+    if (!headers) {
+      return undefined;
+    }
+    return {
+      userAgent: headers.userAgent,
+      accept: headers.accept,
+      referer: headers.referer,
+      origin: headers.origin,
+      cookie: headers.cookie,
+      authorization: headers.authorization,
+      acceptLanguage: headers.acceptLanguage,
+      cacheControl: headers.cacheControl,
+      pragma: headers.pragma,
+      secFetchDest: headers.secFetchDest,
+      secFetchMode: headers.secFetchMode,
+      secFetchSite: headers.secFetchSite,
+      cachePartition: headers.cachePartition,
+      extraHeaders: this.cloneRequestHeaderEntries(headers.extraHeaders)
+    };
+  }
+
+  private buildOnlineLoadOptions(options?: LoadOptions): OnlineLoadOptions {
+    return {
+      width: options?.width,
+      height: options?.height,
+      headers: this.buildOnlineHeaders(options?.headers),
+      sourceId: options?.sourceId,
+      priority: options?.priority || 1,
+      partitionKey: options?.partitionKey
+    } as OnlineLoadOptions;
+  }
+
+  private cloneRequestHeaderEntries(entries?: RequestHeaderEntry[]): RequestHeaderEntry[] | undefined {
+    if (!entries || entries.length === 0) {
+      return undefined;
+    }
+    const result: RequestHeaderEntry[] = [];
+    let index = 0;
+    while (index < entries.length) {
+      const entry = entries[index];
+      if (entry && entry.name && entry.value) {
+        result.push({
+          name: String(entry.name),
+          value: String(entry.value)
+        } as RequestHeaderEntry);
+      }
+      index = index + 1;
+    }
+    return result.length > 0 ? result : undefined;
+  }
+
+  private appendExtraHeaders(target: Record<string, string>, entries?: RequestHeaderEntry[]): void {
+    if (!entries || entries.length === 0) {
+      return;
+    }
+    let index = 0;
+    while (index < entries.length) {
+      const entry = entries[index];
+      if (entry && entry.name && entry.value) {
+        target[String(entry.name)] = String(entry.value);
+      }
+      index = index + 1;
+    }
   }
 
   private async loadFromRemoteProviderCache(
@@ -890,6 +935,13 @@ export class ImageCacheManager {
    * 从网络加载图片
    */
   private async loadFromNetwork(url: string, options?: LoadOptions): Promise<image.PixelMap | null> {
+    if (this.isPhotos18Url(url)) {
+      logger.info(TAG, `Photos18缃戠粶鍥剧墖鏀惧叆OnlineImageLoader闃熷垪: ${url.substring(0, 80)}`);
+      const onlineLoader = OnlineImageLoader.getInstance();
+      const onlineOptions: OnlineLoadOptions = this.buildOnlineLoadOptions(options);
+      return await onlineLoader.load(url, onlineOptions);
+    }
+
     let retryCount = 0;
     const maxRetries = this.config.network.retryCount;
     
@@ -915,7 +967,16 @@ export class ImageCacheManager {
         
         // 优化：使用内存缓存获取Cookie，避免每次都查询数据库
         let cookieHdr: string = options && options.headers && options.headers.cookie ? String(options.headers.cookie) : '';
-        if (cookieHdr.length === 0 && options && options.sourceId) {
+        if (options && options.sourceId && this.isPhotos18Url(url)) {
+          try {
+            cookieHdr = await this.getCachedCookie(options.sourceId, url);
+            if (cookieHdr.length > 0) {
+              logger.debug(TAG, `Photos18图片请求按URL获取Cookie: sourceId=${options.sourceId}, length=${cookieHdr.length}`);
+            }
+          } catch (e) {
+            logger.warn(TAG, `Photos18图片请求按URL获取Cookie失败: sourceId=${options.sourceId}, error=${String(e)}`);
+          }
+        } else if (cookieHdr.length === 0 && options && options.sourceId) {
           try {
             cookieHdr = await this.getCachedCookie(options.sourceId);
             if (cookieHdr.length > 0) {
@@ -958,18 +1019,34 @@ export class ImageCacheManager {
           'Sec-Fetch-Site': secFetchSiteHdr.length > 0 ? secFetchSiteHdr : undefined
         };
 
-        const reqHeaderKeys: string[] = Object.keys(headerObj as Record<string, Object>);
+        const requestHeaders: Record<string, string> = {} as Record<string, string>;
+        const standardHeaderKeys: string[] = Object.keys(headerObj as Record<string, Object>);
+        let headerIndex = 0;
+        while (headerIndex < standardHeaderKeys.length) {
+          const headerKey = standardHeaderKeys[headerIndex];
+          const headerValue = (headerObj as Record<string, string | undefined>)[headerKey];
+          if (headerValue && headerValue.length > 0) {
+            requestHeaders[headerKey] = headerValue;
+          }
+          headerIndex = headerIndex + 1;
+        }
+        this.appendExtraHeaders(requestHeaders, options?.headers?.extraHeaders);
+
+        const reqHeaderKeys: string[] = Object.keys(requestHeaders);
         const uaLog: string = ua.substring(0, Math.min(128, ua.length));
         const refererLen: number = refererHdr.length;
         const originLen: number = originHdr.length > 0 ? originHdr.length : (refererHdr.length > 0 ? refererHdr.length : 0);
         const cookieLen: number = cookieHdr.length;
         logger.debug(TAG, `HTTP请求准备: url=${url}, timeout=${this.config.network.timeout}, headers=${reqHeaderKeys.length}, ua=${uaLog}, refererLen=${refererLen}, originLen=${originLen}, cookieLen=${cookieLen}, secSite=${secFetchSiteHdr}`);
+        if (this.isPhotos18Url(url)) {
+          logger.debug(TAG, `Photos18请求头详情: referer=${refererHdr}, origin=${originHdr}, cookieLen=${cookieLen}`);
+        }
 
         const requestOptions: http.HttpRequestOptions = {
           method: http.RequestMethod.GET,
           connectTimeout: this.config.network.timeout,
           readTimeout: this.config.network.timeout,
-          header: headerObj as Object,
+          header: requestHeaders as Object,
           expectDataType: http.HttpDataType.ARRAY_BUFFER
         };
         
@@ -1215,6 +1292,10 @@ export class ImageCacheManager {
     }
     if (options && options.headers && options.headers.cookie) {
       base = base + `_c${this.simpleHash(String(options.headers.cookie))}`;
+    }
+    if (options && options.headers && options.headers.extraHeaders && options.headers.extraHeaders.length > 0) {
+      const serializedHeaders: string = JSON.stringify(options.headers.extraHeaders);
+      base = base + `_xh${this.simpleHash(serializedHeaders)}`;
     }
     return this.simpleHash(base);
   }
@@ -1486,7 +1567,19 @@ export class ImageCacheManager {
    * @param sourceId 图源ID
    * @returns Cookie字符串
    */
-  private async getCachedCookie(sourceId: number): Promise<string> {
+  private isPhotos18Url(url: string): boolean {
+    return url.includes('photos18.com');
+  }
+
+  private async getCachedCookie(sourceId: number, url?: string): Promise<string> {
+    if (url && this.isPhotos18Url(url)) {
+      try {
+        return await CookieManager.getInstance().getCookieStringForUrl(sourceId, url);
+      } catch (error) {
+        logger.warn(TAG, `按URL获取Cookie失败，回退普通缓存: sourceId=${sourceId}, error=${String(error)}`);
+      }
+    }
+
     const now = Date.now();
     const cached = this.cookieCache.get(sourceId);
     
@@ -1564,7 +1657,8 @@ export class ImageCacheManager {
             cookie: options.headers.cookie || '',
             accept: options.headers.accept || 'image/webp,image/apng,image/*,*/*;q=0.8',
             acceptLanguage: options.headers.acceptLanguage || 'zh-CN,zh;q=0.9,en;q=0.8',
-            cachePartition: options.headers.cachePartition || ''
+            cachePartition: options.headers.cachePartition || '',
+            extraHeaders: this.cloneRequestHeaderEntries(options.headers.extraHeaders)
           };
 
         onlineHeaders = headers;

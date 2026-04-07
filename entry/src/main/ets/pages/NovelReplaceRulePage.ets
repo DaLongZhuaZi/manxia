@@ -22,6 +22,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelReplaceRulePage';
@@ -358,7 +359,7 @@ export struct NovelReplaceRulePage {
           .width('100%')
           .height('100%')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .padding({ top: 8 })
+          .padding({ top: 8, bottom: 24 + this.navigationBarHeight })
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
         }
@@ -539,9 +540,26 @@ export struct NovelReplaceRulePage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .margin({ bottom: 8 })
-    .borderRadius(8)
     .onClick(() => this.editRule(rule))
   }
 
@@ -661,8 +679,28 @@ export struct NovelReplaceRulePage {
         .margin({ top: 24, bottom: 24 })
       }
       .width('100%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-      .borderRadius({ topLeft: 16, topRight: 16 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius({
+        topLeft: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme),
+        topRight: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme)
+      })
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 6,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: -2
+      })
       .transition(TransitionEffect.translate({ y: 300 }).animation({ duration: 300, curve: Curve.EaseOut }))
     }
     .width('100%')

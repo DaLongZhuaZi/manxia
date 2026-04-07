@@ -787,7 +787,6 @@ struct MainMenuPage {
   @State hasSourceUpdate: boolean = false; // 是否有图源更新
   @State sourceViewMode: LibraryViewMode = LibraryViewMode.LIST; // 图源视图模式（LIST/GRID）
   @State sourceTypeFilter: 'all' | 'manga' | 'ebook' | 'novel' = 'all'; // 图源类型筛选
-  @State showProxyDialog: boolean = false; // 是否显示代理配置对话框
   @State proxyConfig: ProxyConfig = DEFAULT_PROXY_CONFIG; // 代理配置
   @State proxyTestResults: string = ''; // 代理测试结果
   @State isTestingProxy: boolean = false; // 是否正在测试代理
@@ -795,6 +794,7 @@ struct MainMenuPage {
   @State proxyDialogTab: 'settings' | 'sources' | 'test' = 'settings'; // 代理对话框当前标签页
   @State proxyTestSites: ProxyTestSite[] = []; // 代理测试网站列表
   @State customTestUrl: string = ''; // 自定义测试URL
+  private proxyDialogController: CustomDialogController | undefined = undefined;
   private sourceManager: SourceManager = SourceManager.getInstance(); // 图源管理器
   private sourceUpdateManager: SourceUpdateManager = SourceUpdateManager.getInstance(); // 图源更新管理器
   private versionHistoryManager = getVersionHistoryManager(); // 提交版本记录管理器
@@ -3590,6 +3590,48 @@ struct MainMenuPage {
     const parsedUrl = this.parseAndFixRepoUrl(value);
     this.sourceRepoUrl = parsedUrl;
     this.syncSelectedRepositoryFromUrl(parsedUrl);
+  }
+
+  private openProxyConfigDialog(): void {
+    try {
+      this.proxySourceList = this.sourceList.filter((s: SourceInfo) => s.requireProxy === true);
+      this.proxyTestSites = this.initProxyTestSites();
+      this.proxyTestResults = '';
+      this.proxyDialogTab = 'settings';
+      this.customTestUrl = '';
+
+      if (this.proxyDialogController) {
+        try {
+          this.proxyDialogController.close();
+        } catch (error) {
+          logger.warn(TAG, `关闭旧代理弹窗失败: ${String(error)}`);
+        }
+      }
+
+      this.proxyDialogController = new CustomDialogController({
+        builder: () => {
+          this.buildProxyConfigDialog();
+        },
+        alignment: DialogAlignment.Center,
+        autoCancel: true,
+        cornerRadius: this.getSettingsAnalyticsCardRadius(),
+        customStyle: true
+      });
+
+      this.proxyDialogController.open();
+      logger.info(TAG, '代理配置弹窗已打开');
+    } catch (error) {
+      logger.error(TAG, '打开代理配置弹窗失败', String(error));
+      this.showToast('打开代理设置失败，请重试');
+    }
+  }
+
+  private closeProxyConfigDialog(): void {
+    this.proxyTestResults = '';
+    this.proxyDialogTab = 'settings';
+    this.customTestUrl = '';
+    this.proxyDialogController?.close();
+    this.proxyDialogController = undefined;
   }
 
   private async openSourceRepoDialog(): Promise<void> {
@@ -21987,11 +22029,7 @@ struct MainMenuPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
         .borderRadius(8)
         .onClick(() => {
-          // 加载需要代理的图源列表
-          this.proxySourceList = this.sourceList.filter((s: SourceInfo) => s.requireProxy === true);
-          // 初始化测试网站列表
-          this.proxyTestSites = this.initProxyTestSites();
-          this.showProxyDialog = true;
+          this.openProxyConfigDialog();
         })
       }
       .width('100%')
@@ -22201,12 +22239,6 @@ struct MainMenuPage {
       }
       .width('100%')
       .height('100%')
-
-      // 代理配置对话框
-      if (this.showProxyDialog) {
-        this.buildProxyConfigDialog()
-      }
-
       // 图源搜索对话框
       if (this.showSourceSearchDialog) {
         this.buildSourceSearchDialog()
@@ -24770,120 +24802,102 @@ struct MainMenuPage {
   @Builder
   buildProxyConfigDialog() {
     Column() {
-      Column() {
-        // 标题栏
-        Row() {
-          SymbolGlyph($r('sys.symbol.airplane_departure'))
-            .fontSize(24)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
-          
-          Text('网络代理设置')
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .margin({ left: 8 })
-          
-          Blank()
-          
-          // 启用开关
-          Toggle({ type: ToggleType.Switch, isOn: this.proxyConfig.enabled })
-            .onChange((isOn: boolean) => {
-              this.proxyConfig.enabled = isOn;
-            })
-        }
-        .width('100%')
-        .margin({ bottom: 12 })
+      // 标题栏
+      Row() {
+        SymbolGlyph($r('sys.symbol.airplane_departure'))
+          .fontSize(24)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
 
-        // 标签页切换 - VSC风格
-        Row({ space: 0 }) {
-          this.buildProxyTabButton('代理设置', 'settings')
-          this.buildProxyTabButton('图源列表', 'sources')
-          this.buildProxyTabButton('连接测试', 'test')
-        }
-        .width('100%')
-        
-        Divider()
-          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+        Text('网络代理设置')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .margin({ left: 8 })
 
-        // 内容区域
-        Scroll() {
-          Column({ space: 12 }) {
-            if (this.proxyDialogTab === 'settings') {
-              this.buildProxySettingsTab()
-            } else if (this.proxyDialogTab === 'sources') {
-              this.buildProxySourcesTab()
-            } else {
-              this.buildProxyTestTab()
-            }
-          }
-          .width('100%')
-          .padding({ top: 12 })
-        }
-        .layoutWeight(1)
-        .scrollBar(BarState.Auto)
+        Blank()
 
-        // 按钮
-        Row({ space: 16 }) {
-          Button('取消')
-            .fontSize(16)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .borderRadius(8)
-            .layoutWeight(1)
-            .onClick(() => {
-              this.showProxyDialog = false;
-              this.proxyTestResults = '';
-              this.proxyDialogTab = 'settings';
-            })
-
-          Button('保存')
-            .fontSize(16)
-            .fontColor(AppColors.onSuccess)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .borderRadius(8)
-            .layoutWeight(1)
-            .onClick(() => {
-              ProxyManager.getInstance().saveConfig(this.proxyConfig);
-              this.showProxyDialog = false;
-              this.proxyTestResults = '';
-              this.proxyDialogTab = 'settings';
-            })
-        }
-        .width('100%')
-        .margin({ top: 16 })
+        Toggle({ type: ToggleType.Switch, isOn: this.proxyConfig.enabled })
+          .onChange((isOn: boolean) => {
+            this.proxyConfig.enabled = isOn;
+          })
       }
-      .width('85%')
-      .height('70%')
-      .constraintSize({ maxWidth: 450, maxHeight: 550 })
-      .backgroundColor(this.getSettingsAnalyticsCardBackground())
-      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-      .borderRadius(this.getSettingsAnalyticsCardRadius())
-      .clip(true)
-      .border({
-        width: this.getSettingsAnalyticsCardBorderWidth(),
-        color: this.getSettingsAnalyticsCardBorderColor()
-      })
-      .shadow({
-        radius: this.getSettingsAnalyticsCardRadius() + 4,
-        color: this.getSettingsAnalyticsCardShadowColor(),
-        offsetX: 0,
-        offsetY: 8
-      })
-      .padding(20)
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      Row({ space: 0 }) {
+        this.buildProxyTabButton('代理设置', 'settings')
+        this.buildProxyTabButton('图源列表', 'sources')
+        this.buildProxyTabButton('连接测试', 'test')
+      }
+      .width('100%')
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      Scroll() {
+        Column({ space: 12 }) {
+          if (this.proxyDialogTab === 'settings') {
+            this.buildProxySettingsTab()
+          } else if (this.proxyDialogTab === 'sources') {
+            this.buildProxySourcesTab()
+          } else {
+            this.buildProxyTestTab()
+          }
+        }
+        .width('100%')
+        .padding({ top: 12 })
+      }
+      .layoutWeight(1)
+      .scrollBar(BarState.Auto)
+
+      Row({ space: 16 }) {
+        Button('取消')
+          .fontSize(16)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(8)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.closeProxyConfigDialog();
+          })
+
+        Button('保存')
+          .fontSize(16)
+          .fontColor(AppColors.onSuccess)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .borderRadius(8)
+          .layoutWeight(1)
+          .onClick(() => {
+            ProxyManager.getInstance().saveConfig(this.proxyConfig);
+            this.closeProxyConfigDialog();
+          })
+      }
+      .width('100%')
+      .margin({ top: 16 })
     }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    // .backgroundColor('rgba(0,0,0,0.1)')
-    .onClick(() => {
-      // 点击遮罩关闭
+    .width('85%')
+    .height('70%')
+    .constraintSize({ maxWidth: 450, maxHeight: 550 })
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
     })
-    .position({ x: 0, y: 0 })
-    .transition(TransitionEffect.opacity(0.01).animation({ duration: 200, curve: Curve.EaseOut }))
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .padding(20)
   }
   
   @Builder

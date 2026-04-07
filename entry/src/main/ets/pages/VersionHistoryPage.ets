@@ -27,6 +27,7 @@ import {
 } from '../Framework/Managers/VersionHistoryManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'VersionHistoryPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -41,6 +42,7 @@ interface NavDestinationContext {
 struct VersionHistoryPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
 
   // 主题/字体状态
@@ -328,6 +330,59 @@ struct VersionHistoryPage {
     };
   }
 
+  private getPageBackgroundResource(): ResourceStr {
+    return $r('app.media.bg1');
+  }
+
+  private getPageBackgroundTint(): string {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(6, 10, 16, 0.24)'
+      : 'rgba(244, 248, 252, 0.16)';
+  }
+
+  private getPageBackgroundScrimColors(): [ResourceColor, number][] {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return [
+        ['rgba(6, 10, 16, 0.08)', 0.0] as [ResourceColor, number],
+        ['rgba(6, 10, 16, 0.18)', 0.52] as [ResourceColor, number],
+        ['rgba(6, 10, 16, 0.42)', 1.0] as [ResourceColor, number]
+      ];
+    }
+    return [
+      ['rgba(255, 255, 255, 0.02)', 0.0] as [ResourceColor, number],
+      ['rgba(244, 248, 252, 0.08)', 0.52] as [ResourceColor, number],
+      ['rgba(236, 243, 250, 0.2)', 1.0] as [ResourceColor, number]
+    ];
+  }
+
+  @Builder
+  private buildPageBackground() {
+    Stack() {
+      Image(this.getPageBackgroundResource())
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Cover)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.getPageBackgroundTint())
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          direction: GradientDirection.Bottom,
+          colors: this.getPageBackgroundScrimColors()
+        })
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    }
+    .width('100%')
+    .height('100%')
+  }
+
   private async loadCommitDetail(repoKey: string, sha: string): Promise<void> {
     const target = this.findTargetByRepoKey(repoKey);
     if (!target) {
@@ -432,9 +487,25 @@ struct VersionHistoryPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -580,8 +651,19 @@ struct VersionHistoryPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(10)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(12)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
   }
 
   @Builder
@@ -682,19 +764,31 @@ struct VersionHistoryPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        this.buildPageBackground()
 
         if (this.isLoading) {
           Column({ space: 14 }) {
@@ -739,7 +833,7 @@ struct VersionHistoryPage {
                 }
               )
 
-              Blank().height(20)
+              Blank().height(24 + this.navigationBarHeight)
             }
             .width('100%')
             .constraintSize({ maxWidth: this.responsive_maxContentWidth })

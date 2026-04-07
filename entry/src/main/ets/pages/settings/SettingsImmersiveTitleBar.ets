@@ -150,11 +150,11 @@ export struct SettingsImmersiveTitleBar {
   @Prop maxContentWidth: number = 1200;
   @Prop hideBackButton: boolean = false;
   @Prop maxDirectActions: number = 2;
+  @Prop actions: SettingsImmersiveTitleActionItem[] = [];
   @State private showOverflowMenu: boolean = false;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   pathStack: NavPathStack | null = null;
   backAction: (() => boolean) | null = null;
-  actions: SettingsImmersiveTitleActionItem[] = [];
   @BuilderParam trailing: () => void = this.emptyTrailing;
 
   @Builder

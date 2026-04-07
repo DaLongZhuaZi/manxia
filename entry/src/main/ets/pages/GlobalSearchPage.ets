@@ -39,6 +39,9 @@ import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Mana
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -92,6 +95,7 @@ export struct GlobalSearchPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @StorageLink('source_features_enabled') @Watch('onSourceFeaturesEnabledChanged') sourceFeaturesEnabled: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
@@ -1048,10 +1052,12 @@ export struct GlobalSearchPage {
     HdsNavDestination() {
       Stack() {
         // 背景层（纯色，响应全局主题）
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层
@@ -1090,6 +1096,25 @@ export struct GlobalSearchPage {
           .id('guide_global_search_input')
           .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
           .padding(this.responsive_contentPadding)
+          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+          .backgroundBlurStyle(
+            SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+            SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+          )
+          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+          .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+          .clip(true)
+          .border({
+            width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+            color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+          })
+          .shadow({
+            radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+            color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+            offsetX: 0,
+            offsetY: 8
+          })
 
           // 紧凑筛选栏 - 内容类型 + 来源类型 在一行（可滑动）
           Scroll() {
@@ -1190,6 +1215,7 @@ export struct GlobalSearchPage {
                   ForEach(this.filteredGroups, (group: SearchSourceGroup) => {
                     this.buildSourceGroupCard(group)
                   }, (group: SearchSourceGroup) => `${group.groupId}-${group.items.length}`)
+                  Blank().height(40 + this.navigationBarHeight)
                 }
                 .width('100%')
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, top: 8 })
@@ -1440,7 +1466,7 @@ export struct GlobalSearchPage {
           .width('100%')
         }, (group: SearchSourceGroup) => group.groupId)
         
-        Blank().height(40)
+        Blank().height(40 + this.navigationBarHeight)
       }
       .width('100%')
       .constraintSize({ maxWidth: this.responsive_maxContentWidth })
@@ -1890,11 +1916,24 @@ export struct GlobalSearchPage {
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(12)
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+      .clip(true)
       .border({
-        width: 1,
-        color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 8
       })
       .onClick(() => {
         animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
@@ -1959,11 +1998,24 @@ export struct GlobalSearchPage {
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
         .margin({ top: 8 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-        .borderRadius(12)
+        .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+        .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+        .backgroundBlurStyle(
+          SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+          SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+        )
+        .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+        .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+        .clip(true)
         .border({
-          width: 1,
-          color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+          width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+          color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+        })
+        .shadow({
+          radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+          color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+          offsetX: 0,
+          offsetY: 8
         })
         .transition(TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseInOut }))
       }

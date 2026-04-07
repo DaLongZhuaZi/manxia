@@ -2806,7 +2806,7 @@ struct EBookImageReaderPage {
                 if (this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL && this.isCurlAnimationSupported()) {
                   Column() {
                     Row() {
-                      Text('卷页背面透明度')
+                      Text('卷页不透明度')
                         .fontSize(14)
                         .fontColor($r('app.color.text_secondary'))
                         .fontFamily(this.appFontFamily)

@@ -1,5 +1,5 @@
 import { promptAction } from '@kit.ArkUI';
-import { logger } from '../utils/Logger';
+import { logger } from '../Utils/Logger';
 
 const TAG = 'PrivacyAuthDialog';
 

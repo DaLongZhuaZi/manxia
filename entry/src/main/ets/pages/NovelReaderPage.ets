@@ -68,6 +68,7 @@ import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import {
   buildLocalTextNovelBookId,
   buildTextReaderSettingsFromEBookSettings,
+  hasCustomLocalTextNovelReadingSettings,
   isLocalTxtNovelReaderSource,
   syncTextReaderSettingsToEBookSettings
 } from '../Framework/Adapters/LocalTextNovelAdapter';
@@ -826,7 +827,10 @@ export struct NovelReaderPage {
         this.ensureSettingsComplete(globalSettings);
         if (this.isLocalTxtNovelMode()) {
           const ebook = await this.ensureLocalEbookLoaded();
-          this.settings = buildTextReaderSettingsFromEBookSettings(ebook?.readingSettings, globalSettings);
+          const ebookSettings = hasCustomLocalTextNovelReadingSettings(ebook?.readingSettings)
+            ? ebook?.readingSettings
+            : undefined;
+          this.settings = buildTextReaderSettingsFromEBookSettings(ebookSettings, globalSettings);
           this.ensureSettingsComplete(this.settings);
           logger.info(TAG, `加载本地 TXT 小说阅读设置: ebookId=${this.localEbookId}`);
         } else {
@@ -1545,7 +1549,6 @@ export struct NovelReaderPage {
   }
 
   private async persistSettingsSnapshot(snapshot: TextReaderSettings): Promise<void> {
-    await this.settingsManager.setJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, snapshot);
     if (this.isLocalTxtNovelMode() && this.localEbookId.length > 0) {
       const ebook = await this.ensureLocalEbookLoaded();
       const ebookSettings = syncTextReaderSettingsToEBookSettings(snapshot, ebook?.readingSettings);
@@ -1559,6 +1562,9 @@ export struct NovelReaderPage {
       const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
       await this.settingsManager.setJSON<TextReaderSettings>(settingsKey, snapshot);
       logger.debug(TAG, `保存书籍专属设置: ${this.bookId}`);
+    } else {
+      await this.settingsManager.setJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, snapshot);
+      logger.debug(TAG, 'Saved global novel reader settings');
     }
 
     const readAloudSettings = normalizeReadAloudSettings(snapshot.readAloud ?? DEFAULT_TEXT_READER_SETTINGS.readAloud);
