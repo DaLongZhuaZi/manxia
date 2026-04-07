@@ -28,6 +28,7 @@ interface CookieEntry {
 export class WebViewAuthManager {
   private static instance: WebViewAuthManager | null = null;
   private readonly dataManager: DataManager;
+  private readonly defaultTtlMs: number = 7 * 24 * 60 * 60 * 1000;
 
   private constructor() {
     this.dataManager = DataManager.getInstance();
@@ -48,7 +49,13 @@ export class WebViewAuthManager {
     if (!cookieStr || cookieStr.length === 0) {
       return result;
     }
-    const parts: string[] = cookieStr.split(';');
+    let normalizedCookieString: string = cookieStr.replace(/\\"/g, '');
+    normalizedCookieString = normalizedCookieString.replace(/^"|"$/g, '');
+    normalizedCookieString = normalizedCookieString.replace(/;\s*;/g, ';').trim();
+    if (normalizedCookieString.length === 0) {
+      return result;
+    }
+    const parts: string[] = normalizedCookieString.split(';');
     let i: number = 0;
     while (i < parts.length) {
       const part: string = parts[i].trim();
@@ -56,12 +63,72 @@ export class WebViewAuthManager {
       if (eqIndex > 0) {
         const name: string = part.substring(0, eqIndex);
         const value: string = part.substring(eqIndex + 1);
-        const entry: CookieEntry = { name, value } as CookieEntry;
+        const entry: CookieEntry = {
+          name,
+          value,
+          expires: Date.now() + this.defaultTtlMs
+        } as CookieEntry;
         result.push(entry);
       }
       i = i + 1;
     }
     return result;
+  }
+
+  private extractOriginUrl(url: string): string {
+    const trimmedUrl: string = url.trim();
+    if (trimmedUrl.length === 0) {
+      return '';
+    }
+    const matched: RegExpMatchArray | null = trimmedUrl.match(/^(https?:\/\/[^\/]+)/);
+    if (matched && matched.length > 1) {
+      return String(matched[1]);
+    }
+    return '';
+  }
+
+  private getControllerUrl(controller: webview.WebviewController): string {
+    try {
+      const currentUrl: string = String(controller.getUrl()).trim();
+      if (currentUrl.length > 0) {
+        return currentUrl;
+      }
+    } catch (error) {
+      logger.debug(TAG, `读取WebView当前URL失败: ${String(error)}`);
+    }
+    return '';
+  }
+
+  private async captureCookiesFromWebEngine(sourceId: number, url: string): Promise<boolean> {
+    const normalizedUrl: string = url.trim();
+    if (normalizedUrl.length === 0) {
+      return false;
+    }
+
+    try {
+      await webview.WebCookieManager.saveCookieAsync();
+    } catch (saveError) {
+      logger.debug(TAG, `WebCookieManager保存Cookie失败，继续尝试读取: ${String(saveError)}`);
+    }
+
+    try {
+      const cookieStr: string = await webview.WebCookieManager.fetchCookie(normalizedUrl);
+      const incoming: CookieEntry[] = this.parseDocumentCookieString(cookieStr);
+      if (incoming.length === 0) {
+        logger.warn(TAG, `WebCookieManager返回Cookie为空: sourceId=${sourceId}, url=${normalizedUrl}`);
+        return false;
+      }
+      const srcRecord = await this.dataManager.getComicSourceById(sourceId);
+      const existing: CookieEntry[] = srcRecord && srcRecord.cookies ? this.deserializeCookies(String(srcRecord.cookies)) : [];
+      const merged: CookieEntry[] = this.mergeCookies(existing, incoming);
+      const json: string = this.serializeCookies(merged);
+      await this.dataManager.updateComicSourceCookies(sourceId, json);
+      logger.info(TAG, `通过WebCookieManager捕获并保存Cookie(${incoming.length}条), 合并后${merged.length}条: sourceId=${sourceId}, url=${normalizedUrl}`);
+      return true;
+    } catch (error) {
+      logger.debug(TAG, `通过WebCookieManager捕获Cookie失败: sourceId=${sourceId}, url=${normalizedUrl}, error=${String(error)}`);
+      return false;
+    }
   }
 
   /**
@@ -209,6 +276,21 @@ export class WebViewAuthManager {
    */
   async captureCookiesFromController(sourceId: number, controller: webview.WebviewController): Promise<void> {
     try {
+      const currentUrl: string = this.getControllerUrl(controller);
+      if (currentUrl.length > 0) {
+        const exactCaptured: boolean = await this.captureCookiesFromWebEngine(sourceId, currentUrl);
+        if (exactCaptured) {
+          return;
+        }
+        const originUrl: string = this.extractOriginUrl(currentUrl);
+        if (originUrl.length > 0 && originUrl !== currentUrl) {
+          const originCaptured: boolean = await this.captureCookiesFromWebEngine(sourceId, originUrl);
+          if (originCaptured) {
+            return;
+          }
+        }
+      }
+
       const cookieStr: string = await controller.runJavaScript('document.cookie');
       const incoming: CookieEntry[] = this.parseDocumentCookieString(cookieStr);
       const srcRecord = await this.dataManager.getComicSourceById(sourceId);

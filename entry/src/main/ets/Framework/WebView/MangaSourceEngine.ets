@@ -2644,6 +2644,21 @@ export class MangaSourceEngine {
         const action: Action = actions[i];
         const result = await this.actionEngine.executeAction(action, context);
         
+        if (result.success && (action.type === 'extract' || action.type === 'api') && result.data) {
+          const resultData = result.data as Record<string, Object> | Array<Record<string, Object>>;
+          if (!Array.isArray(resultData) && !mangaDetail) {
+            mangaDetail = this.transformToMangaInfo(resultData);
+            detailActionIndex = i;
+            logger.debug(TAG, `combined workflow extracted detail from ${action.type} (action ${i})`);
+          }
+
+          if (Array.isArray(resultData) && resultData.length > 0 && chapters.length === 0) {
+            chapters = resultData.map((item: Record<string, Object>) => this.transformToChapterInfo(item));
+            chapterActionIndex = i;
+            logger.debug(TAG, `combined workflow extracted ${chapters.length} chapters from ${action.type} (action ${i})`);
+          }
+        }
+        
         if (!result.success) {
           throw new MangaSourceError(
             MangaSourceErrorCode.ACTION_FAILED,

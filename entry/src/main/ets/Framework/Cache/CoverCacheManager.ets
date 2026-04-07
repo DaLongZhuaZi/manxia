@@ -7,6 +7,7 @@ import { logger } from '../../Utils/Logger';
 import { DatabaseManager } from '../Database/DatabaseManager';
 import { TempMangaInfo, TempMangaDatabaseRecord } from '../../Models/TempMangaModels';
 import { uiContextManager } from '../Managers/UIContextManager';
+import CookieManager from '../Managers/CookieManager';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { BusinessError } from '@ohos.base';
@@ -525,6 +526,18 @@ export class CoverCacheManager {
             continue;
           }
           finalHeaders[key] = headers[key];
+        }
+      }
+
+      if (isPhotos18) {
+        try {
+          const preciseCookie: string = await CookieManager.getInstance().getCookieStringForUrl(sourceId, coverUrl);
+          if (preciseCookie.length > 0) {
+            finalHeaders['Cookie'] = preciseCookie;
+            logger.debug(TAG, `Photos18封面按URL刷新Cookie成功: sourceId=${sourceId}, length=${preciseCookie.length}`);
+          }
+        } catch (cookieError) {
+          logger.warn(TAG, `Photos18封面按URL刷新Cookie失败: sourceId=${sourceId}, error=${String(cookieError)}`);
         }
       }
 

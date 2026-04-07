@@ -10,11 +10,11 @@ import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { getAniListTracker, AniListTracker } from '../../Framework/Tracking/trackers/AniListTracker';
-import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 
 const TAG = 'AniListLoginPage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -175,10 +175,25 @@ export struct AniListLoginPage {
                   this.webController.loadUrl(this.getAuthUrl());
                 })
             }
-            .width('100%')
+            .width('88%')
             .layoutWeight(1)
+            .alignSelf(ItemAlign.Center)
             .justifyContent(FlexAlign.Center)
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+            .padding(24)
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
           } else if (this.loginSuccess) {
             // 登录成功
             Column({ space: 16 }) {
@@ -196,10 +211,25 @@ export struct AniListLoginPage {
                 .fontSize(16)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
-            .width('100%')
+            .width('88%')
             .layoutWeight(1)
+            .alignSelf(ItemAlign.Center)
             .justifyContent(FlexAlign.Center)
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+            .padding(24)
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
           } else if (this.showTokenInput) {
             // 手动输入 Token（用于 oob 授权方式）
             Column({ space: 16 }) {
@@ -235,10 +265,25 @@ export struct AniListLoginPage {
                   .enabled(this.manualToken.length > 0)
               }
             }
-            .width('100%')
+            .width('88%')
             .layoutWeight(1)
+            .alignSelf(ItemAlign.Center)
             .justifyContent(FlexAlign.Center)
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+            .padding(24)
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
           } else {
             // WebView 登录
             Web({ src: this.getAuthUrl(), controller: this.webController })

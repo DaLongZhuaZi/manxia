@@ -2063,6 +2063,7 @@ export struct MangaViewer {
       let pageChanged: boolean = false;
       const currentSinglePage: MangaPage | null = this.isSinglePageMode() ? this.getCurrentPageData().page : null;
       const previousSinglePage: MangaPage | undefined = currentSinglePage ? currentSinglePage : undefined;
+      const previousSinglePageInput: Resource | string | image.PixelMap = this.singlePageImageInput;
 
       if (isDoublePage) {
         const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
@@ -2324,7 +2325,7 @@ export struct MangaViewer {
         const newPage: MangaPage | undefined = (this.chapter && this.chapter.pages && this.viewCurrentPageIndex >= 0 && this.viewCurrentPageIndex < this.chapter.pages.length)
           ? this.chapter.pages[this.viewCurrentPageIndex] : undefined;
         if (previousSinglePage && this.shouldUseSoftNoneCrossfade()) {
-          this.startSoftTransitionOverlay(previousSinglePage);
+          this.startSoftTransitionOverlay(previousSinglePage, previousSinglePageInput);
         } else {
           this.resetSoftTransitionOverlay();
         }
@@ -5887,7 +5888,10 @@ export struct MangaViewer {
     return ImageFit.Contain;
   }
 
-  private startSoftTransitionOverlay(page: MangaPage): void {
+  private startSoftTransitionOverlay(
+    page: MangaPage,
+    displayedInput: Resource | string | image.PixelMap
+  ): void {
     if (!this.shouldUseSoftNoneCrossfade()) {
       this.resetSoftTransitionOverlay();
       return;
@@ -5901,7 +5905,7 @@ export struct MangaViewer {
       this.softTransitionFallbackTimer = -1;
     }
     this.softTransitionOverlayPageId = page.id;
-    this.softTransitionOverlayInput = this.singlePageImageInput;
+    this.softTransitionOverlayInput = displayedInput;
     this.softTransitionOverlayOpacity = 1.0;
     this.softTransitionOverlayTranslateX = 0;
     this.softTransitionOverlayTranslateY = 0;
@@ -5934,9 +5938,37 @@ export struct MangaViewer {
     this.softTransitionTargetTranslateY = 0;
   }
 
+  private completeSoftTransitionOverlayHandoff(): void {
+    if (this.softTransitionStartTimer !== -1) {
+      clearTimeout(this.softTransitionStartTimer);
+      this.softTransitionStartTimer = -1;
+    }
+    if (!this.showSoftTransitionOverlay) {
+      this.isCommittingPageTurn = false;
+      return;
+    }
+    this.softTransitionOverlayOpacity = 0.0;
+    this.softTransitionOverlayTranslateX = 0;
+    this.softTransitionOverlayTranslateY = 0;
+    this.softTransitionStartTimer = setTimeout(() => {
+      this.softTransitionStartTimer = -1;
+      this.resetSoftTransitionOverlay();
+      this.isCommittingPageTurn = false;
+    }, 16);
+  }
+
   private scheduleSoftTransitionOverlayOut(): void {
     if (!this.showSoftTransitionOverlay) {
       this.isCommittingPageTurn = false;
+      return;
+    }
+    if (this.isSoftNonePageTurn()) {
+      if (this.softTransitionStartTimer !== -1) {
+        return;
+      }
+      this.softTransitionStartTimer = setTimeout(() => {
+        this.completeSoftTransitionOverlayHandoff();
+      }, 16);
       return;
     }
     if (this.softTransitionOverlayOpacity < 0.99) {
@@ -5966,6 +5998,10 @@ export struct MangaViewer {
     if (!this.uiContext) {
       this.resetSoftTransitionOverlay();
       this.isCommittingPageTurn = false;
+      return;
+    }
+    if (this.isSoftNonePageTurn()) {
+      this.completeSoftTransitionOverlayHandoff();
       return;
     }
     this.uiContext.animateTo({

@@ -32,6 +32,7 @@ import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } f
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'AnnotationCenterPage';
 const MAX_CONTENT_WIDTH: number = 960;
@@ -2275,7 +2276,13 @@ export struct AnnotationCenterPage {
         .constraintSize({ maxWidth: MAX_CONTENT_WIDTH })
         .padding(14)
         .borderRadius(16)
-        .backgroundColor($r('app.color.settings_panel_background'))
+        .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+        .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+        .backgroundBlurStyle(
+          SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+          SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+        )
+        .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
         .border({ width: 1, color: 'rgba(120,120,120,0.18)' })
         .shadow({ radius: 20, color: 'rgba(0,0,0,0.20)', offsetX: 0, offsetY: 8 })
         .opacity(this.sharePreviewPanelOpacity)

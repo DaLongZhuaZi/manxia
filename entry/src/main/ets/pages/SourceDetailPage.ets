@@ -6,6 +6,9 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { webview } from '@kit.ArkWeb';
+import { picker } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
@@ -41,6 +44,7 @@ import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar'
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
 import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
+import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
 
 
 const TAG = 'SourceDetailPage';
@@ -185,6 +189,8 @@ export struct SourceDetailPage {
   
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
+  @State sourceDebugModeEnabled: boolean = false;
+  @State isExportingDebugLog: boolean = false;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State sourceInfo: SourceInfo | null = null;
   @State currentTabId: string = ''; // 当前标签ID
@@ -248,6 +254,7 @@ export struct SourceDetailPage {
   @State private refreshHintOpacity: number = 0; // 刷新提示透明度（用于动画）
 
   private sourceId: number = 0;
+  private sourceDetailEnterTimestamp: number = 0;
   private sourceName: string = '';
   private sourceManager: SourceManager = SourceManager.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
@@ -307,6 +314,7 @@ export struct SourceDetailPage {
       const param: ESObject = params[0] as ESObject;
       if (param && param.sourceId) {
         this.sourceId = param.sourceId as number;
+        this.sourceDetailEnterTimestamp = Date.now();
         logger.info(TAG, `加载图源详情，ID: ${this.sourceId}`);
         
         // 保存初始标签和搜索关键词参数
@@ -316,7 +324,7 @@ export struct SourceDetailPage {
         const fromGlobalSearch = param.fromGlobalSearch as boolean | undefined;  // 是否来自全局搜索
         
         // 异步初始化
-        this.initializeAsyncWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch);
+        void this.initializePageWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch);
       }
     }
     
@@ -332,6 +340,16 @@ export struct SourceDetailPage {
   /**
    * 异步初始化（无参数版本，向后兼容）
    */
+  private async initializePageWithParams(
+    initialTab?: string,
+    searchKeyword?: string,
+    searchType?: string,
+    fromGlobalSearch?: boolean
+  ): Promise<void> {
+    await this.loadSourceDebugMode();
+    await this.initializeAsyncWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch);
+  }
+
   private async initializeAsync(): Promise<void> {
     await this.initializeAsyncWithParams(undefined, undefined, undefined, undefined);
   }
@@ -453,6 +471,22 @@ export struct SourceDetailPage {
   /**
    * 加载 sourceName
    */
+  private async loadSourceDebugMode(): Promise<void> {
+    try {
+      this.sourceDebugModeEnabled = await sourceDebugLogManager.isDebugModeEnabled(this.sourceId);
+      if (this.sourceDebugModeEnabled) {
+        const startTime = sourceDebugLogManager.markDetailEntry(this.sourceId, this.sourceDetailEnterTimestamp);
+        logger.info(TAG, `图源调试日志会话已开始: sourceId=${this.sourceId}, startTime=${startTime}`);
+      } else {
+        sourceDebugLogManager.clearDetailEntry(this.sourceId);
+      }
+    } catch (error) {
+      this.sourceDebugModeEnabled = false;
+      sourceDebugLogManager.clearDetailEntry(this.sourceId);
+      logger.warn(TAG, `加载图源调试模式失败: sourceId=${this.sourceId}`, String(error));
+    }
+  }
+
   private async loadSourceName(): Promise<void> {
     try {
       logger.info(TAG, `开始加载 sourceName, sourceId=${this.sourceId}`);
@@ -1182,6 +1216,15 @@ export struct SourceDetailPage {
         logger.warn(TAG, 'BaseUrl为空，跳过预加载');
         return;
       }
+      try {
+        const normalizedSourceUserAgent = this.sourceUserAgent.trim();
+        if (normalizedSourceUserAgent.length > 0) {
+          this.webViewController.setCustomUserAgent(normalizedSourceUserAgent);
+          logger.info(TAG, `Source preload WebView user agent synced: length=${normalizedSourceUserAgent.length}`);
+        }
+      } catch (error) {
+        logger.warn(TAG, `Source preload WebView user agent sync failed: ${String(error)}`);
+      }
       this.webViewController.loadUrl(baseUrl);
       if (this.isPhotos18Source()) {
         this.photos18CurrentReferer = baseUrl;
@@ -1265,9 +1308,10 @@ export struct SourceDetailPage {
       const onlineImageLoader = OnlineImageLoader.getInstance();
       await new Promise<void>((resolve) => setTimeout(resolve, 1200));
       const refreshed: boolean = await cookieManager.forceCaptureWebViewCookies(this.sourceId, this.webViewController, baseUrl);
+      const cookieString: string = await cookieManager.getCookieString(this.sourceId);
       imageCacheManager.clearCookieCache(this.sourceId);
       onlineImageLoader.clearCookieCache(this.sourceId);
-      logger.info(TAG, `Photos18图片会话预热完成: refreshed=${refreshed}`);
+      logger.info(TAG, `Photos18图片会话预热完成: refreshed=${refreshed}, cookieLen=${cookieString.length}, baseUrl=${baseUrl}`);
     } catch (error) {
       logger.warn(TAG, `Photos18图片会话预热失败: ${String(error)}`);
     } finally {
@@ -2867,6 +2911,66 @@ export struct SourceDetailPage {
     }
   }
 
+  private async exportSourceDebugLogs(): Promise<void> {
+    if (!this.sourceDebugModeEnabled || this.isExportingDebugLog) {
+      return;
+    }
+
+    const exportTime = Date.now();
+    const sourceName = this.sourceInfo?.name || this.sourceName || `source_${this.sourceId}`;
+    let tempFilePath: string = '';
+    this.isExportingDebugLog = true;
+
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!context || !context.cacheDir) {
+        throw new Error('missing UIAbilityContext');
+      }
+
+      const content = sourceDebugLogManager.buildExportText(this.sourceId, sourceName, exportTime);
+      const fileName = sourceDebugLogManager.buildExportFileName(sourceName, exportTime);
+      tempFilePath = `${context.cacheDir}/${fileName}`;
+
+      const tempFile = fs.openSync(tempFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      fs.writeSync(tempFile.fd, content);
+      fs.closeSync(tempFile);
+
+      const documentPicker = new picker.DocumentViewPicker(context);
+      const documentSaveOptions = new picker.DocumentSaveOptions();
+      documentSaveOptions.newFileNames = [fileName];
+
+      const saveResult = await documentPicker.save(documentSaveOptions);
+      if (saveResult && saveResult.length > 0) {
+        const targetUri = saveResult[0];
+        const sourceFile = fs.openSync(tempFilePath, fs.OpenMode.READ_ONLY);
+        const targetFile = fs.openSync(targetUri, fs.OpenMode.WRITE_ONLY);
+        const buffer = new ArrayBuffer(4096);
+        let readLength = 0;
+        while ((readLength = fs.readSync(sourceFile.fd, buffer)) > 0) {
+          fs.writeSync(targetFile.fd, buffer, { length: readLength });
+        }
+        fs.closeSync(sourceFile);
+        fs.closeSync(targetFile);
+        logger.info(TAG, `图源调试日志导出成功: sourceId=${this.sourceId}, targetUri=${targetUri}`);
+        this.getUIContext().getPromptAction().showToast({ message: '\u5bfc\u51fa\u65e5\u5fd7\u6210\u529f' });
+      } else {
+        logger.info(TAG, `图源调试日志导出已取消: sourceId=${this.sourceId}`);
+        this.getUIContext().getPromptAction().showToast({ message: '\u5df2\u53d6\u6d88\u5bfc\u51fa' });
+      }
+    } catch (error) {
+      logger.error(TAG, `图源调试日志导出失败: sourceId=${this.sourceId}`, String(error));
+      this.getUIContext().getPromptAction().showToast({ message: '\u5bfc\u51fa\u65e5\u5fd7\u5931\u8d25' });
+    } finally {
+      if (tempFilePath.length > 0) {
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (_error) {
+        }
+      }
+      this.isExportingDebugLog = false;
+    }
+  }
+
   private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
     return [
       {
@@ -2877,6 +2981,16 @@ export struct SourceDetailPage {
           this.showSearchDialog = true;
         },
         enabled: true
+      },
+      {
+        id: 'export_debug_logs',
+        symbol: $r('sys.symbol.square_and_arrow_down'),
+        label: '\u5bfc\u51fa\u65e5\u5fd7',
+        onClick: () => {
+          void this.exportSourceDebugLogs();
+        },
+        enabled: !this.isExportingDebugLog,
+        visible: this.sourceDebugModeEnabled
       },
       {
         id: 'settings',

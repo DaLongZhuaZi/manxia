@@ -6,8 +6,7 @@
  * 文件路径: entry/src/main/ets/pages/NovelExplorePage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
@@ -19,6 +18,11 @@ import { NovelDetailPageParams } from './NovelBookshelfPage';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelExplorePage';
 
@@ -40,8 +44,6 @@ interface ExploreKind {
 export interface NovelExplorePageParams {
   sourceId?: string;
 }
-
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 @Component
 export struct NovelExplorePage {
@@ -326,17 +328,19 @@ export struct NovelExplorePage {
         LegadoWebViewComponent()
         
         // 背景层：扩展到系统栏区域，实现完全沉浸式背景
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
         
         // 内容层
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           
           if (this.exploreSources.length === 0) {
             this.buildEmpty()
@@ -370,38 +374,27 @@ export struct NovelExplorePage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .padding({ bottom: this.navigationBarHeight })
         
         // 书源选择弹窗
         if (this.showSourcePicker) {
           this.buildSourcePickerOverlay()
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '\u53d1\u73b0',
+          appFontFamily: this.appFontFamily
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: '发现'
-        },
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
-      logger.info(TAG, 'HdsNavDestination.onReady 已触发');
+      logger.info(TAG, 'HdsNavDestination.onReady \u5df2\u89e6\u53d1');
       const param = context.pathInfo.param as NovelExplorePageParams | null;
       if (param?.sourceId) {
         this.selectedSourceId = param.sourceId;
@@ -413,12 +406,12 @@ export struct NovelExplorePage {
   @Builder
   buildEmpty() {
     Column() {
-      Text('暂无支持发现功能的书源')
+      Text('\u6682\u65e0\u652f\u6301\u53d1\u73b0\u529f\u80fd\u7684\u4e66\u6e90')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       
-      Text('请导入包含发现规则的书源')
+      Text('\u8bf7\u5bfc\u5165\u5305\u542b\u53d1\u73b0\u89c4\u5219\u7684\u4e66\u6e90')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -437,7 +430,7 @@ export struct NovelExplorePage {
         .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         .margin({ left: 12 })
       
-      TextInput({ placeholder: '搜索书源...', text: this.searchKeyword })
+      TextInput({ placeholder: '\u641c\u7d22\u4e66\u6e90...', text: this.searchKeyword })
         .layoutWeight(1)
         .height(36)
         .backgroundColor(Color.Transparent)
@@ -462,15 +455,32 @@ export struct NovelExplorePage {
     }
     .width('100%')
     .height(44)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(8)
     .margin({ left: 12, right: 12, top: 8, bottom: 8 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
   buildSourceDropdown() {
     Row() {
-      Text(this.selectedSourceName || '选择书源')
+      Text(this.selectedSourceName || '\u9009\u62e9\u4e66\u6e90')
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
@@ -486,7 +496,26 @@ export struct NovelExplorePage {
     .width('100%')
     .height(44)
     .padding({ left: 16, right: 16 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .margin({ left: 12, right: 12, bottom: 8 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .onClick(() => {
       this.showSourcePicker = !this.showSourcePicker;
     })
@@ -510,7 +539,7 @@ export struct NovelExplorePage {
       Column() {
         // 标题栏
         Row() {
-          Text('选择书源')
+          Text('\u9009\u62e9\u4e66\u6e90')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
@@ -518,7 +547,7 @@ export struct NovelExplorePage {
           
           Blank()
           
-          Text(`${this.displayedSources.length}/${this.allFilteredSources.length} 个`)
+          Text(`${this.displayedSources.length}/${this.allFilteredSources.length} \u4e2a`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
@@ -536,7 +565,7 @@ export struct NovelExplorePage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
             .margin({ left: 12 })
           
-          TextInput({ placeholder: '搜索书源...', text: this.searchKeyword })
+          TextInput({ placeholder: '\u641c\u7d22\u4e66\u6e90...', text: this.searchKeyword })
             .layoutWeight(1)
             .height(36)
             .backgroundColor(Color.Transparent)
@@ -561,9 +590,20 @@ export struct NovelExplorePage {
         }
         .width('100%')
         .height(44)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-        .borderRadius(8)
         .margin({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+        .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+        .backgroundBlurStyle(
+          SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+          SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+        )
+        .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+        .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+        .clip(true)
+        .border({
+          width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+          color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+        })
         
         // 书源列表
         List({ scroller: this.sourceListScroller }) {
@@ -600,7 +640,7 @@ export struct NovelExplorePage {
                   .width(20)
                   .height(20)
                   .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                Text('加载更多...')
+                Text('\u52a0\u8f7d\u66f4\u591a...')
                   .fontSize(12)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
                   .margin({ left: 8 })
@@ -612,16 +652,17 @@ export struct NovelExplorePage {
           }
         }
         .width('100%')
+        .height('100%')
         .layoutWeight(1)
         .divider({ strokeWidth: 0.5, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
         .onScrollIndex((start: number, end: number) => {
           this.checkSourcePreload(end);
         })
         .onAppear(() => {
-          // 滚动到当前选中的书源
+          // Scroll to the currently selected source.
           const selectedIndex = this.displayedSources.findIndex(s => s.id === this.selectedSourceId);
           if (selectedIndex > 0) {
-            // 延迟滚动，确保List已渲染
+            // Delay the scroll until the List has rendered.
             setTimeout(() => {
               this.sourceListScroller.scrollToIndex(selectedIndex, true, ScrollAlign.CENTER);
             }, 100);
@@ -630,8 +671,28 @@ export struct NovelExplorePage {
       }
       .width('100%')
       .height('60%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-      .borderRadius({ topLeft: 16, topRight: 16 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius({
+        topLeft: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme),
+        topRight: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme)
+      })
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: -4
+      })
     }
     .width('100%')
     .height('100%')
@@ -671,7 +732,26 @@ export struct NovelExplorePage {
     .scrollBar(BarState.Off)
     .width('100%')
     .height(38)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .margin({ left: 12, right: 12, bottom: 8 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   @Builder
@@ -740,8 +820,9 @@ export struct NovelExplorePage {
         }
       }
       .width('100%')
+      .height('100%')
       .layoutWeight(1)
-      .padding({ left: 12, right: 12, top: 8 })
+      .padding({ left: 12, right: 12, top: 8, bottom: 16 })
       .onReachEnd(() => this.loadMore())
       .gesture(
         PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
@@ -831,8 +912,25 @@ export struct NovelExplorePage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .margin({ bottom: 8 })
     .onClick(() => this.openBookDetail(book))
   }

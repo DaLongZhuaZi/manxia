@@ -11,6 +11,7 @@ import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'OpenSourceLicensePage';
 /**
@@ -69,6 +70,59 @@ export struct OpenSourceLicensePage {
     } catch (error) {
       logger.error(TAG, `返回失败: ${String(error)}`);
     }
+  }
+
+  private getPageBackgroundResource(): ResourceStr {
+    return $r('app.media.mangabook');
+  }
+
+  private getPageBackgroundTint(): string {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(7, 10, 16, 0.28)'
+      : 'rgba(246, 249, 252, 0.18)';
+  }
+
+  private getPageBackgroundScrimColors(): [ResourceColor, number][] {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return [
+        ['rgba(7, 10, 16, 0.08)', 0.0] as [ResourceColor, number],
+        ['rgba(7, 10, 16, 0.2)', 0.52] as [ResourceColor, number],
+        ['rgba(7, 10, 16, 0.44)', 1.0] as [ResourceColor, number]
+      ];
+    }
+    return [
+      ['rgba(255, 255, 255, 0.02)', 0.0] as [ResourceColor, number],
+      ['rgba(246, 249, 252, 0.08)', 0.52] as [ResourceColor, number],
+      ['rgba(238, 244, 250, 0.22)', 1.0] as [ResourceColor, number]
+    ];
+  }
+
+  @Builder
+  private buildPageBackground() {
+    Stack() {
+      Image(this.getPageBackgroundResource())
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Cover)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.getPageBackgroundTint())
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          direction: GradientDirection.Bottom,
+          colors: this.getPageBackgroundScrimColors()
+        })
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    }
+    .width('100%')
+    .height('100%')
   }
 
   /**
@@ -153,8 +207,19 @@ export struct OpenSourceLicensePage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(12)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
     .margin({ bottom: 12 })
   }
 
@@ -193,18 +258,17 @@ export struct OpenSourceLicensePage {
         ? '#FFF3E0'
         : '#E8F5E9')
     .borderRadius(8)
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
     .margin({ bottom: 12 })
   }
 
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        this.buildPageBackground()
 
         // 内容层
         Column() {
@@ -290,8 +354,25 @@ export struct OpenSourceLicensePage {
               }
               .width('100%')
               .padding(16)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-              .borderRadius(8)
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(
+                SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+              )
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({
+                width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+              })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
               .margin({ bottom: 16 })
 
               // 第三方开源库
@@ -406,15 +487,31 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
               }
               .width('100%')
               .padding(16)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-              .borderRadius(8)
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(
+                SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+              )
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({
+                width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+              })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
               .margin({ bottom: 16 })
 
               this.buildTipBox('声明', '所有参考的代码都已根据HarmonyOS平台特性和ArkTS语言规范进行了完全重写，严格遵守所有参考项目的开源许可证要求。', 'info')
 
               // 底部间距
-              Column()
-                .height(40)
+              Blank().height(24 + this.navigationBarHeight)
             }
             .width('100%')
             .padding({ left: 20, right: 20, top: 16, bottom: 20 })

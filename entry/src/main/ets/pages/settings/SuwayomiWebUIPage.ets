@@ -15,6 +15,7 @@ import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBack
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 
 const TAG = 'SuwayomiWebUIPage';
 
@@ -164,7 +165,19 @@ export struct SuwayomiWebUIPage {
     .height(44)
     .padding({ left: 16, right: 16 })
     .justifyContent(FlexAlign.Start)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   build() {
@@ -216,9 +229,24 @@ export struct SuwayomiWebUIPage {
                 .fontFamily(this.appFontFamily)
             }
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-            .width('100%')
+            .width('88%')
             .layoutWeight(1)
+            .alignSelf(ItemAlign.Center)
             .justifyContent(FlexAlign.Center)
+            .padding(24)
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
           } else {
             // WebView
             Web({ src: this.currentUrl, controller: this.webController })

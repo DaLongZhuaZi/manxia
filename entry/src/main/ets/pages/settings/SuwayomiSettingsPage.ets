@@ -10,7 +10,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/Th
 import { FontAwareState } from '../../Framework/Components/FontAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Framework/Tracking/trackers/SuwayomiTracker';
-import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
+import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
@@ -324,8 +324,19 @@ export struct SuwayomiSettingsPage {
             }
             .width('100%')
             .padding(16)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .borderRadius(12)
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
 
             // 测试连接按钮
             Button(this.isTesting ? '测试中...' : '测试连接')
@@ -367,8 +378,19 @@ export struct SuwayomiSettingsPage {
             }
             .width('100%')
             .padding(16)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .borderRadius(12)
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
             .alignItems(HorizontalAlign.Start)
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 

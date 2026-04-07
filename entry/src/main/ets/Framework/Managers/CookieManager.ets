@@ -12,7 +12,7 @@ import { http } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../../Utils/Logger';
 import { DataManager } from '../Data/DataManager';
-import { RequestHeaders } from '../Cache/ImageCacheManager';
+import { RequestHeaderEntry, RequestHeaders } from '../Cache/ImageCacheManager';
 
 const TAG: string = 'CookieManager';
 
@@ -93,6 +93,145 @@ export class CookieManager {
 
   private serializeCookies(entries: CookieEntry[]): string {
     return JSON.stringify(entries);
+  }
+
+  private buildCookieStringFromEntries(entries: CookieEntry[]): string {
+    if (!entries || entries.length === 0) {
+      return '';
+    }
+
+    const now: number = Date.now();
+    const parts: string[] = [];
+    let index: number = 0;
+    while (index < entries.length) {
+      const entry: CookieEntry = entries[index];
+      const expiresAt: number | undefined = entry.expires;
+      if ((expiresAt === undefined || now < expiresAt) && entry.value && entry.value.length > 0) {
+        parts.push(`${entry.name}=${entry.value}`);
+      }
+      index = index + 1;
+    }
+
+    if (parts.length === 0) {
+      return '';
+    }
+
+    let cookieStr: string = parts.join('; ');
+    cookieStr = cookieStr.replace(/\\"/g, '');
+    cookieStr = cookieStr.replace(/"/g, '');
+    cookieStr = cookieStr.replace(/;\s*;/g, ';').trim();
+    return cookieStr;
+  }
+
+  private parseCookieHeaderString(cookieStr: string): CookieEntry[] {
+    const result: CookieEntry[] = [];
+    if (!cookieStr || cookieStr.length === 0) {
+      return result;
+    }
+
+    let normalizedCookieString: string = cookieStr.replace(/\\"/g, '');
+    normalizedCookieString = normalizedCookieString.replace(/^"|"$/g, '');
+    normalizedCookieString = normalizedCookieString.replace(/;\s*;/g, ';').trim();
+    if (normalizedCookieString.length === 0) {
+      return result;
+    }
+
+    const parts: string[] = normalizedCookieString.split(';');
+    let index: number = 0;
+    while (index < parts.length) {
+      const item: string = parts[index].trim();
+      const eqIndex: number = item.indexOf('=');
+      if (eqIndex > 0) {
+        const name: string = item.substring(0, eqIndex).trim();
+        const value: string = item.substring(eqIndex + 1).trim();
+        if (name.length > 0 && value.length > 0) {
+          result.push({
+            name: name,
+            value: value,
+            expires: Date.now() + this.defaultTtlMs
+          } as CookieEntry);
+        }
+      }
+      index = index + 1;
+    }
+    return result;
+  }
+
+  private mergeCookieEntries(existing: CookieEntry[], incoming: CookieEntry[]): CookieEntry[] {
+    const merged: CookieEntry[] = [];
+    let existingIndex: number = 0;
+    while (existingIndex < existing.length) {
+      merged.push(existing[existingIndex]);
+      existingIndex = existingIndex + 1;
+    }
+
+    let incomingIndex: number = 0;
+    while (incomingIndex < incoming.length) {
+      const incomingEntry: CookieEntry = incoming[incomingIndex];
+      let matchedIndex: number = -1;
+      let mergedIndex: number = 0;
+      while (mergedIndex < merged.length) {
+        if (merged[mergedIndex].name === incomingEntry.name) {
+          matchedIndex = mergedIndex;
+          break;
+        }
+        mergedIndex = mergedIndex + 1;
+      }
+      if (matchedIndex >= 0) {
+        merged[matchedIndex] = incomingEntry;
+      } else {
+        merged.push(incomingEntry);
+      }
+      incomingIndex = incomingIndex + 1;
+    }
+    return merged;
+  }
+
+  private extractOriginUrl(url: string): string {
+    const trimmedUrl: string = url.trim();
+    if (trimmedUrl.length === 0) {
+      return '';
+    }
+    const matched: RegExpMatchArray | null = trimmedUrl.match(/^(https?:\/\/[^\/]+)/);
+    if (matched && matched.length > 1) {
+      return String(matched[1]);
+    }
+    return '';
+  }
+
+  private async captureCookiesFromWebEngine(sourceId: number, url: string): Promise<boolean> {
+    const normalizedUrl: string = url.trim();
+    if (normalizedUrl.length === 0) {
+      return false;
+    }
+
+    try {
+      await webview.WebCookieManager.saveCookieAsync();
+    } catch (saveError) {
+      logger.debug(TAG, `WebCookieManager保存Cookie失败，继续读取当前Cookie: ${String(saveError)}`);
+    }
+
+    try {
+      const rawCookieString: string = await webview.WebCookieManager.fetchCookie(normalizedUrl);
+      logger.info(TAG, `通过WebCookieManager获取Cookie: sourceId=${sourceId}, url=${normalizedUrl}, rawLength=${rawCookieString.length}`);
+      const incomingEntries: CookieEntry[] = this.parseCookieHeaderString(rawCookieString);
+      if (incomingEntries.length === 0) {
+        logger.warn(TAG, `WebCookieManager返回Cookie为空: sourceId=${sourceId}, url=${normalizedUrl}`);
+        return false;
+      }
+
+      const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
+      const existingEntries: CookieEntry[] = sourceRecord && sourceRecord.cookies
+        ? this.parseCookiesJson(String(sourceRecord.cookies))
+        : [];
+      const mergedEntries: CookieEntry[] = this.mergeCookieEntries(existingEntries, incomingEntries);
+      await this.dataManager.updateComicSourceCookies(sourceId, this.serializeCookies(mergedEntries));
+      logger.info(TAG, `已通过WebCookieManager保存Cookie: sourceId=${sourceId}, incoming=${incomingEntries.length}, merged=${mergedEntries.length}`);
+      return true;
+    } catch (error) {
+      logger.debug(TAG, `通过WebCookieManager获取Cookie失败: sourceId=${sourceId}, url=${normalizedUrl}, error=${String(error)}`);
+      return false;
+    }
   }
 
   async getCookieInfo(sourceId: number): Promise<CookieInfo> {
@@ -200,40 +339,66 @@ export class CookieManager {
         return '';
       }
       
-      const parts: string[] = [];
       let j: number = 0;
       while (j < validEntries.length) {
         const e: CookieEntry = validEntries[j] as CookieEntry;
-        // 过滤掉值为空的Cookie
-        if (e.value && e.value.length > 0) {
-          parts.push(`${e.name}=${e.value}`);
-        } else {
+        if (!e.value || e.value.length === 0) {
           logger.debug(TAG, `跳过空值Cookie: ${e.name}`);
         }
         j = j + 1;
       }
-      
-      if (parts.length === 0) {
+
+      const cookieStr: string = this.buildCookieStringFromEntries(validEntries);
+      if (cookieStr.length === 0) {
         logger.warn(TAG, `所有Cookie值为空: sourceId=${sourceId}`);
         return '';
       }
-      
-      let cookieStr: string = parts.join('; ');
-      
-      // [修复] 清理Cookie字符串中的转义字符和多余引号
-      // 移除转义的引号: \" -> "
-      cookieStr = cookieStr.replace(/\\"/g, '');
-      // 移除单独的引号: " -> (空)
-      cookieStr = cookieStr.replace(/"/g, '');
-      // 移除多余的分号和空格
-      cookieStr = cookieStr.replace(/;\s*;/g, ';').trim();
-      
-      logger.debug(TAG, `获取Cookie成功: sourceId=${sourceId}, count=${parts.length}, length=${cookieStr.length}`);
+
+      logger.debug(TAG, `获取Cookie成功: sourceId=${sourceId}, count=${validEntries.length}, length=${cookieStr.length}`);
       return cookieStr;
     } catch (error) {
       logger.error(TAG, '读取 Cookie 字符串失败', String(error));
       return '';
     }
+  }
+
+  async getCookieStringForUrl(sourceId: number, url: string): Promise<string> {
+    const normalizedUrl: string = url.trim();
+    if (normalizedUrl.length === 0) {
+      return await this.getCookieString(sourceId);
+    }
+
+    const candidateUrls: string[] = [normalizedUrl];
+    const originUrl: string = this.extractOriginUrl(normalizedUrl);
+    if (originUrl.length > 0 && originUrl !== normalizedUrl) {
+      candidateUrls.push(originUrl);
+    }
+
+    let index: number = 0;
+    while (index < candidateUrls.length) {
+      const candidateUrl: string = candidateUrls[index];
+      try {
+        await webview.WebCookieManager.saveCookieAsync();
+      } catch (saveError) {
+        logger.debug(TAG, `按URL读取Cookie前保存WebCookie失败: ${String(saveError)}`);
+      }
+
+      try {
+        const rawCookieString: string = await webview.WebCookieManager.fetchCookie(candidateUrl);
+        const incomingEntries: CookieEntry[] = this.parseCookieHeaderString(rawCookieString);
+        const preciseCookie: string = this.buildCookieStringFromEntries(incomingEntries);
+        if (preciseCookie.length > 0) {
+          logger.info(TAG, `按URL获取Cookie成功: sourceId=${sourceId}, url=${candidateUrl}, cookieLen=${preciseCookie.length}, count=${incomingEntries.length}`);
+          return preciseCookie;
+        }
+      } catch (error) {
+        logger.debug(TAG, `按URL获取Cookie失败: sourceId=${sourceId}, url=${candidateUrl}, error=${String(error)}`);
+      }
+
+      index = index + 1;
+    }
+
+    return await this.getCookieString(sourceId);
   }
 
   async buildHeadersWithCookie(base: RequestHeaders | undefined, sourceId: number): Promise<RequestHeaders> {
@@ -251,6 +416,23 @@ export class CookieManager {
       if (base.secFetchMode) { result.secFetchMode = String(base.secFetchMode); }
       if (base.secFetchSite) { result.secFetchSite = String(base.secFetchSite); }
       if (base.cachePartition) { result.cachePartition = String(base.cachePartition); }
+      if (base.extraHeaders && base.extraHeaders.length > 0) {
+        const extraHeaders: RequestHeaderEntry[] = [];
+        let index = 0;
+        while (index < base.extraHeaders.length) {
+          const entry = base.extraHeaders[index];
+          if (entry && entry.name && entry.value) {
+            extraHeaders.push({
+              name: String(entry.name),
+              value: String(entry.value)
+            } as RequestHeaderEntry);
+          }
+          index = index + 1;
+        }
+        if (extraHeaders.length > 0) {
+          result.extraHeaders = extraHeaders;
+        }
+      }
     }
 
 
@@ -273,36 +455,48 @@ export class CookieManager {
    */
   async forceCaptureWebViewCookies(sourceId: number, controller: webview.WebviewController | null, baseUrl: string): Promise<boolean> {
     let captured: boolean = false;
+    let captureUrl: string = baseUrl ? baseUrl.trim() : '';
     try {
-      if (controller) {
-        const js: string = 'document.cookie';
-        const resultStr: string = await controller.runJavaScript(js) as string;
-        logger.info(TAG, `从WebView捕获Cookie: sourceId=${sourceId}, rawLength=${resultStr?.length || 0}`);
-        
-        const entries: CookieEntry[] = [];
-        const cookieStr: string = resultStr || '';
-        
-        // 清理可能的引号包裹
-        const cleanedStr: string = cookieStr.replace(/^"|"$/g, '');
-        const parts: string[] = cleanedStr.split(';');
-        let p: number = 0;
-        while (p < parts.length) {
-          const item: string = parts[p].trim();
-          const eqIndex: number = item.indexOf('=');
-          if (eqIndex > 0) {
-            const name: string = item.substring(0, eqIndex);
-            const value: string = item.substring(eqIndex + 1);
-            // 特别记录CF相关Cookie
-            if (name.includes('cf_') || name.includes('__cf')) {
-              logger.info(TAG, `捕获到CF Cookie: ${name}`);
-            }
-            entries.push({ name: name, value: value, expires: Date.now() + this.defaultTtlMs } as CookieEntry);
-          }
-          p = p + 1;
+      if (captureUrl.length === 0 && controller) {
+        try {
+          captureUrl = String(controller.getUrl()).trim();
+        } catch (urlError) {
+          logger.debug(TAG, `WebView当前URL读取失败，继续使用回退路径: ${String(urlError)}`);
         }
-        if (entries.length > 0) {
-          await this.dataManager.updateComicSourceCookies(sourceId, this.serializeCookies(entries));
-          logger.info(TAG, `成功保存${entries.length}个Cookie到数据库: sourceId=${sourceId}`);
+      }
+
+      if (captureUrl.length > 0) {
+        captured = await this.captureCookiesFromWebEngine(sourceId, captureUrl);
+        if (!captured) {
+          const originUrl: string = this.extractOriginUrl(captureUrl);
+          if (originUrl.length > 0 && originUrl !== captureUrl) {
+            captured = await this.captureCookiesFromWebEngine(sourceId, originUrl);
+          }
+        }
+      }
+
+      if (!captured && controller) {
+        const resultStr: string = await controller.runJavaScript('document.cookie') as string;
+        logger.info(TAG, `从WebView捕获Cookie: sourceId=${sourceId}, rawLength=${resultStr?.length || 0}`);
+
+        const incomingEntries: CookieEntry[] = this.parseCookieHeaderString(resultStr || '');
+        let entryIndex: number = 0;
+        while (entryIndex < incomingEntries.length) {
+          const cookieName: string = incomingEntries[entryIndex].name;
+          if (cookieName.includes('cf_') || cookieName.includes('__cf')) {
+            logger.info(TAG, `捕获到CF Cookie: ${cookieName}`);
+          }
+          entryIndex = entryIndex + 1;
+        }
+
+        if (incomingEntries.length > 0) {
+          const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
+          const existingEntries: CookieEntry[] = sourceRecord && sourceRecord.cookies
+            ? this.parseCookiesJson(String(sourceRecord.cookies))
+            : [];
+          const mergedEntries: CookieEntry[] = this.mergeCookieEntries(existingEntries, incomingEntries);
+          await this.dataManager.updateComicSourceCookies(sourceId, this.serializeCookies(mergedEntries));
+          logger.info(TAG, `使用document.cookie补充保存Cookie: sourceId=${sourceId}, incoming=${incomingEntries.length}, merged=${mergedEntries.length}`);
           captured = true;
         } else {
           logger.warn(TAG, `WebView中未找到Cookie: sourceId=${sourceId}`);
@@ -312,8 +506,8 @@ export class CookieManager {
       logger.error(TAG, `从WebView捕获Cookie失败: ${String(e)}`);
     }
     if (captured) { return true; }
-    if (baseUrl && baseUrl.length > 0) {
-      const ok: boolean = await this.fetchCookiesByDefaultRequest(sourceId, baseUrl);
+    if (captureUrl.length > 0) {
+      const ok: boolean = await this.fetchCookiesByDefaultRequest(sourceId, captureUrl);
       return ok;
     }
     return false;

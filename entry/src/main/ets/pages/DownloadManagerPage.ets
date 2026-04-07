@@ -19,6 +19,9 @@ import { PermanentImageCacheManager } from '../Framework/Cache/PermanentImageCac
 import { DataManager } from '../Framework/Data/DataManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'DownloadManagerPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -36,6 +39,8 @@ interface DownloadTask {
   remainingTime: string; // 剩余时间，如 "3分钟"
 }
 
+type DownloadContentTypeTab = 'downloads' | 'manga_cache';
+
 // 使用NavDestinationContext官方类型
 // @kit.ArkUI提供的NavDestinationContext已包含必要的类型定义
 
@@ -49,6 +54,7 @@ struct DownloadManagerPage {
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'DownloadManagerPage';
 
@@ -62,7 +68,9 @@ struct DownloadManagerPage {
   @State filterStatus: string = 'all'; // 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
   
   // 内容类型分类
-  @State contentTypeTab: string = 'downloads'; // 'downloads' | 'manga_cache' | 'novel_cache'
+  @State contentTypeTab: DownloadContentTypeTab = 'downloads';
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
   
   // 缓存状态
   @State mangaCacheList: ContentCacheStats[] = [];
@@ -76,6 +84,7 @@ struct DownloadManagerPage {
   private permanentCacheManager: PermanentImageCacheManager = PermanentImageCacheManager.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
   private updateTimer: number = -1;
+  private readonly contentTypeTabOrder: DownloadContentTypeTab[] = ['downloads', 'manga_cache'];
 
   onPageShow(): void {
     try {
@@ -524,12 +533,148 @@ struct DownloadManagerPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 4 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(18)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 18,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .margin({ left: 16, right: 16, top: 8, bottom: 4 })
+  }
+
+  private activateContentTypeTab(tab: DownloadContentTypeTab): void {
+    this.contentTypeTab = tab;
+    if (tab === 'manga_cache' && this.mangaCacheList.length === 0) {
+      this.loadCacheLists();
+    }
+  }
+
+  private switchToNextContentTypeTab(): void {
+    const currentIndex = this.contentTypeTabOrder.indexOf(this.contentTypeTab);
+    const nextIndex = (currentIndex + 1) % this.contentTypeTabOrder.length;
+    this.activateContentTypeTab(this.contentTypeTabOrder[nextIndex]);
+  }
+
+  private switchToPrevContentTypeTab(): void {
+    const currentIndex = this.contentTypeTabOrder.indexOf(this.contentTypeTab);
+    const prevIndex = (currentIndex - 1 + this.contentTypeTabOrder.length) % this.contentTypeTabOrder.length;
+    this.activateContentTypeTab(this.contentTypeTabOrder[prevIndex]);
+  }
+
+  private handleTabSwipeStart(event: GestureEvent): void {
+    this.swipeStartX = event.offsetX;
+    this.swipeOffsetX = 0;
+  }
+
+  private handleTabSwipeUpdate(event: GestureEvent): void {
+    this.swipeOffsetX = event.offsetX - this.swipeStartX;
+  }
+
+  private handleTabSwipeEnd(): void {
+    const swipeThreshold = 80;
+    if (this.swipeOffsetX < -swipeThreshold) {
+      this.switchToNextContentTypeTab();
+    } else if (this.swipeOffsetX > swipeThreshold) {
+      this.switchToPrevContentTypeTab();
+    }
+    this.swipeOffsetX = 0;
   }
   
   /**
    * 构建缓存列表项
    */
+  @Builder
+  buildImportStyleContentTypeTabBar() {
+    Scroll() {
+      Row({ space: 0 }) {
+        Row() {
+          SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+            .fontSize(12)
+            .fontColor([this.contentTypeTab === 'downloads'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 4 })
+          Text('下载任务')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.contentTypeTab === 'downloads'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 10 })
+        .height(30)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.contentTypeTab === 'downloads'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.contentTypeTab === 'downloads' ? 2 : 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.activateContentTypeTab('downloads');
+        })
+        .animation({ duration: 150 })
+
+        Row() {
+          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+            .fontSize(12)
+            .fontColor([this.contentTypeTab === 'manga_cache'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 4 })
+          Text('漫画缓存')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.contentTypeTab === 'manga_cache'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 10 })
+        .height(30)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.contentTypeTab === 'manga_cache'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.contentTypeTab === 'manga_cache' ? 2 : 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.activateContentTypeTab('manga_cache');
+        })
+        .animation({ duration: 150 })
+      }
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .width('100%')
+    .height(32)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(18)
+    .clip(true)
+    .margin({ left: 16, right: 16, top: 8, bottom: 4 })
+  }
+
   @Builder
   buildCacheItem(stats: ContentCacheStats) {
     Column({ space: 10 }) {
@@ -606,9 +751,25 @@ struct DownloadManagerPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(10)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 14,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .margin({ left: 16, right: 16, bottom: 10 })
   }
   
@@ -683,8 +844,25 @@ struct DownloadManagerPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
       .borderRadius(10)
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: 14,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 8
+      })
       .margin({ left: 16, right: 16, bottom: 12 })
       
       // 缓存列表
@@ -873,9 +1051,25 @@ struct DownloadManagerPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 16,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
     .margin({ left: 16, right: 16, bottom: 12 })
   }
 
@@ -917,10 +1111,12 @@ struct DownloadManagerPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column() {
@@ -944,52 +1140,70 @@ struct DownloadManagerPage {
             .justifyContent(FlexAlign.Center)
           } else {
             // 内容类型标签栏
-            this.buildContentTypeTabBar()
-            
-            if (this.contentTypeTab === 'downloads') {
-              // 下载任务列表
-              this.buildFilterBar()
-              this.buildBatchActionsBar()
+            this.buildImportStyleContentTypeTabBar()
 
-              if (this.getFilteredTasks().length === 0) {
-                Column({ space: 20 }) {
-                  Text('暂无下载任务')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            Column() {
+              if (this.contentTypeTab === 'downloads') {
+                // 下载任务列表
+                this.buildFilterBar()
+                this.buildBatchActionsBar()
+
+                if (this.getFilteredTasks().length === 0) {
+                  Column({ space: 20 }) {
+                    Text('暂无下载任务')
+                      .fontSize(16)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  }
+                  .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+                  .width('100%')
+                  .layoutWeight(1)
+                  .justifyContent(FlexAlign.Center)
+                } else {
+                  Scroll(this.scroller) {
+                    Column() {
+                      ForEach(this.getFilteredTasks(), (task: DownloadTask) => {
+                        this.buildTaskItem(task)
+                      }, (task: DownloadTask) => task.id)
+                      Blank().height(24 + this.navigationBarHeight)
+                    }
+                    .width('100%')
+                  }
+                  .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+                  .layoutWeight(1)
+                  .edgeEffect(EdgeEffect.Spring)
+                  .scrollBar(BarState.Auto)
                 }
-                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-                .width('100%')
-                .layoutWeight(1)
-                .justifyContent(FlexAlign.Center)
-              } else {
+              } else if (this.contentTypeTab === 'manga_cache') {
+                // 漫画缓存列表
                 Scroll(this.scroller) {
                   Column() {
-                    ForEach(this.getFilteredTasks(), (task: DownloadTask) => {
-                      this.buildTaskItem(task)
-                    }, (task: DownloadTask) => task.id)
+                    this.buildCacheList()
+                    Blank().height(24 + this.navigationBarHeight)
                   }
                   .width('100%')
+                  .padding({ top: 8 })
                 }
                 .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .layoutWeight(1)
                 .edgeEffect(EdgeEffect.Spring)
                 .scrollBar(BarState.Auto)
               }
-            } else if (this.contentTypeTab === 'manga_cache') {
-              // 漫画缓存列表
-              Scroll(this.scroller) {
-                Column() {
-                  this.buildCacheList()
-                }
-                .width('100%')
-                .padding({ top: 8 })
-              }
-              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-              .layoutWeight(1)
-              .edgeEffect(EdgeEffect.Spring)
-              .scrollBar(BarState.Auto)
             }
+            .width('100%')
+            .layoutWeight(1)
+            .gesture(
+              PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+                .onActionStart((event: GestureEvent) => {
+                  this.handleTabSwipeStart(event);
+                })
+                .onActionUpdate((event: GestureEvent) => {
+                  this.handleTabSwipeUpdate(event);
+                })
+                .onActionEnd((_event: GestureEvent) => {
+                  this.handleTabSwipeEnd();
+                })
+            )
           }
         }
         .width('100%')

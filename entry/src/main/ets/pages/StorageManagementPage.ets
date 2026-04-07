@@ -23,6 +23,9 @@ import { CacheManagementPanel } from '../components/CacheManagementPanel';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'StorageManagementPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -416,7 +419,13 @@ export struct StorageManagementPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(12)
   }
 
@@ -507,7 +516,13 @@ export struct StorageManagementPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
     .borderRadius(12)
     .onClick(() => {
       this.toggleSelection(item.type, item.canClear);
@@ -541,8 +556,13 @@ export struct StorageManagementPage {
       }
         .type(ButtonType.Normal)
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
-          this.themeState.currentTheme))
+        .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+        .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+        .backgroundBlurStyle(
+          SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+          SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+        )
+        .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
         .borderRadius(8)
         .layoutWeight(1)
         .enabled(!this.isLoading && !this.isClearing)
@@ -599,12 +619,13 @@ export struct StorageManagementPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark',
+            this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark',
-            this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column() {
@@ -679,8 +700,13 @@ export struct StorageManagementPage {
                   .type(ButtonType.Normal)
                   .height(40)
                   .layoutWeight(1)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
-                    this.themeState.currentTheme))
+                  .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                  .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                  .backgroundBlurStyle(
+                    SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                    SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                  )
+                  .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
                   .borderRadius(8)
                   .onClick(() => {
                     this.toggleCacheDetails();
@@ -746,8 +772,13 @@ export struct StorageManagementPage {
                 .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .width('100%')
                 .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
-                  this.themeState.currentTheme))
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(
+                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+                )
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
                 .borderRadius(12)
                 .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.translate({ y: -10 })))
               }
@@ -810,7 +841,6 @@ export struct StorageManagementPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
 
         SettingsImmersiveTitleBar({
           themeState: this.themeState,
@@ -832,7 +862,13 @@ export struct StorageManagementPage {
           .width('90%')
           .height('80%')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+          .backgroundBlurStyle(
+            SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+            SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+          )
+          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
           .borderRadius(16)
           .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)' })
           .position({ x: '5%', y: '10%' })

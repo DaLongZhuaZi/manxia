@@ -6,8 +6,8 @@
  * 文件路径: entry/src/main/ets/pages/NovelBookshelfPage.ets
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
@@ -20,9 +20,12 @@ import { AppColors } from '../Framework/Theme/AppColors';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG = 'NovelBookshelfPage';
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 /**
  * 按钮配置接口
@@ -444,21 +447,53 @@ export struct NovelBookshelfPage {
     });
   }
 
+  private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
+    if (this.isEditMode) {
+      return [];
+    }
+
+    return [
+      {
+        id: 'search',
+        label: '搜索',
+        symbol: $r('sys.symbol.magnifyingglass'),
+        onClick: () => this.goToSearch()
+      },
+      {
+        id: 'explore',
+        label: '发现',
+        symbol: $r('sys.symbol.crown'),
+        onClick: () => {
+          const params: NovelExplorePageParams = {};
+          this.pathStack.pushPathByName('NovelExplorePage', params);
+        }
+      },
+      {
+        id: 'settings',
+        label: '小说设置',
+        symbol: $r('sys.symbol.gearshape'),
+        onClick: () => this.goToNovelSettings()
+      }
+    ];
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
         // 背景层：扩展到系统栏区域，实现完全沉浸式背景
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
         
         // 内容层
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
           
           // Tab切换
           this.buildTabs()
@@ -473,57 +508,20 @@ export struct NovelBookshelfPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .padding({ bottom: this.navigationBarHeight })
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '小说书架',
+          appFontFamily: this.appFontFamily,
+          maxDirectActions: 3,
+          actions: this.getTitleBarActions()
+        })
       }
       .width('100%')
       .height('100%')
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: {
-          mainTitle: '小说书架'
-        },
-        menu: {
-          value: this.isEditMode ? [] : [{
-            content: {
-              label: '搜索',
-              icon: $r('sys.symbol.magnifyingglass'),
-              isEnabled: true,
-              action: () => this.goToSearch()
-            }
-          }, {
-            content: {
-              label: '发现',
-              icon: $r('sys.symbol.crown'),
-              isEnabled: true,
-              action: () => {
-                const params: NovelExplorePageParams = {};
-                this.pathStack.pushPathByName('NovelExplorePage', params);
-              }
-            }
-          }, {
-            content: {
-              label: '小说设置',
-              icon: $r('sys.symbol.gearshape'),
-              isEnabled: true,
-              action: () => this.goToNovelSettings()
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');

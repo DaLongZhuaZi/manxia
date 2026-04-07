@@ -10,6 +10,7 @@ import { FontAwareHelper, FontAwareState } from './FontAware';
 import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { AppColors } from '../Theme/AppColors';
+import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
 
 const TAG = 'GroupManagementDialog';
 
@@ -251,11 +252,27 @@ export struct GroupManagementDialog {
         this.buildBottomActions();
       }
     }
-    .width('100%')
-    .constraintSize({ maxHeight: '80%' })
+    .width('90%')
+    .constraintSize({ maxWidth: 680, maxHeight: '80%' })
     .padding(24)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(16)
+    .backgroundColor(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundColor)
+    .backgroundBlurStyle(
+      SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurStyle,
+      SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurOptions
+    )
+    .backgroundEffect(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundEffect)
+    .linearGradient(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.surfaceGradient)
+    .borderRadius(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius)
+    .clip(true)
+    .border({
+      width: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderWidth,
+      color: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderColor
+    })
+    .shadow({
+      radius: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius + 4,
+      color: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.shadowColor,
+      offsetY: 8
+    })
   }
 
   @Builder

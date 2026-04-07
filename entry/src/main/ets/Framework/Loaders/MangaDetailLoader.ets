@@ -622,7 +622,17 @@ export class MangaDetailLoader {
       }
       
       const mangaInfo: MangaInfo = combinedResult.data.detail;
-      const webViewChapters: WebViewChapterInfo[] = combinedResult.data.chapters;
+      let webViewChapters: WebViewChapterInfo[] = combinedResult.data.chapters;
+      if (webViewChapters.length === 0) {
+        logger.warn(TAG, `[网络加载] 合并工作流未返回章节，回退独立章节工作流: ${externalMangaId}`);
+        const chapterListResult = await this.mangaEngine.getChapterList(externalMangaId);
+        if (chapterListResult.success && chapterListResult.data) {
+          webViewChapters = chapterListResult.data;
+          logger.info(TAG, `[网络加载] 独立章节工作流回退成功: ${webViewChapters.length}章`);
+        } else {
+          logger.warn(TAG, `[网络加载] 独立章节工作流回退失败: ${chapterListResult.error || ''}`);
+        }
+      }
       
       // 使用缓存的标题和封面（如果网络获取的为空）
       if ((!mangaInfo.title || mangaInfo.title.trim() === '') && params.cachedTitle) {

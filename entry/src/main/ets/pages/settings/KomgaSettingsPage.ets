@@ -20,6 +20,7 @@ import {
 } from '../../Framework/Source/KomgaConfigStore';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 
 const TAG = 'KomgaSettingsPage';
 const PAGE_BOTTOM_SPACER: number = 32;
@@ -464,8 +465,19 @@ export struct KomgaSettingsPage {
           }
           .width('100%')
           .padding(16)
-          .backgroundColor(this.color('panel_background'))
-          .borderRadius(16)
+          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+          .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+          .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+          .clip(true)
+          .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+          .shadow({
+            radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+            color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+            offsetX: 0,
+            offsetY: 8
+          })
 
           Column({ space: 12 }) {
             Text('当前实例')
@@ -589,8 +601,19 @@ export struct KomgaSettingsPage {
           }
           .width('100%')
           .padding(16)
-          .backgroundColor(this.color('panel_background'))
-          .borderRadius(16)
+          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+          .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+          .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+          .clip(true)
+          .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+          .shadow({
+            radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+            color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+            offsetX: 0,
+            offsetY: 8
+          })
 
           Column({ space: 12 }) {
             Text('默认库与阅读行为')
@@ -646,8 +669,19 @@ export struct KomgaSettingsPage {
           }
           .width('100%')
           .padding(16)
-          .backgroundColor(this.color('panel_background'))
-          .borderRadius(16)
+          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+          .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+          .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+          .clip(true)
+          .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+          .shadow({
+            radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+            color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+            offsetX: 0,
+            offsetY: 8
+          })
 
           Row({ space: 12 }) {
             Button('清除配置')
