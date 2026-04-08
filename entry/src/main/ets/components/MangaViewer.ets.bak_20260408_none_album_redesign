@@ -1938,10 +1938,6 @@ export struct MangaViewer {
       const thresholdY: number = Math.max(20, Math.floor(this.screenHeight * 0.05));
       logger.debug(TAG, `拖拽结束: tx=${this.translateX.toFixed ? this.translateX.toFixed(1) : this.translateX}, ty=${this.translateY.toFixed ? this.translateY.toFixed(1) : this.translateY}, thX=${thresholdX}, thY=${thresholdY}, cur=${this.currentPageIndex}, view=${this.viewCurrentPageIndex}`);
 
-      if (this.handleAlbumNonePageTurn(thresholdX, thresholdY)) {
-        return;
-      }
-
       // ========== 卷页动画特殊处理 ==========
       const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
       if (animationType === PageTurnAnimationType.CURL && !isTTB) {
@@ -4067,10 +4063,8 @@ export struct MangaViewer {
         }
         .width('100%')
         .height('100%')
-        .translate({ x: this.getPrevOverlayTranslateX(), y: this.getPrevOverlayTranslateY() })
         // 移除transition动画，避免与翻页动画冲突，保持opacity即时响应
         .opacity(this.getPrevOverlayOpacity())
-        .transition(TransitionEffect.IDENTITY)
       }
       if (this.previewNextPageId && this.previewNextPageId.length > 0) {
         Stack() {
@@ -4097,10 +4091,8 @@ export struct MangaViewer {
         }
         .width('100%')
         .height('100%')
-        .translate({ x: this.getNextOverlayTranslateX(), y: this.getNextOverlayTranslateY() })
         // 移除transition动画，避免与翻页动画冲突，保持opacity即时响应
         .opacity(this.getNextOverlayOpacity())
-        .transition(TransitionEffect.IDENTITY)
       }
       // 普通内容层（始终显示，作为底层）
       this.buildSinglePageContent()
@@ -5816,12 +5808,8 @@ export struct MangaViewer {
     return this.readingSettings.pageTurnAnimation === PageTurnAnimationType.NONE;
   }
 
-  private shouldUseAlbumNoneTransition(): boolean {
-    return this.isSoftNonePageTurn() && this.isSinglePageMode() && !this.isWebtoonMode() && this.currentScale <= 1.0;
-  }
-
   private shouldUseSoftNoneCrossfade(): boolean {
-    return false;
+    return this.isSoftNonePageTurn() && this.isSinglePageMode() && !this.isWebtoonMode() && this.currentScale <= 1.0;
   }
 
   private getViewerModeKey(): string {
@@ -5835,7 +5823,7 @@ export struct MangaViewer {
     if (this.isWebtoonMode()) {
       return `webtoon_${modeKey}`;
     }
-    if (this.shouldUseAlbumNoneTransition()) {
+    if (this.shouldUseSoftNoneCrossfade()) {
       return `single_none_${modeKey}`;
     }
     return `${modeKey}_${this.viewCurrentPageIndex}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}`;
@@ -5844,299 +5832,10 @@ export struct MangaViewer {
   private getSinglePageContentKey(page: MangaPage): string {
     const pixelEpoch: number = this.getPixelMapEpoch(page.id);
     const sourceState: string = this.pagePixelMaps.has(page.id) ? 'pm' : 'url';
-    if (this.shouldUseAlbumNoneTransition()) {
+    if (this.shouldUseSoftNoneCrossfade()) {
       return `${page.id}_${pixelEpoch}_${sourceState}`;
     }
     return `${page.id}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${pixelEpoch}_${sourceState}`;
-  }
-
-  private usesAlbumNoneVerticalAxis(): boolean {
-    return this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
-      (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE &&
-        this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM);
-  }
-
-  private getAlbumNoneTravelDistanceX(): number {
-    return this.screenWidth > 0 ? this.screenWidth : 360;
-  }
-
-  private getAlbumNoneTravelDistanceY(): number {
-    return this.screenHeight > 0 ? this.screenHeight : 780;
-  }
-
-  private hasAlbumNonePrevReveal(): boolean {
-    if (!this.shouldUseAlbumNoneTransition() || this.previewPrevPageId.length === 0) {
-      return false;
-    }
-    if (this.usesAlbumNoneVerticalAxis()) {
-      return this.translateY > 0.5;
-    }
-    return this.translateX > 0.5;
-  }
-
-  private hasAlbumNoneNextReveal(): boolean {
-    if (!this.shouldUseAlbumNoneTransition() || this.previewNextPageId.length === 0) {
-      return false;
-    }
-    if (this.usesAlbumNoneVerticalAxis()) {
-      return this.translateY < -0.5;
-    }
-    return this.translateX < -0.5;
-  }
-
-  private getPrevOverlayTranslateX(): number {
-    if (!this.shouldUseAlbumNoneTransition()) {
-      return 0;
-    }
-    if (this.usesAlbumNoneVerticalAxis()) {
-      return 0;
-    }
-    const travelDistance = this.getAlbumNoneTravelDistanceX();
-    return this.hasAlbumNonePrevReveal() ? this.translateX - travelDistance : -travelDistance;
-  }
-
-  private getPrevOverlayTranslateY(): number {
-    if (!this.shouldUseAlbumNoneTransition()) {
-      return 0;
-    }
-    if (!this.usesAlbumNoneVerticalAxis()) {
-      return 0;
-    }
-    const travelDistance = this.getAlbumNoneTravelDistanceY();
-    return this.hasAlbumNonePrevReveal() ? this.translateY - travelDistance : -travelDistance;
-  }
-
-  private getNextOverlayTranslateX(): number {
-    if (!this.shouldUseAlbumNoneTransition()) {
-      return 0;
-    }
-    if (this.usesAlbumNoneVerticalAxis()) {
-      return 0;
-    }
-    const travelDistance = this.getAlbumNoneTravelDistanceX();
-    return this.hasAlbumNoneNextReveal() ? this.translateX + travelDistance : travelDistance;
-  }
-
-  private getNextOverlayTranslateY(): number {
-    if (!this.shouldUseAlbumNoneTransition()) {
-      return 0;
-    }
-    if (!this.usesAlbumNoneVerticalAxis()) {
-      return 0;
-    }
-    const travelDistance = this.getAlbumNoneTravelDistanceY();
-    return this.hasAlbumNoneNextReveal() ? this.translateY + travelDistance : travelDistance;
-  }
-
-  private getAlbumNoneSettleDuration(currentOffset: number, travelDistance: number, isCommit: boolean): number {
-    const safeTravelDistance = travelDistance > 0 ? travelDistance : 1;
-    const progress = Math.min(1.0, Math.abs(currentOffset) / safeTravelDistance);
-    if (isCommit) {
-      const remaining = Math.max(0.18, 1.0 - progress);
-      return Math.max(120, Math.floor(220 * remaining));
-    }
-    return Math.max(120, Math.floor(220 * Math.max(0.22, progress)));
-  }
-
-  private animateAlbumNoneCancel(): void {
-    const isVertical = this.usesAlbumNoneVerticalAxis();
-    const currentOffset = isVertical ? this.translateY : this.translateX;
-    const travelDistance = isVertical ? this.getAlbumNoneTravelDistanceY() : this.getAlbumNoneTravelDistanceX();
-    const duration = this.getAlbumNoneSettleDuration(currentOffset, travelDistance, false);
-    this.pageChangeCommitted = false;
-    this.isCommittingPageTurn = true;
-    this.currentAnimationType = PageTurnAnimationType.NONE;
-    this.resetSoftTransitionOverlay();
-    if (!this.uiContext) {
-      this.translateX = 0;
-      this.translateY = 0;
-      this.pageTurnDirection = null;
-      this.isCommittingPageTurn = false;
-      return;
-    }
-    this.uiContext.animateTo({
-      duration: duration,
-      curve: curves.initCurve(Curve.FastOutSlowIn),
-      iterations: 1,
-      playMode: PlayMode.Normal,
-      onFinish: () => {
-        this.translateX = 0;
-        this.translateY = 0;
-        this.pageTurnDirection = null;
-        this.isCommittingPageTurn = false;
-        this.currentAnimationType = PageTurnAnimationType.NONE;
-      }
-    }, () => {
-      this.translateX = 0;
-      this.translateY = 0;
-    });
-  }
-
-  private finishAlbumNonePageTurn(targetIndex: number): void {
-    if (!this.chapter || !this.chapter.pages || targetIndex < 0 || targetIndex >= this.chapter.pages.length) {
-      this.translateX = 0;
-      this.translateY = 0;
-      this.pageTurnDirection = null;
-      this.pageChangeCommitted = false;
-      this.isCommittingPageTurn = false;
-      this.currentAnimationType = PageTurnAnimationType.NONE;
-      return;
-    }
-    const newPage: MangaPage = this.chapter.pages[targetIndex];
-    this.viewCurrentPageIndex = targetIndex;
-    this.currentPageIndex = targetIndex;
-    this.suppressExternalIndex = true;
-    this.updateSinglePageDisplay();
-    this.incrementPixelMapEpoch(newPage.id);
-    this.translateX = 0;
-    this.translateY = 0;
-    this.updateSinglePagePreview();
-    this.loadCurrentAndNeighborPages();
-    if (this.callbacks.onPageChange) {
-      this.callbacks.onPageChange(targetIndex);
-    }
-    this.isPageTurning = false;
-    this.pageTurnDirection = null;
-    this.pageTurnProgress = 0;
-    this.currentAnimationType = PageTurnAnimationType.NONE;
-    this.isCommittingPageTurn = false;
-    this.resetSoftTransitionOverlay();
-    setTimeout(() => { this.suppressExternalIndex = false; }, 0);
-    setTimeout(() => { this.pageChangeCommitted = false; }, this.SWIPE_COOLDOWN_MS);
-  }
-
-  private startAlbumNoneCommit(targetIndex: number, direction: 'left' | 'right' | 'up' | 'down'): void {
-    if (!this.chapter || !this.chapter.pages || targetIndex < 0 || targetIndex >= this.chapter.pages.length) {
-      this.animateAlbumNoneCancel();
-      return;
-    }
-    const targetPage: MangaPage = this.chapter.pages[targetIndex];
-    const targetLoadState: ImageLoadState | undefined = this.getPageLoadState(targetPage);
-    const hasPixelMap: boolean = this.pagePixelMaps.has(targetPage.id);
-    if (!hasPixelMap && (!targetLoadState || !targetLoadState.isLoading)) {
-      this.loadImage(targetPage);
-    }
-    this.ensurePixelMapLoaded(targetPage).catch((_e: Error) => {});
-    this.pageChangeCommitted = true;
-    this.isCommittingPageTurn = true;
-    this.pageTurnDirection = direction;
-    this.currentAnimationType = PageTurnAnimationType.NONE;
-    this.resetSoftTransitionOverlay();
-
-    const isHorizontal: boolean = direction === 'left' || direction === 'right';
-    const travelDistance: number = isHorizontal ? this.getAlbumNoneTravelDistanceX() : this.getAlbumNoneTravelDistanceY();
-    const currentOffset: number = isHorizontal ? this.translateX : this.translateY;
-    const duration = this.getAlbumNoneSettleDuration(currentOffset, travelDistance, true);
-    const targetTranslateX: number = direction === 'left' ? -travelDistance : (direction === 'right' ? travelDistance : 0);
-    const targetTranslateY: number = direction === 'up' ? -travelDistance : (direction === 'down' ? travelDistance : 0);
-
-    if (!this.uiContext) {
-      this.finishAlbumNonePageTurn(targetIndex);
-      return;
-    }
-    this.uiContext.animateTo({
-      duration: duration,
-      curve: curves.initCurve(Curve.FastOutSlowIn),
-      iterations: 1,
-      playMode: PlayMode.Normal,
-      onFinish: () => {
-        this.finishAlbumNonePageTurn(targetIndex);
-      }
-    }, () => {
-      this.translateX = targetTranslateX;
-      this.translateY = targetTranslateY;
-    });
-  }
-
-  private handleAlbumNonePageTurn(thresholdX: number, thresholdY: number): boolean {
-    if (!this.shouldUseAlbumNoneTransition()) {
-      return false;
-    }
-    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
-      this.animateAlbumNoneCancel();
-      return true;
-    }
-
-    if (this.usesAlbumNoneVerticalAxis()) {
-      if (Math.abs(this.translateY) <= thresholdY) {
-        this.animateAlbumNoneCancel();
-        return true;
-      }
-      if (this.translateY > 0) {
-        if (this.viewCurrentPageIndex > 0) {
-          this.startAlbumNoneCommit(this.viewCurrentPageIndex - 1, 'down');
-        } else {
-          if (this.callbacks.onChapterChange) {
-            this.callbacks.onChapterChange('prev');
-          }
-          this.animateAlbumNoneCancel();
-        }
-        return true;
-      }
-      if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
-        this.startAlbumNoneCommit(this.viewCurrentPageIndex + 1, 'up');
-      } else {
-        if (this.callbacks.onChapterChange) {
-          this.callbacks.onChapterChange('next');
-        }
-        this.animateAlbumNoneCancel();
-      }
-      return true;
-    }
-
-    if (Math.abs(this.translateX) <= thresholdX) {
-      this.animateAlbumNoneCancel();
-      return true;
-    }
-
-    const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
-      (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE &&
-        this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
-
-    if (isRTL) {
-      if (this.translateX > 0) {
-        if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
-          this.startAlbumNoneCommit(this.viewCurrentPageIndex + 1, 'right');
-        } else {
-          if (this.callbacks.onChapterChange) {
-            this.callbacks.onChapterChange('next');
-          }
-          this.animateAlbumNoneCancel();
-        }
-        return true;
-      }
-      if (this.viewCurrentPageIndex > 0) {
-        this.startAlbumNoneCommit(this.viewCurrentPageIndex - 1, 'left');
-      } else {
-        if (this.callbacks.onChapterChange) {
-          this.callbacks.onChapterChange('prev');
-        }
-        this.animateAlbumNoneCancel();
-      }
-      return true;
-    }
-
-    if (this.translateX > 0) {
-      if (this.viewCurrentPageIndex > 0) {
-        this.startAlbumNoneCommit(this.viewCurrentPageIndex - 1, 'right');
-      } else {
-        if (this.callbacks.onChapterChange) {
-          this.callbacks.onChapterChange('prev');
-        }
-        this.animateAlbumNoneCancel();
-      }
-      return true;
-    }
-
-    if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
-      this.startAlbumNoneCommit(this.viewCurrentPageIndex + 1, 'left');
-    } else {
-      if (this.callbacks.onChapterChange) {
-        this.callbacks.onChapterChange('next');
-      }
-      this.animateAlbumNoneCancel();
-    }
-    return true;
   }
 
   private getSoftTransitionHoldDelay(): number {
@@ -6325,9 +6024,6 @@ export struct MangaViewer {
     const isTTB: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB;
     const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
-    if (this.shouldUseAlbumNoneTransition()) {
-      return this.hasAlbumNonePrevReveal() ? 1.0 : 0.0;
-    }
     if (this.isCommittingPageTurn) {
       if (this.isSoftNonePageTurn()) {
         return 0.0;
@@ -6357,9 +6053,6 @@ export struct MangaViewer {
     const isTTB: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB;
     const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
-    if (this.shouldUseAlbumNoneTransition()) {
-      return this.hasAlbumNoneNextReveal() ? 1.0 : 0.0;
-    }
     if (this.isCommittingPageTurn) {
       if (this.isSoftNonePageTurn()) {
         return 0.0;
@@ -7703,13 +7396,6 @@ export struct MangaViewer {
     // 检查是否是当前可见页面
     const isVisible = this.isPageCurrentlyVisible(page);
     if (!isVisible) {
-      if (this.shouldUseAlbumNoneTransition()) {
-        const prevIdx: number = this.getPrevPageIndex();
-        const nextIdx: number = this.getNextPageIndex();
-        if (pageIdx === prevIdx || pageIdx === nextIdx) {
-          this.updateSinglePagePreview();
-        }
-      }
       logger.debug(TAG, `PixelMap加载完成但页面不可见: id=${page.id}, idx=${pageIdx}`);
       return;
     }
