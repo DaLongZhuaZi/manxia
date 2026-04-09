@@ -213,34 +213,7 @@ export struct GlobalSearchPage {
   }
 
   private adjustGuideHighlightRect(anchorId: string | undefined, rect: GuideHighlightRect | null): GuideHighlightRect | null {
-    if (!rect || !anchorId) {
-      return rect;
-    }
-    let yOffset = 0;
-    switch (anchorId) {
-      case 'guide_global_search_input':
-        yOffset = SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight);
-        break;
-      case 'guide_global_search_content_types':
-      case 'guide_global_search_source_types':
-      case 'guide_global_search_online_sources':
-      case 'guide_global_search_content_area':
-        yOffset = 6;
-        break;
-      default:
-        yOffset = 0;
-        break;
-    }
-    if (yOffset === 0) {
-      return rect;
-    }
-    return {
-      x: rect.x,
-      y: rect.y + yOffset,
-      width: rect.width,
-      height: rect.height,
-      borderRadius: rect.borderRadius
-    };
+    return rect;
   }
 
   private async refreshPageGuide(trigger: string): Promise<void> {

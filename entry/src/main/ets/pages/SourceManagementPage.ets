@@ -50,6 +50,7 @@ interface SourceInfo {
   isDebugMode?: boolean;
   isPinned?: boolean;  // 是否置顶
   isNSFW?: boolean;    // 是否为NSFW图源
+  requireProxy?: boolean; // 是否需要代理
 }
 
 /**
@@ -167,7 +168,8 @@ export struct SourceManagementPage {
           iconPath: iconPath,
           isDebugMode: false,
           isPinned: source.isPinned || false,
-          isNSFW: source.isNSFW || false
+          isNSFW: source.isNSFW || false,
+          requireProxy: source.requireProxy || false
         };
         return info;
       });
@@ -505,17 +507,41 @@ export struct SourceManagementPage {
 
         // 代理配置对话框
         if (this.showProxyDialog) {
-          ProxyConfigDialog({
-            currentTheme: this.themeState.currentTheme,
-            initialConfig: this.proxyConfig,
-            onSave: (config: ProxyConfig) => {
-              this.proxyManager.saveConfig(config);
-              this.proxyConfig = config;
-              this.showProxyDialog = false;
-            },
-            onCancel: () => {
-              this.showProxyDialog = false;
-            }
+          Column() {
+            ProxyConfigDialog({
+              currentTheme: this.themeState.currentTheme,
+              appFontFamily: this.appFontFamily,
+              initialConfig: this.proxyConfig,
+              sourceList: this.allSources,
+              onSourceProxyChange: async (sourceId: number, requireProxy: boolean): Promise<void> => {
+                await this.sourceManager.updateSourceProxySetting(sourceId, requireProxy);
+                for (let i = 0; i < this.allSources.length; i++) {
+                  if (this.allSources[i].id === sourceId) {
+                    this.allSources[i].requireProxy = requireProxy;
+                    break;
+                  }
+                }
+                this.applyFilter();
+              },
+              onSave: (config: ProxyConfig) => {
+                void this.proxyManager.saveConfig(config);
+                this.proxyConfig = config;
+                this.showProxyDialog = false;
+              },
+              onCancel: () => {
+                this.showProxyDialog = false;
+              }
+            })
+              .onClick(() => {
+              })
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('rgba(14, 20, 31, 0.28)')
+          .position({ x: 0, y: 0 })
+          .onClick(() => {
+            this.showProxyDialog = false;
           })
         }
 

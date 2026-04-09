@@ -95,16 +95,40 @@ export class CookieManager {
     return JSON.stringify(entries);
   }
 
+  private dedupeCookieEntriesByName(entries: CookieEntry[]): CookieEntry[] {
+    const seenNames: Map<string, boolean> = new Map<string, boolean>();
+    const reversedUnique: CookieEntry[] = [];
+    let index: number = entries.length - 1;
+    while (index >= 0) {
+      const entry: CookieEntry = entries[index];
+      const name: string = entry.name ? entry.name.trim() : '';
+      if (name.length > 0 && !seenNames.has(name)) {
+        seenNames.set(name, true);
+        reversedUnique.push(entry);
+      }
+      index = index - 1;
+    }
+
+    const uniqueEntries: CookieEntry[] = [];
+    let reverseIndex: number = reversedUnique.length - 1;
+    while (reverseIndex >= 0) {
+      uniqueEntries.push(reversedUnique[reverseIndex]);
+      reverseIndex = reverseIndex - 1;
+    }
+    return uniqueEntries;
+  }
+
   private buildCookieStringFromEntries(entries: CookieEntry[]): string {
     if (!entries || entries.length === 0) {
       return '';
     }
 
+    const dedupedEntries: CookieEntry[] = this.dedupeCookieEntriesByName(entries);
     const now: number = Date.now();
     const parts: string[] = [];
     let index: number = 0;
-    while (index < entries.length) {
-      const entry: CookieEntry = entries[index];
+    while (index < dedupedEntries.length) {
+      const entry: CookieEntry = dedupedEntries[index];
       const expiresAt: number | undefined = entry.expires;
       if ((expiresAt === undefined || now < expiresAt) && entry.value && entry.value.length > 0) {
         parts.push(`${entry.name}=${entry.value}`);
@@ -158,16 +182,18 @@ export class CookieManager {
   }
 
   private mergeCookieEntries(existing: CookieEntry[], incoming: CookieEntry[]): CookieEntry[] {
+    const normalizedExisting: CookieEntry[] = this.dedupeCookieEntriesByName(existing);
+    const normalizedIncoming: CookieEntry[] = this.dedupeCookieEntriesByName(incoming);
     const merged: CookieEntry[] = [];
     let existingIndex: number = 0;
-    while (existingIndex < existing.length) {
-      merged.push(existing[existingIndex]);
+    while (existingIndex < normalizedExisting.length) {
+      merged.push(normalizedExisting[existingIndex]);
       existingIndex = existingIndex + 1;
     }
 
     let incomingIndex: number = 0;
-    while (incomingIndex < incoming.length) {
-      const incomingEntry: CookieEntry = incoming[incomingIndex];
+    while (incomingIndex < normalizedIncoming.length) {
+      const incomingEntry: CookieEntry = normalizedIncoming[incomingIndex];
       let matchedIndex: number = -1;
       let mergedIndex: number = 0;
       while (mergedIndex < merged.length) {
@@ -184,7 +210,7 @@ export class CookieManager {
       }
       incomingIndex = incomingIndex + 1;
     }
-    return merged;
+    return this.dedupeCookieEntriesByName(merged);
   }
 
   private extractOriginUrl(url: string): string {
@@ -362,10 +388,13 @@ export class CookieManager {
     }
   }
 
-  async getCookieStringForUrl(sourceId: number, url: string): Promise<string> {
+  async getCookieStringForUrl(sourceId: number, url: string, allowStoredFallback: boolean = true): Promise<string> {
     const normalizedUrl: string = url.trim();
     if (normalizedUrl.length === 0) {
-      return await this.getCookieString(sourceId);
+      if (allowStoredFallback) {
+        return await this.getCookieString(sourceId);
+      }
+      return '';
     }
 
     const candidateUrls: string[] = [normalizedUrl];
@@ -385,9 +414,19 @@ export class CookieManager {
 
       try {
         const rawCookieString: string = await webview.WebCookieManager.fetchCookie(candidateUrl);
-        const incomingEntries: CookieEntry[] = this.parseCookieHeaderString(rawCookieString);
+        const incomingEntries: CookieEntry[] = this.dedupeCookieEntriesByName(this.parseCookieHeaderString(rawCookieString));
         const preciseCookie: string = this.buildCookieStringFromEntries(incomingEntries);
         if (preciseCookie.length > 0) {
+          try {
+            const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
+            const existingEntries: CookieEntry[] = sourceRecord && sourceRecord.cookies
+              ? this.parseCookiesJson(String(sourceRecord.cookies))
+              : [];
+            const mergedEntries: CookieEntry[] = this.mergeCookieEntries(existingEntries, incomingEntries);
+            await this.dataManager.updateComicSourceCookies(sourceId, this.serializeCookies(mergedEntries));
+          } catch (persistError) {
+            logger.debug(TAG, `按URL保存新鲜Cookie失败: sourceId=${sourceId}, error=${String(persistError)}`);
+          }
           logger.info(TAG, `按URL获取Cookie成功: sourceId=${sourceId}, url=${candidateUrl}, cookieLen=${preciseCookie.length}, count=${incomingEntries.length}`);
           return preciseCookie;
         }
@@ -398,7 +437,11 @@ export class CookieManager {
       index = index + 1;
     }
 
-    return await this.getCookieString(sourceId);
+    if (allowStoredFallback) {
+      return await this.getCookieString(sourceId);
+    }
+    logger.warn(TAG, `按URL未获取到新鲜Cookie且已禁用回退: sourceId=${sourceId}, url=${normalizedUrl}`);
+    return '';
   }
 
   async buildHeadersWithCookie(base: RequestHeaders | undefined, sourceId: number): Promise<RequestHeaders> {

@@ -218,6 +218,7 @@ import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager
 import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
 import { PrivacyAuthDialog } from '../components/PrivacyAuthDialog';
 import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
+import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { TypeShelfManager, TypeShelf, ShelfType, ShelfContentType, CreateShelfParams, SHELF_COLORS, SHELF_ICONS, getTypeShelfManager, DynamicShelfFilter, smartTokenize, matchesDynamicFilter, DynamicMatchItem } from '../Framework/Data/TypeShelfManager';
@@ -24801,103 +24802,30 @@ struct MainMenuPage {
    */
   @Builder
   buildProxyConfigDialog() {
-    Column() {
-      // 标题栏
-      Row() {
-        SymbolGlyph($r('sys.symbol.airplane_departure'))
-          .fontSize(24)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
-
-        Text('网络代理设置')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .margin({ left: 8 })
-
-        Blank()
-
-        Toggle({ type: ToggleType.Switch, isOn: this.proxyConfig.enabled })
-          .onChange((isOn: boolean) => {
-            this.proxyConfig.enabled = isOn;
-          })
-      }
-      .width('100%')
-      .margin({ bottom: 12 })
-
-      Row({ space: 0 }) {
-        this.buildProxyTabButton('代理设置', 'settings')
-        this.buildProxyTabButton('图源列表', 'sources')
-        this.buildProxyTabButton('连接测试', 'test')
-      }
-      .width('100%')
-
-      Divider()
-        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
-
-      Scroll() {
-        Column({ space: 12 }) {
-          if (this.proxyDialogTab === 'settings') {
-            this.buildProxySettingsTab()
-          } else if (this.proxyDialogTab === 'sources') {
-            this.buildProxySourcesTab()
-          } else {
-            this.buildProxyTestTab()
+    ProxyConfigDialog({
+      currentTheme: this.themeState.currentTheme,
+      appFontFamily: this.appFontFamily,
+      initialConfig: this.proxyConfig,
+      sourceList: this.sourceList,
+      onSourceProxyChange: async (sourceId: number, requireProxy: boolean): Promise<void> => {
+        await this.sourceManager.updateSourceProxySetting(sourceId, requireProxy);
+        for (let i = 0; i < this.sourceList.length; i++) {
+          if (this.sourceList[i].id === sourceId) {
+            this.sourceList[i].requireProxy = requireProxy;
+            break;
           }
         }
-        .width('100%')
-        .padding({ top: 12 })
+        this.proxySourceList = this.sourceList.filter((s: SourceInfo) => s.requireProxy === true);
+      },
+      onSave: (config: ProxyConfig): void => {
+        this.proxyConfig = config;
+        void ProxyManager.getInstance().saveConfig(config);
+        this.closeProxyConfigDialog();
+      },
+      onCancel: (): void => {
+        this.closeProxyConfigDialog();
       }
-      .layoutWeight(1)
-      .scrollBar(BarState.Auto)
-
-      Row({ space: 16 }) {
-        Button('取消')
-          .fontSize(16)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-          .borderRadius(8)
-          .layoutWeight(1)
-          .onClick(() => {
-            this.closeProxyConfigDialog();
-          })
-
-        Button('保存')
-          .fontSize(16)
-          .fontColor(AppColors.onSuccess)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .borderRadius(8)
-          .layoutWeight(1)
-          .onClick(() => {
-            ProxyManager.getInstance().saveConfig(this.proxyConfig);
-            this.closeProxyConfigDialog();
-          })
-      }
-      .width('100%')
-      .margin({ top: 16 })
-    }
-    .width('85%')
-    .height('70%')
-    .constraintSize({ maxWidth: 450, maxHeight: 550 })
-    .backgroundColor(this.getSettingsAnalyticsCardBackground())
-    .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
-    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-    .borderRadius(this.getSettingsAnalyticsCardRadius())
-    .clip(true)
-    .border({
-      width: this.getSettingsAnalyticsCardBorderWidth(),
-      color: this.getSettingsAnalyticsCardBorderColor()
     })
-    .shadow({
-      radius: this.getSettingsAnalyticsCardRadius() + 4,
-      color: this.getSettingsAnalyticsCardShadowColor(),
-      offsetX: 0,
-      offsetY: 8
-    })
-    .padding(20)
   }
   
   @Builder

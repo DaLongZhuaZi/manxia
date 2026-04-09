@@ -5,6 +5,7 @@
   */
 
 import { logger } from '../Utils/Logger';
+import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { common } from '@kit.AbilityKit';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
@@ -3994,6 +3995,7 @@ export struct MangaReaderPage {
       if (!this.readerState.currentManga) {
         logger.warn(TAG, '⚠️ 当前漫画为空，无法加载阅读设置');
         this.readingSettings = this.cloneReadingSettings(DEFAULT_READING_SETTINGS);
+        this.updateVolumeKeyListener();
         this.syncAutoPageTurnStateFromSettings();
         this.isReadingSettingsReady = true;
         logger.info(TAG, '📋 使用默认阅读设置，准备显示交互提示Overlay');
@@ -4041,6 +4043,7 @@ export struct MangaReaderPage {
       this.readingSettings = normalizedSettings;
       // 应用设置
       this.readerState.currentManga.readingSettings = normalizedSettings;
+      this.updateVolumeKeyListener();
       this.syncAutoPageTurnStateFromSettings();
       this.isReadingSettingsReady = true;
       
@@ -4070,6 +4073,7 @@ export struct MangaReaderPage {
       logger.error(TAG, '❌ 加载阅读设置失败', errorMessage);
       logger.error(TAG, '❌ 加载阅读设置失败', errorMessage);
       this.readingSettings = this.cloneReadingSettings(DEFAULT_READING_SETTINGS);
+      this.updateVolumeKeyListener();
       this.syncAutoPageTurnStateFromSettings();
       this.isReadingSettingsReady = true;
       logger.info(TAG, '📋 回退到默认阅读设置，准备显示交互提示Overlay');
@@ -4876,16 +4880,82 @@ export struct MangaReaderPage {
     if (keyCode === KeyCode.KEYCODE_VOLUME_UP || keyCode === 16) {
     // KeyCode.KEYCODE_VOLUME_UP = 16, KeyCode.KEYCODE_VOLUME_DOWN = 17
       logger.info(TAG, '音量键翻页: 上一页');
-      this.goToPreviousPage();
+      this.goToPreviousPageByVolumeKey();
       return true;
     } else if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN || keyCode === 17) {
       // 音量下键 - 下一页
       logger.info(TAG, '音量键翻页: 下一页');
-      this.goToNextPage();
+      this.goToNextPageByVolumeKey();
       return true;
     }
     
     return false;
+  }
+
+  private getEffectivePageIndexForVolumeKey(): number {
+    const currentChapter = this.readerState.currentChapter;
+    let pageIndex = this.readerState.currentPageIndex;
+    if (!currentChapter) {
+      return pageIndex;
+    }
+
+    if (this.mangaViewerComponent) {
+      const viewerPageIndex = this.mangaViewerComponent.currentPageIndex;
+      if (viewerPageIndex >= 0 && viewerPageIndex < currentChapter.pages.length && viewerPageIndex !== pageIndex) {
+        logger.debug(TAG, `音量键翻页页码同步: state=${pageIndex}, viewer=${viewerPageIndex}`);
+        pageIndex = viewerPageIndex;
+      }
+    }
+
+    return pageIndex;
+  }
+
+  private goToPreviousPageByVolumeKey(): void {
+    const currentChapter = this.readerState.currentChapter;
+    if (!currentChapter || currentChapter.pages.length === 0) {
+      return;
+    }
+
+    const effectivePageIndex = this.getEffectivePageIndexForVolumeKey();
+    if (effectivePageIndex !== this.readerState.currentPageIndex) {
+      this.readerState.currentPageIndex = effectivePageIndex;
+    }
+
+    if (effectivePageIndex <= 0) {
+      this.saveReadingProgressInternal('beforePrevChapterFromVolumeKey').then(() => {
+        this.goToPreviousChapter();
+      }).catch((error: Error) => {
+        logger.error(TAG, '切到上一章节前保存进度失败', error.message);
+        this.goToPreviousChapter();
+      });
+      return;
+    }
+
+    this.goToPreviousPage();
+  }
+
+  private goToNextPageByVolumeKey(): void {
+    const currentChapter = this.readerState.currentChapter;
+    if (!currentChapter || currentChapter.pages.length === 0) {
+      return;
+    }
+
+    const effectivePageIndex = this.getEffectivePageIndexForVolumeKey();
+    if (effectivePageIndex !== this.readerState.currentPageIndex) {
+      this.readerState.currentPageIndex = effectivePageIndex;
+    }
+
+    if (effectivePageIndex >= currentChapter.pages.length - 1) {
+      this.saveReadingProgressInternal('beforeNextChapterFromVolumeKey').then(() => {
+        this.goToNextChapter();
+      }).catch((error: Error) => {
+        logger.error(TAG, '切到下一章节前保存进度失败', error.message);
+        this.goToNextChapter();
+      });
+      return;
+    }
+
+    this.goToNextPage();
   }
 
   /**
@@ -6302,7 +6372,7 @@ export struct MangaReaderPage {
     }
     
     // 规则3：如果工具栏已显示，检查点击是否在工具栏区域内
-    const topToolbarHeight = this.statusBarHeight + 56 + 16;
+    const topToolbarHeight = ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight) + 16;
     const bottomToolbarHeight = this.navigationBarHeight + 120;
     
     if (this.showTopToolbar && clickY < topToolbarHeight) {
@@ -7389,8 +7459,8 @@ export struct MangaReaderPage {
         })
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 8, right: 8 })
+    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
+    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
     .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
     .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
     .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
@@ -8425,7 +8495,7 @@ export struct MangaReaderPage {
               .scale({ x: this.moreMenuScale, y: this.moreMenuScale })
               .translate({ y: this.moreMenuTranslateY })
               .align(Alignment.TopEnd)
-              .margin({ top: this.statusBarHeight + 56 + 8, right: 12 })
+              .margin({ top: ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight) + 8, right: 12 })
               .constraintSize({ maxWidth: 260 })
               .zIndex(1100)
             }

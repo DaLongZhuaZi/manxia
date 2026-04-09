@@ -5932,8 +5932,13 @@ export struct MangaViewer {
     const safeTravelDistance = travelDistance > 0 ? travelDistance : 1;
     const progress = Math.min(1.0, Math.abs(currentOffset) / safeTravelDistance);
     if (isCommit) {
-      const remaining = Math.max(0.18, 1.0 - progress);
-      return Math.max(120, Math.floor(220 * remaining));
+      const remaining = Math.max(0.0, 1.0 - progress);
+      const easedRemaining = Math.pow(remaining, 0.82);
+      const shallowReleaseBonus = progress < 0.40
+        ? Math.floor((0.40 - progress) * 140)
+        : 0;
+      const commitDuration = Math.floor(190 + 120 * easedRemaining) + shallowReleaseBonus;
+      return Math.max(190, Math.min(360, commitDuration));
     }
     return Math.max(120, Math.floor(220 * Math.max(0.22, progress)));
   }
@@ -5943,6 +5948,7 @@ export struct MangaViewer {
     const currentOffset = isVertical ? this.translateY : this.translateX;
     const travelDistance = isVertical ? this.getAlbumNoneTravelDistanceY() : this.getAlbumNoneTravelDistanceX();
     const duration = this.getAlbumNoneSettleDuration(currentOffset, travelDistance, false);
+    this.isPageTurning = true;
     this.pageChangeCommitted = false;
     this.isCommittingPageTurn = true;
     this.currentAnimationType = PageTurnAnimationType.NONE;
@@ -5950,6 +5956,7 @@ export struct MangaViewer {
     if (!this.uiContext) {
       this.translateX = 0;
       this.translateY = 0;
+      this.isPageTurning = false;
       this.pageTurnDirection = null;
       this.isCommittingPageTurn = false;
       return;
@@ -5962,6 +5969,7 @@ export struct MangaViewer {
       onFinish: () => {
         this.translateX = 0;
         this.translateY = 0;
+        this.isPageTurning = false;
         this.pageTurnDirection = null;
         this.isCommittingPageTurn = false;
         this.currentAnimationType = PageTurnAnimationType.NONE;
@@ -5972,29 +5980,51 @@ export struct MangaViewer {
     });
   }
 
-  private finishAlbumNonePageTurn(targetIndex: number): void {
-    if (!this.chapter || !this.chapter.pages || targetIndex < 0 || targetIndex >= this.chapter.pages.length) {
-      this.translateX = 0;
-      this.translateY = 0;
-      this.pageTurnDirection = null;
-      this.pageChangeCommitted = false;
-      this.isCommittingPageTurn = false;
-      this.currentAnimationType = PageTurnAnimationType.NONE;
-      return;
+  private getAlbumNoneCommittedTranslateX(direction: 'left' | 'right' | 'up' | 'down'): number {
+    const travelDistance = this.getAlbumNoneTravelDistanceX();
+    if (direction === 'left') {
+      return this.translateX + travelDistance;
     }
-    const newPage: MangaPage = this.chapter.pages[targetIndex];
+    if (direction === 'right') {
+      return this.translateX - travelDistance;
+    }
+    return 0;
+  }
+
+  private getAlbumNoneCommittedTranslateY(direction: 'left' | 'right' | 'up' | 'down'): number {
+    const travelDistance = this.getAlbumNoneTravelDistanceY();
+    if (direction === 'up') {
+      return this.translateY + travelDistance;
+    }
+    if (direction === 'down') {
+      return this.translateY - travelDistance;
+    }
+    return 0;
+  }
+
+  private commitAlbumNoneTargetPage(targetIndex: number, direction: 'left' | 'right' | 'up' | 'down'): boolean {
+    if (!this.chapter || !this.chapter.pages || targetIndex < 0 || targetIndex >= this.chapter.pages.length) {
+      return false;
+    }
+    const committedTranslateX = this.getAlbumNoneCommittedTranslateX(direction);
+    const committedTranslateY = this.getAlbumNoneCommittedTranslateY(direction);
     this.viewCurrentPageIndex = targetIndex;
-    this.currentPageIndex = targetIndex;
     this.suppressExternalIndex = true;
+    this.currentPageIndex = targetIndex;
     this.updateSinglePageDisplay();
-    this.incrementPixelMapEpoch(newPage.id);
-    this.translateX = 0;
-    this.translateY = 0;
+    this.translateX = committedTranslateX;
+    this.translateY = committedTranslateY;
     this.updateSinglePagePreview();
     this.loadCurrentAndNeighborPages();
     if (this.callbacks.onPageChange) {
       this.callbacks.onPageChange(targetIndex);
     }
+    return true;
+  }
+
+  private completeAlbumNonePageTurn(): void {
+    this.translateX = 0;
+    this.translateY = 0;
     this.isPageTurning = false;
     this.pageTurnDirection = null;
     this.pageTurnProgress = 0;
@@ -6018,6 +6048,7 @@ export struct MangaViewer {
     }
     this.ensurePixelMapLoaded(targetPage).catch((_e: Error) => {});
     this.pageChangeCommitted = true;
+    this.isPageTurning = true;
     this.isCommittingPageTurn = true;
     this.pageTurnDirection = direction;
     this.currentAnimationType = PageTurnAnimationType.NONE;
@@ -6025,26 +6056,31 @@ export struct MangaViewer {
 
     const isHorizontal: boolean = direction === 'left' || direction === 'right';
     const travelDistance: number = isHorizontal ? this.getAlbumNoneTravelDistanceX() : this.getAlbumNoneTravelDistanceY();
-    const currentOffset: number = isHorizontal ? this.translateX : this.translateY;
-    const duration = this.getAlbumNoneSettleDuration(currentOffset, travelDistance, true);
-    const targetTranslateX: number = direction === 'left' ? -travelDistance : (direction === 'right' ? travelDistance : 0);
-    const targetTranslateY: number = direction === 'up' ? -travelDistance : (direction === 'down' ? travelDistance : 0);
+    const releaseOffset: number = isHorizontal ? this.translateX : this.translateY;
+    const releaseProgress = Math.min(1.0, Math.abs(releaseOffset) / Math.max(travelDistance, 1));
+    const duration = this.getAlbumNoneSettleDuration(releaseOffset, travelDistance, true);
+    const settleCurve: Curve = releaseProgress < 0.40 ? Curve.EaseOut : Curve.FastOutSlowIn;
+
+    if (!this.commitAlbumNoneTargetPage(targetIndex, direction)) {
+      this.animateAlbumNoneCancel();
+      return;
+    }
 
     if (!this.uiContext) {
-      this.finishAlbumNonePageTurn(targetIndex);
+      this.completeAlbumNonePageTurn();
       return;
     }
     this.uiContext.animateTo({
       duration: duration,
-      curve: curves.initCurve(Curve.FastOutSlowIn),
+      curve: curves.initCurve(settleCurve),
       iterations: 1,
       playMode: PlayMode.Normal,
       onFinish: () => {
-        this.finishAlbumNonePageTurn(targetIndex);
+        this.completeAlbumNonePageTurn();
       }
     }, () => {
-      this.translateX = targetTranslateX;
-      this.translateY = targetTranslateY;
+      this.translateX = 0;
+      this.translateY = 0;
     });
   }
 

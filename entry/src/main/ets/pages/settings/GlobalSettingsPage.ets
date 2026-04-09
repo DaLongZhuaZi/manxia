@@ -292,23 +292,7 @@ export struct GlobalSettingsPage {
   }
 
   private adjustGuideHighlightRect(anchorId: string | undefined, rect: GuideHighlightRect | null): GuideHighlightRect | null {
-    if (!rect || !anchorId) {
-      return rect;
-    }
-    switch (anchorId) {
-      case 'guide_global_settings_search':
-      case 'guide_global_settings_reading_group':
-      case 'guide_global_settings_backup_group':
-        return {
-          x: rect.x,
-          y: Math.max(0, rect.y - 32),
-          width: rect.width,
-          height: rect.height,
-          borderRadius: rect.borderRadius
-        };
-      default:
-        return rect;
-    }
+    return rect;
   }
 
   private async refreshPageGuide(trigger: string): Promise<void> {

@@ -6,6 +6,7 @@
   */
 
 import { logger } from '../Utils/Logger';
+import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -326,7 +327,7 @@ struct EBookReaderPage {
     this.startReadingTimeTracking();
     
     // 注册音量键翻页监听
-    this.registerVolumeKeyListener();
+    this.updateVolumeKeyListener();
     void this.refreshPageGuide('aboutToAppear');
   }
 
@@ -473,7 +474,6 @@ struct EBookReaderPage {
     this.isPageVisible = true;
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
-    this.queueInteractionHintIfNeeded(this.textReaderSettings);
     this.tryShowQueuedInteractionHint('page_show', 260);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EBookReaderPage');
     this.syncTextReadAloudUiFromController();
@@ -843,6 +843,13 @@ struct EBookReaderPage {
   * 更新音量键监听状态（根据设置启用/禁用）
   */
   private updateVolumeKeyListener(): void {
+    if (this.isUsingTextReader()) {
+      if (this.isVolumeKeyListenerRegistered) {
+        this.unregisterVolumeKeyListener();
+      }
+      return;
+    }
+
     const volumeKeyEnabled = this.textReaderSettings.volumeKeyNavigation ?? true;
     
     if (volumeKeyEnabled && !this.isVolumeKeyListenerRegistered) {
@@ -1487,6 +1494,7 @@ struct EBookReaderPage {
     // 同步背景图片设置
     this.bgImagePath = useBgImage ? bgImagePath : '';
     this.bgImageOpacity = bgImageOpacity;
+    this.updateVolumeKeyListener();
   }
 
   /**
@@ -1544,6 +1552,7 @@ struct EBookReaderPage {
       curlBackOpacity: 90,
       readAloud: this.loadGlobalReadAloudSettings()
     };
+    this.updateVolumeKeyListener();
     
     // 同步背景图片设置到页面状态
     if (settings.backgroundType === 'IMAGE' && settings.backgroundImagePath && settings.backgroundImagePath.length > 0) {
@@ -1555,7 +1564,6 @@ struct EBookReaderPage {
 
     logger.info(TAG, `从数据库加载文本阅读器设置: volumeKeyNavigation=${this.textReaderSettings.volumeKeyNavigation}, fontSize=${this.textReaderSettings.textStyle.fontSize}, bgType=${this.textReaderSettings.background.type}, bgColor=${this.textReaderSettings.background.color}, textColor=${this.textReaderSettings.textStyle.textColor}, bgImagePath=${this.textReaderSettings.background.imagePath}`);
   }
-
   private getSafeReadAloudSettings(settings?: ReadAloudSettings): ReadAloudSettings {
     const globalDefaults = this.loadGlobalReadAloudSettings();
     if (!settings) {
@@ -2743,6 +2751,10 @@ struct EBookReaderPage {
       const ebookId: string = this.ebook?.id || '';
       const coverComponentId: string = this.sourceCoverComponentId || (ebookId ? `cover_ebook_lib_${ebookId}` : '');
 
+      if (this.isUsingTextReader()) {
+        await this.saveTextReaderSettings();
+      }
+
       // Save progress first, then trigger close transition.
       this.saveReadingProgress();
 
@@ -2948,6 +2960,10 @@ struct EBookReaderPage {
         }
       })
       .onKeyEvent((event: KeyEvent) => {
+        if (this.isUsingTextReader()) {
+          return;
+        }
+
         if (event.type === KeyType.Up) {
           const consumed = this.handleVolumeKeyPageTurn(event.keyCode);
           if (consumed) {
@@ -3736,6 +3752,7 @@ struct EBookReaderPage {
       settings.tapToTurn = this.textReaderSettings.tapToTurn;
       settings.volumeKeyNavigation = this.textReaderSettings.volumeKeyNavigation;
       settings.keepScreenOn = this.textReaderSettings.keepScreenOn;
+      this.updateVolumeKeyListener();
       
       // 保存到数据库
       settings.showPageNumber = this.textReaderSettings.showPageNumber;
@@ -4260,8 +4277,8 @@ struct EBookReaderPage {
       })
     }
     .width('100%')
-    .height(56 + this.statusBarHeight)
-    .padding({ left: 8, right: 8, top: this.statusBarHeight })
+    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
+    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
     .backgroundColor(this.themeManager.getGlassBackgroundResource())
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
@@ -4531,7 +4548,7 @@ struct EBookReaderPage {
       .scale({ x: this.moreMenuScale, y: this.moreMenuScale })
       .translate({ y: this.moreMenuTranslateY })
       .align(Alignment.TopEnd)
-      .margin({ top: this.statusBarHeight + 56 + 8, right: 12 })
+      .margin({ top: ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight) + 8, right: 12 })
       .constraintSize({ maxWidth: 260 })
       .zIndex(1100)
     }

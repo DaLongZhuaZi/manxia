@@ -25,19 +25,37 @@ export function resolveGuideHighlightRectInRoot(
 
     let originX = 0;
     let originY = 0;
+    let rootWidth = 0;
+    let rootHeight = 0;
     if (rootAnchorId && rootAnchorId.length > 0) {
       const rootRectInfo = componentUtils.getRectangleById(rootAnchorId);
       if (rootRectInfo) {
         originX = Number(rootRectInfo.windowOffset.x);
         originY = Number(rootRectInfo.windowOffset.y);
+        rootWidth = px2vp(Number(rootRectInfo.size.width));
+        rootHeight = px2vp(Number(rootRectInfo.size.height));
       }
     }
 
+    const rawX = px2vp(Number(rectInfo.windowOffset.x) - originX);
+    const rawY = px2vp(Number(rectInfo.windowOffset.y) - originY);
+    const rawWidth = px2vp(Number(rectInfo.size.width));
+    const rawHeight = px2vp(Number(rectInfo.size.height));
+    const visibleRight = rootWidth > 0 ? Math.min(rootWidth, rawX + rawWidth) : rawX + rawWidth;
+    const visibleBottom = rootHeight > 0 ? Math.min(rootHeight, rawY + rawHeight) : rawY + rawHeight;
+    const clippedX = Math.max(0, rawX);
+    const clippedY = Math.max(0, rawY);
+    const clippedWidth = Math.max(0, visibleRight - clippedX);
+    const clippedHeight = Math.max(0, visibleBottom - clippedY);
+    if (clippedWidth <= 0 || clippedHeight <= 0) {
+      return null;
+    }
+
     return {
-      x: Math.max(0, px2vp(Number(rectInfo.windowOffset.x) - originX)),
-      y: Math.max(0, px2vp(Number(rectInfo.windowOffset.y) - originY)),
-      width: px2vp(Number(rectInfo.size.width)),
-      height: px2vp(Number(rectInfo.size.height)),
+      x: clippedX,
+      y: clippedY,
+      width: clippedWidth,
+      height: clippedHeight,
       borderRadius: borderRadius
     };
   } catch (_error) {

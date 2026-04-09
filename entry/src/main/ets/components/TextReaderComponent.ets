@@ -8,9 +8,13 @@ import { curves, componentSnapshot, font, promptAction, SymbolGlyphModifier } fr
 import { image } from '@kit.ImageKit';
 import measure from '@ohos.measure';
 import { display } from '@kit.ArkUI';
-import { KeyCode } from '@kit.InputKit';
+import { KeyCode, inputConsumer } from '@kit.InputKit';
+import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
 import batteryInfo from '@ohos.batteryInfo';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { common } from '@kit.AbilityKit';
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import {
   TextReaderSettings,
   TextReaderParams,
@@ -298,6 +302,9 @@ export struct TextReaderComponent {
   private scrollBoundarySwitchLastTime: number = 0;
   
   // ========== 音量键翻页状态 ==========
+  private isVolumeKeyListenerRegistered: boolean = false;
+  private volumeUpCallback: ((event: InputKeyEvent) => void) | null = null;
+  private volumeDownCallback: ((event: InputKeyEvent) => void) | null = null;
   private renderingSettings: RenderingContextSettings = new RenderingContextSettings(true);
   private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.renderingSettings);
   
@@ -348,6 +355,7 @@ export struct TextReaderComponent {
     // 记录初始内容和章节索引
     this.lastContent = this.content;
     this.lastChapterIndex = this.currentChapterIndex;
+    this.updateVolumeKeyListener();
     this.syncAutoPageTurnState('component-appear');
   }
   
@@ -533,6 +541,7 @@ export struct TextReaderComponent {
   }
 
   private onSettingsChange(): void {
+    this.updateVolumeKeyListener();
     this.syncAutoPageTurnState('settings-change');
     this.checkAndInvalidatePixelMapCache();
     this.stopCurlAnimation();
@@ -1324,6 +1333,7 @@ export struct TextReaderComponent {
   
   aboutToDisappear(): void {
     logger.info(TAG, '文本阅读器组件销毁');
+    this.unregisterVolumeKeyListener();
     this.releaseAllPixelMapCache();
     this.stopCurlAnimation();
     // 清理防抖定时器
@@ -1500,34 +1510,151 @@ export struct TextReaderComponent {
       logger.debug(TAG, '已屏蔽音量键翻页: 划线悬浮窗显示中');
       return true;
     }
-    if (!this.settings.volumeKeyNavigation) {
+    const volumeKeyNavigation = this.settings.volumeKeyNavigation ?? DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
+    if (!volumeKeyNavigation) {
       return false;
     }
     
     if (keyCode === KeyCode.KEYCODE_VOLUME_UP) {
       logger.info(TAG, 'Volume key page turn: previous page');
-      if (this.isDualPageMode()) {
-        this.goToPrevDualPage();
-      } else {
-        this.goToPrevPage();
-      }
+      this.goToPrevPageByVolumeKey();
       this.resetAutoPageTurnTimerForInteraction('volume-key');
       return true;
     } else if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN) {
       logger.info(TAG, 'Volume key page turn: next page');
-      if (this.isDualPageMode()) {
-        this.goToNextDualPage();
-      } else {
-        this.goToNextPage();
-      }
+      this.goToNextPageByVolumeKey();
       this.resetAutoPageTurnTimerForInteraction('volume-key');
       return true;
     }
     
     return false;
   }
+
+  private goToNextPageByVolumeKey(): void {
+    if (this.isDualPageMode()) {
+      this.goToNextDualPage('volume-key');
+      return;
+    }
+
+    if (this.isScrollMode()) {
+      this.goToNextPage('volume-key');
+      return;
+    }
+
+    if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
+      logger.debug(TAG, `goToNextPageByVolumeKey blocked: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
+      return;
+    }
+
+    if (this.currentPageIndex >= this.totalPages - 1) {
+      if (this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1) {
+        this.switchToNextChapter();
+      } else {
+        this.provideBoundaryFeedback();
+      }
+      return;
+    }
+
+    this.goToNextPage('volume-key');
+  }
+
+  private goToPrevPageByVolumeKey(): void {
+    if (this.isDualPageMode()) {
+      this.goToPrevDualPage('volume-key');
+      return;
+    }
+
+    if (this.isScrollMode()) {
+      this.goToPrevPage('volume-key');
+      return;
+    }
+
+    if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
+      logger.debug(TAG, `goToPrevPageByVolumeKey blocked: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
+      return;
+    }
+
+    if (this.currentPageIndex <= 0) {
+      if (this.currentChapterIndex > 0) {
+        this.switchToPrevChapter();
+      } else {
+        this.provideBoundaryFeedback();
+      }
+      return;
+    }
+
+    this.goToPrevPage('volume-key');
+  }
   
   // 缓存屏幕密度，避免重复调用 display.getDefaultDisplaySync()
+  private registerVolumeKeyListener(): void {
+    if (this.isVolumeKeyListenerRegistered) {
+      return;
+    }
+
+    const volumeKeyNavigation = this.settings.volumeKeyNavigation ?? DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
+    if (!volumeKeyNavigation) {
+      return;
+    }
+
+    try {
+      const volumeUpConfig: inputConsumer.KeyPressedConfig = {
+        key: KeyCode.KEYCODE_VOLUME_UP,
+        action: 1,
+        isRepeat: false
+      };
+      const volumeDownConfig: inputConsumer.KeyPressedConfig = {
+        key: KeyCode.KEYCODE_VOLUME_DOWN,
+        action: 1,
+        isRepeat: false
+      };
+
+      this.volumeUpCallback = (_event: InputKeyEvent) => {
+        this.handleVolumeKeyPageTurn(KeyCode.KEYCODE_VOLUME_UP);
+      };
+      this.volumeDownCallback = (_event: InputKeyEvent) => {
+        this.handleVolumeKeyPageTurn(KeyCode.KEYCODE_VOLUME_DOWN);
+      };
+
+      inputConsumer.on('keyPressed', volumeUpConfig, this.volumeUpCallback);
+      inputConsumer.on('keyPressed', volumeDownConfig, this.volumeDownCallback);
+      this.isVolumeKeyListenerRegistered = true;
+      logger.info(TAG, '文本阅读器音量键翻页监听已注册');
+    } catch (error) {
+      logger.error(TAG, `文本阅读器注册音量键监听失败: ${String(error)}`);
+    }
+  }
+
+  private unregisterVolumeKeyListener(): void {
+    if (!this.isVolumeKeyListenerRegistered) {
+      return;
+    }
+
+    try {
+      if (this.volumeUpCallback) {
+        inputConsumer.off('keyPressed', this.volumeUpCallback);
+        this.volumeUpCallback = null;
+      }
+      if (this.volumeDownCallback) {
+        inputConsumer.off('keyPressed', this.volumeDownCallback);
+        this.volumeDownCallback = null;
+      }
+      this.isVolumeKeyListenerRegistered = false;
+      logger.info(TAG, '文本阅读器音量键翻页监听已注销');
+    } catch (error) {
+      logger.error(TAG, `文本阅读器注销音量键监听失败: ${String(error)}`);
+    }
+  }
+
+  private updateVolumeKeyListener(): void {
+    const volumeKeyNavigation = this.settings.volumeKeyNavigation ?? DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
+    if (volumeKeyNavigation) {
+      this.registerVolumeKeyListener();
+    } else {
+      this.unregisterVolumeKeyListener();
+    }
+  }
+
   private cachedScreenDensity: number = 0;
   
   /**
@@ -6348,14 +6475,14 @@ export struct TextReaderComponent {
       if (this.enableNovelAnnotations) {
         MenuItem({
           content: '划线',
-          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.square_and_pencil')).fontSize('18vp')
+          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.highlighter_line')).fontSize('18vp')
         })
           .onClick(() => {
             this.addHighlightFromSelection(false);
           })
         MenuItem({
           content: '划线并添加想法',
-          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.square_and_pencil')).fontSize('18vp')
+          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.scribble')).fontSize('18vp')
         })
           .onClick(() => {
             this.addHighlightFromSelection(true);
@@ -6363,10 +6490,10 @@ export struct TextReaderComponent {
       }
       MenuItem({
         content: '分享',
-        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.arrow_up')).fontSize('18vp')
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.arrowshape_turn_up_right')).fontSize('18vp')
       })
         .onClick(() => {
-          this.shareSelectedText();
+          void this.shareSelectedText();
         })
     }
     .radius(8)
@@ -6403,7 +6530,7 @@ export struct TextReaderComponent {
       }
       MenuItem({ content: '分享' })
         .onClick(() => {
-          this.shareSelectedText();
+          void this.shareSelectedText();
         })
     }
     .radius(8)
@@ -6437,12 +6564,41 @@ export struct TextReaderComponent {
   /**
    * 分享选中的文本
    */
-  private shareSelectedText(): void {
-    if (this.selectedText) {
-      // 调用系统分享
-      promptAction.showToast({ message: '分享功能开发中', duration: 1500 });
+  private async shareSelectedText(): Promise<void> {
+    const safeText: string = this.selectedText ? this.selectedText.trim() : '';
+    if (safeText.length <= 0) {
+      this.clearSelection();
+      return;
     }
-    this.clearSelection();
+
+    try {
+      const uiContext = this.getUIContext();
+      const hostContext = uiContext ? uiContext.getHostContext() : null;
+      if (!hostContext) {
+        throw new Error('hostContext is null');
+      }
+      const abilityContext = hostContext as common.UIAbilityContext;
+      const shareData: systemShare.SharedData = new systemShare.SharedData({
+        utd: utd.UniformDataType.PLAIN_TEXT,
+        content: safeText,
+        title: '文本分享',
+        description: '来自阅读器的选中文本'
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(shareData);
+      await controller.show(abilityContext, {
+        previewMode: systemShare.SharePreviewMode.DETAIL,
+        selectionMode: systemShare.SelectionMode.SINGLE
+      });
+      logger.info(TAG, `系统分享成功: textLength=${safeText.length}`);
+    } catch (error) {
+      logger.error(TAG, `系统分享失败: ${String(error)}`);
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, safeText);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      systemPasteboard.setData(pasteData);
+      promptAction.showToast({ message: '系统分享失败，已复制到剪贴板', duration: 1800 });
+    } finally {
+      this.clearSelection();
+    }
   }
   
   /**

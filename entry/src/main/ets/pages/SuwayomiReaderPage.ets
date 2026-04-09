@@ -5,6 +5,7 @@
  */
 
 import { logger } from '../Utils/Logger';
+import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareState } from '../Framework/Components/FontAware';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
@@ -40,6 +41,7 @@ export struct SuwayomiReaderPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @State isLoading: boolean = false;
   @State errorMessage: string = '';
 
@@ -561,8 +563,8 @@ export struct SuwayomiReaderPage {
       .fontFamily(this.appFontFamily)
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 8, right: 8 })
+    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
+    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
     .backgroundColor('#CC000000')
     .opacity(this.controlsOpacity)
   }

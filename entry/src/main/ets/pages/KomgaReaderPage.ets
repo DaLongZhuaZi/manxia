@@ -2,6 +2,7 @@ import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
+import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ChapterInfo, ComicDetailInfo, PageInfo } from '../Framework/Source/SourceExecutor';
 import { getKomgaSourceExecutor, KomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
@@ -27,6 +28,7 @@ export struct KomgaReaderPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @State itemId: string = '';
   @State contentType: KomgaContentType = 'SERIES';
   @State mangaTitle: string = '';
@@ -397,7 +399,13 @@ export struct KomgaReaderPage {
       .alignItems(HorizontalAlign.End)
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight, 64))
+    .padding({
+      left: 12,
+      right: 12,
+      top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) + 10,
+      bottom: 10
+    })
     .backgroundColor('#CC000000')
     .opacity(this.controlsOpacity)
   }
