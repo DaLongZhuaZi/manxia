@@ -8,6 +8,7 @@
   */
 
 import { logger } from '../Utils/Logger';
+import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
@@ -320,7 +321,6 @@ export struct NovelReaderPage {
     this.isPageVisible = true;
     this.setupFullscreenMode();
     this.scheduleFullscreenRestore('page_show');
-    this.queueInteractionHintIfNeeded(this.settings);
     this.tryShowQueuedInteractionHint('page_show', 260);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
     this.syncReadAloudStateFromController();
@@ -612,6 +612,14 @@ export struct NovelReaderPage {
   * 关闭阅读器（带动画）
   */
   private async closeReader(): Promise<void> {
+    if (this.pendingSettingsSnapshot !== null || this.settingsSavePromise !== null) {
+      try {
+        await this.saveSettings();
+      } catch (error) {
+        logger.warn(TAG, `鍏抽棴鍓嶅埛鏂伴槄璇昏缃け璐? ${String(error)}`);
+      }
+    }
+
     // Save progress before triggering close transition.
     this.saveReadProgress();
 
@@ -883,6 +891,9 @@ export struct NovelReaderPage {
       if (settings.pageMargins.left === undefined || settings.pageMargins.left < 0) settings.pageMargins.left = 24;
       if (settings.pageMargins.right === undefined || settings.pageMargins.right < 0) settings.pageMargins.right = 24;
     }
+
+    if (settings.tapToTurn === undefined) settings.tapToTurn = DEFAULT_TEXT_READER_SETTINGS.tapToTurn;
+    if (settings.volumeKeyNavigation === undefined) settings.volumeKeyNavigation = DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
 
     settings.readAloud = normalizeReadAloudSettings(
       settings.readAloud ?? DEFAULT_TEXT_READER_SETTINGS.readAloud
@@ -3753,8 +3764,8 @@ export struct NovelReaderPage {
       })
     }
     .width('100%')
-    .height(56 + this.statusBarHeight)
-    .padding({ left: 8, right: 8, top: this.statusBarHeight })
+    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
+    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
     .backgroundColor(this.themeManager.getGlassBackgroundResource())
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })

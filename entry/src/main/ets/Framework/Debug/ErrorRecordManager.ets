@@ -285,7 +285,7 @@ export class ErrorRecordManager {
     const category = this.normalizeCategory(record.category, record.source);
 
     sections.push('========================');
-    sections.push('漫霞 错误详情报告');
+    sections.push('漫匣 错误详情报告');
     sections.push('========================');
     sections.push('');
     sections.push(`错误ID: ${record.id}`);
@@ -317,7 +317,7 @@ export class ErrorRecordManager {
     const sections: string[] = [];
 
     sections.push('========================');
-    sections.push('漫霞 错误合并导出报告');
+    sections.push('漫匣 错误合并导出报告');
     sections.push('========================');
     sections.push(`导出时间: ${this.formatDateTime(Date.now())}`);
     sections.push(`错误总数: ${sorted.length}`);

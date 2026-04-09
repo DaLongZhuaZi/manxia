@@ -1,4 +1,5 @@
 import { logger } from '../Utils/Logger';
+import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { common } from '@kit.AbilityKit';
 import { display, promptAction, UIContext } from '@kit.ArkUI';
 import fs from '@ohos.file.fs';
@@ -2022,8 +2023,8 @@ struct EBookImageReaderPage {
         })
     }
     .width('100%')
-    .height(56 + this.statusBarHeight)
-    .padding({ left: 8, right: 8, top: this.statusBarHeight })
+    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
+    .padding({ left: 8, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
     .backgroundColor(this.themeManager.getGlassBackgroundResource())
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
@@ -2323,7 +2324,7 @@ struct EBookImageReaderPage {
         .scale({ x: this.moreMenuScale, y: this.moreMenuScale })
         .translate({ y: this.moreMenuTranslateY })
         .align(Alignment.TopEnd)
-        .margin({ top: this.statusBarHeight + 56 + 8, right: 12 })
+        .margin({ top: ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight) + 8, right: 12 })
         .constraintSize({ maxWidth: 260 })
         .zIndex(1100)
       }

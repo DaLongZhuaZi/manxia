@@ -230,22 +230,7 @@ export struct AnnotationCenterPage {
   }
 
   private adjustGuideHighlightRect(anchorId: string | undefined, rect: GuideHighlightRect | null): GuideHighlightRect | null {
-    if (!rect || !anchorId) {
-      return rect;
-    }
-    let yOffset = this.statusBarHeight > 0 ? this.statusBarHeight : 24;
-    if (anchorId === 'guide_inspiration_filters' ||
-      anchorId === 'guide_inspiration_actions' ||
-      anchorId === 'guide_inspiration_record_list') {
-      yOffset += 12;
-    }
-    return {
-      x: rect.x,
-      y: rect.y + yOffset,
-      width: rect.width,
-      height: rect.height,
-      borderRadius: rect.borderRadius
-    };
+    return rect;
   }
 
   private async refreshPageGuide(trigger: string): Promise<void> {

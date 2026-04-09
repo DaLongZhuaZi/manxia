@@ -345,18 +345,6 @@ struct BackupPage {
   }
 
   private adjustGuideHighlightRect(anchorId: string | undefined, rect: GuideHighlightRect | null): GuideHighlightRect | null {
-    if (!rect || !anchorId) {
-      return rect;
-    }
-    if (anchorId === 'guide_backup_tabs') {
-      return {
-        x: rect.x,
-        y: rect.y + this.getTitleBarSpacerHeight(),
-        width: rect.width,
-        height: rect.height,
-        borderRadius: rect.borderRadius
-      };
-    }
     return rect;
   }
 

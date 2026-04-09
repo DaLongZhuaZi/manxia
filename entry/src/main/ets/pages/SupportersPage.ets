@@ -66,10 +66,18 @@ export struct SupportersPage {
   // ==================== 支持者名单 ====================
   // 在此处添加支持者，格式：{ name: '用户名', level: '等级（可选）' }
   private supporters: SupporterInfo[] = [
-    { name: '柠檬玥' },
-    { name: 'Ring' },
-    { name: '据我所知' },
-    { name: 'kironal' }
+    { name: '柠檬玥' , level: '￥10'},
+    { name: 'Ring' , level: '￥6.66'},
+    { name: '据我所知' , level: '￥6.66'},
+    { name: 'kironal' , level: '￥10'},
+    { name: 'CCTV' , level: '￥1.88'},
+    { name: '王冠' , level: '￥6.66'},
+    { name: '神秘支持者' , level: '￥18'},
+    { name: 'Dove_Tech' , level: '￥6.66'},
+    { name: '神秘支持者' , level: '￥1.88'},
+    { name: '方城峰' , level: '￥6.66'},
+    { name: '慕小乐' , level: '￥6.66'},
+    { name: '神秘支持者' , level: '￥6.66'},
     // 示例：
     // { name: '张三', level: '金牌支持者' },
     // { name: '李四', level: '银牌支持者' },

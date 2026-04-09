@@ -6,6 +6,7 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
+import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { webview } from '@kit.ArkWeb';
@@ -24,6 +25,7 @@ export interface ZLibraryReaderParams {
 export struct ZLibraryReaderPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @State isLoading: boolean = true;
   @State loadProgress: number = 0;
   @State errorMessage: string = '';
@@ -189,7 +191,11 @@ export struct ZLibraryReaderPage {
               })
             }
             .width('100%')
-            .padding({ left: 16, right: 16, top: 48 })
+            .padding({
+              left: 16,
+              right: 16,
+              top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) + 24
+            })
             .justifyContent(FlexAlign.SpaceBetween)
 
             Blank()

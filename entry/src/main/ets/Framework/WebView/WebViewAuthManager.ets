@@ -118,10 +118,9 @@ export class WebViewAuthManager {
         logger.warn(TAG, `WebCookieManager返回Cookie为空: sourceId=${sourceId}, url=${normalizedUrl}`);
         return false;
       }
-      const srcRecord = await this.dataManager.getComicSourceById(sourceId);
-      const existing: CookieEntry[] = srcRecord && srcRecord.cookies ? this.deserializeCookies(String(srcRecord.cookies)) : [];
-      const merged: CookieEntry[] = this.mergeCookies(existing, incoming);
-      const json: string = this.serializeCookies(merged);
+      const normalizedIncoming: CookieEntry[] = this.mergeCookies([], incoming);
+      const json: string = this.serializeCookies(normalizedIncoming);
+      const merged: CookieEntry[] = normalizedIncoming;
       await this.dataManager.updateComicSourceCookies(sourceId, json);
       logger.info(TAG, `通过WebCookieManager捕获并保存Cookie(${incoming.length}条), 合并后${merged.length}条: sourceId=${sourceId}, url=${normalizedUrl}`);
       return true;
@@ -293,9 +292,7 @@ export class WebViewAuthManager {
 
       const cookieStr: string = await controller.runJavaScript('document.cookie');
       const incoming: CookieEntry[] = this.parseDocumentCookieString(cookieStr);
-      const srcRecord = await this.dataManager.getComicSourceById(sourceId);
-      const existing: CookieEntry[] = srcRecord && srcRecord.cookies ? this.deserializeCookies(String(srcRecord.cookies)) : [];
-      const merged: CookieEntry[] = this.mergeCookies(existing, incoming);
+      const merged: CookieEntry[] = this.mergeCookies([], incoming);
       const json: string = this.serializeCookies(merged);
       await this.dataManager.updateComicSourceCookies(sourceId, json);
       logger.info(TAG, `已捕获并保存Cookie(${incoming.length}条), 合并后${merged.length}条: sourceId=${sourceId}`);

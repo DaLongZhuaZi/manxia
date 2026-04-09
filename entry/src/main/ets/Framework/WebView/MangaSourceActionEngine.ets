@@ -1156,6 +1156,11 @@ export class MangaSourceActionEngine {
           }
         }
       }
+      const normalizedUrl: string = this.ensureCopyMangaPlatformParam(url);
+      if (normalizedUrl !== url) {
+        url = normalizedUrl;
+        logger.debug(TAG, `CopyManga接口自动补充platform参数后的URL: ${url}`);
+      }
       logger.info(TAG, '开始构建请求Headers');
       
       // [修复] 检测是否需要签名，并预先计算签名变量
@@ -1298,11 +1303,14 @@ export class MangaSourceActionEngine {
 
       // 始终尝试获取Cookie，不再依赖useCookies变量
       const sidStr: string | undefined = context.variables['sourceId'];
+      let cookieStrForAuth: string = '';
       if (sidStr && sidStr.length > 0) {
         try {
-          const cookieStr: string = await CookieManager.getInstance().getCookieString(Number(sidStr));
+          const allowStoredFallback: boolean = !this.needsCookieAuthHeaders(url);
+          const cookieStr: string = await CookieManager.getInstance().getCookieStringForUrl(Number(sidStr), url, allowStoredFallback);
           if (cookieStr.length > 0) {
-            headers['Cookie'] = cookieStr;
+            headers = this.setHeaderCanonical(headers, 'Cookie', cookieStr);
+            cookieStrForAuth = cookieStr;
             logger.info(TAG, `API请求添加Cookie: sourceId=${sidStr}, length=${cookieStr.length}`);
           } else {
             logger.debug(TAG, `图源无可用Cookie: sourceId=${sidStr}`);
@@ -1316,6 +1324,10 @@ export class MangaSourceActionEngine {
 
       // 2. 自动注入缺少的关键 Headers (修复问题的关键)
       // 检查 User-Agent
+      if (cookieStrForAuth.length > 0) {
+        headers = this.injectAuthHeadersFromCookie(url, headers, cookieStrForAuth);
+      }
+
       const uaKeys: string[] = Object.keys(headers);
       let hasUA: boolean = false;
       let iUA: number = 0;
@@ -1364,12 +1376,37 @@ export class MangaSourceActionEngine {
       // 执行请求
       logger.info(TAG, '准备发起HTTP请求');
       logger.info(TAG, `准备发出API请求: method=${action.method}, url=${url}`);
-      const response = await this.apiEngine.request({
+      let response = await this.apiEngine.request({
         method: action.method,
         url: url,
         headers: headers, // 使用处理后的 headers
         body: body
       });
+
+      // 对需要登录鉴权的接口，401 时先刷新 URL 对应 Cookie 并自动重试一次
+      if (response.status === 401 && sidStr && sidStr.length > 0 && this.needsCookieAuthHeaders(url)) {
+        logger.warn(TAG, `检测到401响应，尝试刷新Cookie后重试: ${url}`);
+        try {
+          const refreshedCookie: string = await CookieManager.getInstance().getCookieStringForUrl(Number(sidStr), url, false);
+          if (refreshedCookie.length > 0) {
+            headers = this.setHeaderCanonical(headers, 'Cookie', refreshedCookie);
+            cookieStrForAuth = refreshedCookie;
+            headers = this.injectAuthHeadersFromCookie(url, headers, refreshedCookie);
+
+            response = await this.apiEngine.request({
+              method: action.method,
+              url: url,
+              headers: headers,
+              body: body
+            });
+            logger.debug(TAG, `401重试后API响应状态: ${response.status}`);
+          } else {
+            logger.warn(TAG, '401重试前刷新Cookie为空，跳过重试');
+          }
+        } catch (retryErr) {
+          logger.warn(TAG, `401重试前刷新Cookie失败: ${String(retryErr)}`);
+        }
+      }
       
       logger.debug(TAG, `API响应状态: ${response.status}`);
       
@@ -1434,6 +1471,15 @@ export class MangaSourceActionEngine {
         }
       } catch (_cookieErr) {}
 
+      if (!this.isSuccessStatusCode(response.status)) {
+        const errorDetail: string = this.extractApiErrorDetail(response.data);
+        const statusMessage: string = errorDetail.length > 0
+          ? `API请求失败: HTTP ${response.status}, ${errorDetail}`
+          : `API请求失败: HTTP ${response.status}`;
+        logger.warn(TAG, statusMessage);
+        throw new MangaSourceError(MangaSourceErrorCode.NETWORK_ERROR, statusMessage);
+      }
+
       // 提取数据
       if (action.extract && response.data) {
         const extracted: ESObject | ESObject[] = this.apiEngine.extractFromJSON(
@@ -1448,6 +1494,9 @@ export class MangaSourceActionEngine {
       return response.data as Record<string, string | string[]>;
       
     } catch (error) {
+      if (error instanceof MangaSourceError) {
+        throw error;
+      }
       logger.error(TAG, `API请求失败: ${error}`);
       throw new MangaSourceError(
         MangaSourceErrorCode.NETWORK_ERROR,
@@ -1472,10 +1521,9 @@ export class MangaSourceActionEngine {
         const sidNum: number = Number(sidVar);
         try {
           const cookieManager = CookieManager.getInstance();
-          const hasCookie = await cookieManager.hasCookie(sidNum);
-          if (hasCookie) {
-            const cookieStr = await cookieManager.getCookieString(sidNum);
-            if (cookieStr && cookieStr.length > 0) {
+          const allowStoredFallback: boolean = !this.needsCookieAuthHeaders(url);
+          const cookieStr: string = await cookieManager.getCookieStringForUrl(sidNum, url, allowStoredFallback);
+          if (cookieStr && cookieStr.length > 0) {
               // 手动合并Cookie到headers
               if (finalHeaders && typeof finalHeaders === 'object') {
                 const mergedHeaders: Record<string, Object> = {};
@@ -1485,16 +1533,15 @@ export class MangaSourceActionEngine {
                   const value: Object = entries[i][1];
                   mergedHeaders[key] = value;
                 }
-                mergedHeaders['cookie'] = cookieStr;
+                mergedHeaders['Cookie'] = cookieStr;
                 finalHeaders = mergedHeaders as Object;
               } else {
                 const newHeaders: Record<string, string> = {};
-                newHeaders['cookie'] = cookieStr;
+                newHeaders['Cookie'] = cookieStr;
                 finalHeaders = newHeaders as Object;
               }
               logger.debug(TAG, `已从数据库读取并添加Cookie到请求: len=${cookieStr.length}`);
             }
-          }
         } catch (cookieErr) {
           logger.warn(TAG, `读取Cookie失败: ${cookieErr}`);
         }
@@ -1618,6 +1665,161 @@ export class MangaSourceActionEngine {
   /**
    * 替换变量
    */
+  private needsCookieAuthHeaders(url: string): boolean {
+    const lowerUrl: string = url.toLowerCase();
+    if (lowerUrl.includes('/api/v3/member/')) {
+      return true;
+    }
+    if (lowerUrl.includes('/api/kb/web/browses')) {
+      return true;
+    }
+    return false;
+  }
+
+  private ensureCopyMangaPlatformParam(url: string): string {
+    const lowerUrl: string = url.toLowerCase();
+    const isCollectApi: boolean = lowerUrl.includes('https://www.mangacopy.com/api/v3/member/collect/comics');
+    const isBrowseApi: boolean = lowerUrl.includes('https://www.mangacopy.com/api/kb/web/browses');
+    if (!isCollectApi && !isBrowseApi) {
+      return url;
+    }
+
+    const hasPlatformParam: boolean = /(?:\?|&)platform=/i.test(url);
+    if (hasPlatformParam) {
+      return url;
+    }
+
+    const separator: string = url.includes('?') ? '&' : '?';
+    return `${url}${separator}platform=3`;
+  }
+
+  private removeHeaderCanonical(headers: Record<string, string>, headerName: string): Record<string, string> {
+    const targetHeaderName: string = headerName.toLowerCase();
+    const normalizedHeaders: Record<string, string> = {};
+    const keys: string[] = Object.keys(headers);
+    for (let i: number = 0; i < keys.length; i++) {
+      const key: string = keys[i];
+      if (key.toLowerCase() !== targetHeaderName) {
+        normalizedHeaders[key] = headers[key];
+      }
+    }
+    return normalizedHeaders;
+  }
+
+  private setHeaderCanonical(headers: Record<string, string>, headerName: string, value: string): Record<string, string> {
+    const normalizedHeaders: Record<string, string> = this.removeHeaderCanonical(headers, headerName);
+    normalizedHeaders[headerName] = value;
+    return normalizedHeaders;
+  }
+
+  private extractCookieValue(cookieString: string, cookieName: string): string {
+    const segments: string[] = cookieString.split(';');
+    for (let i: number = segments.length - 1; i >= 0; i--) {
+      const segment: string = segments[i].trim();
+      if (segment.length === 0) {
+        continue;
+      }
+
+      const equalIndex: number = segment.indexOf('=');
+      if (equalIndex <= 0) {
+        continue;
+      }
+
+      const key: string = segment.substring(0, equalIndex).trim();
+      if (key === cookieName) {
+        const rawValue: string = segment.substring(equalIndex + 1).trim();
+        try {
+          return decodeURIComponent(rawValue);
+        } catch (_decodeError) {
+          return rawValue;
+        }
+      }
+    }
+    return '';
+  }
+
+  private injectAuthHeadersFromCookie(
+    url: string,
+    headers: Record<string, string>,
+    cookieString: string
+  ): Record<string, string> {
+    if (!this.needsCookieAuthHeaders(url)) {
+      return headers;
+    }
+
+    let normalizedHeaders: Record<string, string> = headers;
+    normalizedHeaders = this.removeHeaderCanonical(normalizedHeaders, 'authorization');
+    normalizedHeaders = this.removeHeaderCanonical(normalizedHeaders, 'token');
+    normalizedHeaders = this.removeHeaderCanonical(normalizedHeaders, 'x-csrftoken');
+    const token: string = this.extractCookieValue(cookieString, 'token');
+    const csrfToken: string = this.extractCookieValue(cookieString, 'csrftoken');
+
+    if (token.length > 0) {
+      // DRF TokenAuthentication 需要 "Token <value>" 格式
+      normalizedHeaders = this.setHeaderCanonical(normalizedHeaders, 'Authorization', `Token ${token}`);
+    }
+
+    if (csrfToken.length > 0) {
+      normalizedHeaders = this.setHeaderCanonical(normalizedHeaders, 'X-CSRFToken', csrfToken);
+    }
+
+    if (token.length > 0 || csrfToken.length > 0) {
+      logger.info(
+        TAG,
+        `自动注入Cookie认证头: token=${token.length > 0 ? 'yes' : 'no'}, csrf=${csrfToken.length > 0 ? 'yes' : 'no'}`
+      );
+    }
+    return normalizedHeaders;
+  }
+
+  private isSuccessStatusCode(statusCode: number): boolean {
+    return statusCode >= 200 && statusCode < 300;
+  }
+
+  private extractApiErrorDetail(responseData: Object | string): string {
+    if (typeof responseData === 'string') {
+      const trimmedText: string = responseData.trim();
+      if (trimmedText.length === 0) {
+        return '';
+      }
+      if (trimmedText.length > 200) {
+        return `${trimmedText.substring(0, 200)}...`;
+      }
+      return trimmedText;
+    }
+
+    const responseObject: Record<string, Object> = responseData as Record<string, Object>;
+    const detailValue: Object | undefined = responseObject['detail'];
+    if (detailValue !== undefined && detailValue !== null) {
+      return String(detailValue);
+    }
+
+    const messageValue: Object | undefined = responseObject['message'];
+    if (messageValue !== undefined && messageValue !== null) {
+      return String(messageValue);
+    }
+
+    const errorValue: Object | undefined = responseObject['error'];
+    if (errorValue !== undefined && errorValue !== null) {
+      return String(errorValue);
+    }
+
+    const codeValue: Object | undefined = responseObject['code'];
+    if (codeValue !== undefined && codeValue !== null) {
+      return String(codeValue);
+    }
+
+    try {
+      const jsonText: string = JSON.stringify(responseData);
+      if (jsonText.length > 200) {
+        return `${jsonText.substring(0, 200)}...`;
+      }
+      return jsonText;
+    } catch (_stringifyError) {
+      return '';
+    }
+  }
+
   private replaceVariables(text: string, variables: Record<string, string>): string {
     let result = text;
     for (const key of Object.keys(variables)) {

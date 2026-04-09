@@ -5,6 +5,7 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { UIContext } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -20,11 +21,15 @@ import CookieManager from '../Framework/Managers/CookieManager';
 import { SourceLoginPageParams } from './SourceLoginPage';
 import { ReadingMode, ReadingDirection, PageTurnAnimationType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
+import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
+import { AntiCrawlerConfig, CloudflareConfig, CaptchaConfig, IpBlockConfig } from '../Framework/WebView/MangaSourceTypes';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 
 const TAG: string = 'SourceSettingsPage';
+const COPYMANGA_SOURCE_PKG: string = 'com.manxia.extension.zh.copymangawebview';
+const COPYMANGA_ACCOUNT_LOGIN_URL: string = 'https://www.mangacopy.com/web/login/loginByAccount?url=person%2Fhome';
 
 /**
  * 页面导航参数
@@ -72,6 +77,17 @@ interface MirrorSiteInfo {
   label: string;
 }
 
+interface SourceLoginConfig {
+  url: string;
+  method: string;
+  usernameSelector: string;
+  passwordSelector: string;
+  submitSelector: string;
+  supportsIndependentLogin: boolean;
+  supportsCredentialLogin: boolean;
+  hasLoginWorkflow: boolean;
+}
+
 @Component
 export struct SourceSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -89,6 +105,35 @@ export struct SourceSettingsPage {
   private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private authManager: WebViewAuthManager = WebViewAuthManager.getInstance();
   private scroller: Scroller = new Scroller();
+  private sourceLoginConfig: SourceLoginConfig = {
+    url: '',
+    method: 'manual',
+    usernameSelector: '',
+    passwordSelector: '',
+    submitSelector: '',
+    supportsIndependentLogin: false,
+    supportsCredentialLogin: false,
+    hasLoginWorkflow: false
+  };
+  private isCopyMangaSource: boolean = false;
+  private readonly defaultCloudflareConfig: CloudflareConfig = {
+    enabled: true,
+    bypassMethod: 'interactive',
+    timeout: 30000
+  };
+  private readonly defaultCaptchaConfig: CaptchaConfig = {
+    enabled: true,
+    autoSolve: false
+  };
+  private readonly defaultIpBlockConfig: IpBlockConfig = {
+    enabled: true,
+    delay: 3000
+  };
+  private readonly defaultAntiCrawlerConfig: AntiCrawlerConfig = {
+    cloudflare: this.defaultCloudflareConfig,
+    captcha: this.defaultCaptchaConfig,
+    ipBlock: this.defaultIpBlockConfig
+  };
 
   // 参数
   private pageParams: SourceSettingsPageParams | null = null;
@@ -270,6 +315,186 @@ export struct SourceSettingsPage {
     }];
   }
 
+  private resetSourceLoginConfig(): void {
+    this.isCopyMangaSource = false;
+    this.sourceLoginConfig = {
+      url: '',
+      method: 'manual',
+      usernameSelector: '',
+      passwordSelector: '',
+      submitSelector: '',
+      supportsIndependentLogin: false,
+      supportsCredentialLogin: false,
+      hasLoginWorkflow: false
+    };
+  }
+
+  private normalizeSpecialLoginUrl(url: string): string {
+    const normalizedUrl: string = url.trim();
+    if (!this.isCopyMangaSource) {
+      return normalizedUrl;
+    }
+
+    if (normalizedUrl.length === 0 ||
+      normalizedUrl === 'https://www.mangacopy.com' ||
+      normalizedUrl === 'https://www.mangacopy.com/') {
+      return COPYMANGA_ACCOUNT_LOGIN_URL;
+    }
+
+    return normalizedUrl;
+  }
+
+  private normalizeSpecialSourceLoginUrl(configObj: Record<string, Object>): void {
+    const metadata = configObj['metadata'] as Record<string, Object> | undefined;
+    const metadataId = metadata ? metadata['id'] : null;
+    this.isCopyMangaSource = typeof metadataId === 'string' && metadataId === COPYMANGA_SOURCE_PKG;
+    if (!this.isCopyMangaSource) {
+      return;
+    }
+
+    const currentUrl: string = this.sourceLoginConfig.url.trim();
+    const normalizedUrl: string = this.normalizeSpecialLoginUrl(currentUrl);
+    if (normalizedUrl !== currentUrl) {
+      this.sourceLoginConfig.url = COPYMANGA_ACCOUNT_LOGIN_URL;
+      this.sourceLoginConfig.supportsIndependentLogin = true;
+      logger.info(TAG, `已应用拷贝漫画账号登录地址: ${COPYMANGA_ACCOUNT_LOGIN_URL}`);
+    }
+  }
+
+  private parseSourceLoginConfig(config: ESObject): void {
+    this.resetSourceLoginConfig();
+
+    const configObj = config as Record<string, Object>;
+    const capabilities = configObj['capabilities'] as Record<string, Object> | undefined;
+    if (capabilities) {
+      this.sourceLoginConfig.supportsIndependentLogin = capabilities['loginSupport'] === true;
+      this.sourceLoginConfig.supportsCredentialLogin = capabilities['credentialLogin'] === true;
+    }
+
+    const workflows = configObj['workflows'] as Record<string, Object> | undefined;
+    if (workflows) {
+      this.sourceLoginConfig.hasLoginWorkflow = Object.keys(workflows).includes('login');
+    }
+
+    const login = configObj['login'] as Record<string, Object> | undefined;
+    if (login) {
+      const urlValue = login['url'];
+      const methodValue = login['method'];
+      const usernameSelectorValue = login['usernameSelector'];
+      const passwordSelectorValue = login['passwordSelector'];
+      const submitSelectorValue = login['submitSelector'];
+
+      if (typeof urlValue === 'string' && urlValue.trim().length > 0) {
+        this.sourceLoginConfig.url = urlValue.trim();
+        this.sourceLoginConfig.supportsIndependentLogin = true;
+      }
+      if (typeof methodValue === 'string' && methodValue.trim().length > 0) {
+        this.sourceLoginConfig.method = methodValue.trim().toLowerCase();
+      }
+      if (typeof usernameSelectorValue === 'string' && usernameSelectorValue.trim().length > 0) {
+        this.sourceLoginConfig.usernameSelector = usernameSelectorValue.trim();
+      }
+      if (typeof passwordSelectorValue === 'string' && passwordSelectorValue.trim().length > 0) {
+        this.sourceLoginConfig.passwordSelector = passwordSelectorValue.trim();
+      }
+      if (typeof submitSelectorValue === 'string' && submitSelectorValue.trim().length > 0) {
+        this.sourceLoginConfig.submitSelector = submitSelectorValue.trim();
+      }
+    }
+
+    this.normalizeSpecialSourceLoginUrl(configObj);
+
+    if (this.loginUrl.length === 0 && this.sourceLoginConfig.url.length > 0) {
+      this.loginUrl = this.sourceLoginConfig.url;
+    }
+    this.loginUrl = this.normalizeSpecialLoginUrl(this.loginUrl);
+    if (this.usernameSelector.length === 0 && this.sourceLoginConfig.usernameSelector.length > 0) {
+      this.usernameSelector = this.sourceLoginConfig.usernameSelector;
+    }
+    if (this.passwordSelector.length === 0 && this.sourceLoginConfig.passwordSelector.length > 0) {
+      this.passwordSelector = this.sourceLoginConfig.passwordSelector;
+    }
+    if (this.submitSelector.length === 0 && this.sourceLoginConfig.submitSelector.length > 0) {
+      this.submitSelector = this.sourceLoginConfig.submitSelector;
+    }
+  }
+
+  private getEffectiveLoginUrl(): string {
+    if (this.loginUrl.trim().length > 0) {
+      return this.normalizeSpecialLoginUrl(this.loginUrl);
+    }
+    return this.normalizeSpecialLoginUrl(this.sourceLoginConfig.url);
+  }
+
+  private hasFormSelectorsConfigured(): boolean {
+    return this.usernameSelector.trim().length > 0 &&
+      this.passwordSelector.trim().length > 0 &&
+      this.submitSelector.trim().length > 0;
+  }
+
+  private shouldUseWorkflowLogin(): boolean {
+    return this.sourceLoginConfig.supportsCredentialLogin || this.sourceLoginConfig.hasLoginWorkflow;
+  }
+
+  private async refreshCookieStatus(sourceId: number): Promise<void> {
+    try {
+      const info = await CookieManager.getInstance().getCookieInfo(sourceId);
+      if (info.hasCookie) {
+        this.cookieStatusText = `已保存Cookie（${String(info.cookieCount)} 条）`;
+      } else {
+        this.cookieStatusText = '未保存Cookie';
+      }
+    } catch (error) {
+      logger.warn(TAG, '刷新Cookie状态失败', String(error));
+      this.cookieStatusText = 'Cookie状态不可用';
+    }
+  }
+
+  private async executeWorkflowLogin(sourceRecord: ComicSourceDatabaseRecord): Promise<void> {
+    if (!this.username.trim() || !this.password.trim()) {
+      this.showToast('请输入账号和密码');
+      return;
+    }
+
+    const sid: number = Number(sourceRecord.id);
+    const pkg: string = sourceRecord.pkg || this.pageParams?.sourceName || '';
+    let config: ESObject | null = null;
+    if (pkg.length > 0) {
+      config = await this.dataManager.getSourceConfigByPkg(pkg);
+    }
+    if (!config) {
+      config = await this.dataManager.getSourceConfig(sid);
+    }
+    if (!config) {
+      this.showToast('未找到图源登录配置');
+      return;
+    }
+
+    const engineConfig: EngineConfig = {
+      webViewController: new webview.WebviewController(),
+      antiCrawlerConfig: this.defaultAntiCrawlerConfig,
+      debug: true,
+      timeout: 30000,
+      caseSensitive: false,
+      sourceId: sid
+    };
+
+    const engine = new MangaSourceEngine(engineConfig);
+    await engine.loadConfig(JSON.stringify(config));
+    await this.authManager.saveCredentials(sid, this.username.trim(), this.password);
+
+    const result = await engine.executeLogin(this.username.trim(), this.password);
+    if (!result.success) {
+      const errorMessage = result.error ? String(result.error) : '未知错误';
+      logger.warn(TAG, `图源登录工作流执行失败: ${errorMessage}`);
+      this.showToast(`登录失败: ${errorMessage}`);
+      return;
+    }
+
+    await this.refreshCookieStatus(sid);
+    this.showToast('已按图源配置执行登录');
+  }
+
   private async loadSourceConfigSettings(): Promise<void> {
     if (!this.pageParams || !this.pageParams.sourceName) {
       return;
@@ -289,6 +514,8 @@ export struct SourceSettingsPage {
         logger.warn(TAG, `未找到图源配置: pkg=${pkg}`);
         return;
       }
+
+      this.parseSourceLoginConfig(config);
       
       // 解析镜像站点列表
       const mirrors: string[] | undefined = config._MIRRORS as string[] || config.mirrors as string[];
@@ -501,6 +728,7 @@ export struct SourceSettingsPage {
       if (l2 && l2.settingValue) { this.usernameSelector = l2.settingValue; }
       if (l3 && l3.settingValue) { this.passwordSelector = l3.settingValue; }
       if (l4 && l4.settingValue) { this.submitSelector = l4.settingValue; }
+      this.loginUrl = this.normalizeSpecialLoginUrl(this.loginUrl);
 
       // 加载漫画默认阅读设置
       const mangaEnabled: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'manga.settingsEnabled');
@@ -547,12 +775,7 @@ export struct SourceSettingsPage {
       const sourceRecord = await this.dataManager.getComicSourceByName(sourceName);
       if (sourceRecord) {
         const sid: number = Number(sourceRecord.id);
-        const info = await CookieManager.getInstance().getCookieInfo(sid);
-        if (info.hasCookie) {
-          this.cookieStatusText = `已保存Cookie（${String(info.cookieCount)} 条）`;
-        } else {
-          this.cookieStatusText = '未保存Cookie';
-        }
+        await this.refreshCookieStatus(sid);
       }
     } catch (err) {
       logger.warn(TAG, '刷新Cookie状态失败', String(err));
@@ -708,11 +931,7 @@ export struct SourceSettingsPage {
     const controller = this.webViewManager.getWebViewInstance(sourceName);
     await this.authManager.loginWithCookieString(sid, controller, this.cookieInput);
     this.showToast('Cookie已保存并应用');
-    // 应用后刷新状态
-    try {
-      const info2 = await CookieManager.getInstance().getCookieInfo(sid);
-      this.cookieStatusText = info2.hasCookie ? `已保存Cookie（${String(info2.cookieCount)} 条）` : '未保存Cookie';
-    } catch (_e) {}
+    await this.refreshCookieStatus(sid);
   }
 
   private async fetchCookieWithoutLogin(): Promise<void> {
@@ -767,12 +986,18 @@ export struct SourceSettingsPage {
       if (!srcRecord) { this.showToast('未找到图源记录'); return; }
       
       const sid: number = Number(srcRecord.id);
-      const ok: boolean = await CookieManager.getInstance().fetchCookiesByDefaultRequest(sid, baseUrl);
+      const cookieManager: CookieManager = CookieManager.getInstance();
+      const ok: boolean = await cookieManager.fetchCookiesByDefaultRequest(sid, baseUrl);
+      const info = await cookieManager.getCookieInfo(sid);
       if (ok) {
         this.showToast('已获取并保存服务器Cookie');
-        const info = await CookieManager.getInstance().getCookieInfo(sid);
         this.cookieStatusText = info.hasCookie ? `已保存Cookie（${String(info.cookieCount)} 条）` : '未保存Cookie';
+      } else if (info.hasCookie) {
+        this.cookieStatusText = `已保存Cookie（${String(info.cookieCount)} 条）`;
+        this.showToast('服务器未返回新Cookie，已使用本地Cookie');
+        logger.info(TAG, `默认请求未返回Set-Cookie，但本地Cookie可用: sourceName=${sourceName}, count=${String(info.cookieCount)}`);
       } else {
+        this.cookieStatusText = '未保存Cookie';
         this.showToast('未获取到服务器Cookie');
       }
     } catch (error) {
@@ -793,8 +1018,15 @@ export struct SourceSettingsPage {
       this.showToast('未找到图源记录');
       return;
     }
-    const baseUrl = String(sourceRecord.baseUrl);
-    const url: string = this.loginUrl && this.loginUrl.length > 0 ? this.loginUrl : (baseUrl + '/login');
+    const url: string = this.getEffectiveLoginUrl();
+    if (url.length === 0) {
+      if (this.shouldUseWorkflowLogin()) {
+        this.showToast('当前图源使用凭据登录，请使用“表单登录”执行图源登录流程');
+      } else {
+        this.showToast('图源未配置独立登录页');
+      }
+      return;
+    }
     
     // 跳转到独立的登录页面
     const loginParams: SourceLoginPageParams = {
@@ -818,8 +1050,33 @@ export struct SourceSettingsPage {
       this.showToast('未找到图源记录');
       return;
     }
-    const baseUrl = String(sourceRecord.baseUrl);
-    const url: string = this.loginUrl && this.loginUrl.length > 0 ? this.loginUrl : (baseUrl + '/login');
+
+    if (this.shouldUseWorkflowLogin()) {
+      logger.info(TAG, `执行图源登录工作流: sourceName=${sourceName}`);
+      await this.executeWorkflowLogin(sourceRecord);
+      return;
+    }
+
+    const loginMethod: string = this.sourceLoginConfig.method.trim().toLowerCase();
+    if (loginMethod === 'manual' && !this.hasFormSelectorsConfigured()) {
+      this.showToast('图源配置为手动登录，请使用“打开登录页”');
+      return;
+    }
+
+    if (!this.username.trim() || !this.password.trim()) {
+      this.showToast('请输入账号和密码');
+      return;
+    }
+
+    const url: string = this.getEffectiveLoginUrl();
+    if (url.length === 0) {
+      this.showToast('图源未配置表单登录地址');
+      return;
+    }
+    if (!this.hasFormSelectorsConfigured()) {
+      this.showToast('图源未配置表单选择器');
+      return;
+    }
     
     // 跳转到独立的登录页面（表单模式）
     const loginParams: SourceLoginPageParams = {
