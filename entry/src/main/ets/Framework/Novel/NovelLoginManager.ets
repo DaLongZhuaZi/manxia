@@ -449,7 +449,8 @@ export class NovelLoginManager {
 
     // 执行JS
     const result = await jsEngine.execute(jsCode, {
-      variables: formData
+      variables: formData,
+      jsLib: source.jsLib || ''
     });
 
     if (result.success) {
@@ -509,11 +510,6 @@ export class NovelLoginManager {
       const jsEngine = getLegadoRhinoEngine();
       const sourceId = source.bookSourceUrl;
       
-      // 设置jsLib（书源的JS库）
-      if (source.jsLib) {
-        jsEngine.setJsLib(source.jsLib);
-      }
-      
       // 先保存登录信息（用户输入的表单数据）
       // 这样JS代码中的source.getLoginInfo()可以获取到
       this.putLoginInfo(sourceId, JSON.stringify(formData));
@@ -555,7 +551,8 @@ export class NovelLoginManager {
       const result = await jsEngine.execute(jsCode, {
         baseUrl: sourceId,
         result: JSON.stringify(formData),
-        variables: variables
+        variables: variables,
+        jsLib: source.jsLib || ''
       });
 
       logger.info(TAG, `按钮操作执行结果: success=${result.success}, result=${result.result?.substring(0, 200)}`);
@@ -682,7 +679,8 @@ export class NovelLoginManager {
     try {
       const jsEngine = getLegadoRhinoEngine();
       const result = await jsEngine.execute(source.loginCheckJs, {
-        variables: this.getVariables(source.bookSourceUrl)
+        variables: this.getVariables(source.bookSourceUrl),
+        jsLib: source.jsLib || ''
       });
 
       const isLoggedIn = result.success && (result.result === 'true' || result.result === '1');
@@ -754,14 +752,84 @@ export class NovelLoginManager {
     const allKeys: string[] = [];
     this.cookies.forEach((_, key) => allKeys.push(key));
     logger.debug(TAG, `getCookieString: 查找=${sourceId}, 已保存的keys=[${allKeys.join(', ')}], initialized=${this.initialized}`);
-    
-    const cookies = this.getCookies(sourceId);
-    const keys = Object.keys(cookies);
-    const parts: string[] = [];
-    for (let i = 0; i < keys.length; i++) {
-      parts.push(`${keys[i]}=${cookies[keys[i]]}`);
+
+    const candidateIds = this.buildCookieLookupCandidates(sourceId);
+    for (let i = 0; i < candidateIds.length; i++) {
+      const candidateId = candidateIds[i];
+      const cookies = this.getCookies(candidateId);
+      const keys = Object.keys(cookies);
+      if (keys.length === 0) {
+        continue;
+      }
+
+      const parts: string[] = [];
+      for (let j = 0; j < keys.length; j++) {
+        parts.push(`${keys[j]}=${cookies[keys[j]]}`);
+      }
+      if (candidateId !== sourceId) {
+        logger.debug(TAG, `getCookieString: 命中候选ID=${candidateId}`);
+      }
+      return parts.join('; ');
     }
-    return parts.join('; ');
+
+    return '';
+  }
+
+  /**
+   * 构建Cookie查找候选ID（兼容带附加标识的书源ID）
+   */
+  private buildCookieLookupCandidates(sourceId: string): string[] {
+    const candidates: string[] = [];
+    this.pushUniqueCandidate(candidates, sourceId.trim());
+
+    const normalizedSourceId = this.normalizeSourceId(sourceId);
+    this.pushUniqueCandidate(candidates, normalizedSourceId);
+
+    const domainOnlyId = this.extractDomainId(normalizedSourceId);
+    this.pushUniqueCandidate(candidates, domainOnlyId);
+
+    return candidates;
+  }
+
+  /**
+   * 归一化书源ID（移除 ## 扩展段、片段标记）
+   */
+  private normalizeSourceId(sourceId: string): string {
+    let normalized = sourceId.trim();
+    const extensionSeparator = normalized.indexOf('##');
+    if (extensionSeparator >= 0) {
+      normalized = normalized.substring(0, extensionSeparator).trim();
+    }
+
+    const fragmentIndex = normalized.indexOf('#');
+    if (fragmentIndex >= 0) {
+      normalized = normalized.substring(0, fragmentIndex).trim();
+    }
+
+    return normalized;
+  }
+
+  /**
+   * 提取域名级ID，兼容带路径和尾部斜杠的情况
+   */
+  private extractDomainId(sourceId: string): string {
+    const match = sourceId.match(/^(https?:\/\/[^\/]+)/i);
+    if (match) {
+      return match[1];
+    }
+    return sourceId;
+  }
+
+  /**
+   * 添加唯一候选ID
+   */
+  private pushUniqueCandidate(candidates: string[], candidate: string): void {
+    if (candidate.length === 0) {
+      return;
+    }
+    if (!candidates.includes(candidate)) {
+      candidates.push(candidate);
+    }
   }
 
   /**

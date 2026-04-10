@@ -182,6 +182,16 @@ export class NovelSourceValidator {
   private static readonly EVENT_LOOP_YIELD_INTERVAL = 2;
   private static readonly VALIDATION_SEARCH_MAX_RESULTS = 1;
   private static readonly VALIDATION_SEARCH_MAX_ELEMENT_SCAN = 300;
+  private static readonly NON_FATAL_ERROR_GROUPS: string[] = [
+    ERROR_GROUP_NAMES[ValidationErrorType.DISCOVERY_EMPTY],
+    ERROR_GROUP_NAMES[ValidationErrorType.DISCOVERY_FAILED],
+    ERROR_GROUP_NAMES[ValidationErrorType.TIMEOUT],
+    ERROR_GROUP_NAMES[ValidationErrorType.SSL_ERROR],
+    ERROR_GROUP_NAMES[ValidationErrorType.NETWORK_ERROR],
+    ERROR_GROUP_NAMES[ValidationErrorType.HTTP_403],
+    ERROR_GROUP_NAMES[ValidationErrorType.HTTP_5XX],
+    ERROR_GROUP_NAMES[ValidationErrorType.HTTP_OTHER]
+  ];
 
   private static instance: NovelSourceValidator | null = null;
   private isValidating: boolean = false;
@@ -314,13 +324,20 @@ export class NovelSourceValidator {
         this.addErrorGroup(result, ValidationErrorType.NETWORK_ERROR);
       } else {
         result.errorType = ValidationErrorType.UNKNOWN;
+        this.addErrorGroup(result, ValidationErrorType.UNKNOWN);
       }
       
       logger.warn(TAG, `校验书源失败 [${source.bookSourceName}]: ${result.error}`);
     }
 
     result.searchTime = Date.now() - startTime;
-    result.isValid = result.errorGroups.length === 0;
+    result.isValid = !this.hasFatalErrorGroup(result.errorGroups);
+    if (result.isValid && result.errorGroups.length > 0) {
+      logger.info(
+        TAG,
+        `校验通过（非致命问题） [${source.bookSourceName}]: ${result.errorGroups.join(',')}`
+      );
+    }
     
     return result;
   }
@@ -356,6 +373,58 @@ export class NovelSourceValidator {
     if (index !== -1) {
       result.errorGroups.splice(index, 1);
     }
+  }
+
+  /**
+   * 判断错误分组中是否包含致命错误
+   */
+  private hasFatalErrorGroup(errorGroups: string[]): boolean {
+    for (let i = 0; i < errorGroups.length; i++) {
+      if (!NovelSourceValidator.NON_FATAL_ERROR_GROUPS.includes(errorGroups[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 解析用于发现校验的首个可用URL
+   */
+  private resolveDiscoveryValidationUrl(source: LegadoBookSource, executor: NovelSourceExecutor): string | null {
+    if (!source.exploreUrl) {
+      return null;
+    }
+
+    const exploreKinds = executor.getExploreKinds();
+    for (let i = 0; i < exploreKinds.length; i++) {
+      const kindUrl = exploreKinds[i].url ? exploreKinds[i].url.trim() : '';
+      if (kindUrl.length > 0) {
+        return kindUrl;
+      }
+    }
+
+    const lines = source.exploreUrl.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.length === 0) {
+        continue;
+      }
+      if (line.startsWith('[') || line.startsWith('{')) {
+        continue;
+      }
+
+      const parts = line.split('::');
+      if (parts.length >= 2) {
+        const urlPart = parts.slice(1).join('::').trim();
+        if (urlPart.length > 0) {
+          return urlPart;
+        }
+      }
+
+      return line;
+    }
+
+    return null;
   }
   
   /**
@@ -452,18 +521,25 @@ export class NovelSourceValidator {
     }
 
     // 2. 校验发现
-    if (config.checkDiscovery && source.exploreUrl) {
+    if (config.checkDiscovery && executor.hasExplore()) {
       result.checkedItems.push('发现');
       try {
         // 解析发现URL获取第一个分类
-        const exploreResults = await executor.explore(source.exploreUrl.split('\n')[0], 1);
-        if (exploreResults.length === 0) {
-          this.addErrorGroup(result, ValidationErrorType.DISCOVERY_FAILED);
+        const discoveryUrl = this.resolveDiscoveryValidationUrl(source, executor);
+        if (!discoveryUrl) {
+          this.addErrorGroup(result, ValidationErrorType.DISCOVERY_EMPTY);
+          logger.debug(TAG, `发现校验跳过 [${source.bookSourceName}]: 未找到可用发现URL`);
         } else {
-          this.removeErrorGroup(result, ValidationErrorType.DISCOVERY_FAILED);
-          if (!searchBook) {
-            const firstExplore = exploreResults[0];
-            exploreBook = this.searchBookToBook(firstExplore);
+          const exploreResults = await executor.explore(discoveryUrl, 1);
+          if (exploreResults.length === 0) {
+            this.addErrorGroup(result, ValidationErrorType.DISCOVERY_FAILED);
+          } else {
+            this.removeErrorGroup(result, ValidationErrorType.DISCOVERY_FAILED);
+            this.removeErrorGroup(result, ValidationErrorType.DISCOVERY_EMPTY);
+            if (!searchBook) {
+              const firstExplore = exploreResults[0];
+              exploreBook = this.searchBookToBook(firstExplore);
+            }
           }
         }
       } catch (error) {
@@ -489,14 +565,14 @@ export class NovelSourceValidator {
       result.checkedItems.push('详情');
       try {
         const bookInfo = await executor.getBookInfo(bookToCheck.bookUrl);
-        if (!bookInfo || !bookInfo.tocUrl) {
-          // 尝试使用bookUrl作为tocUrl
-          bookToCheck.tocUrl = bookToCheck.bookUrl;
-        } else {
-          bookToCheck.tocUrl = bookInfo.tocUrl;
-          bookToCheck.name = bookInfo.name || bookToCheck.name;
-          bookToCheck.author = bookInfo.author || bookToCheck.author;
+        if (!bookInfo) {
+          this.addErrorGroup(result, ValidationErrorType.INFO_FAILED);
+          logger.warn(TAG, `详情校验失败 [${source.bookSourceName}]: 未解析到详情信息`);
+          return; // 详情失败则无法继续校验目录和正文
         }
+        bookToCheck.tocUrl = bookInfo.tocUrl || bookToCheck.bookUrl;
+        bookToCheck.name = bookInfo.name || bookToCheck.name;
+        bookToCheck.author = bookInfo.author || bookToCheck.author;
         this.removeErrorGroup(result, ValidationErrorType.INFO_FAILED);
       } catch (error) {
         this.addErrorGroup(result, ValidationErrorType.INFO_FAILED);
@@ -726,7 +802,11 @@ export class NovelSourceValidator {
 
     if (result.isValid) {
       if (autoUpdateGroups) {
-        await this.removeAllErrorGroups(source);
+        if (result.errorGroups.length === 0) {
+          await this.removeAllErrorGroups(source);
+        } else {
+          await this.updateSourceWarningGroups(source, result.errorGroups);
+        }
       }
     } else {
       if (autoUpdateGroups) {
@@ -882,6 +962,18 @@ export class NovelSourceValidator {
    */
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 更新书源的非致命问题分组
+   */
+  private async updateSourceWarningGroups(source: LegadoBookSource, warningGroups: string[]): Promise<void> {
+    try {
+      await this.updateSourceErrorGroups(source, warningGroups);
+      logger.debug(TAG, `更新书源非致命问题分组 [${source.bookSourceName}]: ${warningGroups.join(',')}`);
+    } catch (error) {
+      logger.warn(TAG, `更新书源非致命问题分组失败 [${source.bookSourceName}]: ${String(error)}`);
+    }
   }
 
   private normalizeValidationConcurrency(value: number): number {

@@ -992,6 +992,12 @@ export struct MangaViewer {
       logger.debug(TAG, `[修复] 忽略初始化期间的页面索引变化: 外部=${this.currentPageIndex + 1}, 本地=${this.viewCurrentPageIndex + 1}`);
       return;
     }
+
+    const previousViewPageIndex: number = this.viewCurrentPageIndex;
+    if (this.currentPageIndex === previousViewPageIndex) {
+      logger.debug(TAG, `忽略同页索引回写: page=${this.currentPageIndex + 1}`);
+      return;
+    }
     
     logger.debug(TAG, `页面索引变化: 新页面=${this.currentPageIndex + 1}`);
     this.viewCurrentPageIndex = this.currentPageIndex;
@@ -1005,6 +1011,11 @@ export struct MangaViewer {
 
     // 触发翻页动画（双页卷曲动画期间不触发，避免重复动画）
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE && !this.showDualCurlEffect) {
+      const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+      const isForwardExternalJump: boolean = this.currentPageIndex > previousViewPageIndex;
+      this.pageTurnDirection = isForwardExternalJump
+        ? (isRTL ? 'right' : 'left')
+        : (isRTL ? 'left' : 'right');
       this.animatePageTurn();
       this.translateX = 0;
       this.translateY = 0;

@@ -80,6 +80,9 @@ export interface JsContext {
 export class NativeJsEngine {
   private vmId: number = -1;
   private isInitialized: boolean = false;
+  private initPromise: Promise<boolean> | null = null;
+  // Serialize setContext + executeJs for a single VM instance.
+  private executeSequence: Promise<void> = Promise.resolve();
   
   /**
    * 检查Native模块是否可用
@@ -142,7 +145,28 @@ export class NativeJsEngine {
       }
       this.vmId = -1;
       this.isInitialized = false;
+      this.initPromise = null;
+      this.executeSequence = Promise.resolve();
     }
+  }
+
+  private async ensureInitialized(): Promise<boolean> {
+    if (this.isInitialized) {
+      return true;
+    }
+
+    if (!this.initPromise) {
+      this.initPromise = this.initialize().then((initialized: boolean): boolean => {
+        this.initPromise = null;
+        return initialized;
+      }).catch((error: Object): boolean => {
+        this.initPromise = null;
+        logger.error(TAG, `初始化流程异常: ${String(error)}`);
+        return false;
+      });
+    }
+
+    return await this.initPromise;
   }
   
   /**
@@ -162,33 +186,49 @@ export class NativeJsEngine {
     }
     
     if (!this.isInitialized) {
-      const initialized = await this.initialize();
+      const initialized = await this.ensureInitialized();
       if (!initialized) {
         return { success: false, result: '', error: 'JSVM初始化失败' };
       }
     }
-    
-    try {
-      // 设置上下文变量
-      if (context) {
-        await this.setContext(context);
-      }
-      
-      // 执行代码
-      const result = jsvmEngine.executeJs(this.vmId, code);
-      
-      if (result.success) {
-        logger.debug(TAG, `JS执行成功: ${result.result.substring(0, 100)}`);
-        return { success: true, result: result.result };
-      } else {
+
+    return await this.executeWithLock(code, context);
+  }
+
+  private async executeWithLock(code: string, context?: JsContext): Promise<JsResult> {
+    const runTask = this.executeSequence.then(async (): Promise<JsResult> => {
+      try {
+        const engine = jsvmEngine;
+        if (!engine) {
+          return {
+            success: false,
+            result: '',
+            error: `Native JSVM模块未加载。${nativeModuleLoadError}\n\n请在build-profile.json5中配置Native编译选项。`
+          };
+        }
+
+        if (context) {
+          this.setContext(context);
+        }
+
+        const result = engine.executeJs(this.vmId, code);
+
+        if (result.success) {
+          logger.debug(TAG, `JS执行成功: ${result.result.substring(0, 100)}`);
+          return { success: true, result: result.result };
+        }
+
         logger.warn(TAG, `JS执行失败: ${result.result}`);
         return { success: false, result: '', error: result.result };
+      } catch (e) {
+        const errorMsg = String(e);
+        logger.error(TAG, `JS执行异常: ${errorMsg}`);
+        return { success: false, result: '', error: errorMsg };
       }
-    } catch (e) {
-      const errorMsg = String(e);
-      logger.error(TAG, `JS执行异常: ${errorMsg}`);
-      return { success: false, result: '', error: errorMsg };
-    }
+    });
+
+    this.executeSequence = runTask.then((): void => {}, (): void => {});
+    return await runTask;
   }
   
   /**
@@ -205,7 +245,7 @@ export class NativeJsEngine {
   /**
    * 设置执行上下文
    */
-  private async setContext(context: JsContext): Promise<void> {
+  private setContext(context: JsContext): void {
     if (!jsvmEngine) {
       return;
     }

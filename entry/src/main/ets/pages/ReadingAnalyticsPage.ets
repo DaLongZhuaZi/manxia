@@ -33,6 +33,8 @@ import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 
 const TAG = 'ReadingAnalyticsPage';
 const USER_MANUAL_TITLE = '漫匣使用手册'; // 需要过滤掉的使用手册标题
@@ -4838,11 +4840,12 @@ struct ReadingAnalyticsPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层（纯色，响应全局主题）
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 如果未询问过权限或功能未启用，显示权限请求界面
