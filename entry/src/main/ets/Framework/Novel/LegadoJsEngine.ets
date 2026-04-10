@@ -76,6 +76,8 @@ export interface JsContext {
   variables?: Record<string, string>;
   /** 原始内容（与result相同，用于兼容） */
   src?: string;
+  /** 本次执行绑定的jsLib快照（可选，优先级高于全局jsLib） */
+  jsLib?: string;
   /** 书源对象 */
   source?: ESObject;
 }
@@ -86,6 +88,7 @@ export interface JsContext {
 interface PendingTask {
   code: string;
   context: JsContext;
+  jsLibSnapshot: string;
   resolve: (result: JsExecuteResult) => void;
 }
 
@@ -284,6 +287,36 @@ export class LegadoJsEngine {
     
     return false;
   }
+
+  private shouldPreferWebViewForJs(code: string): boolean {
+    const trimmedCode = code.trim();
+    if (trimmedCode.length === 0) {
+      return false;
+    }
+
+    // 多语句/长脚本在Native编译失败概率较高，直接走WebView更稳
+    if (trimmedCode.length > 160 && (trimmedCode.includes('\n') || trimmedCode.includes(';'))) {
+      return true;
+    }
+
+    const riskyPatterns = [
+      'Date.now(',
+      'java.md5Encode',
+      'headers=',
+      'params=',
+      'setArguments(',
+      'cookie.',
+      'cache.',
+      'source.'
+    ];
+    for (const pattern of riskyPatterns) {
+      if (trimmedCode.includes(pattern)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
   
   /**
    * 执行JavaScript代码
@@ -296,18 +329,27 @@ export class LegadoJsEngine {
       return { success: true, result: '' };
     }
 
+    // 优先使用上下文中的jsLib快照，避免并发时全局jsLib串源
+    const activeJsLib = context.jsLib !== undefined ? context.jsLib : this.jsLib;
+
     // 检测是否需要网络请求功能
     const needsNetwork = this.needsNetworkCapability(code);
+    const shouldPreferWebView = !needsNetwork && this.shouldPreferWebViewForJs(code);
     
     // 如果需要网络请求，直接使用WebView执行（WebView支持XMLHttpRequest同步请求）
     // 注意：Native JSVM不支持网络请求，因为HarmonyOS没有libcurl
-    if (needsNetwork) {
-      logger.debug(TAG, `JS代码包含网络请求函数，使用WebView执行`);
+    if (needsNetwork || shouldPreferWebView) {
+      if (shouldPreferWebView) {
+        logger.debug(TAG, `JS代码命中Native高风险特征，优先使用WebView执行`);
+      } else {
+        logger.debug(TAG, `JS代码包含网络请求函数，使用WebView执行`);
+      }
       if (this.isReady && this.webviewController) {
         return new Promise((resolve) => {
           const task: PendingTask = {
             code: code,
             context: context,
+            jsLibSnapshot: activeJsLib,
             resolve: resolve
           };
           this.pendingTasks.push(task);
@@ -323,7 +365,7 @@ export class LegadoJsEngine {
     if (this.nativeEngineReady && this.nativeEngine) {
       try {
         // 构建完整的执行脚本（包含辅助函数和上下文）
-        const fullScript = this.buildNativeScript(code, context);
+        const fullScript = this.buildNativeScript(code, context, activeJsLib);
         
         const nativeContext: NativeJsContext = {
           result: context.result,
@@ -342,16 +384,40 @@ export class LegadoJsEngine {
             const errorMsg = result.result.substring(6); // 移除"ERROR:"前缀
             logger.warn(TAG, `Native执行错误: ${errorMsg}`);
             // 返回错误信息而不是空字符串，方便调试
-            return { success: true, result: '', error: errorMsg };
+            return { success: false, result: '', error: errorMsg };
           }
           logger.debug(TAG, `Native执行结果: ${result.result ? result.result.substring(0, 100) : '(空)'}`);
           return { success: true, result: result.result };
         }
-        // Native执行失败
+        // Native执行失败时降级到WebView执行（只影响失败路径）
         logger.warn(TAG, `Native执行失败: ${result.error}`);
+        if (this.isReady && this.webviewController) {
+          return new Promise((resolve) => {
+            const task: PendingTask = {
+              code: code,
+              context: context,
+              jsLibSnapshot: activeJsLib,
+              resolve: resolve
+            };
+            this.pendingTasks.push(task);
+            this.processPendingTasks();
+          });
+        }
         return { success: false, result: '', error: result.error || 'Native执行失败' };
       } catch (e) {
         logger.error(TAG, `Native执行异常: ${String(e)}`);
+        if (this.isReady && this.webviewController) {
+          return new Promise((resolve) => {
+            const task: PendingTask = {
+              code: code,
+              context: context,
+              jsLibSnapshot: activeJsLib,
+              resolve: resolve
+            };
+            this.pendingTasks.push(task);
+            this.processPendingTasks();
+          });
+        }
         return { success: false, result: '', error: String(e) };
       }
     }
@@ -375,6 +441,7 @@ export class LegadoJsEngine {
         const task: PendingTask = {
           code: code,
           context: context,
+          jsLibSnapshot: activeJsLib,
           resolve: resolve
         };
         this.pendingTasks.push(task);
@@ -460,7 +527,7 @@ export class LegadoJsEngine {
     logger.debug(TAG, `开始执行WebView JS任务，剩余队列: ${this.pendingTasks.length}`);
     
     try {
-      const result = await this.executeInWebView(task.code, task.context);
+      const result = await this.executeInWebView(task.code, task.context, task.jsLibSnapshot);
       logger.debug(TAG, `WebView JS任务执行完成，success=${result.success}`);
       task.resolve(result);
     } catch (error) {
@@ -562,7 +629,7 @@ export class LegadoJsEngine {
   /**
    * 在WebView中执行JavaScript（带超时保护）
    */
-  private async executeInWebView(code: string, context: JsContext): Promise<JsExecuteResult> {
+  private async executeInWebView(code: string, context: JsContext, jsLibSnapshot: string): Promise<JsExecuteResult> {
     if (!this.webviewController) {
       return { success: false, result: '', error: 'WebView未初始化' };
     }
@@ -576,7 +643,7 @@ export class LegadoJsEngine {
       // 然后我们可以在需要时重新执行脚本
       
       // 构建执行脚本
-      const script = this.buildScript(code, context);
+      const script = this.buildScript(code, context, jsLibSnapshot);
       
       // 包装脚本以捕获执行结果、错误、日志、Toast消息和Cookie变化
       // 注意：不再嵌套buildScript的IIFE，直接执行其内部代码
@@ -897,7 +964,7 @@ export class LegadoJsEngine {
   /**
    * 构建执行脚本
    */
-  private buildScript(code: string, context: JsContext): string {
+  private buildScript(code: string, context: JsContext, jsLibSnapshot: string): string {
     // 获取sourceUrl（优先从variables中获取，否则使用baseUrl）
     const sourceUrl = context.variables?.['sourceUrl'] || context.baseUrl || '';
     
@@ -1693,25 +1760,28 @@ export class LegadoJsEngine {
     `;
 
     // 处理代码，确保最后一个表达式被返回
-    // Legado使用Rhino引擎，会自动返回最后一个表达式的值
+    // 注意：不能直接对整行前缀 return，否则单行多语句会提前返回第一句
     let processedCode = code.trim();
     if (!processedCode.includes('return ')) {
-      const lines = processedCode.split('\n');
-      if (lines.length > 0) {
-        const lastLine = lines[lines.length - 1].trim();
-        if (lastLine && 
-            !lastLine.startsWith('var ') && 
-            !lastLine.startsWith('let ') && 
-            !lastLine.startsWith('const ') &&
-            !lastLine.startsWith('function ') &&
-            !lastLine.startsWith('if ') &&
-            !lastLine.startsWith('for ') &&
-            !lastLine.startsWith('while ') &&
-            !lastLine.startsWith('//') &&
-            !lastLine.endsWith('{') &&
-            !lastLine.endsWith('}')) {
-          lines[lines.length - 1] = 'return ' + lastLine;
-          processedCode = lines.join('\n');
+      const statements = processedCode
+        .split(';')
+        .map((statement: string): string => statement.trim())
+        .filter((statement: string): boolean => statement.length > 0);
+      if (statements.length > 0) {
+        const lastStatement = statements[statements.length - 1];
+        if (lastStatement &&
+          !lastStatement.startsWith('var ') &&
+          !lastStatement.startsWith('let ') &&
+          !lastStatement.startsWith('const ') &&
+          !lastStatement.startsWith('function ') &&
+          !lastStatement.startsWith('if ') &&
+          !lastStatement.startsWith('for ') &&
+          !lastStatement.startsWith('while ') &&
+          !lastStatement.startsWith('//') &&
+          !lastStatement.endsWith('{') &&
+          !lastStatement.endsWith('}')) {
+          statements[statements.length - 1] = 'return ' + lastStatement;
+          processedCode = statements.join(';\n');
         }
       }
     }
@@ -1739,7 +1809,7 @@ export class LegadoJsEngine {
           };
           
           // 加载jsLib，让其中定义的函数在作用域内可用
-          ${this.jsLib}
+          ${jsLibSnapshot}
           
           // 如果jsLib中定义了setArguments函数，重新绑定其this上下文
           if (typeof setArguments === 'function') {
@@ -1749,11 +1819,21 @@ export class LegadoJsEngine {
             };
           }
           
+          var __originalResult__ = result;
           var __result__ = (function() {
             ${processedCode}
           })();
-          
-          return __result__ !== undefined ? String(__result__) : '';
+
+          var __finalResult__ = __result__;
+          if (__finalResult__ === undefined || __finalResult__ === null) {
+            if (typeof result !== 'undefined' && result !== null && result !== __originalResult__) {
+              __finalResult__ = result;
+            } else {
+              __finalResult__ = '';
+            }
+          }
+
+          return String(__finalResult__);
         } catch(e) {
           return 'ERROR:' + e.message;
         }
@@ -1767,7 +1847,7 @@ export class LegadoJsEngine {
    * 构建Native JSVM执行脚本
    * 包含完整的辅助函数和上下文变量
    */
-  private buildNativeScript(code: string, context: JsContext): string {
+  private buildNativeScript(code: string, context: JsContext, jsLibSnapshot: string): string {
     // 获取sourceUrl（优先从variables中获取，否则使用baseUrl）
     const sourceUrl = context.variables?.['sourceUrl'] || context.baseUrl || '';
     
@@ -2345,7 +2425,7 @@ export class LegadoJsEngine {
           };
           
           // 加载jsLib，让其中定义的函数在作用域内可用
-          ${this.jsLib}
+          ${jsLibSnapshot}
           
           // 如果jsLib中定义了setArguments函数，重新绑定其this上下文
           if (typeof setArguments === 'function') {
@@ -2355,11 +2435,21 @@ export class LegadoJsEngine {
             };
           }
           
+          var __originalResult__ = result;
           var __result__ = (function() {
             ${processedCode}
           })();
-          
-          return __result__ !== undefined ? String(__result__) : '';
+
+          var __finalResult__ = __result__;
+          if (__finalResult__ === undefined || __finalResult__ === null) {
+            if (typeof result !== 'undefined' && result !== null && result !== __originalResult__) {
+              __finalResult__ = result;
+            } else {
+              __finalResult__ = '';
+            }
+          }
+
+          return String(__finalResult__);
         } catch(e) {
           return 'ERROR:' + e.message;
         }

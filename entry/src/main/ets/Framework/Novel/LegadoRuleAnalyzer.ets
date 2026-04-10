@@ -277,8 +277,14 @@ export class LegadoRuleAnalyzer {
   private htmlBridge: LegadoHtmlBridge | null = null;
   private htmlToTextCache: Map<string, string> = new Map();
   private maxElementsLimit: number = 0;
+  private jsLib: string = '';
 
   constructor() {}
+
+  setJsLib(jsLib?: string): LegadoRuleAnalyzer {
+    this.jsLib = jsLib || '';
+    return this;
+  }
 
   setMaxElementsLimit(limit?: number): LegadoRuleAnalyzer {
     if (limit === undefined || limit <= 0) {
@@ -1286,21 +1292,22 @@ export class LegadoRuleAnalyzer {
           const context: JsContext = jsContext || {
             result: this.content,
             baseUrl: this.baseUrl,
-            src: this.content
+            src: this.content,
+            jsLib: this.jsLib
           };
-          const jsResult = await jsEngine.execute(jsCode, context);
+          if (!context.jsLib) {
+            context.jsLib = this.jsLib;
+          }
+          const executeResult = await jsEngine.execute(jsCode, context);
+          if (!executeResult.success) {
+            logger.warn(TAG, `JS规则执行失败: ${executeResult.error || 'unknown error'}`);
+            break;
+          }
           // 性能优化：减少日志输出
-          // logger.debug(TAG, `JS执行结果: ${String(jsResult).substring(0, 200)}`);
+          // logger.debug(TAG, `JS执行结果: ${executeResult.result.substring(0, 200)}`);
           
           // 更新content为JS执行结果
-          let jsResultStr = '';
-          if (typeof jsResult === 'string') {
-            jsResultStr = jsResult;
-          } else if (Array.isArray(jsResult)) {
-            jsResultStr = JSON.stringify(jsResult);
-          } else if (jsResult !== null && jsResult !== undefined) {
-            jsResultStr = String(jsResult);
-          }
+          const jsResultStr = executeResult.result;
           
           // 如果有后续规则，使用JS结果继续解析
           if (afterJsRule) {
@@ -1394,16 +1401,16 @@ export class LegadoRuleAnalyzer {
           src: element,
           key: jsContext?.key,
           page: jsContext?.page,
-          variables: jsContext?.variables
+          variables: jsContext?.variables,
+          jsLib: jsContext?.jsLib || this.jsLib
         };
         
-        const jsResult = await jsEngine.execute(jsCode, context);
-        let resultStr = '';
-        if (typeof jsResult === 'string') {
-          resultStr = jsResult;
-        } else if (jsResult !== null && jsResult !== undefined) {
-          resultStr = String(jsResult);
+        const executeResult = await jsEngine.execute(jsCode, context);
+        if (!executeResult.success) {
+          logger.warn(TAG, `链式规则JS执行失败: ${executeResult.error || 'unknown error'}`);
+          continue;
         }
+        const resultStr = executeResult.result;
         
         if (resultStr) {
           processedResults.push(resultStr);
@@ -5043,7 +5050,8 @@ export class LegadoRuleAnalyzer {
     const context: JsContext = {
       result: this.content,
       baseUrl: this.baseUrl,
-      variables: this.getVariablesObject()
+      variables: this.getVariablesObject(),
+      jsLib: this.jsLib
     };
     
     // 异步执行，结果会被丢弃（同步上下文无法等待）
@@ -5068,7 +5076,8 @@ export class LegadoRuleAnalyzer {
     const context: JsContext = {
       result: this.content,
       baseUrl: this.baseUrl,
-      variables: this.getVariablesObject()
+      variables: this.getVariablesObject(),
+      jsLib: this.jsLib
     };
     
     const result = await jsEngine.execute(code, context);

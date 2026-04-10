@@ -43,6 +43,8 @@ struct SplashPage {
   @StorageProp(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE) customBackgroundImage: string = '';
   @StorageProp(CUSTOM_THEME_KEYS.IS_CUSTOM_THEME_ACTIVE) customThemeActive: boolean = false;
   @StorageProp(CUSTOM_THEME_KEYS.CURRENT_THEME_ID) currentCustomThemeId: string = '';
+  @StorageProp(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO) hideSplashLogo: boolean = false;
+  @StorageProp(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS) hideSplashProgress: boolean = false;
 
   // 主题管理器
   private themeManager: ThemeManager = ThemeManager.getInstance();
@@ -106,17 +108,18 @@ struct SplashPage {
       logger.info('SplashPage', '🎯 开始完整初始化流程');
       this.initStartTime = Date.now();
       
-      // 1. 注册初始化进度监听器
-      this.setupInitializationListener();
-      
-      // 2. 初始化欢迎引导管理器（SplashPage自己的初始化）
+      // 1. 初始化欢迎引导管理器（SplashPage自己的初始化）
       logger.info('SplashPage', '📖 初始化欢迎引导管理器...');
       await this.welcomeGuideManager.initialize();
       logger.info('SplashPage', '✅ 欢迎引导管理器初始化完成');
 
-      // 3. 初始化主题管理器
+      // 2. 初始化主题管理器（先加载主题级开屏显示策略）
       logger.info('SplashPage', '🎨 初始化主题管理器...');
+      const wasThemeManagerReady: boolean = this.themeManager.isReady();
       await this.themeManager.initialize();
+      if (wasThemeManagerReady) {
+        await this.themeManager.refreshSplashBackgroundForLaunch();
+      }
       
       // 4. 初始化主题感知功能
       await ThemeAwareHelper.initializeThemeAware(
@@ -132,11 +135,18 @@ struct SplashPage {
       
       logger.info('SplashPage', `✅ 主题初始化完成: ${this.themeState.currentTheme}`);
       this.isThemeLoaded = true;
+      logger.info(
+        TAG,
+        `开屏显示策略: customActive=${this.customThemeActive}, hideLogo=${this.themeManager.isSplashLogoHiddenByTheme()}, hideProgress=${this.themeManager.isSplashProgressHiddenByTheme()}`
+      );
 
-      // 5. 等待 EntryAbility 的初始化完成
+      // 3. 注册初始化进度监听器（在主题状态加载后再绑定，避免先显示再隐藏）
+      this.setupInitializationListener();
+
+      // 4. 等待 EntryAbility 的初始化完成
       await this.waitForAppInitialization();
       
-      // 6. 所有初始化完成
+      // 5. 所有初始化完成
       this.isPageLoaded = true;
       this.checkInitializationComplete();
 
@@ -347,6 +357,32 @@ struct SplashPage {
     return ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme);
   }
 
+  private shouldShowSplashLogo(): boolean {
+    const hiddenByManager: boolean = this.themeManager.isSplashLogoHiddenByTheme();
+    if (hiddenByManager) {
+      return false;
+    }
+    if (!this.customThemeActive) {
+      return true;
+    }
+    return !this.hideSplashLogo;
+  }
+
+  private shouldShowSplashProgress(): boolean {
+    // 主题状态未加载完成前不显示进度，避免配置加载前出现错误闪现
+    if (!this.isThemeLoaded) {
+      return false;
+    }
+    const hiddenByManager: boolean = this.themeManager.isSplashProgressHiddenByTheme();
+    if (hiddenByManager) {
+      return false;
+    }
+    if (!this.customThemeActive) {
+      return true;
+    }
+    return !this.hideSplashProgress;
+  }
+
   build() {
     // 沉浸式显示设计：Stack双层布局
     Stack() {
@@ -389,56 +425,60 @@ struct SplashPage {
         // 主要内容区域
         Column() {
           // Logo区域 - 使用应用图标
-          Image($r('app.media.icon'))
-            .width(126)
-            .height(126)
-            .objectFit(ImageFit.Contain)
-            .animation({ duration: 300, curve: Curve.EaseOut })
-
-          // 加载状态文本
-          Text(this.loadingProgress)
-            .fontSize(16)
-            .fontColor(this.getTextColor())
-            .opacity(0.8)
-            .margin({ top: 24 })
-            .animation({ duration: 200, curve: Curve.EaseOut })
-          
-          // 进度条容器
-          Column() {
-            // 进度条背景
-            Stack({ alignContent: Alignment.Start }) {
-              // 背景轨道
-              Row()
-                .width('100%')
-                .height(4)
-                .borderRadius(2)
-                .backgroundColor(this.themeState.currentTheme === 'dark' 
-                  ? 'rgba(255, 255, 255, 0.1)' 
-                  : 'rgba(0, 0, 0, 0.1)')
-              
-              // 进度填充
-              Row()
-                .width(`${this.initProgress}%`)
-                .height(4)
-                .borderRadius(2)
-                .backgroundColor(this.themeState.currentTheme === 'dark'
-                  ? '#4FC3F7'
-                  : '#2196F3')
-                .animation({ duration: 300, curve: Curve.EaseOut })
-            }
-            .width(200)
-            .height(4)
-            
-            // 进度百分比文本
-            Text(`${this.initProgress}%`)
-              .fontSize(12)
-              .fontColor(this.getTextColor())
-              .opacity(0.6)
-              .margin({ top: 8 })
+          if (this.shouldShowSplashLogo()) {
+            Image($r('app.media.icon'))
+              .width(126)
+              .height(126)
+              .objectFit(ImageFit.Contain)
+              .animation({ duration: 300, curve: Curve.EaseOut })
           }
-          .margin({ top: 32 })
-          .opacity(this.initProgress > 0 ? 1 : 0)
-          .animation({ duration: 300, curve: Curve.EaseOut })
+
+          if (this.shouldShowSplashProgress()) {
+            // 加载状态文本
+            Text(this.loadingProgress)
+              .fontSize(16)
+              .fontColor(this.getTextColor())
+              .opacity(0.8)
+              .margin({ top: 24 })
+              .animation({ duration: 200, curve: Curve.EaseOut })
+            
+            // 进度条容器
+            Column() {
+              // 进度条背景
+              Stack({ alignContent: Alignment.Start }) {
+                // 背景轨道
+                Row()
+                  .width('100%')
+                  .height(4)
+                  .borderRadius(2)
+                  .backgroundColor(this.themeState.currentTheme === 'dark' 
+                    ? 'rgba(255, 255, 255, 0.1)' 
+                    : 'rgba(0, 0, 0, 0.1)')
+                
+                // 进度填充
+                Row()
+                  .width(`${this.initProgress}%`)
+                  .height(4)
+                  .borderRadius(2)
+                  .backgroundColor(this.themeState.currentTheme === 'dark'
+                    ? '#4FC3F7'
+                    : '#2196F3')
+                  .animation({ duration: 300, curve: Curve.EaseOut })
+              }
+              .width(200)
+              .height(4)
+              
+              // 进度百分比文本
+              Text(`${this.initProgress}%`)
+                .fontSize(12)
+                .fontColor(this.getTextColor())
+                .opacity(0.6)
+                .margin({ top: 8 })
+            }
+            .margin({ top: 32 })
+            .opacity(this.initProgress > 0 ? 1 : 0)
+            .animation({ duration: 300, curve: Curve.EaseOut })
+          }
         }
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)

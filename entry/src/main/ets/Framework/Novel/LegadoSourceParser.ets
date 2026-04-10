@@ -375,11 +375,29 @@ export class LegadoSourceParser {
    */
   static getBaseUrl(source: LegadoBookSource): string {
     try {
-      const url = source.bookSourceUrl;
-      const match = url.match(/^(https?:\/\/[^\/]+)/);
+      const url = LegadoSourceParser.normalizeSourceUrl(source.bookSourceUrl);
+      const match = url.match(/^(https?:\/\/[^\/]+)/i);
       return match ? match[1] : url;
     } catch (e) {
       return source.bookSourceUrl;
     }
+  }
+
+  /**
+   * 归一化书源URL，去除附加标识（如 ##@xxx）和无效片段
+   */
+  private static normalizeSourceUrl(rawUrl: string): string {
+    let result = rawUrl.trim();
+    const extensionSeparator = result.indexOf('##');
+    if (extensionSeparator >= 0) {
+      result = result.substring(0, extensionSeparator).trim();
+    }
+
+    const fragmentIndex = result.indexOf('#');
+    if (fragmentIndex >= 0) {
+      result = result.substring(0, fragmentIndex).trim();
+    }
+
+    return result;
   }
 }

@@ -3,7 +3,7 @@
  * 提供自定义主题功能：图片选择、裁剪、模糊效果、主色调提取、深色模式适配
  */
 import { logger } from '../Utils/Logger';
-import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS } from '../Framework/Managers/ThemeManager';
+import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS, SplashRotationRule } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -13,7 +13,7 @@ import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { UIContext, LengthMetrics, promptAction } from '@kit.ArkUI';
-import { cropToDisplayAspect, cropToDisplayAspectWithOptions, CropAlignment } from '../Framework/Utils/ImageCropper';
+import { CropAlignment } from '../Framework/Utils/ImageCropper';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
 import effectKit from '@ohos.effectKit';
@@ -39,12 +39,24 @@ interface CustomTheme {
   backgroundImagePath: string; // 浅色模式图片路径
   backgroundImagePathDark?: string; // 深色模式图片路径（可选，用于兼容旧版本）
   splashBackgroundImagePath?: string; // 开屏图片路径（可选）
+  splashBackgroundImagePaths?: string[]; // 多开屏图片路径
+  splashRotationRule?: SplashRotationRule; // 开屏轮换规则
+  splashRotationCursor?: number; // 轮换游标
+  splashRotationLastDateKey?: string; // 轮换日期键
+  hideSplashLogo?: boolean; // 启动页不显示应用logo
+  hideSplashProgress?: boolean; // 不显示启动进度
   blurLevel: number;
   brightness: number; // 亮度调整（0-100），50为原始亮度
   primaryColor: string;
   isDark: boolean;
   createTime: number;
   lastModified: number;
+}
+
+interface SplashRotationOption {
+  label: string;
+  description: string;
+  value: SplashRotationRule;
 }
 
 /**
@@ -75,6 +87,37 @@ interface RGBColor {
   b: number;
 }
 
+interface ViewfinderImageMetrics {
+  frameWidth: number;
+  frameHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+  coverScale: number;
+  baseDisplayWidth: number;
+  baseDisplayHeight: number;
+  displayWidth: number;
+  displayHeight: number;
+  maxOffsetX: number;
+  maxOffsetY: number;
+}
+
+interface ViewfinderCropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface BackgroundDraftSelection {
+  originalPath: string;
+  appliedPath: string;
+}
+
+enum ThemeMediaTabType {
+  BACKGROUND = 0,
+  SPLASH = 1
+}
+
 
 @Component
 export struct ThemeSettingsPage {
@@ -103,24 +146,57 @@ export struct ThemeSettingsPage {
   @State responsive_contentPadding: number = 16;
   @State responsive_maxContentWidth: number = 1200;
   @State responsive_isLandscape: boolean = false;
+  @State previewFrameAspectRatio: number = 9 / 16;
+  @State previewFrameWidthVp: number = 210;
+  @State previewFrameHeightVp: number = 373;
+  @State mediaEditorTab: ThemeMediaTabType = ThemeMediaTabType.BACKGROUND;
+  @State isEditingCustomTheme: boolean = false;
+  @State editingThemeId: string = '';
+  @State editingThemeCreateTime: number = 0;
 
   // 当前选择的图片
   @State selectedImagePath: string = '';
+  @State backgroundDraftImagePaths: string[] = [];
+  @State activeBackgroundDraftPath: string = '';
   @State selectedImagePixelMap: image.PixelMap | null = null;
   // 开屏图片选择
   @State selectedSplashImagePath: string = '';
   @State selectedSplashImagePixelMap: image.PixelMap | null = null;
   @State processedSplashImagePixelMap: image.PixelMap | null = null;
   @State processedSplashImagePath: string = '';
+  @State splashDraftImagePaths: string[] = [];
+  @State splashSourceImagePaths: string[] = [];
+  @State activeSplashSourcePath: string = '';
+  @State splashCropAlignment: CropAlignment = CropAlignment.CENTER;
+  @State splashCropZoom: number = 1.0;
+  @State splashRotateQuarterTurns: number = 0;
+  @State splashRotationRule: SplashRotationRule = SplashRotationRule.EVERY_LAUNCH;
+  @State hideSplashLogo: boolean = false;
+  @State hideSplashProgress: boolean = false;
+  @State splashViewfinderScale: number = 1.0;
+  @State splashViewfinderOffsetX: number = 0;
+  @State splashViewfinderOffsetY: number = 0;
+  @State selectedSplashPixelWidth: number = 0;
+  @State selectedSplashPixelHeight: number = 0;
   
   // 主题商店展示与创建模式
   @State isCreatingCustomTheme: boolean = false;
   @State isCropping: boolean = false;
   @State cropAlignment: CropAlignment = CropAlignment.CENTER;
   @State cropZoom: number = 1.0;
+  @State backgroundRotateQuarterTurns: number = 0;
+  @State backgroundViewfinderScale: number = 1.0;
+  @State backgroundViewfinderOffsetX: number = 0;
+  @State backgroundViewfinderOffsetY: number = 0;
+  @State selectedImagePixelWidth: number = 0;
+  @State selectedImagePixelHeight: number = 0;
   @State newThemeName: string = '';
   @State selectedPrimaryColor: string = '';
   @State availablePrimaryColors: string[] = [];
+  @State customPrimaryColorHex: string = '#007DFF';
+  @State customPrimaryColorR: number = 0;
+  @State customPrimaryColorG: number = 125;
+  @State customPrimaryColorB: number = 255;
   // 多选删除：选择模式与已选主题ID列表
   @State selectionModeEnabled: boolean = false;
   @State selectedThemeIds: string[] = [];
@@ -150,6 +226,24 @@ export struct ThemeSettingsPage {
   
   // 滑块调节防抖定时器
   private effectDebounceTimer: number = -1;
+  private readonly previewFrameMinWidthVp: number = 180;
+  private readonly previewFrameMaxWidthVp: number = 420;
+  private readonly previewFrameLandscapeMaxHeightVp: number = 520;
+  private readonly previewFramePortraitMaxHeightVp: number = 680;
+  private readonly viewfinderMinScale: number = 1.0;
+  private readonly viewfinderMaxScale: number = 4.0;
+  private viewfinderPinchStartScale: number = 1.0;
+  private viewfinderPinchStartOffsetX: number = 0;
+  private viewfinderPinchStartOffsetY: number = 0;
+  private viewfinderPanStartOffsetX: number = 0;
+  private viewfinderPanStartOffsetY: number = 0;
+  private backgroundDraftSelections: Map<string, BackgroundDraftSelection> = new Map<string, BackgroundDraftSelection>();
+  private splashViewfinderPinchStartScale: number = 1.0;
+  private splashViewfinderPinchStartOffsetX: number = 0;
+  private splashViewfinderPinchStartOffsetY: number = 0;
+  private splashViewfinderPanStartOffsetX: number = 0;
+  private splashViewfinderPanStartOffsetY: number = 0;
+  private splashDraftSelections: Map<string, BackgroundDraftSelection> = new Map<string, BackgroundDraftSelection>();
   
   // 用户主题配置管理器
   private userThemeConfigManager: UserThemeConfigManager = UserThemeConfigManager.getInstance();
@@ -185,6 +279,23 @@ export struct ThemeSettingsPage {
   private SECONDARY_THEME_NAME: string = '第二自定义主题';
   // 原始背景图片所在 rawfile 目录（如需调整实际目录，请修改此常量）
   private RAW_BACKGROUND_DIR: string = 'backgrounds';
+  private splashRotationOptions: SplashRotationOption[] = [
+    {
+      label: '每次启动轮换',
+      description: '每次启动应用时切到下一张开屏图',
+      value: SplashRotationRule.EVERY_LAUNCH
+    },
+    {
+      label: '每天轮换',
+      description: '每天只切换一次，全天保持同一张开屏图',
+      value: SplashRotationRule.DAILY
+    },
+    {
+      label: '固定第一张',
+      description: '始终使用列表第一张开屏图',
+      value: SplashRotationRule.FIXED_FIRST
+    }
+  ];
   
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
@@ -212,6 +323,8 @@ export struct ThemeSettingsPage {
     colorsInit.push(THEME_CONFIGS[ThemeType.LIGHT].primaryColor);
     colorsInit.push(THEME_CONFIGS[ThemeType.DARK].primaryColor);
     this.availablePrimaryColors = colorsInit;
+    this.selectedPrimaryColor = colorsInit[0];
+    this.syncCustomColorEditor(this.selectedPrimaryColor);
     
     // 初始化用户主题配置并加载当前设置
     this.initializeUserThemeConfig();
@@ -269,6 +382,1105 @@ export struct ThemeSettingsPage {
   /**
    * 初始化用户主题配置
    */
+  private clampColorChannel(value: number): number {
+    if (value < 0) {
+      return 0;
+    }
+    if (value > 255) {
+      return 255;
+    }
+    return Math.round(value);
+  }
+
+  private ensureColorInPalette(color: string): void {
+    if (!this.availablePrimaryColors.includes(color)) {
+      const nextColors: string[] = [];
+      let idx: number = 0;
+      while (idx < this.availablePrimaryColors.length) {
+        nextColors.push(this.availablePrimaryColors[idx]);
+        idx = idx + 1;
+      }
+      nextColors.push(color);
+      this.availablePrimaryColors = nextColors;
+    }
+  }
+
+  private normalizeHexColor(color: string): string {
+    if (!color || color.length === 0) {
+      return '#007DFF';
+    }
+    let normalized: string = color.trim().toUpperCase();
+    if (!normalized.startsWith('#')) {
+      normalized = `#${normalized}`;
+    }
+    if (normalized.length === 4) {
+      const r: string = normalized.substring(1, 2);
+      const g: string = normalized.substring(2, 3);
+      const b: string = normalized.substring(3, 4);
+      normalized = `#${r}${r}${g}${g}${b}${b}`;
+    }
+    const hexRegex: RegExp = /^#[0-9A-F]{6}$/;
+    if (!hexRegex.test(normalized)) {
+      return '#007DFF';
+    }
+    return normalized;
+  }
+
+  private syncCustomColorEditor(color: string): void {
+    const normalized: string = this.normalizeHexColor(color);
+    const rgb: RGBColor = this.parseHexColorToRGB(normalized);
+    this.customPrimaryColorHex = normalized;
+    this.customPrimaryColorR = this.clampColorChannel(rgb.r);
+    this.customPrimaryColorG = this.clampColorChannel(rgb.g);
+    this.customPrimaryColorB = this.clampColorChannel(rgb.b);
+  }
+
+  private updateCustomColorFromChannels(): void {
+    const r: number = this.clampColorChannel(this.customPrimaryColorR);
+    const g: number = this.clampColorChannel(this.customPrimaryColorG);
+    const b: number = this.clampColorChannel(this.customPrimaryColorB);
+    this.customPrimaryColorR = r;
+    this.customPrimaryColorG = g;
+    this.customPrimaryColorB = b;
+    this.customPrimaryColorHex = `#${this.toHex(r)}${this.toHex(g)}${this.toHex(b)}`;
+  }
+
+  private applyCustomPrimaryColorFromEditor(): void {
+    const normalized: string = this.normalizeHexColor(this.customPrimaryColorHex);
+    this.customPrimaryColorHex = normalized;
+    const rgb: RGBColor = this.parseHexColorToRGB(normalized);
+    this.customPrimaryColorR = this.clampColorChannel(rgb.r);
+    this.customPrimaryColorG = this.clampColorChannel(rgb.g);
+    this.customPrimaryColorB = this.clampColorChannel(rgb.b);
+    this.ensureColorInPalette(normalized);
+    this.selectedPrimaryColor = normalized;
+  }
+
+  private getSplashPathsFromTheme(theme: CustomTheme): string[] {
+    const normalized: string[] = [];
+    if (theme.splashBackgroundImagePaths && theme.splashBackgroundImagePaths.length > 0) {
+      let idx: number = 0;
+      while (idx < theme.splashBackgroundImagePaths.length) {
+        const candidate: string = theme.splashBackgroundImagePaths[idx];
+        if (candidate && candidate.length > 0) {
+          normalized.push(candidate);
+        }
+        idx = idx + 1;
+      }
+    }
+    if (normalized.length === 0 && theme.splashBackgroundImagePath && theme.splashBackgroundImagePath.length > 0) {
+      normalized.push(theme.splashBackgroundImagePath);
+    }
+    return normalized;
+  }
+
+  private getSplashRotationRuleFromTheme(theme: CustomTheme): SplashRotationRule {
+    if (theme.splashRotationRule === SplashRotationRule.DAILY) {
+      return SplashRotationRule.DAILY;
+    }
+    if (theme.splashRotationRule === SplashRotationRule.FIXED_FIRST) {
+      return SplashRotationRule.FIXED_FIRST;
+    }
+    return SplashRotationRule.EVERY_LAUNCH;
+  }
+
+  private getHideSplashLogoFromTheme(theme: CustomTheme): boolean {
+    return theme.hideSplashLogo === true;
+  }
+
+  private getHideSplashProgressFromTheme(theme: CustomTheme): boolean {
+    return theme.hideSplashProgress === true;
+  }
+
+  private getSplashRotationRuleLabel(rule: SplashRotationRule): string {
+    let idx: number = 0;
+    while (idx < this.splashRotationOptions.length) {
+      const option: SplashRotationOption = this.splashRotationOptions[idx];
+      if (option.value === rule) {
+        return option.label;
+      }
+      idx = idx + 1;
+    }
+    return '每次启动轮换';
+  }
+
+  private isMediaTabActive(tab: ThemeMediaTabType): boolean {
+    return this.mediaEditorTab === tab;
+  }
+
+  private getMediaTabLabel(tab: ThemeMediaTabType): string {
+    if (tab === ThemeMediaTabType.SPLASH) {
+      return '开屏图片';
+    }
+    return '背景图片';
+  }
+
+  private normalizeQuarterTurns(turns: number): number {
+    let normalized: number = turns % 4;
+    if (normalized < 0) {
+      normalized = normalized + 4;
+    }
+    return normalized;
+  }
+
+  private getQuarterTurnsLabel(turns: number): string {
+    const normalized: number = this.normalizeQuarterTurns(turns);
+    if (normalized === 1) {
+      return '90°';
+    }
+    if (normalized === 2) {
+      return '180°';
+    }
+    if (normalized === 3) {
+      return '270°';
+    }
+    return '0°';
+  }
+
+  private async readPixelMapToRGBA(pixelMap: image.PixelMap): Promise<ArrayBuffer> {
+    const info = await pixelMap.getImageInfo();
+    const width: number = info.size.width;
+    const height: number = info.size.height;
+    const buffer = new ArrayBuffer(width * height * 4);
+    await pixelMap.readPixelsToBuffer(buffer);
+    const pixels = new Uint8Array(buffer);
+    for (let idx = 0; idx < pixels.length; idx += 4) {
+      const b: number = pixels[idx];
+      const r: number = pixels[idx + 2];
+      pixels[idx] = r;
+      pixels[idx + 2] = b;
+    }
+    return buffer;
+  }
+
+  private async createPixelMapFromRGBA(buffer: ArrayBuffer, width: number, height: number): Promise<image.PixelMap> {
+    const createOptions: image.InitializationOptions = {
+      size: { width: width, height: height },
+      pixelFormat: 3,
+      alphaType: 0,
+      editable: true
+    };
+    return await image.createPixelMap(buffer, createOptions);
+  }
+
+  private async rotatePixelMapByQuarterTurns(pixelMap: image.PixelMap, quarterTurns: number): Promise<image.PixelMap> {
+    const turns: number = this.normalizeQuarterTurns(quarterTurns);
+    const srcInfo = await pixelMap.getImageInfo();
+    const srcWidth: number = srcInfo.size.width;
+    const srcHeight: number = srcInfo.size.height;
+    const srcBuffer: ArrayBuffer = await this.readPixelMapToRGBA(pixelMap);
+
+    if (turns === 0) {
+      return await this.createPixelMapFromRGBA(srcBuffer, srcWidth, srcHeight);
+    }
+
+    const dstWidth: number = turns % 2 === 0 ? srcWidth : srcHeight;
+    const dstHeight: number = turns % 2 === 0 ? srcHeight : srcWidth;
+    const dstBuffer = new ArrayBuffer(dstWidth * dstHeight * 4);
+    const srcPixels = new Uint8Array(srcBuffer);
+    const dstPixels = new Uint8Array(dstBuffer);
+
+    let srcY: number = 0;
+    while (srcY < srcHeight) {
+      let srcX: number = 0;
+      while (srcX < srcWidth) {
+        let dstX: number = srcX;
+        let dstY: number = srcY;
+        if (turns === 1) {
+          dstX = srcHeight - 1 - srcY;
+          dstY = srcX;
+        } else if (turns === 2) {
+          dstX = srcWidth - 1 - srcX;
+          dstY = srcHeight - 1 - srcY;
+        } else {
+          dstX = srcY;
+          dstY = srcWidth - 1 - srcX;
+        }
+        const srcIndex: number = (srcY * srcWidth + srcX) * 4;
+        const dstIndex: number = (dstY * dstWidth + dstX) * 4;
+        dstPixels[dstIndex] = srcPixels[srcIndex];
+        dstPixels[dstIndex + 1] = srcPixels[srcIndex + 1];
+        dstPixels[dstIndex + 2] = srcPixels[srcIndex + 2];
+        dstPixels[dstIndex + 3] = srcPixels[srcIndex + 3];
+        srcX = srcX + 1;
+      }
+      srcY = srcY + 1;
+    }
+
+    return await this.createPixelMapFromRGBA(dstBuffer, dstWidth, dstHeight);
+  }
+
+  private resetBackgroundViewfinder(): void {
+    this.backgroundViewfinderScale = 1.0;
+    this.backgroundViewfinderOffsetX = 0;
+    this.backgroundViewfinderOffsetY = 0;
+    this.viewfinderPinchStartScale = 1.0;
+    this.viewfinderPinchStartOffsetX = 0;
+    this.viewfinderPinchStartOffsetY = 0;
+  }
+
+  private async syncSelectedImagePixelSize(pixelMap: image.PixelMap | null): Promise<void> {
+    if (!pixelMap) {
+      this.selectedImagePixelWidth = 0;
+      this.selectedImagePixelHeight = 0;
+      return;
+    }
+    const info = await pixelMap.getImageInfo();
+    this.selectedImagePixelWidth = info.size.width;
+    this.selectedImagePixelHeight = info.size.height;
+  }
+
+  private getRotatedSelectedImageSize(): TargetSize {
+    const rawWidth: number = this.selectedImagePixelWidth > 0 ? this.selectedImagePixelWidth : 1;
+    const rawHeight: number = this.selectedImagePixelHeight > 0 ? this.selectedImagePixelHeight : 1;
+    const turns: number = this.normalizeQuarterTurns(this.backgroundRotateQuarterTurns);
+    const rotatedSize: TargetSize = {
+      targetWidth: turns % 2 === 0 ? rawWidth : rawHeight,
+      targetHeight: turns % 2 === 0 ? rawHeight : rawWidth
+    };
+    return rotatedSize;
+  }
+
+  private buildViewfinderMetricsForImage(imageWidth: number, imageHeight: number, scale: number): ViewfinderImageMetrics {
+    const frameWidth: number = this.previewFrameWidthVp > 0 ? this.previewFrameWidthVp : 220;
+    const frameHeight: number = this.previewFrameHeightVp > 0 ? this.previewFrameHeightVp : (220 / (9 / 16));
+    const safeImageWidth: number = imageWidth > 0 ? imageWidth : 1;
+    const safeImageHeight: number = imageHeight > 0 ? imageHeight : 1;
+    const coverScale: number = Math.max(frameWidth / safeImageWidth, frameHeight / safeImageHeight);
+    const baseDisplayWidth: number = safeImageWidth * coverScale;
+    const baseDisplayHeight: number = safeImageHeight * coverScale;
+    const currentScale: number = this.clampNumber(scale, this.viewfinderMinScale, this.viewfinderMaxScale);
+    const displayWidth: number = baseDisplayWidth * currentScale;
+    const displayHeight: number = baseDisplayHeight * currentScale;
+    const maxOffsetX: number = Math.max((displayWidth - frameWidth) / 2, 0);
+    const maxOffsetY: number = Math.max((displayHeight - frameHeight) / 2, 0);
+    const metrics: ViewfinderImageMetrics = {
+      frameWidth: frameWidth,
+      frameHeight: frameHeight,
+      imageWidth: safeImageWidth,
+      imageHeight: safeImageHeight,
+      coverScale: coverScale,
+      baseDisplayWidth: baseDisplayWidth,
+      baseDisplayHeight: baseDisplayHeight,
+      displayWidth: displayWidth,
+      displayHeight: displayHeight,
+      maxOffsetX: maxOffsetX,
+      maxOffsetY: maxOffsetY
+    } as ViewfinderImageMetrics;
+    return metrics;
+  }
+
+  private getCurrentViewfinderMetrics(): ViewfinderImageMetrics {
+    const rotatedSize: TargetSize = this.getRotatedSelectedImageSize();
+    return this.buildViewfinderMetricsForImage(rotatedSize.targetWidth, rotatedSize.targetHeight, this.backgroundViewfinderScale);
+  }
+
+  private getCurrentViewfinderBaseImageWidth(): number {
+    const metrics: ViewfinderImageMetrics = this.getCurrentViewfinderMetrics();
+    const turns: number = this.normalizeQuarterTurns(this.backgroundRotateQuarterTurns);
+    if (turns % 2 === 1) {
+      return metrics.baseDisplayHeight;
+    }
+    return metrics.baseDisplayWidth;
+  }
+
+  private getCurrentViewfinderBaseImageHeight(): number {
+    const metrics: ViewfinderImageMetrics = this.getCurrentViewfinderMetrics();
+    const turns: number = this.normalizeQuarterTurns(this.backgroundRotateQuarterTurns);
+    if (turns % 2 === 1) {
+      return metrics.baseDisplayWidth;
+    }
+    return metrics.baseDisplayHeight;
+  }
+
+  private clampNumber(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  private clampViewfinderToBounds(): void {
+    if (this.selectedImagePixelWidth <= 0 || this.selectedImagePixelHeight <= 0) {
+      this.backgroundViewfinderScale = this.viewfinderMinScale;
+      this.backgroundViewfinderOffsetX = 0;
+      this.backgroundViewfinderOffsetY = 0;
+      return;
+    }
+    const clampedScale: number = this.clampNumber(this.backgroundViewfinderScale, this.viewfinderMinScale, this.viewfinderMaxScale);
+    const rotatedSize: TargetSize = this.getRotatedSelectedImageSize();
+    const metrics: ViewfinderImageMetrics = this.buildViewfinderMetricsForImage(
+      rotatedSize.targetWidth,
+      rotatedSize.targetHeight,
+      clampedScale
+    );
+    this.backgroundViewfinderScale = clampedScale;
+    this.backgroundViewfinderOffsetX = this.clampNumber(this.backgroundViewfinderOffsetX, -metrics.maxOffsetX, metrics.maxOffsetX);
+    this.backgroundViewfinderOffsetY = this.clampNumber(this.backgroundViewfinderOffsetY, -metrics.maxOffsetY, metrics.maxOffsetY);
+  }
+
+  private handleBackgroundViewfinderPan(event: GestureEvent): void {
+    if (this.selectedImagePixelWidth <= 0 || this.selectedImagePixelHeight <= 0) {
+      return;
+    }
+    const metrics: ViewfinderImageMetrics = this.getCurrentViewfinderMetrics();
+    const nextOffsetX: number = this.viewfinderPanStartOffsetX + event.offsetX;
+    const nextOffsetY: number = this.viewfinderPanStartOffsetY + event.offsetY;
+    this.backgroundViewfinderOffsetX = this.clampNumber(nextOffsetX, -metrics.maxOffsetX, metrics.maxOffsetX);
+    this.backgroundViewfinderOffsetY = this.clampNumber(nextOffsetY, -metrics.maxOffsetY, metrics.maxOffsetY);
+  }
+
+  private handleBackgroundViewfinderPanStart(): void {
+    this.viewfinderPanStartOffsetX = this.backgroundViewfinderOffsetX;
+    this.viewfinderPanStartOffsetY = this.backgroundViewfinderOffsetY;
+  }
+
+  private handleBackgroundViewfinderPinchStart(): void {
+    this.viewfinderPinchStartScale = this.backgroundViewfinderScale;
+    this.viewfinderPinchStartOffsetX = this.backgroundViewfinderOffsetX;
+    this.viewfinderPinchStartOffsetY = this.backgroundViewfinderOffsetY;
+  }
+
+  private handleBackgroundViewfinderPinch(event: GestureEvent): void {
+    if (this.selectedImagePixelWidth <= 0 || this.selectedImagePixelHeight <= 0) {
+      return;
+    }
+    const rawScale: number = this.viewfinderPinchStartScale * event.scale;
+    const nextScale: number = this.clampNumber(rawScale, this.viewfinderMinScale, this.viewfinderMaxScale);
+    const scaleRatio: number = this.viewfinderPinchStartScale > 0 ? (nextScale / this.viewfinderPinchStartScale) : 1.0;
+    this.backgroundViewfinderScale = nextScale;
+    this.backgroundViewfinderOffsetX = this.viewfinderPinchStartOffsetX * scaleRatio;
+    this.backgroundViewfinderOffsetY = this.viewfinderPinchStartOffsetY * scaleRatio;
+    this.clampViewfinderToBounds();
+  }
+
+  private handleBackgroundViewfinderPinchEnd(): void {
+    const shouldReboundToBase: boolean = this.backgroundViewfinderScale < this.viewfinderMinScale + 0.03;
+    const targetScale: number = shouldReboundToBase ? this.viewfinderMinScale : this.clampNumber(this.backgroundViewfinderScale, this.viewfinderMinScale, this.viewfinderMaxScale);
+    if (this.uiContext) {
+      this.uiContext.animateTo({
+        duration: 180,
+        curve: Curve.EaseOut
+      }, () => {
+        this.backgroundViewfinderScale = targetScale;
+        this.clampViewfinderToBounds();
+      });
+      return;
+    }
+    this.backgroundViewfinderScale = targetScale;
+    this.clampViewfinderToBounds();
+  }
+
+  private computeViewfinderCropRectByOffset(metrics: ViewfinderImageMetrics, offsetX: number, offsetY: number): ViewfinderCropRect {
+    const left: number = (metrics.frameWidth - metrics.displayWidth) / 2 + offsetX;
+    const top: number = (metrics.frameHeight - metrics.displayHeight) / 2 + offsetY;
+    const scaleX: number = metrics.displayWidth / metrics.imageWidth;
+    const scaleY: number = metrics.displayHeight / metrics.imageHeight;
+    let cropX: number = Math.round((0 - left) / scaleX);
+    let cropY: number = Math.round((0 - top) / scaleY);
+    let cropWidth: number = Math.round(metrics.frameWidth / scaleX);
+    let cropHeight: number = Math.round(metrics.frameHeight / scaleY);
+
+    cropWidth = Math.max(1, Math.min(cropWidth, metrics.imageWidth));
+    cropHeight = Math.max(1, Math.min(cropHeight, metrics.imageHeight));
+    cropX = this.clampNumber(cropX, 0, Math.max(0, metrics.imageWidth - cropWidth));
+    cropY = this.clampNumber(cropY, 0, Math.max(0, metrics.imageHeight - cropHeight));
+
+    const cropRect: ViewfinderCropRect = {
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight
+    } as ViewfinderCropRect;
+    return cropRect;
+  }
+
+  private computeViewfinderCropRect(metrics: ViewfinderImageMetrics): ViewfinderCropRect {
+    return this.computeViewfinderCropRectByOffset(metrics, this.backgroundViewfinderOffsetX, this.backgroundViewfinderOffsetY);
+  }
+
+  private async cropPixelMapByRect(pixelMap: image.PixelMap, cropRect: ViewfinderCropRect): Promise<image.PixelMap> {
+    const bufferSize: number = cropRect.width * cropRect.height * 4;
+    const buffer = new ArrayBuffer(bufferSize);
+    const readArea: image.PositionArea = {
+      pixels: buffer,
+      offset: 0,
+      stride: cropRect.width * 4,
+      region: {
+        size: {
+          width: cropRect.width,
+          height: cropRect.height
+        },
+        x: cropRect.x,
+        y: cropRect.y
+      }
+    };
+    await pixelMap.readPixels(readArea);
+    const initOptions: image.InitializationOptions = {
+      size: {
+        width: cropRect.width,
+        height: cropRect.height
+      },
+      pixelFormat: 3,
+      alphaType: 0,
+      editable: true
+    };
+    return await image.createPixelMap(buffer, initOptions);
+  }
+
+  private async buildBackgroundPreviewPixelMap(sourcePixelMap: image.PixelMap): Promise<image.PixelMap> {
+    const rotatedPixelMap = await this.rotatePixelMapByQuarterTurns(sourcePixelMap, this.backgroundRotateQuarterTurns);
+    try {
+      const rotatedInfo = await rotatedPixelMap.getImageInfo();
+      const metrics: ViewfinderImageMetrics = this.buildViewfinderMetricsForImage(
+        rotatedInfo.size.width,
+        rotatedInfo.size.height,
+        this.backgroundViewfinderScale
+      );
+      const cropRect: ViewfinderCropRect = this.computeViewfinderCropRect(metrics);
+      return await this.cropPixelMapByRect(rotatedPixelMap, cropRect);
+    } finally {
+      rotatedPixelMap.release();
+    }
+  }
+
+  private resetSplashViewfinder(): void {
+    this.splashViewfinderScale = 1.0;
+    this.splashViewfinderOffsetX = 0;
+    this.splashViewfinderOffsetY = 0;
+    this.splashViewfinderPanStartOffsetX = 0;
+    this.splashViewfinderPanStartOffsetY = 0;
+    this.splashViewfinderPinchStartScale = 1.0;
+    this.splashViewfinderPinchStartOffsetX = 0;
+    this.splashViewfinderPinchStartOffsetY = 0;
+  }
+
+  private async syncSelectedSplashPixelSize(pixelMap: image.PixelMap | null): Promise<void> {
+    if (!pixelMap) {
+      this.selectedSplashPixelWidth = 0;
+      this.selectedSplashPixelHeight = 0;
+      return;
+    }
+    const info = await pixelMap.getImageInfo();
+    this.selectedSplashPixelWidth = info.size.width;
+    this.selectedSplashPixelHeight = info.size.height;
+  }
+
+  private getRotatedSelectedSplashSize(): TargetSize {
+    const rawWidth: number = this.selectedSplashPixelWidth > 0 ? this.selectedSplashPixelWidth : 1;
+    const rawHeight: number = this.selectedSplashPixelHeight > 0 ? this.selectedSplashPixelHeight : 1;
+    const turns: number = this.normalizeQuarterTurns(this.splashRotateQuarterTurns);
+    const rotatedSize: TargetSize = {
+      targetWidth: turns % 2 === 0 ? rawWidth : rawHeight,
+      targetHeight: turns % 2 === 0 ? rawHeight : rawWidth
+    };
+    return rotatedSize;
+  }
+
+  private getCurrentSplashViewfinderMetrics(): ViewfinderImageMetrics {
+    const rotatedSize: TargetSize = this.getRotatedSelectedSplashSize();
+    return this.buildViewfinderMetricsForImage(rotatedSize.targetWidth, rotatedSize.targetHeight, this.splashViewfinderScale);
+  }
+
+  private getCurrentSplashViewfinderBaseImageWidth(): number {
+    const metrics: ViewfinderImageMetrics = this.getCurrentSplashViewfinderMetrics();
+    const turns: number = this.normalizeQuarterTurns(this.splashRotateQuarterTurns);
+    if (turns % 2 === 1) {
+      return metrics.baseDisplayHeight;
+    }
+    return metrics.baseDisplayWidth;
+  }
+
+  private getCurrentSplashViewfinderBaseImageHeight(): number {
+    const metrics: ViewfinderImageMetrics = this.getCurrentSplashViewfinderMetrics();
+    const turns: number = this.normalizeQuarterTurns(this.splashRotateQuarterTurns);
+    if (turns % 2 === 1) {
+      return metrics.baseDisplayWidth;
+    }
+    return metrics.baseDisplayHeight;
+  }
+
+  private clampSplashViewfinderToBounds(): void {
+    if (this.selectedSplashPixelWidth <= 0 || this.selectedSplashPixelHeight <= 0) {
+      this.splashViewfinderScale = this.viewfinderMinScale;
+      this.splashViewfinderOffsetX = 0;
+      this.splashViewfinderOffsetY = 0;
+      return;
+    }
+    const clampedScale: number = this.clampNumber(this.splashViewfinderScale, this.viewfinderMinScale, this.viewfinderMaxScale);
+    const rotatedSize: TargetSize = this.getRotatedSelectedSplashSize();
+    const metrics: ViewfinderImageMetrics = this.buildViewfinderMetricsForImage(
+      rotatedSize.targetWidth,
+      rotatedSize.targetHeight,
+      clampedScale
+    );
+    this.splashViewfinderScale = clampedScale;
+    this.splashViewfinderOffsetX = this.clampNumber(this.splashViewfinderOffsetX, -metrics.maxOffsetX, metrics.maxOffsetX);
+    this.splashViewfinderOffsetY = this.clampNumber(this.splashViewfinderOffsetY, -metrics.maxOffsetY, metrics.maxOffsetY);
+  }
+
+  private handleSplashViewfinderPanStart(): void {
+    this.splashViewfinderPanStartOffsetX = this.splashViewfinderOffsetX;
+    this.splashViewfinderPanStartOffsetY = this.splashViewfinderOffsetY;
+  }
+
+  private handleSplashViewfinderPan(event: GestureEvent): void {
+    if (this.selectedSplashPixelWidth <= 0 || this.selectedSplashPixelHeight <= 0) {
+      return;
+    }
+    const metrics: ViewfinderImageMetrics = this.getCurrentSplashViewfinderMetrics();
+    const nextOffsetX: number = this.splashViewfinderPanStartOffsetX + event.offsetX;
+    const nextOffsetY: number = this.splashViewfinderPanStartOffsetY + event.offsetY;
+    this.splashViewfinderOffsetX = this.clampNumber(nextOffsetX, -metrics.maxOffsetX, metrics.maxOffsetX);
+    this.splashViewfinderOffsetY = this.clampNumber(nextOffsetY, -metrics.maxOffsetY, metrics.maxOffsetY);
+  }
+
+  private handleSplashViewfinderPinchStart(): void {
+    this.splashViewfinderPinchStartScale = this.splashViewfinderScale;
+    this.splashViewfinderPinchStartOffsetX = this.splashViewfinderOffsetX;
+    this.splashViewfinderPinchStartOffsetY = this.splashViewfinderOffsetY;
+  }
+
+  private handleSplashViewfinderPinch(event: GestureEvent): void {
+    if (this.selectedSplashPixelWidth <= 0 || this.selectedSplashPixelHeight <= 0) {
+      return;
+    }
+    const rawScale: number = this.splashViewfinderPinchStartScale * event.scale;
+    const nextScale: number = this.clampNumber(rawScale, this.viewfinderMinScale, this.viewfinderMaxScale);
+    const scaleRatio: number = this.splashViewfinderPinchStartScale > 0 ? (nextScale / this.splashViewfinderPinchStartScale) : 1.0;
+    this.splashViewfinderScale = nextScale;
+    this.splashViewfinderOffsetX = this.splashViewfinderPinchStartOffsetX * scaleRatio;
+    this.splashViewfinderOffsetY = this.splashViewfinderPinchStartOffsetY * scaleRatio;
+    this.clampSplashViewfinderToBounds();
+  }
+
+  private handleSplashViewfinderPinchEnd(): void {
+    const shouldReboundToBase: boolean = this.splashViewfinderScale < this.viewfinderMinScale + 0.03;
+    const targetScale: number = shouldReboundToBase ? this.viewfinderMinScale : this.clampNumber(this.splashViewfinderScale, this.viewfinderMinScale, this.viewfinderMaxScale);
+    if (this.uiContext) {
+      this.uiContext.animateTo({
+        duration: 180,
+        curve: Curve.EaseOut
+      }, () => {
+        this.splashViewfinderScale = targetScale;
+        this.clampSplashViewfinderToBounds();
+      });
+      return;
+    }
+    this.splashViewfinderScale = targetScale;
+    this.clampSplashViewfinderToBounds();
+  }
+
+  private async buildSplashPreviewPixelMap(sourcePixelMap: image.PixelMap): Promise<image.PixelMap> {
+    const rotatedPixelMap = await this.rotatePixelMapByQuarterTurns(sourcePixelMap, this.splashRotateQuarterTurns);
+    try {
+      const rotatedInfo = await rotatedPixelMap.getImageInfo();
+      const metrics: ViewfinderImageMetrics = this.buildViewfinderMetricsForImage(
+        rotatedInfo.size.width,
+        rotatedInfo.size.height,
+        this.splashViewfinderScale
+      );
+      const cropRect: ViewfinderCropRect = this.computeViewfinderCropRectByOffset(
+        metrics,
+        this.splashViewfinderOffsetX,
+        this.splashViewfinderOffsetY
+      );
+      return await this.cropPixelMapByRect(rotatedPixelMap, cropRect);
+    } finally {
+      rotatedPixelMap.release();
+    }
+  }
+
+  private async refreshSplashPreviewFromSelection(): Promise<void> {
+    if (!this.selectedSplashImagePixelMap) {
+      return;
+    }
+    const nextPreview: image.PixelMap = await this.buildSplashPreviewPixelMap(this.selectedSplashImagePixelMap);
+    if (this.processedSplashImagePixelMap) {
+      this.processedSplashImagePixelMap.release();
+    }
+    this.processedSplashImagePixelMap = nextPreview;
+    this.processedSplashImagePath = this.selectedSplashImagePath;
+  }
+
+  private clearCurrentSplashSelection(): void {
+    if (this.selectedSplashImagePixelMap) {
+      this.selectedSplashImagePixelMap.release();
+      this.selectedSplashImagePixelMap = null;
+    }
+    if (this.processedSplashImagePixelMap) {
+      this.processedSplashImagePixelMap.release();
+      this.processedSplashImagePixelMap = null;
+    }
+    this.selectedSplashImagePath = '';
+    this.processedSplashImagePath = '';
+    this.selectedSplashPixelWidth = 0;
+    this.selectedSplashPixelHeight = 0;
+    this.resetSplashViewfinder();
+  }
+
+  private removeSplashDraftAt(index: number): void {
+    if (index < 0 || index >= this.splashDraftImagePaths.length) {
+      return;
+    }
+    const pathToDelete: string = this.splashDraftImagePaths[index];
+    if (pathToDelete.length > 0 && fs.accessSync(pathToDelete)) {
+      fs.unlinkSync(pathToDelete);
+    }
+    const nextPaths: string[] = [];
+    let idx: number = 0;
+    while (idx < this.splashDraftImagePaths.length) {
+      if (idx !== index) {
+        nextPaths.push(this.splashDraftImagePaths[idx]);
+      }
+      idx = idx + 1;
+    }
+    this.splashDraftImagePaths = nextPaths;
+  }
+
+  private async addCurrentSplashToDraftList(): Promise<void> {
+    if (!this.processedSplashImagePixelMap) {
+      logger.warn(TAG, '当前没有可加入列表的开屏图');
+      return;
+    }
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      throw new Error('无法获取UIAbilityContext');
+    }
+    const themesDir: string = `${context.filesDir}/custom_themes`;
+    if (!fs.accessSync(themesDir)) {
+      fs.mkdirSync(themesDir);
+    }
+    const draftDir: string = `${themesDir}/splash_drafts`;
+    if (!fs.accessSync(draftDir)) {
+      fs.mkdirSync(draftDir);
+    }
+    const timestamp: number = Date.now();
+    const draftPath: string = `${draftDir}/draft_${timestamp}_${this.splashDraftImagePaths.length + 1}.webp`;
+    const packOpts: image.PackingOption = {
+      format: 'image/webp',
+      quality: 85
+    };
+    const imagePacker = image.createImagePacker();
+    const file = fs.openSync(draftPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    try {
+      await imagePacker.packToFile(this.processedSplashImagePixelMap, file.fd, packOpts);
+    } finally {
+      fs.closeSync(file);
+      imagePacker.release();
+    }
+    const nextDrafts: string[] = [];
+    let idx: number = 0;
+    while (idx < this.splashDraftImagePaths.length) {
+      nextDrafts.push(this.splashDraftImagePaths[idx]);
+      idx = idx + 1;
+    }
+    nextDrafts.push(draftPath);
+    this.splashDraftImagePaths = nextDrafts;
+  }
+
+  private async persistCurrentSplashAsThemeImage(path: string): Promise<void> {
+    if (!this.processedSplashImagePixelMap) {
+      throw new Error('processedSplashImagePixelMap为空');
+    }
+    const packOpts: image.PackingOption = {
+      format: 'image/webp',
+      quality: 85
+    };
+    const imagePacker = image.createImagePacker();
+    const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    try {
+      await imagePacker.packToFile(this.processedSplashImagePixelMap, file.fd, packOpts);
+    } finally {
+      fs.closeSync(file);
+      imagePacker.release();
+    }
+  }
+
+  private async generateSplashImages(themeId: string): Promise<string[]> {
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      throw new Error('无法获取UIAbilityContext');
+    }
+    const themesDir: string = `${context.filesDir}/custom_themes`;
+    const generatedPaths: string[] = [];
+    const sourcePaths: string[] = this.splashSourceImagePaths.length > 0 ? this.splashSourceImagePaths : this.splashDraftImagePaths;
+    let index: number = 0;
+    while (index < sourcePaths.length) {
+      const sourcePath: string = sourcePaths[index];
+      let resolvedPath: string = this.resolveSplashSourcePath(sourcePath);
+      if (!(resolvedPath.length > 0 && fs.accessSync(resolvedPath))) {
+        try {
+          await this.importSplashSourceToDraftIfNeeded(sourcePath);
+          resolvedPath = this.resolveSplashSourcePath(sourcePath);
+        } catch (error) {
+          const message: string = error instanceof Error ? error.message : String(error);
+          logger.warn(TAG, `导入开屏原图用于保存失败: ${message}`);
+        }
+      }
+      if (resolvedPath.length > 0 && fs.accessSync(resolvedPath)) {
+        const targetPath: string = `${themesDir}/${themeId}_splash_${index + 1}.webp`;
+        fs.copyFileSync(resolvedPath, targetPath);
+        generatedPaths.push(targetPath);
+      } else {
+        logger.warn(TAG, `跳过不可访问的开屏图: ${sourcePath}`);
+      }
+      index = index + 1;
+    }
+    if (generatedPaths.length === 0 && this.processedSplashImagePixelMap) {
+      const fallbackPath: string = `${themesDir}/${themeId}_splash_1.webp`;
+      await this.persistCurrentSplashAsThemeImage(fallbackPath);
+      generatedPaths.push(fallbackPath);
+    }
+    return generatedPaths;
+  }
+
+  private cleanupSplashDraftFiles(): void {
+    let idx: number = 0;
+    while (idx < this.splashDraftImagePaths.length) {
+      const path: string = this.splashDraftImagePaths[idx];
+      if (path && path.length > 0 && fs.accessSync(path)) {
+        fs.unlinkSync(path);
+      }
+      idx = idx + 1;
+    }
+    this.splashDraftSelections.forEach((selection: BackgroundDraftSelection) => {
+      if (selection.appliedPath.length > 0 && fs.accessSync(selection.appliedPath)) {
+        fs.unlinkSync(selection.appliedPath);
+      }
+    });
+    this.splashDraftSelections.clear();
+    this.splashDraftImagePaths = [];
+    this.splashSourceImagePaths = [];
+    this.activeSplashSourcePath = '';
+  }
+
+  private normalizeBackgroundImageUris(imageUris: string[]): string[] {
+    const normalized: string[] = [];
+    let idx: number = 0;
+    while (idx < imageUris.length) {
+      const uri: string = imageUris[idx];
+      if (uri && uri.length > 0 && !normalized.includes(uri)) {
+        normalized.push(uri);
+      }
+      idx = idx + 1;
+    }
+    return normalized;
+  }
+
+  private mergeBackgroundDraftPaths(newUris: string[]): string[] {
+    const merged: string[] = [];
+    let oldIdx: number = 0;
+    while (oldIdx < this.backgroundDraftImagePaths.length) {
+      const oldPath: string = this.backgroundDraftImagePaths[oldIdx];
+      if (oldPath.length > 0 && !merged.includes(oldPath)) {
+        merged.push(oldPath);
+      }
+      oldIdx = oldIdx + 1;
+    }
+    let newIdx: number = 0;
+    while (newIdx < newUris.length) {
+      const newPath: string = newUris[newIdx];
+      if (newPath.length > 0 && !merged.includes(newPath)) {
+        merged.push(newPath);
+      }
+      newIdx = newIdx + 1;
+    }
+    return merged;
+  }
+
+  private resolveBackgroundDraftSourcePath(originalPath: string): string {
+    const selection: BackgroundDraftSelection | undefined = this.backgroundDraftSelections.get(originalPath);
+    if (selection && selection.appliedPath.length > 0 && fs.accessSync(selection.appliedPath)) {
+      return selection.appliedPath;
+    }
+    return originalPath;
+  }
+
+  private registerBackgroundDraftIfNeeded(originalPath: string): void {
+    if (originalPath.length === 0) {
+      return;
+    }
+    if (!this.backgroundDraftSelections.has(originalPath)) {
+      const draft: BackgroundDraftSelection = {
+        originalPath: originalPath,
+        appliedPath: ''
+      };
+      this.backgroundDraftSelections.set(originalPath, draft);
+    }
+  }
+
+  private async packPixelMapToWebp(pixelMap: image.PixelMap, path: string, quality: number): Promise<void> {
+    const packOpts: image.PackingOption = {
+      format: 'image/webp',
+      quality: quality
+    };
+    const imagePacker = image.createImagePacker();
+    const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    try {
+      await imagePacker.packToFile(pixelMap, file.fd, packOpts);
+    } finally {
+      fs.closeSync(file);
+      imagePacker.release();
+    }
+  }
+
+  private async persistActiveBackgroundDraftCrop(): Promise<void> {
+    if (!this.selectedImagePixelMap) {
+      return;
+    }
+    const activePath: string = this.activeBackgroundDraftPath.length > 0 ? this.activeBackgroundDraftPath : this.selectedImagePath;
+    if (activePath.length === 0) {
+      return;
+    }
+    this.registerBackgroundDraftIfNeeded(activePath);
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      throw new Error('无法获取UIAbilityContext');
+    }
+    const themesDir: string = `${context.filesDir}/custom_themes`;
+    if (!fs.accessSync(themesDir)) {
+      fs.mkdirSync(themesDir);
+    }
+    const draftDir: string = `${themesDir}/background_drafts`;
+    if (!fs.accessSync(draftDir)) {
+      fs.mkdirSync(draftDir);
+    }
+    const oldSelection: BackgroundDraftSelection | undefined = this.backgroundDraftSelections.get(activePath);
+    if (oldSelection && oldSelection.appliedPath.length > 0 && fs.accessSync(oldSelection.appliedPath)) {
+      fs.unlinkSync(oldSelection.appliedPath);
+    }
+    const targetPath: string = `${draftDir}/draft_${Date.now()}_${this.backgroundDraftImagePaths.indexOf(activePath) + 1}.webp`;
+    await this.packPixelMapToWebp(this.selectedImagePixelMap, targetPath, 88);
+    const nextSelection: BackgroundDraftSelection = {
+      originalPath: activePath,
+      appliedPath: targetPath
+    };
+    this.backgroundDraftSelections.set(activePath, nextSelection);
+  }
+
+  private async switchBackgroundDraftImage(targetOriginalPath: string): Promise<void> {
+    if (targetOriginalPath.length === 0) {
+      return;
+    }
+    try {
+      if (this.activeBackgroundDraftPath === targetOriginalPath && this.selectedImagePixelMap) {
+        return;
+      }
+      const resolvedPath: string = this.resolveBackgroundDraftSourcePath(targetOriginalPath);
+      await this.loadAndProcessImage(resolvedPath, targetOriginalPath);
+    } catch (error) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `切换背景草稿失败: ${message}`);
+    }
+  }
+
+  private async setBackgroundDraftImages(imageUris: string[]): Promise<void> {
+    const normalizedUris: string[] = this.normalizeBackgroundImageUris(imageUris);
+    if (normalizedUris.length === 0) {
+      return;
+    }
+    const mergedDraftPaths: string[] = this.mergeBackgroundDraftPaths(normalizedUris);
+    this.backgroundDraftImagePaths = mergedDraftPaths;
+    let idx: number = 0;
+    while (idx < normalizedUris.length) {
+      this.registerBackgroundDraftIfNeeded(normalizedUris[idx]);
+      idx = idx + 1;
+    }
+    await this.switchBackgroundDraftImage(normalizedUris[0]);
+  }
+
+  private cleanupBackgroundDraftFiles(): void {
+    this.backgroundDraftSelections.forEach((selection: BackgroundDraftSelection) => {
+      if (selection.appliedPath.length > 0 && fs.accessSync(selection.appliedPath)) {
+        fs.unlinkSync(selection.appliedPath);
+      }
+    });
+    this.backgroundDraftSelections.clear();
+    this.backgroundDraftImagePaths = [];
+    this.activeBackgroundDraftPath = '';
+  }
+
+  private normalizeSplashImageUris(imageUris: string[]): string[] {
+    const normalized: string[] = [];
+    let idx: number = 0;
+    while (idx < imageUris.length) {
+      const uri: string = imageUris[idx];
+      if (uri && uri.length > 0 && !normalized.includes(uri)) {
+        normalized.push(uri);
+      }
+      idx = idx + 1;
+    }
+    return normalized;
+  }
+
+  private mergeSplashSourcePaths(newUris: string[]): string[] {
+    const merged: string[] = [];
+    let oldIdx: number = 0;
+    while (oldIdx < this.splashSourceImagePaths.length) {
+      const oldPath: string = this.splashSourceImagePaths[oldIdx];
+      if (oldPath.length > 0 && !merged.includes(oldPath)) {
+        merged.push(oldPath);
+      }
+      oldIdx = oldIdx + 1;
+    }
+    let newIdx: number = 0;
+    while (newIdx < newUris.length) {
+      const newPath: string = newUris[newIdx];
+      if (newPath.length > 0 && !merged.includes(newPath)) {
+        merged.push(newPath);
+      }
+      newIdx = newIdx + 1;
+    }
+    return merged;
+  }
+
+  private registerSplashSourceIfNeeded(originalPath: string): void {
+    if (originalPath.length === 0) {
+      return;
+    }
+    if (!this.splashDraftSelections.has(originalPath)) {
+      const draft: BackgroundDraftSelection = {
+        originalPath: originalPath,
+        appliedPath: ''
+      };
+      this.splashDraftSelections.set(originalPath, draft);
+    }
+  }
+
+  private resolveSplashSourcePath(originalPath: string): string {
+    const selection: BackgroundDraftSelection | undefined = this.splashDraftSelections.get(originalPath);
+    if (selection && selection.appliedPath.length > 0 && fs.accessSync(selection.appliedPath)) {
+      return selection.appliedPath;
+    }
+    return originalPath;
+  }
+
+  private async importSplashSourceToDraftIfNeeded(originalPath: string): Promise<void> {
+    if (originalPath.length === 0) {
+      return;
+    }
+    this.registerSplashSourceIfNeeded(originalPath);
+    const existingSelection: BackgroundDraftSelection | undefined = this.splashDraftSelections.get(originalPath);
+    if (existingSelection && existingSelection.appliedPath.length > 0 && fs.accessSync(existingSelection.appliedPath)) {
+      return;
+    }
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      throw new Error('无法获取UIAbilityContext');
+    }
+    const themesDir: string = `${context.filesDir}/custom_themes`;
+    if (!fs.accessSync(themesDir)) {
+      fs.mkdirSync(themesDir);
+    }
+    const draftDir: string = `${themesDir}/splash_drafts`;
+    if (!fs.accessSync(draftDir)) {
+      fs.mkdirSync(draftDir);
+    }
+    const targetPath: string = `${draftDir}/source_${Date.now()}_${this.splashSourceImagePaths.indexOf(originalPath) + 1}.webp`;
+    let copied: boolean = false;
+    if (fs.accessSync(originalPath)) {
+      try {
+        fs.copyFileSync(originalPath, targetPath);
+        copied = true;
+      } catch (error) {
+        const message: string = error instanceof Error ? error.message : String(error);
+        logger.warn(TAG, `复制开屏原图失败，尝试重编码: ${message}`);
+      }
+    }
+    if (!copied) {
+      const file = fs.openSync(originalPath, fs.OpenMode.READ_ONLY);
+      const imageSource = image.createImageSource(file.fd);
+      try {
+        const decodingOptions: image.DecodingOptions = {
+          desiredPixelFormat: 3
+        };
+        const sourcePixelMap: image.PixelMap = await imageSource.createPixelMap(decodingOptions);
+        try {
+          await this.packPixelMapToWebp(sourcePixelMap, targetPath, 88);
+        } finally {
+          sourcePixelMap.release();
+        }
+      } finally {
+        fs.closeSync(file);
+        imageSource.release();
+      }
+    }
+    const nextSelection: BackgroundDraftSelection = {
+      originalPath: originalPath,
+      appliedPath: targetPath
+    };
+    this.splashDraftSelections.set(originalPath, nextSelection);
+  }
+
+  private async persistActiveSplashDraftCrop(): Promise<void> {
+    if (!this.selectedSplashImagePixelMap) {
+      return;
+    }
+    const activePath: string = this.activeSplashSourcePath.length > 0 ? this.activeSplashSourcePath : this.selectedSplashImagePath;
+    if (activePath.length === 0) {
+      return;
+    }
+    this.registerSplashSourceIfNeeded(activePath);
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      throw new Error('无法获取UIAbilityContext');
+    }
+    const themesDir: string = `${context.filesDir}/custom_themes`;
+    if (!fs.accessSync(themesDir)) {
+      fs.mkdirSync(themesDir);
+    }
+    const draftDir: string = `${themesDir}/splash_drafts`;
+    if (!fs.accessSync(draftDir)) {
+      fs.mkdirSync(draftDir);
+    }
+    const oldSelection: BackgroundDraftSelection | undefined = this.splashDraftSelections.get(activePath);
+    if (oldSelection && oldSelection.appliedPath.length > 0 && fs.accessSync(oldSelection.appliedPath)) {
+      fs.unlinkSync(oldSelection.appliedPath);
+    }
+    const targetPath: string = `${draftDir}/draft_${Date.now()}_${this.splashSourceImagePaths.indexOf(activePath) + 1}.webp`;
+    await this.packPixelMapToWebp(this.selectedSplashImagePixelMap, targetPath, 88);
+    const nextSelection: BackgroundDraftSelection = {
+      originalPath: activePath,
+      appliedPath: targetPath
+    };
+    this.splashDraftSelections.set(activePath, nextSelection);
+  }
+
+  private async switchSplashSourceImage(targetOriginalPath: string): Promise<void> {
+    if (targetOriginalPath.length === 0) {
+      return;
+    }
+    try {
+      if (this.activeSplashSourcePath === targetOriginalPath && this.selectedSplashImagePixelMap) {
+        return;
+      }
+      const resolvedPath: string = this.resolveSplashSourcePath(targetOriginalPath);
+      await this.loadAndProcessSplashImage(resolvedPath, targetOriginalPath);
+    } catch (error) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `切换开屏草稿失败: ${message}`);
+    }
+  }
+
+  private async setSplashSourceImages(imageUris: string[]): Promise<void> {
+    const normalizedUris: string[] = this.normalizeSplashImageUris(imageUris);
+    if (normalizedUris.length === 0) {
+      return;
+    }
+    const mergedSourcePaths: string[] = this.mergeSplashSourcePaths(normalizedUris);
+    this.splashSourceImagePaths = mergedSourcePaths;
+    let idx: number = 0;
+    while (idx < normalizedUris.length) {
+      const uri: string = normalizedUris[idx];
+      this.registerSplashSourceIfNeeded(uri);
+      try {
+        await this.importSplashSourceToDraftIfNeeded(uri);
+      } catch (error) {
+        const message: string = error instanceof Error ? error.message : String(error);
+        logger.warn(TAG, `导入开屏原图到草稿失败: ${message}`);
+      }
+      idx = idx + 1;
+    }
+    await this.switchSplashSourceImage(normalizedUris[0]);
+  }
   private async initializeUserThemeConfig(): Promise<void> {
     try {
       await this.userThemeConfigManager.initialize();
@@ -326,6 +1538,14 @@ export struct ThemeSettingsPage {
     if (this.processedSplashImagePixelMap) {
       this.processedSplashImagePixelMap.release();
     }
+    this.cleanupSplashDraftFiles();
+    this.cleanupBackgroundDraftFiles();
+    this.selectedImagePixelMap = null;
+    this.processedImagePixelMap = null;
+    this.selectedSplashImagePixelMap = null;
+    this.processedSplashImagePixelMap = null;
+    this.selectedImagePixelWidth = 0;
+    this.selectedImagePixelHeight = 0;
   }
 
   /**
@@ -423,8 +1643,46 @@ export struct ThemeSettingsPage {
 
     // 最大内容宽度改为直接使用工具类计算结果，保持与断点逻辑一致
     this.responsive_maxContentWidth = ResponsiveLayoutHelper.getMaxContentWidth();
+    this.refreshPreviewFrameMetrics(deviceInfo);
+    this.clampViewfinderToBounds();
     
-    logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}`);
+    logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}, 预览框=${this.previewFrameWidthVp.toFixed(1)}x${this.previewFrameHeightVp.toFixed(1)}`);
+  }
+
+  private normalizeAspectRatio(width: number, height: number): number {
+    if (width <= 0 || height <= 0) {
+      return 9 / 16;
+    }
+    const ratio: number = width / height;
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      return 9 / 16;
+    }
+    return ratio;
+  }
+
+  private refreshPreviewFrameMetrics(deviceInfo: DeviceInfo): void {
+    const ratio: number = this.normalizeAspectRatio(deviceInfo.screenWidthPx, deviceInfo.screenHeightPx);
+    this.previewFrameAspectRatio = ratio;
+
+    const safeScreenWidthVp: number = deviceInfo.screenWidth > 0 ? deviceInfo.screenWidth : 360;
+    const horizontalPadding: number = this.responsive_contentPadding * 2;
+    const availableWidthVp: number = Math.max(220, Math.min(this.responsive_maxContentWidth, safeScreenWidthVp - horizontalPadding));
+    const cardRatio: number = this.responsive_isLandscape ? 0.48 : 1.0;
+    const cardInnerWidthVp: number = availableWidthVp * cardRatio - 32;
+    let frameWidthVp: number = Math.max(this.previewFrameMinWidthVp, Math.min(this.previewFrameMaxWidthVp, cardInnerWidthVp));
+    if (!Number.isFinite(frameWidthVp) || frameWidthVp <= 0) {
+      frameWidthVp = 220;
+    }
+
+    let frameHeightVp: number = frameWidthVp / ratio;
+    const maxHeightVp: number = this.responsive_isLandscape ? this.previewFrameLandscapeMaxHeightVp : this.previewFramePortraitMaxHeightVp;
+    if (frameHeightVp > maxHeightVp) {
+      frameHeightVp = maxHeightVp;
+      frameWidthVp = frameHeightVp * ratio;
+    }
+
+    this.previewFrameWidthVp = frameWidthVp;
+    this.previewFrameHeightVp = frameHeightVp;
   }
 
   /**
@@ -450,18 +1708,34 @@ export struct ThemeSettingsPage {
         while (j < this.customThemes.length) {
           const t: CustomTheme = this.customThemes[j];
           const isDefaultOrSecondary: boolean = (t.id === this.DEFAULT_THEME_ID) || (t.id === this.SECONDARY_THEME_ID);
+          const splashPaths: string[] = this.getSplashPathsFromTheme(t);
+          const splashRule: SplashRotationRule = this.getSplashRotationRuleFromTheme(t);
+          const splashCursor: number = t.splashRotationCursor !== undefined ? t.splashRotationCursor : -1;
+          const splashDate: string = t.splashRotationLastDateKey ? t.splashRotationLastDateKey : '';
+          const hideSplashLogo: boolean = this.getHideSplashLogoFromTheme(t);
+          const hideSplashProgress: boolean = this.getHideSplashProgressFromTheme(t);
+          const blurLevel: number = t.blurLevel !== undefined ? t.blurLevel : 0;
+          const brightness: number = t.brightness !== undefined ? t.brightness : 50;
+          const createTime: number = t.createTime !== undefined ? t.createTime : Date.now();
+          const lastModified: number = t.lastModified !== undefined ? t.lastModified : createTime;
           const newTheme: CustomTheme = {
             id: t.id,
             name: t.name,
             backgroundImagePath: isDefaultOrSecondary ? '' : (t.backgroundImagePath ? t.backgroundImagePath : ''),
             backgroundImagePathDark: isDefaultOrSecondary ? '' : (t.backgroundImagePathDark ? t.backgroundImagePathDark : ''),
-            splashBackgroundImagePath: t.splashBackgroundImagePath ? t.splashBackgroundImagePath : '',
-            blurLevel: t.blurLevel,
-            brightness: t.brightness,
+            splashBackgroundImagePath: splashPaths.length > 0 ? splashPaths[0] : '',
+            splashBackgroundImagePaths: splashPaths,
+            splashRotationRule: splashRule,
+            splashRotationCursor: splashCursor,
+            splashRotationLastDateKey: splashDate,
+            hideSplashLogo: hideSplashLogo,
+            hideSplashProgress: hideSplashProgress,
+            blurLevel: blurLevel,
+            brightness: brightness,
             primaryColor: t.primaryColor,
             isDark: t.isDark,
-            createTime: t.createTime,
-            lastModified: t.lastModified
+            createTime: createTime,
+            lastModified: lastModified
           };
           sanitized.push(newTheme);
           j = j + 1;
@@ -493,18 +1767,44 @@ export struct ThemeSettingsPage {
       }
       
       // 添加或更新主题
+      const normalizedSplashPaths: string[] = this.getSplashPathsFromTheme(theme);
+      const normalizedRule: SplashRotationRule = this.getSplashRotationRuleFromTheme(theme);
+      const normalizedTheme: CustomTheme = {
+        id: theme.id,
+        name: theme.name,
+        backgroundImagePath: theme.backgroundImagePath ? theme.backgroundImagePath : '',
+        backgroundImagePathDark: theme.backgroundImagePathDark ? theme.backgroundImagePathDark : '',
+        splashBackgroundImagePath: normalizedSplashPaths.length > 0 ? normalizedSplashPaths[0] : '',
+        splashBackgroundImagePaths: normalizedSplashPaths,
+        splashRotationRule: normalizedRule,
+        splashRotationCursor: theme.splashRotationCursor !== undefined ? theme.splashRotationCursor : -1,
+        splashRotationLastDateKey: theme.splashRotationLastDateKey ? theme.splashRotationLastDateKey : '',
+        hideSplashLogo: this.getHideSplashLogoFromTheme(theme),
+        hideSplashProgress: this.getHideSplashProgressFromTheme(theme),
+        blurLevel: theme.blurLevel,
+        brightness: theme.brightness,
+        primaryColor: theme.primaryColor,
+        isDark: theme.isDark,
+        createTime: theme.createTime,
+        lastModified: theme.lastModified
+      };
+      const isDefaultOrSecondary: boolean = (normalizedTheme.id === this.DEFAULT_THEME_ID) || (normalizedTheme.id === this.SECONDARY_THEME_ID);
+      if (isDefaultOrSecondary) {
+        normalizedTheme.backgroundImagePath = '';
+        normalizedTheme.backgroundImagePathDark = '';
+      }
       const existingIndex = this.customThemes.findIndex(t => t.id === theme.id);
       if (existingIndex >= 0) {
-        this.customThemes[existingIndex] = theme;
+        this.customThemes[existingIndex] = normalizedTheme;
       } else {
-        this.customThemes.push(theme);
+        this.customThemes.push(normalizedTheme);
       }
       
       // 保存到文件
       const file = fs.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       fs.writeSync(file.fd, JSON.stringify(this.customThemes));
       fs.closeSync(file);
-      logger.info(TAG, `已保存自定义主题: ${theme.name}`);
+      logger.info(TAG, `已保存自定义主题: ${normalizedTheme.name}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `保存自定义主题失败: ${errorMsg}`);
@@ -554,6 +1854,39 @@ export struct ThemeSettingsPage {
       if (!fs.accessSync(themesDir)) {
         fs.mkdirSync(themesDir);
       }
+      const sanitizedThemes: CustomTheme[] = [];
+      let idx: number = 0;
+      while (idx < this.customThemes.length) {
+        const sourceTheme: CustomTheme = this.customThemes[idx];
+        const splashPaths: string[] = this.getSplashPathsFromTheme(sourceTheme);
+        const sanitizedTheme: CustomTheme = {
+          id: sourceTheme.id,
+          name: sourceTheme.name,
+          backgroundImagePath: sourceTheme.backgroundImagePath ? sourceTheme.backgroundImagePath : '',
+          backgroundImagePathDark: sourceTheme.backgroundImagePathDark ? sourceTheme.backgroundImagePathDark : '',
+          splashBackgroundImagePath: splashPaths.length > 0 ? splashPaths[0] : '',
+          splashBackgroundImagePaths: splashPaths,
+          splashRotationRule: this.getSplashRotationRuleFromTheme(sourceTheme),
+          splashRotationCursor: sourceTheme.splashRotationCursor !== undefined ? sourceTheme.splashRotationCursor : -1,
+          splashRotationLastDateKey: sourceTheme.splashRotationLastDateKey ? sourceTheme.splashRotationLastDateKey : '',
+          hideSplashLogo: this.getHideSplashLogoFromTheme(sourceTheme),
+          hideSplashProgress: this.getHideSplashProgressFromTheme(sourceTheme),
+          blurLevel: sourceTheme.blurLevel,
+          brightness: sourceTheme.brightness,
+          primaryColor: sourceTheme.primaryColor,
+          isDark: sourceTheme.isDark,
+          createTime: sourceTheme.createTime,
+          lastModified: sourceTheme.lastModified
+        };
+        const isDefaultOrSecondary: boolean = (sanitizedTheme.id === this.DEFAULT_THEME_ID) || (sanitizedTheme.id === this.SECONDARY_THEME_ID);
+        if (isDefaultOrSecondary) {
+          sanitizedTheme.backgroundImagePath = '';
+          sanitizedTheme.backgroundImagePathDark = '';
+        }
+        sanitizedThemes.push(sanitizedTheme);
+        idx = idx + 1;
+      }
+      this.customThemes = sanitizedThemes;
       const file = fs.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       fs.writeSync(file.fd, JSON.stringify(this.customThemes));
       fs.closeSync(file);
@@ -656,6 +1989,16 @@ export struct ThemeSettingsPage {
           if (theme.splashBackgroundImagePath && theme.splashBackgroundImagePath.length > 0 && fs.accessSync(theme.splashBackgroundImagePath)) {
             fs.unlinkSync(theme.splashBackgroundImagePath);
             logger.info(TAG, `已删除开屏背景: ${theme.splashBackgroundImagePath}`);
+          }
+          const splashPathsToDelete: string[] = this.getSplashPathsFromTheme(theme);
+          let splashIdx: number = 0;
+          while (splashIdx < splashPathsToDelete.length) {
+            const splashPath: string = splashPathsToDelete[splashIdx];
+            if (splashPath.length > 0 && splashPath !== theme.splashBackgroundImagePath && fs.accessSync(splashPath)) {
+              fs.unlinkSync(splashPath);
+              logger.info(TAG, `已删除开屏背景(列表): ${splashPath}`);
+            }
+            splashIdx = splashIdx + 1;
           }
 
           // 若当前激活主题被删除，则清除自定义主题状态
@@ -790,6 +2133,12 @@ export struct ThemeSettingsPage {
       backgroundImagePath: '',
       backgroundImagePathDark: '',
       splashBackgroundImagePath: '',
+      splashBackgroundImagePaths: [],
+      splashRotationRule: SplashRotationRule.FIXED_FIRST,
+      splashRotationCursor: -1,
+      splashRotationLastDateKey: '',
+      hideSplashLogo: false,
+      hideSplashProgress: false,
       blurLevel: 0,
       brightness: 50,
       primaryColor: primaryColor,
@@ -839,6 +2188,12 @@ export struct ThemeSettingsPage {
       backgroundImagePath: '',
       backgroundImagePathDark: '',
       splashBackgroundImagePath: '',
+      splashBackgroundImagePaths: [],
+      splashRotationRule: SplashRotationRule.FIXED_FIRST,
+      splashRotationCursor: -1,
+      splashRotationLastDateKey: '',
+      hideSplashLogo: false,
+      hideSplashProgress: false,
       blurLevel: 0,
       brightness: 50,
       primaryColor: primaryColor,
@@ -888,7 +2243,7 @@ export struct ThemeSettingsPage {
       }
 
       if (targetTheme) {
-        await this.applyCustomThemeToManager(targetTheme, '');
+        await this.applyCustomThemeToManager(targetTheme);
         logger.info(TAG, '✅ 已恢复并应用默认自定义主题（媒体资源模式）');
       }
     } catch (error) {
@@ -911,17 +2266,15 @@ export struct ThemeSettingsPage {
       
       const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = {
         MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
-        maxSelectNumber: 1
+        maxSelectNumber: 12
       };
       
       const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const result = await photoPicker.select(photoSelectOptions);
       
       if (result && result.photoUris && result.photoUris.length > 0) {
-        const imageUri = result.photoUris[0];
-        logger.info(TAG, `已选择图片: ${imageUri}`);
-        
-        await this.loadAndProcessImage(imageUri);
+        logger.info(TAG, `已选择背景图片数量: ${result.photoUris.length}`);
+        await this.setBackgroundDraftImages(result.photoUris);
       }
     } catch (error) {
       logger.error(TAG, `选择图片失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -931,7 +2284,7 @@ export struct ThemeSettingsPage {
   /**
    * 加载并处理图片
    */
-  private async loadAndProcessImage(imageUri: string): Promise<void> {
+  private async loadAndProcessImage(imageUri: string, draftOriginalPath?: string): Promise<void> {
     this.isProcessing = true;
     this.processingMessage = '正在加载图片...';
     this.processingProgress = 10;
@@ -940,41 +2293,66 @@ export struct ThemeSettingsPage {
       // 打开图片文件
       const file = fs.openSync(imageUri, fs.OpenMode.READ_ONLY);
       const imageSource = image.createImageSource(file.fd);
-      
-      // 获取图片信息
-      const imageInfo = await imageSource.getImageInfo();
-      logger.info(TAG, `图片尺寸: ${imageInfo.size.width}x${imageInfo.size.height}`);
-      
-      this.processingProgress = 30;
-      this.processingMessage = '正在准备裁剪...';
-      
-      // 计算目标尺寸（使用720p分辨率，足够用于背景且文件小）
-      // 使用较小的分辨率可以显著减小文件大小，提升性能
-      const maxWidth = 720;
-      const maxHeight = 1280;
-      const targetSize = this.calculateTargetSize(
-        imageInfo.size.width,
-        imageInfo.size.height,
-        maxWidth,
-        maxHeight
-      );
-      const targetWidth = targetSize.targetWidth;
-      const targetHeight = targetSize.targetHeight;
-      
-      logger.info(TAG, `目标尺寸: ${targetWidth}x${targetHeight}`);
-      
-      // 解码并缩放图片（不立即裁剪，进入裁剪阶段）
-      const decodingOptions: image.DecodingOptions = {
-        desiredSize: { width: targetWidth, height: targetHeight },
-        desiredPixelFormat: 3 // RGBA_8888
-      };
-      
-      const decodedPixelMap = await imageSource.createPixelMap(decodingOptions);
-      this.selectedImagePixelMap = decodedPixelMap;
-      this.selectedImagePath = imageUri;
-      
-      fs.closeSync(file);
-      imageSource.release();
+      try {
+        // 获取图片信息
+        const imageInfo = await imageSource.getImageInfo();
+        logger.info(TAG, `图片尺寸: ${imageInfo.size.width}x${imageInfo.size.height}`);
+        
+        this.processingProgress = 30;
+        this.processingMessage = '正在准备裁剪...';
+        
+        // 计算目标尺寸（使用720p分辨率，足够用于背景且文件小）
+        // 使用较小的分辨率可以显著减小文件大小，提升性能
+        const maxWidth = 720;
+        const maxHeight = 1280;
+        const targetSize = this.calculateTargetSize(
+          imageInfo.size.width,
+          imageInfo.size.height,
+          maxWidth,
+          maxHeight
+        );
+        const targetWidth = targetSize.targetWidth;
+        const targetHeight = targetSize.targetHeight;
+        
+        logger.info(TAG, `目标尺寸: ${targetWidth}x${targetHeight}`);
+        
+        // 解码并缩放图片（不立即裁剪，进入裁剪阶段）
+        const decodingOptions: image.DecodingOptions = {
+          desiredSize: { width: targetWidth, height: targetHeight },
+          desiredPixelFormat: 3 // RGBA_8888
+        };
+        
+        const decodedPixelMap = await imageSource.createPixelMap(decodingOptions);
+        if (this.selectedImagePixelMap) {
+          this.selectedImagePixelMap.release();
+        }
+        if (this.processedImagePixelMap) {
+          this.processedImagePixelMap.release();
+        }
+        const activeDraftPath: string = draftOriginalPath && draftOriginalPath.length > 0 ? draftOriginalPath : imageUri;
+        this.activeBackgroundDraftPath = activeDraftPath;
+        if (!this.backgroundDraftImagePaths.includes(activeDraftPath)) {
+          const nextDraftPaths: string[] = [];
+          let pathIdx: number = 0;
+          while (pathIdx < this.backgroundDraftImagePaths.length) {
+            nextDraftPaths.push(this.backgroundDraftImagePaths[pathIdx]);
+            pathIdx = pathIdx + 1;
+          }
+          nextDraftPaths.push(activeDraftPath);
+          this.backgroundDraftImagePaths = nextDraftPaths;
+        }
+        this.registerBackgroundDraftIfNeeded(activeDraftPath);
+        this.selectedImagePixelMap = decodedPixelMap;
+        this.selectedImagePath = activeDraftPath;
+        this.cropAlignment = CropAlignment.CENTER;
+        this.cropZoom = 1.0;
+        this.backgroundRotateQuarterTurns = 0;
+        await this.syncSelectedImagePixelSize(this.selectedImagePixelMap);
+        this.resetBackgroundViewfinder();
+      } finally {
+        fs.closeSync(file);
+        imageSource.release();
+      }
       
       // 直接进行主色调提取（不进入自定义裁剪阶段）
       this.processingProgress = 60;
@@ -1014,10 +2392,12 @@ export struct ThemeSettingsPage {
       this.processingMessage = '正在裁剪图片...';
       this.processingProgress = 40;
 
-      const cropped = await cropToDisplayAspectWithOptions(this.selectedImagePixelMap, this.cropAlignment, this.cropZoom);
-      // 释放旧像素图
+      const nextPixelMap: image.PixelMap = await this.buildBackgroundPreviewPixelMap(this.selectedImagePixelMap);
       this.selectedImagePixelMap.release();
-      this.selectedImagePixelMap = cropped;
+      this.selectedImagePixelMap = nextPixelMap;
+      await this.syncSelectedImagePixelSize(this.selectedImagePixelMap);
+      this.resetBackgroundViewfinder();
+      await this.persistActiveBackgroundDraftCrop();
 
       this.processingProgress = 70;
       this.processingMessage = '正在提取主色调...';
@@ -1039,6 +2419,37 @@ export struct ThemeSettingsPage {
     }
   }
 
+  private async applySplashCrop(): Promise<void> {
+    if (!this.selectedSplashImagePixelMap) {
+      logger.error(TAG, 'applySplashCrop: selectedSplashImagePixelMap为空');
+      return;
+    }
+    try {
+      this.isProcessing = true;
+      this.processingMessage = '正在裁剪开屏图片...';
+      this.processingProgress = 40;
+      const nextPixelMap: image.PixelMap = await this.buildSplashPreviewPixelMap(this.selectedSplashImagePixelMap);
+      this.selectedSplashImagePixelMap.release();
+      this.selectedSplashImagePixelMap = nextPixelMap;
+      await this.syncSelectedSplashPixelSize(this.selectedSplashImagePixelMap);
+      this.resetSplashViewfinder();
+      if (this.processedSplashImagePixelMap) {
+        this.processedSplashImagePixelMap.release();
+      }
+      const previewCopy: image.PixelMap = await this.rotatePixelMapByQuarterTurns(this.selectedSplashImagePixelMap, 0);
+      this.processedSplashImagePixelMap = previewCopy;
+      this.processedSplashImagePath = this.selectedSplashImagePath;
+      await this.persistActiveSplashDraftCrop();
+      this.processingProgress = 100;
+      this.processingMessage = '开屏裁剪完成';
+      setTimeout(() => { this.isProcessing = false; }, 220);
+    } catch (error) {
+      const msg: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `应用开屏裁剪失败: ${msg}`);
+      this.isProcessing = false;
+    }
+  }
+
   /**
    * 预览裁剪效果（不修改原图，仅生成预览处理结果）
    */
@@ -1051,14 +2462,13 @@ export struct ThemeSettingsPage {
       this.isProcessing = true;
       this.processingMessage = '正在预览裁剪效果...';
       this.processingProgress = 30;
-      const cropped = await cropToDisplayAspectWithOptions(this.selectedImagePixelMap, this.cropAlignment, this.cropZoom);
-      // 释放旧的预览处理结果
-      if (this.processedImagePixelMap) {
-        this.processedImagePixelMap.release();
+      const previewPixelMap: image.PixelMap = await this.buildBackgroundPreviewPixelMap(this.selectedImagePixelMap);
+      try {
+        this.processingProgress = 70;
+        await this.applyImageEffects(previewPixelMap);
+      } finally {
+        previewPixelMap.release();
       }
-      this.processedImagePixelMap = cropped;
-      this.processingProgress = 70;
-      await this.applyImageEffects();
       this.processingProgress = 100;
       this.processingMessage = '裁剪预览完成';
       setTimeout(() => { this.isProcessing = false; }, 200);
@@ -1082,16 +2492,15 @@ export struct ThemeSettingsPage {
 
       const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = {
         MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
-        maxSelectNumber: 1
+        maxSelectNumber: 12
       };
 
       const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const result = await photoPicker.select(photoSelectOptions);
 
       if (result && result.photoUris && result.photoUris.length > 0) {
-        const imageUri = result.photoUris[0];
-        logger.info(TAG, `已选择开屏图片: ${imageUri}`);
-        await this.loadAndProcessSplashImage(imageUri);
+        logger.info(TAG, `已选择开屏图片数量: ${result.photoUris.length}`);
+        await this.setSplashSourceImages(result.photoUris);
       }
     } catch (error) {
       logger.error(TAG, `选择开屏图片失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -1101,7 +2510,7 @@ export struct ThemeSettingsPage {
   /**
    * 加载并处理开屏图片（仅裁剪到设备比例）
    */
-  private async loadAndProcessSplashImage(imageUri: string): Promise<void> {
+  private async loadAndProcessSplashImage(imageUri: string, sourceOriginalPath?: string): Promise<void> {
     this.isProcessing = true;
     this.processingMessage = '正在加载开屏图片...';
     this.processingProgress = 10;
@@ -1109,37 +2518,48 @@ export struct ThemeSettingsPage {
     try {
       const file = fs.openSync(imageUri, fs.OpenMode.READ_ONLY);
       const imageSource = image.createImageSource(file.fd);
-      const imageInfo = await imageSource.getImageInfo();
-      logger.info(TAG, `开屏图片尺寸: ${imageInfo.size.width}x${imageInfo.size.height}`);
+      try {
+        const imageInfo = await imageSource.getImageInfo();
+        logger.info(TAG, `开屏图片尺寸: ${imageInfo.size.width}x${imageInfo.size.height}`);
 
-      this.processingProgress = 40;
-      this.processingMessage = '正在裁剪开屏图片...';
+        this.processingProgress = 40;
+        this.processingMessage = '正在裁剪开屏图片...';
 
-      const maxWidth = 1080; // 开屏图片保存更高分辨率以保证品质
-      const maxHeight = 1920;
-      const targetSize = this.calculateTargetSize(imageInfo.size.width, imageInfo.size.height, maxWidth, maxHeight);
-      const decodingOptions: image.DecodingOptions = {
-        desiredSize: { width: targetSize.targetWidth, height: targetSize.targetHeight },
-        desiredPixelFormat: 3
-      };
+        const maxWidth = 1080; // 开屏图片保存更高分辨率以保证品质
+        const maxHeight = 1920;
+        const targetSize = this.calculateTargetSize(imageInfo.size.width, imageInfo.size.height, maxWidth, maxHeight);
+        const decodingOptions: image.DecodingOptions = {
+          desiredSize: { width: targetSize.targetWidth, height: targetSize.targetHeight },
+          desiredPixelFormat: 3
+        };
 
-      const decodedPixelMap = await imageSource.createPixelMap(decodingOptions);
-      const cropped = await cropToDisplayAspect(decodedPixelMap);
-      decodedPixelMap.release();
+        const decodedPixelMap = await imageSource.createPixelMap(decodingOptions);
+        this.clearCurrentSplashSelection();
+        const activeSourcePath: string = sourceOriginalPath && sourceOriginalPath.length > 0 ? sourceOriginalPath : imageUri;
+        this.activeSplashSourcePath = activeSourcePath;
+        if (!this.splashSourceImagePaths.includes(activeSourcePath)) {
+          const nextSourcePaths: string[] = [];
+          let pathIdx: number = 0;
+          while (pathIdx < this.splashSourceImagePaths.length) {
+            nextSourcePaths.push(this.splashSourceImagePaths[pathIdx]);
+            pathIdx = pathIdx + 1;
+          }
+          nextSourcePaths.push(activeSourcePath);
+          this.splashSourceImagePaths = nextSourcePaths;
+        }
+        this.registerSplashSourceIfNeeded(activeSourcePath);
+        this.selectedSplashImagePixelMap = decodedPixelMap;
+        this.selectedSplashImagePath = activeSourcePath;
+        await this.syncSelectedSplashPixelSize(this.selectedSplashImagePixelMap);
+        this.resetSplashViewfinder();
+        await this.refreshSplashPreviewFromSelection();
 
-      // 保存状态
-      this.selectedSplashImagePixelMap = cropped;
-      this.selectedSplashImagePath = imageUri;
-
-      // 预览使用处理后的（裁剪）像素图
-      this.processedSplashImagePixelMap = cropped;
-      this.processedSplashImagePath = imageUri;
-
-      this.processingProgress = 100;
-      this.processingMessage = '开屏图片处理完成';
-
-      fs.closeSync(file);
-      imageSource.release();
+        this.processingProgress = 100;
+        this.processingMessage = '开屏图片处理完成';
+      } finally {
+        fs.closeSync(file);
+        imageSource.release();
+      }
       setTimeout(() => { this.isProcessing = false; }, 300);
     } catch (error) {
       logger.error(TAG, `处理开屏图片失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -1220,6 +2640,7 @@ export struct ThemeSettingsPage {
         this.availablePrimaryColors = updatedColors;
       }
       this.selectedPrimaryColor = this.extractedColor;
+      this.syncCustomColorEditor(this.selectedPrimaryColor);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `提取主色调失败: ${errorMsg}`);
@@ -1294,8 +2715,8 @@ export struct ThemeSettingsPage {
   /**
    * 获取裁剪对齐方式的显示标签
    */
-  private getCropAlignmentLabel(): string {
-    switch (this.cropAlignment) {
+  private getCropAlignmentLabelFor(alignment: CropAlignment): string {
+    switch (alignment) {
       case CropAlignment.TOP_LEFT:
         return '左上';
       case CropAlignment.TOP:
@@ -1317,6 +2738,48 @@ export struct ThemeSettingsPage {
       default:
         return '居中';
     }
+  }
+
+  private getCropAlignmentLabel(): string {
+    return this.getCropAlignmentLabelFor(this.cropAlignment);
+  }
+
+  private getSplashCropAlignmentLabel(): string {
+    return this.getCropAlignmentLabelFor(this.splashCropAlignment);
+  }
+
+  private nextCropAlignment(current: CropAlignment): CropAlignment {
+    if (current === CropAlignment.CENTER) {
+      return CropAlignment.TOP;
+    }
+    if (current === CropAlignment.TOP) {
+      return CropAlignment.BOTTOM;
+    }
+    if (current === CropAlignment.BOTTOM) {
+      return CropAlignment.LEFT;
+    }
+    if (current === CropAlignment.LEFT) {
+      return CropAlignment.RIGHT;
+    }
+    if (current === CropAlignment.RIGHT) {
+      return CropAlignment.TOP_LEFT;
+    }
+    if (current === CropAlignment.TOP_LEFT) {
+      return CropAlignment.TOP_RIGHT;
+    }
+    if (current === CropAlignment.TOP_RIGHT) {
+      return CropAlignment.CENTER_LEFT;
+    }
+    if (current === CropAlignment.CENTER_LEFT) {
+      return CropAlignment.CENTER_RIGHT;
+    }
+    if (current === CropAlignment.CENTER_RIGHT) {
+      return CropAlignment.BOTTOM_LEFT;
+    }
+    if (current === CropAlignment.BOTTOM_LEFT) {
+      return CropAlignment.BOTTOM_RIGHT;
+    }
+    return CropAlignment.CENTER;
   }
 
   /**
@@ -1389,8 +2852,9 @@ export struct ThemeSettingsPage {
    * 应用图片效果（模糊和压暗）
    * 使用effectKit硬件加速的模糊效果，避免CPU密集型处理导致ANR
    */
-  private async applyImageEffects(): Promise<void> {
-    if (!this.selectedImagePixelMap) {
+  private async applyImageEffects(sourcePixelMap?: image.PixelMap): Promise<void> {
+    const basePixelMap: image.PixelMap | null = sourcePixelMap ? sourcePixelMap : this.selectedImagePixelMap;
+    if (!basePixelMap) {
       return;
     }
     
@@ -1399,19 +2863,27 @@ export struct ThemeSettingsPage {
       
       // 如果没有需要应用的效果（模糊为0且亮度为50），直接复制原图
       if (this.blurLevel === 0 && this.brightnessLevel === 50) {
-        await this.copyOriginalToProcessed();
+        if (!sourcePixelMap) {
+          await this.copyOriginalToProcessed();
+        } else {
+          const directCopy: image.PixelMap = await this.rotatePixelMapByQuarterTurns(basePixelMap, 0);
+          if (this.processedImagePixelMap) {
+            this.processedImagePixelMap.release();
+          }
+          this.processedImagePixelMap = directCopy;
+        }
         logger.info(TAG, '✅ 无需应用效果，使用原图');
         return;
       }
       
       // 获取原图信息
-      const imageInfo = await this.selectedImagePixelMap.getImageInfo();
+      const imageInfo = await basePixelMap.getImageInfo();
       const width = imageInfo.size.width;
       const height = imageInfo.size.height;
       
       // 1. 复制原图作为工作副本（避免修改原图）
       const buffer = new ArrayBuffer(width * height * 4);
-      await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
+      await basePixelMap.readPixelsToBuffer(buffer);
       
       // BGRA -> RGBA：交换 R 和 B 通道（readPixelsToBuffer 返回 BGRA 格式）
       const pixelsBgra = new Uint8Array(buffer);
@@ -1498,11 +2970,11 @@ export struct ThemeSettingsPage {
       logger.error(TAG, `应用图片效果失败: ${errorMsg}`);
       
       // 失败时直接复制原图
-      if (this.selectedImagePixelMap && !this.processedImagePixelMap) {
+      if (basePixelMap && !this.processedImagePixelMap) {
         try {
-          const imageInfo = await this.selectedImagePixelMap.getImageInfo();
+          const imageInfo = await basePixelMap.getImageInfo();
           const buffer = new ArrayBuffer(imageInfo.size.width * imageInfo.size.height * 4);
-          await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
+          await basePixelMap.readPixelsToBuffer(buffer);
           
           // BGRA -> RGBA 转换
           const fallbackPixels = new Uint8Array(buffer);
@@ -1573,7 +3045,9 @@ export struct ThemeSettingsPage {
         fs.mkdirSync(themesDir);
       }
       
-      const themeId = `theme_${Date.now()}`;
+      const themeId: string = this.isEditingCustomTheme && this.editingThemeId.length > 0
+        ? this.editingThemeId
+        : `theme_${Date.now()}`;
       
       // 1. 生成浅色模式图片（使用用户设置的亮度+模糊）
       this.processingMessage = '正在生成浅色模式图片...';
@@ -1586,30 +3060,40 @@ export struct ThemeSettingsPage {
       const darkBrightness = Math.max(10, Math.min(40, this.brightnessLevel - 20)); // 比当前亮度低20%，范围10-40
       const darkImagePath = await this.generateThemeImage(themeId, 'dark', this.blurLevel, darkBrightness);
 
-      // 生成开屏图片（如果已选择）
-      let splashImagePath: string = '';
-      if (this.selectedSplashImagePixelMap) {
+      // 生成开屏图片列表（如果已选择或已加入草稿）
+      let splashImagePaths: string[] = [];
+      if (this.splashSourceImagePaths.length > 0 || this.splashDraftImagePaths.length > 0 || this.processedSplashImagePixelMap) {
         this.processingMessage = '正在生成开屏图片...';
         this.processingProgress = 80;
-        splashImagePath = await this.generateSplashImage(themeId);
+        splashImagePaths = await this.generateSplashImages(themeId);
       }
+      const splashPrimaryPath: string = splashImagePaths.length > 0 ? splashImagePaths[0] : '';
       
       // 3. 创建主题对象
       this.processingMessage = '正在保存主题信息...';
       this.processingProgress = 90;
       const themeName: string = this.normalizeThemeName();
       const primaryColorToUse: string = this.selectedPrimaryColor && this.selectedPrimaryColor.length > 0 ? this.selectedPrimaryColor : this.extractedColor;
+      const createTimeValue: number = this.isEditingCustomTheme && this.editingThemeCreateTime > 0
+        ? this.editingThemeCreateTime
+        : Date.now();
       const customTheme: CustomTheme = {
         id: themeId,
         name: themeName,
         backgroundImagePath: lightImagePath,
         backgroundImagePathDark: darkImagePath,
-        splashBackgroundImagePath: splashImagePath,
+        splashBackgroundImagePath: splashPrimaryPath,
+        splashBackgroundImagePaths: splashImagePaths,
+        splashRotationRule: this.splashRotationRule,
+        splashRotationCursor: -1,
+        splashRotationLastDateKey: '',
+        hideSplashLogo: this.hideSplashLogo,
+        hideSplashProgress: this.hideSplashProgress,
         blurLevel: this.blurLevel,
         brightness: this.brightnessLevel,
         primaryColor: primaryColorToUse,
         isDark: this.themeState.currentTheme === ThemeType.DARK,
-        createTime: Date.now(),
+        createTime: createTimeValue,
         lastModified: Date.now()
       };
       
@@ -1618,20 +3102,24 @@ export struct ThemeSettingsPage {
       logger.info(TAG, `主题已保存: ${customTheme.name}`);
       logger.info(TAG, `  浅色模式图片: ${lightImagePath}`);
       logger.info(TAG, `  深色模式图片: ${darkImagePath}`);
+      logger.info(TAG, `  开屏图片数量: ${splashImagePaths.length}`);
       
       // 应用主题到应用
-      await this.applyCustomThemeToManager(customTheme, splashImagePath);
+      await this.applyCustomThemeToManager(customTheme);
       
-      this.processingMessage = '主题保存成功！';
+      this.processingMessage = this.isEditingCustomTheme ? '主题修改成功！' : '主题保存成功！';
       this.processingProgress = 100;
       logger.info(TAG, `✅ 自定义主题已应用，将在所有页面生效`);
+      this.cleanupSplashDraftFiles();
+      this.cleanupBackgroundDraftFiles();
+      this.clearCurrentSplashSelection();
       
       // 显示Toast并自动返回
       setTimeout(() => {
         this.isProcessing = false;
         // 显示成功提示
         promptAction.showToast({
-          message: '主题已保存并应用',
+          message: this.isEditingCustomTheme ? '主题修改已保存并应用' : '主题已保存并应用',
           duration: 2000
         });
         // 延迟返回上一页
@@ -1784,49 +3272,15 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 生成开屏图片（仅打包裁剪后的像素图）
-   */
-  private async generateSplashImage(themeId: string): Promise<string> {
-    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
-    if (!context) {
-      throw new Error('无法获取UIAbilityContext');
-    }
-    if (!this.selectedSplashImagePixelMap) {
-      throw new Error('selectedSplashImagePixelMap为null');
-    }
-
-    const themesDir = `${context.filesDir}/custom_themes`;
-    const imagePath = `${themesDir}/${themeId}_splash.webp`;
-
-    const packOpts: image.PackingOption = {
-      format: 'image/webp',
-      quality: 85
-    };
-
-    try {
-      const imagePacker = image.createImagePacker();
-      const file = fs.openSync(imagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      await imagePacker.packToFile(this.selectedSplashImagePixelMap, file.fd, packOpts);
-      fs.closeSync(file);
-      imagePacker.release();
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `保存开屏图片失败: ${errorMsg}`);
-      throw new Error(`保存开屏图片失败: ${errorMsg}`);
-    }
-
-    logger.info(TAG, `✅ 生成开屏图片: ${imagePath}`);
-    return imagePath;
-  }
-
-  /**
    * 应用自定义主题到ThemeManager
    * 辅助方法，用于调用ThemeManager的applyCustomTheme方法
    */
-  private async applyCustomThemeToManager(theme: CustomTheme, splashImagePath: string): Promise<void> {
+  private async applyCustomThemeToManager(theme: CustomTheme): Promise<void> {
     try {
       logger.info(TAG, `开始应用自定义主题: ${theme.name}`);
       // 不强制切换应用主题；保持当前主题设置（含AUTO），由ThemeManager按系统深浅切换背景
+      const splashPaths: string[] = this.getSplashPathsFromTheme(theme);
+      const splashRule: SplashRotationRule = this.getSplashRotationRuleFromTheme(theme);
       
       // 调用ThemeManager统一应用（包含开屏背景路径）
       const themeData: CustomThemeData = {
@@ -1834,7 +3288,13 @@ export struct ThemeSettingsPage {
         name: theme.name,
         backgroundImagePath: theme.backgroundImagePath,
         backgroundImagePathDark: theme.backgroundImagePathDark,
-        splashBackgroundImagePath: theme.splashBackgroundImagePath ? theme.splashBackgroundImagePath : splashImagePath,
+        splashBackgroundImagePath: splashPaths.length > 0 ? splashPaths[0] : '',
+        splashBackgroundImagePaths: splashPaths,
+        splashRotationRule: splashRule,
+        splashRotationCursor: theme.splashRotationCursor !== undefined ? theme.splashRotationCursor : -1,
+        splashRotationLastDateKey: theme.splashRotationLastDateKey ? theme.splashRotationLastDateKey : '',
+        hideSplashLogo: this.getHideSplashLogoFromTheme(theme),
+        hideSplashProgress: this.getHideSplashProgressFromTheme(theme),
         blurLevel: theme.blurLevel,
         primaryColor: theme.primaryColor,
         isDark: theme.isDark,
@@ -1846,9 +3306,10 @@ export struct ThemeSettingsPage {
       logger.info(TAG, `✅ 自定义主题应用成功（含开屏图）: ${theme.name}`);
       logger.info(TAG, `   背景图片: ${theme.backgroundImagePath}`);
       logger.info(TAG, `   深色背景: ${theme.backgroundImagePathDark}`);
-      if (splashImagePath && splashImagePath.length > 0) {
-        logger.info(TAG, `   开屏图片: ${splashImagePath}`);
+      if (splashPaths.length > 0) {
+        logger.info(TAG, `   开屏图片数量: ${splashPaths.length}`);
       }
+      logger.info(TAG, `   开屏轮换规则: ${splashRule}`);
       logger.info(TAG, `   主色调: ${theme.primaryColor}`);
       logger.info(TAG, `   当前显示主题: ${this.themeManager.getActualThemeSync()}`);
     } catch (error) {
@@ -2013,6 +3474,130 @@ export struct ThemeSettingsPage {
     });
   }
 
+  private scrollThemeEditorToTop(): void {
+    setTimeout(() => {
+      try {
+        this.scroller.scrollTo({
+          xOffset: 0,
+          yOffset: 0,
+          animation: {
+            duration: 220
+          }
+        });
+      } catch (error) {
+        const message: string = error instanceof Error ? error.message : String(error);
+        logger.warn(TAG, `滚动到主题编辑区顶部失败: ${message}`);
+      }
+    }, 0);
+  }
+
+  private beginCreateCustomTheme(): void {
+    this.isCreatingCustomTheme = true;
+    this.isEditingCustomTheme = false;
+    this.editingThemeId = '';
+    this.editingThemeCreateTime = 0;
+    this.mediaEditorTab = ThemeMediaTabType.BACKGROUND;
+    this.newThemeName = '';
+    this.cropAlignment = CropAlignment.CENTER;
+    this.cropZoom = 1.0;
+    this.backgroundRotateQuarterTurns = 0;
+    this.resetBackgroundViewfinder();
+    this.splashCropAlignment = CropAlignment.CENTER;
+    this.splashCropZoom = 1.0;
+    this.splashRotateQuarterTurns = 0;
+    this.splashRotationRule = SplashRotationRule.EVERY_LAUNCH;
+    this.hideSplashLogo = false;
+    this.hideSplashProgress = false;
+    this.resetSplashViewfinder();
+    this.cleanupSplashDraftFiles();
+    this.cleanupBackgroundDraftFiles();
+    this.clearCurrentSplashSelection();
+    if (this.selectedPrimaryColor.length > 0) {
+      this.syncCustomColorEditor(this.selectedPrimaryColor);
+    }
+    this.scrollThemeEditorToTop();
+  }
+
+  private async editExistingTheme(theme: CustomTheme): Promise<void> {
+    try {
+      this.beginCreateCustomTheme();
+      this.isEditingCustomTheme = true;
+      this.editingThemeId = theme.id;
+      this.editingThemeCreateTime = theme.createTime;
+      this.newThemeName = theme.name;
+      this.blurLevel = theme.blurLevel;
+      this.brightnessLevel = theme.brightness;
+      this.splashRotationRule = this.getSplashRotationRuleFromTheme(theme);
+      this.hideSplashLogo = this.getHideSplashLogoFromTheme(theme);
+      this.hideSplashProgress = this.getHideSplashProgressFromTheme(theme);
+      if (theme.primaryColor && theme.primaryColor.length > 0) {
+        this.ensureColorInPalette(theme.primaryColor);
+        this.selectedPrimaryColor = theme.primaryColor;
+        this.syncCustomColorEditor(theme.primaryColor);
+      }
+      if (theme.backgroundImagePath && theme.backgroundImagePath.length > 0) {
+        await this.setBackgroundDraftImages([theme.backgroundImagePath]);
+      }
+      const splashPaths: string[] = this.getSplashPathsFromTheme(theme);
+      if (splashPaths.length > 0) {
+        await this.setSplashSourceImages(splashPaths);
+      }
+      this.processingMessage = '';
+      this.processingProgress = 0;
+      this.isProcessing = false;
+      this.scrollThemeEditorToTop();
+    } catch (error) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `加载主题编辑信息失败: ${message}`);
+      promptAction.showToast({
+        message: '加载主题失败，请重试',
+        duration: 1600
+      });
+    }
+  }
+
+  @Builder
+  private buildMediaCapsuleTabButton(tab: ThemeMediaTabType) {
+    Row() {
+      Text(this.getMediaTabLabel(tab))
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(this.isMediaTabActive(tab) ? FontWeight.Medium : FontWeight.Normal)
+        .fontColor(this.isMediaTabActive(tab)
+          ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .layoutWeight(1)
+    .height(34)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 10, right: 10 })
+    .backgroundColor(this.isMediaTabActive(tab)
+      ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+      : Color.Transparent)
+    .borderRadius(999)
+    .onClick(() => {
+      this.mediaEditorTab = tab;
+    })
+    .animation({ duration: 180, curve: Curve.EaseOut })
+  }
+
+  @Builder
+  private buildMediaCapsuleTabBar() {
+    Row({ space: 6 }) {
+      this.buildMediaCapsuleTabButton(ThemeMediaTabType.BACKGROUND)
+      this.buildMediaCapsuleTabButton(ThemeMediaTabType.SPLASH)
+    }
+    .width('100%')
+    .padding(4)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .border({
+      width: 1,
+      color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+    })
+    .borderRadius(999)
+    .clip(true)
+  }
+
   build() {
     HdsNavDestination() {
       Stack({ alignContent: Alignment.TopStart }) {
@@ -2137,21 +3722,32 @@ export struct ThemeSettingsPage {
                               .layoutWeight(1)
                               .alignItems(HorizontalAlign.Start)
 
-                              Button(this.currentCustomThemeId === theme.id ? '已激活' : '应用')
-                                .fontSize(12)
-                                .height(32)
-                                .fontFamily(this.appFontFamily)
-                                .backgroundColor(this.currentCustomThemeId === theme.id ? $r('app.color.text_secondary') : $r('app.color.accent_primary'))
-                                .enabled(this.currentCustomThemeId !== theme.id)
-                                .onClick(async () => {
-                                  try {
-                                    const splashPathApply: string = theme.splashBackgroundImagePath ? theme.splashBackgroundImagePath : '';
-                                    await this.applyCustomThemeToManager(theme, splashPathApply);
-                                    logger.info(TAG, `已应用保存的主题: ${theme.name}`);
-                                  } catch (error) {
-                                    logger.error(TAG, `应用主题失败: ${error instanceof Error ? error.message : String(error)}`);
-                                  }
-                                })
+                              Row({ space: 6 }) {
+                                Button('编辑')
+                                  .fontSize(12)
+                                  .height(32)
+                                  .fontFamily(this.appFontFamily)
+                                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                                  .enabled(!this.selectionModeEnabled)
+                                  .onClick(async () => {
+                                    await this.editExistingTheme(theme);
+                                  })
+                                Button(this.currentCustomThemeId === theme.id ? '已激活' : '应用')
+                                  .fontSize(12)
+                                  .height(32)
+                                  .fontFamily(this.appFontFamily)
+                                  .backgroundColor(this.currentCustomThemeId === theme.id ? $r('app.color.text_secondary') : $r('app.color.accent_primary'))
+                                  .enabled(this.currentCustomThemeId !== theme.id && !this.selectionModeEnabled)
+                                  .onClick(async () => {
+                                    try {
+                                      await this.applyCustomThemeToManager(theme);
+                                      logger.info(TAG, `已应用保存的主题: ${theme.name}`);
+                                    } catch (error) {
+                                      logger.error(TAG, `应用主题失败: ${error instanceof Error ? error.message : String(error)}`);
+                                    }
+                                  })
+                              }
                             }
                             .width('100%')
                             .padding({ top: 8 })
@@ -2199,7 +3795,9 @@ export struct ThemeSettingsPage {
                     .fontSize(16)
                     .fontFamily(this.appFontFamily)
                     .backgroundColor($r('app.color.accent_primary'))
-                    .onClick(() => { this.isCreatingCustomTheme = true; })
+                    .onClick(() => {
+                      this.beginCreateCustomTheme();
+                    })
 
                   Button('关闭自定义主题')
                     .width('100%')
@@ -2726,135 +4324,177 @@ export struct ThemeSettingsPage {
                 .margin({ bottom: 16 })
               }
 
-              // 图片预览区域（创建模式）
-              if (this.isCreatingCustomTheme && this.processedImagePixelMap) {
-                Column() {
-                  Text('预览效果')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .width('100%')
-                    .margin({ bottom: 8 })
-
-                  Stack() {
-                    Image(this.processedImagePixelMap)
-                      .width('100%')
-                      .height(300)
-                      .objectFit(ImageFit.Cover)
-                      .borderRadius(12)
-
-                    // 主色调预览
-                    Row() {
-                      Column() {
-                        Text('主色调')
-                          .fontSize(12)
-                          .fontFamily(this.appFontFamily)
-                          .fontColor(Color.White)
-                        Text(this.extractedColor)
-                          .fontSize(10)
-                          .fontColor(Color.White)
-                          .margin({ top: 4 })
-                          .fontFamily(this.appFontFamily)
-                      }
-                      .padding(8)
-                      .backgroundColor(this.extractedColor)
-                      .borderRadius(8)
-                    }
-                    .width('100%')
-                    .justifyContent(FlexAlign.End)
-                    .padding(12)
-                  }
-                  .width('100%')
-                }
-                .width(this.responsive_isLandscape ? '48%' : '100%')
-                .padding(16)
-                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
-                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
-                .backgroundBlurStyle(
-                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
-                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
-                )
-                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
-                .clip(true)
-                .border({
-                  width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
-                  color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
-                })
-                .shadow({
-                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
-                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
-                  offsetX: 0,
-                  offsetY: 8
-                })
-                .margin({ bottom: 16 })
-              } else if (this.isCreatingCustomTheme && this.selectedImagePixelMap) {
-                Column() {
-                  Text('原始图片')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .width('100%')
-                    .margin({ bottom: 8 })
-
-                  Image(this.selectedImagePixelMap)
-                    .width('100%')
-                    .height(300)
-                    .objectFit(ImageFit.Cover)
-                    .borderRadius(12)
-                }
-                .width(this.responsive_isLandscape ? '48%' : '100%')
-                .padding(16)
-                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
-                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
-                .backgroundBlurStyle(
-                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
-                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
-                )
-                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
-                .clip(true)
-                .border({
-                  width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
-                  color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
-                })
-                .shadow({
-                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
-                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
-                  offsetX: 0,
-                  offsetY: 8
-                })
-                .margin({ bottom: 16 })
-              }
-
               // 选择图片按钮（背景）仅创建模式
               if (this.isCreatingCustomTheme) {
-                Column({ space: 8 }) {
-                  Button('选择背景图片')
-                    .width('100%')
-                    .height(48)
+                Column({ space: 12 }) {
+                  Text(this.isEditingCustomTheme ? '编辑主题素材' : '创建主题素材')
                     .fontSize(16)
                     .fontFamily(this.appFontFamily)
-                    .backgroundColor($r('app.color.accent_primary'))
-                    .onClick(() => this.selectImage())
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .width('100%')
 
-                  Button('选择开屏背景图片')
-                    .width('100%')
-                    .height(48)
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .backgroundColor($r('app.color.accent_primary'))
-                    .onClick(() => this.selectSplashImage())
-                  
-                  Text('提示：未设置开屏图片将使用背景图片作为开屏图片')
+                  Text('使用胶囊标签页分别配置背景图与开屏图，二者都支持取景框裁剪和旋转')
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                    .opacity(0.8)
                     .width('100%')
-                    .textAlign(TextAlign.Center)
+                    .opacity(0.82)
+
+                  this.buildMediaCapsuleTabBar()
+
+                  if (this.mediaEditorTab === ThemeMediaTabType.BACKGROUND) {
+                    Column({ space: 10 }) {
+                      Text('背景图片将用于阅读器与页面背景展示')
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                        .width('100%')
+                        .opacity(0.82)
+
+                      Button('选择背景图片')
+                        .width('100%')
+                        .height(44)
+                        .fontSize(15)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor($r('app.color.accent_primary'))
+                        .onClick(() => this.selectImage())
+
+                      if (this.backgroundDraftImagePaths.length > 0) {
+                        Text(`已导入 ${this.backgroundDraftImagePaths.length} 张背景图`)
+                          .fontSize(12)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                          .width('100%')
+                      }
+                    }
+                    .width('100%')
+                  } else {
+                    Column({ space: 10 }) {
+                      Text('开屏图支持多图轮换，可为每一张独立保存裁剪结果')
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                        .width('100%')
+                        .opacity(0.82)
+
+                      Button('选择开屏图片')
+                        .width('100%')
+                        .height(44)
+                        .fontSize(15)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor($r('app.color.accent_primary'))
+                        .onClick(() => this.selectSplashImage())
+
+                      Row({ space: 8 }) {
+                        Text(`已导入 ${this.splashSourceImagePaths.length} 张开屏图`)
+                          .fontSize(12)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                          .layoutWeight(1)
+                        Button('清空列表')
+                          .height(32)
+                          .fontSize(12)
+                          .fontFamily(this.appFontFamily)
+                          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                          .enabled(this.splashSourceImagePaths.length > 0)
+                          .onClick(() => {
+                            this.clearCurrentSplashSelection();
+                            this.cleanupSplashDraftFiles();
+                          })
+                      }
+                      .width('100%')
+
+                      Text(`轮换规则：${this.getSplashRotationRuleLabel(this.splashRotationRule)}`)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                        .width('100%')
+
+                      Row() {
+                        Column({ space: 2 }) {
+                          Text('启动页不显示应用logo')
+                            .fontSize(13)
+                            .fontFamily(this.appFontFamily)
+                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                          Text('开启后，当前主题在启动页仅显示背景与进度，不显示应用图标')
+                            .fontSize(11)
+                            .fontFamily(this.appFontFamily)
+                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                            .opacity(0.8)
+                        }
+                        .layoutWeight(1)
+                        Toggle({ type: ToggleType.Switch, isOn: this.hideSplashLogo })
+                          .selectedColor($r('app.color.accent_primary'))
+                          .onChange((isOn: boolean) => {
+                            this.hideSplashLogo = isOn;
+                          })
+                      }
+                      .width('100%')
+                      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      .borderRadius(8)
+
+                      Row() {
+                        Column({ space: 2 }) {
+                          Text('不显示启动进度')
+                            .fontSize(13)
+                            .fontFamily(this.appFontFamily)
+                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                          Text('开启后，当前主题在启动页不显示进度文本、进度条与百分比')
+                            .fontSize(11)
+                            .fontFamily(this.appFontFamily)
+                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                            .opacity(0.8)
+                        }
+                        .layoutWeight(1)
+                        Toggle({ type: ToggleType.Switch, isOn: this.hideSplashProgress })
+                          .selectedColor($r('app.color.accent_primary'))
+                          .onChange((isOn: boolean) => {
+                            this.hideSplashProgress = isOn;
+                          })
+                      }
+                      .width('100%')
+                      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      .borderRadius(8)
+
+                      Column({ space: 6 }) {
+                        ForEach(this.splashRotationOptions, (option: SplashRotationOption) => {
+                          Row({ space: 8 }) {
+                            Text(option.label)
+                              .fontSize(13)
+                              .fontFamily(this.appFontFamily)
+                              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                              .layoutWeight(1)
+                            if (this.splashRotationRule === option.value) {
+                              Text('当前')
+                                .fontSize(12)
+                                .fontFamily(this.appFontFamily)
+                                .fontColor($r('app.color.accent_primary'))
+                            }
+                          }
+                          .width('100%')
+                          .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+                          .backgroundColor(
+                            this.splashRotationRule === option.value
+                              ? ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme)
+                              : 'rgba(0, 0, 0, 0)'
+                          )
+                          .borderRadius(8)
+                          .border({
+                            width: this.splashRotationRule === option.value ? 1 : 0,
+                            color: $r('app.color.accent_primary')
+                          })
+                          .onClick(() => {
+                            this.splashRotationRule = option.value;
+                          })
+                        }, (option: SplashRotationOption) => option.value)
+                      }
+                      .width('100%')
+                    }
+                    .width('100%')
+                  }
                 }
                 .id('theme_create_background')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
@@ -2912,8 +4552,203 @@ export struct ThemeSettingsPage {
               }
 
               // 参数调节区域（选择图片后显示）
-              if (this.isCreatingCustomTheme && this.selectedImagePixelMap) {
+              if (this.isCreatingCustomTheme
+                && this.mediaEditorTab === ThemeMediaTabType.BACKGROUND
+                && this.selectedImagePixelMap) {
                 Column({ space: 16 }) {
+                  Column({ space: 8 }) {
+                    Text('背景裁剪与旋转')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      .width('100%')
+
+                    Text('直接在取景框内拖动和双指缩放，所见即所得')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      .width('100%')
+
+                    Row() {
+                      Stack() {
+                        Image(this.processedImagePixelMap ? this.processedImagePixelMap : this.selectedImagePixelMap)
+                          .width(this.getCurrentViewfinderBaseImageWidth())
+                          .height(this.getCurrentViewfinderBaseImageHeight())
+                          .objectFit(ImageFit.Fill)
+                          .rotate({
+                            x: 0,
+                            y: 0,
+                            z: 1,
+                            angle: this.normalizeQuarterTurns(this.backgroundRotateQuarterTurns) * 90
+                          })
+                          .scale({
+                            x: this.backgroundViewfinderScale,
+                            y: this.backgroundViewfinderScale
+                          })
+                          .translate({
+                            x: this.backgroundViewfinderOffsetX,
+                            y: this.backgroundViewfinderOffsetY
+                          })
+
+                        Column() {
+                          Row()
+                            .width('100%')
+                            .height(1)
+                            .backgroundColor($r('app.color.divider_primary'))
+                            .opacity(0.35)
+                          Blank()
+                          Row()
+                            .width('100%')
+                            .height(1)
+                            .backgroundColor($r('app.color.divider_primary'))
+                            .opacity(0.35)
+                        }
+                        .width('100%')
+                        .height('100%')
+
+                        Row() {
+                          Column()
+                            .width(1)
+                            .height('100%')
+                            .backgroundColor($r('app.color.divider_primary'))
+                            .opacity(0.35)
+                          Blank()
+                          Column()
+                            .width(1)
+                            .height('100%')
+                            .backgroundColor($r('app.color.divider_primary'))
+                            .opacity(0.35)
+                        }
+                        .width('100%')
+                        .height('100%')
+
+                        Column()
+                          .width('100%')
+                          .height('100%')
+                          .border({
+                            width: 2,
+                            color: $r('app.color.accent_primary')
+                          })
+                          .borderRadius(12)
+                      }
+                      .width(this.previewFrameWidthVp)
+                      .height(this.previewFrameHeightVp)
+                      .clip(true)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      .borderRadius(12)
+                      .gesture(
+                        GestureGroup(GestureMode.Parallel,
+                          PanGesture({ fingers: 1, direction: PanDirection.All, distance: 1 })
+                            .onActionStart(() => {
+                              this.handleBackgroundViewfinderPanStart();
+                            })
+                            .onActionUpdate((event: GestureEvent) => {
+                              this.handleBackgroundViewfinderPan(event);
+                            }),
+                          PinchGesture({ fingers: 2, distance: 2 })
+                            .onActionStart(() => {
+                              this.handleBackgroundViewfinderPinchStart();
+                            })
+                            .onActionUpdate((event: GestureEvent) => {
+                              this.handleBackgroundViewfinderPinch(event);
+                            })
+                            .onActionEnd(() => {
+                              this.handleBackgroundViewfinderPinchEnd();
+                            })
+                        )
+                      )
+                    }
+                    .width('100%')
+                    .justifyContent(FlexAlign.Center)
+
+                    Row({ space: 8 }) {
+                      Text(`当前缩放 ${this.backgroundViewfinderScale.toFixed(2)}x`)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Blank()
+                      Text(`比例 ${this.previewFrameAspectRatio.toFixed(3)}`)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+
+                    Row({ space: 8 }) {
+                      Button(`旋转：${this.getQuarterTurnsLabel(this.backgroundRotateQuarterTurns)}`)
+                        .layoutWeight(1)
+                        .height(36)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                        .onClick(() => {
+                          this.backgroundRotateQuarterTurns = this.normalizeQuarterTurns(this.backgroundRotateQuarterTurns + 1);
+                          this.clampViewfinderToBounds();
+                        })
+                      Button('重置取景')
+                        .layoutWeight(1)
+                        .height(36)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                        .onClick(() => {
+                          this.resetBackgroundViewfinder();
+                        })
+                    }
+                    .width('100%')
+
+                    Button('应用取景裁剪')
+                      .width('100%')
+                      .height(36)
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .backgroundColor($r('app.color.color_success'))
+                      .onClick(async () => {
+                        await this.applyCrop();
+                      })
+
+                    if (this.backgroundDraftImagePaths.length > 1) {
+                      Column({ space: 8 }) {
+                        Text('已导入背景（点击缩略图切换，已应用裁剪会自动保存）')
+                          .fontSize(12)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                          .width('100%')
+
+                        Flex({
+                          wrap: FlexWrap.Wrap,
+                          justifyContent: FlexAlign.Start
+                        }) {
+                          ForEach(this.backgroundDraftImagePaths, (draftOriginalPath: string) => {
+                            if (draftOriginalPath !== this.activeBackgroundDraftPath) {
+                              Column({ space: 4 }) {
+                                Image(this.normalizeThemePreviewPath(this.resolveBackgroundDraftSourcePath(draftOriginalPath)))
+                                  .width(72)
+                                  .height(Math.round(72 / this.previewFrameAspectRatio))
+                                  .objectFit(ImageFit.Cover)
+                                  .borderRadius(8)
+                                  .border({
+                                    width: 1,
+                                    color: $r('app.color.divider_primary')
+                                  })
+                                  .onClick(async () => {
+                                    await this.switchBackgroundDraftImage(draftOriginalPath);
+                                  })
+                                Text('切换')
+                                  .fontSize(11)
+                                  .fontFamily(this.appFontFamily)
+                                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                              }
+                              .margin({ right: 8, bottom: 8 })
+                            }
+                          }, (draftOriginalPath: string) => draftOriginalPath)
+                        }
+                        .width('100%')
+                      }
+                      .width('100%')
+                    }
+                  }
+
                   // 模糊程度
                   Column({ space: 8 }) {
                     Row() {
@@ -3010,21 +4845,219 @@ export struct ThemeSettingsPage {
               }
 
               // 开屏图片预览区域（仅创建模式）
-              if (this.isCreatingCustomTheme && this.processedSplashImagePixelMap) {
-                Column() {
-                  Text('开屏图片预览')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .width('100%')
-                    .margin({ bottom: 8 })
+              if (this.isCreatingCustomTheme
+                && this.mediaEditorTab === ThemeMediaTabType.SPLASH
+                && this.selectedSplashImagePixelMap) {
+                Column({ space: 16 }) {
+                  Column({ space: 8 }) {
+                    Text('开屏裁剪与旋转')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      .width('100%')
 
-                  Image(this.processedSplashImagePixelMap)
+                    Text('直接在取景框内拖动和双指缩放，完成后点击“应用取景裁剪”保存当前图片')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      .width('100%')
+
+                    Row() {
+                      Stack() {
+                        Image(this.selectedSplashImagePixelMap)
+                          .width(this.getCurrentSplashViewfinderBaseImageWidth())
+                          .height(this.getCurrentSplashViewfinderBaseImageHeight())
+                          .objectFit(ImageFit.Fill)
+                          .rotate({
+                            x: 0,
+                            y: 0,
+                            z: 1,
+                            angle: this.normalizeQuarterTurns(this.splashRotateQuarterTurns) * 90
+                          })
+                          .scale({
+                            x: this.splashViewfinderScale,
+                            y: this.splashViewfinderScale
+                          })
+                          .translate({
+                            x: this.splashViewfinderOffsetX,
+                            y: this.splashViewfinderOffsetY
+                          })
+
+                        Column() {
+                          Row()
+                            .width('100%')
+                            .height(1)
+                            .backgroundColor($r('app.color.divider_primary'))
+                            .opacity(0.35)
+                          Blank()
+                          Row()
+                            .width('100%')
+                            .height(1)
+                            .backgroundColor($r('app.color.divider_primary'))
+                            .opacity(0.35)
+                        }
+                        .width('100%')
+                        .height('100%')
+
+                        Row() {
+                          Column()
+                            .width(1)
+                            .height('100%')
+                            .backgroundColor($r('app.color.divider_primary'))
+                            .opacity(0.35)
+                          Blank()
+                          Column()
+                            .width(1)
+                            .height('100%')
+                            .backgroundColor($r('app.color.divider_primary'))
+                            .opacity(0.35)
+                        }
+                        .width('100%')
+                        .height('100%')
+
+                        Column()
+                          .width('100%')
+                          .height('100%')
+                          .border({
+                            width: 2,
+                            color: $r('app.color.accent_primary')
+                          })
+                          .borderRadius(12)
+                      }
+                      .width(this.previewFrameWidthVp)
+                      .height(this.previewFrameHeightVp)
+                      .clip(true)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      .borderRadius(12)
+                      .gesture(
+                        GestureGroup(GestureMode.Parallel,
+                          PanGesture({ fingers: 1, direction: PanDirection.All, distance: 1 })
+                            .onActionStart(() => {
+                              this.handleSplashViewfinderPanStart();
+                            })
+                            .onActionUpdate((event: GestureEvent) => {
+                              this.handleSplashViewfinderPan(event);
+                            }),
+                          PinchGesture({ fingers: 2, distance: 2 })
+                            .onActionStart(() => {
+                              this.handleSplashViewfinderPinchStart();
+                            })
+                            .onActionUpdate((event: GestureEvent) => {
+                              this.handleSplashViewfinderPinch(event);
+                            })
+                            .onActionEnd(() => {
+                              this.handleSplashViewfinderPinchEnd();
+                            })
+                        )
+                      )
+                    }
                     .width('100%')
-                    .height(300)
-                    .objectFit(ImageFit.Cover)
-                    .borderRadius(12)
+                    .justifyContent(FlexAlign.Center)
+
+                    Row({ space: 8 }) {
+                      Text(`当前缩放 ${this.splashViewfinderScale.toFixed(2)}x`)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Blank()
+                      Text(`比例 ${this.previewFrameAspectRatio.toFixed(3)}`)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+
+                    Row({ space: 8 }) {
+                      Button(`旋转：${this.getQuarterTurnsLabel(this.splashRotateQuarterTurns)}`)
+                        .layoutWeight(1)
+                        .height(36)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                        .onClick(() => {
+                          this.splashRotateQuarterTurns = this.normalizeQuarterTurns(this.splashRotateQuarterTurns + 1);
+                          this.clampSplashViewfinderToBounds();
+                        })
+                      Button('重置取景')
+                        .layoutWeight(1)
+                        .height(36)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                        .onClick(() => {
+                          this.resetSplashViewfinder();
+                        })
+                    }
+                    .width('100%')
+
+                    Row({ space: 8 }) {
+                      Button('应用取景裁剪')
+                        .layoutWeight(1)
+                        .height(36)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor($r('app.color.color_success'))
+                        .onClick(async () => {
+                          await this.applySplashCrop();
+                        })
+                      Button('清除当前')
+                        .layoutWeight(1)
+                        .height(36)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor($r('app.color.color_error'))
+                        .onClick(() => {
+                          this.clearCurrentSplashSelection();
+                        })
+                    }
+                    .width('100%')
+
+                    if (this.splashSourceImagePaths.length > 1) {
+                      Column({ space: 8 }) {
+                        Text('已导入开屏（点击缩略图切换，已应用裁剪会自动保存）')
+                          .fontSize(12)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                          .width('100%')
+
+                        Flex({
+                          wrap: FlexWrap.Wrap,
+                          justifyContent: FlexAlign.Start
+                        }) {
+                          ForEach(this.splashSourceImagePaths, (sourcePath: string) => {
+                            Column({ space: 4 }) {
+                              Image(this.normalizeThemePreviewPath(this.resolveSplashSourcePath(sourcePath)))
+                                .width(72)
+                                .height(Math.round(72 / this.previewFrameAspectRatio))
+                                .objectFit(ImageFit.Cover)
+                                .borderRadius(8)
+                                .border({
+                                  width: sourcePath === this.activeSplashSourcePath ? 2 : 1,
+                                  color: sourcePath === this.activeSplashSourcePath
+                                    ? $r('app.color.accent_primary')
+                                    : $r('app.color.divider_primary')
+                                })
+                                .onClick(async () => {
+                                  await this.switchSplashSourceImage(sourcePath);
+                                })
+                              Text(sourcePath === this.activeSplashSourcePath ? '当前' : '切换')
+                                .fontSize(11)
+                                .fontFamily(this.appFontFamily)
+                                .fontColor(
+                                  sourcePath === this.activeSplashSourcePath
+                                    ? $r('app.color.accent_primary')
+                                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)
+                                )
+                            }
+                            .margin({ right: 8, bottom: 8 })
+                          }, (sourcePath: string) => sourcePath)
+                        }
+                        .width('100%')
+                      }
+                      .width('100%')
+                    }
+                  }
+                  .width('100%')
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
@@ -3069,7 +5102,10 @@ export struct ThemeSettingsPage {
                         .backgroundColor(this.extractedColor)
                         .borderRadius(8)
                         .border({ width: this.selectedPrimaryColor === this.extractedColor ? 3 : 0, color: $r('app.color.accent_primary') })
-                        .onClick(() => { this.selectedPrimaryColor = this.extractedColor; })
+                        .onClick(() => {
+                          this.selectedPrimaryColor = this.extractedColor;
+                          this.syncCustomColorEditor(this.selectedPrimaryColor);
+                        })
 
                       Column({ space: 4 }) {
                         Text('从图片提取')
@@ -3121,10 +5157,138 @@ export struct ThemeSettingsPage {
                       .height(40)
                       .onClick(() => {
                         this.selectedPrimaryColor = colorStr;
+                        this.syncCustomColorEditor(this.selectedPrimaryColor);
                       })
                     }, (colorStr: string) => colorStr)
                   }
                   .width('100%')
+
+                  Column({ space: 8 }) {
+                    Text('自定义色盘')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      .width('100%')
+
+                    Row({ space: 8 }) {
+                      TextInput({ text: this.customPrimaryColorHex, placeholder: '#RRGGBB' })
+                        .layoutWeight(1)
+                        .height(38)
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                        .borderRadius(8)
+                        .onChange((value: string) => {
+                          this.customPrimaryColorHex = value;
+                        })
+                      Button('解析')
+                        .height(38)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor($r('app.color.accent_primary'))
+                        .onClick(() => {
+                          const normalized: string = this.normalizeHexColor(this.customPrimaryColorHex);
+                          this.syncCustomColorEditor(normalized);
+                        })
+                    }
+                    .width('100%')
+
+                    Row({ space: 8 }) {
+                      Text('R')
+                        .width(16)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Slider({ value: this.customPrimaryColorR, min: 0, max: 255, step: 1 })
+                        .layoutWeight(1)
+                        .trackColor($r('app.color.divider_primary'))
+                        .selectedColor($r('app.color.accent_primary'))
+                        .onChange((value: number) => {
+                          this.customPrimaryColorR = Math.round(value);
+                          this.updateCustomColorFromChannels();
+                        })
+                      Text(this.customPrimaryColorR.toString())
+                        .width(36)
+                        .textAlign(TextAlign.End)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+
+                    Row({ space: 8 }) {
+                      Text('G')
+                        .width(16)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Slider({ value: this.customPrimaryColorG, min: 0, max: 255, step: 1 })
+                        .layoutWeight(1)
+                        .trackColor($r('app.color.divider_primary'))
+                        .selectedColor($r('app.color.accent_primary'))
+                        .onChange((value: number) => {
+                          this.customPrimaryColorG = Math.round(value);
+                          this.updateCustomColorFromChannels();
+                        })
+                      Text(this.customPrimaryColorG.toString())
+                        .width(36)
+                        .textAlign(TextAlign.End)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+
+                    Row({ space: 8 }) {
+                      Text('B')
+                        .width(16)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Slider({ value: this.customPrimaryColorB, min: 0, max: 255, step: 1 })
+                        .layoutWeight(1)
+                        .trackColor($r('app.color.divider_primary'))
+                        .selectedColor($r('app.color.accent_primary'))
+                        .onChange((value: number) => {
+                          this.customPrimaryColorB = Math.round(value);
+                          this.updateCustomColorFromChannels();
+                        })
+                      Text(this.customPrimaryColorB.toString())
+                        .width(36)
+                        .textAlign(TextAlign.End)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+
+                    Row({ space: 8 }) {
+                      Column()
+                        .width(34)
+                        .height(34)
+                        .backgroundColor(this.customPrimaryColorHex)
+                        .borderRadius(8)
+                        .border({ width: 1, color: $r('app.color.divider_primary') })
+                      Text(this.customPrimaryColorHex)
+                        .layoutWeight(1)
+                        .fontSize(13)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      Button('加入色盘并选中')
+                        .height(34)
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .backgroundColor($r('app.color.color_success'))
+                        .onClick(() => {
+                          this.applyCustomPrimaryColorFromEditor();
+                        })
+                    }
+                    .width('100%')
+                  }
+                  .width('100%')
+                  .padding(10)
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  .borderRadius(8)
 
                   Column({ space: 16 }) {
                     Column({ space: 8 }) {
@@ -3140,7 +5304,7 @@ export struct ThemeSettingsPage {
                         .onChange((value: string) => { this.newThemeName = value; })
                     }
 
-                    Button('保存并应用主题')
+                    Button(this.isEditingCustomTheme ? '保存修改并应用主题' : '保存并应用主题')
                       .width('100%')
                       .height(48)
                       .fontSize(16)
@@ -3243,7 +5407,7 @@ export struct ThemeSettingsPage {
                       .onChange((value: string) => { this.newThemeName = value; })
                   }
 
-                  Button('保存并应用主题')
+                  Button(this.isEditingCustomTheme ? '保存修改并应用主题' : '保存并应用主题')
                     .width('100%')
                     .height(48)
                     .fontSize(16)

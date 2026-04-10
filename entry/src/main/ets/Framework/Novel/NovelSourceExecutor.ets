@@ -15,10 +15,10 @@ import { LegadoUrlAnalyzer, ParsedUrlRequest, RequestMethod } from './LegadoUrlA
 import { getNovelReplaceRuleManager, ReplaceScope } from './NovelReplaceRuleManager';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { HtmlFormatter } from './HtmlFormatter';
-import { getLegadoJsEngine } from './LegadoJsEngine';
 import { ProxyManager } from '../Network/ProxyManager';
 
 const TAG = 'NovelSourceExecutor';
+const REQUEST_TIMEOUT_MS = 15000;
 
 /**
  * 章节列表解析结果
@@ -94,6 +94,8 @@ export interface SearchParseOptions {
  */
 export class NovelSourceExecutor {
   private static readonly ENABLE_SEARCH_PARSE_TRACE: boolean = false;
+  private static readonly JS_RULE_TOKEN_PATTERN: RegExp = /<js>|(?:@|＠)js(?:\:|：)/i;
+  private static readonly UNRESOLVED_RULE_TOKEN_PATTERN: RegExp = /(?:@|＠)js(?:\:|：)|<js>|\{\{|\}\}|｛｛|｝｝/i;
   private source: LegadoBookSource;
   private urlAnalyzer: LegadoUrlAnalyzer;
 
@@ -102,18 +104,23 @@ export class NovelSourceExecutor {
     // 传入baseUrl和sourceUrl，支持JS中的source.getKey()
     this.urlAnalyzer = new LegadoUrlAnalyzer(
       LegadoSourceParser.getBaseUrl(source),
-      source.bookSourceUrl
+      source.bookSourceUrl,
+      source.jsLib || ''
     );
   }
   
   /**
-   * 确保JS引擎使用当前书源的jsLib
-   * 由于JS引擎是单例，多个书源并发使用时需要在每次操作前设置
+   * 确保当前执行器使用当前书源的jsLib快照
    */
   private ensureJsLib(): void {
-    if (this.source.jsLib) {
-      getLegadoJsEngine().setJsLib(this.source.jsLib);
-    }
+    // 仅更新当前执行器的URL解析器快照，避免并发校验时污染全局jsLib
+    this.urlAnalyzer.setJsLib(this.source.jsLib || '');
+  }
+
+  private createRuleAnalyzer(): LegadoRuleAnalyzer {
+    const analyzer = new LegadoRuleAnalyzer();
+    analyzer.setJsLib(this.source.jsLib || '');
+    return analyzer;
   }
 
   private searchParseTrace(messageBuilder: () => string): void {
@@ -151,40 +158,29 @@ export class NovelSourceExecutor {
 
     try {
       const searchUrl = this.source.searchUrl;
-      
-      // 检查搜索URL是否包含JS规则，使用异步方法处理
-      const hasJsRule = searchUrl.includes('<js>') || searchUrl.includes('@js:') || 
-                        (searchUrl.includes('{{') && this.containsJsExpression(searchUrl));
-      
-      let request: ParsedUrlRequest;
-      if (hasJsRule) {
-        // 确保在执行JS前设置当前书源的jsLib
-        this.ensureJsLib();
-        // 使用异步方法处理JS规则
+      if (this.shouldAnalyzeUrlAsync(searchUrl) ||
+        (searchUrl.includes('{{') && this.containsJsExpression(searchUrl))) {
         logger.debug(TAG, `[书源:${this.source.bookSourceName}] 使用异步JS解析搜索URL`);
-        request = await this.urlAnalyzer.analyzeUrlAsync(searchUrl, keyword, page);
-      } else {
-        // 普通URL，使用同步方法
-        request = this.urlAnalyzer.analyzeUrl(searchUrl, keyword, page);
       }
-      
-      // 检查解析后的URL是否有效
-      if (!request.url || request.url.includes('{{') || request.url.includes('<js>')) {
+
+      const request = await this.analyzeRequestUrl(searchUrl, keyword, page);
+      if (!request.url || this.hasUnresolvedRuleTokens(request.url) || this.isLikelyJsFragmentUrl(request.url)) {
         const urlSnippet = request.url ? request.url.substring(0, 100) : '';
         logger.warn(TAG, `[书源:${this.source.bookSourceName}] URL解析不完整: ${urlSnippet}`);
-        
-        // 分析JS错误类型
         const errorType = this.analyzeJsError(urlSnippet);
-        return { books: [], errorType, errorMessage: `URL解析不完整: ${urlSnippet}` };
+        return { books: [], errorType: errorType, errorMessage: `URL解析不完整: ${urlSnippet}` };
       }
-      
+
       const requestResult = await this.executeRequestWithError(request);
-      
       if (requestResult.errorType && requestResult.errorType !== SearchErrorType.NONE) {
         logger.warn(TAG, `[书源:${this.source.bookSourceName}] 搜索请求失败: ${requestResult.errorMessage}`);
-        return { books: [], errorType: requestResult.errorType, errorMessage: requestResult.errorMessage || '' };
+        return {
+          books: [],
+          errorType: requestResult.errorType,
+          errorMessage: requestResult.errorMessage || ''
+        };
       }
-      
+
       if (!requestResult.response) {
         logger.warn(TAG, `[书源:${this.source.bookSourceName}] 搜索请求失败，无响应数据`);
         return { books: [], errorType: SearchErrorType.NETWORK_ERROR, errorMessage: '无响应数据' };
@@ -200,14 +196,13 @@ export class NovelSourceExecutor {
       const errorMsg = this.formatError(error);
       logger.error(TAG, `[书源:${this.source.bookSourceName}] 搜索失败: ${errorMsg}`);
       const errorType = this.analyzeErrorType(errorMsg);
-      return { books: [], errorType, errorMessage: errorMsg };
+      return { books: [], errorType: errorType, errorMessage: errorMsg };
     }
   }
-  
-  /**
-   * 分析JS错误类型
-   */
   private analyzeJsError(urlOrError: string): SearchErrorType {
+    if (this.isLikelyJsFragmentUrl(urlOrError)) {
+      return SearchErrorType.JS_ERROR;
+    }
     if (urlOrError.includes('source is not defined') || urlOrError.includes('sourceisnotdefined')) {
       return SearchErrorType.JS_SOURCE_UNDEFINED;
     }
@@ -225,7 +220,7 @@ export class NovelSourceExecutor {
    */
   private analyzeErrorType(errorMsg: string): SearchErrorType {
     const lowerMsg = errorMsg.toLowerCase();
-    
+
     if (lowerMsg.includes('timeout') || lowerMsg.includes('超时')) {
       return SearchErrorType.TIMEOUT;
     }
@@ -241,27 +236,25 @@ export class NovelSourceExecutor {
     if (lowerMsg.includes('network') || lowerMsg.includes('connect') || lowerMsg.includes('网络')) {
       return SearchErrorType.NETWORK_ERROR;
     }
-    
+    if (lowerMsg.includes('invalid url') || lowerMsg.includes('missing url') || lowerMsg.includes('url format')) {
+      return SearchErrorType.URL_PARSE_ERROR;
+    }
+
     return SearchErrorType.UNKNOWN;
   }
-  
-  /**
-   * 检查字符串是否包含JS表达式（而不仅仅是简单变量）
-   */
   private containsJsExpression(str: string): boolean {
-    // 匹配 {{...}} 中包含非简单变量的内容
     const matches = str.match(/\{\{([^}]+)\}\}/g);
-    if (!matches) return false;
-    
+    if (!matches) {
+      return false;
+    }
+
     for (const match of matches) {
       const expr = match.slice(2, -2).trim();
-      // 简单变量: key, page, encodedKey
       if (expr === 'key' || expr === 'page' || expr === 'encodedKey') {
         continue;
       }
-      // 包含函数调用、运算符等，认为是JS表达式
-      if (expr.includes('(') || expr.includes('.') || expr.includes('+') || 
-          expr.includes('var ') || expr.includes('function')) {
+      if (expr.includes('(') || expr.includes('.') || expr.includes('+') ||
+        expr.includes('var ') || expr.includes('function')) {
         return true;
       }
     }
@@ -269,55 +262,120 @@ export class NovelSourceExecutor {
   }
 
   /**
-   * 获取书籍详情
+   * 判断URL模板是否需要异步JS解析
    */
+  private shouldAnalyzeUrlAsync(urlTemplate: string): boolean {
+    if (!urlTemplate) {
+      return false;
+    }
+    if (NovelSourceExecutor.JS_RULE_TOKEN_PATTERN.test(urlTemplate)) {
+      return true;
+    }
+    return urlTemplate.includes('{{') && urlTemplate.includes('}}');
+  }
+
+  /**
+   * 检查URL中是否仍包含未解析模板
+   */
+  private hasUnresolvedRuleTokens(url: string): boolean {
+    if (!url) {
+      return false;
+    }
+    return NovelSourceExecutor.UNRESOLVED_RULE_TOKEN_PATTERN.test(url);
+  }
+
+  private isLikelyJsFragmentUrl(url: string): boolean {
+    if (!url) {
+      return false;
+    }
+
+    const trimmedUrl = url.trim();
+    if (trimmedUrl.length === 0) {
+      return false;
+    }
+
+    const lowerUrl = trimmedUrl.toLowerCase();
+    if (lowerUrl.includes('date.now(') || lowerUrl.includes('javascript:')) {
+      return true;
+    }
+
+    const pathStart = trimmedUrl.startsWith('https://') ? 8 : (trimmedUrl.startsWith('http://') ? 7 : 0);
+    const slashIndex = trimmedUrl.indexOf('/', pathStart);
+    const inspectSegment = slashIndex >= 0 ? trimmedUrl.substring(slashIndex) : trimmedUrl;
+
+    if (inspectSegment.includes('\n') || inspectSegment.includes('\r')) {
+      return true;
+    }
+
+    if (inspectSegment.includes(';') || inspectSegment.includes('{') || inspectSegment.includes('}')) {
+      return true;
+    }
+
+    const jsKeywordPattern = /\b(var|let|const|function|return)\b/i;
+    return jsKeywordPattern.test(inspectSegment);
+  }
+
+  /**
+   * 智能解析URL：包含JS规则时使用异步解析，其他情况优先同步并兜底异步
+   */
+  private async analyzeRequestUrl(
+    urlTemplate: string,
+    key?: string,
+    page?: number
+  ): Promise<ParsedUrlRequest> {
+    if (this.shouldAnalyzeUrlAsync(urlTemplate)) {
+      this.ensureJsLib();
+      return await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+    }
+
+    const request = this.urlAnalyzer.analyzeUrl(urlTemplate, key, page);
+    if (this.hasUnresolvedRuleTokens(request.url)) {
+      this.ensureJsLib();
+      return await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+    }
+    return request;
+  }
   async getBookInfo(bookUrl: string): Promise<LegadoBook | null> {
-    // 确保JS引擎使用当前书源的jsLib
     this.ensureJsLib();
     try {
-      const request = this.urlAnalyzer.analyzeUrl(bookUrl);
+      const request = await this.analyzeRequestUrl(bookUrl);
       const response = await this.executeRequest(request);
-      
+
       if (!response) {
         return null;
       }
 
-      return this.parseBookInfo(response, request.url, bookUrl);
+      return this.parseBookInfo(response, request.url, request.url);
     } catch (error) {
       logger.error(TAG, `获取书籍详情失败: ${String(error)}`);
       return null;
     }
   }
-
-  /**
-   * 获取章节列表（支持分页）
-   */
   async getChapterList(book: LegadoBook): Promise<LegadoChapter[]> {
-    // 确保JS引擎使用当前书源的jsLib
     this.ensureJsLib();
     const tocUrl = book.tocUrl || book.bookUrl;
     const allChapters: LegadoChapter[] = [];
     let currentUrl: string | null = tocUrl;
     let pageCount = 0;
-    const maxPages = 50; // 防止无限循环
-    
+    const maxPages = 50;
+
     try {
       while (currentUrl && pageCount < maxPages) {
-        const request = this.urlAnalyzer.analyzeUrl(currentUrl);
+        const request = await this.analyzeRequestUrl(currentUrl);
         const response = await this.executeRequest(request);
-        
+
         if (!response) {
           break;
         }
 
-        const parseResult = this.parseChapterListWithNext(response, request.url, book, allChapters.length);
-        const chapters = parseResult.chapters;
-        const nextUrl = parseResult.nextUrl;
+        const parseResult: ChapterListParseResult =
+          await this.parseChapterListWithNext(response, request.url, book, allChapters.length);
+        const chapters: LegadoChapter[] = parseResult.chapters;
+        const nextUrl: string | null = parseResult.nextUrl;
         for (let j = 0; j < chapters.length; j++) {
           allChapters.push(chapters[j]);
         }
-        
-        // 检查是否有下一页
+
         if (nextUrl && nextUrl !== currentUrl) {
           currentUrl = nextUrl;
           pageCount++;
@@ -326,7 +384,7 @@ export class NovelSourceExecutor {
           currentUrl = null;
         }
       }
-      
+
       logger.info(TAG, `章节列表: ${allChapters.length} 章 (${pageCount + 1} 页)`);
       return allChapters;
     } catch (error) {
@@ -334,33 +392,28 @@ export class NovelSourceExecutor {
       return allChapters;
     }
   }
-
-  /**
-   * 获取章节正文（支持分页）
-   */
   async getContent(chapter: LegadoChapter): Promise<string> {
-    // 确保JS引擎使用当前书源的jsLib
     this.ensureJsLib();
     const allContent: string[] = [];
     let currentUrl: string | null = chapter.url;
     let pageCount = 0;
-    const maxPages = 20; // 防止无限循环
-    
+    const maxPages = 20;
+
     try {
       while (currentUrl && pageCount < maxPages) {
-        const request = this.urlAnalyzer.analyzeUrl(currentUrl);
+        const request = await this.analyzeRequestUrl(currentUrl);
         const response = await this.executeRequest(request);
-        
+
         if (!response) {
           break;
         }
 
-        const contentResult = this.parseContentWithNext(response, request.url, chapter);
+        const contentResult: ContentParseResult =
+          await this.parseContentWithNext(response, request.url, chapter);
         if (contentResult.content) {
           allContent.push(contentResult.content);
         }
-        
-        // 检查是否有下一页
+
         if (contentResult.nextUrl && contentResult.nextUrl !== currentUrl) {
           currentUrl = contentResult.nextUrl;
           pageCount++;
@@ -369,14 +422,13 @@ export class NovelSourceExecutor {
           currentUrl = null;
         }
       }
-      
+
       return allContent.join('\n\n');
     } catch (error) {
       logger.error(TAG, `获取正文失败: ${String(error)}`);
       return allContent.join('\n\n');
     }
   }
-
   // ==================== 发现页功能 ====================
 
   /**
@@ -402,7 +454,6 @@ export class NovelSourceExecutor {
    * 获取发现页书籍列表
    */
   async explore(exploreUrl: string, page: number = 1): Promise<LegadoSearchBook[]> {
-    // 确保JS引擎使用当前书源的jsLib
     this.ensureJsLib();
     if (!this.source.ruleExplore) {
       logger.warn(TAG, '书源没有配置发现规则');
@@ -410,9 +461,9 @@ export class NovelSourceExecutor {
     }
 
     try {
-      const request = this.urlAnalyzer.analyzeUrl(exploreUrl, '', page);
+      const request = await this.analyzeRequestUrl(exploreUrl, '', page);
       const response = await this.executeRequest(request);
-      
+
       if (!response) {
         return [];
       }
@@ -423,10 +474,6 @@ export class NovelSourceExecutor {
       return [];
     }
   }
-
-  /**
-   * 解析发现页结果
-   */
   private parseExploreResult(html: string, baseUrl: string): LegadoSearchBook[] {
     const results: LegadoSearchBook[] = [];
     const rule = this.source.ruleExplore;
@@ -435,13 +482,13 @@ export class NovelSourceExecutor {
       return results;
     }
 
-    const analyzer = new LegadoRuleAnalyzer();
+    const analyzer = this.createRuleAnalyzer();
     analyzer.setContent(html, baseUrl);
 
     const bookElements = analyzer.getElements(rule.bookList);
     
     for (let i = 0; i < bookElements.length; i++) {
-      const itemAnalyzer = new LegadoRuleAnalyzer();
+      const itemAnalyzer = this.createRuleAnalyzer();
       itemAnalyzer.setContent(bookElements[i], baseUrl);
 
       const name = itemAnalyzer.getString(rule.name);
@@ -475,45 +522,58 @@ export class NovelSourceExecutor {
    */
   private async executeRequest(request: ParsedUrlRequest): Promise<string | null> {
     try {
-      // 检查URL是否包含未解析的JS规则（说明JS执行失败）
-      if (request.url.includes('<js>') || request.url.includes('@js:') || request.url.includes('{{')) {
+      if (this.hasUnresolvedRuleTokens(request.url)) {
         logger.error(TAG, `URL包含未解析的规则: ${request.url.substring(0, 100)}...`);
         logger.warn(TAG, '请检查JS引擎是否正常工作');
         return null;
       }
-      
-      // 处理data:协议的URL（用于传递数据，不需要HTTP请求）
+
       if (request.url.startsWith('data:')) {
-        return this.parseDataUrl(request.url);
+        const dataPayload = this.parseDataUrl(request.url);
+        if (this.isLikelyRedirectUrl(dataPayload)) {
+          const redirectRequest = await this.analyzeRequestUrl(dataPayload);
+          if (!redirectRequest.url.startsWith('data:')) {
+            logger.debug(TAG, `data:URL解析为跳转请求: ${redirectRequest.url}`);
+            return await this.executeRequest(redirectRequest);
+          }
+        }
+        return dataPayload;
       }
-      
-      // 检查URL是否有效
+
+      if (this.isLikelyJsFragmentUrl(request.url)) {
+        logger.error(TAG, `URL疑似包含未执行的JS片段: ${request.url.substring(0, 100)}...`);
+        return null;
+      }
+
+      if (request.url.startsWith('ERROR:')) {
+        logger.error(TAG, `JS执行返回错误: ${request.url}`);
+        logger.warn(TAG, '请检查JS规则或JS引擎状态');
+        return null;
+      }
+
       if (!request.url.startsWith('http://') && !request.url.startsWith('https://')) {
         logger.error(TAG, `无效的URL: ${request.url}`);
         return null;
       }
-      
+
       logger.debug(TAG, `请求: ${request.method} ${request.url}`);
       if (request.body) {
         logger.debug(TAG, `请求Body: ${request.body}`);
       }
 
       const httpRequest = http.createHttp();
-      
-      // 如果指定了charset且不是utf-8，使用ArrayBuffer获取原始数据
-      const needCustomDecode = request.charset && 
-        request.charset.toLowerCase() !== 'utf-8' && 
+      const needCustomDecode: boolean = !!request.charset &&
+        request.charset.toLowerCase() !== 'utf-8' &&
         request.charset.toLowerCase() !== 'utf8';
-      
+
       const options: http.HttpRequestOptions = {
         method: request.method === RequestMethod.POST ? http.RequestMethod.POST : http.RequestMethod.GET,
         header: this.buildHeaders(request.headers),
-        connectTimeout: 10000,
-        readTimeout: 10000,
+        connectTimeout: REQUEST_TIMEOUT_MS,
+        readTimeout: REQUEST_TIMEOUT_MS,
         expectDataType: needCustomDecode ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING
       };
-      
-      // 应用代理配置
+
       const proxyManager = ProxyManager.getInstance();
       if (proxyManager.isEnabled()) {
         options.usingProxy = true;
@@ -521,14 +581,11 @@ export class NovelSourceExecutor {
       }
 
       if (request.method === RequestMethod.POST) {
-        // POST请求需要设置Content-Type
         const header = options.header as Record<string, string>;
         if (!header['Content-Type']) {
-          // 检查body是否是JSON格式
           if (request.body && (request.body.trim().startsWith('{') || request.body.trim().startsWith('['))) {
             header['Content-Type'] = 'application/json; charset=utf-8';
           } else {
-            // 默认使用表单格式
             header['Content-Type'] = 'application/x-www-form-urlencoded; charset=utf-8';
           }
         }
@@ -542,7 +599,6 @@ export class NovelSourceExecutor {
       httpRequest.destroy();
 
       if (response.responseCode >= 200 && response.responseCode < 300) {
-        // 根据charset解码响应
         if (needCustomDecode && response.result instanceof ArrayBuffer) {
           try {
             const decoder = new util.TextDecoder(request.charset);
@@ -551,7 +607,6 @@ export class NovelSourceExecutor {
             return result;
           } catch (decodeError) {
             logger.warn(TAG, `使用${request.charset}解码失败，尝试UTF-8: ${String(decodeError)}`);
-            // 降级到UTF-8
             const decoder = new util.TextDecoder('utf-8');
             return decoder.decodeToString(new Uint8Array(response.result));
           }
@@ -559,7 +614,6 @@ export class NovelSourceExecutor {
         return typeof response.result === 'string' ? response.result : String(response.result);
       }
 
-      // 详细的错误日志
       const responseBody = typeof response.result === 'string' ? response.result : String(response.result);
       const truncatedBody = responseBody.length > 200 ? responseBody.substring(0, 200) + '...' : responseBody;
       logger.warn(TAG, `请求失败: HTTP ${response.responseCode}`);
@@ -567,44 +621,30 @@ export class NovelSourceExecutor {
       logger.debug(TAG, `响应内容: ${truncatedBody}`);
       return null;
     } catch (error) {
-      // 详细的异常日志
       const errorMsg = this.formatError(error);
       logger.error(TAG, `HTTP请求异常: ${errorMsg}`);
       logger.debug(TAG, `失败URL: ${request.url}`);
       return null;
     }
   }
-  
-  /**
-   * 解析data:协议的URL
-   * 格式: data:;base64,{json_data},{extra_data}
-   * 这种URL用于传递书籍信息，不需要HTTP请求
-   * 
-   * 注意：这里的"base64"是书源的命名约定，实际数据可能是JSON而非真正的base64编码
-   */
   private parseDataUrl(url: string): string {
     try {
       logger.debug(TAG, `解析data:URL: ${url.substring(0, Math.min(200, url.length))}...`);
-      
-      // 格式: data:;base64,{json1},{json2}
-      // 例如: data:;base64,{"book_id":"xxx","sources":"番茄","tab":"小说","url":""},{"type":"qingtian"}
-      // 这里的数据实际上是JSON格式，不是真正的base64编码
-      
-      // 提取逗号后面的内容（第一个逗号之后的所有内容）
+
       const firstCommaIndex = url.indexOf(',');
       if (firstCommaIndex > 0) {
         const content = url.substring(firstCommaIndex + 1);
         logger.debug(TAG, `data:URL内容: ${content.substring(0, Math.min(200, content.length))}...`);
-        
-        // 内容格式: {json1},{json2}
-        // 需要提取第一个JSON对象作为主要数据
+
         if (content.startsWith('{')) {
-          // 找到第一个完整的JSON对象
           let braceCount = 0;
           let endIndex = 0;
           for (let i = 0; i < content.length; i++) {
-            if (content[i] === '{') braceCount++;
-            else if (content[i] === '}') braceCount--;
+            if (content[i] === '{') {
+              braceCount++;
+            } else if (content[i] === '}') {
+              braceCount--;
+            }
             if (braceCount === 0) {
               endIndex = i + 1;
               break;
@@ -616,62 +656,158 @@ export class NovelSourceExecutor {
             return jsonContent;
           }
         }
-        
+
+        const decodedContent = this.tryDecodeBase64DataUrlPayload(content);
+        if (decodedContent !== null) {
+          logger.debug(TAG, `data:URL Base64解码成功: ${decodedContent.substring(0, Math.min(200, decodedContent.length))}...`);
+          return decodedContent;
+        }
+
         return content;
       }
-      
+
       return url;
     } catch (error) {
       logger.error(TAG, `解析data:URL失败: ${String(error)}`);
       return url;
     }
   }
-  
-  /**
-   * 执行HTTP请求（带详细错误信息）
-   */
+
+  private tryDecodeBase64DataUrlPayload(payload: string): string | null {
+    const trimmedPayload = payload.trim();
+    if (!this.isLikelyBase64Payload(trimmedPayload)) {
+      return null;
+    }
+
+    try {
+      let normalized = trimmedPayload.replace(/-/g, '+').replace(/_/g, '/');
+      const paddingLength = normalized.length % 4;
+      if (paddingLength > 0) {
+        normalized += '='.repeat(4 - paddingLength);
+      }
+
+      const base64Helper: util.Base64Helper = new util.Base64Helper();
+      const decodedBytes: Uint8Array = base64Helper.decodeSync(normalized);
+      const decoder = new util.TextDecoder('utf-8');
+      const decodedText = decoder.decodeToString(decodedBytes).trim();
+      if (!this.isUsableDecodedDataPayload(decodedText)) {
+        return null;
+      }
+      return decodedText.length > 0 ? decodedText : null;
+    } catch (error) {
+      logger.debug(TAG, `data:URL Base64解码失败，按原文处理: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private isLikelyBase64Payload(value: string): boolean {
+    if (value.length < 8 || value.length > 8192) {
+      return false;
+    }
+    const base64Pattern = /^[A-Za-z0-9+/=_-]+$/;
+    return base64Pattern.test(value);
+  }
+
+  private isLikelyRedirectUrl(value: string): boolean {
+    const trimmedValue = value.trim();
+    if (trimmedValue.length === 0) {
+      return false;
+    }
+    if (!this.isUsableDecodedDataPayload(trimmedValue)) {
+      return false;
+    }
+    if (trimmedValue.startsWith('{') || trimmedValue.startsWith('[') || trimmedValue.startsWith('<')) {
+      return false;
+    }
+    if (/[<>"'`{}|\\^]/.test(trimmedValue) || /\s/.test(trimmedValue)) {
+      return false;
+    }
+    return trimmedValue.startsWith('http://') || trimmedValue.startsWith('https://') || trimmedValue.startsWith('/');
+  }
+
+  private isUsableDecodedDataPayload(value: string): boolean {
+    if (value.length === 0 || value.includes('\uFFFD')) {
+      return false;
+    }
+
+    for (let i = 0; i < value.length; i++) {
+      const code = value.charCodeAt(i);
+      const isControl = code < 0x20 && code !== 0x09 && code !== 0x0A && code !== 0x0D;
+      if (isControl || code === 0x7F) {
+        return false;
+      }
+    }
+
+    return true;
+  }
   private async executeRequestWithError(request: ParsedUrlRequest): Promise<HttpRequestResult> {
     try {
-      // 检查URL是否包含未解析的JS规则
-      if (request.url.includes('<js>') || request.url.includes('@js:') || request.url.includes('{{')) {
+      if (this.hasUnresolvedRuleTokens(request.url)) {
         const errorType = this.analyzeJsError(request.url);
-        const result: HttpRequestResult = { response: null, errorType: errorType, errorMessage: 'URL包含未解析的规则' };
+        const result: HttpRequestResult = {
+          response: null,
+          errorType: errorType,
+          errorMessage: 'URL包含未解析的规则'
+        };
         return result;
       }
-      
-      // 处理data:协议的URL
+
       if (request.url.startsWith('data:')) {
-        const response = this.parseDataUrl(request.url);
-        return { response: response } as HttpRequestResult;
+        const dataPayload = this.parseDataUrl(request.url);
+        if (this.isLikelyRedirectUrl(dataPayload)) {
+          const redirectRequest = await this.analyzeRequestUrl(dataPayload);
+          if (!redirectRequest.url.startsWith('data:')) {
+            logger.debug(TAG, `data:URL解析为跳转请求: ${redirectRequest.url}`);
+            return await this.executeRequestWithError(redirectRequest);
+          }
+        }
+        return { response: dataPayload } as HttpRequestResult;
       }
-      
-      // 检查URL是否有效
+
+      if (this.isLikelyJsFragmentUrl(request.url)) {
+        return {
+          response: null,
+          errorType: SearchErrorType.URL_PARSE_ERROR,
+          errorMessage: 'URL疑似包含未执行的JS片段'
+        } as HttpRequestResult;
+      }
+
+      if (request.url.startsWith('ERROR:')) {
+        const jsErrorType = this.analyzeJsError(request.url);
+        return {
+          response: null,
+          errorType: jsErrorType,
+          errorMessage: request.url
+        } as HttpRequestResult;
+      }
+
       if (!request.url.startsWith('http://') && !request.url.startsWith('https://')) {
-        const result: HttpRequestResult = { response: null, errorType: SearchErrorType.URL_PARSE_ERROR, errorMessage: '无效的URL' };
+        const result: HttpRequestResult = {
+          response: null,
+          errorType: SearchErrorType.URL_PARSE_ERROR,
+          errorMessage: '无效的URL'
+        };
         return result;
       }
-      
+
       logger.debug(TAG, `请求: ${request.method} ${request.url}`);
       if (request.body) {
         logger.debug(TAG, `请求Body: ${request.body}`);
       }
 
       const httpRequest = http.createHttp();
-      
-      // 如果指定了charset且不是utf-8，使用ArrayBuffer获取原始数据
-      const needCustomDecode = request.charset && 
-        request.charset.toLowerCase() !== 'utf-8' && 
+      const needCustomDecode: boolean = !!request.charset &&
+        request.charset.toLowerCase() !== 'utf-8' &&
         request.charset.toLowerCase() !== 'utf8';
-      
+
       const options: http.HttpRequestOptions = {
         method: request.method === RequestMethod.POST ? http.RequestMethod.POST : http.RequestMethod.GET,
         header: this.buildHeaders(request.headers),
-        connectTimeout: 10000,
-        readTimeout: 10000,
+        connectTimeout: REQUEST_TIMEOUT_MS,
+        readTimeout: REQUEST_TIMEOUT_MS,
         expectDataType: needCustomDecode ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING
       };
-      
-      // 应用代理配置
+
       const proxyMgr = ProxyManager.getInstance();
       if (proxyMgr.isEnabled()) {
         options.usingProxy = true;
@@ -697,7 +833,6 @@ export class NovelSourceExecutor {
 
       if (response.responseCode >= 200 && response.responseCode < 300) {
         let responseStr: string;
-        // 根据charset解码响应
         if (needCustomDecode && response.result instanceof ArrayBuffer) {
           try {
             const decoder = new util.TextDecoder(request.charset);
@@ -711,11 +846,14 @@ export class NovelSourceExecutor {
         } else {
           responseStr = typeof response.result === 'string' ? response.result : String(response.result);
         }
-        const successResult: HttpRequestResult = { response: responseStr, errorType: SearchErrorType.NONE, errorMessage: '' };
+        const successResult: HttpRequestResult = {
+          response: responseStr,
+          errorType: SearchErrorType.NONE,
+          errorMessage: ''
+        };
         return successResult;
       }
 
-      // HTTP错误分类
       const responseCode = response.responseCode;
       let errorType: SearchErrorType;
       if (responseCode === 404) {
@@ -727,26 +865,29 @@ export class NovelSourceExecutor {
       } else {
         errorType = SearchErrorType.HTTP_OTHER;
       }
-      
+
       logger.warn(TAG, `请求失败: HTTP ${responseCode}`);
       logger.debug(TAG, `失败URL: ${request.url}`);
-      const httpErrorResult: HttpRequestResult = { response: null, errorType: errorType, errorMessage: `HTTP ${responseCode}` };
+      const httpErrorResult: HttpRequestResult = {
+        response: null,
+        errorType: errorType,
+        errorMessage: `HTTP ${responseCode}`
+      };
       return httpErrorResult;
     } catch (error) {
       const errorMsg = this.formatError(error);
       logger.error(TAG, `HTTP请求异常: ${errorMsg}`);
       logger.debug(TAG, `失败URL: ${request.url}`);
-      
-      // 分析异常类型
+
       const errorType = this.analyzeErrorType(errorMsg);
-      const exceptionResult: HttpRequestResult = { response: null, errorType: errorType, errorMessage: errorMsg };
+      const exceptionResult: HttpRequestResult = {
+        response: null,
+        errorType: errorType,
+        errorMessage: errorMsg
+      };
       return exceptionResult;
     }
   }
-  
-  /**
-   * 格式化错误信息
-   */
   private formatError(error: Object | null | undefined): string {
     if (error === null || error === undefined) {
       return '未知错误';
@@ -867,7 +1008,7 @@ export class NovelSourceExecutor {
       rootElementLimit = Math.max(20, Math.min(limitByResults, limitByScan, 240));
     }
 
-    const analyzer = new LegadoRuleAnalyzer();
+    const analyzer = this.createRuleAnalyzer();
     if (rootElementLimit > 0) {
       analyzer.setMaxElementsLimit(rootElementLimit);
     }
@@ -892,7 +1033,13 @@ export class NovelSourceExecutor {
         return false;
       }
       const lowerRule = ruleText.toLowerCase();
-      return lowerRule.includes('<js>') || lowerRule.includes('@js:') || lowerRule.startsWith('js:');
+      return lowerRule.includes('<js>') ||
+        lowerRule.includes('@js:') ||
+        lowerRule.includes('@js：') ||
+        lowerRule.includes('＠js:') ||
+        lowerRule.includes('＠js：') ||
+        lowerRule.startsWith('js:') ||
+        lowerRule.startsWith('js：');
     };
     const nameUseAsync = shouldUseAsyncRule(rule.name);
     const bookUrlUseAsync = shouldUseAsyncRule(rule.bookUrl);
@@ -903,7 +1050,7 @@ export class NovelSourceExecutor {
     const latestChapterUseAsync = shouldUseAsyncRule(rule.lastChapter);
     const wordCountUseAsync = shouldUseAsyncRule(rule.wordCount);
     const shouldDisableItemDomBridge = disableItemDomBridge || scanLimit > 40;
-    const itemAnalyzer = new LegadoRuleAnalyzer();
+    const itemAnalyzer = this.createRuleAnalyzer();
     if (shouldDisableItemDomBridge) {
       // item级规则只用于提取单条字段，不需要放开到全局上限，限制可显著降低异常规则卡顿风险
       itemAnalyzer.setMaxElementsLimit(768);
@@ -1038,13 +1185,12 @@ export class NovelSourceExecutor {
    */
   private parseBookInfo(html: string, baseUrl: string, bookUrl: string): LegadoBook | null {
     const rule = this.source.ruleBookInfo;
-    
-    const analyzer = new LegadoRuleAnalyzer();
-    
-    // 处理init规则：先从响应中提取指定字段作为初始数据
+
+    const analyzer = this.createRuleAnalyzer();
+
     let contentToAnalyze = html;
-    if (rule?.init) {
-      const initAnalyzer = new LegadoRuleAnalyzer();
+    if (rule && rule.init) {
+      const initAnalyzer = this.createRuleAnalyzer();
       initAnalyzer.setContent(html, baseUrl);
       const initData = initAnalyzer.getString(rule.init);
       if (initData) {
@@ -1052,48 +1198,49 @@ export class NovelSourceExecutor {
         logger.debug(TAG, `应用init规则: ${rule.init}, 提取数据长度: ${initData.length}`);
       }
     }
-    
+
     analyzer.setContent(contentToAnalyze, baseUrl);
 
-    // 性能优化：减少大型内容时的日志输出
     if (contentToAnalyze.length < 50000) {
       logger.debug(TAG, `书籍详情规则 name: ${rule?.name}`);
       logger.debug(TAG, `HTML长度: ${contentToAnalyze.length}, 前500字符: ${contentToAnalyze.substring(0, 500)}`);
     }
-    
-    // 解析书名，如果规则为空则使用空字符串（后续由调用方用fallback补充）
+
     const name = rule?.name ? analyzer.getString(rule.name) : '';
+    const fallbackName = this.extractFallbackBookName(contentToAnalyze);
+    const resolvedName = name || fallbackName;
     if (contentToAnalyze.length < 50000) {
-      logger.debug(TAG, `解析书名结果: "${name}", 规则: ${rule?.name}`);
+      logger.debug(TAG, `解析书名结果: "${resolvedName}", 规则: ${rule?.name}`);
     }
-    
-    // 解析tocUrl，这是关键字段，即使name为空也要尝试解析
+
     const tocUrl = rule?.tocUrl ? analyzer.getString(rule.tocUrl) : '';
-    
-    // 如果name和tocUrl都为空，说明解析完全失败
-    if (!name && !tocUrl) {
+    if (this.isInvalidParsedTocUrl(tocUrl)) {
+      logger.warn(TAG, `目录URL疑似缺少关键参数，详情解析失败: ${tocUrl}`);
+      return null;
+    }
+
+    if (!resolvedName && !tocUrl && !bookUrl) {
       logger.warn(TAG, '无法解析书名和目录URL，详情页解析失败');
       logger.warn(TAG, `详情页规则: name=${rule?.name}, tocUrl=${rule?.tocUrl}`);
       logger.warn(TAG, `响应内容前500字符: ${contentToAnalyze.substring(0, 500)}`);
       return null;
     }
-    
-    // 性能优化：减少日志输出
+
     if (contentToAnalyze.length < 50000) {
-      logger.debug(TAG, `解析书籍详情: name=${name}, bookUrl=${bookUrl}, tocUrl=${tocUrl}`);
+      logger.debug(TAG, `解析书籍详情: name=${resolvedName}, bookUrl=${bookUrl}, tocUrl=${tocUrl}`);
     }
-    
+
     const book: LegadoBook = {
       id: this.generateId(),
       origin: this.source.bookSourceUrl,
       originName: this.source.bookSourceName,
       bookUrl: bookUrl,
-      name: name, // 可能为空，调用方需要用fallback补充
+      name: resolvedName,
       author: rule?.author ? analyzer.getString(rule.author) : '',
       kind: rule?.kind ? analyzer.getString(rule.kind) : undefined,
       intro: rule?.intro ? analyzer.getString(rule.intro) : undefined,
       coverUrl: rule?.coverUrl ? analyzer.getString(rule.coverUrl) : undefined,
-      tocUrl: tocUrl || bookUrl, // 如果tocUrl为空，使用bookUrl作为默认值
+      tocUrl: tocUrl || bookUrl,
       latestChapterTitle: rule?.lastChapter ? analyzer.getString(rule.lastChapter) : undefined,
       wordCount: rule?.wordCount ? analyzer.getString(rule.wordCount) : undefined,
       type: this.source.bookSourceType
@@ -1102,30 +1249,118 @@ export class NovelSourceExecutor {
     return book;
   }
 
-  /**
-   * 解析章节列表（带分页支持）
-   */
-  private parseChapterListWithNext(html: string, baseUrl: string, book: LegadoBook, startIndex: number): ChapterListParseResult {
+  private extractFallbackBookName(content: string): string {
+    const trimmedContent = content.trim();
+    if (!trimmedContent) {
+      return '';
+    }
+
+    try {
+      const parsed = JSON.parse(trimmedContent) as Object;
+      const directName = this.readObjectStringField(parsed, ['name', 'title', 'book_name', 'bookTitle']);
+      if (directName) {
+        return directName;
+      }
+
+      const nestedData = this.readObjectField(parsed, 'data');
+      const nestedName = this.readObjectStringField(nestedData, ['name', 'title', 'book_name', 'bookTitle']);
+      if (nestedName) {
+        return nestedName;
+      }
+    } catch {
+      // ignore
+    }
+
+    const titleMatch = trimmedContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    if (titleMatch && titleMatch[1]) {
+      return titleMatch[1].trim();
+    }
+    return '';
+  }
+
+  private readObjectStringField(obj: Object | null, fieldCandidates: string[]): string {
+    if (!obj || typeof obj !== 'object') {
+      return '';
+    }
+    const record = obj as Record<string, Object>;
+    for (let i = 0; i < fieldCandidates.length; i++) {
+      const field = fieldCandidates[i];
+      const keys = Object.keys(record);
+      if (!keys.includes(field)) {
+        continue;
+      }
+      const value = record[field];
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value.trim();
+      }
+    }
+    return '';
+  }
+
+  private readObjectField(obj: Object | null, field: string): Object | null {
+    if (!obj || typeof obj !== 'object') {
+      return null;
+    }
+    const record = obj as Record<string, Object>;
+    const keys = Object.keys(record);
+    if (!keys.includes(field)) {
+      return null;
+    }
+    const value = record[field];
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    return value;
+  }
+
+  private isInvalidParsedTocUrl(tocUrl: string): boolean {
+    const trimmedUrl = tocUrl.trim();
+    if (!trimmedUrl) {
+      return false;
+    }
+
+    if (trimmedUrl.startsWith('//')) {
+      return false;
+    }
+
+    if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
+      const withoutScheme = trimmedUrl.replace(/^https?:\/\//i, '');
+      const firstSlash = withoutScheme.indexOf('/');
+      if (firstSlash < 0) {
+        return false;
+      }
+      const pathPart = withoutScheme.substring(firstSlash);
+      return pathPart.includes('//');
+    }
+
+    return trimmedUrl.includes('//');
+  }
+  private async parseChapterListWithNext(
+    html: string,
+    baseUrl: string,
+    book: LegadoBook,
+    startIndex: number
+  ): Promise<ChapterListParseResult> {
     const chapters: LegadoChapter[] = [];
     const rule = this.source.ruleToc;
-    
+
     if (!rule || !rule.chapterList) {
       const emptyResult: ChapterListParseResult = { chapters: chapters, nextUrl: null };
       return emptyResult;
     }
 
-    const analyzer = new LegadoRuleAnalyzer();
+    const analyzer = this.createRuleAnalyzer();
     analyzer.setContent(html, baseUrl);
 
-    const chapterElements = analyzer.getElements(rule.chapterList);
-    
+    const chapterElements = await analyzer.getElementsAsync(rule.chapterList);
+
     for (let i = 0; i < chapterElements.length; i++) {
-      const itemAnalyzer = new LegadoRuleAnalyzer();
+      const itemAnalyzer = this.createRuleAnalyzer();
       itemAnalyzer.setContent(chapterElements[i], baseUrl);
 
-      const title = itemAnalyzer.getString(rule.chapterName);
-      const url = itemAnalyzer.getString(rule.chapterUrl);
-      
+      const title = await itemAnalyzer.getStringAsync(rule.chapterName);
+      const url = await itemAnalyzer.getStringAsync(rule.chapterUrl);
+
       if (!title || !url) {
         continue;
       }
@@ -1136,22 +1371,19 @@ export class NovelSourceExecutor {
         url: url,
         title: title,
         index: startIndex + i,
-        isVolume: rule.isVolume ? itemAnalyzer.getString(rule.isVolume) === 'true' : false,
-        isVip: rule.isVip ? itemAnalyzer.getString(rule.isVip) === 'true' : false,
-        isPay: rule.isPay ? itemAnalyzer.getString(rule.isPay) === 'true' : false
+        isVolume: rule.isVolume ? await itemAnalyzer.getStringAsync(rule.isVolume) === 'true' : false,
+        isVip: rule.isVip ? await itemAnalyzer.getStringAsync(rule.isVip) === 'true' : false,
+        isPay: rule.isPay ? await itemAnalyzer.getStringAsync(rule.isPay) === 'true' : false
       };
 
       chapters.push(chapter);
     }
 
-    // 解析下一页URL
-    // 参考Kotlin原版：只取第一个有效URL，避免多个URL被拼接
     let nextUrl: string | null = null;
     if (rule.nextTocUrl) {
-      const nextUrlStr = analyzer.getString(rule.nextTocUrl);
+      const nextUrlStr = await analyzer.getStringAsync(rule.nextTocUrl);
       if (nextUrlStr && nextUrlStr.trim()) {
-        // 如果返回多个URL（用换行符分隔），只取第一个
-        const urls = nextUrlStr.split('\n').filter((u: string) => u.trim().length > 0);
+        const urls = nextUrlStr.split('\n').filter((u: string): boolean => u.trim().length > 0);
         if (urls.length > 0) {
           nextUrl = urls[0].trim();
         }
@@ -1161,72 +1393,48 @@ export class NovelSourceExecutor {
     const result: ChapterListParseResult = { chapters: chapters, nextUrl: nextUrl };
     return result;
   }
-
-  /**
-   * 解析章节列表（兼容旧方法）
-   */
-  private parseChapterList(html: string, baseUrl: string, book: LegadoBook): LegadoChapter[] {
-    const parseResult = this.parseChapterListWithNext(html, baseUrl, book, 0);
+  private async parseChapterList(html: string, baseUrl: string, book: LegadoBook): Promise<LegadoChapter[]> {
+    const parseResult = await this.parseChapterListWithNext(html, baseUrl, book, 0);
     const chapters = parseResult.chapters;
     logger.info(TAG, `章节列表: ${chapters.length} 章`);
     return chapters;
   }
-
-  /**
-   * 解析正文内容（带分页支持）
-   * 参考Kotlin原版Legado的BookContent.analyzeContent实现
-   */
-  private parseContentWithNext(html: string, baseUrl: string, chapter: LegadoChapter): ContentParseResult {
+  private async parseContentWithNext(html: string, baseUrl: string, chapter: LegadoChapter): Promise<ContentParseResult> {
     const rule = this.source.ruleContent;
-    
+
     if (!rule || !rule.content) {
       const emptyResult: ContentParseResult = { content: '', nextUrl: null };
       return emptyResult;
     }
 
-    const analyzer = new LegadoRuleAnalyzer();
+    const analyzer = this.createRuleAnalyzer();
     analyzer.setContent(html, baseUrl);
 
-    // 步骤1: 使用规则提取正文内容
-    let content = analyzer.getString(rule.content);
-    
+    let content = await analyzer.getStringAsync(rule.content);
     if (!content) {
       const emptyResult: ContentParseResult = { content: '', nextUrl: null };
       return emptyResult;
     }
 
-    // 步骤2: 使用HtmlFormatter格式化内容（参考Kotlin原版）
-    // 对于小说正文，不保留img标签，因为Text组件无法渲染图片
-    // 如果保留img标签，会被当作文本显示，占用大量宽度
     content = HtmlFormatter.format(content, false);
-    
-    // 步骤3: 处理HTML实体（参考Kotlin原版的StringEscapeUtils.unescapeHtml4）
     if (content.indexOf('&') > -1) {
       content = HtmlFormatter.unescapeHtml(content);
     }
 
-    // 步骤4: 应用书源内置替换规则
-    // 注意：不在这里添加段落缩进，缩进由NovelContentProcessor或TextReaderComponent统一处理
     if (rule.replaceRegex && content) {
       content = this.applyReplaceRules(content, rule.replaceRegex);
     }
 
-    // 步骤5: 应用全局替换规则
     const replaceManager = getNovelReplaceRuleManager();
     content = replaceManager.applyRules(content, ReplaceScope.CONTENT, this.source.bookSourceUrl);
 
-    // 步骤6: 清理广告等无关内容
     content = HtmlFormatter.cleanContent(content);
 
-    // 解析下一页URL
-    // 参考Kotlin原版：使用getStringList获取URL列表，只取第一个有效URL
-    // 避免多个URL被拼接在一起导致404错误
     let nextUrl: string | null = null;
     if (rule.nextContentUrl) {
-      const nextUrlStr = analyzer.getString(rule.nextContentUrl);
+      const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
       if (nextUrlStr && nextUrlStr.trim()) {
-        // 如果返回多个URL（用换行符分隔），只取第一个
-        const urls = nextUrlStr.split('\n').filter((u: string) => u.trim().length > 0);
+        const urls = nextUrlStr.split('\n').filter((u: string): boolean => u.trim().length > 0);
         if (urls.length > 0) {
           nextUrl = urls[0].trim();
         }
@@ -1236,21 +1444,11 @@ export class NovelSourceExecutor {
     const result: ContentParseResult = { content: content, nextUrl: nextUrl };
     return result;
   }
-
-  /**
-   * 解析正文内容（兼容旧方法）
-   */
-  private parseContent(html: string, baseUrl: string, chapter: LegadoChapter): string {
-    const parseResult = this.parseContentWithNext(html, baseUrl, chapter);
+  private async parseContent(html: string, baseUrl: string, chapter: LegadoChapter): Promise<string> {
+    const parseResult = await this.parseContentWithNext(html, baseUrl, chapter);
     const content = parseResult.content;
     return content;
   }
-
-  /**
-   * 应用替换规则
-   * 参考Kotlin原版AnalyzeRule.replaceRegex实现
-   * 格式: pattern##replacement 或 pattern##replacement### (只替换第一个)
-   */
   private applyReplaceRules(content: string, replaceRegex: string): string {
     if (!replaceRegex || !content) {
       return content;

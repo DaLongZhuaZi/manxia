@@ -50,11 +50,29 @@ export interface CustomThemeData {
   // 深色模式背景图片路径（可选，兼容旧版本未提供暗色图）
   backgroundImagePathDark?: string;
   splashBackgroundImagePath?: string;
+  splashBackgroundImagePaths?: string[];
+  splashRotationRule?: SplashRotationRule;
+  splashRotationCursor?: number;
+  splashRotationLastDateKey?: string;
+  hideSplashLogo?: boolean;
+  hideSplashProgress?: boolean;
   blurLevel: number;
   primaryColor: string;
   isDark: boolean;
   createTime: number;
   lastModified: number;
+}
+
+interface SplashResolveResult {
+  selectedPath: string;
+  cursor: number;
+  lastDateKey: string;
+}
+
+export enum SplashRotationRule {
+  EVERY_LAUNCH = 'every_launch',
+  DAILY = 'daily',
+  FIXED_FIRST = 'fixed_first'
 }
 
 /**
@@ -65,6 +83,10 @@ export interface CustomThemeKeys {
   BACKGROUND_IMAGE_LIGHT: string;
   BACKGROUND_IMAGE_DARK: string;
   SPLASH_BACKGROUND_IMAGE: string;
+  SPLASH_BACKGROUND_IMAGES: string;
+  SPLASH_ROTATION_RULE: string;
+  HIDE_SPLASH_LOGO: string;
+  HIDE_SPLASH_PROGRESS: string;
   PRIMARY_COLOR: string;
   IS_CUSTOM_THEME_ACTIVE: string;
   CURRENT_THEME_ID: string;
@@ -78,6 +100,10 @@ export const CUSTOM_THEME_KEYS: CustomThemeKeys = {
   BACKGROUND_IMAGE_LIGHT: 'custom_theme_background_image_light',
   BACKGROUND_IMAGE_DARK: 'custom_theme_background_image_dark',
   SPLASH_BACKGROUND_IMAGE: 'custom_theme_splash_background_image',
+  SPLASH_BACKGROUND_IMAGES: 'custom_theme_splash_background_images',
+  SPLASH_ROTATION_RULE: 'custom_theme_splash_rotation_rule',
+  HIDE_SPLASH_LOGO: 'custom_theme_hide_splash_logo',
+  HIDE_SPLASH_PROGRESS: 'custom_theme_hide_splash_progress',
   PRIMARY_COLOR: 'custom_theme_primary_color',
   IS_CUSTOM_THEME_ACTIVE: 'custom_theme_is_active',
   CURRENT_THEME_ID: 'custom_theme_current_id'
@@ -197,6 +223,13 @@ export class ThemeManager {
   private themeChangeCallbacks: Set<ThemeChangeCallback> = new Set();
   private preferencesStore: preferences.Preferences | null = null;
   private readonly THEME_KEY = 'app_theme';
+  private readonly CUSTOM_THEME_SPLASH_BACKGROUND_KEY = 'custom_theme_splash_background';
+  private readonly CUSTOM_THEME_SPLASH_BACKGROUNDS_KEY = 'custom_theme_splash_backgrounds';
+  private readonly CUSTOM_THEME_SPLASH_ROTATION_RULE_KEY = 'custom_theme_splash_rotation_rule';
+  private readonly CUSTOM_THEME_SPLASH_ROTATION_CURSOR_KEY = 'custom_theme_splash_rotation_cursor';
+  private readonly CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY = 'custom_theme_splash_rotation_date';
+  private readonly CUSTOM_THEME_HIDE_SPLASH_LOGO_KEY = 'custom_theme_hide_splash_logo';
+  private readonly CUSTOM_THEME_HIDE_SPLASH_PROGRESS_KEY = 'custom_theme_hide_splash_progress';
   private isInitialized: boolean = false; // 添加初始化标志
   // 轻量玻璃模糊在浅色主题下启用
   private glassBlurEnabledInLightMode: boolean = true;
@@ -219,6 +252,10 @@ export class ThemeManager {
       ThemeManager.instance = new ThemeManager();
     }
     return ThemeManager.instance;
+  }
+
+  public isReady(): boolean {
+    return this.isInitialized;
   }
 
   /**
@@ -1329,6 +1366,135 @@ export class ThemeManager {
     logger.debug(TAG, this.getDiagnostics());
   }
 
+  private normalizeSplashBackgroundPaths(themeData: CustomThemeData): string[] {
+    const normalized: string[] = [];
+    if (themeData.splashBackgroundImagePaths && themeData.splashBackgroundImagePaths.length > 0) {
+      let idx: number = 0;
+      while (idx < themeData.splashBackgroundImagePaths.length) {
+        const candidate: string = themeData.splashBackgroundImagePaths[idx];
+        if (candidate && candidate.length > 0 && !normalized.includes(candidate)) {
+          normalized.push(candidate);
+        }
+        idx = idx + 1;
+      }
+    }
+    if (
+      normalized.length === 0 &&
+      themeData.splashBackgroundImagePath &&
+      themeData.splashBackgroundImagePath.length > 0
+    ) {
+      normalized.push(themeData.splashBackgroundImagePath);
+    }
+    return normalized;
+  }
+
+  private sanitizeSplashRotationRule(rawRule: SplashRotationRule | string | undefined): SplashRotationRule {
+    if (rawRule === SplashRotationRule.DAILY) {
+      return SplashRotationRule.DAILY;
+    }
+    if (rawRule === SplashRotationRule.FIXED_FIRST) {
+      return SplashRotationRule.FIXED_FIRST;
+    }
+    return SplashRotationRule.EVERY_LAUNCH;
+  }
+
+  private encodeSplashBackgrounds(paths: string[]): string {
+    if (paths.length === 0) {
+      return '';
+    }
+    return paths.join('\n');
+  }
+
+  private decodeSplashBackgrounds(raw: string): string[] {
+    if (!raw || raw.length === 0) {
+      return [];
+    }
+    const normalized: string[] = [];
+    const parts: string[] = raw.split('\n');
+    let idx: number = 0;
+    while (idx < parts.length) {
+      const candidate: string = parts[idx].trim();
+      if (candidate.length > 0 && !normalized.includes(candidate)) {
+        normalized.push(candidate);
+      }
+      idx = idx + 1;
+    }
+    return normalized;
+  }
+
+  private getCurrentDateKey(): string {
+    const now: Date = new Date();
+    const year: string = now.getFullYear().toString();
+    const month: string = (now.getMonth() + 1).toString().padStart(2, '0');
+    const day: string = now.getDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private normalizeSplashCursor(cursor: number, count: number): number {
+    if (count <= 0) {
+      return -1;
+    }
+    if (cursor < 0) {
+      return -1;
+    }
+    return cursor % count;
+  }
+
+  private resolveSplashBackgroundByRule(
+    splashPaths: string[],
+    rule: SplashRotationRule,
+    storedCursor: number,
+    storedDateKey: string
+  ): SplashResolveResult {
+    if (splashPaths.length === 0) {
+      return {
+        selectedPath: '',
+        cursor: -1,
+        lastDateKey: ''
+      } as SplashResolveResult;
+    }
+
+    if (rule === SplashRotationRule.FIXED_FIRST) {
+      return {
+        selectedPath: splashPaths[0],
+        cursor: 0,
+        lastDateKey: ''
+      } as SplashResolveResult;
+    }
+
+    if (rule === SplashRotationRule.DAILY) {
+      const todayKey: string = this.getCurrentDateKey();
+      const safeCursor: number = this.normalizeSplashCursor(storedCursor, splashPaths.length);
+      if (storedDateKey !== todayKey) {
+        const nextCursor: number = safeCursor < 0 ? 0 : (safeCursor + 1) % splashPaths.length;
+        return {
+          selectedPath: splashPaths[nextCursor],
+          cursor: nextCursor,
+          lastDateKey: todayKey
+        } as SplashResolveResult;
+      }
+      return {
+        selectedPath: splashPaths[safeCursor < 0 ? 0 : safeCursor],
+        cursor: safeCursor < 0 ? 0 : safeCursor,
+        lastDateKey: todayKey
+      } as SplashResolveResult;
+    }
+
+    if (storedCursor < 0) {
+      return {
+        selectedPath: splashPaths[0],
+        cursor: 0,
+        lastDateKey: storedDateKey
+      } as SplashResolveResult;
+    }
+    const nextCursor: number = (this.normalizeSplashCursor(storedCursor, splashPaths.length) + 1) % splashPaths.length;
+    return {
+      selectedPath: splashPaths[nextCursor],
+      cursor: nextCursor,
+      lastDateKey: storedDateKey
+    } as SplashResolveResult;
+  }
+
   /**
    * 应用自定义主题
    * 将自定义主题的背景图片和主色调设置为全局状态
@@ -1336,6 +1502,13 @@ export class ThemeManager {
   public async applyCustomTheme(themeData: CustomThemeData): Promise<void> {
     try {
       logger.info(TAG, `开始应用自定义主题: ${themeData.name}`);
+      const splashPaths: string[] = this.normalizeSplashBackgroundPaths(themeData);
+      const splashRule: SplashRotationRule = this.sanitizeSplashRotationRule(themeData.splashRotationRule);
+      const splashCursorInput: number = themeData.splashRotationCursor !== undefined ? themeData.splashRotationCursor : -1;
+      const splashDateInput: string = themeData.splashRotationLastDateKey ? themeData.splashRotationLastDateKey : '';
+      const splashResolved = this.resolveSplashBackgroundByRule(splashPaths, splashRule, splashCursorInput, splashDateInput);
+      const hideSplashLogo: boolean = themeData.hideSplashLogo === true;
+      const hideSplashProgress: boolean = themeData.hideSplashProgress === true;
       
       // 1. 设置全局状态（双版本背景）
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_LIGHT, themeData.backgroundImagePath);
@@ -1345,9 +1518,11 @@ export class ThemeManager {
         // 若未提供深色版本，则先使用浅色版本占位
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_DARK, themeData.backgroundImagePath);
       }
-      if (themeData.splashBackgroundImagePath && themeData.splashBackgroundImagePath.length > 0) {
-        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, themeData.splashBackgroundImagePath);
-      }
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, splashResolved.selectedPath);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGES, this.encodeSplashBackgrounds(splashPaths));
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_ROTATION_RULE, splashRule);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, hideSplashLogo);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, hideSplashProgress);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, themeData.primaryColor);
       // 必须先设置 IS_CUSTOM_THEME_ACTIVE 为 true，再调用 refreshCustomBackgroundForCurrentTheme
       // 否则该函数会因为检查到 IS_CUSTOM_THEME_ACTIVE 不为 true 而提前返回
@@ -1373,9 +1548,13 @@ export class ThemeManager {
         await this.preferencesStore.put('custom_theme_background_dark', themeData.backgroundImagePathDark && themeData.backgroundImagePathDark.length > 0
           ? themeData.backgroundImagePathDark
           : themeData.backgroundImagePath);
-        if (themeData.splashBackgroundImagePath && themeData.splashBackgroundImagePath.length > 0) {
-          await this.preferencesStore.put('custom_theme_splash_background', themeData.splashBackgroundImagePath);
-        }
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_BACKGROUND_KEY, splashResolved.selectedPath);
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_BACKGROUNDS_KEY, this.encodeSplashBackgrounds(splashPaths));
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_RULE_KEY, splashRule);
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_CURSOR_KEY, splashResolved.cursor);
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY, splashResolved.lastDateKey);
+        await this.preferencesStore.put(this.CUSTOM_THEME_HIDE_SPLASH_LOGO_KEY, hideSplashLogo);
+        await this.preferencesStore.put(this.CUSTOM_THEME_HIDE_SPLASH_PROGRESS_KEY, hideSplashProgress);
         await this.preferencesStore.put('custom_theme_color', themeData.primaryColor);
         await this.preferencesStore.flush();
       }
@@ -1383,6 +1562,9 @@ export class ThemeManager {
       logger.info(TAG, `✅ 自定义主题应用成功: ${themeData.name}`);
       logger.info(TAG, `   浅色背景: ${themeData.backgroundImagePath}`);
       logger.info(TAG, `   深色背景: ${themeData.backgroundImagePathDark && themeData.backgroundImagePathDark.length > 0 ? themeData.backgroundImagePathDark : themeData.backgroundImagePath}`);
+      logger.info(TAG, `   开屏轮换规则: ${splashRule}, 开屏图数量: ${splashPaths.length}`);
+      logger.info(TAG, `   启动页隐藏Logo: ${hideSplashLogo}`);
+      logger.info(TAG, `   启动页隐藏进度: ${hideSplashProgress}`);
       logger.info(TAG, `   主色调: ${themeData.primaryColor}`);
       logger.info(TAG, `   当前显示主题: ${this.getActualThemeSync()}`);
     } catch (error) {
@@ -1404,6 +1586,10 @@ export class ThemeManager {
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_LIGHT, '');
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_DARK, '');
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, '');
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGES, '');
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_ROTATION_RULE, SplashRotationRule.EVERY_LAUNCH);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, false);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, false);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, '');
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.IS_CUSTOM_THEME_ACTIVE, false);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.CURRENT_THEME_ID, '');
@@ -1414,7 +1600,13 @@ export class ThemeManager {
         await this.preferencesStore.delete('custom_theme_id');
         await this.preferencesStore.delete('custom_theme_background_light');
         await this.preferencesStore.delete('custom_theme_background_dark');
-        await this.preferencesStore.delete('custom_theme_splash_background');
+        await this.preferencesStore.delete(this.CUSTOM_THEME_SPLASH_BACKGROUND_KEY);
+        await this.preferencesStore.delete(this.CUSTOM_THEME_SPLASH_BACKGROUNDS_KEY);
+        await this.preferencesStore.delete(this.CUSTOM_THEME_SPLASH_ROTATION_RULE_KEY);
+        await this.preferencesStore.delete(this.CUSTOM_THEME_SPLASH_ROTATION_CURSOR_KEY);
+        await this.preferencesStore.delete(this.CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY);
+        await this.preferencesStore.delete(this.CUSTOM_THEME_HIDE_SPLASH_LOGO_KEY);
+        await this.preferencesStore.delete(this.CUSTOM_THEME_HIDE_SPLASH_PROGRESS_KEY);
         await this.preferencesStore.delete('custom_theme_color');
         await this.preferencesStore.flush();
       }
@@ -1453,6 +1645,98 @@ export class ThemeManager {
   }
 
   /**
+   * 获取当前自定义主题是否隐藏启动页Logo
+   */
+  public isSplashLogoHiddenByTheme(): boolean {
+    return AppStorage.get<boolean>(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO) === true;
+  }
+
+  /**
+   * 获取当前自定义主题是否隐藏启动页进度
+   */
+  public isSplashProgressHiddenByTheme(): boolean {
+    return AppStorage.get<boolean>(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS) === true;
+  }
+
+  /**
+   * 在启动页展示前刷新一次开屏背景选择结果。
+   * 说明：
+   * 1. 冷启动时 initialize() 内部已完成一次决策，不应重复调用本方法；
+   * 2. 当 ThemeManager 已初始化且再次进入启动页时，可调用本方法按规则轮换。
+   */
+  public async refreshSplashBackgroundForLaunch(): Promise<void> {
+    try {
+      if (!this.isCustomThemeActive()) {
+        return;
+      }
+      if (!this.preferencesStore) {
+        await this.initializePreferences();
+      }
+
+      let splashBackgroundsRaw: string = AppStorage.get<string>(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGES) || '';
+      let splashPaths: string[] = this.decodeSplashBackgrounds(splashBackgroundsRaw);
+      let splashRuleRaw: string = AppStorage.get<string>(CUSTOM_THEME_KEYS.SPLASH_ROTATION_RULE) || '';
+      const currentSplash: string = AppStorage.get<string>(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE) || '';
+
+      if (this.preferencesStore) {
+        if (splashBackgroundsRaw.length === 0) {
+          splashBackgroundsRaw = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_BACKGROUNDS_KEY, '') as string;
+          splashPaths = this.decodeSplashBackgrounds(splashBackgroundsRaw);
+        }
+        if (splashRuleRaw.length === 0) {
+          splashRuleRaw = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_ROTATION_RULE_KEY, '') as string;
+        }
+      }
+
+      if (splashPaths.length === 0 && currentSplash.length > 0) {
+        splashPaths.push(currentSplash);
+      }
+      if (splashPaths.length === 0) {
+        return;
+      }
+
+      let splashCursorRaw: number = -1;
+      let splashDateKey: string = '';
+      if (this.preferencesStore) {
+        splashCursorRaw = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_ROTATION_CURSOR_KEY, -1) as number;
+        splashDateKey = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY, '') as string;
+      }
+
+      const splashRuleInput: string = splashRuleRaw && splashRuleRaw.length > 0
+        ? splashRuleRaw
+        : SplashRotationRule.EVERY_LAUNCH;
+      const splashRule: SplashRotationRule = this.sanitizeSplashRotationRule(splashRuleInput);
+      const splashResolved: SplashResolveResult = this.resolveSplashBackgroundByRule(
+        splashPaths,
+        splashRule,
+        splashCursorRaw,
+        splashDateKey
+      );
+
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, splashResolved.selectedPath);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGES, this.encodeSplashBackgrounds(splashPaths));
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_ROTATION_RULE, splashRule);
+
+      if (this.preferencesStore) {
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_BACKGROUND_KEY, splashResolved.selectedPath);
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_BACKGROUNDS_KEY, this.encodeSplashBackgrounds(splashPaths));
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_RULE_KEY, splashRule);
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_CURSOR_KEY, splashResolved.cursor);
+        await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY, splashResolved.lastDateKey);
+        await this.preferencesStore.flush();
+      }
+
+      logger.info(
+        TAG,
+        `启动页轮换开屏图完成: 规则=${splashRule}, 索引=${splashResolved.cursor}, 数量=${splashPaths.length}`
+      );
+    } catch (error) {
+      const errorMsg: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `启动页轮换开屏图失败: ${errorMsg}`);
+    }
+  }
+
+  /**
    * 获取当前自定义主题的主色调
    */
   public getCustomThemePrimaryColor(): string {
@@ -1480,7 +1764,13 @@ export class ThemeManager {
       const themeId: string = await this.preferencesStore.get('custom_theme_id', '') as string;
       let backgroundLight: string = await this.preferencesStore.get('custom_theme_background_light', '') as string;
       let backgroundDark: string = await this.preferencesStore.get('custom_theme_background_dark', '') as string;
-      const splashBackground: string = await this.preferencesStore.get('custom_theme_splash_background', '') as string;
+      const legacySplashBackground: string = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_BACKGROUND_KEY, '') as string;
+      const splashBackgroundsRaw: string = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_BACKGROUNDS_KEY, '') as string;
+      const splashRotationRuleRaw: string = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_ROTATION_RULE_KEY, '') as string;
+      const splashCursorRaw: number = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_ROTATION_CURSOR_KEY, -1) as number;
+      const splashDateKey: string = await this.preferencesStore.get(this.CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY, '') as string;
+      const hideSplashLogo: boolean = await this.preferencesStore.get(this.CUSTOM_THEME_HIDE_SPLASH_LOGO_KEY, false) as boolean;
+      const hideSplashProgress: boolean = await this.preferencesStore.get(this.CUSTOM_THEME_HIDE_SPLASH_PROGRESS_KEY, false) as boolean;
       const color: string = await this.preferencesStore.get('custom_theme_color', '') as string;
 
       // 媒体资源模式迁移：默认/第二自定义主题不应使用本地文件路径
@@ -1494,6 +1784,16 @@ export class ThemeManager {
         await this.preferencesStore.flush();
         logger.info(TAG, '🔧 已迁移默认/次级自定义主题到媒体资源模式（清空旧文件路径）');
       }
+
+      const splashPaths: string[] = this.decodeSplashBackgrounds(splashBackgroundsRaw);
+      if (splashPaths.length === 0 && legacySplashBackground.length > 0) {
+        splashPaths.push(legacySplashBackground);
+      }
+      const splashRuleInput: string = splashRotationRuleRaw && splashRotationRuleRaw.length > 0
+        ? splashRotationRuleRaw
+        : (splashPaths.length > 0 ? SplashRotationRule.FIXED_FIRST : SplashRotationRule.EVERY_LAUNCH);
+      const splashRule: SplashRotationRule = this.sanitizeSplashRotationRule(splashRuleInput);
+      const splashResolved = this.resolveSplashBackgroundByRule(splashPaths, splashRule, splashCursorRaw, splashDateKey);
       
       // 显式布尔判断，避免 ArkTS 将字符串参与条件导致类型错误
       const hasColor: boolean = (color.length > 0);
@@ -1507,14 +1807,27 @@ export class ThemeManager {
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_LIGHT, backgroundLight ? backgroundLight : backgroundDark);
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_DARK, backgroundDark ? backgroundDark : backgroundLight);
         this.refreshCustomBackgroundForCurrentTheme();
-        if (splashBackground && splashBackground.length > 0) {
-          AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, splashBackground);
-        } else {
-          AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, '');
-        }
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, splashResolved.selectedPath);
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGES, this.encodeSplashBackgrounds(splashPaths));
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_ROTATION_RULE, splashRule);
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, hideSplashLogo === true);
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, hideSplashProgress === true);
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, color);
+
+        const needUpdateCursor: boolean = splashResolved.cursor !== splashCursorRaw;
+        const needUpdateDate: boolean = splashResolved.lastDateKey !== splashDateKey;
+        const needWriteBackList: boolean = splashBackgroundsRaw.length === 0 && splashPaths.length > 0;
+        const needWriteBackRule: boolean = splashRotationRuleRaw.length === 0;
+        if (needUpdateCursor || needUpdateDate || needWriteBackList || needWriteBackRule) {
+          await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_BACKGROUND_KEY, splashResolved.selectedPath);
+          await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_BACKGROUNDS_KEY, this.encodeSplashBackgrounds(splashPaths));
+          await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_RULE_KEY, splashRule);
+          await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_CURSOR_KEY, splashResolved.cursor);
+          await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY, splashResolved.lastDateKey);
+          await this.preferencesStore.flush();
+        }
         
-        logger.info(TAG, `已加载自定义主题状态: ID=${themeId}, 主色调=${color}`);
+        logger.info(TAG, `已加载自定义主题状态: ID=${themeId}, 主色调=${color}, 开屏图=${splashPaths.length}`);
       } else {
         // 确保初始化默认状态
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.IS_CUSTOM_THEME_ACTIVE, false);
@@ -1523,6 +1836,10 @@ export class ThemeManager {
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_LIGHT, '');
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_DARK, '');
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, '');
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGES, '');
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_ROTATION_RULE, SplashRotationRule.EVERY_LAUNCH);
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, false);
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, false);
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, '');
       }
     } catch (error) {
@@ -1535,6 +1852,10 @@ export class ThemeManager {
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_LIGHT, '');
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_DARK, '');
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, '');
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGES, '');
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_ROTATION_RULE, SplashRotationRule.EVERY_LAUNCH);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, false);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, false);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, '');
     }
   }
