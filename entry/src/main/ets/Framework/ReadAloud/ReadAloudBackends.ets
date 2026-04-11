@@ -4982,7 +4982,9 @@ export class ReadAloudBackendFactory {
       case ReadAloudEngineType.SYSTEM:
         return new SystemReadAloudBackend(ReadAloudEngineType.SYSTEM);
       case ReadAloudEngineType.LEGADO_COMPAT:
-        return new PlaceholderReadAloudBackend(ReadAloudEngineType.LEGADO_COMPAT);
+        // 兼容链路复用系统TTS后端，实现与SYSTEM一致的可播放行为，
+        // 同时保留独立engineType，便于后续对接Legado专属策略。
+        return new SystemReadAloudBackend(ReadAloudEngineType.LEGADO_COMPAT);
       case ReadAloudEngineType.REMOTE:
         return new RemoteReadAloudBackend(ReadAloudEngineType.REMOTE);
       default:

@@ -28,7 +28,7 @@ import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceValidator, ValidationConfig, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
 import { getNovelLoginManager } from '../Framework/Novel/NovelLoginManager';
 import { NovelSourceInfo } from '../Models/NovelModels';
-import { LegadoSourceImportResult, LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
@@ -242,10 +242,12 @@ export struct NovelSourceManagementPage {
     // 搜索筛选
     if (this.searchKeyword.trim()) {
       const keyword = this.searchKeyword.toLowerCase();
+      const isAudioKeyword: boolean = keyword.includes('听书') || keyword.includes('有声') || keyword.includes('audio');
       result = result.filter(s => 
         s.name.toLowerCase().includes(keyword) || 
         (s.group && s.group.toLowerCase().includes(keyword)) ||
-        s.url.toLowerCase().includes(keyword)
+        s.url.toLowerCase().includes(keyword) ||
+        (isAudioKeyword && this.isAudioSource(s))
       );
     }
     
@@ -311,6 +313,10 @@ export struct NovelSourceManagementPage {
   onSearchChange(keyword: string): void {
     this.searchKeyword = keyword;
     this.applyFilter();
+  }
+
+  private isAudioSource(source: NovelSourceInfo): boolean {
+    return source.bookSourceType === LegadoBookSourceType.AUDIO;
   }
 
   private toggleSearchBar(): void {
@@ -1381,6 +1387,17 @@ export struct NovelSourceManagementPage {
               .borderRadius(2)
               .margin({ left: 4 })
           }
+
+          if (this.isAudioSource(source)) {
+            Text('听书')
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor('#1677FF')
+              .backgroundColor('#E6F4FF')
+              .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+              .borderRadius(2)
+              .margin({ left: 4 })
+          }
         }
         .width('100%')
         
@@ -2409,7 +2426,7 @@ export struct NovelSourceManagementPage {
       buttons: [
         { text: '快速校验（仅搜索）', color: $r('sys.color.ohos_id_color_text_primary') },
         { text: '标准校验（搜索+详情+目录）', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '完整校验（全部项目）', color: $r('sys.color.ohos_id_color_text_primary') }
+        { text: '完整校验（文本正文/听书音频）', color: $r('sys.color.ohos_id_color_text_primary') }
       ]
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
       let config: Partial<ValidationConfig>;

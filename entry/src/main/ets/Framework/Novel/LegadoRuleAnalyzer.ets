@@ -1198,7 +1198,7 @@ export class LegadoRuleAnalyzer {
     try {
       // 先处理 || 操作符（或操作，第一个有结果就返回）
       if (ruleStr.includes('||')) {
-        const orParts = ruleStr.split('||');
+        const orParts = this.safeSplit(ruleStr, '||');
         for (const part of orParts) {
           const trimmedPart = part.trim();
           if (trimmedPart) {
@@ -1231,7 +1231,7 @@ export class LegadoRuleAnalyzer {
     try {
       // 先处理 || 操作符（或操作，第一个有结果就返回）
       if (ruleStr.includes('||')) {
-        const orParts = ruleStr.split('||');
+        const orParts = this.safeSplit(ruleStr, '||');
         for (const part of orParts) {
           const trimmedPart = part.trim();
           if (trimmedPart) {
@@ -1303,33 +1303,34 @@ export class LegadoRuleAnalyzer {
             logger.warn(TAG, `JS规则执行失败: ${executeResult.error || 'unknown error'}`);
             break;
           }
-          // 性能优化：减少日志输出
-          // logger.debug(TAG, `JS执行结果: ${executeResult.result.substring(0, 200)}`);
-          
-          // 更新content为JS执行结果
           const jsResultStr = executeResult.result;
+          const normalizedJsResult = jsResultStr && jsResultStr.trim().length > 0 &&
+            jsResultStr.trim() !== '[object Object]' &&
+            jsResultStr.trim() !== '[object Array]'
+            ? jsResultStr
+            : (context.result || this.content);
           
           // 如果有后续规则，使用JS结果继续解析
           if (afterJsRule) {
-            this.content = jsResultStr;
-            this.isJSON = this.checkIsJSON(jsResultStr);
+            this.content = normalizedJsResult;
+            this.isJSON = this.checkIsJSON(normalizedJsResult);
             // 性能优化：减少日志输出
             // logger.debug(TAG, `JS后续规则: ${afterJsRule}, isJSON=${this.isJSON}`);
-            results = await this.getElementsSingleAsync(afterJsRule, jsContext);
+            results = await this.getElementsAsync(afterJsRule, jsContext);
           } else {
             // 没有后续规则，尝试解析JS结果
             try {
-              const parsed: ESObject = JSON.parse(jsResultStr) as ESObject;
+              const parsed: ESObject = JSON.parse(normalizedJsResult) as ESObject;
               if (Array.isArray(parsed)) {
                 const parsedArray: ESObject[] = parsed as ESObject[];
                 results = parsedArray.map((item: ESObject): string => 
                   typeof item === 'object' ? JSON.stringify(item) : String(item)
                 );
               } else {
-                this.content = jsResultStr;
+                this.content = normalizedJsResult;
               }
             } catch (parseError) {
-              this.content = jsResultStr;
+              this.content = normalizedJsResult;
             }
           }
         } catch (e) {
@@ -1411,9 +1412,13 @@ export class LegadoRuleAnalyzer {
           continue;
         }
         const resultStr = executeResult.result;
-        
-        if (resultStr) {
+        if (resultStr && resultStr.trim().length > 0 &&
+          resultStr.trim() !== '[object Object]' &&
+          resultStr.trim() !== '[object Array]') {
           processedResults.push(resultStr);
+        } else {
+          // JS仅做副作用时，继续沿用当前元素参与后续规则解析
+          processedResults.push(element);
         }
       } catch (e) {
         logger.warn(TAG, `链式规则JS执行失败: ${String(e)}`);
@@ -1429,19 +1434,23 @@ export class LegadoRuleAnalyzer {
           // 临时设置content为JS结果，同时禁用HTML桥接避免不一致
           const originalContent = this.content;
           const originalBridge = this.htmlBridge;
+          const originalIsJSON = this.isJSON;
           this.content = result;
+          this.isJSON = this.checkIsJSON(result);
           this.htmlBridge = null; // 禁用桥接，强制使用字符串解析
-          
-          // 执行后续选择器
-          const afterSelector = afterParts[0].trim();
-          const found = this.getElementsByCSS(afterSelector);
-          for (const f of found) {
-            finalResults.push(f);
+          try {
+            // 执行后续规则（需要完整规则解析能力，而不只是CSS）
+            const afterSelector = afterParts[0].trim();
+            const found = await this.getElementsAsync(afterSelector, jsContext);
+            for (const f of found) {
+              finalResults.push(f);
+            }
+          } finally {
+            // 恢复content和桥接
+            this.content = originalContent;
+            this.isJSON = originalIsJSON;
+            this.htmlBridge = originalBridge;
           }
-          
-          // 恢复content和桥接
-          this.content = originalContent;
-          this.htmlBridge = originalBridge;
         }
         return finalResults;
       }
@@ -5050,6 +5059,7 @@ export class LegadoRuleAnalyzer {
     const context: JsContext = {
       result: this.content,
       baseUrl: this.baseUrl,
+      src: this.content,
       variables: this.getVariablesObject(),
       jsLib: this.jsLib
     };
@@ -5076,6 +5086,7 @@ export class LegadoRuleAnalyzer {
     const context: JsContext = {
       result: this.content,
       baseUrl: this.baseUrl,
+      src: this.content,
       variables: this.getVariablesObject(),
       jsLib: this.jsLib
     };
@@ -5186,6 +5197,17 @@ export class LegadoRuleAnalyzer {
    */
   put(key: string, value: string): void {
     this.variables.set(key, value);
+  }
+
+  /**
+   * 获取变量快照
+   */
+  getVariablesSnapshot(): Record<string, string> {
+    const snapshot: Record<string, string> = {};
+    this.variables.forEach((value: string, key: string): void => {
+      snapshot[key] = value;
+    });
+    return snapshot;
   }
 
   /**

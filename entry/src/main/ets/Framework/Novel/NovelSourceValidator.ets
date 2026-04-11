@@ -8,7 +8,7 @@
  */
 
 import { logger } from '../../Utils/Logger';
-import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoSearchBook } from './LegadoSourceTypes';
+import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoSearchBook, LegadoBookSourceType } from './LegadoSourceTypes';
 import { NovelSourceExecutor, SearchErrorType } from './NovelSourceExecutor';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
 import { AppNotificationManager } from '../Managers/NotificationManager';
@@ -17,6 +17,7 @@ import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
 import { common } from '@kit.AbilityKit';
 
 const TAG = 'NovelSourceValidator';
+type AudioValidationJsonValue = Object | string | number | boolean | null | undefined;
 
 /**
  * 校验配置
@@ -395,10 +396,22 @@ export class NovelSourceValidator {
       return null;
     }
 
+    const trimmedExploreUrl = source.exploreUrl.trim();
+    const lowerExploreUrl = trimmedExploreUrl.toLowerCase();
+    if (
+      lowerExploreUrl.startsWith('@js:') ||
+      lowerExploreUrl.startsWith('@js：') ||
+      lowerExploreUrl.startsWith('＠js:') ||
+      lowerExploreUrl.startsWith('＠js：') ||
+      lowerExploreUrl.startsWith('<js>')
+    ) {
+      return null;
+    }
+
     const exploreKinds = executor.getExploreKinds();
     for (let i = 0; i < exploreKinds.length; i++) {
       const kindUrl = exploreKinds[i].url ? exploreKinds[i].url.trim() : '';
-      if (kindUrl.length > 0) {
+      if (kindUrl.length > 0 && !this.isDynamicRuleUrl(kindUrl)) {
         return kindUrl;
       }
     }
@@ -412,19 +425,58 @@ export class NovelSourceValidator {
       if (line.startsWith('[') || line.startsWith('{')) {
         continue;
       }
+      if (this.isDynamicRuleUrl(line)) {
+        continue;
+      }
 
       const parts = line.split('::');
       if (parts.length >= 2) {
         const urlPart = parts.slice(1).join('::').trim();
-        if (urlPart.length > 0) {
+        if (urlPart.length > 0 && !this.isDynamicRuleUrl(urlPart)) {
           return urlPart;
         }
       }
 
-      return line;
+      if (!this.isDynamicRuleUrl(line)) {
+        return line;
+      }
     }
 
     return null;
+  }
+
+  /**
+   * 解析用于书源校验的搜索关键词
+   * 优先使用书源自带 checkKeyWord 的首个候选词，避免固定关键词导致误判
+   */
+  private resolveValidationKeyword(source: LegadoBookSource, fallbackKeyword: string): string {
+    const defaultKeyword = fallbackKeyword.trim();
+    const checkKeyword = source.ruleSearch?.checkKeyWord ? source.ruleSearch.checkKeyWord.trim() : '';
+    if (checkKeyword.length <= 0) {
+      return defaultKeyword;
+    }
+
+    const candidates = checkKeyword
+      .split(/[|｜,\n，、]/)
+      .map((item: string): string => item.trim())
+      .filter((item: string): boolean => item.length > 0);
+    if (candidates.length <= 0) {
+      return defaultKeyword;
+    }
+
+    return candidates[0];
+  }
+
+  private isDynamicRuleUrl(url: string): boolean {
+    const trimmed = url.trim();
+    if (trimmed.length <= 0) {
+      return false;
+    }
+    const lower = trimmed.toLowerCase();
+    return lower.startsWith('@js:') ||
+      lower.startsWith('<js>') ||
+      lower.includes('{{') ||
+      lower.includes('}}');
   }
   
   /**
@@ -472,6 +524,14 @@ export class NovelSourceValidator {
     result: SourceValidationResult
   ): Promise<void> {
     const executor = new NovelSourceExecutor(source);
+    const isAudioSource = this.isAudioSource(source);
+    const validationKeyword = this.resolveValidationKeyword(source, config.keyword);
+    if (validationKeyword !== config.keyword) {
+      logger.debug(
+        TAG,
+        `校验关键词已切换 [${source.bookSourceName}]: ${config.keyword} -> ${validationKeyword}`
+      );
+    }
     let searchBook: LegadoBook | null = null;
     let exploreBook: LegadoBook | null = null;
 
@@ -485,11 +545,15 @@ export class NovelSourceValidator {
     if (config.checkSearch) {
       result.checkedItems.push('搜索');
       if (!source.searchUrl) {
-        this.addErrorGroup(result, ValidationErrorType.SEARCH_EMPTY);
+        if (isAudioSource && executor.hasExplore()) {
+          logger.debug(TAG, `听书书源无搜索入口，跳过搜索校验并使用发现兜底 [${source.bookSourceName}]`);
+        } else {
+          this.addErrorGroup(result, ValidationErrorType.SEARCH_EMPTY);
+        }
       } else {
         this.removeErrorGroup(result, ValidationErrorType.SEARCH_EMPTY);
         try {
-          const searchResult = await executor.searchWithError(config.keyword, 1, {
+          const searchResult = await executor.searchWithError(validationKeyword, 1, {
             maxResults: NovelSourceValidator.VALIDATION_SEARCH_MAX_RESULTS,
             maxElementScan: NovelSourceValidator.VALIDATION_SEARCH_MAX_ELEMENT_SCAN,
             disableItemDomBridge: true
@@ -503,6 +567,8 @@ export class NovelSourceValidator {
             logger.debug(TAG, `搜索失败 [${source.bookSourceName}]: ${searchResult.errorType} - ${searchResult.errorMessage}`);
           } else {
             this.removeErrorGroup(result, ValidationErrorType.SEARCH_FAILED);
+            this.removeErrorGroup(result, ValidationErrorType.SEARCH_PARSE_ERROR);
+            this.removeErrorGroup(result, ValidationErrorType.SEARCH_EMPTY);
             // 使用第一个搜索结果进行后续校验
             const firstResult = searchResult.books[0];
             searchBook = this.searchBookToBook(firstResult);
@@ -527,8 +593,13 @@ export class NovelSourceValidator {
         // 解析发现URL获取第一个分类
         const discoveryUrl = this.resolveDiscoveryValidationUrl(source, executor);
         if (!discoveryUrl) {
-          this.addErrorGroup(result, ValidationErrorType.DISCOVERY_EMPTY);
-          logger.debug(TAG, `发现校验跳过 [${source.bookSourceName}]: 未找到可用发现URL`);
+          if (isAudioSource) {
+            this.removeErrorGroup(result, ValidationErrorType.DISCOVERY_EMPTY);
+            logger.debug(TAG, `听书书源发现校验跳过 [${source.bookSourceName}]: 发现URL为动态脚本或不可直接校验`);
+          } else {
+            this.addErrorGroup(result, ValidationErrorType.DISCOVERY_EMPTY);
+            logger.debug(TAG, `发现校验跳过 [${source.bookSourceName}]: 未找到可用发现URL`);
+          }
         } else {
           const exploreResults = await executor.explore(discoveryUrl, 1);
           if (exploreResults.length === 0) {
@@ -543,15 +614,26 @@ export class NovelSourceValidator {
           }
         }
       } catch (error) {
-        this.addErrorGroup(result, ValidationErrorType.DISCOVERY_FAILED);
-        logger.warn(TAG, `发现校验失败 [${source.bookSourceName}]: ${String(error)}`);
+        if (isAudioSource) {
+          logger.warn(TAG, `听书书源发现校验已跳过 [${source.bookSourceName}]: ${String(error)}`);
+        } else {
+          this.addErrorGroup(result, ValidationErrorType.DISCOVERY_FAILED);
+          logger.warn(TAG, `发现校验失败 [${source.bookSourceName}]: ${String(error)}`);
+        }
       }
     }
 
     // 选择用于后续校验的书籍
     const bookToCheck = searchBook || exploreBook;
     if (!bookToCheck) {
-      return; // 没有书籍可用于后续校验
+      if (!this.hasFatalErrorGroup(result.errorGroups)) {
+        this.addErrorGroup(result, ValidationErrorType.SEARCH_FAILED);
+      }
+      if (!result.error || result.error.trim().length <= 0) {
+        result.error = '未获取到可校验书籍';
+      }
+      logger.warn(TAG, `未获取到可校验书籍 [${source.bookSourceName}]`);
+      return;
     }
 
     // 检查是否已取消
@@ -605,18 +687,28 @@ export class NovelSourceValidator {
           
           // 5. 校验正文
           if (config.checkContent && chapters.length > 0) {
-            result.checkedItems.push('正文');
+            result.checkedItems.push(isAudioSource ? '音频' : '正文');
             try {
               const firstChapter = chapters[0];
               const content = await executor.getContent(firstChapter);
-              if (!content || content.length < 100) {
-                this.addErrorGroup(result, ValidationErrorType.CONTENT_FAILED);
+              if (isAudioSource) {
+                const resolvedAudioUrl = this.resolveAudioSourceUrl(content, firstChapter.url);
+                if (resolvedAudioUrl.length <= 0) {
+                  this.addErrorGroup(result, ValidationErrorType.CONTENT_FAILED);
+                  logger.warn(TAG, `音频校验失败 [${source.bookSourceName}]: 未解析到可播放音频URL`);
+                } else {
+                  this.removeErrorGroup(result, ValidationErrorType.CONTENT_FAILED);
+                }
               } else {
-                this.removeErrorGroup(result, ValidationErrorType.CONTENT_FAILED);
+                if (!content || content.length < 100) {
+                  this.addErrorGroup(result, ValidationErrorType.CONTENT_FAILED);
+                } else {
+                  this.removeErrorGroup(result, ValidationErrorType.CONTENT_FAILED);
+                }
               }
             } catch (error) {
               this.addErrorGroup(result, ValidationErrorType.CONTENT_FAILED);
-              logger.warn(TAG, `正文校验失败 [${source.bookSourceName}]: ${String(error)}`);
+              logger.warn(TAG, `${isAudioSource ? '音频' : '正文'}校验失败 [${source.bookSourceName}]: ${String(error)}`);
             }
           }
         }
@@ -625,6 +717,172 @@ export class NovelSourceValidator {
         logger.warn(TAG, `目录校验失败 [${source.bookSourceName}]: ${String(error)}`);
       }
     }
+  }
+
+  private isAudioSource(source: LegadoBookSource): boolean {
+    return source.bookSourceType === LegadoBookSourceType.AUDIO;
+  }
+
+  private looksLikeAudioUrlCandidate(raw: string): boolean {
+    const value = raw.trim();
+    if (value.length <= 0) {
+      return false;
+    }
+    if (
+      value.startsWith('http://') ||
+      value.startsWith('https://') ||
+      value.startsWith('file://') ||
+      value.startsWith('data:audio/') ||
+      value.startsWith('//')
+    ) {
+      return true;
+    }
+    if (value.indexOf('://') > 0 && value.indexOf(' ') < 0) {
+      return true;
+    }
+    const lower = value.toLowerCase();
+    return lower.indexOf('.mp3') >= 0 ||
+      lower.indexOf('.m4a') >= 0 ||
+      lower.indexOf('.aac') >= 0 ||
+      lower.indexOf('.wav') >= 0 ||
+      lower.indexOf('.ogg') >= 0 ||
+      lower.indexOf('.flac') >= 0 ||
+      lower.indexOf('.m3u8') >= 0;
+  }
+
+  private resolveAudioUrlCandidate(raw: string, baseUrl: string): string {
+    const trimmed = raw.trim();
+    if (trimmed.length <= 0) {
+      return '';
+    }
+    if (
+      trimmed.startsWith('http://') ||
+      trimmed.startsWith('https://') ||
+      trimmed.startsWith('file://') ||
+      trimmed.startsWith('data:audio/')
+    ) {
+      return trimmed;
+    }
+    const baseMatch = /^(https?:\/\/[^/]+)(\/.*)?$/i.exec(baseUrl);
+    if (trimmed.startsWith('//')) {
+      const protocol = baseMatch && baseMatch.length > 1 && baseMatch[1].startsWith('http://')
+        ? 'http:'
+        : 'https:';
+      return `${protocol}${trimmed}`;
+    }
+    if (!baseMatch || baseMatch.length <= 1) {
+      return trimmed;
+    }
+    const host = baseMatch[1];
+    const path = baseMatch.length > 2 && baseMatch[2] ? baseMatch[2] : '/';
+    if (trimmed.startsWith('/')) {
+      return `${host}${trimmed}`;
+    }
+    const slashIndex = path.lastIndexOf('/');
+    const parentPath = slashIndex >= 0 ? path.substring(0, slashIndex + 1) : '/';
+    return `${host}${parentPath}${trimmed}`;
+  }
+
+  private collectAudioUrlHints(payload: AudioValidationJsonValue, urlHints: string[]): void {
+    if (payload === null || payload === undefined) {
+      return;
+    }
+    if (Array.isArray(payload)) {
+      const payloadArray = payload as AudioValidationJsonValue[];
+      for (let index = 0; index < payloadArray.length; index++) {
+        this.collectAudioUrlHints(payloadArray[index], urlHints);
+      }
+      return;
+    }
+    if (typeof payload === 'string') {
+      const text = payload.trim();
+      if (text.length > 0 && this.looksLikeAudioUrlCandidate(text)) {
+        urlHints.push(text);
+      }
+      return;
+    }
+    if (typeof payload !== 'object') {
+      return;
+    }
+
+    const record = payload as Record<string, AudioValidationJsonValue>;
+    const keys = Object.keys(record);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index];
+      const value = record[key];
+      if (typeof value === 'string') {
+        const text = value.trim();
+        const lowerKey = key.toLowerCase();
+        if (text.length > 0) {
+          if (
+            lowerKey === 'url' ||
+            lowerKey === 'audio' ||
+            lowerKey === 'audio_url' ||
+            lowerKey === 'playurl' ||
+            lowerKey === 'play_url' ||
+            lowerKey.endsWith('_url') ||
+            lowerKey.indexOf('audio') >= 0 ||
+            lowerKey.indexOf('play') >= 0
+          ) {
+            urlHints.push(text);
+          } else if (this.looksLikeAudioUrlCandidate(text)) {
+            urlHints.push(text);
+          }
+        }
+      }
+      this.collectAudioUrlHints(value, urlHints);
+    }
+  }
+
+  private tryExtractAudioUrlFromJson(rawContent: string, baseUrl: string): string {
+    if (!rawContent || rawContent.trim().length <= 0) {
+      return '';
+    }
+    try {
+      const parsed = JSON.parse(rawContent) as AudioValidationJsonValue;
+      const urlHints: string[] = [];
+      this.collectAudioUrlHints(parsed, urlHints);
+      for (let index = 0; index < urlHints.length; index++) {
+        const resolved = this.resolveAudioUrlCandidate(urlHints[index], baseUrl);
+        if (resolved.length > 0) {
+          return resolved;
+        }
+      }
+    } catch {
+      return '';
+    }
+    return '';
+  }
+
+  private resolveAudioSourceUrl(rawContent: string, baseUrl: string): string {
+    const text = rawContent ? rawContent.trim() : '';
+    if (text.length <= 0) {
+      return '';
+    }
+
+    const fromJson = this.tryExtractAudioUrlFromJson(text, baseUrl);
+    if (fromJson.length > 0) {
+      return fromJson;
+    }
+
+    const urlMatch = /(https?:\/\/[^\s"'<>]+)/i.exec(text);
+    if (urlMatch && urlMatch.length > 1) {
+      return this.resolveAudioUrlCandidate(urlMatch[1], baseUrl);
+    }
+
+    const lines = text.split('\n');
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index].trim();
+      if (this.looksLikeAudioUrlCandidate(line)) {
+        return this.resolveAudioUrlCandidate(line, baseUrl);
+      }
+    }
+
+    if (this.looksLikeAudioUrlCandidate(text)) {
+      return this.resolveAudioUrlCandidate(text, baseUrl);
+    }
+
+    return '';
   }
 
   /**

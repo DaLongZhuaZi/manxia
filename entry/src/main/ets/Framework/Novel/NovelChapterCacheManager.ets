@@ -17,11 +17,12 @@
 import { logger } from '../../Utils/Logger';
 import { getNovelDataManager } from './NovelDataManager';
 import { getNovelSourceManager } from './NovelSourceManager';
-import { LegadoChapter } from './LegadoSourceTypes';
+import { LegadoChapter, LegadoBookSourceType } from './LegadoSourceTypes';
 import { NovelDownloadTask, NovelCacheInfo, BookMetadata } from '../../Models/NovelModels';
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { fileIo } from '@kit.CoreFileKit';
+import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 
 const TAG = 'NovelChapterCacheManager';
@@ -48,6 +49,23 @@ interface ChapterListCacheData {
   totalCount: number;
   chapters: LegadoChapter[];
 }
+
+interface AudioChapterCacheItem {
+  chapterIndex: number;
+  fileName: string;
+  sourceUrl: string;
+  mimeType: string;
+  fileSize: number;
+  updateTime: number;
+}
+
+interface AudioChapterCacheIndex {
+  updateTime: number;
+  items: AudioChapterCacheItem[];
+}
+
+type AudioJsonValue = string | number | boolean | Object | Array<Object> | null;
+type AudioJsonRecord = Record<string, AudioJsonValue>;
 
 /**
  * 小说章节缓存管理器类
@@ -190,6 +208,59 @@ export class NovelChapterCacheManager {
     const chapterFileName = String(chapterIndex + 1).padStart(4, '0') + '.txt';
     return `${bookDir}/chapters/${chapterFileName}`;
   }
+
+  private getAudioCacheDir(bookId: string): string {
+    return `${this.getBookCacheDir(bookId)}/audio`;
+  }
+
+  private getAudioCacheIndexPath(bookId: string): string {
+    return `${this.getAudioCacheDir(bookId)}/audio_index.json`;
+  }
+
+  private getAudioCacheFileName(chapterIndex: number, extension: string): string {
+    const safeExtension = this.normalizeAudioExtension(extension);
+    const baseName = String(chapterIndex + 1).padStart(4, '0');
+    return `${baseName}.${safeExtension}`;
+  }
+
+  private getAudioCacheFilePath(bookId: string, fileName: string): string {
+    return `${this.getAudioCacheDir(bookId)}/${fileName}`;
+  }
+
+  private normalizeAudioExtension(extension: string): string {
+    const normalized = extension.trim().replace(/^\./, '').toLowerCase();
+    if (normalized.length <= 0) {
+      return 'm4a';
+    }
+    if (/^[a-z0-9]{1,8}$/.test(normalized)) {
+      return normalized;
+    }
+    return 'm4a';
+  }
+
+  private extractAudioExtensionFromUrl(url: string): string {
+    const cleaned = url.trim();
+    if (cleaned.length <= 0) {
+      return 'm4a';
+    }
+    const urlNoQuery = cleaned.split('?')[0].split('#')[0];
+    const slashIndex = urlNoQuery.lastIndexOf('/');
+    const fileName = slashIndex >= 0 ? urlNoQuery.substring(slashIndex + 1) : urlNoQuery;
+    const dotIndex = fileName.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex >= fileName.length - 1) {
+      return 'm4a';
+    }
+    return this.normalizeAudioExtension(fileName.substring(dotIndex + 1));
+  }
+
+  private extractChapterIndexFromCacheFileName(fileName: string): number {
+    const nameOnly = fileName.includes('.') ? fileName.substring(0, fileName.indexOf('.')) : fileName;
+    const parsed = parseInt(nameOnly, 10);
+    if (isNaN(parsed)) {
+      return -1;
+    }
+    return parsed - 1;
+  }
   
   /**
    * 将字符串转换为安全的文件名
@@ -203,6 +274,419 @@ export class NovelChapterCacheManager {
       .substring(0, 100); // 限制长度
   }
 
+  private getSourceType(sourceId: string): LegadoBookSourceType {
+    const source = this.sourceManager.getSource(sourceId);
+    if (!source) {
+      return LegadoBookSourceType.TEXT;
+    }
+    return source.bookSourceType;
+  }
+
+  private looksLikeAudioUrlCandidate(raw: string): boolean {
+    const value = raw.trim();
+    if (value.length <= 0) {
+      return false;
+    }
+    if (
+      value.startsWith('http://') ||
+      value.startsWith('https://') ||
+      value.startsWith('file://') ||
+      value.startsWith('data:audio/') ||
+      value.startsWith('//')
+    ) {
+      return true;
+    }
+    if (value.indexOf('://') > 0 && value.indexOf(' ') < 0) {
+      return true;
+    }
+    const lower = value.toLowerCase();
+    return lower.indexOf('.mp3') >= 0 ||
+      lower.indexOf('.m4a') >= 0 ||
+      lower.indexOf('.aac') >= 0 ||
+      lower.indexOf('.wav') >= 0 ||
+      lower.indexOf('.ogg') >= 0 ||
+      lower.indexOf('.flac') >= 0 ||
+      lower.indexOf('.m3u8') >= 0;
+  }
+
+  private resolveAudioUrlCandidate(raw: string, baseUrl: string): string {
+    const trimmed = raw.trim();
+    if (trimmed.length <= 0) {
+      return '';
+    }
+    if (
+      trimmed.startsWith('http://') ||
+      trimmed.startsWith('https://') ||
+      trimmed.startsWith('file://') ||
+      trimmed.startsWith('data:audio/')
+    ) {
+      return trimmed;
+    }
+    const baseMatch = /^(https?:\/\/[^/]+)(\/.*)?$/i.exec(baseUrl);
+    if (trimmed.startsWith('//')) {
+      const protocol = baseMatch && baseMatch.length > 1 && baseMatch[1].startsWith('http://')
+        ? 'http:'
+        : 'https:';
+      return `${protocol}${trimmed}`;
+    }
+    if (!baseMatch || baseMatch.length <= 1) {
+      return trimmed;
+    }
+    const host = baseMatch[1];
+    const path = baseMatch.length > 2 && baseMatch[2] ? baseMatch[2] : '/';
+    if (trimmed.startsWith('/')) {
+      return `${host}${trimmed}`;
+    }
+    const slashIndex = path.lastIndexOf('/');
+    const parentPath = slashIndex >= 0 ? path.substring(0, slashIndex + 1) : '/';
+    return `${host}${parentPath}${trimmed}`;
+  }
+
+  private collectAudioUrlHints(payload: AudioJsonValue, urlHints: string[]): void {
+    if (payload === null || payload === undefined) {
+      return;
+    }
+    if (Array.isArray(payload)) {
+      const payloadArray = payload as Array<Object>;
+      for (let index = 0; index < payloadArray.length; index++) {
+        this.collectAudioUrlHints(payloadArray[index] as AudioJsonValue, urlHints);
+      }
+      return;
+    }
+    if (typeof payload === 'string') {
+      const text = payload.trim();
+      if (text.length > 0 && this.looksLikeAudioUrlCandidate(text)) {
+        urlHints.push(text);
+      }
+      return;
+    }
+    if (typeof payload !== 'object') {
+      return;
+    }
+
+    const record = payload as AudioJsonRecord;
+    const keys = Object.keys(record);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index];
+      const value = record[key];
+      if (typeof value === 'string') {
+        const text = value.trim();
+        const lowerKey = key.toLowerCase();
+        if (text.length > 0) {
+          if (
+            lowerKey === 'url' ||
+            lowerKey === 'audio' ||
+            lowerKey === 'audio_url' ||
+            lowerKey === 'playurl' ||
+            lowerKey === 'play_url' ||
+            lowerKey.endsWith('_url') ||
+            lowerKey.indexOf('audio') >= 0 ||
+            lowerKey.indexOf('play') >= 0
+          ) {
+            urlHints.push(text);
+          } else if (this.looksLikeAudioUrlCandidate(text)) {
+            urlHints.push(text);
+          }
+        }
+      }
+      this.collectAudioUrlHints(value, urlHints);
+    }
+  }
+
+  private tryExtractAudioUrlFromJson(rawContent: string, baseUrl: string): string {
+    if (!rawContent || rawContent.trim().length <= 0) {
+      return '';
+    }
+    try {
+      const parsed = JSON.parse(rawContent) as AudioJsonValue;
+      const urlHints: string[] = [];
+      this.collectAudioUrlHints(parsed, urlHints);
+      for (let index = 0; index < urlHints.length; index++) {
+        const resolved = this.resolveAudioUrlCandidate(urlHints[index], baseUrl);
+        if (resolved.length > 0) {
+          return resolved;
+        }
+      }
+    } catch {
+      return '';
+    }
+    return '';
+  }
+
+  private resolveAudioSourceUrl(rawContent: string, baseUrl: string): string {
+    const text = rawContent ? rawContent.trim() : '';
+    if (text.length <= 0) {
+      return '';
+    }
+
+    const fromJson = this.tryExtractAudioUrlFromJson(text, baseUrl);
+    if (fromJson.length > 0) {
+      return fromJson;
+    }
+
+    const urlMatch = /(https?:\/\/[^\s"'<>]+)/i.exec(text);
+    if (urlMatch && urlMatch.length > 1) {
+      return this.resolveAudioUrlCandidate(urlMatch[1], baseUrl);
+    }
+
+    const lines = text.split('\n');
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index].trim();
+      if (this.looksLikeAudioUrlCandidate(line)) {
+        return this.resolveAudioUrlCandidate(line, baseUrl);
+      }
+    }
+
+    if (this.looksLikeAudioUrlCandidate(text)) {
+      return this.resolveAudioUrlCandidate(text, baseUrl);
+    }
+
+    return '';
+  }
+
+  private buildAudioRequestHeaders(sourceId: string, audioUrl: string): Record<string, string> {
+    const headers: Record<string, string> = {};
+    headers['User-Agent'] = 'Mozilla/5.0 (Linux; Android 11; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36';
+
+    const source = this.sourceManager.getSource(sourceId);
+    if (source && source.header && source.header.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(source.header) as Record<string, string>;
+        const keys = Object.keys(parsed);
+        for (let index = 0; index < keys.length; index++) {
+          const key = keys[index];
+          const value = parsed[key];
+          if (value && String(value).trim().length > 0) {
+            headers[key] = String(value);
+          }
+        }
+      } catch (error) {
+        logger.warn(TAG, `解析书源请求头失败，使用默认请求头: ${String(error)}`);
+      }
+    }
+
+    if (!Object.keys(headers).includes('Referer') && source?.bookSourceUrl) {
+      headers['Referer'] = source.bookSourceUrl;
+    }
+    if (!Object.keys(headers).includes('Accept')) {
+      headers['Accept'] = '*/*';
+    }
+    if (audioUrl.startsWith('https://') && !Object.keys(headers).includes('Origin')) {
+      const match = /^(https?:\/\/[^/]+)/i.exec(audioUrl);
+      if (match && match.length > 1) {
+        headers['Origin'] = match[1];
+      }
+    }
+    return headers;
+  }
+
+  private async downloadAudioBuffer(audioUrl: string, headers: Record<string, string>): Promise<ArrayBuffer | null> {
+    const request = http.createHttp();
+    try {
+      const response = await request.request(audioUrl, {
+        method: http.RequestMethod.GET,
+        header: headers,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        connectTimeout: 20000,
+        readTimeout: 120000
+      });
+      if (response.responseCode < 200 || response.responseCode >= 300 || !response.result) {
+        logger.warn(TAG, `音频下载失败: code=${response.responseCode}, url=${audioUrl}`);
+        return null;
+      }
+      if (response.result instanceof ArrayBuffer) {
+        return response.result;
+      }
+      if (typeof response.result === 'string') {
+        const encoder = new util.TextEncoder();
+        const encoded = encoder.encodeInto(response.result);
+        return encoded.buffer;
+      }
+      logger.warn(TAG, `音频下载返回了非ArrayBuffer结果: ${typeof response.result}`);
+      return null;
+    } catch (error) {
+      logger.error(TAG, `音频下载异常: ${String(error)}, url=${audioUrl}`);
+      return null;
+    } finally {
+      request.destroy();
+    }
+  }
+
+  private async loadAudioCacheIndex(bookId: string): Promise<AudioChapterCacheIndex> {
+    const emptyIndex: AudioChapterCacheIndex = {
+      updateTime: 0,
+      items: []
+    };
+    try {
+      await this.ensureInitialized();
+      const indexPath = this.getAudioCacheIndexPath(bookId);
+      if (!await this.sandboxManager.exists(indexPath)) {
+        return emptyIndex;
+      }
+      const rawText = await this.sandboxManager.readTextFile(indexPath);
+      if (!rawText || rawText.trim().length <= 0) {
+        return emptyIndex;
+      }
+      const parsed = JSON.parse(rawText) as Record<string, Object>;
+      const updateTime = Number(parsed['updateTime']) || 0;
+      const itemsRaw = parsed['items'];
+      const items: AudioChapterCacheItem[] = [];
+      if (Array.isArray(itemsRaw)) {
+        const itemArray = itemsRaw as Array<Object>;
+        for (let index = 0; index < itemArray.length; index++) {
+          const itemRaw = itemArray[index];
+          if (!itemRaw || typeof itemRaw !== 'object') {
+            continue;
+          }
+          const itemRecord = itemRaw as Record<string, Object>;
+          const chapterIndex = Number(itemRecord['chapterIndex']);
+          const fileName = String(itemRecord['fileName'] ?? '');
+          if (isNaN(chapterIndex) || chapterIndex < 0 || fileName.trim().length <= 0) {
+            continue;
+          }
+          items.push({
+            chapterIndex: chapterIndex,
+            fileName: fileName.trim(),
+            sourceUrl: String(itemRecord['sourceUrl'] ?? ''),
+            mimeType: String(itemRecord['mimeType'] ?? ''),
+            fileSize: Number(itemRecord['fileSize']) || 0,
+            updateTime: Number(itemRecord['updateTime']) || 0
+          });
+        }
+      }
+      return {
+        updateTime,
+        items
+      };
+    } catch (error) {
+      logger.warn(TAG, `读取音频缓存索引失败: ${String(error)}`);
+      return emptyIndex;
+    }
+  }
+
+  private async saveAudioCacheIndex(bookId: string, cacheIndex: AudioChapterCacheIndex): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      const audioDir = this.getAudioCacheDir(bookId);
+      await this.sandboxManager.createDirectory(audioDir);
+      const indexPath = this.getAudioCacheIndexPath(bookId);
+      await this.sandboxManager.writeFile(indexPath, JSON.stringify(cacheIndex));
+    } catch (error) {
+      logger.warn(TAG, `保存音频缓存索引失败: ${String(error)}`);
+    }
+  }
+
+  private async resolveAudioCachePathByIndex(bookId: string, chapterIndex: number): Promise<string | null> {
+    const indexData = await this.loadAudioCacheIndex(bookId);
+    for (let i = 0; i < indexData.items.length; i++) {
+      const item = indexData.items[i];
+      if (item.chapterIndex === chapterIndex) {
+        const path = this.getAudioCacheFilePath(bookId, item.fileName);
+        if (await this.sandboxManager.exists(path)) {
+          return path;
+        }
+      }
+    }
+
+    const audioDir = this.getAudioCacheDir(bookId);
+    if (!await this.sandboxManager.exists(audioDir)) {
+      return null;
+    }
+    const expectedPrefix = `${String(chapterIndex + 1).padStart(4, '0')}.`;
+    const files = await fileIo.listFile(audioDir);
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+      const fileName = files[fileIndex];
+      if (!fileName.startsWith(expectedPrefix)) {
+        continue;
+      }
+      if (fileName.endsWith('.json')) {
+        continue;
+      }
+      const filePath = this.getAudioCacheFilePath(bookId, fileName);
+      if (await this.sandboxManager.exists(filePath)) {
+        return filePath;
+      }
+    }
+    return null;
+  }
+
+  async getChapterAudioCachePath(bookId: string, chapterIndex: number): Promise<string | null> {
+    try {
+      await this.ensureInitialized();
+      return await this.resolveAudioCachePathByIndex(bookId, chapterIndex);
+    } catch (error) {
+      logger.warn(TAG, `获取音频缓存路径失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  async isAudioChapterCached(bookId: string, chapterIndex: number): Promise<boolean> {
+    const path = await this.getChapterAudioCachePath(bookId, chapterIndex);
+    return !!path && path.length > 0;
+  }
+
+  private async cacheAudioChapter(
+    sourceId: string,
+    bookId: string,
+    chapter: LegadoChapter
+  ): Promise<boolean> {
+    try {
+      const cachedPath = await this.getChapterAudioCachePath(bookId, chapter.index);
+      if (cachedPath && cachedPath.length > 0) {
+        logger.debug(TAG, `音频章节已缓存: ${chapter.title}`);
+        return true;
+      }
+
+      const content = await this.sourceManager.getContent(sourceId, chapter);
+      let audioUrl = this.resolveAudioSourceUrl(content, chapter.url);
+      if (audioUrl.length <= 0 && this.looksLikeAudioUrlCandidate(chapter.url)) {
+        audioUrl = this.resolveAudioUrlCandidate(chapter.url, chapter.url);
+      }
+      if (audioUrl.length <= 0) {
+        logger.warn(TAG, `未解析到可缓存的音频URL: ${chapter.title}`);
+        return false;
+      }
+
+      const extension = this.extractAudioExtensionFromUrl(audioUrl);
+      const fileName = this.getAudioCacheFileName(chapter.index, extension);
+      const targetPath = this.getAudioCacheFilePath(bookId, fileName);
+      const headers = this.buildAudioRequestHeaders(sourceId, audioUrl);
+      const audioBuffer = await this.downloadAudioBuffer(audioUrl, headers);
+      if (!audioBuffer || audioBuffer.byteLength <= 0) {
+        logger.warn(TAG, `音频下载结果为空: ${chapter.title}`);
+        return false;
+      }
+      await this.sandboxManager.writeFile(targetPath, audioBuffer);
+
+      const currentIndex = await this.loadAudioCacheIndex(bookId);
+      const nextItems: AudioChapterCacheItem[] = [];
+      for (let i = 0; i < currentIndex.items.length; i++) {
+        const item = currentIndex.items[i];
+        if (item.chapterIndex !== chapter.index) {
+          nextItems.push(item);
+        }
+      }
+      nextItems.push({
+        chapterIndex: chapter.index,
+        fileName: fileName,
+        sourceUrl: audioUrl,
+        mimeType: extension === 'm3u8' ? 'application/vnd.apple.mpegurl' : `audio/${extension}`,
+        fileSize: audioBuffer.byteLength,
+        updateTime: Date.now()
+      });
+      await this.saveAudioCacheIndex(bookId, {
+        updateTime: Date.now(),
+        items: nextItems
+      });
+
+      logger.info(TAG, `音频章节缓存成功: ${chapter.title}, size=${audioBuffer.byteLength}`);
+      return true;
+    } catch (error) {
+      logger.error(TAG, `缓存音频章节失败: ${chapter.title}, ${String(error)}`);
+      return false;
+    }
+  }
+
   /**
    * 缓存单个章节内容（保存为txt文件）
    */
@@ -214,7 +698,11 @@ export class NovelChapterCacheManager {
     try {
       // 确保缓存目录已初始化
       await this.ensureInitialized();
-      
+
+      if (this.getSourceType(sourceId) === LegadoBookSourceType.AUDIO) {
+        return await this.cacheAudioChapter(sourceId, bookId, chapter);
+      }
+
       // 检查是否已缓存
       const cached = await this.getChapterCache(bookId, chapter.index);
       if (cached) {
@@ -246,7 +734,10 @@ export class NovelChapterCacheManager {
   async isChapterCached(bookId: string, chapterIndex: number): Promise<boolean> {
     try {
       const filePath = this.getChapterFilePath(bookId, chapterIndex);
-      return await this.sandboxManager.exists(filePath);
+      if (await this.sandboxManager.exists(filePath)) {
+        return true;
+      }
+      return await this.isAudioChapterCached(bookId, chapterIndex);
     } catch (error) {
       return false;
     }
@@ -263,20 +754,35 @@ export class NovelChapterCacheManager {
       
       const bookDir = this.getBookCacheDir(bookId);
       const chaptersDir = `${bookDir}/chapters`;
+      const maxIndex = totalChapters > 0 ? totalChapters : Number.MAX_SAFE_INTEGER;
       
       // 检查目录是否存在
-      if (!await this.sandboxManager.exists(chaptersDir)) {
-        return cachedIndexes;
-      }
-      
-      // 列出目录中的所有txt文件
-      const files = await fileIo.listFile(chaptersDir);
-      for (const file of files) {
-        if (file.endsWith('.txt')) {
+      if (await this.sandboxManager.exists(chaptersDir)) {
+        // 列出目录中的所有txt文件
+        const files = await fileIo.listFile(chaptersDir);
+        for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+          const fileName = files[fileIndex];
+          if (!fileName.endsWith('.txt')) {
+            continue;
+          }
           // 从文件名提取章节索引（0001.txt -> 0）
-          const indexStr = file.replace('.txt', '');
-          const index = parseInt(indexStr, 10) - 1; // 文件名是1-based，索引是0-based
-          if (!isNaN(index) && index >= 0 && index < totalChapters) {
+          const index = this.extractChapterIndexFromCacheFileName(fileName);
+          if (!isNaN(index) && index >= 0 && index < maxIndex) {
+            cachedIndexes.add(index);
+          }
+        }
+      }
+
+      const audioDir = this.getAudioCacheDir(bookId);
+      if (await this.sandboxManager.exists(audioDir)) {
+        const audioFiles = await fileIo.listFile(audioDir);
+        for (let fileIndex = 0; fileIndex < audioFiles.length; fileIndex++) {
+          const fileName = audioFiles[fileIndex];
+          if (fileName.endsWith('.json')) {
+            continue;
+          }
+          const index = this.extractChapterIndexFromCacheFileName(fileName);
+          if (!isNaN(index) && index >= 0 && index < maxIndex) {
             cachedIndexes.add(index);
           }
         }
@@ -598,48 +1104,98 @@ export class NovelChapterCacheManager {
    */
   async getBookCacheInfo(bookId: string): Promise<NovelCacheInfo> {
     try {
+      await this.ensureInitialized();
       const bookDir = this.getBookCacheDir(bookId);
       const chaptersDir = `${bookDir}/chapters`;
-      
-      // 检查目录是否存在
-      if (!await this.sandboxManager.exists(chaptersDir)) {
-        return {
-          bookId: bookId,
-          cachedChapterCount: 0,
-          totalChapterCount: 0,
-          cacheSize: 0,
-          lastCacheTime: 0
-        };
-      }
-      
-      // 统计缓存信息
-      const files = await fileIo.listFile(chaptersDir);
-      let cachedCount = 0;
-      let cacheSize = 0;
+      const audioDir = this.getAudioCacheDir(bookId);
+
+      const cachedTextIndexes = new Set<number>();
+      const cachedAudioIndexes = new Set<number>();
+      let textCacheSize = 0;
+      let audioCacheSize = 0;
       let lastCacheTime = 0;
-      
-      for (const file of files) {
-        if (file.endsWith('.txt')) {
-          cachedCount++;
-          const filePath = `${chaptersDir}/${file}`;
+
+      if (await this.sandboxManager.exists(chaptersDir)) {
+        const textFiles = await fileIo.listFile(chaptersDir);
+        for (let fileIndex = 0; fileIndex < textFiles.length; fileIndex++) {
+          const fileName = textFiles[fileIndex];
+          if (!fileName.endsWith('.txt')) {
+            continue;
+          }
+          const chapterIndex = this.extractChapterIndexFromCacheFileName(fileName);
+          if (chapterIndex >= 0) {
+            cachedTextIndexes.add(chapterIndex);
+          }
+          const filePath = `${chaptersDir}/${fileName}`;
           try {
             const stat = await fileIo.stat(filePath);
-            cacheSize += stat.size;
+            textCacheSize += stat.size;
             if (stat.mtime > lastCacheTime) {
               lastCacheTime = stat.mtime;
             }
-          } catch (e) {
-            // 忽略单个文件的错误
+          } catch (_error) {
           }
         }
       }
 
+      if (await this.sandboxManager.exists(audioDir)) {
+        const audioFiles = await fileIo.listFile(audioDir);
+        for (let fileIndex = 0; fileIndex < audioFiles.length; fileIndex++) {
+          const fileName = audioFiles[fileIndex];
+          if (fileName.endsWith('.json')) {
+            continue;
+          }
+          const chapterIndex = this.extractChapterIndexFromCacheFileName(fileName);
+          if (chapterIndex >= 0) {
+            cachedAudioIndexes.add(chapterIndex);
+          }
+          const filePath = `${audioDir}/${fileName}`;
+          try {
+            const stat = await fileIo.stat(filePath);
+            audioCacheSize += stat.size;
+            if (stat.mtime > lastCacheTime) {
+              lastCacheTime = stat.mtime;
+            }
+          } catch (_error) {
+          }
+        }
+      }
+
+      const audioIndexPath = this.getAudioCacheIndexPath(bookId);
+      if (await this.sandboxManager.exists(audioIndexPath)) {
+        try {
+          const stat = await fileIo.stat(audioIndexPath);
+          if (stat.mtime > lastCacheTime) {
+            lastCacheTime = stat.mtime;
+          }
+        } catch (_error) {
+        }
+      }
+
+      const mergedIndexes = new Set<number>();
+      cachedTextIndexes.forEach((index: number) => mergedIndexes.add(index));
+      cachedAudioIndexes.forEach((index: number) => mergedIndexes.add(index));
+
+      let cacheKind: 'text' | 'audio' | 'mixed' | undefined = undefined;
+      if (cachedTextIndexes.size > 0 && cachedAudioIndexes.size > 0) {
+        cacheKind = 'mixed';
+      } else if (cachedAudioIndexes.size > 0) {
+        cacheKind = 'audio';
+      } else if (cachedTextIndexes.size > 0) {
+        cacheKind = 'text';
+      }
+
       return {
         bookId: bookId,
-        cachedChapterCount: cachedCount,
-        totalChapterCount: 0, // 需要从其他地方获取
-        cacheSize: cacheSize,
-        lastCacheTime: lastCacheTime
+        cachedChapterCount: mergedIndexes.size,
+        totalChapterCount: 0,
+        cacheSize: textCacheSize + audioCacheSize,
+        lastCacheTime: lastCacheTime,
+        cachedTextChapterCount: cachedTextIndexes.size,
+        cachedAudioChapterCount: cachedAudioIndexes.size,
+        textCacheSize: textCacheSize,
+        audioCacheSize: audioCacheSize,
+        cacheKind: cacheKind
       };
     } catch (error) {
       logger.error(TAG, `获取缓存信息失败: ${String(error)}`);
@@ -648,7 +1204,11 @@ export class NovelChapterCacheManager {
         cachedChapterCount: 0,
         totalChapterCount: 0,
         cacheSize: 0,
-        lastCacheTime: 0
+        lastCacheTime: 0,
+        cachedTextChapterCount: 0,
+        cachedAudioChapterCount: 0,
+        textCacheSize: 0,
+        audioCacheSize: 0
       };
     }
   }
@@ -659,6 +1219,7 @@ export class NovelChapterCacheManager {
    */
   async cleanExpiredCache(maxAgeDays: number = 30): Promise<number> {
     try {
+      await this.ensureInitialized();
       const expireTime = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
       let count = 0;
       
@@ -669,24 +1230,111 @@ export class NovelChapterCacheManager {
       
       // 遍历所有书籍目录
       const bookDirs = await fileIo.listFile(this.novelsCacheDir);
-      for (const bookDir of bookDirs) {
-        const chaptersDir = `${this.novelsCacheDir}/${bookDir}/chapters`;
-        if (!await this.sandboxManager.exists(chaptersDir)) {
-          continue;
+      for (let bookDirIndex = 0; bookDirIndex < bookDirs.length; bookDirIndex++) {
+        const bookDir = bookDirs[bookDirIndex];
+        const baseDir = `${this.novelsCacheDir}/${bookDir}`;
+        const chaptersDir = `${baseDir}/chapters`;
+        if (await this.sandboxManager.exists(chaptersDir)) {
+          const files = await fileIo.listFile(chaptersDir);
+          for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+            const file = files[fileIndex];
+            if (file.endsWith('.txt')) {
+              const filePath = `${chaptersDir}/${file}`;
+              try {
+                const stat = await fileIo.stat(filePath);
+                if (stat.mtime < expireTime) {
+                  await fileIo.unlink(filePath);
+                  count++;
+                }
+              } catch (_error) {
+              }
+            }
+          }
         }
-        
-        const files = await fileIo.listFile(chaptersDir);
-        for (const file of files) {
-          if (file.endsWith('.txt')) {
-            const filePath = `${chaptersDir}/${file}`;
+
+        const audioDir = `${baseDir}/audio`;
+        if (await this.sandboxManager.exists(audioDir)) {
+          const audioFiles = await fileIo.listFile(audioDir);
+          for (let fileIndex = 0; fileIndex < audioFiles.length; fileIndex++) {
+            const fileName = audioFiles[fileIndex];
+            if (fileName.endsWith('.json')) {
+              continue;
+            }
+            const filePath = `${audioDir}/${fileName}`;
             try {
               const stat = await fileIo.stat(filePath);
               if (stat.mtime < expireTime) {
                 await fileIo.unlink(filePath);
                 count++;
               }
-            } catch (e) {
-              // 忽略单个文件的错误
+            } catch (_error) {
+            }
+          }
+
+          const audioIndexPath = `${audioDir}/audio_index.json`;
+          if (await this.sandboxManager.exists(audioIndexPath)) {
+            try {
+              const rawIndexText = await this.sandboxManager.readTextFile(audioIndexPath);
+              if (rawIndexText && rawIndexText.trim().length > 0) {
+                const parsed = JSON.parse(rawIndexText) as Record<string, Object>;
+                const itemsValue = parsed['items'];
+                const filteredItems: AudioChapterCacheItem[] = [];
+                let changed = false;
+                if (Array.isArray(itemsValue)) {
+                  const itemArray = itemsValue as Array<Object>;
+                  for (let itemIndex = 0; itemIndex < itemArray.length; itemIndex++) {
+                    const itemRaw = itemArray[itemIndex];
+                    if (!itemRaw || typeof itemRaw !== 'object') {
+                      changed = true;
+                      continue;
+                    }
+                    const itemRecord = itemRaw as Record<string, Object>;
+                    const chapterIndex = Number(itemRecord['chapterIndex']);
+                    const fileName = String(itemRecord['fileName'] ?? '').trim();
+                    if (isNaN(chapterIndex) || chapterIndex < 0 || fileName.length <= 0) {
+                      changed = true;
+                      continue;
+                    }
+                    const filePath = `${audioDir}/${fileName}`;
+                    if (!await this.sandboxManager.exists(filePath)) {
+                      changed = true;
+                      continue;
+                    }
+                    filteredItems.push({
+                      chapterIndex: chapterIndex,
+                      fileName: fileName,
+                      sourceUrl: String(itemRecord['sourceUrl'] ?? ''),
+                      mimeType: String(itemRecord['mimeType'] ?? ''),
+                      fileSize: Number(itemRecord['fileSize']) || 0,
+                      updateTime: Number(itemRecord['updateTime']) || 0
+                    });
+                  }
+                } else {
+                  changed = true;
+                }
+
+                if (changed) {
+                  if (filteredItems.length <= 0) {
+                    const indexStat = await fileIo.stat(audioIndexPath);
+                    if (indexStat.mtime < expireTime) {
+                      await fileIo.unlink(audioIndexPath);
+                      count++;
+                    } else {
+                      await this.sandboxManager.writeFile(audioIndexPath, JSON.stringify({
+                        updateTime: Date.now(),
+                        items: filteredItems
+                      }));
+                    }
+                  } else {
+                    await this.sandboxManager.writeFile(audioIndexPath, JSON.stringify({
+                      updateTime: Date.now(),
+                      items: filteredItems
+                    }));
+                  }
+                }
+              }
+            } catch (error) {
+              logger.warn(TAG, `整理音频缓存索引失败: ${audioIndexPath}, ${String(error)}`);
             }
           }
         }

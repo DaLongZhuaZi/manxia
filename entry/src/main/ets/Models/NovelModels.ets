@@ -131,6 +131,8 @@ export interface NovelSourceInfo {
   name: string;
   url: string;
   group?: string;
+  /** 书源类型（0: 文本，1: 听书，2: 图片，3: 文件） */
+  bookSourceType?: number;
   enabled: boolean;
   weight: number;
   /** 用户自定义排序顺序（越小越靠前） */
@@ -212,6 +214,11 @@ export interface NovelCacheInfo {
   totalChapterCount: number;
   cacheSize: number;
   lastCacheTime: number;
+  cachedTextChapterCount?: number;
+  cachedAudioChapterCount?: number;
+  textCacheSize?: number;
+  audioCacheSize?: number;
+  cacheKind?: 'text' | 'audio' | 'mixed';
 }
 
 /**

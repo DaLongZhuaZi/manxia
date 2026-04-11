@@ -8,7 +8,7 @@
 import { logger } from '../../Utils/Logger';
 import { LegadoBookSource, LegadoLoginUiItem } from './LegadoSourceTypes';
 import { getLegadoRhinoEngine } from './LegadoRhinoEngine';
-import { ToastMessage, CookieChange } from './LegadoJsEngine';
+import { ToastMessage, CookieChange, JsContext } from './LegadoJsEngine';
 import { getCookieStore } from './LegadoCookieStore';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
@@ -448,10 +448,11 @@ export class NovelLoginManager {
     }
 
     // 执行JS
-    const result = await jsEngine.execute(jsCode, {
+    const jsContext: JsContext = {
       variables: formData,
       jsLib: source.jsLib || ''
-    });
+    };
+    const result = await jsEngine.execute(jsCode, jsContext);
 
     if (result.success) {
       // 解析结果
@@ -548,12 +549,13 @@ export class NovelLoginManager {
       variables['__sourceVariable'] = this.getSourceVariable(sourceId);
       
       // 执行JS，将formData作为result变量传入
-      const result = await jsEngine.execute(jsCode, {
+      const jsContext: JsContext = {
         baseUrl: sourceId,
         result: JSON.stringify(formData),
         variables: variables,
         jsLib: source.jsLib || ''
-      });
+      };
+      const result = await jsEngine.execute(jsCode, jsContext);
 
       logger.info(TAG, `按钮操作执行结果: success=${result.success}, result=${result.result?.substring(0, 200)}`);
 
@@ -678,10 +680,11 @@ export class NovelLoginManager {
 
     try {
       const jsEngine = getLegadoRhinoEngine();
-      const result = await jsEngine.execute(source.loginCheckJs, {
+      const jsContext: JsContext = {
         variables: this.getVariables(source.bookSourceUrl),
         jsLib: source.jsLib || ''
-      });
+      };
+      const result = await jsEngine.execute(source.loginCheckJs, jsContext);
 
       const isLoggedIn = result.success && (result.result === 'true' || result.result === '1');
       this.setLoggedIn(source.bookSourceUrl, isLoggedIn);

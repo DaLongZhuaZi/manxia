@@ -182,6 +182,7 @@ export struct NovelReaderPage {
   private sourceId: string = '';
   private bookUrl: string = '';
   private bookName: string = '';
+  private author: string = '';
   private bookCoverUrl: string = '';
   private chapterUrl: string = '';
   private bookId: string = '';
@@ -1446,6 +1447,14 @@ export struct NovelReaderPage {
   /**
   * 加载章节列表
   */
+  private getCurrentSourceType(): LegadoBookSourceType {
+    const source = this.sourceManager.getSource(this.sourceId);
+    if (source) {
+      return source.bookSourceType;
+    }
+    return LegadoBookSourceType.TEXT;
+  }
+
   async loadChapterList(): Promise<void> {
     try {
       if (this.isLocalTxtNovelMode()) {
@@ -1498,9 +1507,10 @@ export struct NovelReaderPage {
 
       const tocUrl = this.tocUrl || this.bookUrl;
       logger.info(TAG, `加载章节列表: tocUrl=${tocUrl}`);
+      const sourceType = this.getCurrentSourceType();
       const book: LegadoBook = {
         id: '',
-        type: LegadoBookSourceType.TEXT,
+        type: sourceType,
         bookUrl: this.bookUrl,
         tocUrl: tocUrl,// 使用tocUrl加载章节列表
         name: this.bookName,
@@ -2320,6 +2330,14 @@ export struct NovelReaderPage {
       return;
     }
 
+    if (this.getCurrentSourceType() === LegadoBookSourceType.AUDIO) {
+      const shouldAutoStart = this.shouldAutoStartReadAloud || this.shouldAutoOpenReadAloudPlayer;
+      this.shouldAutoStartReadAloud = false;
+      this.shouldAutoOpenReadAloudPlayer = false;
+      this.openNovelReadAloudPageFromReader(shouldAutoStart);
+      return;
+    }
+
     this.updateReadAloudContextByPosition();
 
     if (this.shouldAutoStartReadAloud) {
@@ -2333,6 +2351,24 @@ export struct NovelReaderPage {
         this.openReadAloudPlayerPageFromReader();
       }, 60);
     }
+  }
+
+  private openNovelReadAloudPageFromReader(autoStart: boolean): void {
+    const params: NovelReaderPageParams = {
+      sourceId: this.sourceId,
+      bookUrl: this.bookUrl,
+      bookName: this.bookName,
+      chapterUrl: this.chapterUrl,
+      chapterTitle: this.chapterTitle,
+      chapterIndex: this.currentChapterIndex,
+      totalChapters: this.totalChapters,
+      tocUrl: this.tocUrl || this.bookUrl,
+      author: this.author,
+      coverUrl: this.bookCoverUrl,
+      coverComponentId: this.sourceCoverComponentId || undefined,
+      autoStartReadAloud: autoStart
+    };
+    this.pathStack.pushPathByName('NovelReadAloudPage', params);
   }
 
   private openReadAloudPlayerPageFromReader(): void {
@@ -3590,6 +3626,7 @@ export struct NovelReaderPage {
             : '');
         this.bookUrl = param.bookUrl;
         this.bookName = param.bookName;
+        this.author = param.author || '';
         this.chapterUrl = param.chapterUrl;
         this.chapterTitle = param.chapterTitle;
         this.currentChapterIndex = param.chapterIndex;
