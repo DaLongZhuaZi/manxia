@@ -88,7 +88,6 @@ export interface JsContext {
 interface PendingTask {
   code: string;
   context: JsContext;
-  jsLibSnapshot: string;
   resolve: (result: JsExecuteResult) => void;
 }
 
@@ -271,50 +270,41 @@ export class LegadoJsEngine {
     }
     
     // java.get 需要特殊处理：
-    // - java.get("key") / java.get("page") / java.get("result") / java.get("baseUrl") 是变量获取，不需要网络
-    // - java.get(url) 或 java.get("http...") 是网络请求，需要WebView
+    // - java.get("entityType") / java.get("n") 等字符串字面量变量读取，不需要网络
+    // - java.get(urlVariable) / java.get("http...") 这类URL读取，才需要网络
     if (code.includes('java.get')) {
-      // 检查是否只是变量获取
-      const varGetPattern = /java\.get\s*\(\s*["'](key|page|result|baseUrl|sourceUrl)["']\s*\)/g;
-      const allGetPattern = /java\.get\s*\(/g;
-      const varGetMatches = code.match(varGetPattern) || [];
-      const allGetMatches = code.match(allGetPattern) || [];
-      // 如果所有java.get调用都是变量获取，则不需要网络
-      if (varGetMatches.length < allGetMatches.length) {
-        return true; // 有非变量获取的java.get调用，需要网络
-      }
-    }
-    
-    return false;
-  }
+      const javaGetCallPattern = /java\.get\s*\(\s*([^)]+?)\s*\)/g;
+      const matches = code.match(javaGetCallPattern) || [];
+      for (let i = 0; i < matches.length; i++) {
+        const fullCall = matches[i];
+        const argMatch = fullCall.match(/java\.get\s*\(\s*([^)]+?)\s*\)/);
+        if (!argMatch || argMatch.length < 2) {
+          return true;
+        }
 
-  private shouldPreferWebViewForJs(code: string): boolean {
-    const trimmedCode = code.trim();
-    if (trimmedCode.length === 0) {
-      return false;
-    }
+        const arg = argMatch[1].trim();
+        const isDoubleQuoted = arg.startsWith('"') && arg.endsWith('"');
+        const isSingleQuoted = arg.startsWith("'") && arg.endsWith("'");
+        if (isDoubleQuoted || isSingleQuoted) {
+          const literal = arg.substring(1, arg.length - 1).trim();
+          if (literal.length <= 0) {
+            continue;
+          }
+          if (
+            literal.includes('://') ||
+            literal.startsWith('/') ||
+            literal.startsWith('resource://')
+          ) {
+            return true;
+          }
+          continue;
+        }
 
-    // 多语句/长脚本在Native编译失败概率较高，直接走WebView更稳
-    if (trimmedCode.length > 160 && (trimmedCode.includes('\n') || trimmedCode.includes(';'))) {
-      return true;
-    }
-
-    const riskyPatterns = [
-      'Date.now(',
-      'java.md5Encode',
-      'headers=',
-      'params=',
-      'setArguments(',
-      'cookie.',
-      'cache.',
-      'source.'
-    ];
-    for (const pattern of riskyPatterns) {
-      if (trimmedCode.includes(pattern)) {
+        // 非字面量参数（变量/表达式）按网络请求处理
         return true;
       }
     }
-
+    
     return false;
   }
   
@@ -329,32 +319,15 @@ export class LegadoJsEngine {
       return { success: true, result: '' };
     }
 
-    // 优先使用上下文中的jsLib快照，避免并发时全局jsLib串源
-    const activeJsLib = context.jsLib !== undefined ? context.jsLib : this.jsLib;
-
     // 检测是否需要网络请求功能
     const needsNetwork = this.needsNetworkCapability(code);
-    const shouldPreferWebView = !needsNetwork && this.shouldPreferWebViewForJs(code);
     
     // 如果需要网络请求，直接使用WebView执行（WebView支持XMLHttpRequest同步请求）
     // 注意：Native JSVM不支持网络请求，因为HarmonyOS没有libcurl
-    if (needsNetwork || shouldPreferWebView) {
-      if (shouldPreferWebView) {
-        logger.debug(TAG, `JS代码命中Native高风险特征，优先使用WebView执行`);
-      } else {
-        logger.debug(TAG, `JS代码包含网络请求函数，使用WebView执行`);
-      }
-      if (this.isReady && this.webviewController) {
-        return new Promise((resolve) => {
-          const task: PendingTask = {
-            code: code,
-            context: context,
-            jsLibSnapshot: activeJsLib,
-            resolve: resolve
-          };
-          this.pendingTasks.push(task);
-          this.processPendingTasks();
-        });
+    if (needsNetwork) {
+      logger.debug(TAG, `JS代码包含网络请求函数，使用WebView执行`);
+      if (this.canUseWebView()) {
+        return this.enqueueWebViewTask(code, context);
       }
       
       // WebView不可用时，尝试简单求值（网络请求功能将不可用）
@@ -365,7 +338,7 @@ export class LegadoJsEngine {
     if (this.nativeEngineReady && this.nativeEngine) {
       try {
         // 构建完整的执行脚本（包含辅助函数和上下文）
-        const fullScript = this.buildNativeScript(code, context, activeJsLib);
+        const fullScript = this.buildNativeScript(code, context);
         
         const nativeContext: NativeJsContext = {
           result: context.result,
@@ -378,47 +351,34 @@ export class LegadoJsEngine {
         
         const result = await this.nativeEngine.execute(fullScript, nativeContext);
         if (result.success) {
-          // 检查是否返回错误
-          if (result.result && result.result.startsWith('ERROR:')) {
-            // Native执行返回错误，记录错误信息
-            const errorMsg = result.result.substring(6); // 移除"ERROR:"前缀
-            logger.warn(TAG, `Native执行错误: ${errorMsg}`);
-            // 返回错误信息而不是空字符串，方便调试
-            return { success: false, result: '', error: errorMsg };
+          const nativeError = this.extractErrorFromResult(result.result);
+          if (nativeError) {
+            logger.warn(TAG, `Native执行错误: ${nativeError}`);
+            if (this.canUseWebView()) {
+              logger.info(TAG, 'Native执行结果包含错误，回退到WebView重试');
+              return this.enqueueWebViewTask(code, context);
+            }
+            return { success: true, result: '', error: nativeError };
           }
           logger.debug(TAG, `Native执行结果: ${result.result ? result.result.substring(0, 100) : '(空)'}`);
           return { success: true, result: result.result };
         }
-        // Native执行失败时降级到WebView执行（只影响失败路径）
-        logger.warn(TAG, `Native执行失败: ${result.error}`);
-        if (this.isReady && this.webviewController) {
-          return new Promise((resolve) => {
-            const task: PendingTask = {
-              code: code,
-              context: context,
-              jsLibSnapshot: activeJsLib,
-              resolve: resolve
-            };
-            this.pendingTasks.push(task);
-            this.processPendingTasks();
-          });
+        // Native执行失败
+        const nativeFailure = result.error || 'Native执行失败';
+        logger.warn(TAG, `Native执行失败: ${nativeFailure}`);
+        if (this.canUseWebView()) {
+          logger.info(TAG, 'Native执行失败，回退到WebView重试');
+          return this.enqueueWebViewTask(code, context);
         }
-        return { success: false, result: '', error: result.error || 'Native执行失败' };
+        return { success: false, result: '', error: nativeFailure };
       } catch (e) {
-        logger.error(TAG, `Native执行异常: ${String(e)}`);
-        if (this.isReady && this.webviewController) {
-          return new Promise((resolve) => {
-            const task: PendingTask = {
-              code: code,
-              context: context,
-              jsLibSnapshot: activeJsLib,
-              resolve: resolve
-            };
-            this.pendingTasks.push(task);
-            this.processPendingTasks();
-          });
+        const exceptionError = String(e);
+        logger.error(TAG, `Native执行异常: ${exceptionError}`);
+        if (this.canUseWebView()) {
+          logger.info(TAG, 'Native执行异常，回退到WebView重试');
+          return this.enqueueWebViewTask(code, context);
         }
-        return { success: false, result: '', error: String(e) };
+        return { success: false, result: '', error: exceptionError };
       }
     }
     
@@ -436,22 +396,29 @@ export class LegadoJsEngine {
     }
 
     // 降级到WebView执行（仅当Native引擎不可用时）
-    if (this.isReady && this.webviewController) {
-      return new Promise((resolve) => {
-        const task: PendingTask = {
-          code: code,
-          context: context,
-          jsLibSnapshot: activeJsLib,
-          resolve: resolve
-        };
-        this.pendingTasks.push(task);
-        this.processPendingTasks();
-      });
+    if (this.canUseWebView()) {
+      return this.enqueueWebViewTask(code, context);
     }
 
     // 最后使用简单的表达式求值（仅当所有引擎都不可用时）
     logger.warn(TAG, 'Native和WebView都不可用，使用简单求值');
     return this.executeSimple(code, context);
+  }
+
+  private canUseWebView(): boolean {
+    return this.isReady && this.webviewController !== null;
+  }
+
+  private enqueueWebViewTask(code: string, context: JsContext): Promise<JsExecuteResult> {
+    return new Promise((resolve) => {
+      const task: PendingTask = {
+        code: code,
+        context: context,
+        resolve: resolve
+      };
+      this.pendingTasks.push(task);
+      this.processPendingTasks();
+    });
   }
 
   /**
@@ -470,6 +437,14 @@ export class LegadoJsEngine {
       vars.push(`var baseUrl = ${JSON.stringify(context.baseUrl)};`);
     } else {
       vars.push(`var baseUrl = '';`);
+    }
+
+    if (context.src !== undefined) {
+      vars.push(`var src = ${JSON.stringify(context.src)};`);
+    } else if (context.result !== undefined) {
+      vars.push(`var src = ${JSON.stringify(context.result)};`);
+    } else {
+      vars.push(`var src = '';`);
     }
     
     if (context.key !== undefined) {
@@ -527,7 +502,7 @@ export class LegadoJsEngine {
     logger.debug(TAG, `开始执行WebView JS任务，剩余队列: ${this.pendingTasks.length}`);
     
     try {
-      const result = await this.executeInWebView(task.code, task.context, task.jsLibSnapshot);
+      const result = await this.executeInWebView(task.code, task.context);
       logger.debug(TAG, `WebView JS任务执行完成，success=${result.success}`);
       task.resolve(result);
     } catch (error) {
@@ -629,7 +604,7 @@ export class LegadoJsEngine {
   /**
    * 在WebView中执行JavaScript（带超时保护）
    */
-  private async executeInWebView(code: string, context: JsContext, jsLibSnapshot: string): Promise<JsExecuteResult> {
+  private async executeInWebView(code: string, context: JsContext): Promise<JsExecuteResult> {
     if (!this.webviewController) {
       return { success: false, result: '', error: 'WebView未初始化' };
     }
@@ -643,7 +618,10 @@ export class LegadoJsEngine {
       // 然后我们可以在需要时重新执行脚本
       
       // 构建执行脚本
-      const script = this.buildScript(code, context, jsLibSnapshot);
+      const script = this.buildScript(code, context);
+      const scriptLiteral = JSON.stringify(script)
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
       
       // 包装脚本以捕获执行结果、错误、日志、Toast消息和Cookie变化
       // 注意：不再嵌套buildScript的IIFE，直接执行其内部代码
@@ -680,7 +658,7 @@ export class LegadoJsEngine {
           try {
             console.log('[WebView] 开始执行脚本...');
             // 使用eval执行脚本字符串，避免模板字符串嵌入导致的语法问题
-            __scriptResult = eval(${JSON.stringify(script)});
+            __scriptResult = eval(${scriptLiteral});
             console.log('[WebView] 脚本执行完成，结果:', typeof __scriptResult, __scriptResult ? String(__scriptResult).substring(0, 100) : 'null/undefined');
           } catch(e) {
             __scriptError = e.message || String(e);
@@ -735,7 +713,7 @@ export class LegadoJsEngine {
           (function() {
             try {
               // 尝试创建一个Function来检查语法
-              var testCode = ${JSON.stringify(script)};
+              var testCode = ${scriptLiteral};
               new Function(testCode);
               return JSON.stringify({ syntaxOk: true });
             } catch(e) {
@@ -859,9 +837,22 @@ export class LegadoJsEngine {
           
           // 优先返回脚本执行结果
           if (parsed['__result'] !== undefined) {
+            const parsedResult = String(parsed['__result']);
+            const parsedError = this.extractErrorFromResult(parsedResult);
+            if (parsedError) {
+              logger.error(TAG, `JS执行错误: ${parsedError}`);
+              return {
+                success: false,
+                result: '',
+                error: parsedError,
+                toasts: toasts,
+                logs: logs,
+                cookieChanges: cookieChanges
+              };
+            }
             return {
               success: true,
-              result: String(parsed['__result']),
+              result: parsedResult,
               toasts: toasts,
               logs: logs,
               cookieChanges: cookieChanges
@@ -891,9 +882,20 @@ export class LegadoJsEngine {
         }
       }
       
+      const plainResult = result ? String(result) : '';
+      const plainError = this.extractErrorFromResult(plainResult);
+      if (plainError) {
+        logger.error(TAG, `JS执行错误: ${plainError}`);
+        return {
+          success: false,
+          result: '',
+          error: plainError
+        };
+      }
+
       return {
         success: true,
-        result: result ? String(result) : ''
+        result: plainResult
       };
     } catch (error) {
       logger.error(TAG, `JS执行失败: ${String(error)}`);
@@ -961,12 +963,51 @@ export class LegadoJsEngine {
     });
   }
 
+  private extractErrorFromResult(rawResult: string): string | undefined {
+    const normalized = rawResult.trim();
+    if (!normalized) {
+      return undefined;
+    }
+    if (normalized.startsWith('ERROR:')) {
+      return normalized.substring(6).trim();
+    }
+    if (normalized.startsWith('Error:')) {
+      return normalized.substring(6).trim();
+    }
+    if (normalized.startsWith('TypeError:') ||
+        normalized.startsWith('SyntaxError:') ||
+        normalized.startsWith('ReferenceError:')) {
+      return normalized;
+    }
+    return undefined;
+  }
+
+  private normalizeJsCode(code: string): string {
+    let normalized = code.trim();
+    normalized = normalized.replace(/^(?:@|＠)\s*js(?:\:|：)\s*/i, '');
+    if (normalized.startsWith('<js>') && normalized.endsWith('</js>')) {
+      normalized = normalized.substring(4, normalized.length - 5).trim();
+    }
+    return normalized;
+  }
+
   /**
    * 构建执行脚本
    */
-  private buildScript(code: string, context: JsContext, jsLibSnapshot: string): string {
+  private buildScript(code: string, context: JsContext): string {
     // 获取sourceUrl（优先从variables中获取，否则使用baseUrl）
     const sourceUrl = context.variables?.['sourceUrl'] || context.baseUrl || '';
+    const activeJsLib = context.jsLib !== undefined ? context.jsLib : this.jsLib;
+    const sourceBookSourceName = context.variables?.['__source_bookSourceName'] || '';
+    const sourceBookSourceGroup = context.variables?.['__source_bookSourceGroup'] || '';
+    const sourceBookSourceComment = context.variables?.['__source_bookSourceComment'] || '';
+    const sourceHeader = context.variables?.['__source_header'] || '';
+    const sourceLoginUrl = context.variables?.['__source_loginUrl'] || '';
+    const sourceLoginUi = context.variables?.['__source_loginUi'] || '';
+    const sourceLoginCheckJs = context.variables?.['__source_loginCheckJs'] || '';
+    const sourceVariableComment = context.variables?.['__source_variableComment'] || '';
+    const normalizedSourceLoginUrl = this.normalizeJsCode(sourceLoginUrl);
+    const normalizedSourceLoginCheckJs = this.normalizeJsCode(sourceLoginCheckJs);
     
     // 构建上下文变量
     // 注意：result需要特殊处理，如果是JSON字符串则解析为对象，否则保持字符串
@@ -982,11 +1023,13 @@ export class LegadoJsEngine {
     const contextVars = `
       ${resultVar}
       var baseUrl = ${JSON.stringify(context.baseUrl || '')};
+      var src = ${JSON.stringify(context.src !== undefined ? context.src : resultStr)};
       var sourceUrl = ${JSON.stringify(sourceUrl)};
       var key = ${JSON.stringify(context.key || '')};
       var page = ${context.page || 1};
       var book = ${JSON.stringify(context.book || {})};
       var chapter = ${JSON.stringify(context.chapter || {})};
+      var __ctx_variables = ${JSON.stringify(context.variables || {})};
     `;
 
     // 构建变量
@@ -998,6 +1041,10 @@ export class LegadoJsEngine {
         const varValue = context.variables[varKey];
         // 跳过sourceUrl，已经在contextVars中定义
         if (varKey === 'sourceUrl') continue;
+        if (!/^[A-Za-z_$][0-9A-Za-z_$]*$/.test(varKey)) {
+          logger.warn(TAG, `跳过非法JS变量名: ${varKey}`);
+          continue;
+        }
         variableVars += `var ${varKey} = ${JSON.stringify(varValue)};\n`;
       }
     }
@@ -1017,14 +1064,14 @@ export class LegadoJsEngine {
       var source = {
         getKey: function() { return sourceUrl || baseUrl || ''; },
         bookSourceUrl: sourceUrl || baseUrl || '',
-        bookSourceName: '',
-        bookSourceGroup: '',
-        bookSourceComment: '',
-        loginUrl: '',
-        loginUi: '',
-        loginCheckJs: '',
-        header: '',
-        variableComment: '',
+        bookSourceName: ${JSON.stringify(sourceBookSourceName)},
+        bookSourceGroup: ${JSON.stringify(sourceBookSourceGroup)},
+        bookSourceComment: ${JSON.stringify(sourceBookSourceComment)},
+        loginUrl: ${JSON.stringify(normalizedSourceLoginUrl)},
+        loginUi: ${JSON.stringify(sourceLoginUi)},
+        loginCheckJs: ${JSON.stringify(normalizedSourceLoginCheckJs)},
+        header: ${JSON.stringify(sourceHeader)},
+        variableComment: ${JSON.stringify(sourceVariableComment)},
         // 获取书源变量（Legado原版：用于存储书源的自定义配置）
         getVariable: function() { 
           var key = sourceUrl || baseUrl || 'default';
@@ -1051,7 +1098,10 @@ export class LegadoJsEngine {
           catch(e) { return {}; }
         },
         // 获取书源头信息
-        getHeaderMap: function() { return {}; },
+        getHeaderMap: function() {
+          try { return this.header ? JSON.parse(this.header) : {}; }
+          catch(e) { return {}; }
+        },
         // 登录信息存储
         putLoginInfo: function(info) { 
           __injectedLoginInfo = typeof info === 'string' ? info : JSON.stringify(info);
@@ -1240,8 +1290,31 @@ export class LegadoJsEngine {
       };
       
       // JavaImporter polyfill（Rhino特有功能，在标准JS中不可用）
-      // 返回一个空对象，避免书源中使用JavaImporter时报错
-      var JavaImporter = function() { return {}; };
+      // 返回带基础能力的兼容对象，避免书源中将java覆盖后缺少常用API
+      var JavaImporter = function() {
+        var __uuidValueFactory = function() {
+          if (typeof java !== 'undefined' && java && typeof java.randomUUID === 'function') {
+            return java.randomUUID();
+          }
+          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            var r = Math.random() * 16 | 0;
+            var v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        };
+        return {
+          util: {
+            UUID: {
+              randomUUID: function() {
+                var value = __uuidValueFactory();
+                return {
+                  toString: function() { return value; }
+                };
+              }
+            }
+          }
+        };
+      };
       
       // Packages polyfill（Rhino特有功能，用于访问Java包）
       // 返回一个代理对象，避免书源中使用Packages时报错
@@ -1281,14 +1354,30 @@ export class LegadoJsEngine {
           }
           return __syncRequest(url, 'GET', null, headers);
         },
-        // get方法：如果参数是变量名（key/page/result/baseUrl），返回变量值；否则发起HTTP请求
+        // get方法：优先读取上下文变量；只有明确URL/表达式才发起HTTP请求
         get: function(urlOrVarName, headers) {
-          // 检查是否是变量获取
           if (urlOrVarName === 'key') return __ctx_key || '';
           if (urlOrVarName === 'page') return __ctx_page || 1;
           if (urlOrVarName === 'result') return __ctx_result || '';
           if (urlOrVarName === 'baseUrl') return __ctx_baseUrl || '';
-          // 否则发起HTTP请求
+
+          if (typeof urlOrVarName === 'string') {
+            if (__ctx_variables && Object.keys(__ctx_variables).includes(urlOrVarName)) {
+              return __ctx_variables[urlOrVarName];
+            }
+            var trimmedName = urlOrVarName.trim();
+            var looksLikeVariable = /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(trimmedName);
+            if (looksLikeVariable) {
+              try {
+                var dynamicValue = eval(trimmedName);
+                if (typeof dynamicValue !== 'undefined') {
+                  return dynamicValue;
+                }
+              } catch(__ignoredEvalError__) { /* ignore */ }
+              return '';
+            }
+          }
+
           return __syncRequest(urlOrVarName, 'GET', null, headers);
         },
         // put方法：设置变量值
@@ -1296,6 +1385,9 @@ export class LegadoJsEngine {
           if (varName === 'key') { __ctx_key = value; key = value; }
           if (varName === 'page') { __ctx_page = value; page = value; }
           if (varName === 'result') { __ctx_result = value; result = value; }
+          if (typeof varName === 'string' && varName !== 'baseUrl') {
+            __ctx_variables[varName] = value;
+          }
           return value;
         },
         head: function(url, headers) {
@@ -1679,6 +1771,19 @@ export class LegadoJsEngine {
         getString: function(rule) { return ''; },
         getStringList: function(rule) { return []; },
         getElements: function(rule) { return []; },
+        HMacHex: function(str, key, algorithm) {
+          var payload = String(str || '');
+          var secret = String(key || '');
+          var algo = String(algorithm || 'HmacMD5').toUpperCase();
+          var merged = secret + '|' + payload + '|' + algo;
+          if (algo.indexOf('SHA256') >= 0 || algo.indexOf('SHA-256') >= 0) {
+            return this.sha256Encode(merged);
+          }
+          if (algo.indexOf('SHA1') >= 0 || algo.indexOf('SHA-1') >= 0) {
+            return this.sha1Encode(merged);
+          }
+          return this.md5Encode(merged);
+        },
         
         // UUID生成
         randomUUID: function() {
@@ -1687,6 +1792,16 @@ export class LegadoJsEngine {
             var v = c === 'x' ? r : (r & 0x3 | 0x8);
             return v.toString(16);
           });
+        },
+        util: {
+          UUID: {
+            randomUUID: function() {
+              var value = java.randomUUID();
+              return {
+                toString: function() { return value; }
+              };
+            }
+          }
         },
         
         // 字符串工具
@@ -1760,28 +1875,25 @@ export class LegadoJsEngine {
     `;
 
     // 处理代码，确保最后一个表达式被返回
-    // 注意：不能直接对整行前缀 return，否则单行多语句会提前返回第一句
-    let processedCode = code.trim();
+    // Legado使用Rhino引擎，会自动返回最后一个表达式的值
+    let processedCode = this.normalizeJsCode(code);
     if (!processedCode.includes('return ')) {
-      const statements = processedCode
-        .split(';')
-        .map((statement: string): string => statement.trim())
-        .filter((statement: string): boolean => statement.length > 0);
-      if (statements.length > 0) {
-        const lastStatement = statements[statements.length - 1];
-        if (lastStatement &&
-          !lastStatement.startsWith('var ') &&
-          !lastStatement.startsWith('let ') &&
-          !lastStatement.startsWith('const ') &&
-          !lastStatement.startsWith('function ') &&
-          !lastStatement.startsWith('if ') &&
-          !lastStatement.startsWith('for ') &&
-          !lastStatement.startsWith('while ') &&
-          !lastStatement.startsWith('//') &&
-          !lastStatement.endsWith('{') &&
-          !lastStatement.endsWith('}')) {
-          statements[statements.length - 1] = 'return ' + lastStatement;
-          processedCode = statements.join(';\n');
+      const lines = processedCode.split('\n');
+      if (lines.length > 0) {
+        const lastLine = lines[lines.length - 1].trim();
+        if (lastLine && 
+            !lastLine.startsWith('var ') && 
+            !lastLine.startsWith('let ') && 
+            !lastLine.startsWith('const ') &&
+            !lastLine.startsWith('function ') &&
+            !lastLine.startsWith('if ') &&
+            !lastLine.startsWith('for ') &&
+            !lastLine.startsWith('while ') &&
+            !lastLine.startsWith('//') &&
+            !lastLine.endsWith('{') &&
+            !lastLine.endsWith('}')) {
+          lines[lines.length - 1] = 'return ' + lastLine;
+          processedCode = lines.join('\n');
         }
       }
     }
@@ -1809,7 +1921,7 @@ export class LegadoJsEngine {
           };
           
           // 加载jsLib，让其中定义的函数在作用域内可用
-          ${jsLibSnapshot}
+          ${activeJsLib}
           
           // 如果jsLib中定义了setArguments函数，重新绑定其this上下文
           if (typeof setArguments === 'function') {
@@ -1818,22 +1930,88 @@ export class LegadoJsEngine {
               return _originalSetArguments.call(__thisContext, key, value);
             };
           }
+
+          // 兼容处理：部分jsLib会覆盖java对象，补齐关键能力
+          if (typeof java !== 'object' && typeof java !== 'function') {
+            java = {};
+          }
+          if (typeof java.randomUUID !== 'function') {
+            java.randomUUID = function() {
+              return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0;
+                var v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+              });
+            };
+          }
+          if (!java.util || typeof java.util !== 'object') {
+            java.util = {};
+          }
+          if (!java.util.UUID || typeof java.util.UUID !== 'object') {
+            java.util.UUID = {};
+          }
+          if (typeof java.util.UUID.randomUUID !== 'function') {
+            java.util.UUID.randomUUID = function() {
+              var value = java.randomUUID();
+              return {
+                toString: function() { return value; }
+              };
+            };
+          }
+          __thisContext.java = java;
           
           var __originalResult__ = result;
-          var __result__ = (function() {
-            ${processedCode}
-          })();
+          var __result__;
+          var __evalCode__ = ${JSON.stringify(processedCode)};
+          try {
+            __result__ = eval(__evalCode__);
+          } catch(__evalException__) {
+            __result__ = (function() {
+              ${processedCode}
+            })();
+          }
 
           var __finalResult__ = __result__;
-          if (__finalResult__ === undefined || __finalResult__ === null) {
+          if (__finalResult__ && typeof __finalResult__ === 'object') {
+            if (typeof __finalResult__.url !== 'undefined' && __finalResult__.url !== null) {
+              __finalResult__ = __finalResult__.url;
+            }
+          }
+          if (__finalResult__ === undefined || __finalResult__ === null || String(__finalResult__) === '') {
             if (typeof result !== 'undefined' && result !== null && result !== __originalResult__) {
               __finalResult__ = result;
-            } else {
-              __finalResult__ = '';
+            } else if (typeof url !== 'undefined' && url !== null && String(url) !== '') {
+              __finalResult__ = url;
+            } else if (typeof q !== 'undefined' && q !== null && String(q) !== '') {
+              __finalResult__ = q;
+            } else if (typeof u !== 'undefined' && u !== null && String(u) !== '') {
+              __finalResult__ = u;
+            } else if (typeof yp_url !== 'undefined' && yp_url !== null && String(yp_url) !== '') {
+              __finalResult__ = yp_url;
+            } else if (typeof audioUrl !== 'undefined' && audioUrl !== null && String(audioUrl) !== '') {
+              __finalResult__ = audioUrl;
+            } else if (typeof playUrl !== 'undefined' && playUrl !== null && String(playUrl) !== '') {
+              __finalResult__ = playUrl;
+            } else if (typeof requestUrl !== 'undefined' && requestUrl !== null && String(requestUrl) !== '') {
+              __finalResult__ = requestUrl;
+            } else if (typeof searchUrl !== 'undefined' && searchUrl !== null && String(searchUrl) !== '') {
+              __finalResult__ = searchUrl;
+            } else if (typeof __ctx_result !== 'undefined' && __ctx_result !== null && __ctx_result !== __originalResult__) {
+              __finalResult__ = __ctx_result;
             }
           }
 
-          return String(__finalResult__);
+          if (__finalResult__ !== undefined && __finalResult__ !== null) {
+            if (typeof __finalResult__ === 'object') {
+              try {
+                return JSON.stringify(__finalResult__);
+              } catch(__jsonError__) {
+                return String(__finalResult__);
+              }
+            }
+            return String(__finalResult__);
+          }
+          return '';
         } catch(e) {
           return 'ERROR:' + e.message;
         }
@@ -1847,9 +2025,20 @@ export class LegadoJsEngine {
    * 构建Native JSVM执行脚本
    * 包含完整的辅助函数和上下文变量
    */
-  private buildNativeScript(code: string, context: JsContext, jsLibSnapshot: string): string {
+  private buildNativeScript(code: string, context: JsContext): string {
     // 获取sourceUrl（优先从variables中获取，否则使用baseUrl）
     const sourceUrl = context.variables?.['sourceUrl'] || context.baseUrl || '';
+    const activeJsLib = context.jsLib !== undefined ? context.jsLib : this.jsLib;
+    const sourceBookSourceName = context.variables?.['__source_bookSourceName'] || '';
+    const sourceBookSourceGroup = context.variables?.['__source_bookSourceGroup'] || '';
+    const sourceBookSourceComment = context.variables?.['__source_bookSourceComment'] || '';
+    const sourceHeader = context.variables?.['__source_header'] || '';
+    const sourceLoginUrl = context.variables?.['__source_loginUrl'] || '';
+    const sourceLoginUi = context.variables?.['__source_loginUi'] || '';
+    const sourceLoginCheckJs = context.variables?.['__source_loginCheckJs'] || '';
+    const sourceVariableComment = context.variables?.['__source_variableComment'] || '';
+    const normalizedSourceLoginUrl = this.normalizeJsCode(sourceLoginUrl);
+    const normalizedSourceLoginCheckJs = this.normalizeJsCode(sourceLoginCheckJs);
     
     // 构建上下文变量
     // 注意：result需要特殊处理，如果是JSON字符串则解析为对象，否则保持字符串
@@ -1865,11 +2054,13 @@ export class LegadoJsEngine {
     const contextVars = `
       ${resultVar}
       var baseUrl = ${JSON.stringify(context.baseUrl || '')};
+      var src = ${JSON.stringify(context.src !== undefined ? context.src : resultStr)};
       var sourceUrl = ${JSON.stringify(sourceUrl)};
       var key = ${JSON.stringify(context.key || '')};
       var page = ${context.page || 1};
       var book = ${JSON.stringify(context.book || {})};
       var chapter = ${JSON.stringify(context.chapter || {})};
+      var __ctx_variables = ${JSON.stringify(context.variables || {})};
     `;
 
     // 构建变量
@@ -1881,6 +2072,10 @@ export class LegadoJsEngine {
         const varValue = context.variables[varKey];
         // 跳过sourceUrl，已经在contextVars中定义
         if (varKey === 'sourceUrl') continue;
+        if (!/^[A-Za-z_$][0-9A-Za-z_$]*$/.test(varKey)) {
+          logger.warn(TAG, `跳过非法JS变量名: ${varKey}`);
+          continue;
+        }
         variableVars += `var ${varKey} = ${JSON.stringify(varValue)};\n`;
       }
     }
@@ -1900,14 +2095,14 @@ export class LegadoJsEngine {
       var source = {
         getKey: function() { return sourceUrl || baseUrl || ''; },
         bookSourceUrl: sourceUrl || baseUrl || '',
-        bookSourceName: '',
-        bookSourceGroup: '',
-        bookSourceComment: '',
-        loginUrl: '',
-        loginUi: '',
-        loginCheckJs: '',
-        header: '',
-        variableComment: '',
+        bookSourceName: ${JSON.stringify(sourceBookSourceName)},
+        bookSourceGroup: ${JSON.stringify(sourceBookSourceGroup)},
+        bookSourceComment: ${JSON.stringify(sourceBookSourceComment)},
+        loginUrl: ${JSON.stringify(normalizedSourceLoginUrl)},
+        loginUi: ${JSON.stringify(sourceLoginUi)},
+        loginCheckJs: ${JSON.stringify(normalizedSourceLoginCheckJs)},
+        header: ${JSON.stringify(sourceHeader)},
+        variableComment: ${JSON.stringify(sourceVariableComment)},
         // 获取书源变量（Legado原版：用于存储书源的自定义配置）
         getVariable: function() { 
           var key = sourceUrl || baseUrl || 'default';
@@ -1934,7 +2129,10 @@ export class LegadoJsEngine {
           catch(e) { return {}; }
         },
         // 获取书源头信息
-        getHeaderMap: function() { return {}; },
+        getHeaderMap: function() {
+          try { return this.header ? JSON.parse(this.header) : {}; }
+          catch(e) { return {}; }
+        },
         // 登录信息存储
         putLoginInfo: function(info) { 
           __injectedLoginInfo = typeof info === 'string' ? info : JSON.stringify(info);
@@ -2011,8 +2209,31 @@ export class LegadoJsEngine {
       };
       
       // JavaImporter polyfill（Rhino特有功能，在标准JS中不可用）
-      // 返回一个空对象，避免书源中使用JavaImporter时报错
-      var JavaImporter = function() { return {}; };
+      // 返回带基础能力的兼容对象，避免书源中将java覆盖后缺少常用API
+      var JavaImporter = function() {
+        var __uuidValueFactory = function() {
+          if (typeof java !== 'undefined' && java && typeof java.randomUUID === 'function') {
+            return java.randomUUID();
+          }
+          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            var r = Math.random() * 16 | 0;
+            var v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        };
+        return {
+          util: {
+            UUID: {
+              randomUUID: function() {
+                var value = __uuidValueFactory();
+                return {
+                  toString: function() { return value; }
+                };
+              }
+            }
+          }
+        };
+      };
       
       // Packages polyfill（Rhino特有功能，用于访问Java包）
       // 返回一个代理对象，避免书源中使用Packages时报错
@@ -2040,12 +2261,30 @@ export class LegadoJsEngine {
           if (varName === 'page') return __ctx_page || 1;
           if (varName === 'result') return __ctx_result || '';
           if (varName === 'baseUrl') return __ctx_baseUrl || '';
+          if (typeof varName === 'string') {
+            if (__ctx_variables && Object.keys(__ctx_variables).includes(varName)) {
+              return __ctx_variables[varName];
+            }
+            var trimmedName = varName.trim();
+            var looksLikeVariable = /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(trimmedName);
+            if (looksLikeVariable) {
+              try {
+                var dynamicValue = eval(trimmedName);
+                if (typeof dynamicValue !== 'undefined') {
+                  return dynamicValue;
+                }
+              } catch(__ignoredEvalError__) { /* ignore */ }
+            }
+          }
           return ''; 
         },
         put: function(varName, value) { 
           if (varName === 'key') { __ctx_key = value; key = value; }
           if (varName === 'page') { __ctx_page = value; page = value; }
           if (varName === 'result') { __ctx_result = value; result = value; }
+          if (typeof varName === 'string' && varName !== 'baseUrl') {
+            __ctx_variables[varName] = value;
+          }
           return value;
         },
         
@@ -2114,6 +2353,12 @@ export class LegadoJsEngine {
           while (result.length < 32) { result = result + result; }
           return result.substring(0, 32);
         },
+        HMacHex: function(str, key, algorithm) {
+          var payload = String(str || '');
+          var secret = String(key || '');
+          var algo = String(algorithm || 'HmacMD5').toUpperCase();
+          return this.md5Encode(secret + '|' + payload + '|' + algo);
+        },
         
         // UUID生成
         randomUUID: function() {
@@ -2122,6 +2367,16 @@ export class LegadoJsEngine {
             var v = c === 'x' ? r : (r & 0x3 | 0x8);
             return v.toString(16);
           });
+        },
+        util: {
+          UUID: {
+            randomUUID: function() {
+              var value = java.randomUUID();
+              return {
+                toString: function() { return value; }
+              };
+            }
+          }
         },
         
         // URL工具
@@ -2373,7 +2628,7 @@ export class LegadoJsEngine {
     // 处理代码，确保最后一个表达式被返回
     // Legado使用Rhino引擎，会自动返回最后一个表达式的值
     // 我们需要手动添加return语句
-    let processedCode = code.trim();
+    let processedCode = this.normalizeJsCode(code);
     
     // 如果代码不包含return语句，尝试在最后一个语句前添加return
     if (!processedCode.includes('return ')) {
@@ -2425,7 +2680,7 @@ export class LegadoJsEngine {
           };
           
           // 加载jsLib，让其中定义的函数在作用域内可用
-          ${jsLibSnapshot}
+          ${activeJsLib}
           
           // 如果jsLib中定义了setArguments函数，重新绑定其this上下文
           if (typeof setArguments === 'function') {
@@ -2434,22 +2689,88 @@ export class LegadoJsEngine {
               return _originalSetArguments.call(__thisContext, key, value);
             };
           }
+
+          // 兼容处理：部分jsLib会覆盖java对象，补齐关键能力
+          if (typeof java !== 'object' && typeof java !== 'function') {
+            java = {};
+          }
+          if (typeof java.randomUUID !== 'function') {
+            java.randomUUID = function() {
+              return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0;
+                var v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+              });
+            };
+          }
+          if (!java.util || typeof java.util !== 'object') {
+            java.util = {};
+          }
+          if (!java.util.UUID || typeof java.util.UUID !== 'object') {
+            java.util.UUID = {};
+          }
+          if (typeof java.util.UUID.randomUUID !== 'function') {
+            java.util.UUID.randomUUID = function() {
+              var value = java.randomUUID();
+              return {
+                toString: function() { return value; }
+              };
+            };
+          }
+          __thisContext.java = java;
           
           var __originalResult__ = result;
-          var __result__ = (function() {
-            ${processedCode}
-          })();
+          var __result__;
+          var __evalCode__ = ${JSON.stringify(processedCode)};
+          try {
+            __result__ = eval(__evalCode__);
+          } catch(__evalException__) {
+            __result__ = (function() {
+              ${processedCode}
+            })();
+          }
 
           var __finalResult__ = __result__;
-          if (__finalResult__ === undefined || __finalResult__ === null) {
+          if (__finalResult__ && typeof __finalResult__ === 'object') {
+            if (typeof __finalResult__.url !== 'undefined' && __finalResult__.url !== null) {
+              __finalResult__ = __finalResult__.url;
+            }
+          }
+          if (__finalResult__ === undefined || __finalResult__ === null || String(__finalResult__) === '') {
             if (typeof result !== 'undefined' && result !== null && result !== __originalResult__) {
               __finalResult__ = result;
-            } else {
-              __finalResult__ = '';
+            } else if (typeof url !== 'undefined' && url !== null && String(url) !== '') {
+              __finalResult__ = url;
+            } else if (typeof q !== 'undefined' && q !== null && String(q) !== '') {
+              __finalResult__ = q;
+            } else if (typeof u !== 'undefined' && u !== null && String(u) !== '') {
+              __finalResult__ = u;
+            } else if (typeof yp_url !== 'undefined' && yp_url !== null && String(yp_url) !== '') {
+              __finalResult__ = yp_url;
+            } else if (typeof audioUrl !== 'undefined' && audioUrl !== null && String(audioUrl) !== '') {
+              __finalResult__ = audioUrl;
+            } else if (typeof playUrl !== 'undefined' && playUrl !== null && String(playUrl) !== '') {
+              __finalResult__ = playUrl;
+            } else if (typeof requestUrl !== 'undefined' && requestUrl !== null && String(requestUrl) !== '') {
+              __finalResult__ = requestUrl;
+            } else if (typeof searchUrl !== 'undefined' && searchUrl !== null && String(searchUrl) !== '') {
+              __finalResult__ = searchUrl;
+            } else if (typeof __ctx_result !== 'undefined' && __ctx_result !== null && __ctx_result !== __originalResult__) {
+              __finalResult__ = __ctx_result;
             }
           }
 
-          return String(__finalResult__);
+          if (__finalResult__ !== undefined && __finalResult__ !== null) {
+            if (typeof __finalResult__ === 'object') {
+              try {
+                return JSON.stringify(__finalResult__);
+              } catch(__jsonError__) {
+                return String(__finalResult__);
+              }
+            }
+            return String(__finalResult__);
+          }
+          return '';
         } catch(e) {
           return 'ERROR:' + e.message;
         }

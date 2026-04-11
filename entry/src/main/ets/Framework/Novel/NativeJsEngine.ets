@@ -83,6 +83,8 @@ export class NativeJsEngine {
   private initPromise: Promise<boolean> | null = null;
   // Serialize setContext + executeJs for a single VM instance.
   private executeSequence: Promise<void> = Promise.resolve();
+  private lastSuccessLogTime: number = 0;
+  private readonly successLogIntervalMs: number = 300;
   
   /**
    * 检查Native模块是否可用
@@ -214,7 +216,11 @@ export class NativeJsEngine {
         const result = engine.executeJs(this.vmId, code);
 
         if (result.success) {
-          logger.debug(TAG, `JS执行成功: ${result.result.substring(0, 100)}`);
+          const now = Date.now();
+          if (now - this.lastSuccessLogTime >= this.successLogIntervalMs) {
+            logger.debug(TAG, `JS执行成功: ${result.result.substring(0, 100)}`);
+            this.lastSuccessLogTime = now;
+          }
           return { success: true, result: result.result };
         }
 

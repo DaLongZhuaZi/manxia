@@ -91,6 +91,10 @@ export class LegadoUrlAnalyzer {
     return this;
   }
 
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
   /**
    * 设置变量
    */
@@ -373,6 +377,7 @@ export class LegadoUrlAnalyzer {
     // 同步版本：尝试简单执行
     const jsResult = this.executeJsSimple(jsCode);
     if (jsResult !== null) {
+      this.variables.set('result', jsResult);
       // JS执行成功，替换结果
       const beforeJs = ruleUrl.substring(0, jsMatch.index || 0).trim();
       const afterJs = ruleUrl.substring((jsMatch.index || 0) + jsMatch[0].length).trim();
@@ -392,9 +397,17 @@ export class LegadoUrlAnalyzer {
   private async analyzeJsAsync(ruleUrl: string): Promise<string> {
     let result = ruleUrl;
     let start = 0;
+    let iterationCount = 0;
+    const maxIterations = 24;
     
     // 循环处理所有JS代码块
     while (true) {
+      iterationCount++;
+      if (iterationCount > maxIterations) {
+        logger.warn(TAG, `JS规则解析达到安全上限，提前终止以避免主线程阻塞: ${ruleUrl.substring(0, 120)}`);
+        break;
+      }
+
       const remaining = result.substring(start);
       const jsMatch = remaining.match(JS_PATTERN);
       if (!jsMatch) {
@@ -411,8 +424,18 @@ export class LegadoUrlAnalyzer {
       const matchEnd = matchStart + jsMatch[0].length;
 
       // 执行JS
-      const jsResult = await this.executeJsAsync(jsCode, result);
+      const contextResult = this.variables.has('result') ? (this.variables.get('result') || result) : result;
+      const jsResult = await this.executeJsAsync(jsCode, contextResult);
       if (jsResult.success && jsResult.result.trim().length === 0 && this.isLikelyComplexJs(jsCode)) {
+        // 复杂JS可能仅做副作用，优先移除当前JS片段继续解析，避免残留@js导致URL无效
+        const beforeJsOnEmpty = result.substring(0, matchStart).trim();
+        const afterJsOnEmpty = result.substring(matchEnd).trim();
+        const mergedEmptyResult = this.mergeJsRuleResult(beforeJsOnEmpty, '', afterJsOnEmpty);
+        if (mergedEmptyResult !== result) {
+          result = mergedEmptyResult;
+          start = beforeJsOnEmpty.length;
+          continue;
+        }
         logger.warn(TAG, `JS执行结果为空，保留原规则片段: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
         start = matchEnd;
         continue;
@@ -423,11 +446,21 @@ export class LegadoUrlAnalyzer {
         start = matchEnd;
         continue;
       }
+      this.variables.set('result', jsResult.result);
 
       // 替换结果
       const beforeJs = result.substring(0, matchStart).trim();
       const afterJs = result.substring(matchEnd).trim();
-      result = this.mergeJsRuleResult(beforeJs, jsResult.result, afterJs);
+      const mergedResult = this.mergeJsRuleResult(beforeJs, jsResult.result, afterJs);
+
+      // 避免“JS返回原始规则”导致在同一位置无限循环
+      if (mergedResult === result) {
+        logger.warn(TAG, `JS替换后无变化，跳过当前片段避免循环: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
+        start = matchEnd;
+        continue;
+      }
+
+      result = mergedResult;
       start = beforeJs.length;
     }
 
@@ -474,6 +507,9 @@ export class LegadoUrlAnalyzer {
       if (trimmedExpr === 'page') {
         return String(this.page);
       }
+      if (trimmedExpr === 'source.bookSourceUrl' || trimmedExpr === 'source.getKey()' || trimmedExpr === 'source.getKey') {
+        return this.sourceUrl || this.baseUrl;
+      }
       if (this.variables.has(trimmedExpr)) {
         return this.variables.get(trimmedExpr) || '';
       }
@@ -506,6 +542,9 @@ export class LegadoUrlAnalyzer {
       }
       if (trimmedExpr === 'page') {
         return String(this.page);
+      }
+      if (trimmedExpr === 'source.bookSourceUrl' || trimmedExpr === 'source.getKey()' || trimmedExpr === 'source.getKey') {
+        return this.sourceUrl || this.baseUrl;
       }
       if (this.variables.has(trimmedExpr)) {
         return this.variables.get(trimmedExpr) || '';
@@ -604,9 +643,10 @@ export class LegadoUrlAnalyzer {
    * 简单JS执行（同步，不依赖WebView）
    * 处理简单的字符串拼接、变量替换、数学表达式等
    */
-  private executeJsSimple(jsCode: string): string | null {
+  private executeJsSimple(jsCode: string, currentResult?: string): string | null {
     try {
       let code = jsCode.trim();
+      const resultValue = currentResult !== undefined ? currentResult : (this.variables.get('result') || '');
       
       // 处理 cookie.removeCookie() - 这是一个副作用函数，直接返回空字符串
       // 书源中常用于清除cookie，但不影响URL生成
@@ -647,9 +687,52 @@ export class LegadoUrlAnalyzer {
         return this.key;
       }
 
+      // 处理 result 变量
+      if (code === 'result') {
+        return resultValue;
+      }
+
       // 处理 page 变量
       if (code === 'page') {
         return String(this.page);
+      }
+
+      // 处理 parseInt(result) 以及四则运算组合（常见于bookId拼接）
+      const parseIntOnlyMatch = code.match(/^parseInt\s*\(\s*result\s*(?:,\s*(\d+)\s*)?\)$/i);
+      if (parseIntOnlyMatch) {
+        const radix = parseIntOnlyMatch[1] ? parseInt(parseIntOnlyMatch[1]) : undefined;
+        const parsedResult = radix ? parseInt(resultValue, radix) : parseInt(resultValue);
+        if (!Number.isNaN(parsedResult)) {
+          return String(parsedResult);
+        }
+      }
+
+      const leftMathWithResult = code.match(/^(\d+)\s*([+\-*/])\s*parseInt\s*\(\s*result\s*(?:,\s*(\d+)\s*)?\)\s*$/i);
+      if (leftMathWithResult) {
+        const leftValue = parseInt(leftMathWithResult[1]);
+        const operator = leftMathWithResult[2];
+        const radix = leftMathWithResult[3] ? parseInt(leftMathWithResult[3]) : undefined;
+        const parsedResult = radix ? parseInt(resultValue, radix) : parseInt(resultValue);
+        if (!Number.isNaN(parsedResult)) {
+          const mathResult = this.applySimpleArithmetic(leftValue, parsedResult, operator);
+          if (mathResult !== null) {
+            return String(mathResult);
+          }
+        }
+      }
+
+      const rightMathWithResult = code.match(/^parseInt\s*\(\s*result\s*(?:,\s*(\d+)\s*)?\)\s*([+\-*/])\s*(\d+)\s*$/i);
+      if (rightMathWithResult) {
+        const radix = rightMathWithResult[1] ? parseInt(rightMathWithResult[1]) : undefined;
+        const operator = rightMathWithResult[2];
+        const rightValue = parseInt(rightMathWithResult[3]);
+        const parsedResult = radix ? parseInt(resultValue, radix) : parseInt(resultValue);
+        if (!Number.isNaN(parsedResult)) {
+          const mathResult = this.applySimpleArithmetic(parsedResult, rightValue, operator);
+          if (mathResult !== null) {
+            return String(mathResult);
+          }
+        }
       }
 
       // 处理简单数学表达式: page-1, page+1, page*10 等
@@ -698,6 +781,7 @@ export class LegadoUrlAnalyzer {
       // 处理简单的字符串拼接: "xxx" + key + "yyy"
       if (code.includes('+') && !code.includes('function') && !code.includes('=>')) {
         let result = code;
+        result = result.replace(/\bresult\b/g, JSON.stringify(resultValue));
         result = result.replace(/\bkey\b/g, `"${this.key}"`);
         result = result.replace(/\bpage\b/g, String(this.page));
         result = result.replace(/\bbaseUrl\b/g, `"${this.baseUrl}"`);
@@ -733,6 +817,24 @@ export class LegadoUrlAnalyzer {
     }
   }
 
+  private applySimpleArithmetic(left: number, right: number, operator: string): number | null {
+    switch (operator) {
+      case '+':
+        return left + right;
+      case '-':
+        return left - right;
+      case '*':
+        return left * right;
+      case '/':
+        if (right === 0) {
+          return null;
+        }
+        return left / right;
+      default:
+        return null;
+    }
+  }
+
   /**
    * 异步JS执行（强制使用LegadoJsEngine的Native JSVM）
    */
@@ -750,6 +852,7 @@ export class LegadoUrlAnalyzer {
       
       const context: JsContext = {
         result: result,
+        src: result,
         baseUrl: this.baseUrl,
         key: this.key,
         page: this.page,
@@ -773,7 +876,7 @@ export class LegadoUrlAnalyzer {
 
       const nativeError = executeResult.error || 'native_execute_failed';
       logger.warn(TAG, `JS执行失败: ${nativeError}`);
-      const fallbackResult = this.executeJsSimple(jsCode);
+      const fallbackResult = this.executeJsSimple(jsCode, result);
       if (fallbackResult !== null) {
         logger.debug(TAG, `JS执行降级为简单求值: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
         const fallbackSuccess: JsExecutionOutcome = {
@@ -794,7 +897,7 @@ export class LegadoUrlAnalyzer {
     } catch (e) {
       const exceptionError = String(e);
       logger.error(TAG, `JS执行异常: ${exceptionError}`);
-      const fallbackResult = this.executeJsSimple(jsCode);
+      const fallbackResult = this.executeJsSimple(jsCode, result);
       if (fallbackResult !== null) {
         logger.debug(TAG, `JS执行异常后降级为简单求值: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
         const fallbackSuccess: JsExecutionOutcome = {

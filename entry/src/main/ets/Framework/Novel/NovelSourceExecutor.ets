@@ -107,6 +107,15 @@ export class NovelSourceExecutor {
       source.bookSourceUrl,
       source.jsLib || ''
     );
+    this.urlAnalyzer
+      .setVariable('__source_bookSourceName', source.bookSourceName || '')
+      .setVariable('__source_bookSourceGroup', source.bookSourceGroup || '')
+      .setVariable('__source_bookSourceComment', source.bookSourceComment || '')
+      .setVariable('__source_header', source.header || '')
+      .setVariable('__source_loginUrl', source.loginUrl || '')
+      .setVariable('__source_loginUi', source.loginUi || '')
+      .setVariable('__source_loginCheckJs', source.loginCheckJs || '')
+      .setVariable('__source_variableComment', source.variableComment || '');
   }
   
   /**
@@ -307,12 +316,31 @@ export class NovelSourceExecutor {
       return true;
     }
 
-    if (inspectSegment.includes(';') || inspectSegment.includes('{') || inspectSegment.includes('}')) {
+    if (inspectSegment.includes('{') || inspectSegment.includes('}')) {
       return true;
+    }
+
+    if (inspectSegment.includes(';')) {
+      const semicolonScriptPattern = /(?:^|;)\s*(?:var|let|const|function|return)\b/i;
+      if (semicolonScriptPattern.test(inspectSegment)) {
+        return true;
+      }
     }
 
     const jsKeywordPattern = /\b(var|let|const|function|return)\b/i;
     return jsKeywordPattern.test(inspectSegment);
+  }
+
+  private normalizeRequestUrl(rawUrl: string): string {
+    if (!rawUrl) {
+      return rawUrl;
+    }
+    let normalized = rawUrl.trim();
+    normalized = normalized
+      .replace(/&amp;/gi, '&')
+      .replace(/&#38;/gi, '&')
+      .replace(/&#x26;/gi, '&');
+    return normalized;
   }
 
   /**
@@ -321,19 +349,34 @@ export class NovelSourceExecutor {
   private async analyzeRequestUrl(
     urlTemplate: string,
     key?: string,
-    page?: number
+    page?: number,
+    runtimeBaseUrl?: string
   ): Promise<ParsedUrlRequest> {
-    if (this.shouldAnalyzeUrlAsync(urlTemplate)) {
-      this.ensureJsLib();
-      return await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+    const runtimeBaseUrlValue = runtimeBaseUrl !== undefined ? runtimeBaseUrl.trim() : '';
+    const hasRuntimeBaseUrl = runtimeBaseUrlValue.length > 0;
+    const originalBaseUrl = this.urlAnalyzer.getBaseUrl();
+
+    if (hasRuntimeBaseUrl) {
+      this.urlAnalyzer.setBaseUrl(runtimeBaseUrlValue);
     }
 
-    const request = this.urlAnalyzer.analyzeUrl(urlTemplate, key, page);
-    if (this.hasUnresolvedRuleTokens(request.url)) {
-      this.ensureJsLib();
-      return await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+    try {
+      if (this.shouldAnalyzeUrlAsync(urlTemplate)) {
+        this.ensureJsLib();
+        return await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+      }
+
+      const request = this.urlAnalyzer.analyzeUrl(urlTemplate, key, page);
+      if (this.hasUnresolvedRuleTokens(request.url)) {
+        this.ensureJsLib();
+        return await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+      }
+      return request;
+    } finally {
+      if (hasRuntimeBaseUrl) {
+        this.urlAnalyzer.setBaseUrl(originalBaseUrl);
+      }
     }
-    return request;
   }
   async getBookInfo(bookUrl: string): Promise<LegadoBook | null> {
     this.ensureJsLib();
@@ -401,7 +444,7 @@ export class NovelSourceExecutor {
 
     try {
       while (currentUrl && pageCount < maxPages) {
-        const request = await this.analyzeRequestUrl(currentUrl);
+        const request = await this.analyzeRequestUrl(currentUrl, undefined, undefined, chapter.bookUrl);
         const response = await this.executeRequest(request);
 
         if (!response) {
@@ -522,6 +565,8 @@ export class NovelSourceExecutor {
    */
   private async executeRequest(request: ParsedUrlRequest): Promise<string | null> {
     try {
+      request.url = this.normalizeRequestUrl(request.url);
+
       if (this.hasUnresolvedRuleTokens(request.url)) {
         logger.error(TAG, `URL包含未解析的规则: ${request.url.substring(0, 100)}...`);
         logger.warn(TAG, '请检查JS引擎是否正常工作');
@@ -742,6 +787,8 @@ export class NovelSourceExecutor {
   }
   private async executeRequestWithError(request: ParsedUrlRequest): Promise<HttpRequestResult> {
     try {
+      request.url = this.normalizeRequestUrl(request.url);
+
       if (this.hasUnresolvedRuleTokens(request.url)) {
         const errorType = this.analyzeJsError(request.url);
         const result: HttpRequestResult = {
@@ -1226,6 +1273,8 @@ export class NovelSourceExecutor {
       return null;
     }
 
+    this.syncRuleVariablesToUrlAnalyzer(analyzer.getVariablesSnapshot());
+
     if (contentToAnalyze.length < 50000) {
       logger.debug(TAG, `解析书籍详情: name=${resolvedName}, bookUrl=${bookUrl}, tocUrl=${tocUrl}`);
     }
@@ -1247,6 +1296,25 @@ export class NovelSourceExecutor {
     };
 
     return book;
+  }
+
+  private syncRuleVariablesToUrlAnalyzer(variables: Record<string, string>): void {
+    const keys = Object.keys(variables);
+    if (keys.length <= 0) {
+      return;
+    }
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = variables[key];
+      if (!key || value === undefined || value === null) {
+        continue;
+      }
+      if (value.length > 4096) {
+        continue;
+      }
+      this.urlAnalyzer.setVariable(key, value);
+    }
   }
 
   private extractFallbackBookName(content: string): string {
@@ -1335,6 +1403,58 @@ export class NovelSourceExecutor {
 
     return trimmedUrl.includes('//');
   }
+
+  private parseTruthyFlag(flagValue: string): boolean {
+    const normalized = flagValue.trim().toLowerCase();
+    if (normalized.length <= 0) {
+      return false;
+    }
+    return normalized === 'true' ||
+      normalized === '1' ||
+      normalized === 'yes' ||
+      normalized === 'y' ||
+      normalized === 'on';
+  }
+
+  private resolveChapterUrlWithFallback(
+    rawUrl: string,
+    title: string,
+    isVolume: boolean,
+    index: number,
+    baseUrl: string
+  ): string {
+    const normalizedUrl = rawUrl.trim();
+    if (normalizedUrl.length > 0) {
+      return normalizedUrl;
+    }
+    if (isVolume) {
+      logger.debug(TAG, `目录${index}未解析到URL，按legado兼容策略回退卷标识URL`);
+      return `${title}${index}`;
+    }
+    logger.debug(TAG, `目录${index}未解析到URL，按legado兼容策略回退baseUrl`);
+    return baseUrl;
+  }
+
+  private extractFirstNonEmptyLine(input: string): string | null {
+    if (!input || input.trim().length <= 0) {
+      return null;
+    }
+    const urls = input.split('\n').filter((item: string): boolean => item.trim().length > 0);
+    if (urls.length <= 0) {
+      return null;
+    }
+    return urls[0].trim();
+  }
+
+  private resolveContentFallbackWhenRuleMissing(chapter: LegadoChapter): string {
+    const chapterUrl = chapter.url.trim();
+    if (chapterUrl.length > 0) {
+      logger.debug(TAG, `正文规则为空，按legado兼容策略返回章节URL: ${chapterUrl}`);
+      return chapterUrl;
+    }
+    return '';
+  }
+
   private async parseChapterListWithNext(
     html: string,
     baseUrl: string,
@@ -1358,22 +1478,30 @@ export class NovelSourceExecutor {
       const itemAnalyzer = this.createRuleAnalyzer();
       itemAnalyzer.setContent(chapterElements[i], baseUrl);
 
-      const title = await itemAnalyzer.getStringAsync(rule.chapterName);
-      const url = await itemAnalyzer.getStringAsync(rule.chapterUrl);
-
-      if (!title || !url) {
+      const title = (await itemAnalyzer.getStringAsync(rule.chapterName)).trim();
+      if (!title) {
         continue;
       }
+
+      const isVolumeRaw = rule.isVolume ? await itemAnalyzer.getStringAsync(rule.isVolume) : '';
+      const isVipRaw = rule.isVip ? await itemAnalyzer.getStringAsync(rule.isVip) : '';
+      const isPayRaw = rule.isPay ? await itemAnalyzer.getStringAsync(rule.isPay) : '';
+      const isVolume = this.parseTruthyFlag(isVolumeRaw);
+      const chapterUrlRule = rule.chapterUrl ?? '';
+      const url = chapterUrlRule.length > 0 ? await itemAnalyzer.getStringAsync(chapterUrlRule) : '';
+      const fallbackUrl = this.resolveChapterUrlWithFallback(url, title, isVolume, startIndex + i, baseUrl);
+      const updateTag = rule.updateTime ? await itemAnalyzer.getStringAsync(rule.updateTime) : '';
 
       const chapter: LegadoChapter = {
         id: this.generateId(),
         bookUrl: book.bookUrl,
-        url: url,
+        url: fallbackUrl,
         title: title,
-        index: startIndex + i,
-        isVolume: rule.isVolume ? await itemAnalyzer.getStringAsync(rule.isVolume) === 'true' : false,
-        isVip: rule.isVip ? await itemAnalyzer.getStringAsync(rule.isVip) === 'true' : false,
-        isPay: rule.isPay ? await itemAnalyzer.getStringAsync(rule.isPay) === 'true' : false
+        index: startIndex + chapters.length,
+        isVolume: isVolume,
+        isVip: this.parseTruthyFlag(isVipRaw),
+        isPay: this.parseTruthyFlag(isPayRaw),
+        tag: updateTag
       };
 
       chapters.push(chapter);
@@ -1382,12 +1510,7 @@ export class NovelSourceExecutor {
     let nextUrl: string | null = null;
     if (rule.nextTocUrl) {
       const nextUrlStr = await analyzer.getStringAsync(rule.nextTocUrl);
-      if (nextUrlStr && nextUrlStr.trim()) {
-        const urls = nextUrlStr.split('\n').filter((u: string): boolean => u.trim().length > 0);
-        if (urls.length > 0) {
-          nextUrl = urls[0].trim();
-        }
-      }
+      nextUrl = this.extractFirstNonEmptyLine(nextUrlStr);
     }
 
     const result: ChapterListParseResult = { chapters: chapters, nextUrl: nextUrl };
@@ -1403,8 +1526,9 @@ export class NovelSourceExecutor {
     const rule = this.source.ruleContent;
 
     if (!rule || !rule.content) {
-      const emptyResult: ContentParseResult = { content: '', nextUrl: null };
-      return emptyResult;
+      const fallbackContent = this.resolveContentFallbackWhenRuleMissing(chapter);
+      const fallbackResult: ContentParseResult = { content: fallbackContent, nextUrl: null };
+      return fallbackResult;
     }
 
     const analyzer = this.createRuleAnalyzer();
@@ -1433,12 +1557,7 @@ export class NovelSourceExecutor {
     let nextUrl: string | null = null;
     if (rule.nextContentUrl) {
       const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
-      if (nextUrlStr && nextUrlStr.trim()) {
-        const urls = nextUrlStr.split('\n').filter((u: string): boolean => u.trim().length > 0);
-        if (urls.length > 0) {
-          nextUrl = urls[0].trim();
-        }
-      }
+      nextUrl = this.extractFirstNonEmptyLine(nextUrlStr);
     }
 
     const result: ContentParseResult = { content: content, nextUrl: nextUrl };

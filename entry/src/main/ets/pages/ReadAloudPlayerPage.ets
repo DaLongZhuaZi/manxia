@@ -7,6 +7,13 @@ import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import {
+  NovelAudioReadAloudLaunchParams,
+  NovelAudioReadAloudSnapshot,
+  NovelAudioReadAloudStateListener,
+  getNovelAudioReadAloudSessionManager
+} from '../Framework/ReadAloud/NovelAudioReadAloudSessionManager';
+import { NovelReaderPageParams } from './NovelBookshelfPage';
 
 const TAG = 'ReadAloudPlayerPage';
 const PLAYER_SKIP_CHARS: number = 420;
@@ -51,12 +58,14 @@ export struct ReadAloudPlayerPage {
   @State customSleepTimerValue: string = '45';
   @State customSleepTimerUnit: 'minute' | 'hour' = 'minute';
   @State entered: boolean = false;
+  @State isNovelAudioMode: boolean = false;
 
   // 主题状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private componentId: string = `ReadAloudPlayerPage_${Date.now()}`;
 
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
+  private novelAudioSessionManager = getNovelAudioReadAloudSessionManager();
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   private returnHostPage: string = '';
   private hasCapturedRouteState: boolean = false;
@@ -70,6 +79,9 @@ export struct ReadAloudPlayerPage {
   private onReadAloudCacheUpdated: (_payload: IEventPayload) => void = (_payload: IEventPayload): void => {
     this.refreshPlayerState();
   };
+  private onNovelAudioSessionChanged: NovelAudioReadAloudStateListener = (_snapshot: NovelAudioReadAloudSnapshot): void => {
+    this.refreshPlayerState();
+  };
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, () => {});
@@ -79,9 +91,12 @@ export struct ReadAloudPlayerPage {
     AppStorage.setOrCreate(READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY, true);
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     eventBus.subscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
+    this.novelAudioSessionManager.subscribe(this.onNovelAudioSessionChanged);
     this.startSleepTimerRefreshTimer();
     this.refreshPlayerState();
-    this.readAloudController.refreshMediaSession();
+    if (!this.novelAudioSessionManager.hasActiveSession()) {
+      this.readAloudController.refreshMediaSession();
+    }
   }
 
   aboutToDisappear(): void {
@@ -98,6 +113,7 @@ export struct ReadAloudPlayerPage {
     this.clearPlayerReturnMarkers();
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     eventBus.unsubscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
+    this.novelAudioSessionManager.unsubscribe(this.onNovelAudioSessionChanged);
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -195,6 +211,7 @@ export struct ReadAloudPlayerPage {
     this.stopSleepTimerRefreshTimer();
     this.sleepTimerRefreshTimer = setInterval(() => {
       this.refreshSleepTimerState();
+      this.refreshPlayerState();
     }, 1000) as number;
   }
 
@@ -248,6 +265,12 @@ export struct ReadAloudPlayerPage {
   }
 
   private refreshRemoteStatus(snapshot: ReadAloudStateSnapshot): void {
+    if (this.isNovelAudioMode) {
+      this.remoteSegmentText = '--';
+      this.remoteCacheSegmentText = '--';
+      this.remoteCacheBytesText = '--';
+      return;
+    }
     if (String(snapshot.settings.engineType ?? 'SYSTEM') !== 'REMOTE') {
       this.remoteSegmentText = '--';
       this.remoteCacheSegmentText = '--';
@@ -317,6 +340,9 @@ export struct ReadAloudPlayerPage {
   }
 
   private isRemoteEngineActive(): boolean {
+    if (this.isNovelAudioMode) {
+      return false;
+    }
     return this.engineInfoText === '远程 TTS';
   }
 
@@ -379,7 +405,138 @@ export struct ReadAloudPlayerPage {
     this.applySleepTimer(durationMs);
   }
 
+  private resolveNovelAudioLaunchParams(param: NovelReaderPageParams | null): NovelAudioReadAloudLaunchParams | null {
+    if (!param) {
+      return null;
+    }
+    if (!param.sourceId || !param.bookUrl) {
+      return null;
+    }
+    return {
+      sourceId: param.sourceId,
+      bookUrl: param.bookUrl,
+      bookName: param.bookName,
+      chapterUrl: param.chapterUrl,
+      chapterTitle: param.chapterTitle,
+      chapterIndex: Math.max(0, param.chapterIndex),
+      totalChapters: Math.max(0, param.totalChapters),
+      tocUrl: param.tocUrl || param.bookUrl,
+      author: param.author || '',
+      coverUrl: param.coverUrl || '',
+      autoStartReadAloud: param.autoStartReadAloud === true
+    };
+  }
+
+  private async initializeNovelAudioSessionIfNeeded(param: NovelReaderPageParams | null): Promise<void> {
+    const launchParams = this.resolveNovelAudioLaunchParams(param);
+    if (!launchParams) {
+      this.isNovelAudioMode = this.novelAudioSessionManager.hasActiveSession();
+      this.refreshPlayerState();
+      return;
+    }
+
+    const hasActiveSession = this.novelAudioSessionManager.hasActiveSession();
+    const shouldAutoStart = launchParams.autoStartReadAloud === true || !hasActiveSession;
+    const finalLaunchParams: NovelAudioReadAloudLaunchParams = {
+      sourceId: launchParams.sourceId,
+      bookUrl: launchParams.bookUrl,
+      bookName: launchParams.bookName,
+      chapterUrl: launchParams.chapterUrl,
+      chapterTitle: launchParams.chapterTitle,
+      chapterIndex: launchParams.chapterIndex,
+      totalChapters: launchParams.totalChapters,
+      tocUrl: launchParams.tocUrl,
+      author: launchParams.author,
+      coverUrl: launchParams.coverUrl,
+      autoStartReadAloud: shouldAutoStart
+    };
+
+    logger.info(
+      TAG,
+      `Initialize novel audio session: sourceId=${finalLaunchParams.sourceId}, chapterIndex=${finalLaunchParams.chapterIndex}, autoStart=${finalLaunchParams.autoStartReadAloud === true}, chapterUrl=${(finalLaunchParams.chapterUrl || '').substring(0, 160)}`
+    );
+
+    // 听书小说改为 AVPlayer 独立链路，避免与 ReadAloudController 会话互相影响
+    this.readAloudController.release();
+    const started = await this.novelAudioSessionManager.startSession(finalLaunchParams);
+    if (started) {
+      this.isNovelAudioMode = true;
+      logger.info(TAG, `ReadAloudPlayerPage active audio session: sourceId=${finalLaunchParams.sourceId}, chapterIndex=${finalLaunchParams.chapterIndex}`);
+    } else {
+      this.isNovelAudioMode = this.novelAudioSessionManager.hasActiveSession();
+      logger.warn(TAG, `ReadAloudPlayerPage audio session init returned false: sourceId=${finalLaunchParams.sourceId}, chapterIndex=${finalLaunchParams.chapterIndex}`);
+    }
+    this.refreshPlayerState();
+  }
+
+  private applyNovelAudioSnapshot(snapshot: NovelAudioReadAloudSnapshot): void {
+    const hasSession = snapshot.hasSession;
+    this.hasSession = hasSession;
+    this.isPlaying = snapshot.isPlaying;
+    this.statusText = snapshot.isLoading
+      ? '正在准备音频...'
+      : snapshot.isPlaying
+        ? '播放中'
+        : (snapshot.loadErrorMessage.length > 0 ? '播放异常' : '已暂停');
+    if (!hasSession) {
+      this.bookTitle = '听书播放器';
+      this.chapterTitle = '当前没有可播放内容';
+      this.coverUrl = '';
+      this.progressPercent = 0;
+      this.progressText = '0%';
+      this.chapterInfoText = '--';
+      this.pageInfoText = '--';
+      this.charInfoText = '--';
+      this.chunkInfoText = '--';
+      this.engineInfoText = '--';
+      this.speedInfoText = '--';
+      this.excerptText = '';
+      this.remoteSegmentText = '--';
+      this.remoteCacheSegmentText = '--';
+      this.remoteCacheBytesText = '--';
+      this.refreshSleepTimerState();
+      return;
+    }
+
+    this.bookTitle = snapshot.bookName.length > 0 ? snapshot.bookName : '听书播放器';
+    this.chapterTitle = snapshot.chapterTitle.length > 0
+      ? snapshot.chapterTitle
+      : `第${snapshot.chapterIndex + 1}章`;
+    this.coverUrl = snapshot.coverUrl;
+    const durationMs = Math.max(0, snapshot.audioDurationMs);
+    const positionMs = Math.max(0, Math.min(snapshot.audioPositionMs, durationMs > 0 ? durationMs : snapshot.audioPositionMs));
+    this.progressPercent = durationMs > 0 ? Math.max(0, Math.min(100, (positionMs / durationMs) * 100)) : 0;
+    this.progressText = durationMs > 0
+      ? `${this.formatDuration(positionMs)} / ${this.formatDuration(durationMs)}`
+      : '0%';
+    this.chapterInfoText = snapshot.totalChapters > 0
+      ? `${snapshot.chapterIndex + 1}/${snapshot.totalChapters}`
+      : `第${snapshot.chapterIndex + 1}章`;
+    this.pageInfoText = '--';
+    this.charInfoText = '--';
+    this.chunkInfoText = snapshot.audioChapterCached ? '已缓存' : '未缓存';
+    this.engineInfoText = '书源音频';
+    this.speedInfoText = snapshot.isCachingCurrentChapterAudio ? '缓存中' : '直连';
+    this.excerptText = snapshot.loadErrorMessage.length > 0
+      ? snapshot.loadErrorMessage
+      : (snapshot.audioSourceUrl.length > 0 ? snapshot.audioSourceUrl : '已就绪，点击播放开始听书');
+    this.remoteSegmentText = '--';
+    this.remoteCacheSegmentText = '--';
+    this.remoteCacheBytesText = '--';
+    this.refreshSleepTimerState();
+  }
+
   private refreshPlayerState(): void {
+    const audioSnapshot = this.novelAudioSessionManager.getSnapshot();
+    if (audioSnapshot.hasSession) {
+      this.isNovelAudioMode = true;
+      this.applyNovelAudioSnapshot(audioSnapshot);
+      return;
+    }
+    if (this.isNovelAudioMode) {
+      this.isNovelAudioMode = false;
+    }
+
     const snapshot = this.readAloudController.getSnapshot();
     const context = this.readAloudController.getContextSnapshot();
     const hasValidContext = context !== null && snapshot.hasContext;
@@ -507,6 +664,10 @@ export struct ReadAloudPlayerPage {
   }
 
   private togglePlayPause(): void {
+    if (this.isNovelAudioMode) {
+      void this.handleNovelAudioTogglePlayPause();
+      return;
+    }
     if (!this.hasSession) {
       promptAction.showToast({
         message: '当前没有可播放内容',
@@ -523,7 +684,23 @@ export struct ReadAloudPlayerPage {
     this.refreshPlayerState();
   }
 
+  private async handleNovelAudioTogglePlayPause(): Promise<void> {
+    if (!this.hasSession) {
+      promptAction.showToast({
+        message: '当前没有可播放的听书会话',
+        duration: 1400
+      });
+      return;
+    }
+    await this.novelAudioSessionManager.togglePlayPause();
+    this.refreshPlayerState();
+  }
+
   private skipPrevious(): void {
+    if (this.isNovelAudioMode) {
+      void this.handleNovelAudioSkipPrevious();
+      return;
+    }
     if (!this.hasSession) {
       return;
     }
@@ -532,7 +709,19 @@ export struct ReadAloudPlayerPage {
     this.refreshPlayerState();
   }
 
+  private async handleNovelAudioSkipPrevious(): Promise<void> {
+    if (!this.hasSession) {
+      return;
+    }
+    await this.novelAudioSessionManager.playPreviousChapter(this.isPlaying);
+    this.refreshPlayerState();
+  }
+
   private skipNext(): void {
+    if (this.isNovelAudioMode) {
+      void this.handleNovelAudioSkipNext();
+      return;
+    }
     if (!this.hasSession) {
       return;
     }
@@ -541,7 +730,19 @@ export struct ReadAloudPlayerPage {
     this.refreshPlayerState();
   }
 
+  private async handleNovelAudioSkipNext(): Promise<void> {
+    if (!this.hasSession) {
+      return;
+    }
+    await this.novelAudioSessionManager.playNextChapter(this.isPlaying);
+    this.refreshPlayerState();
+  }
+
   private stopPlayback(): void {
+    if (this.isNovelAudioMode) {
+      void this.handleNovelAudioStop();
+      return;
+    }
     if (!this.hasSession) {
       return;
     }
@@ -550,6 +751,25 @@ export struct ReadAloudPlayerPage {
     this.refreshPlayerState();
   }
 
+  private async handleNovelAudioStop(): Promise<void> {
+    if (!this.hasSession) {
+      return;
+    }
+    await this.novelAudioSessionManager.stop();
+    this.refreshPlayerState();
+  }
+
+  private async cacheCurrentNovelAudioChapter(): Promise<void> {
+    if (!this.isNovelAudioMode || !this.hasSession) {
+      return;
+    }
+    const success = await this.novelAudioSessionManager.cacheCurrentChapterAudio();
+    promptAction.showToast({
+      message: success ? '当前章节听书音频已缓存' : '当前章节听书缓存失败',
+      duration: 1400
+    });
+    this.refreshPlayerState();
+  }
   private closePage(): void {
     try {
       if (this.returnHostPage.length > 0) {
@@ -1122,6 +1342,20 @@ export struct ReadAloudPlayerPage {
         .fontColor($r('app.color.text_primary'))
         .enabled(this.hasSession)
         .onClick(() => this.stopPlayback())
+
+      if (this.isNovelAudioMode) {
+        Button(this.speedInfoText === '缓存中' ? '正在缓存本章...' : '缓存当前章节')
+          .height(38)
+          .width('100%')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor($r('app.color.background_secondary'))
+          .fontColor($r('app.color.text_primary'))
+          .enabled(this.hasSession && this.speedInfoText !== '缓存中')
+          .onClick(() => {
+            void this.cacheCurrentNovelAudioChapter();
+          })
+      }
     }
     .width('100%')
     .padding(16)
@@ -1158,7 +1392,9 @@ export struct ReadAloudPlayerPage {
             this.buildCoverCard()
             this.buildProgressCard()
             this.buildSessionInfoCard()
-            this.buildRemoteStatusCard()
+            if (!this.isNovelAudioMode) {
+              this.buildRemoteStatusCard()
+            }
             this.buildSleepTimerCard()
             this.buildExcerptCard()
             this.buildControlCard()
@@ -1214,7 +1450,8 @@ export struct ReadAloudPlayerPage {
     .mode(NavDestinationMode.STANDARD)
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
-      this.refreshPlayerState();
+      const routeParam = context.pathInfo.param as NovelReaderPageParams | null;
+      void this.initializeNovelAudioSessionIfNeeded(routeParam);
       this.entered = false;
       setTimeout(() => {
         this.entered = true;
@@ -1227,7 +1464,9 @@ export struct ReadAloudPlayerPage {
       AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
       AppStorage.setOrCreate(READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY, true);
       this.refreshPlayerState();
-      this.readAloudController.refreshMediaSession();
+      if (!this.isNovelAudioMode) {
+        this.readAloudController.refreshMediaSession();
+      }
     })
     .onBackPressed(() => {
       if (this.showSleepTimerDialog) {
@@ -1239,3 +1478,5 @@ export struct ReadAloudPlayerPage {
     })
   }
 }
+
+

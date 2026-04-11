@@ -128,7 +128,7 @@ import {
 import { Manga, MangaChapter, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
 import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from '../Models/EBookModels';
-import { LegadoBook, LegadoChapter, LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoChapter, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';
 
 // 阅读器参数导入
@@ -483,6 +483,57 @@ export struct UnifiedDetailPage {
   private getNovelCacheBookId(sourceId: string, bookUrl: string): string {
     return `${sourceId}_${encodeURIComponent(bookUrl)}`;
   }
+
+  private getCurrentNovelSourceId(): string {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return '';
+    }
+    return (this.content.sourceId || this.pageParams?.sourceId || '').trim();
+  }
+
+  private getCurrentNovelSourceType(): LegadoBookSourceType {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return LegadoBookSourceType.TEXT;
+    }
+    const sourceId = this.getCurrentNovelSourceId();
+    if (sourceId.length <= 0) {
+      return LegadoBookSourceType.TEXT;
+    }
+    const source = this.novelSourceManager.getSource(sourceId);
+    if (!source) {
+      return LegadoBookSourceType.TEXT;
+    }
+    return source.bookSourceType;
+  }
+
+  private isCurrentNovelAudioSource(): boolean {
+    return this.content?.contentType === UnifiedContentType.NOVEL &&
+      this.getCurrentNovelSourceType() === LegadoBookSourceType.AUDIO;
+  }
+
+  private getNovelCacheSectionTitle(): string {
+    return this.isCurrentNovelAudioSource() ? '听书缓存' : '章节缓存';
+  }
+
+  private getNovelCachedCountLabel(): string {
+    return this.isCurrentNovelAudioSource() ? '已缓存音频' : '已缓存章节';
+  }
+
+  private getNovelCacheActionTitle(): string {
+    return this.isCurrentNovelAudioSource() ? '听书缓存' : '缓存章节';
+  }
+
+  private getNovelDownloadedTagLabel(): string {
+    return this.isCurrentNovelAudioSource() ? '已缓存音频' : '已缓存';
+  }
+
+  private getNovelCacheCountActionLabel(count: number): string {
+    return this.isCurrentNovelAudioSource() ? `缓存 ${count} 章音频` : `缓存 ${count} 章`;
+  }
+
+  private getNovelCacheWorkingLabel(): string {
+    return this.isCurrentNovelAudioSource() ? '正在缓存听书音频...' : '正在缓存中...';
+  }
   
   /**
    * 判断下载任务是否属于当前内容
@@ -493,8 +544,7 @@ export struct UnifiedDetailPage {
     
     // 小说使用特殊的 bookId 格式
     if (this.content.contentType === UnifiedContentType.NOVEL) {
-      // [修复] 优先使用content.sourceId，因为loadNovelContent已经从数据库获取了正确的sourceId
-      const sourceId = this.content.sourceId || this.pageParams?.sourceId;
+      const sourceId = this.getCurrentNovelSourceId();
       if (sourceId) {
         const novelCacheBookId = this.getNovelCacheBookId(sourceId, this.content.id);
         return task.contentId === novelCacheBookId;
@@ -1757,6 +1807,9 @@ export struct UnifiedDetailPage {
   }
 
   private getReadButtonLabel(): string {
+    if (this.isCurrentNovelAudioSource()) {
+      return this.hasReadingRecord() ? '继续听书' : '开始听书';
+    }
     return this.hasReadingRecord() ? '继续阅读' : '开始阅读';
   }
 
@@ -1766,6 +1819,9 @@ export struct UnifiedDetailPage {
 
   private canShowReadAloudButton(): boolean {
     if (!this.content) {
+      return false;
+    }
+    if (this.isCurrentNovelAudioSource()) {
       return false;
     }
     return this.content.contentType === UnifiedContentType.NOVEL || this.isLocalTxtNovelEBookContent();
@@ -1992,9 +2048,19 @@ export struct UnifiedDetailPage {
     // 获取原始小说章节数据
     const originalChapter = NovelAdapter.getOriginalChapter(chapter);
     const originalBook = NovelAdapter.getOriginalNovel(this.content);
+    const sourceId = this.content.sourceId || '';
+    const sourceType = sourceId.length > 0
+      ? (this.novelSourceManager.getSource(sourceId)?.bookSourceType ?? LegadoBookSourceType.TEXT)
+      : LegadoBookSourceType.TEXT;
+
+    if (sourceType === LegadoBookSourceType.AUDIO) {
+      logger.info(TAG, `听书内容跳过翻书动画，直接打开播放器页: chapterIndex=${chapterIndex}, sourceId=${sourceId}`);
+      this.openNovelReadAloudPage(chapterIndex);
+      return;
+    }
 
     const params: NovelReaderPageParams = {
-      sourceId: this.content.sourceId || '',
+      sourceId,
       bookUrl: this.content.id,
       bookName: this.content.title,
       chapterUrl: originalChapter?.url || '',
@@ -2079,7 +2145,7 @@ export struct UnifiedDetailPage {
   }
 
   /**
-   * 打开小说听书播放器（通过阅读器初始化上下文后自动跳转播放器页）
+   * 打开小说听书播放器
    */
   private openNovelReadAloudPage(chapterIndex: number): void {
     if (!this.content) return;
@@ -2089,9 +2155,15 @@ export struct UnifiedDetailPage {
 
     const originalChapter = NovelAdapter.getOriginalChapter(chapter);
     const originalBook = NovelAdapter.getOriginalNovel(this.content);
+    const sourceId = this.content.sourceId || '';
+    const sourceType = sourceId.length > 0
+      ? (this.novelSourceManager.getSource(sourceId)?.bookSourceType ?? LegadoBookSourceType.TEXT)
+      : LegadoBookSourceType.TEXT;
+    const shouldDisableTransition = sourceType === LegadoBookSourceType.AUDIO;
+    const readAloudCoverComponentId = shouldDisableTransition ? undefined : `cover_${this.componentId}`;
 
     const params: NovelReaderPageParams = {
-      sourceId: this.content.sourceId || '',
+      sourceId,
       bookUrl: this.content.id,
       bookName: this.content.title,
       chapterUrl: originalChapter?.url || '',
@@ -2101,11 +2173,20 @@ export struct UnifiedDetailPage {
       tocUrl: originalBook?.tocUrl,
       author: this.content.author,
       coverUrl: this.content.coverUrl,
-      coverComponentId: `cover_${this.componentId}`,
-      autoStartReadAloud: true,
-      autoOpenReadAloudPlayer: true
+      coverComponentId: readAloudCoverComponentId
     };
 
+    if (sourceType === LegadoBookSourceType.AUDIO) {
+      params.autoStartReadAloud = true;
+      AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', 'UnifiedDetailPage');
+      AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
+      AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
+      logger.info(TAG, `开始听书直达播放器页: chapterIndex=${chapterIndex}, sourceId=${sourceId}, chapterUrl=${params.chapterUrl}`);
+      this.pathStack.pushPathByName('ReadAloudPlayerPage', params);
+      return;
+    }
+    params.autoStartReadAloud = true;
+    params.autoOpenReadAloudPlayer = true;
     this.pathStack.pushPathByName('NovelReaderPage', params);
   }
 
@@ -2205,7 +2286,7 @@ export struct UnifiedDetailPage {
       case UnifiedContentType.EBOOK:
         return this.content.isLocal ? '本地电子书' : '在线电子书';
       case UnifiedContentType.NOVEL:
-        return '小说';
+        return this.isCurrentNovelAudioSource() ? '听书' : '小说';
       default:
         return '';
     }
@@ -2506,8 +2587,7 @@ export struct UnifiedDetailPage {
         }
       } else if (isNovel) {
         // 小说：始终加载并显示缓存状态（使用与NovelReaderPage一致的bookId格式）
-        // [修复] 优先使用content.sourceId，因为loadNovelContent已经从数据库获取了正确的sourceId
-        const sourceId = this.content.sourceId || this.pageParams?.sourceId || '';
+        const sourceId = this.getCurrentNovelSourceId();
         const novelCacheBookId = this.getNovelCacheBookId(sourceId, this.content.id);
         this.cacheStats = await this.cacheStatusService.getNovelCacheStatus(
           novelCacheBookId,
@@ -2516,7 +2596,10 @@ export struct UnifiedDetailPage {
         );
         // 小说始终显示缓存卡片，方便用户了解缓存情况和进行下载操作
         this.showCacheStatusCard = true;
-        logger.info(TAG, `小说缓存状态加载完成: ${this.cacheStats.cachedChapterCount}/${this.cacheStats.totalChapterCount}章`);
+        logger.info(
+          TAG,
+          `${this.isCurrentNovelAudioSource() ? '听书缓存' : '小说缓存'}状态加载完成: ${this.cacheStats.cachedChapterCount}/${this.cacheStats.totalChapterCount}章`
+        );
       }
     } catch (error) {
       logger.error(TAG, `加载缓存状态失败: ${String(error)}`);
@@ -2528,6 +2611,9 @@ export struct UnifiedDetailPage {
   }
 
   private supportsReadAloudCacheSection(): boolean {
+    if (this.isCurrentNovelAudioSource()) {
+      return false;
+    }
     return this.remoteReadAloudCacheService.supportsContent(this.content);
   }
 
@@ -4333,13 +4419,14 @@ export struct UnifiedDetailPage {
 
       // 信息区域
       Column({ space: 8 }) {
-      Text(this.stripHtmlTags(this.content?.title || '加载中...'))
+        Text(this.stripHtmlTags(this.content?.title || '加载中...'))
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
           .onClick(() => {
             this.navigateToSearch(this.content?.title || '');
           })
@@ -4349,12 +4436,16 @@ export struct UnifiedDetailPage {
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
             .onClick(() => {
               this.navigateToSearch(this.content?.author || '');
             })
         } else {
           Text('')
             .fontSize(14)
+            .width('100%')
         }
 
         Row({ space: 8 }) {
@@ -4362,18 +4453,25 @@ export struct UnifiedDetailPage {
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
 
           Text(`${this.content?.totalChapters || 0}章`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
+        .width('100%')
 
         if (this.content?.sourceName) {
           Text(`来源: ${this.content.sourceName}`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
         }
 
         Blank()
@@ -4466,8 +4564,9 @@ export struct UnifiedDetailPage {
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
-      .height(COVER_HEIGHT)
+      .constraintSize({ minHeight: COVER_HEIGHT })
     }
+    .alignItems(VerticalAlign.Top)
     .width('100%')
     .id('guide_unified_detail_header')
     .padding(16)
@@ -4709,6 +4808,9 @@ export struct UnifiedDetailPage {
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .constraintSize({ maxWidth: 220 })
                   .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '16')
                   .borderRadius(14)
@@ -4724,6 +4826,9 @@ export struct UnifiedDetailPage {
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .constraintSize({ maxWidth: 220 })
                   .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                   .borderRadius(14)
@@ -5114,7 +5219,7 @@ export struct UnifiedDetailPage {
               SymbolGlyph($r('sys.symbol.arrow_down_circle'))
                 .fontSize(16)
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
-              Text(this.cacheStats.contentType === CacheContentType.MANGA ? '漫画缓存' : '章节缓存')
+              Text(this.cacheStats.contentType === CacheContentType.MANGA ? '漫画缓存' : this.getNovelCacheSectionTitle())
                 .fontSize(14)
                 .fontWeight(FontWeight.Medium)
                 .fontFamily(this.appFontFamily)
@@ -5151,7 +5256,7 @@ export struct UnifiedDetailPage {
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              Text('已缓存章节')
+              Text(this.cacheStats.contentType === CacheContentType.MANGA ? '已缓存章节' : this.getNovelCachedCountLabel())
                 .fontSize(11)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -5230,7 +5335,7 @@ export struct UnifiedDetailPage {
                   .width(14)
                   .height(14)
                   .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-                Text('正在缓存中...')
+                Text(this.cacheStats.contentType === CacheContentType.NOVEL ? this.getNovelCacheWorkingLabel() : '正在缓存中...')
                   .fontSize(12)
                   .fontWeight(FontWeight.Medium)
                   .fontFamily(this.appFontFamily)
@@ -5712,10 +5817,15 @@ export struct UnifiedDetailPage {
       return;
     }
 
-    const contentTypeName = this.cacheStats.contentType === CacheContentType.MANGA ? '漫画' : '小说';
+    const isManga = this.cacheStats.contentType === CacheContentType.MANGA;
+    const contentTypeName = isManga ? '漫画' : (this.isCurrentNovelAudioSource() ? '听书' : '小说');
+    const cachedLabel = isManga ? '已缓存章节' : this.getNovelCachedCountLabel();
+    const restoreTip = isManga
+      ? '清理后需要重新阅读才能再次缓存。'
+      : (this.isCurrentNovelAudioSource() ? '清理后需要重新缓存才能离线播放。' : '清理后需要重新阅读才能再次缓存。');
     const sizeText = this.cacheStatusService.formatSize(this.cacheStats.cacheSize);
     this.cacheConfirmTitle = '清理缓存';
-    this.cacheConfirmMessage = `确定要清理此${contentTypeName}的所有缓存吗？\n\n缓存大小: ${sizeText}\n已缓存章节: ${this.cacheStats.cachedChapterCount}章\n\n清理后需要重新阅读才能再次缓存。`;
+    this.cacheConfirmMessage = `确定要清理此${contentTypeName}的所有缓存吗？\n\n缓存大小: ${sizeText}\n${cachedLabel}: ${this.cacheStats.cachedChapterCount}章\n\n${restoreTip}`;
     this.cacheConfirmActionLabel = '清理';
     this.cacheConfirmActionKind = 'danger';
     this.cacheConfirmPendingAction = 'clear_content';
@@ -5736,9 +5846,12 @@ export struct UnifiedDetailPage {
       const sourceId = this.cacheStats.contentType === CacheContentType.MANGA
         ? Number(this.pageParams?.sourceId)
         : undefined;
+      const targetContentId = this.cacheStats.contentType === CacheContentType.NOVEL
+        ? this.getNovelCacheBookId(this.getCurrentNovelSourceId(), this.content.id)
+        : this.content.id;
       const success = await this.cacheStatusService.clearContentCache(
         this.cacheStats.contentType,
-        this.content.id,
+        targetContentId,
         sourceId
       );
 
@@ -7168,7 +7281,11 @@ export struct UnifiedDetailPage {
 
     const selectedCount = this.getSelectedChapterCount();
     if (selectedCount === 0) {
-      promptAction.showToast({ message: '未选择要缓存的章节' });
+      promptAction.showToast({
+        message: this.content.contentType === UnifiedContentType.NOVEL && this.isCurrentNovelAudioSource()
+          ? '未选择要缓存的音频章节'
+          : '未选择要缓存的章节'
+      });
       return;
     }
 
@@ -7185,7 +7302,7 @@ export struct UnifiedDetailPage {
       return;
     }
 
-    const sourceId = this.pageParams?.sourceId;
+    const sourceId = this.getCurrentNovelSourceId();
     if (!sourceId) {
       promptAction.showToast({ message: '缺少书源信息' });
       return;
@@ -7212,7 +7329,7 @@ export struct UnifiedDetailPage {
     }
 
     if (chapters.length === 0) {
-      promptAction.showToast({ message: '无可缓存的章节' });
+      promptAction.showToast({ message: this.isCurrentNovelAudioSource() ? '无可缓存的章节音频' : '无可缓存的章节' });
       return;
     }
 
@@ -7223,7 +7340,11 @@ export struct UnifiedDetailPage {
     this.downloadCurrentChapterTitle = '';
 
     const novelCacheBookId = this.getNovelCacheBookId(sourceId, this.content.id);
-    promptAction.showToast({ message: `开始缓存 ${chapters.length} 章...` });
+    promptAction.showToast({
+      message: this.isCurrentNovelAudioSource()
+        ? `开始缓存 ${chapters.length} 章音频...`
+        : `开始缓存 ${chapters.length} 章...`
+    });
 
     try {
       await this.unifiedDownloadManager.downloadNovelChapters({
@@ -7234,7 +7355,11 @@ export struct UnifiedDetailPage {
         startIndex: selectedIndexes[0],
         endIndex: selectedIndexes[selectedIndexes.length - 1]
       });
-      promptAction.showToast({ message: '缓存任务已创建，后台继续处理中...' });
+      promptAction.showToast({
+        message: this.isCurrentNovelAudioSource()
+          ? '听书缓存任务已创建，后台继续处理中...'
+          : '缓存任务已创建，后台继续处理中...'
+      });
     } catch (error) {
       logger.error(TAG, `缓存小说选中章节失败: ${String(error)}`);
       promptAction.showToast({ message: `缓存失败: ${String(error)}` });
@@ -7386,22 +7511,29 @@ export struct UnifiedDetailPage {
     }
 
     try {
-      const sourceId = this.content.sourceId || this.pageParams?.sourceId || '';
+      const sourceId = this.getCurrentNovelSourceId();
       const novelCacheBookId = this.getNovelCacheBookId(sourceId, this.content.id);
       await this.novelCacheManager.clearBookCache(novelCacheBookId);
-      promptAction.showToast({ message: '小说缓存已清理' });
+      promptAction.showToast({ message: `${this.isCurrentNovelAudioSource() ? '听书缓存' : '小说缓存'}已清理` });
       this.content.chapters.forEach((ch: UnifiedChapter) => {
         ch.isDownloaded = false;
       });
       await this.loadCacheStatus();
     } catch (error) {
-      promptAction.showToast({ message: `清理小说缓存失败: ${String(error)}` });
+      promptAction.showToast({
+        message: `${this.isCurrentNovelAudioSource() ? '清理听书缓存失败' : '清理小说缓存失败'}: ${String(error)}`
+      });
     }
   }
 
   private showNovelCacheClearConfirm(): void {
-    this.cacheConfirmTitle = '清理小说缓存';
-    this.cacheConfirmMessage = '确定要清理当前小说的章节缓存吗？清理后需要重新缓存才能离线阅读。';
+    if (this.isCurrentNovelAudioSource()) {
+      this.cacheConfirmTitle = '清理听书缓存';
+      this.cacheConfirmMessage = '确定要清理当前小说的听书缓存吗？清理后需要重新缓存才能离线播放。';
+    } else {
+      this.cacheConfirmTitle = '清理小说缓存';
+      this.cacheConfirmMessage = '确定要清理当前小说的章节缓存吗？清理后需要重新缓存才能离线阅读。';
+    }
     this.cacheConfirmActionLabel = '清理';
     this.cacheConfirmActionKind = 'danger';
     this.cacheConfirmPendingAction = 'clear_novel';
@@ -7715,6 +7847,9 @@ export struct UnifiedDetailPage {
                   .fontSize(11)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .constraintSize({ maxWidth: 180 })
                 
                 // 更新时间
                 if (chapter.publishDate) {
@@ -7812,7 +7947,7 @@ export struct UnifiedDetailPage {
                     SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
                       .fontSize(10)
                       .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
-                    Text('已缓存')
+                    Text(this.getNovelDownloadedTagLabel())
                       .fontSize(10)
                       .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
@@ -8496,6 +8631,9 @@ export struct UnifiedDetailPage {
             .fontSize(13)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
             .onClick(() => {
               this.navigateToSearch(this.content?.author || '');
             })
@@ -8505,17 +8643,24 @@ export struct UnifiedDetailPage {
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
             Text(`${this.content?.totalChapters || 0}章`)
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
+          .width('100%')
 
           if (this.content?.sourceName) {
             Text(`来源: ${this.content.sourceName}`)
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
           }
         }
         .width('100%')
@@ -8529,6 +8674,9 @@ export struct UnifiedDetailPage {
                 .fontSize(11)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: 180 })
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
                 .padding({ left: 8, right: 8 })
                 .height(24)
@@ -8544,6 +8692,9 @@ export struct UnifiedDetailPage {
                 .fontSize(11)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: 180 })
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
                 .padding({ left: 8, right: 8 })
                 .height(24)
@@ -11842,7 +11993,7 @@ export struct UnifiedDetailPage {
             // 标题栏
 
             Row() {
-              Text(this.content.contentType === UnifiedContentType.NOVEL ? '缓存章节' : '缓存章节')
+              Text(this.content.contentType === UnifiedContentType.NOVEL ? this.getNovelCacheActionTitle() : '缓存章节')
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
@@ -12156,7 +12307,7 @@ export struct UnifiedDetailPage {
                               .layoutWeight(1)
 
                             if (chapter.isDownloaded) {
-                              Text('已缓存')
+                              Text(this.content?.contentType === UnifiedContentType.NOVEL ? this.getNovelDownloadedTagLabel() : '已缓存')
                                 .fontSize(11)
                                 .fontFamily(this.appFontFamily)
                                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
@@ -12263,7 +12414,9 @@ export struct UnifiedDetailPage {
                   SymbolGlyph($r('sys.symbol.arrow_down_circle'))
                     .fontSize(16)
                     .fontColor([Color.White])
-                  Text(`缓存 ${this.getSelectedChapterCount()} 章`)
+                  Text(this.content.contentType === UnifiedContentType.NOVEL
+                    ? this.getNovelCacheCountActionLabel(this.getSelectedChapterCount())
+                    : `缓存 ${this.getSelectedChapterCount()} 章`)
                     .fontSize(14)
                     .fontFamily(this.appFontFamily)
                     .fontColor(Color.White)
@@ -14224,3 +14377,4 @@ export struct UnifiedDetailPage {
     }
   }
 }
+

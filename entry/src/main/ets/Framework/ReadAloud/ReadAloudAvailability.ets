@@ -30,7 +30,7 @@ export interface ReadAloudEngineAvailabilityMap {
 
 const DEFAULT_AVAILABILITY: ReadAloudEngineAvailabilityMap = {
   SYSTEM: true,
-  LEGADO_COMPAT: false,
+  LEGADO_COMPAT: true,
   REMOTE: false
 };
 
@@ -64,7 +64,8 @@ export class ReadAloudAvailability {
     const remoteAvailable = ReadAloudAvailability.checkRemoteTtsConfigured(settingsOverride);
     const result: ReadAloudEngineAvailabilityMap = {
       SYSTEM: systemAvailable,
-      LEGADO_COMPAT: false,
+      // LEGADO_COMPAT 当前复用系统TTS能力，可用性与SYSTEM保持一致。
+      LEGADO_COMPAT: systemAvailable,
       REMOTE: remoteAvailable
     };
     if (settingsOverride === undefined) {

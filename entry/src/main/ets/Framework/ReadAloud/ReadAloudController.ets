@@ -433,7 +433,7 @@ export class ReadAloudController {
 
     const unavailableReason = currentEngine === ReadAloudEngineType.REMOTE
       ? ReadAloudAvailability.getLastRemoteProbeErrorMessage()
-      : currentEngine === ReadAloudEngineType.SYSTEM
+      : (currentEngine === ReadAloudEngineType.SYSTEM || currentEngine === ReadAloudEngineType.LEGADO_COMPAT)
         ? ReadAloudAvailability.getLastSystemProbeErrorMessage()
         : '';
     logger.warn(

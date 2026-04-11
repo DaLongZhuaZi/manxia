@@ -1790,6 +1790,7 @@ struct MainMenuPage {
   private async navigateNovelToReadAloud(novel: NovelBook): Promise<void> {
     try {
       const sourceManager = getNovelSourceManager();
+      const sourceType = sourceManager.getSource(novel.sourceId)?.bookSourceType ?? LegadoBookSourceType.TEXT;
       const parsedBook = await sourceManager.getBookInfo(novel.sourceId, novel.bookUrl);
       const resolvedBook: LegadoBook = parsedBook ?? {
         id: `${novel.sourceId}_${encodeURIComponent(novel.bookUrl)}`,
@@ -1805,7 +1806,7 @@ struct MainMenuPage {
         latestChapterTitle: novel.latestChapterTitle,
         wordCount: novel.wordCount,
         updateTime: novel.lastReadTime,
-        type: LegadoBookSourceType.TEXT
+        type: sourceType
       };
       const chapters = await sourceManager.getChapterList(novel.sourceId, resolvedBook);
       if (chapters.length <= 0) {
@@ -1830,12 +1831,21 @@ struct MainMenuPage {
         author: resolvedBook.author || novel.author,
         coverUrl: resolvedBook.coverUrl || novel.coverUrl,
         sourceName: novel.sourceName || resolvedBook.originName || '',
-        coverComponentId: `cover_novel_home_${novel.id}`,
-        autoStartReadAloud: true,
-        autoOpenReadAloudPlayer: true
+        coverComponentId: `cover_novel_home_${novel.id}`
       };
-      this.pathStack.pushPathByName('NovelReaderPage', params);
-      logger.info(TAG, `快捷方式继续听书命中最近小说: ${novel.name}, chapter=${safeChapterIndex + 1}/${chapters.length}`);
+      if (sourceType === LegadoBookSourceType.AUDIO) {
+        params.autoStartReadAloud = true;
+        this.pathStack.pushPathByName('NovelReadAloudPage', params);
+        logger.info(
+          TAG,
+          `快捷方式继续听书命中音频源: ${novel.name}, chapter=${safeChapterIndex + 1}/${chapters.length}`
+        );
+      } else {
+        params.autoStartReadAloud = true;
+        params.autoOpenReadAloudPlayer = true;
+        this.pathStack.pushPathByName('NovelReaderPage', params);
+        logger.info(TAG, `快捷方式继续听书命中最近小说: ${novel.name}, chapter=${safeChapterIndex + 1}/${chapters.length}`);
+      }
     } catch (error) {
       logger.error(TAG, `快捷方式继续听书恢复章节失败: ${String(error)}`);
       this.showToast('恢复听书失败，已打开小说详情');
@@ -19266,6 +19276,7 @@ struct MainMenuPage {
       }
 
       const sourceManager = getNovelSourceManager();
+      const sourceType = sourceManager.getSource(novel.sourceId)?.bookSourceType ?? LegadoBookSourceType.TEXT;
       const rawCoverPath = this.getNovelCoverPath(novel);
       const displayCoverPath = this.getNovelDisplayCoverPath(novel);
       const resolvedBook: LegadoBook = {
@@ -19283,7 +19294,7 @@ struct MainMenuPage {
         latestChapterTitle: novel.latestChapterTitle,
         wordCount: novel.wordCount,
         updateTime: novel.lastReadTime,
-        type: LegadoBookSourceType.TEXT
+        type: sourceType
       };
 
       const preferredChapterIndex = Math.max(0, novel.lastReadChapterIndex ?? 0);
@@ -19351,7 +19362,11 @@ struct MainMenuPage {
         transitionBookId,
         'novel',
         () => {
-          this.pathStack.pushPathByName('NovelReaderPage', readerParams);
+          if (sourceType === LegadoBookSourceType.AUDIO) {
+            this.pathStack.pushPathByName('NovelReadAloudPage', readerParams);
+          } else {
+            this.pathStack.pushPathByName('NovelReaderPage', readerParams);
+          }
         },
         undefined,
         {

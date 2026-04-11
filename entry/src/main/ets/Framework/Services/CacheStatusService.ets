@@ -207,9 +207,11 @@ export class CacheStatusService {
         totalChapters || cacheInfo.totalChapterCount || 0
       );
       
+      const cachedChapterCount = Math.max(cacheInfo.cachedChapterCount, cachedIndexes.size);
+
       // 构建章节状态列表
       const chapterStats: ChapterCacheStatus[] = [];
-      const totalChapterCount = totalChapters || cacheInfo.totalChapterCount || cachedIndexes.size;
+      const totalChapterCount = totalChapters || cacheInfo.totalChapterCount || cachedChapterCount;
       
       for (let i = 0; i < totalChapterCount; i++) {
         const isCached = cachedIndexes.has(i);
@@ -229,9 +231,9 @@ export class CacheStatusService {
         contentType: CacheContentType.NOVEL,
         title: bookTitle || bookId,
         sourceId: 0,  // 小说可能没有sourceId
-        cachedChapterCount: cacheInfo.cachedChapterCount,
+        cachedChapterCount: cachedChapterCount,
         totalChapterCount: totalChapterCount,
-        cachedPageCount: cacheInfo.cachedChapterCount,  // 小说用章节数代替
+        cachedPageCount: cachedChapterCount,  // 小说用章节数代替
         totalPageCount: totalChapterCount,
         cacheSize: cacheInfo.cacheSize,
         downloadWhileReadingEnabled: true,  // 小说默认开启
@@ -239,7 +241,10 @@ export class CacheStatusService {
         lastCacheTime: cacheInfo.lastCacheTime
       };
       
-      logger.info(TAG, `小说缓存状态: cached=${cacheInfo.cachedChapterCount}/${totalChapterCount}章, size=${this.formatSize(cacheInfo.cacheSize)}`);
+      logger.info(
+        TAG,
+        `小说缓存状态: cached=${cachedChapterCount}/${totalChapterCount}章, size=${this.formatSize(cacheInfo.cacheSize)}, kind=${cacheInfo.cacheKind || 'unknown'}`
+      );
       
       return result;
     } catch (error) {

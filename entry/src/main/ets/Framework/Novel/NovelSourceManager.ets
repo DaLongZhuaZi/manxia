@@ -237,6 +237,7 @@ export class NovelSourceManager {
         name: source.bookSourceName,
         url: url,
         group: source.bookSourceGroup,
+        bookSourceType: source.bookSourceType,
         enabled: source.enabled !== false,
         weight: source.weight || 0,
         customOrder: source.customOrder ?? 0,

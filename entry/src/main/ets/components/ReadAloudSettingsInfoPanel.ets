@@ -202,7 +202,7 @@ export struct ReadAloudSettingsInfoPanel {
       return '系统 TTS 探测失败，请点击“刷新”重试';
     }
     if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
-      return '兼容后端开发中，当前请使用系统引擎';
+      return '兼容渠道不可用，请先确认系统 TTS 可用后点击“刷新”';
     }
     return '远程 TTS 当前不可用，请检查 endpoint/model/voice/apiKey 后点击“刷新”';
   }
@@ -211,6 +211,10 @@ export struct ReadAloudSettingsInfoPanel {
     if (engineType === ReadAloudEngineType.SYSTEM) {
       const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
       return probeError.length > 0 ? `系统 TTS 不可用：${probeError}` : this.getReadAloudUnavailableHint(engineType);
+    }
+    if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+      return probeError.length > 0 ? `兼容渠道不可用：${probeError}` : this.getReadAloudUnavailableHint(engineType);
     }
     if (engineType === ReadAloudEngineType.REMOTE) {
       const probeError = ReadAloudAvailability.getLastRemoteProbeErrorMessage();
@@ -1270,7 +1274,7 @@ export struct ReadAloudSettingsInfoPanel {
         .fontFamily(this.appFontFamily)
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
-      Text('该渠道当前主要用于兼容后续适配，暂不提供系统音色预览与远程参数编辑。若只是想配置 Xiaomi MiMo，请切换到“远程”标签。')
+      Text('该渠道复用系统 TTS 播放链路，重点用于兼容 legado 风格听书流程；音色预览建议在“系统”标签中设置。')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor($r('app.color.text_secondary'))
