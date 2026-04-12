@@ -121,7 +121,7 @@ export struct PageSettingsSubPage {
   @State novelDetailPageType: DetailPageType = DetailPageType.DEFAULT;
   @State recommendationEnabled: boolean = true;
   @State shelfContentEnabled: boolean = true;
-  @State nonMainPageGlobalBackgroundEnabled: boolean = false;
+  @State nonMainPageGlobalBackgroundEnabled: boolean = true;
 
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -250,7 +250,7 @@ export struct PageSettingsSubPage {
     this.shelfContentEnabled = this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true);
     this.nonMainPageGlobalBackgroundEnabled = this.settingsManager.getBoolean(
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
-      false
+      true
     );
     AppStorage.setOrCreate(
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
@@ -702,6 +702,9 @@ export struct PageSettingsSubPage {
             this.mangaDetailPageType = DetailPageType.DEFAULT;
             this.ebookDetailPageType = DetailPageType.DEFAULT;
             this.novelDetailPageType = DetailPageType.DEFAULT;
+            this.recommendationEnabled = true;
+            this.shelfContentEnabled = true;
+            this.nonMainPageGlobalBackgroundEnabled = true;
             this.saveSettings();
           }
         });
@@ -1215,7 +1218,7 @@ export struct PageSettingsSubPage {
                     .fontWeight(FontWeight.Medium)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  Text('为所有非 MainMenu 页面启用与主页面一致的自定义背景层，默认关闭')
+                  Text('为所有非 MainMenu 页面启用与主页面一致的自定义背景层，默认开启')
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))

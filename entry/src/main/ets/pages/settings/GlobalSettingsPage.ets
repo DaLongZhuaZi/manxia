@@ -83,6 +83,13 @@ export struct GlobalSettingsPage {
       targetPage: 'PageSettingsSubPage'
     },
     {
+      id: 'shortcut',
+      title: '快捷方式',
+      subtitle: '桌面长按菜单快捷方式显示与选择',
+      icon: $r('sys.symbol.book'),
+      targetPage: 'ShortcutSettingsSubPage'
+    },
+    {
       id: 'main_menu',
       title: '主页面设置',
       subtitle: '主页面入口交互、底栏标签与平板顶栏布局',
@@ -448,6 +455,8 @@ export struct GlobalSettingsPage {
         return '阅读设置';
       case 'PageSettingsSubPage':
         return '页面设置';
+      case 'ShortcutSettingsSubPage':
+        return '快捷方式';
       case 'MainMenuSettingsSubPage':
         return '主页面设置';
       case 'SourceFeatureSettingsSubPage':

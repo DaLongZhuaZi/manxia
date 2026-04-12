@@ -15,6 +15,8 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
+import { SettingsGlassStyleHelper } from '../pages/settings/SettingsGlassStyleHelper';
 import {
   TextReaderSettings,
   TextReaderParams,
@@ -3208,8 +3210,12 @@ export struct TextReaderComponent {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor('#14000000')
-          .backgroundBlurStyle(BlurStyle.Thin)
+          .backgroundColor(DialogSurfaceStyleHelper.getPopupMaskColor())
+          .backgroundBlurStyle(
+            DialogSurfaceStyleHelper.getPopupMaskBlurStyle(),
+            DialogSurfaceStyleHelper.getPopupMaskBlurOptions()
+          )
+          .backgroundEffect(DialogSurfaceStyleHelper.getPopupMaskBackgroundEffect())
           .opacity(this.highlightThoughtPopupMaskOpacity)
           .clip(true)
           .zIndex(0)
@@ -3373,8 +3379,19 @@ export struct TextReaderComponent {
         }
         .width(this.getHighlightThoughtPopupWidthVp())
         .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-        .backgroundColor(this.getContentBackgroundColor())
-        .borderRadius(12)
+        .backgroundColor(SettingsGlassStyleHelper.getSheetBackground())
+        .backgroundBlurStyle(SettingsGlassStyleHelper.getSheetBlurStyle(), SettingsGlassStyleHelper.getSheetBlurOptions())
+        .border({
+          width: SettingsGlassStyleHelper.getSheetBorderWidth(),
+          color: SettingsGlassStyleHelper.getSheetBorderColor()
+        })
+        .borderRadius(SettingsGlassStyleHelper.getSheetRadius())
+        .shadow({
+          radius: SettingsGlassStyleHelper.getSheetRadius() + 4,
+          color: SettingsGlassStyleHelper.getSheetShadowColor(),
+          offsetX: 0,
+          offsetY: 6
+        })
         .position({ x: this.highlightThoughtPopupLeftVp, y: this.highlightThoughtPopupTopVp })
         .opacity(this.highlightThoughtPopupOpacity)
         .scale({ x: this.highlightThoughtPopupScale, y: this.highlightThoughtPopupScale })

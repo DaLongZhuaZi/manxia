@@ -117,6 +117,7 @@ export class SettingKeys {
   // 通知设置
   static readonly ENABLE_DOWNLOAD_NOTIFICATIONS = 'enable_download_notifications';
   static readonly ENABLE_UPDATE_NOTIFICATIONS = 'enable_update_notifications';
+  static readonly SHORTCUT_VISIBLE_IDS = 'shortcut_visible_ids'; // 快捷方式可见ID列表（JSON数组）
   
   // 其他设置
   static readonly AUTO_CHECK_UPDATES = 'auto_check_updates';
@@ -145,6 +146,7 @@ export class SettingKeys {
   static readonly LIBRARY_GRID_AUTHOR_DISPLAY_MODE = 'library_grid_author_display_mode';
   static readonly LIBRARY_GRID_PROGRESS_DISPLAY_MODE = 'library_grid_progress_display_mode';
   static readonly LIBRARY_GRID_DIRECT_COVER_ENABLED = 'library_grid_direct_cover_enabled';
+  static readonly LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED = 'library_grid_cover_type_marker_enabled';
   static readonly LIBRARY_SHELF_DETAIL_DIRECT_COVER_ENABLED = 'library_shelf_detail_direct_cover_enabled';
   
   // 内容过滤设置
@@ -184,7 +186,7 @@ export class SettingKeys {
   static readonly SHELF_CONTENT_ENABLED = 'shelf_content_enabled'; // 统一详情页同书架内容功能开关（默认开启）
   static readonly MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED = 'main_menu_library_cover_open_reader_enabled'; // 主页面书库封面点击直接阅读开关（默认开启）
   static readonly READER_KIT_ENABLED = 'reader_kit_enabled'; // ReaderKit 能力开关（默认开启）
-  static readonly NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED = 'non_main_page_global_background_enabled';
+  static readonly NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED = 'non_main_page_global_background_enabled'; // 非主页面全局背景开关（默认开启）
 }
 
 /**

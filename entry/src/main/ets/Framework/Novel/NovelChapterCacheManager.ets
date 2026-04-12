@@ -274,6 +274,41 @@ export class NovelChapterCacheManager {
       .substring(0, 100); // 限制长度
   }
 
+  private decodeLegacyBookUrlFromCompositeId(bookId: string): string {
+    const separatorIndex = bookId.indexOf('_');
+    if (separatorIndex <= 0 || separatorIndex >= bookId.length - 1) {
+      return '';
+    }
+    const encodedBookUrl = bookId.substring(separatorIndex + 1).trim();
+    if (encodedBookUrl.length <= 0) {
+      return '';
+    }
+    let decodedBookUrl = '';
+    try {
+      decodedBookUrl = decodeURIComponent(encodedBookUrl);
+    } catch (_error) {
+      return '';
+    }
+    const normalized = decodedBookUrl.trim();
+    if (
+      normalized.length <= 0 ||
+      normalized === bookId ||
+      (!normalized.startsWith('http://') && !normalized.startsWith('https://') && !normalized.startsWith('file://'))
+    ) {
+      return '';
+    }
+    return normalized;
+  }
+
+  private getCompatibleBookIds(bookId: string): string[] {
+    const ids: string[] = [bookId];
+    const legacyBookUrl = this.decodeLegacyBookUrlFromCompositeId(bookId);
+    if (legacyBookUrl.length > 0 && legacyBookUrl !== bookId) {
+      ids.push(legacyBookUrl);
+    }
+    return ids;
+  }
+
   private getSourceType(sourceId: string): LegadoBookSourceType {
     const source = this.sourceManager.getSource(sourceId);
     if (!source) {
@@ -613,7 +648,21 @@ export class NovelChapterCacheManager {
   async getChapterAudioCachePath(bookId: string, chapterIndex: number): Promise<string | null> {
     try {
       await this.ensureInitialized();
-      return await this.resolveAudioCachePathByIndex(bookId, chapterIndex);
+      const candidateBookIds = this.getCompatibleBookIds(bookId);
+      for (let i = 0; i < candidateBookIds.length; i++) {
+        const candidateBookId = candidateBookIds[i];
+        const path = await this.resolveAudioCachePathByIndex(candidateBookId, chapterIndex);
+        if (path && path.length > 0) {
+          if (candidateBookId !== bookId) {
+            logger.debug(
+              TAG,
+              `音频缓存命中兼容路径: compositeBookId=${bookId}, legacyBookUrl=${candidateBookId}, chapter=${chapterIndex + 1}`
+            );
+          }
+          return path;
+        }
+      }
+      return null;
     } catch (error) {
       logger.warn(TAG, `获取音频缓存路径失败: ${String(error)}`);
       return null;
@@ -751,39 +800,43 @@ export class NovelChapterCacheManager {
     try {
       // 确保缓存目录已初始化
       await this.ensureInitialized();
-      
-      const bookDir = this.getBookCacheDir(bookId);
-      const chaptersDir = `${bookDir}/chapters`;
       const maxIndex = totalChapters > 0 ? totalChapters : Number.MAX_SAFE_INTEGER;
-      
-      // 检查目录是否存在
-      if (await this.sandboxManager.exists(chaptersDir)) {
-        // 列出目录中的所有txt文件
-        const files = await fileIo.listFile(chaptersDir);
-        for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-          const fileName = files[fileIndex];
-          if (!fileName.endsWith('.txt')) {
-            continue;
-          }
-          // 从文件名提取章节索引（0001.txt -> 0）
-          const index = this.extractChapterIndexFromCacheFileName(fileName);
-          if (!isNaN(index) && index >= 0 && index < maxIndex) {
-            cachedIndexes.add(index);
+
+      const candidateBookIds = this.getCompatibleBookIds(bookId);
+      for (let i = 0; i < candidateBookIds.length; i++) {
+        const candidateBookId = candidateBookIds[i];
+        const bookDir = this.getBookCacheDir(candidateBookId);
+        const chaptersDir = `${bookDir}/chapters`;
+
+        // 检查目录是否存在
+        if (await this.sandboxManager.exists(chaptersDir)) {
+          // 列出目录中的所有txt文件
+          const files = await fileIo.listFile(chaptersDir);
+          for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+            const fileName = files[fileIndex];
+            if (!fileName.endsWith('.txt')) {
+              continue;
+            }
+            // 从文件名提取章节索引（0001.txt -> 0）
+            const index = this.extractChapterIndexFromCacheFileName(fileName);
+            if (!isNaN(index) && index >= 0 && index < maxIndex) {
+              cachedIndexes.add(index);
+            }
           }
         }
-      }
 
-      const audioDir = this.getAudioCacheDir(bookId);
-      if (await this.sandboxManager.exists(audioDir)) {
-        const audioFiles = await fileIo.listFile(audioDir);
-        for (let fileIndex = 0; fileIndex < audioFiles.length; fileIndex++) {
-          const fileName = audioFiles[fileIndex];
-          if (fileName.endsWith('.json')) {
-            continue;
-          }
-          const index = this.extractChapterIndexFromCacheFileName(fileName);
-          if (!isNaN(index) && index >= 0 && index < maxIndex) {
-            cachedIndexes.add(index);
+        const audioDir = this.getAudioCacheDir(candidateBookId);
+        if (await this.sandboxManager.exists(audioDir)) {
+          const audioFiles = await fileIo.listFile(audioDir);
+          for (let fileIndex = 0; fileIndex < audioFiles.length; fileIndex++) {
+            const fileName = audioFiles[fileIndex];
+            if (fileName.endsWith('.json')) {
+              continue;
+            }
+            const index = this.extractChapterIndexFromCacheFileName(fileName);
+            if (!isNaN(index) && index >= 0 && index < maxIndex) {
+              cachedIndexes.add(index);
+            }
           }
         }
       }
@@ -822,19 +875,33 @@ export class NovelChapterCacheManager {
         index = parseInt(parts[parts.length - 1], 10);
         bookId = parts.slice(0, -1).join('_');
       }
-      
-      const filePath = this.getChapterFilePath(bookId, index);
-      
-      // 检查文件是否存在
-      if (!await this.sandboxManager.exists(filePath)) {
-        logger.debug(TAG, `缓存未命中: ${filePath}`);
-        return null;
+
+      const candidateBookIds = this.getCompatibleBookIds(bookId);
+      for (let i = 0; i < candidateBookIds.length; i++) {
+        const candidateBookId = candidateBookIds[i];
+        const filePath = this.getChapterFilePath(candidateBookId, index);
+
+        // 检查文件是否存在
+        if (!await this.sandboxManager.exists(filePath)) {
+          continue;
+        }
+
+        // 读取txt文件内容
+        const content = await this.sandboxManager.readTextFile(filePath);
+        if (candidateBookId !== bookId) {
+          logger.info(
+            TAG,
+            `章节缓存命中兼容路径: compositeBookId=${bookId}, legacyBookUrl=${candidateBookId}, chapter=${index + 1}`
+          );
+        } else {
+          logger.info(TAG, `✅ 缓存命中: ${filePath}, 内容长度=${content?.length || 0}`);
+        }
+        return content;
       }
-      
-      // 读取txt文件内容
-      const content = await this.sandboxManager.readTextFile(filePath);
-      logger.info(TAG, `✅ 缓存命中: ${filePath}, 内容长度=${content?.length || 0}`);
-      return content;
+
+      const missPath = this.getChapterFilePath(bookId, index);
+      logger.debug(TAG, `缓存未命中: ${missPath}`);
+      return null;
     } catch (error) {
       logger.error(TAG, `获取章节缓存失败: ${String(error)}`);
       return null;
@@ -1353,6 +1420,7 @@ export class NovelChapterCacheManager {
    */
   async clearBookCache(bookId: string): Promise<void> {
     try {
+      await this.ensureInitialized();
       const bookDir = this.getBookCacheDir(bookId);
       
       // 检查目录是否存在
@@ -1431,8 +1499,12 @@ export class NovelChapterCacheManager {
           url: ch.url || '',
           title: ch.title || '',
           index: ch.index,
+          isVolume: ch.isVolume || false,
           isVip: ch.isVip || false,
-          isPay: ch.isPay || false
+          isPay: ch.isPay || false,
+          updateTime: ch.updateTime,
+          variable: ch.variable,
+          tag: ch.tag
         };
         chaptersArray.push(chapterItem);
       }
@@ -1459,38 +1531,53 @@ export class NovelChapterCacheManager {
   async getCachedChapterList(bookId: string, maxAgeHours: number = 24): Promise<LegadoChapter[] | null> {
     try {
       await this.ensureInitialized();
-      
-      const bookDir = this.getBookCacheDir(bookId);
-      const chapterListPath = `${bookDir}/chapters_list.json`;
-      
-      // 检查文件是否存在
-      if (!await this.sandboxManager.exists(chapterListPath)) {
-        return null;
-      }
-      
-      // 读取文件
-      const contentBuffer: string | ArrayBuffer = await this.sandboxManager.readFile(chapterListPath);
-      let contentStr: string;
-      if (typeof contentBuffer === 'string') {
-        contentStr = contentBuffer;
-      } else {
-        contentStr = new util.TextDecoder().decode(new Uint8Array(contentBuffer));
-      }
-      const chapterData = JSON.parse(contentStr) as ChapterListCacheData;
-      
       const normalizedMaxAgeHours = Number.isFinite(maxAgeHours) ? Math.max(0, maxAgeHours) : 24;
-      const cacheAgeMs = Date.now() - chapterData.updateTime;
       const maxAgeMs = normalizedMaxAgeHours * 60 * 60 * 1000;
-      if (cacheAgeMs > maxAgeMs) {
-        logger.info(
-          TAG,
-          `章节列表缓存过期: ${bookId}, ageMs=${cacheAgeMs}, maxAgeMs=${maxAgeMs}`
-        );
-        return null;
+
+      const candidateBookIds = this.getCompatibleBookIds(bookId);
+      for (let i = 0; i < candidateBookIds.length; i++) {
+        const candidateBookId = candidateBookIds[i];
+        const bookDir = this.getBookCacheDir(candidateBookId);
+        const chapterListPath = `${bookDir}/chapters_list.json`;
+
+        // 检查文件是否存在
+        if (!await this.sandboxManager.exists(chapterListPath)) {
+          continue;
+        }
+
+        try {
+          // 读取文件
+          const contentBuffer: string | ArrayBuffer = await this.sandboxManager.readFile(chapterListPath);
+          let contentStr: string;
+          if (typeof contentBuffer === 'string') {
+            contentStr = contentBuffer;
+          } else {
+            contentStr = new util.TextDecoder().decode(new Uint8Array(contentBuffer));
+          }
+          const chapterData = JSON.parse(contentStr) as ChapterListCacheData;
+          const cacheAgeMs = Date.now() - chapterData.updateTime;
+          if (cacheAgeMs > maxAgeMs) {
+            logger.info(
+              TAG,
+              `章节列表缓存过期: ${candidateBookId}, ageMs=${cacheAgeMs}, maxAgeMs=${maxAgeMs}`
+            );
+            continue;
+          }
+
+          if (candidateBookId !== bookId) {
+            logger.info(
+              TAG,
+              `从兼容路径加载章节列表缓存: compositeBookId=${bookId}, legacyBookUrl=${candidateBookId}, count=${chapterData.totalCount}`
+            );
+          } else {
+            logger.info(TAG, `从缓存加载章节列表: ${candidateBookId}, ${chapterData.totalCount}章`);
+          }
+          return chapterData.chapters;
+        } catch (singleError) {
+          logger.warn(TAG, `读取章节列表缓存文件失败: ${chapterListPath}, ${String(singleError)}`);
+        }
       }
-      
-      logger.info(TAG, `从缓存加载章节列表: ${bookId}, ${chapterData.totalCount}章`);
-      return chapterData.chapters;
+      return null;
     } catch (error) {
       logger.warn(TAG, `获取缓存章节列表失败: ${String(error)}`);
       return null;

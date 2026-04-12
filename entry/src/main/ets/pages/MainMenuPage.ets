@@ -134,6 +134,7 @@ import { SystemResourcePreviewPage } from './SystemResourcePreviewPage';
 import { HelpCenterPage } from './HelpCenterPage';
 import { FontSettingsSubPage } from './settings/FontSettingsSubPage';
 import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } from './settings/PageSettingsSubPage';
+import { ShortcutSettingsSubPage } from './settings/ShortcutSettingsSubPage';
 import { MainMenuSettingsSubPage } from './settings/MainMenuSettingsSubPage';
 import { SourceFeatureSettingsSubPage } from './settings/SourceFeatureSettingsSubPage';
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
@@ -188,7 +189,7 @@ import { EBookSettingsPage } from './EBookSettingsPage';
 import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { LegadoBook, LegadoSourceImportResult, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoBookSource, LegadoSourceImportResult, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { FontManager } from '../Framework/Managers/FontManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
@@ -503,6 +504,7 @@ interface DynamicFilterTabConfig {
 type ShelfToolbarPlacement = 'top' | 'bottom';
 type LibraryGridInfoDisplayMode = 'hidden' | 'smart' | 'always';
 type LibraryGridCardScope = 'library_grid' | 'category_grid' | 'shelf_detail' | 'discover_grid';
+type LibraryCoverTypeMarker = '漫画' | '小说' | '听书' | '电子书';
 
 interface LibraryResolvedCoverAsset {
   source: ResourceStr | image.PixelMap | string;
@@ -815,7 +817,8 @@ struct MainMenuPage {
   @State isRefreshingBookSource: boolean = false; // 是否正在刷新书源
   @State bookSourceCurrentPage: number = 1; // 书源当前页码
   @State bookSourceHasMore: boolean = true; // 书源是否有更多
-  @State showBookSourcePicker: boolean = false; // 是否显示书源选择器
+  @State showBookSourcePicker: boolean = false; // 是否显示书源筛选对话框
+  @State bookSourceViewMode: LibraryViewMode = LibraryViewMode.LIST; // 书源视图模式（LIST/GRID）
   @State bookSourceSearchInput: string = ''; // 书源搜索输入框
   @State isBookSourceSearchMode: boolean = false; // 是否处于搜索模式
   @State bookSourceKindsExpanded: boolean = false; // 书源发现分类是否展开
@@ -1079,8 +1082,21 @@ struct MainMenuPage {
           .fontSize(11)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(14)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .bindMenu(this.buildLibraryGridDisplayModeMenu('author'))
       }
       .width('100%')
@@ -1097,8 +1113,21 @@ struct MainMenuPage {
           .fontSize(11)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(14)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .bindMenu(this.buildLibraryGridDisplayModeMenu('progress'))
       }
       .width('100%')
@@ -1246,7 +1275,7 @@ struct MainMenuPage {
   @State private initializationProgress: string = '正在初始化...';
 
   // 版本信息
-  @State public appVersion: string = '26.0.0.8';
+  @State public appVersion: string = '26.0.0.9';
   @State public systemVersion: string = '';
 
   @StorageProp('enable_log_floating_window') private enableLogFloatingWindow: boolean = false;
@@ -1529,6 +1558,7 @@ struct MainMenuPage {
     this.checkAndShowChangelog(); // 新版本首次启动显示更新日志
     this.initializeContentData(); // 加载漫画、电子书并提取标签作者
     void this.loadLibraryViewMode();
+    void this.loadBookSourceViewMode();
     this.loadRecentReadingList();
     this.initializeRepositoryManager(); // 初始化仓库管理器（会在完成后自动加载图源列表）
     this.checkSourceUpdates(); // 检查图源更新
@@ -4307,6 +4337,57 @@ struct MainMenuPage {
       logger.error(TAG, `切换视图模式失败: ${error.message}`);
     });
     logger.info(TAG, `切换书库视图模式: ${newMode}`);
+  }
+
+  /**
+   * 加载书源视图模式设置
+   */
+  private async loadBookSourceViewMode(): Promise<void> {
+    try {
+      const viewMode: string | null = await this.dataManager.getUserSetting('default_user', 'book_source_view_mode');
+      if (viewMode === LibraryViewMode.GRID) {
+        this.bookSourceViewMode = LibraryViewMode.GRID;
+      } else {
+        this.bookSourceViewMode = LibraryViewMode.LIST;
+      }
+      logger.info(TAG, `加载书源视图模式: ${this.bookSourceViewMode}`);
+    } catch (error) {
+      logger.warn(TAG, `加载书源视图模式失败，使用默认值: ${String(error)}`);
+      this.bookSourceViewMode = LibraryViewMode.LIST;
+    }
+  }
+
+  /**
+   * 保存书源视图模式设置
+   */
+  private async saveBookSourceViewMode(mode: LibraryViewMode): Promise<void> {
+    try {
+      await this.dataManager.saveUserSetting('default_user', 'book_source_view_mode', mode);
+      logger.info(TAG, `保存书源视图模式: ${mode}`);
+    } catch (error) {
+      logger.error(TAG, `保存书源视图模式失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 切换书源视图模式（列表/焕新封面）
+   */
+  private toggleBookSourceViewMode(): void {
+    const newMode: LibraryViewMode = this.bookSourceViewMode === LibraryViewMode.LIST
+      ? LibraryViewMode.GRID
+      : LibraryViewMode.LIST;
+
+    animateTo({
+      duration: 250,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.bookSourceViewMode = newMode;
+    });
+
+    this.saveBookSourceViewMode(newMode).catch((error: Error) => {
+      logger.error(TAG, `切换书源视图模式失败: ${error.message}`);
+    });
+    logger.info(TAG, `切换书源视图模式: ${newMode}`);
   }
 
   /**
@@ -7219,6 +7300,7 @@ struct MainMenuPage {
   aboutToDisappear() {
     this.stopNavStackReturnWatch();
     logger.lifecycle(TAG, '应用主页面即将销毁');
+    this.showBookSourcePicker = false;
 
     if (this.sideTabCenterTimer >= 0) {
       clearTimeout(this.sideTabCenterTimer);
@@ -7474,6 +7556,7 @@ struct MainMenuPage {
       this.restoreBottomBarAfterMainMenuReturn();
     }
     void this.loadLibraryViewMode();
+    void this.loadBookSourceViewMode();
     if (this.fromGuide && this.guideTargetPageOpened && this.targetPage.length > 0) {
       try {
         if (this.pathStack.size() === 0 && !this.welcomeGuideManager.isGuideCompleted()) {
@@ -9512,7 +9595,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(40)
         .height(40)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           if (this.shouldShowPrivacyExitButton()) {
             this.exitPrivacyLibrary();
@@ -9531,7 +9628,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(40)
         .height(40)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           try {
             this.pathStack.pushPath({ name: 'GlobalSearchPage' });
@@ -9553,7 +9664,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(40)
         .height(40)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.showMoreOptions();
         })
@@ -9608,7 +9733,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(40)
         .height(40)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           if (this.shouldShowPrivacyExitButton()) {
             this.exitPrivacyLibrary();
@@ -9625,7 +9764,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(40)
         .height(40)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           try {
             this.pathStack.pushPath({ name: 'GlobalSearchPage' });
@@ -9645,7 +9798,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(40)
         .height(40)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.showMoreOptions();
         })
@@ -9821,7 +9988,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(34)
         .height(34)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(17)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           if (this.shouldShowPrivacyExitButton()) {
             this.exitPrivacyLibrary();
@@ -9838,7 +10019,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(34)
         .height(34)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(17)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           try {
             this.pathStack.pushPath({ name: 'GlobalSearchPage' });
@@ -9858,7 +10053,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(34)
         .height(34)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(17)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.showMoreOptions();
         })
@@ -9935,27 +10144,21 @@ struct MainMenuPage {
     .type(ButtonType.Circle)
     .width(this.FLOAT_SEARCH_BUTTON_SIZE)
     .height(this.FLOAT_SEARCH_BUTTON_SIZE)
-    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(30, 30, 30, 0.45)'
-      : 'rgba(255, 255, 255, 0.45)')
-    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
-      colorMode: ThemeColorMode.SYSTEM,
-      adaptiveColor: AdaptiveColor.DEFAULT,
-      scale: 1.0
-    })
+    .padding(0)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
+    .clip(true)
     .border({
-      width: 1,
-      color: this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(255, 255, 255, 0.22)'
-        : 'rgba(255, 255, 255, 0.60)'
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
     })
     .shadow({
-      radius: 12,
-      color: this.themeState.currentTheme === ThemeType.DARK
-        ? 'rgba(0, 0, 0, 0.35)'
-        : 'rgba(0, 0, 0, 0.12)',
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
       offsetX: 0,
-      offsetY: 3
+      offsetY: 8
     })
     .onClick(() => {
       this.exitPrivacyLibrary();
@@ -10360,8 +10563,22 @@ struct MainMenuPage {
               .fontSize(14)
               .height(32)
               .fontFamily(this.appFontFamily)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .backgroundColor(this.getSettingsAnalyticsCardBackground())
+              .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+              .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+              .border({
+                width: this.getSettingsAnalyticsCardBorderWidth(),
+                color: this.getSettingsAnalyticsCardBorderColor()
+              })
+              .borderRadius(16)
+              .shadow({
+                radius: this.getSettingsAnalyticsCardRadius(),
+                color: this.getSettingsAnalyticsCardShadowColor(),
+                offsetX: 0,
+                offsetY: 2
+              })
+              .clip(true)
               .onClick(() => {
                 this.changeMainContentToTabIndex(TabIndex.LIBRARY);
               })
@@ -10426,7 +10643,21 @@ struct MainMenuPage {
       .type(ButtonType.Circle)
       .width(38)
       .height(38)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(19)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.exitAllLibraryMultiSelectModes();
       })
@@ -10456,9 +10687,22 @@ struct MainMenuPage {
         .fontSize(14)
         .height(36)
         .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .borderRadius(18)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .padding({ left: 12, right: 12 })
         .onClick(() => {
           this.selectAllLibraryMixedItems();
@@ -10472,7 +10716,21 @@ struct MainMenuPage {
       .type(ButtonType.Circle)
       .width(38)
       .height(38)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
+      })
+      .borderRadius(19)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.showLibraryMixedBatchDeleteConfirm();
       })
@@ -10506,7 +10764,21 @@ struct MainMenuPage {
       .type(ButtonType.Circle)
       .width(38)
       .height(38)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(19)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.exitMultiSelectMode();
       })
@@ -10529,9 +10801,22 @@ struct MainMenuPage {
         .fontSize(14)
         .height(36)
         .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .borderRadius(18)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .padding({ left: 12, right: 12 })
         .onClick(() => {
           this.selectAllManga();
@@ -10545,7 +10830,21 @@ struct MainMenuPage {
       .type(ButtonType.Circle)
       .width(38)
       .height(38)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
+      })
+      .borderRadius(19)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.showBatchDeleteConfirm();
       })
@@ -10579,7 +10878,21 @@ struct MainMenuPage {
       .type(ButtonType.Circle)
       .width(38)
       .height(38)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(19)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.exitEBookMultiSelectMode();
       })
@@ -10602,9 +10915,22 @@ struct MainMenuPage {
         .fontSize(14)
         .height(36)
         .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .borderRadius(18)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .padding({ left: 12, right: 12 })
         .onClick(() => {
           this.selectAllEBooks();
@@ -10618,7 +10944,21 @@ struct MainMenuPage {
       .type(ButtonType.Circle)
       .width(38)
       .height(38)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
+      })
+      .borderRadius(19)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.showEBookBatchDeleteConfirm();
       })
@@ -10652,7 +10992,21 @@ struct MainMenuPage {
       .type(ButtonType.Circle)
       .width(38)
       .height(38)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(19)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.exitNovelMultiSelectMode();
       })
@@ -10675,9 +11029,22 @@ struct MainMenuPage {
         .fontSize(14)
         .height(36)
         .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .borderRadius(18)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .padding({ left: 12, right: 12 })
         .onClick(() => {
           this.selectAllNovels();
@@ -10691,7 +11058,21 @@ struct MainMenuPage {
       .type(ButtonType.Circle)
       .width(38)
       .height(38)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
+      })
+      .borderRadius(19)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.showNovelBatchDeleteConfirm();
       })
@@ -10810,8 +11191,21 @@ struct MainMenuPage {
     }
     .height(30)
     .padding({ left: 10, right: 10 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
     .borderRadius(15)
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius(),
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 2
+    })
+    .clip(true)
     .onClick(() => {
       animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
         this.isShelfEditMode = !this.isShelfEditMode;
@@ -10994,7 +11388,7 @@ struct MainMenuPage {
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-      Text('作者与进度仅影响默认网格视图，焕新封面同时作用于书库视图')
+      Text('作者与进度仅影响默认网格视图，封面类型标记与焕新封面会作用于书库封面视图')
         .fontSize(11)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -11035,8 +11429,21 @@ struct MainMenuPage {
           .fontSize(11)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(14)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .bindMenu(this.buildLibraryGridDisplayModeMenu('author'))
       }
       .width('100%')
@@ -11053,8 +11460,21 @@ struct MainMenuPage {
           .fontSize(11)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(14)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .bindMenu(this.buildLibraryGridDisplayModeMenu('progress'))
       }
       .width('100%')
@@ -11073,8 +11493,38 @@ struct MainMenuPage {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('封面类型标记（需重启）')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.libraryCoverTypeMarkerEnabledSetting })
+          .onChange((isOn: boolean) => {
+            this.updateLibraryCoverTypeMarkerEnabled(isOn);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
     }
+    .width('100%')
     .padding(12)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 2,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 4
+    })
+    .clip(true)
   }
 
   @Builder
@@ -11085,11 +11535,27 @@ struct MainMenuPage {
       .fontFamily(this.appFontFamily)
       .type(ButtonType.ROUNDED_RECTANGLE)
       .backgroundColor(this.libraryFilterType === filterType
-        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-        : Color.Transparent)
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+        : this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
       .fontColor(this.libraryFilterType === filterType
-        ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.libraryFilterType === filterType
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(16)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.applyLibraryFilterSelection(filterType);
       })
@@ -11117,7 +11583,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(34)
         .height(34)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(17)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.toggleLibraryViewMode();
         })
@@ -11130,7 +11610,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(34)
         .height(34)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(17)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.showLibrarySortPopup = false;
           this.showLibraryGridSettingsPopup = true;
@@ -11139,6 +11633,7 @@ struct MainMenuPage {
           builder: this.buildLibraryGridSettingsPopup(),
           placement: Placement.Bottom,
           width: '248vp',
+          popupColor: Color.Transparent,
           onStateChange: (e) => {
             if (!e.isVisible) {
               this.showLibraryGridSettingsPopup = false;
@@ -11154,7 +11649,21 @@ struct MainMenuPage {
         .type(ButtonType.Circle)
         .width(34)
         .height(34)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(17)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.showLibraryGridSettingsPopup = false;
           this.showLibrarySortPopup = true;
@@ -11362,7 +11871,9 @@ struct MainMenuPage {
   @StorageProp('library_grid_progress_display_mode')
   private libraryGridProgressDisplayModeSetting: string = 'smart';
   @StorageProp('library_grid_direct_cover_enabled')
-  private libraryRenewedCoverEnabledSetting: boolean = false;
+  private libraryRenewedCoverEnabledSetting: boolean = true;
+  @StorageProp('library_grid_cover_type_marker_enabled')
+  private libraryCoverTypeMarkerEnabledSetting: boolean = true;
   private lastShelfGridColumnsLogged: number = -1;
   private lastLibraryDefaultGridColumnsLogged: number = -1;
 
@@ -11643,7 +12154,7 @@ struct MainMenuPage {
 
     const settingsRenewedCover = this.settingsManager.getBoolean(
       SettingKeys.LIBRARY_GRID_DIRECT_COVER_ENABLED,
-      false
+      true
     );
     const appStorageRenewedCover = this.parseShelfBooleanValue(
       AppStorage.get(SettingKeys.LIBRARY_GRID_DIRECT_COVER_ENABLED) as boolean | number | string | null | undefined
@@ -11659,7 +12170,7 @@ struct MainMenuPage {
       ?? legacyAppStorageShelfDetailRenewedCover
       ?? settingsRenewedCover
       ?? legacySettingsShelfDetailRenewedCover
-      ?? false;
+      ?? true;
     this.libraryRenewedCoverEnabledSetting = finalRenewedCover;
     AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_DIRECT_COVER_ENABLED, finalRenewedCover);
 
@@ -11671,9 +12182,30 @@ struct MainMenuPage {
       );
     }
 
+    const settingsCoverTypeMarkerEnabled = this.settingsManager.getBoolean(
+      SettingKeys.LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED,
+      true
+    );
+    const appStorageCoverTypeMarkerEnabled = this.parseShelfBooleanValue(
+      AppStorage.get(SettingKeys.LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED) as boolean | number | string | null | undefined
+    );
+    const finalCoverTypeMarkerEnabled = appStorageCoverTypeMarkerEnabled
+      ?? settingsCoverTypeMarkerEnabled
+      ?? true;
+    this.libraryCoverTypeMarkerEnabledSetting = finalCoverTypeMarkerEnabled;
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED, finalCoverTypeMarkerEnabled);
+
+    if (settingsCoverTypeMarkerEnabled !== finalCoverTypeMarkerEnabled) {
+      this.persistLibraryGridBooleanSetting(
+        SettingKeys.LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED,
+        finalCoverTypeMarkerEnabled,
+        '封面类型标记'
+      );
+    }
+
     logger.info(
       TAG,
-      `[书架网格] 初始化完成: 默认视图每行内容数量=${this.libraryDefaultGridColumnsSetting}, 每行书籍数量=${this.shelfGridColumnsSetting}, 木质书架纹理=${this.hideWoodShelfTexture ? '关闭' : '开启'}, 筛选栏位置=${this.getShelfToolbarPlacementLabel(finalToolbarPlacement)}, 作者显示=${this.getLibraryGridInfoDisplayModeLabel(finalAuthorDisplayMode)}, 阅读进度显示=${this.getLibraryGridInfoDisplayModeLabel(finalProgressDisplayMode)}, 焕新封面=${finalRenewedCover ? '开启' : '关闭'}`
+      `[书架网格] 初始化完成: 默认视图每行内容数量=${this.libraryDefaultGridColumnsSetting}, 每行书籍数量=${this.shelfGridColumnsSetting}, 木质书架纹理=${this.hideWoodShelfTexture ? '关闭' : '开启'}, 筛选栏位置=${this.getShelfToolbarPlacementLabel(finalToolbarPlacement)}, 作者显示=${this.getLibraryGridInfoDisplayModeLabel(finalAuthorDisplayMode)}, 阅读进度显示=${this.getLibraryGridInfoDisplayModeLabel(finalProgressDisplayMode)}, 焕新封面=${finalRenewedCover ? '开启' : '关闭'}, 封面类型标记=${finalCoverTypeMarkerEnabled ? '开启' : '关闭'}`
     );
   }
 
@@ -11755,6 +12287,22 @@ struct MainMenuPage {
       '焕新封面'
     );
     logger.info(TAG, `[书架网格] 焕新封面已${enabled ? '开启' : '关闭'}`);
+  }
+
+  private updateLibraryCoverTypeMarkerEnabled(enabled: boolean): void {
+    if (this.libraryCoverTypeMarkerEnabledSetting === enabled) {
+      return;
+    }
+    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      this.libraryCoverTypeMarkerEnabledSetting = enabled;
+      AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED, enabled);
+    });
+    this.persistLibraryGridBooleanSetting(
+      SettingKeys.LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED,
+      enabled,
+      '封面类型标记'
+    );
+    logger.info(TAG, `[书架网格] 封面类型标记已${enabled ? '开启' : '关闭'}`);
   }
 
   private completeShelfPreviewAdjustments(): void {
@@ -12197,7 +12745,21 @@ struct MainMenuPage {
       }
       .width(44)
       .height(44)
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(16)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.beginShelfDetailExitAnimation();
         setTimeout(() => {
@@ -12525,7 +13087,21 @@ struct MainMenuPage {
           }
           .width(32)
           .height(32)
-          .backgroundColor(Color.Transparent)
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
+          })
+          .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .position({ x: '100%', y: 0 })
           .translate({ x: -32, y: 2 })
           .onClick(() => {
@@ -12823,9 +13399,22 @@ struct MainMenuPage {
         .height(28)
         .fontSize(11)
         .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
         .borderRadius(14)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.completeShelfPreviewAdjustments();
         })
@@ -15772,8 +16361,21 @@ struct MainMenuPage {
         }
         .height(32)
         .padding({ left: 10, right: 10 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
         .borderRadius(16)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .bindMenu(this.buildCustomShelfSortMenu())
 
         // 标签筛选按钮
@@ -15796,8 +16398,23 @@ struct MainMenuPage {
         .padding({ left: 10, right: 10 })
         .backgroundColor(this.customShelfSelectedTags.size > 0
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          : this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.customShelfSelectedTags.size > 0
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : this.getSettingsAnalyticsCardBorderColor()
+        })
         .borderRadius(16)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.extractShelfTagsAndAuthors();
           this.showCustomShelfTagPopup = true;
@@ -15832,8 +16449,23 @@ struct MainMenuPage {
         .padding({ left: 10, right: 10 })
         .backgroundColor(this.customShelfSelectedAuthors.size > 0
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          : this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.customShelfSelectedAuthors.size > 0
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : this.getSettingsAnalyticsCardBorderColor()
+        })
         .borderRadius(16)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.extractShelfTagsAndAuthors();
           this.showCustomShelfAuthorPopup = true;
@@ -15859,7 +16491,21 @@ struct MainMenuPage {
           }
           .width(32)
           .height(32)
-          .backgroundColor(Color.Transparent)
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => {
             this.customShelfSelectedTags.clear();
             this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
@@ -15937,12 +16583,27 @@ struct MainMenuPage {
                 .margin(2)
                 .fontFamily(this.appFontFamily)
                 .backgroundColor(this.customShelfSelectedTags.has(tag)
-                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+                  : this.getSettingsAnalyticsCardBackground())
+                .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
                 .fontColor(this.customShelfSelectedTags.has(tag)
-                  ? Color.White
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                   : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .border({
+                  width: this.getSettingsAnalyticsCardBorderWidth(),
+                  color: this.customShelfSelectedTags.has(tag)
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : this.getSettingsAnalyticsCardBorderColor()
+                })
                 .borderRadius(14)
+                .shadow({
+                  radius: this.getSettingsAnalyticsCardRadius(),
+                  color: this.getSettingsAnalyticsCardShadowColor(),
+                  offsetX: 0,
+                  offsetY: 2
+                })
+                .clip(true)
                 .onClick(() => {
                   if (this.customShelfSelectedTags.has(tag)) {
                     this.customShelfSelectedTags.delete(tag);
@@ -15991,12 +16652,27 @@ struct MainMenuPage {
                 .margin(2)
                 .fontFamily(this.appFontFamily)
                 .backgroundColor(this.customShelfSelectedAuthors.has(author)
-                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+                  : this.getSettingsAnalyticsCardBackground())
+                .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
                 .fontColor(this.customShelfSelectedAuthors.has(author)
-                  ? Color.White
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                   : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .border({
+                  width: this.getSettingsAnalyticsCardBorderWidth(),
+                  color: this.customShelfSelectedAuthors.has(author)
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : this.getSettingsAnalyticsCardBorderColor()
+                })
                 .borderRadius(14)
+                .shadow({
+                  radius: this.getSettingsAnalyticsCardRadius(),
+                  color: this.getSettingsAnalyticsCardShadowColor(),
+                  offsetX: 0,
+                  offsetY: 2
+                })
+                .clip(true)
                 .onClick(() => {
                   if (this.customShelfSelectedAuthors.has(author)) {
                     this.customShelfSelectedAuthors.delete(author);
@@ -16691,7 +17367,21 @@ struct MainMenuPage {
         }
         .width(44)
         .height(44)
-        .backgroundColor(Color.Transparent)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(16)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           animateTo({
             duration: 300,
@@ -16728,11 +17418,27 @@ struct MainMenuPage {
           .height(32)
           .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryFilterType === LibraryFilterType.ALL
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+            : this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
           .fontColor(this.libraryFilterType === LibraryFilterType.ALL
-            ? Color.White
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.libraryFilterType === LibraryFilterType.ALL
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => {
             this.libraryFilterType = LibraryFilterType.ALL;
           })
@@ -16748,11 +17454,27 @@ struct MainMenuPage {
           .height(32)
           .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryContentType === LibraryContentType.MANGA
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+            : this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
           .fontColor(this.libraryContentType === LibraryContentType.MANGA
-            ? Color.White
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.libraryContentType === LibraryContentType.MANGA
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => {
             this.libraryContentType = LibraryContentType.MANGA;
           })
@@ -16762,11 +17484,27 @@ struct MainMenuPage {
           .height(32)
           .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryContentType === LibraryContentType.EBOOK
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+            : this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
           .fontColor(this.libraryContentType === LibraryContentType.EBOOK
-            ? Color.White
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.libraryContentType === LibraryContentType.EBOOK
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => {
             this.libraryContentType = LibraryContentType.EBOOK;
           })
@@ -16776,11 +17514,27 @@ struct MainMenuPage {
           .height(32)
           .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryContentType === LibraryContentType.NOVEL
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+            : this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
           .fontColor(this.libraryContentType === LibraryContentType.NOVEL
-            ? Color.White
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.libraryContentType === LibraryContentType.NOVEL
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => {
             this.libraryContentType = LibraryContentType.NOVEL;
           })
@@ -17109,6 +17863,216 @@ struct MainMenuPage {
     return this.libraryRenewedCoverEnabledSetting;
   }
 
+  private shouldShowLibraryCoverTypeMarker(anchorScope: LibraryGridCardScope): boolean {
+    if (!this.libraryCoverTypeMarkerEnabledSetting) {
+      return false;
+    }
+    return anchorScope === 'library_grid' || anchorScope === 'category_grid' || anchorScope === 'shelf_detail';
+  }
+
+  private normalizeNovelSourceLookupId(sourceId: string): string {
+    let normalized: string = sourceId.trim();
+    const extensionSeparator: number = normalized.indexOf('##');
+    if (extensionSeparator >= 0) {
+      normalized = normalized.substring(0, extensionSeparator).trim();
+    }
+    const fragmentIndex: number = normalized.indexOf('#');
+    if (fragmentIndex >= 0) {
+      normalized = normalized.substring(0, fragmentIndex).trim();
+    }
+    if (normalized.length > 1 && normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
+  }
+
+  private appendNovelSourceLookupCandidate(candidates: string[], candidate: string): void {
+    const normalizedCandidate: string = candidate.trim();
+    if (normalizedCandidate.length <= 0) {
+      return;
+    }
+    if (!candidates.includes(normalizedCandidate)) {
+      candidates.push(normalizedCandidate);
+    }
+  }
+
+  private extractNovelSourceDomainId(sourceId: string): string {
+    const match = sourceId.match(/^(https?:\/\/[^\/?#]+)/i);
+    if (match && match[1]) {
+      return match[1];
+    }
+    return sourceId;
+  }
+
+  private buildNovelSourceLookupCandidates(sourceId: string): string[] {
+    const candidates: string[] = [];
+    const trimmedSourceId: string = sourceId.trim();
+    const normalizedSourceId: string = this.normalizeNovelSourceLookupId(trimmedSourceId);
+    this.appendNovelSourceLookupCandidate(candidates, trimmedSourceId);
+    this.appendNovelSourceLookupCandidate(candidates, normalizedSourceId);
+    if (normalizedSourceId.length > 0) {
+      this.appendNovelSourceLookupCandidate(candidates, `${normalizedSourceId}/`);
+    }
+
+    const domainId: string = this.extractNovelSourceDomainId(normalizedSourceId);
+    this.appendNovelSourceLookupCandidate(candidates, domainId);
+    if (domainId.length > 0) {
+      this.appendNovelSourceLookupCandidate(candidates, `${domainId}/`);
+    }
+
+    if (normalizedSourceId.startsWith('http://')) {
+      const httpsVariant: string = `https://${normalizedSourceId.substring('http://'.length)}`;
+      this.appendNovelSourceLookupCandidate(candidates, httpsVariant);
+      this.appendNovelSourceLookupCandidate(candidates, `${httpsVariant}/`);
+    } else if (normalizedSourceId.startsWith('https://')) {
+      const httpVariant: string = `http://${normalizedSourceId.substring('https://'.length)}`;
+      this.appendNovelSourceLookupCandidate(candidates, httpVariant);
+      this.appendNovelSourceLookupCandidate(candidates, `${httpVariant}/`);
+    } else if (normalizedSourceId.length > 0 && normalizedSourceId.indexOf('://') < 0) {
+      const httpsVariantNoScheme: string = `https://${normalizedSourceId}`;
+      const httpVariantNoScheme: string = `http://${normalizedSourceId}`;
+      this.appendNovelSourceLookupCandidate(candidates, httpsVariantNoScheme);
+      this.appendNovelSourceLookupCandidate(candidates, `${httpsVariantNoScheme}/`);
+      this.appendNovelSourceLookupCandidate(candidates, httpVariantNoScheme);
+      this.appendNovelSourceLookupCandidate(candidates, `${httpVariantNoScheme}/`);
+    }
+
+    return candidates;
+  }
+
+  private extractNovelHostFromUrl(url: string): string {
+    const match = url.trim().match(/^(?:https?:\/\/)?([^\/?#]+)/i);
+    if (match && match[1]) {
+      return match[1].toLowerCase();
+    }
+    return '';
+  }
+
+  private areNovelSourceHostsCompatible(sourceUrl: string, bookUrl: string): boolean {
+    const sourceHost: string = this.extractNovelHostFromUrl(sourceUrl);
+    const bookHost: string = this.extractNovelHostFromUrl(bookUrl);
+    if (sourceHost.length <= 0 || bookHost.length <= 0) {
+      return true;
+    }
+    if (sourceHost === bookHost) {
+      return true;
+    }
+    if (sourceHost.endsWith(`.${bookHost}`) || bookHost.endsWith(`.${sourceHost}`)) {
+      return true;
+    }
+    return false;
+  }
+
+  private normalizeNovelSourceName(sourceName: string): string {
+    return sourceName.trim().replace(/\s+/g, '').toLowerCase();
+  }
+
+  private isNovelSourceNameCompatible(expectedSourceName: string, actualSourceName: string): boolean {
+    const normalizedExpected: string = this.normalizeNovelSourceName(expectedSourceName);
+    const normalizedActual: string = this.normalizeNovelSourceName(actualSourceName);
+    if (normalizedExpected.length <= 0 || normalizedActual.length <= 0) {
+      return true;
+    }
+    if (normalizedExpected === normalizedActual) {
+      return true;
+    }
+    if (normalizedExpected.includes(normalizedActual) || normalizedActual.includes(normalizedExpected)) {
+      return true;
+    }
+    return false;
+  }
+
+  private resolveNovelSourceForMarker(novel: NovelBook): LegadoBookSource | null {
+    const sourceId: string = typeof novel.sourceId === 'string' ? novel.sourceId.trim() : '';
+    if (sourceId.length <= 0) {
+      return null;
+    }
+
+    const sourceName: string = typeof novel.sourceName === 'string' ? novel.sourceName.trim() : '';
+    const bookUrl: string = typeof novel.bookUrl === 'string' ? novel.bookUrl.trim() : '';
+    const sourceManager: NovelSourceManager = getNovelSourceManager();
+    const lookupCandidates: string[] = this.buildNovelSourceLookupCandidates(sourceId);
+
+    for (const candidate of lookupCandidates) {
+      const source = sourceManager.getSource(candidate);
+      if (!source) {
+        continue;
+      }
+      const sourceUrl: string = typeof source.bookSourceUrl === 'string' ? source.bookSourceUrl.trim() : '';
+      const sourceBookName: string = typeof source.bookSourceName === 'string' ? source.bookSourceName.trim() : '';
+      if (!this.isNovelSourceNameCompatible(sourceName, sourceBookName)) {
+        continue;
+      }
+      if (!this.areNovelSourceHostsCompatible(sourceUrl, bookUrl)) {
+        continue;
+      }
+      return source;
+    }
+
+    return null;
+  }
+
+  private isReadAloudNovelBook(novel: NovelBook): boolean {
+    const source: LegadoBookSource | null = this.resolveNovelSourceForMarker(novel);
+    if (!source) {
+      return false;
+    }
+    return source.bookSourceType === LegadoBookSourceType.AUDIO;
+  }
+
+  private getNovelCoverTypeMarker(novel: NovelBook): LibraryCoverTypeMarker {
+    return this.isReadAloudNovelBook(novel) ? '听书' : '小说';
+  }
+
+  private getLibraryCoverTypeMarkerBackground(marker: LibraryCoverTypeMarker): ResourceColor {
+    const alpha: number = this.themeState.currentTheme === ThemeType.DARK ? 0.90 : 0.92;
+    switch (marker) {
+      case '漫画':
+        return AppColors.withAlpha(ColorRole.INFO, alpha);
+      case '电子书':
+        return AppColors.withAlpha(ColorRole.WARNING, alpha);
+      case '听书':
+        return AppColors.withAlpha(ColorRole.SUCCESS, alpha);
+      case '小说':
+      default:
+        return AppColors.withAlpha(ColorRole.PRIMARY, alpha);
+    }
+  }
+
+  private getLibraryCoverTypeMarkerTextColor(marker: LibraryCoverTypeMarker): ResourceColor {
+    switch (marker) {
+      case '漫画':
+        return AppColors.getColor(ColorRole.ON_INFO);
+      case '电子书':
+        return AppColors.getColor(ColorRole.ON_WARNING);
+      case '听书':
+        return AppColors.getColor(ColorRole.ON_SUCCESS);
+      case '小说':
+      default:
+        return AppColors.getColor(ColorRole.ON_PRIMARY);
+    }
+  }
+
+  @Builder
+  private buildLibraryCoverTypeMarkerOverlay(marker: LibraryCoverTypeMarker) {
+    Column() {
+      Text(marker)
+        .fontSize(10)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getLibraryCoverTypeMarkerTextColor(marker))
+        .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+        .backgroundColor(this.getLibraryCoverTypeMarkerBackground(marker))
+        .borderRadius(999)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Start)
+    .alignItems(HorizontalAlign.End)
+    .padding(8)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
   private getLibraryDirectCoverBorderColor(selected: boolean): ResourceColor {
     if (selected) {
       return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
@@ -17208,8 +18172,7 @@ struct MainMenuPage {
     asset: LibraryResolvedCoverAsset,
     selected: boolean,
     showSelection: boolean,
-    badgeText: string = '',
-    badgeBackgroundColor: ResourceColor = Color.Transparent,
+    badgeText: LibraryCoverTypeMarker | '' = '',
     manga?: Manga
   ) {
     Stack() {
@@ -17244,23 +18207,8 @@ struct MainMenuPage {
         .alignItems(HorizontalAlign.Center)
       }
 
-      if (badgeText.length > 0) {
-        Column() {
-          Text(badgeText)
-            .fontSize(10)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .backgroundColor(badgeBackgroundColor)
-            .borderRadius(999)
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Start)
-        .alignItems(HorizontalAlign.End)
-        .padding(8)
-        .hitTestBehavior(HitTestMode.None)
+      if (badgeText.length > 0 && !showSelection) {
+        this.buildLibraryCoverTypeMarkerOverlay(badgeText as LibraryCoverTypeMarker)
       }
 
       if (showSelection) {
@@ -17304,8 +18252,7 @@ struct MainMenuPage {
           this.resolveMangaCoverAsset(manga),
           this.selectedMangaIds.has(manga.id),
           this.isMultiSelectMode,
-          '',
-          Color.Transparent,
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMultiSelectMode ? '漫画' : '',
           manga
         )
       }
@@ -17393,7 +18340,8 @@ struct MainMenuPage {
         this.buildLibraryDirectCoverSurface(
           this.resolveEBookCoverAsset(ebook),
           this.selectedEBookIds.has(ebook.id),
-          this.isEBookMultiSelectMode
+          this.isEBookMultiSelectMode,
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isEBookMultiSelectMode ? '电子书' : ''
         )
       }
       .width('100%')
@@ -17480,7 +18428,10 @@ struct MainMenuPage {
         this.buildLibraryDirectCoverSurface(
           this.resolveNovelCoverAsset(novel),
           this.selectedNovelIds.has(novel.id),
-          this.isNovelMultiSelectMode
+          this.isNovelMultiSelectMode,
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isNovelMultiSelectMode
+            ? this.getNovelCoverTypeMarker(novel)
+            : ''
         )
       }
       .width('100%')
@@ -17568,8 +18519,7 @@ struct MainMenuPage {
           this.resolvePdfEBookCoverAsset(manga),
           this.selectedMangaIds.has(manga.id),
           this.isMultiSelectMode,
-          'PDF',
-          AppColors.error
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMultiSelectMode ? '电子书' : ''
         )
       }
       .width('100%')
@@ -17704,6 +18654,10 @@ struct MainMenuPage {
               logger.warn('MainMenuPage', `主页网格封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
             })
             .id(`library_manga_${manga.id}`)
+        }
+
+        if (!this.isMultiSelectMode && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+          this.buildLibraryCoverTypeMarkerOverlay('漫画')
         }
 
         // 多选模式蒙版层
@@ -17868,7 +18822,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const mangaToMove = this.contextMenuManga;
         this.hideMangaContextMenu();
@@ -17897,7 +18865,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const mangaToToggle = this.contextMenuManga;
         this.hideMangaContextMenu();
@@ -17926,7 +18908,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const mangaToSelect = this.contextMenuManga;
         this.hideMangaContextMenu();
@@ -17957,7 +18953,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const mangaToDelete = this.contextMenuManga;
         this.hideMangaContextMenu();
@@ -18104,7 +19114,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const ebookToMove = this.contextMenuEBook;
         this.hideEBookContextMenu();
@@ -18133,7 +19157,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const ebookToToggle = this.contextMenuEBook;
         this.hideEBookContextMenu();
@@ -18162,7 +19200,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const ebookToSelect = this.contextMenuEBook;
         this.hideEBookContextMenu();
@@ -18193,7 +19245,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const ebookToDelete = this.contextMenuEBook;
         this.hideEBookContextMenu();
@@ -18229,7 +19295,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const novelToMove = this.contextMenuNovel;
         this.hideNovelContextMenu();
@@ -18258,7 +19338,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const novelToToggle = this.contextMenuNovel;
         this.hideNovelContextMenu();
@@ -18287,7 +19381,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const novelToSelect = this.contextMenuNovel;
         this.hideNovelContextMenu();
@@ -18318,7 +19426,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         const novelToDelete = this.contextMenuNovel;
         this.hideNovelContextMenu();
@@ -19354,6 +20476,20 @@ struct MainMenuPage {
         readerParams.chapterStartOffset = lastReadPosition;
       }
 
+      if (sourceType === LegadoBookSourceType.AUDIO) {
+        readerParams.autoStartReadAloud = true;
+        readerParams.coverComponentId = undefined;
+        AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', 'MainMenuPage');
+        AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
+        AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
+        logger.info(
+          TAG,
+          `书库封面听书直达播放器: 书籍=${novel.name}, 章节索引=${safeChapterIndex}, 图源=${novel.sourceId}, 章节地址=${chapterUrl}`
+        );
+        this.pathStack.pushPathByName('ReadAloudPlayerPage', readerParams);
+        return;
+      }
+
       const coverPath = displayCoverPath;
       const transitionBookId = this.getNovelTransitionBookId(novel);
       startBookOpenTransitionWithComponentId(
@@ -19362,11 +20498,7 @@ struct MainMenuPage {
         transitionBookId,
         'novel',
         () => {
-          if (sourceType === LegadoBookSourceType.AUDIO) {
-            this.pathStack.pushPathByName('NovelReadAloudPage', readerParams);
-          } else {
-            this.pathStack.pushPathByName('NovelReaderPage', readerParams);
-          }
+          this.pathStack.pushPathByName('NovelReaderPage', readerParams);
         },
         undefined,
         {
@@ -19856,11 +20988,15 @@ struct MainMenuPage {
         .borderRadius(this.getCoverImageRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
-        .shadow({
-            radius: 8,
-            color: AppColors.getShadowColor(4),
-            offsetY: 4
-          })
+          .shadow({
+              radius: 8,
+              color: AppColors.getShadowColor(4),
+              offsetY: 4
+            })
+
+          if (!this.isEBookMultiSelectMode && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+            this.buildLibraryCoverTypeMarkerOverlay('电子书')
+          }
 
           // 多选模式蒙版层
           if (this.isEBookMultiSelectMode) {
@@ -20213,6 +21349,10 @@ struct MainMenuPage {
             .borderRadius(4)
             .position({ x: 4, y: 4 })
             .hitTestBehavior(HitTestMode.None)
+        }
+
+        if (!this.isNovelMultiSelectMode && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+          this.buildLibraryCoverTypeMarkerOverlay(this.getNovelCoverTypeMarker(novel))
         }
 
         // 多选模式蒙版层
@@ -20621,22 +21761,9 @@ struct MainMenuPage {
             offsetY: 4
           })
 
-          // PDF标识
-          Column() {
-            Text('PDF')
-              .fontSize(10)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-              .backgroundColor(AppColors.error)
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .borderRadius(4)
+          if (!this.isMultiSelectMode && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+            this.buildLibraryCoverTypeMarkerOverlay('电子书')
           }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Start)
-          .alignItems(HorizontalAlign.End)
-          .padding(8)
-          .hitTestBehavior(HitTestMode.None)
 
           if (this.isMultiSelectMode) {
             Column()
@@ -20747,6 +21874,21 @@ struct MainMenuPage {
         .width('100%')
         .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.applyLibraryFilterSelection(LibraryFilterType.ALL);
           this.showLibraryFilterPopup = false;
@@ -20756,6 +21898,21 @@ struct MainMenuPage {
         .width('100%')
         .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.applyLibraryFilterSelection(LibraryFilterType.UNREAD);
           this.showLibraryFilterPopup = false;
@@ -20765,6 +21922,21 @@ struct MainMenuPage {
         .width('100%')
         .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.applyLibraryFilterSelection(LibraryFilterType.READING);
           this.showLibraryFilterPopup = false;
@@ -21313,8 +22485,23 @@ struct MainMenuPage {
         .padding({ left: 12, right: 12, top: 8, bottom: 8 })
         .backgroundColor(this.selectedTags.size > 0
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          : this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.selectedTags.size > 0
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : this.getSettingsAnalyticsCardBorderColor()
+        })
         .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.showTagPopup = true;
         })
@@ -21354,8 +22541,23 @@ struct MainMenuPage {
         .padding({ left: 12, right: 12, top: 8, bottom: 8 })
         .backgroundColor(this.selectedAuthors.size > 0
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          : this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.selectedAuthors.size > 0
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : this.getSettingsAnalyticsCardBorderColor()
+        })
         .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.showAuthorPopup = true;
         })
@@ -21383,12 +22585,27 @@ struct MainMenuPage {
           .fontFamily(this.appFontFamily)
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor(this.discoverContentType === 'all' ?
-            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-            ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+            this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
           .fontColor(this.discoverContentType === 'all' ?
-            ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
             ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.discoverContentType === 'all'
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => {
             animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
               this.discoverContentType = 'all';
@@ -21401,14 +22618,29 @@ struct MainMenuPage {
           .fontFamily(this.appFontFamily)
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor(this.discoverContentType === 'manga' ?
-            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-            ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+            this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
           .fontColor(this.discoverContentType === 'manga' ?
-            ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
             (this.filteredMangaCount === 0 ?
               ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
               ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)))
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.discoverContentType === 'manga'
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .opacity(this.filteredMangaCount === 0 && this.discoverContentType !== 'manga' ? 0.5 : 1)
           .onClick(() => {
             if (this.filteredMangaCount > 0 || this.discoverContentType === 'manga') {
@@ -21424,14 +22656,29 @@ struct MainMenuPage {
           .fontFamily(this.appFontFamily)
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor(this.discoverContentType === 'ebook' ?
-            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-            ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+            this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
           .fontColor(this.discoverContentType === 'ebook' ?
-            ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
             (this.filteredEBookCount === 0 ?
               ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
               ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)))
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.discoverContentType === 'ebook'
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .opacity(this.filteredEBookCount === 0 && this.discoverContentType !== 'ebook' ? 0.5 : 1)
           .onClick(() => {
             if (this.filteredEBookCount > 0 || this.discoverContentType === 'ebook') {
@@ -21447,14 +22694,29 @@ struct MainMenuPage {
           .fontFamily(this.appFontFamily)
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor(this.discoverContentType === 'novel' ?
-            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-            ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+            this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
           .fontColor(this.discoverContentType === 'novel' ?
-            ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
             (this.filteredNovelCount === 0 ?
               ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
               ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)))
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.discoverContentType === 'novel'
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(16)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .opacity(this.filteredNovelCount === 0 && this.discoverContentType !== 'novel' ? 0.5 : 1)
           .onClick(() => {
             if (this.filteredNovelCount > 0 || this.discoverContentType === 'novel') {
@@ -21999,8 +23261,21 @@ struct MainMenuPage {
         }
         .width(40)
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .bindMenu([
           {
             value: 'Pixiv - 作品ID',
@@ -22042,8 +23317,21 @@ struct MainMenuPage {
         }
         .width(40)
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.openProxyConfigDialog();
         })
@@ -22060,7 +23348,22 @@ struct MainMenuPage {
           Button('图源管理')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .backgroundColor(this.getSettingsAnalyticsCardBackground())
+            .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+            .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+            .border({
+              width: this.getSettingsAnalyticsCardBorderWidth(),
+              color: this.getSettingsAnalyticsCardBorderColor()
+            })
+            .borderRadius(16)
+            .shadow({
+              radius: this.getSettingsAnalyticsCardRadius(),
+              color: this.getSettingsAnalyticsCardShadowColor(),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .clip(true)
             .onClick(() => {
               this.pathStack.pushPathByName('SourceManagementPage', null);
             })
@@ -22068,7 +23371,22 @@ struct MainMenuPage {
           Button('图源导入')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .backgroundColor(this.getSettingsAnalyticsCardBackground())
+            .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+            .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+            .border({
+              width: this.getSettingsAnalyticsCardBorderWidth(),
+              color: this.getSettingsAnalyticsCardBorderColor()
+            })
+            .borderRadius(16)
+            .shadow({
+              radius: this.getSettingsAnalyticsCardRadius(),
+              color: this.getSettingsAnalyticsCardShadowColor(),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .clip(true)
             .onClick(() => {
               this.openSourceRepoDialog();
             })
@@ -22093,7 +23411,21 @@ struct MainMenuPage {
           .type(ButtonType.Circle)
           .width(36)
           .height(36)
-          .backgroundColor(Color.Transparent)
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(18)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => {
             this.cycleSourceTypeFilter();
           })
@@ -22109,7 +23441,21 @@ struct MainMenuPage {
           .type(ButtonType.Circle)
           .width(36)
           .height(36)
-          .backgroundColor(Color.Transparent)
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(18)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => {
             // 使用动画过渡切换视图模式
             animateTo({
@@ -22792,9 +24138,13 @@ struct MainMenuPage {
       this.isBookSourceSearchMode = false;
       this.bookSourceSearchInput = '';
       this.showBookSourcePicker = false;
+      this.bookSourceSearchKeyword = '';
+      this.filterBookSourceList(this.bookSourceSearchKeyword);
       await this.loadBookSourceExploreKinds();
     } else {
       this.showBookSourcePicker = false;
+      this.bookSourceSearchKeyword = '';
+      this.filterBookSourceList(this.bookSourceSearchKeyword);
     }
   }
 
@@ -22855,18 +24205,80 @@ struct MainMenuPage {
       // 顶部避让空间（为顶部导航栏留出空间）
       Blank().height(this.getInitialTopOverlaySpacerHeight())
 
-      // 搜索栏
+      // 顶部操作栏（移除搜索框，当前书源移至顶部）
       Row({ space: 8 }) {
-        Search({ value: this.bookSourceSearchInput, placeholder: '搜索小说（在当前书源中搜索）' })
-          .searchButton('搜索')
-          .layoutWeight(1)
-          .onChange((value: string) => {
-            this.bookSourceSearchInput = value;
-          })
-          .onSubmit(() => {
-            this.performBookSourceSearch();
-          })
-        
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.text_book_closed'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          Text(this.selectedBookSourceName || '选择书源')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(14)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .rotate({ angle: this.showBookSourcePicker ? 180 : 0 })
+            .animation({ duration: 200 })
+        }
+        .layoutWeight(1)
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(20)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
+        .onClick(() => {
+          this.bookSourceSearchKeyword = '';
+          this.filterBookSourceList(this.bookSourceSearchKeyword);
+          this.showBookSourcePicker = true;
+        })
+
+        // 书源搜索按钮（去掉顶部搜索框后改为入口按钮）
+        Button() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .width(40)
+        .height(40)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
+        .onClick(() => {
+          const params: NovelSearchPageParams = {};
+          if (this.selectedBookSourceId) {
+            params.sourceId = this.selectedBookSourceId;
+            params.sourceName = this.selectedBookSourceName;
+          }
+          this.pathStack.pushPathByName('NovelSearchPage', params);
+        })
+
         // 小说设置按钮
         Button() {
           SymbolGlyph($r('sys.symbol.gearshape'))
@@ -22875,8 +24287,21 @@ struct MainMenuPage {
         }
         .width(40)
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.pathStack.pushPathByName('NovelSettingsPage', null);
         })
@@ -22889,8 +24314,21 @@ struct MainMenuPage {
         }
         .width(40)
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.pathStack.pushPathByName('NovelSourceManagementPage', null);
         })
@@ -22899,34 +24337,8 @@ struct MainMenuPage {
       .padding(16)
       .backgroundColor(Color.Transparent)
 
-      // 功能按钮行
+      // 状态行
       Row({ space: 12 }) {
-        // 书源选择按钮
-        Row({ space: 6 }) {
-          SymbolGlyph($r('sys.symbol.text_book_closed'))
-            .fontSize(16)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-          Text(this.selectedBookSourceName || '选择书源')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .constraintSize({ maxWidth: 150 })
-          SymbolGlyph($r('sys.symbol.chevron_down'))
-            .fontSize(14)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-            .rotate({ angle: this.showBookSourcePicker ? 180 : 0 })
-            .animation({ duration: 200 })
-        }
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-        .borderRadius(20)
-        .onClick(() => {
-          this.showBookSourcePicker = !this.showBookSourcePicker;
-        })
-        
-        // 清除搜索按钮（搜索模式下显示）
         if (this.isBookSourceSearchMode) {
           Row({ space: 6 }) {
             SymbolGlyph($r('sys.symbol.xmark_circle'))
@@ -22938,18 +24350,34 @@ struct MainMenuPage {
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           }
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
           .borderRadius(20)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
           .onClick(() => this.clearBookSourceSearch())
         }
-        
+
         Blank()
-        
-        // 书源统计
-        Text(`共 ${this.bookSourceList.length} 个书源`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+
+        Row({ space: 8 }) {
+          Text(`共 ${this.bookSourceList.length} 个书源`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getBookSourceReadableTertiaryColor())
+
+          this.buildBookSourceViewModeToggleButton()
+        }
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 12 })
@@ -22968,7 +24396,7 @@ struct MainMenuPage {
             Text(`(${this.bookSourceExploreKinds.length})`)
               .fontSize(12)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .fontColor(this.getBookSourceReadableTertiaryColor())
               .margin({ left: 4 })
             
             Blank()
@@ -22984,8 +24412,21 @@ struct MainMenuPage {
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
             }
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .backgroundColor(this.getSettingsAnalyticsCardBackground())
+            .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+            .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+            .border({
+              width: this.getSettingsAnalyticsCardBorderWidth(),
+              color: this.getSettingsAnalyticsCardBorderColor()
+            })
             .borderRadius(12)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+            .shadow({
+              radius: this.getSettingsAnalyticsCardRadius(),
+              color: this.getSettingsAnalyticsCardShadowColor(),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .clip(true)
             .onClick(() => {
               animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
                 this.bookSourceKindsExpanded = !this.bookSourceKindsExpanded;
@@ -23005,12 +24446,27 @@ struct MainMenuPage {
                   .fontFamily(this.appFontFamily)
                   .padding({ left: 16, right: 16, top: 6, bottom: 6 })
                   .backgroundColor(this.selectedBookSourceKindIndex === index ?
-                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-                    ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+                    this.getSettingsAnalyticsCardBackground())
+                  .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                  .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
                   .fontColor(this.selectedBookSourceKindIndex === index ?
-                    ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
                     ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .border({
+                    width: this.getSettingsAnalyticsCardBorderWidth(),
+                    color: this.selectedBookSourceKindIndex === index ?
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                      this.getSettingsAnalyticsCardBorderColor()
+                  })
                   .borderRadius(16)
+                  .shadow({
+                    radius: this.getSettingsAnalyticsCardRadius(),
+                    color: this.getSettingsAnalyticsCardShadowColor(),
+                    offsetX: 0,
+                    offsetY: 2
+                  })
+                  .clip(true)
                   .margin({ right: 8, bottom: 8 })
                   .onClick(() => this.selectBookSourceKind(index))
               })
@@ -23027,12 +24483,27 @@ struct MainMenuPage {
                     .fontFamily(this.appFontFamily)
                     .padding({ left: 16, right: 16, top: 6, bottom: 6 })
                     .backgroundColor(this.selectedBookSourceKindIndex === index ?
-                      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-                      ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+                      this.getSettingsAnalyticsCardBackground())
+                    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
                     .fontColor(this.selectedBookSourceKindIndex === index ?
-                      ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
                       ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .border({
+                      width: this.getSettingsAnalyticsCardBorderWidth(),
+                      color: this.selectedBookSourceKindIndex === index ?
+                        ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                        this.getSettingsAnalyticsCardBorderColor()
+                    })
                     .borderRadius(16)
+                    .shadow({
+                      radius: this.getSettingsAnalyticsCardRadius(),
+                      color: this.getSettingsAnalyticsCardShadowColor(),
+                      offsetX: 0,
+                      offsetY: 2
+                    })
+                    .clip(true)
                     .onClick(() => this.selectBookSourceKind(index))
                 })
               }
@@ -23060,7 +24531,7 @@ struct MainMenuPage {
               Text('初始化书源模块...')
                 .fontSize(14)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .fontColor(this.getBookSourceReadableTertiaryColor())
             }
             .width('100%')
             .padding(40)
@@ -23070,25 +24541,25 @@ struct MainMenuPage {
             Column({ space: 12 }) {
               SymbolGlyph($r('sys.symbol.text_book_closed'))
                 .fontSize(64)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+                .fontColor([this.getBookSourceReadableMutedColor()])
                 .opacity(0.3)
-              
+               
               Text('暂无支持发现功能的书源')
                 .fontSize(16)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              
+                .fontColor(this.getBookSourceReadableMutedColor())
+               
               Column({ space: 8 }) {
                 Text('请导入包含发现规则的书源')
                   .fontSize(14)
                   .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .fontColor(this.getBookSourceReadableMutedColor())
                   .textAlign(TextAlign.Center)
                 
                 Text('点击右上角的书籍图标进入书源管理')
                   .fontSize(13)
                   .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .fontColor(this.getBookSourceReadableMutedColor())
                   .opacity(0.8)
                   .textAlign(TextAlign.Center)
               }
@@ -23096,7 +24567,22 @@ struct MainMenuPage {
               Button('管理书源')
                 .fontSize(14)
                 .margin({ top: 8 })
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                .backgroundColor(this.getSettingsAnalyticsCardBackground())
+                .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+                .border({
+                  width: this.getSettingsAnalyticsCardBorderWidth(),
+                  color: this.getSettingsAnalyticsCardBorderColor()
+                })
+                .borderRadius(16)
+                .shadow({
+                  radius: this.getSettingsAnalyticsCardRadius(),
+                  color: this.getSettingsAnalyticsCardShadowColor(),
+                  offsetX: 0,
+                  offsetY: 2
+                })
+                .clip(true)
                 .onClick(() => {
                   this.pathStack.pushPathByName('NovelSourceManagementPage', null);
                 })
@@ -23114,7 +24600,7 @@ struct MainMenuPage {
               Text('加载中...')
                 .fontSize(14)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .fontColor(this.getBookSourceReadableTertiaryColor())
             }
             .width('100%')
             .padding(40)
@@ -23124,29 +24610,49 @@ struct MainMenuPage {
             Column({ space: 12 }) {
               SymbolGlyph($r('sys.symbol.magnifyingglass'))
                 .fontSize(64)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+                .fontColor([this.getBookSourceReadableMutedColor()])
                 .opacity(0.3)
-              
+               
               Text('未找到相关小说')
                 .fontSize(16)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              
+                .fontColor(this.getBookSourceReadableMutedColor())
+               
               Text('请尝试其他关键词或切换书源')
                 .fontSize(14)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .fontColor(this.getBookSourceReadableMutedColor())
             }
             .width('100%')
             .padding(40)
             .justifyContent(FlexAlign.Center)
           } else {
-            // 书籍列表
-            Column({ space: 8 }) {
-              ForEach(this.bookSourceBooks, (book: NovelSearchResult) => {
-                this.buildBookItem(book)
-              }, (book: NovelSearchResult) => `book_${book.bookUrl}`)
-              
+            Column({ space: 10 }) {
+              if (this.bookSourceViewMode === LibraryViewMode.LIST) {
+                Column({ space: 8 }) {
+                  ForEach(this.bookSourceBooks, (book: NovelSearchResult) => {
+                    this.buildBookItem(book)
+                  }, (book: NovelSearchResult) => `book_list_${book.bookUrl}`)
+                }
+                .width('100%')
+                .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
+              }
+
+              if (this.bookSourceViewMode === LibraryViewMode.GRID) {
+                Grid() {
+                  ForEach(this.bookSourceBooks, (book: NovelSearchResult) => {
+                    GridItem() {
+                      this.buildBookSourceGridCard(book)
+                    }
+                  }, (book: NovelSearchResult) => `book_grid_${book.bookUrl}`)
+                }
+                .columnsTemplate(this.getLibraryGridColumnsTemplate())
+                .columnsGap(this.responsive_gridGap)
+                .rowsGap(this.responsive_gridGap)
+                .width('100%')
+                .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
+              }
+
               // 加载更多提示
               if (this.bookSourceHasMore) {
                 Row() {
@@ -23155,18 +24661,33 @@ struct MainMenuPage {
                     Text('加载中...')
                       .fontSize(12)
                       .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+                      .fontColor(this.getBookSourceReadableTertiaryColor())
                       .margin({ left: 8 })
                   } else {
                     Text('上拉加载更多')
                       .fontSize(12)
                       .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+                      .fontColor(this.getBookSourceReadableTertiaryColor())
                   }
                 }
                 .width('100%')
                 .height(48)
                 .justifyContent(FlexAlign.Center)
+                .backgroundColor(this.getSettingsAnalyticsCardBackground())
+                .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+                .borderRadius(this.getSettingsAnalyticsCardRadius())
+                .clip(true)
+                .border({
+                  width: this.getSettingsAnalyticsCardBorderWidth(),
+                  color: this.getSettingsAnalyticsCardBorderColor()
+                })
+                .shadow({
+                  radius: this.getSettingsAnalyticsCardRadius() + 1,
+                  color: this.getSettingsAnalyticsCardShadowColor(),
+                  offsetX: 0,
+                  offsetY: 3
+                })
               }
             }
             .width('100%')
@@ -23216,115 +24737,159 @@ struct MainMenuPage {
         .hitTestBehavior(HitTestMode.None)
       }
 
-      // 书源选择弹窗（使用动画显示/隐藏）
-      Column() {
-        // 点击空白区域关闭
-        Column()
-          .width('100%')
-          .layoutWeight(1)
-          .onClick(() => {
-            this.showBookSourcePicker = false;
-          })
-        
-        // 书源选择器内容
-        this.buildBookSourcePickerContent()
-      }
-      .width('100%')
-      .height('100%')
-      .position({ x: 0, y: 0 })
-      .translate({ y: this.showBookSourcePicker ? 0 : '100%' })
-      .animation({
-        duration: 300,
-        curve: Curve.EaseOut
-      })
-      .hitTestBehavior(this.showBookSourcePicker ? HitTestMode.Default : HitTestMode.None)
     }
     .width('100%')
     .height('100%')
   }
 
   /**
-   * 构建书源选择器内容
+   * 构建书源筛选对话框
    */
   @Builder
   buildBookSourcePickerContent() {
     Column() {
-      // 拖拽手柄
-      Row() {
-        Column()
-          .width(40)
-          .height(4)
-          .borderRadius(2)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
-      }
-      .width('100%')
-      .height(20)
-      .justifyContent(FlexAlign.Center)
-      
-      // 标题栏
-      Row() {
-        Text('选择书源')
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Blank()
-        Text(`共 ${this.filteredBookSourceList.length} 个`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-      }
-      .width('100%')
-      .height(40)
-      .padding({ left: 16, right: 16 })
-      
-      // 分割线
-      Divider()
-        .strokeWidth(0.5)
-        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
-      
-      // 书源列表
-      List({ scroller: this.bookSourceListScroller }) {
-        ForEach(this.filteredBookSourceList, (source: NovelSourceInfo) => {
-          ListItem() {
-            Row() {
-              Text(source.name)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontColor(this.selectedBookSourceId === source.id ?
-                  ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-                  ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .fontWeight(this.selectedBookSourceId === source.id ? FontWeight.Medium : FontWeight.Normal)
-                .layoutWeight(1)
-              if (this.selectedBookSourceId === source.id) {
-                SymbolGlyph($r('sys.symbol.checkmark'))
-                  .fontSize(20)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-              }
-            }
-            .width('100%')
-            .height(48)
-            .padding({ left: 16, right: 16 })
-            .backgroundColor(this.selectedBookSourceId === source.id ?
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
-              Color.Transparent)
-            .onClick(() => this.selectBookSource(source))
+      Column({ space: 12 }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.text_book_closed'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('书源筛选')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Text(`共 ${this.filteredBookSourceList.length} 个`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getBookSourceReadableTertiaryColor())
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
           }
-        })
+          .width(30)
+          .height(30)
+          .backgroundColor(this.getSettingsAnalyticsCardBackground())
+          .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+          .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+          .border({
+            width: this.getSettingsAnalyticsCardBorderWidth(),
+            color: this.getSettingsAnalyticsCardBorderColor()
+          })
+          .borderRadius(15)
+          .shadow({
+            radius: this.getSettingsAnalyticsCardRadius(),
+            color: this.getSettingsAnalyticsCardShadowColor(),
+            offsetX: 0,
+            offsetY: 2
+          })
+          .clip(true)
+          .onClick(() => {
+            this.showBookSourcePicker = false;
+            this.bookSourceSearchKeyword = '';
+            this.filterBookSourceList(this.bookSourceSearchKeyword);
+          })
+        }
+        .width('100%')
+
+        TextInput({ placeholder: '输入书源名称进行筛选', text: this.bookSourceSearchKeyword })
+          .width('100%')
+          .height(42)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(8)
+          .onChange((value: string) => {
+            this.bookSourceSearchKeyword = value;
+            this.filterBookSourceList(value);
+          })
+
+        if (this.filteredBookSourceList.length > 0) {
+          List({ scroller: this.bookSourceListScroller }) {
+            ForEach(this.filteredBookSourceList, (source: NovelSourceInfo) => {
+              ListItem() {
+                Row() {
+                  Text(source.name)
+                    .fontSize(14)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.selectedBookSourceId === source.id ?
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                      ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .fontWeight(this.selectedBookSourceId === source.id ? FontWeight.Medium : FontWeight.Normal)
+                    .layoutWeight(1)
+                  if (this.selectedBookSourceId === source.id) {
+                    SymbolGlyph($r('sys.symbol.checkmark'))
+                      .fontSize(20)
+                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                  }
+                }
+                .width('100%')
+                .height(48)
+                .padding({ left: 16, right: 16 })
+                .backgroundColor(this.selectedBookSourceId === source.id ?
+                  ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+                  Color.Transparent)
+                .onClick(() => this.selectBookSource(source))
+              }
+            })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .divider({ strokeWidth: 0.5, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
+          .onAppear(() => {
+            this.scrollToSelectedBookSource();
+          })
+        } else {
+          Column({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(40)
+              .fontColor([this.getBookSourceReadableMutedColor()])
+              .opacity(0.45)
+            Text('未匹配到书源')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getBookSourceReadableMutedColor())
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        }
       }
-      .width('100%')
-      .layoutWeight(1)
-      .divider({ strokeWidth: 0.5, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
-      .onAppear(() => {
-        // 自动滚动到当前选中的书源
-        this.scrollToSelectedBookSource();
+      .width('85%')
+      .height('72%')
+      .constraintSize({ maxWidth: 520 })
+      .padding(20)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .borderRadius(this.getSettingsAnalyticsCardRadius())
+      .clip(true)
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
       })
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius() + 4,
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 8
+      })
+      .onClick(() => {})
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.scale({ x: 0.9, y: 0.9 })))
     }
     .width('100%')
-    .height('50%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-    .borderRadius({ topLeft: 16, topRight: 16 })
-    .shadow({ radius: 16, color: 'rgba(0, 0, 0, 0.15)', offsetY: -4 })
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('rgba(14, 20, 31, 0.28)')
+    .position({ x: 0, y: 0 })
+    .zIndex(1000)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .transition(TransitionEffect.OPACITY.animation({ duration: 150 }))
+    .onClick(() => {
+      this.showBookSourcePicker = false;
+      this.bookSourceSearchKeyword = '';
+      this.filterBookSourceList(this.bookSourceSearchKeyword);
+    })
   }
 
   /**
@@ -23340,6 +24905,109 @@ struct MainMenuPage {
         this.bookSourceListScroller.scrollToIndex(selectedIndex, true, ScrollAlign.CENTER);
       }, 100);
     }
+  }
+
+  private resolveBookSourceGridCoverAsset(book: NovelSearchResult): LibraryResolvedCoverAsset {
+    const rawCoverPath = typeof book.coverUrl === 'string' ? book.coverUrl.trim() : '';
+    return this.buildLibraryResolvedCoverAsset(rawCoverPath, $r('app.media.ic_source_novel'));
+  }
+
+  private getBookSourceReadableMutedColor(): ResourceColor {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme);
+  }
+
+  private getBookSourceReadableTertiaryColor(): ResourceColor {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme);
+  }
+
+  @Builder
+  buildBookSourceViewModeToggleButton() {
+    Row({ space: 6 }) {
+      SymbolGlyph(this.bookSourceViewMode === LibraryViewMode.LIST
+        ? $r('sys.symbol.list_bullet')
+        : $r('sys.symbol.square_grid_2x2'))
+        .fontSize(16)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+      Text(this.bookSourceViewMode === LibraryViewMode.LIST ? '列表' : '封面')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getBookSourceReadableTertiaryColor())
+    }
+    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .borderRadius(16)
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius(),
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 2
+    })
+    .onClick(() => {
+      this.toggleBookSourceViewMode();
+    })
+  }
+
+  @Builder
+  buildBookSourceGridCard(book: NovelSearchResult) {
+    Column({ space: 8 }) {
+      Stack() {
+        this.buildLibraryDirectCoverSurface(
+          this.resolveBookSourceGridCoverAsset(book),
+          false,
+          false
+        )
+      }
+      .width('100%')
+      .onClick(() => this.openBookDetail(book))
+
+      Column({ space: 4 }) {
+        Text(book.name)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        Text(book.author || '未知作者')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getBookSourceReadableTertiaryColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        if (book.latestChapterTitle) {
+          Text(book.latestChapterTitle)
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getBookSourceReadableTertiaryColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: 2, right: 2 })
+      .onClick(() => this.openBookDetail(book))
+    }
+    .width('100%')
+    .padding({ left: 2, right: 2, top: 4, bottom: 6 })
+    .onClick(() => this.openBookDetail(book))
   }
 
   @Builder
@@ -23375,13 +25043,13 @@ struct MainMenuPage {
         Text(book.author || '未知作者')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getBookSourceReadableTertiaryColor())
           .margin({ top: 4 })
         if (book.intro) {
           Text(book.intro)
             .fontSize(11)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .fontColor(this.getBookSourceReadableTertiaryColor())
             .margin({ top: 4 })
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -23393,8 +25061,21 @@ struct MainMenuPage {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 2,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 4
+    })
     .margin({ bottom: 8 })
     .onClick(() => this.openBookDetail(book))
   }
@@ -23857,8 +25538,21 @@ struct MainMenuPage {
         }
         .width(40)
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           this.pathStack.pushPathByName('SuwayomiSettingsPage', null);
         })
@@ -23870,8 +25564,21 @@ struct MainMenuPage {
         }
         .width(40)
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(12)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
         .onClick(() => {
           // 使用动画过渡切换显示模式（与书库LIST/GRID切换动画保持一致）
           animateTo({
@@ -23916,8 +25623,21 @@ struct MainMenuPage {
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
             }
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .backgroundColor(this.getSettingsAnalyticsCardBackground())
+            .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+            .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+            .border({
+              width: this.getSettingsAnalyticsCardBorderWidth(),
+              color: this.getSettingsAnalyticsCardBorderColor()
+            })
             .borderRadius(12)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+            .shadow({
+              radius: this.getSettingsAnalyticsCardRadius(),
+              color: this.getSettingsAnalyticsCardShadowColor(),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .clip(true)
             .onClick(() => {
               animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
                 this.suwayomiCategoriesExpanded = !this.suwayomiCategoriesExpanded;
@@ -23937,9 +25657,24 @@ struct MainMenuPage {
                   ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                 .backgroundColor(this.suwayomiSelectedCategoryId === -1 ?
-                  ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-                  ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+                  this.getSettingsAnalyticsCardBackground())
+                .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
                 .borderRadius(16)
+                .border({
+                  width: this.getSettingsAnalyticsCardBorderWidth(),
+                  color: this.suwayomiSelectedCategoryId === -1 ?
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+                    this.getSettingsAnalyticsCardBorderColor()
+                })
+                .shadow({
+                  radius: this.getSettingsAnalyticsCardRadius(),
+                  color: this.getSettingsAnalyticsCardShadowColor(),
+                  offsetX: 0,
+                  offsetY: 2
+                })
+                .clip(true)
                 .fontFamily(this.appFontFamily)
                 .margin({ right: 8, bottom: 8 })
                 .onClick(() => {
@@ -23959,9 +25694,24 @@ struct MainMenuPage {
                     ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                   .backgroundColor(this.suwayomiSelectedCategoryId === category.id ?
-                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-                    ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+                    this.getSettingsAnalyticsCardBackground())
+                  .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                  .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
                   .borderRadius(16)
+                  .border({
+                    width: this.getSettingsAnalyticsCardBorderWidth(),
+                    color: this.suwayomiSelectedCategoryId === category.id ?
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+                      this.getSettingsAnalyticsCardBorderColor()
+                  })
+                  .shadow({
+                    radius: this.getSettingsAnalyticsCardRadius(),
+                    color: this.getSettingsAnalyticsCardShadowColor(),
+                    offsetX: 0,
+                    offsetY: 2
+                  })
+                  .clip(true)
                   .fontFamily(this.appFontFamily)
                   .margin({ right: 8, bottom: 8 })
                   .onClick(() => {
@@ -23988,9 +25738,24 @@ struct MainMenuPage {
                     ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                   .backgroundColor(this.suwayomiSelectedCategoryId === -1 ?
-                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-                    ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+                    this.getSettingsAnalyticsCardBackground())
+                  .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                  .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
                   .borderRadius(16)
+                  .border({
+                    width: this.getSettingsAnalyticsCardBorderWidth(),
+                    color: this.suwayomiSelectedCategoryId === -1 ?
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+                      this.getSettingsAnalyticsCardBorderColor()
+                  })
+                  .shadow({
+                    radius: this.getSettingsAnalyticsCardRadius(),
+                    color: this.getSettingsAnalyticsCardShadowColor(),
+                    offsetX: 0,
+                    offsetY: 2
+                  })
+                  .clip(true)
                   .fontFamily(this.appFontFamily)
                   .onClick(() => {
                     // 使用动画过渡切换分类
@@ -24009,9 +25774,24 @@ struct MainMenuPage {
                       ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                     .backgroundColor(this.suwayomiSelectedCategoryId === category.id ?
-                      ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-                      ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+                      this.getSettingsAnalyticsCardBackground())
+                    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
                     .borderRadius(16)
+                    .border({
+                      width: this.getSettingsAnalyticsCardBorderWidth(),
+                      color: this.suwayomiSelectedCategoryId === category.id ?
+                        ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+                        this.getSettingsAnalyticsCardBorderColor()
+                    })
+                    .shadow({
+                      radius: this.getSettingsAnalyticsCardRadius(),
+                      color: this.getSettingsAnalyticsCardShadowColor(),
+                      offsetX: 0,
+                      offsetY: 2
+                    })
+                    .clip(true)
                     .fontFamily(this.appFontFamily)
                     .onClick(() => {
                       // 使用动画过渡切换分类
@@ -24048,8 +25828,23 @@ struct MainMenuPage {
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
               .backgroundColor(this.suwayomiSelectedLanguage === 'all' ?
                 ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
-                ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                this.getSettingsAnalyticsCardBackground())
+              .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+              .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+              .border({
+                width: this.getSettingsAnalyticsCardBorderWidth(),
+                color: this.suwayomiSelectedLanguage === 'all'
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : this.getSettingsAnalyticsCardBorderColor()
+              })
               .borderRadius(16)
+              .shadow({
+                radius: this.getSettingsAnalyticsCardRadius(),
+                color: this.getSettingsAnalyticsCardShadowColor(),
+                offsetX: 0,
+                offsetY: 2
+              })
+              .clip(true)
               .fontFamily(this.appFontFamily)
               .onClick(() => {
                 // 使用动画过渡切换语言
@@ -24069,8 +25864,23 @@ struct MainMenuPage {
                 .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                 .backgroundColor(this.suwayomiSelectedLanguage === lang ?
                   ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
-                  ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  this.getSettingsAnalyticsCardBackground())
+                .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+                .border({
+                  width: this.getSettingsAnalyticsCardBorderWidth(),
+                  color: this.suwayomiSelectedLanguage === lang
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                    : this.getSettingsAnalyticsCardBorderColor()
+                })
                 .borderRadius(16)
+                .shadow({
+                  radius: this.getSettingsAnalyticsCardRadius(),
+                  color: this.getSettingsAnalyticsCardShadowColor(),
+                  offsetX: 0,
+                  offsetY: 2
+                })
+                .clip(true)
                 .fontFamily(this.appFontFamily)
                 .onClick(() => {
                   // 使用动画过渡切换语言
@@ -24102,8 +25912,21 @@ struct MainMenuPage {
             .fontSize(13)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .backgroundColor(this.getSettingsAnalyticsCardBackground())
+            .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+            .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+            .border({
+              width: this.getSettingsAnalyticsCardBorderWidth(),
+              color: this.getSettingsAnalyticsCardBorderColor()
+            })
             .borderRadius(12)
+            .shadow({
+              radius: this.getSettingsAnalyticsCardRadius(),
+              color: this.getSettingsAnalyticsCardShadowColor(),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .clip(true)
             .fontFamily(this.appFontFamily)
             .bindMenu(this.buildSuwayomiSortMenu())
           Blank()
@@ -24148,8 +25971,22 @@ struct MainMenuPage {
             .textAlign(TextAlign.Center)
             .fontFamily(this.appFontFamily)
           Button('打开设置')
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .fontColor(Color.White)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .backgroundColor(this.getSettingsAnalyticsCardBackground())
+            .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+            .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+            .border({
+              width: this.getSettingsAnalyticsCardBorderWidth(),
+              color: this.getSettingsAnalyticsCardBorderColor()
+            })
+            .borderRadius(16)
+            .shadow({
+              radius: this.getSettingsAnalyticsCardRadius(),
+              color: this.getSettingsAnalyticsCardShadowColor(),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .clip(true)
             .onClick(() => {
               this.pathStack.pushPathByName('SuwayomiSettingsPage', null);
             })
@@ -24261,7 +26098,21 @@ struct MainMenuPage {
                     .width('100%')
                     .height(44)
                     .margin({ top: 16 })
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+                    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+                    .border({
+                      width: this.getSettingsAnalyticsCardBorderWidth(),
+                      color: this.getSettingsAnalyticsCardBorderColor()
+                    })
+                    .borderRadius(16)
+                    .shadow({
+                      radius: this.getSettingsAnalyticsCardRadius(),
+                      color: this.getSettingsAnalyticsCardShadowColor(),
+                      offsetX: 0,
+                      offsetY: 2
+                    })
+                    .clip(true)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .onClick(() => {
                       this.loadSuwayomiLibrary(false);
@@ -24288,7 +26139,21 @@ struct MainMenuPage {
                   Button('加载更多')
                     .width('100%')
                     .height(44)
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+                    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+                    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+                    .border({
+                      width: this.getSettingsAnalyticsCardBorderWidth(),
+                      color: this.getSettingsAnalyticsCardBorderColor()
+                    })
+                    .borderRadius(16)
+                    .shadow({
+                      radius: this.getSettingsAnalyticsCardRadius(),
+                      color: this.getSettingsAnalyticsCardShadowColor(),
+                      offsetX: 0,
+                      offsetY: 2
+                    })
+                    .clip(true)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .onClick(() => {
                       this.loadSuwayomiLibrary(false);
@@ -24574,7 +26439,21 @@ struct MainMenuPage {
       }
       .width(36)
       .height(36)
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(18)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         this.toggleSuwayomiSourcePin(source.id);
       })
@@ -25433,7 +27312,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: this.getSettingsAnalyticsCardBorderColor()
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         logger.info(TAG, '点击编辑按钮');
         const sourceToEdit = this.contextMenuSource;
@@ -25463,7 +27356,21 @@ struct MainMenuPage {
       .width('100%')
       .height(44)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.getSettingsAnalyticsCardBackground())
+      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+      .border({
+        width: this.getSettingsAnalyticsCardBorderWidth(),
+        color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
+      })
+      .borderRadius(10)
+      .shadow({
+        radius: this.getSettingsAnalyticsCardRadius(),
+        color: this.getSettingsAnalyticsCardShadowColor(),
+        offsetX: 0,
+        offsetY: 2
+      })
+      .clip(true)
       .onClick(() => {
         logger.info(TAG, '点击删除按钮');
         const sourceToDelete = this.contextMenuSource;
@@ -26540,6 +28447,8 @@ struct MainMenuPage {
         FontSettingsSubPage()
       } else if (name === 'PageSettingsSubPage') {
         PageSettingsSubPage()
+      } else if (name === 'ShortcutSettingsSubPage') {
+        ShortcutSettingsSubPage()
       } else if (name === 'MainMenuSettingsSubPage') {
         MainMenuSettingsSubPage()
       } else if (name === 'SourceFeatureSettingsSubPage') {
@@ -27950,6 +29859,7 @@ struct MainMenuPage {
       this.loadUserThemeConfig();
       this.loadVisibleTabs();
       void this.loadLibraryViewMode();
+      void this.loadBookSourceViewMode();
       if (tabIndex === TabIndex.KOMGA) {
         this.komgaTabRefreshSignal = this.komgaTabRefreshSignal + 1;
       }
@@ -28246,6 +30156,11 @@ struct MainMenuPage {
           .height('100%')
           .zIndex(2001)
           .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+        }
+
+        // 书源筛选对话框（提升到根层，确保遮罩可沉浸到系统状态栏）
+        if (this.showBookSourcePicker && this.currentTabIndex === TabIndex.BOOK_SOURCE) {
+          this.buildBookSourcePickerContent()
         }
 
         // 标签自定义对话框（从底部滑入）

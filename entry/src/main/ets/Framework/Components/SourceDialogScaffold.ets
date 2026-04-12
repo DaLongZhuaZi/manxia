@@ -1,4 +1,4 @@
-import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
+import { ThemeAwareState } from './ThemeAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 
 export enum SourceDialogLayoutMode {
@@ -28,8 +28,10 @@ export struct SourceDialogScaffold {
   @Prop contentPadding: number = 16;
   @Prop contentScrollable: boolean = false;
   @Prop useMaskBlur: boolean = true;
-  @Prop maskBlurStyle: BlurStyle = BlurStyle.BACKGROUND_THIN;
-  @Prop maskColor: ResourceColor = $r('app.color.system_resource_background_overlay');
+  @Prop maskBlurStyle: BlurStyle = DialogSurfaceStyleHelper.getPopupMaskBlurStyle();
+  @Prop maskBlurOptions: BackgroundBlurStyleOptions = DialogSurfaceStyleHelper.getPopupMaskBlurOptions();
+  @Prop maskColor: ResourceColor = DialogSurfaceStyleHelper.getPopupMaskColor();
+  @Prop maskBackgroundEffect: BackgroundEffectOptions | undefined = DialogSurfaceStyleHelper.getPopupMaskBackgroundEffect();
   @Prop dialogRadius: number = 14;
   onMaskTap: () => void = () => {};
   @BuilderParam content: () => void = this.emptyContentBuilder;
@@ -71,7 +73,9 @@ export struct SourceDialogScaffold {
       DialogSurfaceStyleHelper.getPopupCardBlurOptions()
     )
     .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
+    .backgroundEffect(DialogSurfaceStyleHelper.getPopupCardBackgroundEffect())
     .borderRadius(this.dialogRadius)
+    .clip(true)
     .border({ width: 1, color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState) })
     .shadow({
       radius: this.dialogRadius + 4,
@@ -93,8 +97,10 @@ export struct SourceDialogScaffold {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundBlurStyle(this.maskBlurStyle)
+          .backgroundBlurStyle(this.maskBlurStyle, this.maskBlurOptions)
           .backgroundColor(this.maskColor)
+          .backgroundEffect(this.maskBackgroundEffect)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .zIndex(0)
           .onClick(() => {
             if (this.closeOnMaskTap && this.maskTapEnabled) {
@@ -106,6 +112,7 @@ export struct SourceDialogScaffold {
           .width('100%')
           .height('100%')
           .backgroundColor(this.maskColor)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .zIndex(0)
           .onClick(() => {
             if (this.closeOnMaskTap && this.maskTapEnabled) {
@@ -137,6 +144,7 @@ export struct SourceDialogScaffold {
     .width('100%')
     .height('100%')
     .position({ x: 0, y: 0 })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .zIndex(this.zIndexValue)
   }
 

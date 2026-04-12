@@ -183,6 +183,51 @@ export class CacheStatusService {
       return this.createEmptyStats(mangaId, CacheContentType.MANGA, sourceId, mangaTitle);
     }
   }
+
+  private decodeLegacyBookUrlFromCompositeId(bookId: string): string {
+    const separatorIndex = bookId.indexOf('_');
+    if (separatorIndex <= 0 || separatorIndex >= bookId.length - 1) {
+      return '';
+    }
+    const encodedBookUrl = bookId.substring(separatorIndex + 1).trim();
+    if (encodedBookUrl.length <= 0) {
+      return '';
+    }
+    let decodedBookUrl = '';
+    try {
+      decodedBookUrl = decodeURIComponent(encodedBookUrl);
+    } catch (_error) {
+      return '';
+    }
+    const normalized = decodedBookUrl.trim();
+    if (
+      normalized.length <= 0 ||
+      normalized === bookId ||
+      (!normalized.startsWith('http://') && !normalized.startsWith('https://') && !normalized.startsWith('file://'))
+    ) {
+      return '';
+    }
+    return normalized;
+  }
+
+  private mergeNovelCacheKind(
+    first: 'text' | 'audio' | 'mixed' | undefined,
+    second: 'text' | 'audio' | 'mixed' | undefined
+  ): 'text' | 'audio' | 'mixed' | undefined {
+    if (first === 'mixed' || second === 'mixed') {
+      return 'mixed';
+    }
+    if (!first) {
+      return second;
+    }
+    if (!second) {
+      return first;
+    }
+    if (first === second) {
+      return first;
+    }
+    return 'mixed';
+  }
   
   /**
    * 获取小说缓存状态
@@ -198,23 +243,43 @@ export class CacheStatusService {
     try {
       logger.info(TAG, `获取小说缓存状态: bookId=${bookId}`);
       
-      // 获取小说缓存信息
-      const cacheInfo = await this.novelCacheManager.getBookCacheInfo(bookId);
+      // 获取主key（组合bookId）缓存信息
+      const primaryCacheInfo = await this.novelCacheManager.getBookCacheInfo(bookId);
       
       // 获取已缓存的章节索引
-      const cachedIndexes = await this.novelCacheManager.getCachedChapterIndexes(
+      const primaryCachedIndexes = await this.novelCacheManager.getCachedChapterIndexes(
         bookId,
-        totalChapters || cacheInfo.totalChapterCount || 0
+        totalChapters || primaryCacheInfo.totalChapterCount || 0
       );
-      
-      const cachedChapterCount = Math.max(cacheInfo.cachedChapterCount, cachedIndexes.size);
+      const mergedCachedIndexes = new Set<number>();
+      primaryCachedIndexes.forEach((index: number) => mergedCachedIndexes.add(index));
+
+      let mergedCacheSize = primaryCacheInfo.cacheSize;
+      let mergedLastCacheTime = primaryCacheInfo.lastCacheTime;
+      let mergedCacheKind: 'text' | 'audio' | 'mixed' | undefined = primaryCacheInfo.cacheKind;
+
+      const legacyBookUrl = this.decodeLegacyBookUrlFromCompositeId(bookId);
+      if (legacyBookUrl.length > 0 && legacyBookUrl !== bookId) {
+        logger.debug(TAG, `小说缓存状态启用旧bookUrl兼容: composite=${bookId}, legacy=${legacyBookUrl}`);
+        const legacyCacheInfo = await this.novelCacheManager.getBookCacheInfo(legacyBookUrl);
+        const legacyCachedIndexes = await this.novelCacheManager.getCachedChapterIndexes(
+          legacyBookUrl,
+          totalChapters || legacyCacheInfo.totalChapterCount || 0
+        );
+        legacyCachedIndexes.forEach((index: number) => mergedCachedIndexes.add(index));
+        mergedCacheSize += legacyCacheInfo.cacheSize;
+        mergedLastCacheTime = Math.max(mergedLastCacheTime, legacyCacheInfo.lastCacheTime);
+        mergedCacheKind = this.mergeNovelCacheKind(mergedCacheKind, legacyCacheInfo.cacheKind);
+      }
+
+      const cachedChapterCount = Math.max(primaryCacheInfo.cachedChapterCount, mergedCachedIndexes.size);
 
       // 构建章节状态列表
       const chapterStats: ChapterCacheStatus[] = [];
-      const totalChapterCount = totalChapters || cacheInfo.totalChapterCount || cachedChapterCount;
+      const totalChapterCount = totalChapters || primaryCacheInfo.totalChapterCount || cachedChapterCount;
       
       for (let i = 0; i < totalChapterCount; i++) {
-        const isCached = cachedIndexes.has(i);
+        const isCached = mergedCachedIndexes.has(i);
         chapterStats.push({
           chapterId: `${bookId}_chapter_${i}`,
           chapterTitle: `第${i + 1}章`,
@@ -235,15 +300,15 @@ export class CacheStatusService {
         totalChapterCount: totalChapterCount,
         cachedPageCount: cachedChapterCount,  // 小说用章节数代替
         totalPageCount: totalChapterCount,
-        cacheSize: cacheInfo.cacheSize,
+        cacheSize: mergedCacheSize,
         downloadWhileReadingEnabled: true,  // 小说默认开启
         chapterStats: chapterStats,
-        lastCacheTime: cacheInfo.lastCacheTime
+        lastCacheTime: mergedLastCacheTime
       };
       
       logger.info(
         TAG,
-        `小说缓存状态: cached=${cachedChapterCount}/${totalChapterCount}章, size=${this.formatSize(cacheInfo.cacheSize)}, kind=${cacheInfo.cacheKind || 'unknown'}`
+        `小说缓存状态: cached=${cachedChapterCount}/${totalChapterCount}章, size=${this.formatSize(mergedCacheSize)}, kind=${mergedCacheKind || 'unknown'}`
       );
       
       return result;
@@ -337,6 +402,11 @@ export class CacheStatusService {
         logger.info(TAG, `清理漫画缓存成功: ${contentId}`);
       } else if (contentType === CacheContentType.NOVEL) {
         await this.novelCacheManager.clearBookCache(contentId);
+        const legacyBookUrl = this.decodeLegacyBookUrlFromCompositeId(contentId);
+        if (legacyBookUrl.length > 0 && legacyBookUrl !== contentId) {
+          await this.novelCacheManager.clearBookCache(legacyBookUrl);
+          logger.info(TAG, `已同步清理小说旧版bookUrl缓存: ${legacyBookUrl}`);
+        }
         logger.info(TAG, `清理小说缓存成功: ${contentId}`);
       }
       return true;

@@ -221,7 +221,6 @@ struct AboutPage {
         .width(100)
         .height(100)
         .borderRadius(20)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
 
       Text('漫匣')
         .fontSize(28)
