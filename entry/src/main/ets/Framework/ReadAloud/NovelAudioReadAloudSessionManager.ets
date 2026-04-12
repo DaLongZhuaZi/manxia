@@ -1,4 +1,5 @@
 import { media } from '@kit.MediaKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { logger } from '../../Utils/Logger';
 import { getNovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
@@ -6,12 +7,16 @@ import { LegadoBook, LegadoBookSourceType, LegadoChapter } from '../Novel/Legado
 import { DEFAULT_READ_ALOUD_SETTINGS, ReadAloudSettings } from '../../Models/TextReaderModels';
 import { loadGlobalReadAloudSettings } from './ReadAloudSettingsStore';
 import { SettingsManager } from '../Managers/SettingsManager';
+import { ReadAloudMediaCommandListener, ReadAloudMediaSession } from './ReadAloudMediaSession';
+import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from './ReadAloudTypes';
 
 const TAG = 'NovelAudioSessionManager';
 const CHAPTER_LIST_CACHE_MAX_AGE_HOURS: number = 48;
 const WAIT_STATE_TIMEOUT_MS: number = 4600;
 const PLAYER_OPERATION_TIMEOUT_MS: number = 5000;
 const PLAYER_POST_PLAY_WAIT_TIMEOUT_MS: number = 2600;
+const AUDIO_PROGRESS_PERSIST_INTERVAL_MS: number = 1200;
+const AUDIO_PROGRESS_KEY_PREFIX: string = 'novel_audio_read_aloud_progress_';
 
 type AudioJsonValue = string | number | boolean | Object | Array<Object> | null;
 type AudioJsonRecord = Record<string, AudioJsonValue>;
@@ -55,12 +60,62 @@ export interface NovelAudioReadAloudSnapshot {
 
 export type NovelAudioReadAloudStateListener = (snapshot: NovelAudioReadAloudSnapshot) => void;
 
+class NovelAudioMediaCommandBridge implements ReadAloudMediaCommandListener {
+  private readonly onPlayCallback: () => void;
+  private readonly onPauseCallback: () => void;
+  private readonly onStopCallback: () => void;
+  private readonly onPlayNextCallback: () => void;
+  private readonly onPlayPreviousCallback: () => void;
+  private readonly onSeekCallback: (positionMs: number) => void;
+
+  constructor(
+    onPlayCallback: () => void,
+    onPauseCallback: () => void,
+    onStopCallback: () => void,
+    onPlayNextCallback: () => void,
+    onPlayPreviousCallback: () => void,
+    onSeekCallback: (positionMs: number) => void
+  ) {
+    this.onPlayCallback = onPlayCallback;
+    this.onPauseCallback = onPauseCallback;
+    this.onStopCallback = onStopCallback;
+    this.onPlayNextCallback = onPlayNextCallback;
+    this.onPlayPreviousCallback = onPlayPreviousCallback;
+    this.onSeekCallback = onSeekCallback;
+  }
+
+  onPlay(): void {
+    this.onPlayCallback();
+  }
+
+  onPause(): void {
+    this.onPauseCallback();
+  }
+
+  onStop(): void {
+    this.onStopCallback();
+  }
+
+  onPlayNext(): void {
+    this.onPlayNextCallback();
+  }
+
+  onPlayPrevious(): void {
+    this.onPlayPreviousCallback();
+  }
+
+  onSeek(positionMs: number): void {
+    this.onSeekCallback(positionMs);
+  }
+}
+
 export class NovelAudioReadAloudSessionManager {
   private static instance: NovelAudioReadAloudSessionManager | null = null;
 
   private readonly sourceManager = getNovelSourceManager();
   private readonly cacheManager = getNovelChapterCacheManager();
   private readonly settingsManager = SettingsManager.getInstance();
+  private readonly mediaSession: ReadAloudMediaSession = new ReadAloudMediaSession();
 
   private listeners: NovelAudioReadAloudStateListener[] = [];
 
@@ -89,13 +144,39 @@ export class NovelAudioReadAloudSessionManager {
   private sessionToken: number = 0;
   private autoSwitchingChapter: boolean = false;
   private chapterContent: string = '';
+  private pendingResumePositionMs: number = 0;
+  private mediaPlaybackState: ReadAloudPlaybackState = ReadAloudPlaybackState.IDLE;
+  private lastProgressPersistTime: number = 0;
 
   private audioPlayer: media.AVPlayer | null = null;
   private audioStateChangeHandler: ((state: media.AVPlayerState, reason: media.StateChangeReason) => void) | null = null;
   private audioTimeUpdateHandler: ((timeMs: number) => void) | null = null;
   private audioErrorHandler: ((error: Object) => void) | null = null;
+  private localAudioSourceFile: fileIo.File | null = null;
+  private localAudioSourcePath: string = '';
 
   private constructor() {
+    const mediaCommandListener: ReadAloudMediaCommandListener = new NovelAudioMediaCommandBridge(
+      (): void => {
+        this.handleMediaPlayCommand();
+      },
+      (): void => {
+        this.handleMediaPauseCommand();
+      },
+      (): void => {
+        this.handleMediaStopCommand();
+      },
+      (): void => {
+        this.handleMediaNextCommand();
+      },
+      (): void => {
+        this.handleMediaPreviousCommand();
+      },
+      (positionMs: number): void => {
+        this.handleMediaSeekCommand(positionMs);
+      }
+    );
+    this.mediaSession.setCommandListener(mediaCommandListener);
   }
 
   static getInstance(): NovelAudioReadAloudSessionManager {
@@ -155,12 +236,12 @@ export class NovelAudioReadAloudSessionManager {
 
   async startSession(params: NovelAudioReadAloudLaunchParams): Promise<boolean> {
     if (!params.sourceId || !params.bookUrl) {
-      this.loadErrorMessage = 'Missing required launch params for audio session';
+      this.loadErrorMessage = '听书会话启动参数缺失';
       this.publishState();
       return false;
     }
     if (!this.isAudioSource(params.sourceId)) {
-      logger.debug(TAG, `Skip audio session init for non-audio source: sourceId=${params.sourceId}`);
+      logger.debug(TAG, `非听书源，跳过听书会话初始化: 图源=${params.sourceId}`);
       return false;
     }
 
@@ -181,42 +262,55 @@ export class NovelAudioReadAloudSessionManager {
     this.totalChapters = Math.max(0, params.totalChapters);
     this.currentChapterIndex = Math.max(0, params.chapterIndex);
     this.bookId = `${params.sourceId}_${encodeURIComponent(params.bookUrl)}`;
+    this.applyPersistedProgressForLaunch(params.chapterIndex, sameSession);
     this.loadErrorMessage = '';
     this.isLoading = true;
     this.initialized = false;
+    this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'start_session_prepare');
     this.sessionToken += 1;
     const token = this.sessionToken;
-    logger.info(TAG, `Start audio novel session: sourceId=${params.sourceId}, chapterIndex=${this.currentChapterIndex}, autoStart=${params.autoStartReadAloud === true}`);
+    logger.info(TAG, `启动听书小说会话: 图源=${params.sourceId}, 章节索引=${this.currentChapterIndex}, 自动播放=${params.autoStartReadAloud === true}`);
     this.publishState();
 
     try {
       await this.loadChapterList(token);
       if (!this.isTokenValid(token)) {
-        return false;
+        logger.warn(TAG, `听书会话初始化被新会话覆盖（目录阶段）: 请求令牌=${token}, 当前令牌=${this.sessionToken}`);
+        return this.hasActiveSession();
       }
       const loaded = await this.loadChapterContent(this.currentChapterIndex, token);
       if (!this.isTokenValid(token)) {
-        return false;
+        logger.warn(TAG, `听书会话初始化被新会话覆盖（章节阶段）: 请求令牌=${token}, 当前令牌=${this.sessionToken}`);
+        return this.hasActiveSession();
       }
       if (!loaded) {
         this.isLoading = false;
         this.initialized = false;
+        this.updateMediaPlaybackState(ReadAloudPlaybackState.STOPPED, 'start_session_load_failed');
+        logger.warn(
+          TAG,
+          `听书会话初始化中止: 章节内容加载返回false, 章节索引=${this.currentChapterIndex}, 章节地址=${this.chapterUrl.substring(0, 180)}, 错误=${this.loadErrorMessage}`
+        );
         this.publishState();
         return false;
       }
       this.isLoading = false;
       this.initialized = true;
+      if (!this.isPlaying) {
+        this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'start_session_loaded');
+      }
       this.publishState();
-      logger.info(TAG, `Audio session initialized: bookId=${this.bookId}, chapterIndex=${this.currentChapterIndex}, hasAudioUrl=${this.audioSourceUrl.length > 0}`);
+      logger.info(TAG, `听书会话初始化完成: 书籍标识=${this.bookId}, 章节索引=${this.currentChapterIndex}, 已解析音频地址=${this.audioSourceUrl.length > 0}`);
       if (params.autoStartReadAloud === true) {
         const started = await this.play();
-        logger.info(TAG, `Audio session auto-start result: success=${started}, chapterIndex=${this.currentChapterIndex}`);
+        logger.info(TAG, `听书会话自动播放结果: 成功=${started}, 章节索引=${this.currentChapterIndex}`);
       }
       return true;
     } catch (error) {
       this.isLoading = false;
       this.initialized = false;
-      this.loadErrorMessage = `Audio session init failed: ${String(error)}`;
+      this.loadErrorMessage = `听书会话初始化失败: ${String(error)}`;
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.STOPPED, 'start_session_error');
       logger.error(TAG, this.loadErrorMessage);
       this.publishState();
       return false;
@@ -233,29 +327,33 @@ export class NovelAudioReadAloudSessionManager {
 
   async play(): Promise<boolean> {
     if (!this.audioSourceUrl || this.audioSourceUrl.length <= 0) {
-      this.loadErrorMessage = 'Current chapter has no playable audio URL';
+      this.loadErrorMessage = '当前章节没有可播放的音频地址';
       this.publishState();
       return false;
     }
     try {
       const player = await this.ensureAudioPlayer();
       const state = player.state;
-      logger.debug(TAG, `Audio play requested: state=${state}, chapterIndex=${this.currentChapterIndex}, url=${this.audioSourceUrl.substring(0, 120)}`);
+      logger.debug(TAG, `请求播放音频: 状态=${state}, 章节索引=${this.currentChapterIndex}, 地址=${this.audioSourceUrl.substring(0, 120)}`);
       if (state === 'playing') {
         this.isPlaying = true;
         this.loadErrorMessage = '';
+        this.updateMediaPlaybackState(ReadAloudPlaybackState.PLAYING, 'play_already_playing');
         this.publishState();
         return true;
       }
 
       if (state === 'paused' || state === 'prepared') {
+        await this.restorePendingResumePositionIfNeeded(player, 'play_resume');
         await this.invokeAudioPlayerOperationWithTimeout('play_resume', PLAYER_OPERATION_TIMEOUT_MS, () => player.play());
       } else if (state === 'completed') {
         await this.seekAudioPlayer(player, 0);
+        this.pendingResumePositionMs = 0;
         await this.invokeAudioPlayerOperationWithTimeout('play_from_completed', PLAYER_OPERATION_TIMEOUT_MS, () => player.play());
       } else if (state === 'initialized' || state === 'stopped') {
         await this.invokeAudioPlayerOperationWithTimeout('play_prepare', PLAYER_OPERATION_TIMEOUT_MS, () => player.prepare());
         await this.waitForAudioPlayerState(player, ['prepared', 'playing'], WAIT_STATE_TIMEOUT_MS, 'play_prepare');
+        await this.restorePendingResumePositionIfNeeded(player, 'play_prepare');
         await this.invokeAudioPlayerOperationWithTimeout('play_after_prepare', PLAYER_OPERATION_TIMEOUT_MS, () => player.play());
       } else {
         await this.prepareAudioPlayerWithUrl(this.audioSourceUrl, true);
@@ -265,27 +363,30 @@ export class NovelAudioReadAloudSessionManager {
         try {
           await this.waitForAudioPlayerState(player, 'playing', PLAYER_POST_PLAY_WAIT_TIMEOUT_MS, 'play_wait_playing');
         } catch (error) {
-          logger.warn(TAG, `Wait playing state timeout after play request: ${String(error)}`);
+          logger.warn(TAG, `播放请求后等待playing状态超时: ${String(error)}`);
         }
       }
 
       if (player.state !== 'playing') {
-        logger.warn(TAG, `Audio player still not in playing state, retry prepare+play once: state=${player.state}`);
+        logger.warn(TAG, `音频播放器仍未进入playing状态，重试一次prepare+play: 状态=${player.state}`);
         await this.prepareAudioPlayerWithUrl(this.audioSourceUrl, true);
       }
 
       this.syncAudioProgressFromPlayer();
       this.isPlaying = player.state === 'playing';
       if (!this.isPlaying) {
-        this.loadErrorMessage = 'Audio playback did not enter playing state, tap play to retry';
+        this.loadErrorMessage = '音频播放未进入playing状态，请点击播放重试';
+        this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'play_not_playing');
       } else {
         this.loadErrorMessage = '';
+        this.updateMediaPlaybackState(ReadAloudPlaybackState.PLAYING, 'play_success');
       }
       this.publishState();
       return this.isPlaying;
     } catch (error) {
       this.isPlaying = false;
-      this.loadErrorMessage = `Play failed: ${String(error)}`;
+      this.loadErrorMessage = `播放失败: ${String(error)}`;
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'play_failed');
       logger.warn(TAG, this.loadErrorMessage);
       this.publishState();
       return false;
@@ -295,6 +396,7 @@ export class NovelAudioReadAloudSessionManager {
   async pause(): Promise<void> {
     if (!this.audioPlayer) {
       this.isPlaying = false;
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'pause_without_player');
       this.publishState();
       return;
     }
@@ -303,6 +405,7 @@ export class NovelAudioReadAloudSessionManager {
     }
     this.syncAudioProgressFromPlayer();
     this.isPlaying = false;
+    this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'pause_success');
     this.publishState();
   }
 
@@ -310,6 +413,8 @@ export class NovelAudioReadAloudSessionManager {
     if (!this.audioPlayer) {
       this.isPlaying = false;
       this.audioPositionMs = 0;
+      this.pendingResumePositionMs = 0;
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.STOPPED, 'stop_without_player');
       this.publishState();
       return;
     }
@@ -322,7 +427,35 @@ export class NovelAudioReadAloudSessionManager {
     }
     this.syncAudioProgressFromPlayer();
     this.isPlaying = false;
+    this.pendingResumePositionMs = 0;
+    this.updateMediaPlaybackState(ReadAloudPlaybackState.STOPPED, 'stop_success');
     this.publishState();
+  }
+
+  handlePageHide(isInBackground: boolean): void {
+    if (!isInBackground) {
+      return;
+    }
+    this.readAloudSettings = loadGlobalReadAloudSettings(this.settingsManager);
+    if (!this.readAloudSettings.continueInBackground && this.isPlaying) {
+      logger.info(TAG, '应用进入后台且未开启后台继续播放，自动暂停听书');
+      void this.pause();
+    }
+  }
+
+  async seekToPosition(positionMs: number, reason: string = 'manual_seek'): Promise<boolean> {
+    if (!this.audioPlayer) {
+      return false;
+    }
+    const safePositionMs = Math.max(0, Math.floor(positionMs));
+    await this.seekAudioPlayer(this.audioPlayer, safePositionMs);
+    this.syncAudioProgressFromPlayer();
+    if (this.mediaPlaybackState === ReadAloudPlaybackState.STOPPED && this.audioPositionMs > 0) {
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, `seek_${reason}`);
+    }
+    logger.info(TAG, `音频定位完成: 原因=${reason}, 位置毫秒=${this.audioPositionMs}, 章节=${this.currentChapterIndex + 1}`);
+    this.publishState();
+    return true;
   }
 
   async playNextChapter(forceStart: boolean = false): Promise<boolean> {
@@ -345,7 +478,7 @@ export class NovelAudioReadAloudSessionManager {
     this.isCachingCurrentChapterAudio = true;
     this.publishState();
     try {
-      const alreadyCached = await this.cacheManager.isAudioChapterCached(this.bookId, this.currentChapterIndex);
+      const alreadyCached = await this.isChapterAudioCachedWithLegacyFallback(this.currentChapterIndex);
       if (alreadyCached) {
         this.audioChapterCached = true;
         this.publishState();
@@ -357,7 +490,7 @@ export class NovelAudioReadAloudSessionManager {
         return false;
       }
       this.audioChapterCached = true;
-      const localAudioPath = await this.cacheManager.getChapterAudioCachePath(this.bookId, this.currentChapterIndex);
+      const localAudioPath = await this.resolveChapterAudioCachePathWithLegacyFallback(this.currentChapterIndex);
       if (localAudioPath && localAudioPath.length > 0 && !this.isPlaying) {
         this.audioSourceUrl = this.toAudioPlayerSourceUrl(localAudioPath);
         await this.prepareAudioPlayerWithUrl(this.audioSourceUrl, false);
@@ -374,7 +507,8 @@ export class NovelAudioReadAloudSessionManager {
   }
 
   releaseSession(reason: string = 'manual_release'): void {
-    logger.info(TAG, `释放听书会话: reason=${reason}, bookId=${this.bookId}, chapterIndex=${this.currentChapterIndex}`);
+    logger.info(TAG, `释放听书会话: 原因=${reason}, 书籍标识=${this.bookId}, 章节索引=${this.currentChapterIndex}`);
+    this.persistPlaybackProgress(true);
     this.releasePlayerOnly();
     this.sourceId = '';
     this.bookUrl = '';
@@ -397,8 +531,12 @@ export class NovelAudioReadAloudSessionManager {
     this.isPlaying = false;
     this.audioChapterCached = false;
     this.isCachingCurrentChapterAudio = false;
+    this.pendingResumePositionMs = 0;
+    this.lastProgressPersistTime = 0;
     this.sessionToken += 1;
+    this.updateMediaPlaybackState(ReadAloudPlaybackState.IDLE, 'release_session');
     this.publishState();
+    this.mediaSession.release();
   }
 
   private async switchToChapter(targetIndex: number, forceStart: boolean): Promise<boolean> {
@@ -409,6 +547,7 @@ export class NovelAudioReadAloudSessionManager {
     if (this.isPlaying) {
       await this.pause();
     }
+    this.pendingResumePositionMs = 0;
     this.isLoading = true;
     this.publishState();
     const token = this.sessionToken;
@@ -416,12 +555,14 @@ export class NovelAudioReadAloudSessionManager {
     this.isLoading = false;
     if (!loaded) {
       this.isPlaying = false;
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.STOPPED, 'switch_chapter_failed');
       this.publishState();
       return false;
     }
     if (shouldRestart) {
       await this.play();
     } else {
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'switch_chapter_loaded');
       this.publishState();
     }
     return true;
@@ -433,6 +574,8 @@ export class NovelAudioReadAloudSessionManager {
 
   private publishState(): void {
     const snapshot = this.getSnapshot();
+    this.syncMediaSession();
+    this.persistPlaybackProgress(false);
     for (let index = 0; index < this.listeners.length; index++) {
       try {
         this.listeners[index](snapshot);
@@ -494,6 +637,47 @@ export class NovelAudioReadAloudSessionManager {
       logger.warn(TAG, `读取章节列表缓存失败: ${String(error)}`);
       return null;
     }
+  }
+
+  private async resolveChapterAudioCachePathWithLegacyFallback(chapterIndex: number): Promise<string | null> {
+    const pathByBookId = await this.cacheManager.getChapterAudioCachePath(this.bookId, chapterIndex);
+    if (pathByBookId && pathByBookId.length > 0) {
+      return pathByBookId;
+    }
+    if (this.bookUrl.length > 0 && this.bookUrl !== this.bookId) {
+      const pathByBookUrl = await this.cacheManager.getChapterAudioCachePath(this.bookUrl, chapterIndex);
+      if (pathByBookUrl && pathByBookUrl.length > 0) {
+        logger.info(TAG, `命中旧版bookUrl音频缓存: 章节=${chapterIndex + 1}, 路径=${pathByBookUrl}`);
+        return pathByBookUrl;
+      }
+    }
+    return null;
+  }
+
+  private async resolveChapterTextCacheWithLegacyFallback(chapterIndex: number): Promise<string | null> {
+    const contentByBookId = await this.cacheManager.getChapterCache(this.bookId, chapterIndex);
+    if (contentByBookId && contentByBookId.length > 0) {
+      return contentByBookId;
+    }
+    if (this.bookUrl.length > 0 && this.bookUrl !== this.bookId) {
+      const contentByBookUrl = await this.cacheManager.getChapterCache(this.bookUrl, chapterIndex);
+      if (contentByBookUrl && contentByBookUrl.length > 0) {
+        logger.info(TAG, `命中旧版bookUrl章节缓存: 章节=${chapterIndex + 1}, 内容长度=${contentByBookUrl.length}`);
+        return contentByBookUrl;
+      }
+    }
+    return null;
+  }
+
+  private async isChapterAudioCachedWithLegacyFallback(chapterIndex: number): Promise<boolean> {
+    const cachedByBookId = await this.cacheManager.isAudioChapterCached(this.bookId, chapterIndex);
+    if (cachedByBookId) {
+      return true;
+    }
+    if (this.bookUrl.length > 0 && this.bookUrl !== this.bookId) {
+      return await this.cacheManager.isAudioChapterCached(this.bookUrl, chapterIndex);
+    }
+    return false;
   }
 
   private async loadChapterList(token: number): Promise<void> {
@@ -581,11 +765,13 @@ export class NovelAudioReadAloudSessionManager {
     this.currentChapterIndex = safeIndex;
     this.chapterTitle = safeTitle;
     this.chapterUrl = safeUrl;
+    this.audioDurationMs = 0;
+    this.audioPositionMs = this.pendingResumePositionMs > 0 ? this.pendingResumePositionMs : 0;
     this.loadErrorMessage = '';
     this.publishState();
 
     try {
-      const cachedAudioPath = await this.cacheManager.getChapterAudioCachePath(this.bookId, safeIndex);
+      const cachedAudioPath = await this.resolveChapterAudioCachePathWithLegacyFallback(safeIndex);
       if (cachedAudioPath && cachedAudioPath.length > 0) {
         if (!this.isTokenValid(token)) {
           return false;
@@ -593,16 +779,16 @@ export class NovelAudioReadAloudSessionManager {
         this.chapterContent = '';
         this.audioSourceUrl = this.toAudioPlayerSourceUrl(cachedAudioPath);
         this.audioChapterCached = true;
-        logger.info(TAG, `章节命中本地音频缓存: chapter=${safeIndex + 1}, path=${cachedAudioPath}`);
+        logger.info(TAG, `章节命中本地音频缓存: 章节=${safeIndex + 1}, 路径=${cachedAudioPath}`);
         this.syncAudioProgressFromPlayer();
         this.publishState();
         return true;
       }
     } catch (error) {
-      logger.warn(TAG, `读取本地音频缓存失败，回退网络解析: chapter=${safeIndex}, error=${String(error)}`);
+      logger.warn(TAG, `读取本地音频缓存失败，回退网络解析: 章节=${safeIndex}, 错误=${String(error)}`);
     }
 
-    let rawContent = await this.cacheManager.getChapterCache(this.bookId, safeIndex);
+    let rawContent = await this.resolveChapterTextCacheWithLegacyFallback(safeIndex);
     if ((!rawContent || rawContent.length <= 0) && this.sourceId.length > 0 && this.chapterUrl.length > 0) {
       const chapter: LegadoChapter = {
         id: '',
@@ -612,6 +798,16 @@ export class NovelAudioReadAloudSessionManager {
         index: safeIndex
       };
       rawContent = await this.sourceManager.getContent(this.sourceId, chapter);
+      if (rawContent && rawContent.length > 0) {
+        logger.debug(
+          TAG,
+          `音频章节网络内容已加载: 章节=${safeIndex + 1}, 内容长度=${rawContent.length}, 预览=${rawContent.substring(0, 180)}`
+        );
+      } else {
+        logger.warn(TAG, `音频章节网络内容为空: 章节=${safeIndex + 1}, 章节地址=${this.chapterUrl.substring(0, 180)}`);
+      }
+    } else if (rawContent && rawContent.length > 0) {
+      logger.debug(TAG, `命中文本章节缓存: 章节=${safeIndex + 1}, 内容长度=${rawContent.length}`);
     }
     if (!this.isTokenValid(token)) {
       return false;
@@ -620,7 +816,9 @@ export class NovelAudioReadAloudSessionManager {
       this.chapterContent = '';
       this.audioSourceUrl = '';
       this.audioChapterCached = false;
-      this.loadErrorMessage = '当前章节未获取到音频信息，请先缓存音频或检查书源';
+      this.pendingResumePositionMs = 0;
+      this.loadErrorMessage = '音频章节内容为空';
+      logger.warn(TAG, `音频章节内容为空，无法解析播放地址: 章节=${safeIndex + 1}, 图源=${this.sourceId}`);
       this.publishState();
       return false;
     }
@@ -633,7 +831,9 @@ export class NovelAudioReadAloudSessionManager {
       this.chapterContent = rawContent;
       this.audioSourceUrl = '';
       this.audioChapterCached = false;
-      this.loadErrorMessage = '当前章节未解析到可播放音频 URL';
+      this.pendingResumePositionMs = 0;
+      this.loadErrorMessage = '无法解析可播放音频地址';
+      logger.warn(TAG, `音频章节地址解析失败: 章节=${safeIndex + 1}, 章节地址=${this.chapterUrl.substring(0, 180)}, 原始预览=${rawContent.substring(0, 220)}`);
       this.publishState();
       return false;
     }
@@ -642,7 +842,9 @@ export class NovelAudioReadAloudSessionManager {
       this.chapterContent = rawContent;
       this.audioSourceUrl = '';
       this.audioChapterCached = false;
-      this.loadErrorMessage = '当前章节音频地址无效';
+      this.pendingResumePositionMs = 0;
+      this.loadErrorMessage = '音频地址清洗后无效';
+      logger.warn(TAG, `音频章节地址清洗后为空: 章节=${safeIndex + 1}, 解析地址=${resolvedAudioUrl.substring(0, 220)}`);
       this.publishState();
       return false;
     }
@@ -654,7 +856,7 @@ export class NovelAudioReadAloudSessionManager {
     const audioUrlTail = audioUrlLength > 120 ? this.audioSourceUrl.substring(audioUrlLength - 120, audioUrlLength) : this.audioSourceUrl;
     logger.info(
       TAG,
-      `章节音频解析完成: chapter=${safeIndex + 1}, urlLength=${audioUrlLength}, audioUrlPrefix=${audioUrlPrefix}, audioUrlTail=${audioUrlTail}`
+      `章节音频解析完成: 章节=${safeIndex + 1}, 地址长度=${audioUrlLength}, 地址前缀=${audioUrlPrefix}, 地址后缀=${audioUrlTail}`
     );
     this.syncAudioProgressFromPlayer();
     this.publishState();
@@ -857,6 +1059,95 @@ export class NovelAudioReadAloudSessionManager {
     return normalized;
   }
 
+  private isLocalAudioSource(url: string): boolean {
+    const normalized = url.trim();
+    if (normalized.length <= 0) {
+      return false;
+    }
+    return normalized.startsWith('file://') || (normalized.startsWith('/') && !normalized.startsWith('//'));
+  }
+
+  private toLocalAudioFilePath(urlOrPath: string): string {
+    let normalized = urlOrPath.trim();
+    if (normalized.length <= 0) {
+      return '';
+    }
+    if (normalized.startsWith('file://')) {
+      normalized = normalized.substring('file://'.length);
+      if (!normalized.startsWith('/')) {
+        normalized = `/${normalized}`;
+      }
+    }
+    const queryIndex = normalized.indexOf('?');
+    if (queryIndex >= 0) {
+      normalized = normalized.substring(0, queryIndex);
+    }
+    const hashIndex = normalized.indexOf('#');
+    if (hashIndex >= 0) {
+      normalized = normalized.substring(0, hashIndex);
+    }
+    if (normalized.indexOf('%') >= 0) {
+      try {
+        normalized = decodeURIComponent(normalized);
+      } catch (_error) {
+      }
+    }
+    return normalized;
+  }
+
+  private releaseLocalAudioSourceFile(reason: string): void {
+    if (!this.localAudioSourceFile) {
+      return;
+    }
+    const path = this.localAudioSourcePath;
+    const fd = this.localAudioSourceFile.fd;
+    try {
+      fileIo.closeSync(fd);
+    } catch (error) {
+      logger.warn(TAG, `关闭本地音频文件句柄失败: 原因=${reason}, 路径=${path}, 错误=${String(error)}`);
+    }
+    this.localAudioSourceFile = null;
+    this.localAudioSourcePath = '';
+  }
+
+  private bindLocalFileAudioSource(player: media.AVPlayer, sourceUrl: string): boolean {
+    const localPath = this.toLocalAudioFilePath(sourceUrl);
+    if (localPath.length <= 0) {
+      logger.warn(TAG, `本地音频路径无效，回退URL模式: ${sourceUrl.substring(0, 140)}`);
+      return false;
+    }
+    this.releaseLocalAudioSourceFile('bind_local_audio_source');
+    let localFile: fileIo.File | null = null;
+    try {
+      localFile = fileIo.openSync(localPath, fileIo.OpenMode.READ_ONLY);
+      const stat = fileIo.statSync(localFile.fd);
+      const fileSize = Math.floor(stat.size);
+      if (fileSize <= 0) {
+        fileIo.closeSync(localFile.fd);
+        logger.warn(TAG, `本地音频文件大小异常，回退URL模式: 路径=${localPath}, 大小=${fileSize}`);
+        return false;
+      }
+      player.fdSrc = {
+        fd: localFile.fd,
+        offset: 0,
+        length: fileSize
+      };
+      this.localAudioSourceFile = localFile;
+      this.localAudioSourcePath = localPath;
+      logger.info(TAG, `音频播放器绑定本地缓存音频成功: 路径=${localPath}, 大小=${fileSize}`);
+      return true;
+    } catch (error) {
+      if (localFile) {
+        try {
+          fileIo.closeSync(localFile.fd);
+        } catch (_closeError) {
+        }
+      }
+      logger.warn(TAG, `本地缓存音频绑定失败，回退URL模式: 路径=${localPath}, 错误=${String(error)}`);
+      return false;
+    }
+  }
+
   private syncAudioProgressFromPlayer(): void {
     if (!this.audioPlayer) {
       return;
@@ -910,12 +1201,12 @@ export class NovelAudioReadAloudSessionManager {
           }
         }
         if (state === 'released' || state === 'error') {
-          finish(state, `AUDIO_PLAYER_WAIT_STATE_FAILED: label=${label}, state=${state}`);
+          finish(state, `音频播放器状态等待失败: label=${label}, state=${state}`);
         }
       };
       player.on('stateChange', onStateChange);
       timerId = setTimeout(() => {
-        finish(player.state, `AUDIO_PLAYER_WAIT_STATE_TIMEOUT: label=${label}, state=${player.state}`);
+        finish(player.state, `音频播放器状态等待超时: label=${label}, state=${player.state}`);
       }, timeoutMs);
     });
   }
@@ -945,12 +1236,12 @@ export class NovelAudioReadAloudSessionManager {
       };
       timerId = setTimeout(() => {
         const currentState = this.audioPlayer ? this.audioPlayer.state : 'null';
-        finish(`AUDIO_PLAYER_OPERATION_TIMEOUT: label=${label}, state=${currentState}`);
+        finish(`音频播放器操作超时: label=${label}, state=${currentState}`);
       }, timeoutMs);
       operation().then(() => {
         finish();
       }).catch((error: Object | string) => {
-        finish(`AUDIO_PLAYER_OPERATION_FAILED: label=${label}, error=${String(error)}`);
+        finish(`音频播放器操作失败: label=${label}, error=${String(error)}`);
       });
     });
   }
@@ -994,9 +1285,10 @@ export class NovelAudioReadAloudSessionManager {
     this.releasePlayerOnly();
     const player = await media.createAVPlayer();
     this.audioStateChangeHandler = (state: media.AVPlayerState, reason: media.StateChangeReason): void => {
-      logger.debug(TAG, `音频播放器状态变化: state=${state}, reason=${reason}, chapter=${this.currentChapterIndex}`);
+      logger.debug(TAG, `音频播放器状态变化: 状态=${state}, 原因=${reason}, 章节=${this.currentChapterIndex}`);
       this.syncAudioProgressFromPlayer();
       this.isPlaying = state === 'playing';
+      this.updateMediaPlaybackState(this.mapAudioPlayerStateToPlaybackState(state), `player_state_${state}`);
       if (state === 'completed') {
         this.audioPositionMs = this.audioDurationMs;
         this.tryAutoPlayNextChapter();
@@ -1011,6 +1303,7 @@ export class NovelAudioReadAloudSessionManager {
       this.isPlaying = false;
       this.syncAudioProgressFromPlayer();
       this.loadErrorMessage = `音频播放失败: ${String(error)}`;
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'player_error');
       logger.warn(TAG, `音频播放器错误: ${String(error)}`);
       this.publishState();
     };
@@ -1022,6 +1315,7 @@ export class NovelAudioReadAloudSessionManager {
   }
   private async resetAudioPlayerForNewSource(player: media.AVPlayer): Promise<void> {
     if (player.state === 'idle' || player.state === 'released') {
+      this.releaseLocalAudioSourceFile('reset_idle_or_released');
       return;
     }
     try {
@@ -1033,6 +1327,7 @@ export class NovelAudioReadAloudSessionManager {
       await this.waitForAudioPlayerState(player, 'idle', 1800, 'reset');
     } catch (_error) {
     }
+    this.releaseLocalAudioSourceFile('reset_audio_source');
   }
 
   private async prepareAudioPlayerWithUrl(url: string, autoStart: boolean): Promise<void> {
@@ -1040,35 +1335,54 @@ export class NovelAudioReadAloudSessionManager {
     await this.resetAudioPlayerForNewSource(player);
     this.audioDurationMs = 0;
     this.audioPositionMs = 0;
-    logger.debug(TAG, `Prepare audio player with url: autoStart=${autoStart}, url=${url.substring(0, 140)}`);
-    player.url = url;
+    const isLocalSource = this.isLocalAudioSource(url);
+    let useFdSource = false;
+    if (isLocalSource) {
+      useFdSource = this.bindLocalFileAudioSource(player, url);
+      if (!useFdSource) {
+        logger.warn(TAG, `本地音频将回退到URL模式: 地址=${url.substring(0, 140)}`);
+      }
+    }
+    if (!useFdSource) {
+      logger.debug(TAG, `准备音频播放器URL: 自动播放=${autoStart}, 地址=${url.substring(0, 140)}`);
+      player.url = url;
+    }
     let stateAfterUrl: media.AVPlayerState = player.state;
+    const sourceLabel = useFdSource ? 'set_fd_src' : 'set_url';
     try {
-      stateAfterUrl = await this.waitForAudioPlayerState(player, ['initialized', 'prepared'], WAIT_STATE_TIMEOUT_MS, 'set_url');
+      stateAfterUrl = await this.waitForAudioPlayerState(
+        player,
+        ['initialized', 'prepared'],
+        WAIT_STATE_TIMEOUT_MS,
+        sourceLabel
+      );
     } catch (error) {
-      logger.warn(TAG, `Wait state after set url timed out, try direct prepare: ${String(error)}`);
+      logger.warn(TAG, `设置音源后等待状态超时，尝试直接prepare: ${String(error)}`);
       stateAfterUrl = player.state;
     }
     if (stateAfterUrl !== 'prepared' && player.state !== 'prepared' && player.state !== 'playing') {
-      await this.invokeAudioPlayerOperationWithTimeout('prepare_after_set_url', PLAYER_OPERATION_TIMEOUT_MS, () => player.prepare());
+      const prepareLabel = useFdSource ? 'prepare_after_set_fd_src' : 'prepare_after_set_url';
+      await this.invokeAudioPlayerOperationWithTimeout(prepareLabel, PLAYER_OPERATION_TIMEOUT_MS, () => player.prepare());
       await this.waitForAudioPlayerState(player, ['prepared', 'playing'], WAIT_STATE_TIMEOUT_MS, 'prepare');
     }
+    await this.restorePendingResumePositionIfNeeded(player, 'prepare_audio_source');
     if (autoStart && player.state !== 'playing') {
       await this.invokeAudioPlayerOperationWithTimeout('play_after_prepare', PLAYER_OPERATION_TIMEOUT_MS, () => player.play());
       try {
         await this.waitForAudioPlayerState(player, 'playing', PLAYER_POST_PLAY_WAIT_TIMEOUT_MS, 'play_after_prepare_wait');
       } catch (error) {
-        logger.warn(TAG, `Wait playing state after prepare timed out: ${String(error)}`);
+        logger.warn(TAG, `prepare后等待playing状态超时: ${String(error)}`);
       }
     }
     this.syncAudioProgressFromPlayer();
     this.isPlaying = player.state === 'playing';
-    logger.info(TAG, `Audio player ready: state=${player.state}, autoStart=${autoStart}, durationMs=${this.audioDurationMs}`);
+    logger.info(TAG, `音频播放器就绪: 状态=${player.state}, 自动播放=${autoStart}, 总时长毫秒=${this.audioDurationMs}`);
     this.publishState();
   }
 
   private releasePlayerOnly(): void {
     if (!this.audioPlayer) {
+      this.releaseLocalAudioSourceFile('release_player_without_instance');
       return;
     }
     if (this.audioStateChangeHandler) {
@@ -1085,11 +1399,17 @@ export class NovelAudioReadAloudSessionManager {
     } catch (error) {
       logger.warn(TAG, `释放音频播放器失败: ${String(error)}`);
     }
+    this.releaseLocalAudioSourceFile('release_player_only');
     this.audioStateChangeHandler = null;
     this.audioTimeUpdateHandler = null;
     this.audioErrorHandler = null;
     this.audioPlayer = null;
     this.isPlaying = false;
+    if (this.sourceId.length > 0 && this.bookUrl.length > 0) {
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.PAUSED, 'release_player_only');
+    } else {
+      this.updateMediaPlaybackState(ReadAloudPlaybackState.IDLE, 'release_player_only');
+    }
   }
 
   private tryAutoPlayNextChapter(): void {
@@ -1104,6 +1424,208 @@ export class NovelAudioReadAloudSessionManager {
       this.autoSwitchingChapter = false;
     }).catch((_error: Object | string): void => {
       this.autoSwitchingChapter = false;
+    });
+  }
+
+  private handleMediaPlayCommand(): void {
+    void this.play().then((started: boolean): void => {
+      if (!started) {
+        logger.warn(TAG, '媒体播放指令未能启动音频播放');
+      }
+    }).catch((error: Object | string): void => {
+      logger.warn(TAG, `处理媒体播放指令失败: ${String(error)}`);
+    });
+  }
+
+  private handleMediaPauseCommand(): void {
+    void this.pause().catch((error: Object | string): void => {
+      logger.warn(TAG, `处理媒体暂停指令失败: ${String(error)}`);
+    });
+  }
+
+  private handleMediaStopCommand(): void {
+    void this.stop().catch((error: Object | string): void => {
+      logger.warn(TAG, `处理媒体停止指令失败: ${String(error)}`);
+    });
+  }
+
+  private handleMediaNextCommand(): void {
+    const shouldForceStart = this.isPlaying || this.mediaPlaybackState === ReadAloudPlaybackState.PLAYING;
+    void this.playNextChapter(shouldForceStart).then((switched: boolean): void => {
+      if (!switched) {
+        logger.debug(TAG, '媒体下一章指令未切换章节（可能已到最后一章）');
+      }
+    }).catch((error: Object | string): void => {
+      logger.warn(TAG, `处理媒体下一章指令失败: ${String(error)}`);
+    });
+  }
+
+  private handleMediaPreviousCommand(): void {
+    const shouldForceStart = this.isPlaying || this.mediaPlaybackState === ReadAloudPlaybackState.PLAYING;
+    void this.playPreviousChapter(shouldForceStart).then((switched: boolean): void => {
+      if (!switched) {
+        logger.debug(TAG, '媒体上一章指令未切换章节（可能已在第一章）');
+      }
+    }).catch((error: Object | string): void => {
+      logger.warn(TAG, `处理媒体上一章指令失败: ${String(error)}`);
+    });
+  }
+
+  private handleMediaSeekCommand(positionMs: number): void {
+    void this.seekToPosition(positionMs, 'media_control_seek').catch((error: Object | string): void => {
+      logger.warn(TAG, `处理媒体定位指令失败: ${String(error)}`);
+    });
+  }
+
+  private mapAudioPlayerStateToPlaybackState(state: media.AVPlayerState): ReadAloudPlaybackState {
+    if (state === 'playing') {
+      return ReadAloudPlaybackState.PLAYING;
+    }
+    if (state === 'completed' || state === 'stopped') {
+      return ReadAloudPlaybackState.STOPPED;
+    }
+    if (state === 'released') {
+      return ReadAloudPlaybackState.IDLE;
+    }
+    return ReadAloudPlaybackState.PAUSED;
+  }
+
+  private updateMediaPlaybackState(nextState: ReadAloudPlaybackState, reason: string): void {
+    if (this.mediaPlaybackState === nextState) {
+      return;
+    }
+    logger.debug(TAG, `媒体会话播放状态切换: ${this.mediaPlaybackState} -> ${nextState}, 原因=${reason}`);
+    this.mediaPlaybackState = nextState;
+  }
+
+  private buildMediaStateSnapshot(): ReadAloudStateSnapshot {
+    const hasContext = this.sourceId.length > 0 && this.bookUrl.length > 0;
+    const mediaContext = this.buildMediaSessionContext();
+    const contentLength = mediaContext && mediaContext.content ? mediaContext.content.length : 0;
+    const currentCharIndex = contentLength > 0 ? this.resolveMediaCurrentCharIndex(contentLength) : -1;
+    return {
+      playbackState: hasContext ? this.mediaPlaybackState : ReadAloudPlaybackState.IDLE,
+      settings: this.readAloudSettings,
+      hasContext: hasContext,
+      chapterIndex: hasContext ? this.currentChapterIndex : -1,
+      pageIndex: 0,
+      currentCharIndex: currentCharIndex,
+      chunkStartCharIndex: -1,
+      chunkEndCharIndex: -1,
+      currentPositionMs: hasContext ? Math.max(0, Math.floor(this.audioPositionMs)) : -1,
+      totalDurationMs: hasContext ? Math.max(0, Math.floor(this.audioDurationMs)) : -1
+    };
+  }
+
+  private buildMediaSessionContext(): ReadAloudSessionContext | null {
+    if (this.sourceId.length <= 0 || this.bookUrl.length <= 0) {
+      return null;
+    }
+    const content = this.chapterContent.length > 0 ? this.chapterContent : this.chapterTitle;
+    return {
+      bookId: this.bookId,
+      bookTitle: this.bookName,
+      chapterIndex: this.currentChapterIndex,
+      chapterTitle: this.chapterTitle.length > 0 ? this.chapterTitle : `第${this.currentChapterIndex + 1}章`,
+      coverUrl: this.coverUrl,
+      content: content,
+      pageIndex: 0,
+      resumeCharIndex: content.length > 0 ? this.resolveMediaCurrentCharIndex(content.length) : undefined
+    };
+  }
+
+  private resolveMediaCurrentCharIndex(contentLength: number): number {
+    if (contentLength <= 0) {
+      return -1;
+    }
+    if (this.audioDurationMs <= 0) {
+      return this.audioPositionMs > 0 ? 0 : -1;
+    }
+    const safeDuration = Math.max(1, Math.floor(this.audioDurationMs));
+    const safePosition = Math.max(0, Math.min(Math.floor(this.audioPositionMs), safeDuration));
+    const maxCharIndex = Math.max(0, contentLength - 1);
+    return Math.max(0, Math.min(maxCharIndex, Math.floor((safePosition / safeDuration) * maxCharIndex)));
+  }
+
+  private syncMediaSession(): void {
+    this.mediaSession.sync(this.buildMediaStateSnapshot(), this.buildMediaSessionContext(), this.readAloudSettings);
+  }
+
+  private getAudioProgressChapterIndexKey(bookId: string): string {
+    return `${AUDIO_PROGRESS_KEY_PREFIX}${bookId}_chapter_index`;
+  }
+
+  private getAudioProgressPositionKey(bookId: string): string {
+    return `${AUDIO_PROGRESS_KEY_PREFIX}${bookId}_position_ms`;
+  }
+
+  private applyPersistedProgressForLaunch(requestedChapterIndex: number, sameSession: boolean): void {
+    this.pendingResumePositionMs = 0;
+    if (sameSession || this.bookId.length <= 0) {
+      return;
+    }
+    const persistedChapterIndex = Math.floor(
+      this.settingsManager.getNumber(this.getAudioProgressChapterIndexKey(this.bookId), -1)
+    );
+    const persistedPositionMs = Math.max(
+      0,
+      Math.floor(this.settingsManager.getNumber(this.getAudioProgressPositionKey(this.bookId), 0))
+    );
+    if (persistedChapterIndex < 0) {
+      return;
+    }
+    let resolvedChapterIndex = this.currentChapterIndex;
+    if (requestedChapterIndex <= 0) {
+      resolvedChapterIndex = persistedChapterIndex;
+    } else if (persistedChapterIndex === this.currentChapterIndex) {
+      resolvedChapterIndex = persistedChapterIndex;
+    }
+    if (this.totalChapters > 0) {
+      resolvedChapterIndex = Math.max(0, Math.min(resolvedChapterIndex, this.totalChapters - 1));
+    } else {
+      resolvedChapterIndex = Math.max(0, resolvedChapterIndex);
+    }
+    this.currentChapterIndex = resolvedChapterIndex;
+    if (persistedChapterIndex === this.currentChapterIndex && persistedPositionMs > 0) {
+      this.pendingResumePositionMs = persistedPositionMs;
+      this.audioPositionMs = persistedPositionMs;
+      logger.info(TAG, `命中听书进度恢复: 章节=${this.currentChapterIndex + 1}, 位置毫秒=${this.pendingResumePositionMs}`);
+    }
+  }
+
+  private async restorePendingResumePositionIfNeeded(player: media.AVPlayer, trigger: string): Promise<void> {
+    const pendingPositionMs = Math.max(0, Math.floor(this.pendingResumePositionMs));
+    if (pendingPositionMs <= 0) {
+      return;
+    }
+    const durationFromPlayer = Math.max(0, Math.floor(player.duration));
+    const targetPositionMs = durationFromPlayer > 0
+      ? Math.max(0, Math.min(pendingPositionMs, durationFromPlayer))
+      : pendingPositionMs;
+    await this.seekAudioPlayer(player, targetPositionMs);
+    this.pendingResumePositionMs = 0;
+    this.syncAudioProgressFromPlayer();
+    logger.info(TAG, `恢复听书播放进度: 触发点=${trigger}, 章节=${this.currentChapterIndex + 1}, 位置毫秒=${this.audioPositionMs}`);
+  }
+
+  private persistPlaybackProgress(force: boolean): void {
+    if (this.bookId.length <= 0) {
+      return;
+    }
+    const now = Date.now();
+    if (!force && (now - this.lastProgressPersistTime) < AUDIO_PROGRESS_PERSIST_INTERVAL_MS) {
+      return;
+    }
+    this.lastProgressPersistTime = now;
+    const safeChapterIndex = Math.max(0, Math.floor(this.currentChapterIndex));
+    const safePositionMs = Math.max(0, Math.floor(this.audioPositionMs));
+    const chapterKey = this.getAudioProgressChapterIndexKey(this.bookId);
+    const positionKey = this.getAudioProgressPositionKey(this.bookId);
+    this.settingsManager.setNumber(chapterKey, safeChapterIndex).catch((error: Object | string): void => {
+      logger.warn(TAG, `保存听书章节进度失败: ${String(error)}`);
+    });
+    this.settingsManager.setNumber(positionKey, safePositionMs).catch((error: Object | string): void => {
+      logger.warn(TAG, `保存听书播放毫秒进度失败: ${String(error)}`);
     });
   }
 }

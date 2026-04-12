@@ -237,12 +237,12 @@ export class ReadAloudMediaSession {
       }
     }
 
-    await this.session.setAVPlaybackState(playbackState);
+    await this.setPlaybackStateWithRecovery(playbackState);
 
     this.lastPlaybackState = mappedState;
     this.lastPlaybackPositionMs = positionMs;
     this.lastPlaybackSyncTimeMs = now;
-    logger.debug(TAG, `媒体播放状态已同步: state=${snapshot.playbackState}, mapped=${mappedState}, positionMs=${positionMs}`);
+    logger.debug(TAG, `媒体播放状态已同步: 原始状态=${snapshot.playbackState}, 映射状态=${mappedState}, 位置毫秒=${positionMs}`);
 
     if (snapshot.playbackState === ReadAloudPlaybackState.IDLE) {
       await this.deactivateSession();
@@ -260,6 +260,43 @@ export class ReadAloudMediaSession {
       return avSession.PlaybackState.PLAYBACK_STATE_STOP;
     }
     return avSession.PlaybackState.PLAYBACK_STATE_IDLE;
+  }
+
+  private async setPlaybackStateWithRecovery(playbackState: avSession.AVPlaybackState): Promise<void> {
+    if (!this.session) {
+      return;
+    }
+    try {
+      await this.session.setAVPlaybackState(playbackState);
+      return;
+    } catch (error) {
+      if (!this.shouldRecoverFromNativeSessionLoss(error)) {
+        throw new Error(this.formatError(error));
+      }
+      logger.warn(TAG, `检测到媒体会话原生实例失效，准备自动重建: ${this.formatError(error)}`);
+      await this.recreateSessionForNativeLoss();
+      if (!this.session) {
+        throw new Error(this.formatError(error));
+      }
+      await this.session.setAVPlaybackState(playbackState);
+      logger.info(TAG, '媒体会话重建完成，播放状态重试成功');
+    }
+  }
+
+  private shouldRecoverFromNativeSessionLoss(error: Object | string): boolean {
+    const errorText = this.formatError(error).toLowerCase();
+    if (errorText.includes('native session not exist')) {
+      return true;
+    }
+    if (errorText.includes('session not exist')) {
+      return true;
+    }
+    return false;
+  }
+
+  private async recreateSessionForNativeLoss(): Promise<void> {
+    await this.releaseInternal();
+    await this.ensureSessionReady();
   }
 
   private async activateSession(): Promise<void> {

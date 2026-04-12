@@ -8,7 +8,14 @@
 import { logger } from '../../Utils/Logger';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
-import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoExploreKind } from './LegadoSourceTypes';
+import {
+  LegadoBookSource,
+  LegadoSearchBook,
+  LegadoBook,
+  LegadoChapter,
+  LegadoExploreKind,
+  LegadoBookSourceType
+} from './LegadoSourceTypes';
 import { LegadoSourceParser } from './LegadoSourceParser';
 import { LegadoRuleAnalyzer } from './LegadoRuleAnalyzer';
 import { LegadoUrlAnalyzer, ParsedUrlRequest, RequestMethod } from './LegadoUrlAnalyzer';
@@ -98,6 +105,8 @@ export class NovelSourceExecutor {
   private static readonly UNRESOLVED_RULE_TOKEN_PATTERN: RegExp = /(?:@|＠)js(?:\:|：)|<js>|\{\{|\}\}|｛｛|｝｝/i;
   private source: LegadoBookSource;
   private urlAnalyzer: LegadoUrlAnalyzer;
+  private contentVariableWarmupTriedBookUrls: Set<string> = new Set();
+  private contentVariableWarmupReadyBookUrls: Set<string> = new Set();
 
   constructor(source: LegadoBookSource) {
     this.source = source;
@@ -443,6 +452,7 @@ export class NovelSourceExecutor {
     const maxPages = 20;
 
     try {
+      await this.prepareContentRuleVariables(chapter);
       while (currentUrl && pageCount < maxPages) {
         const request = await this.analyzeRequestUrl(currentUrl, undefined, undefined, chapter.bookUrl);
         const response = await this.executeRequest(request);
@@ -477,6 +487,230 @@ export class NovelSourceExecutor {
   /**
    * 获取发现分类列表
    */
+  private hasRuleVariableToken(template: string, variableName: string): boolean {
+    if (!template || !variableName) {
+      return false;
+    }
+    const escapedVariable = this.escapeRegexLiteral(variableName);
+    const javaGetPattern = new RegExp(`java\\.get\\s*\\(\\s*["']${escapedVariable}["']\\s*\\)`, 'i');
+    if (javaGetPattern.test(template)) {
+      return true;
+    }
+    const directPattern = new RegExp(`\\{\\{\\s*${escapedVariable}\\s*\\}\\}`, 'i');
+    return directPattern.test(template);
+  }
+
+  private escapeRegexLiteral(input: string): string {
+    return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private parseChapterVariablePayload(variableText: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    const trimmedText = variableText.trim();
+    if (trimmedText.length <= 0) {
+      return result;
+    }
+
+    const assignValue = (rawKey: string, rawValue: string): void => {
+      const key = rawKey.trim();
+      const value = rawValue.trim();
+      if (key.length <= 0 || value.length <= 0 || value.length > 512) {
+        return;
+      }
+      result[key] = value;
+    };
+
+    if (trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmedText) as Record<string, string | number | boolean | null>;
+        const keys = Object.keys(parsed);
+        for (let i = 0; i < keys.length; i++) {
+          const key = keys[i];
+          const parsedValue = parsed[key];
+          if (parsedValue === null || parsedValue === undefined) {
+            continue;
+          }
+          assignValue(key, String(parsedValue));
+        }
+      } catch (_error) {
+        // 继续尝试 key=value 解析
+      }
+    }
+
+    if (Object.keys(result).length > 0) {
+      return result;
+    }
+
+    const pairs = trimmedText.split(/[&;\n]/);
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i].trim();
+      if (pair.length <= 0) {
+        continue;
+      }
+      const separatorIndex = pair.indexOf('=');
+      if (separatorIndex <= 0 || separatorIndex >= pair.length - 1) {
+        continue;
+      }
+      const key = pair.substring(0, separatorIndex);
+      const value = pair.substring(separatorIndex + 1);
+      assignValue(key, value);
+    }
+
+    return result;
+  }
+
+  private mergeRuleVariables(target: Record<string, string>, source: Record<string, string>): void {
+    const keys = Object.keys(source);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = source[key];
+      if (!key || !value) {
+        continue;
+      }
+      target[key] = value;
+    }
+  }
+
+  private applyVariablesToUrlAnalyzer(variables: Record<string, string>, reason: string): void {
+    const keys = Object.keys(variables);
+    let applied = 0;
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = variables[key];
+      if (!key || !value || value.length > 1024) {
+        continue;
+      }
+      this.urlAnalyzer.setVariable(key, value);
+      applied++;
+    }
+    if (applied > 0) {
+      logger.debug(TAG, `同步正文规则变量成功(${reason}): ${applied} 项`);
+    }
+  }
+
+  private resolveEntityTypeFallback(chapter: LegadoChapter, variables: Record<string, string>): string {
+    const candidateKeys: string[] = ['entityType', 'baseEntityType', 'entity_type'];
+    for (let i = 0; i < candidateKeys.length; i++) {
+      const candidateKey = candidateKeys[i];
+      if (Object.keys(variables).includes(candidateKey)) {
+        const value = (variables[candidateKey] || '').trim();
+        if (value.length > 0) {
+          return value;
+        }
+      }
+    }
+
+    const chapterUrl = (chapter.url || '').trim();
+    const urlMatch = chapterUrl.match(/(?:\?|&)entityType=(\d+)/i);
+    if (urlMatch && urlMatch.length > 1) {
+      return urlMatch[1];
+    }
+
+    const chapterTag = (chapter.tag || '').trim();
+    const tagMatch = chapterTag.match(/(?:entityType|entity_type)\s*[:=]\s*(\d+)/i);
+    if (tagMatch && tagMatch.length > 1) {
+      return tagMatch[1];
+    }
+
+    if (this.source.bookSourceUrl.indexOf('lrts.me') >= 0) {
+      return '1';
+    }
+
+    if (this.source.bookSourceType === LegadoBookSourceType.AUDIO) {
+      return '1';
+    }
+    return '';
+  }
+
+  private collectChapterRuleVariables(chapter: LegadoChapter): Record<string, string> {
+    const variables: Record<string, string> = {};
+    const chapterVariable = (chapter.variable || '').trim();
+    if (chapterVariable.length > 0) {
+      const parsedVariables = this.parseChapterVariablePayload(chapterVariable);
+      this.mergeRuleVariables(variables, parsedVariables);
+    }
+
+    const chapterUrl = (chapter.url || '').trim();
+    const sectionNumber = String(Math.max(1, chapter.index + 1));
+
+    if (this.hasRuleVariableToken(chapterUrl, 'n')) {
+      variables['n'] = sectionNumber;
+    }
+    if (this.hasRuleVariableToken(chapterUrl, 'section')) {
+      variables['section'] = sectionNumber;
+    }
+    if (this.hasRuleVariableToken(chapterUrl, 'sections')) {
+      variables['sections'] = `[${sectionNumber}]`;
+    }
+    if (this.hasRuleVariableToken(chapterUrl, 'entityType')) {
+      variables['entityType'] = this.resolveEntityTypeFallback(chapter, variables);
+    }
+
+    return variables;
+  }
+
+  private needsContentRuleVariableWarmup(chapterUrl: string): boolean {
+    if (!chapterUrl || chapterUrl.trim().length <= 0) {
+      return false;
+    }
+    if (this.hasRuleVariableToken(chapterUrl, 'entityType')) {
+      return true;
+    }
+    return /\{\{\s*java\.get\s*\(/i.test(chapterUrl);
+  }
+
+  private async warmupVariablesFromBookInfo(bookUrl: string): Promise<void> {
+    const normalizedBookUrl = bookUrl.trim();
+    if (normalizedBookUrl.length <= 0) {
+      return;
+    }
+    if (this.contentVariableWarmupReadyBookUrls.has(normalizedBookUrl)) {
+      return;
+    }
+    if (this.contentVariableWarmupTriedBookUrls.has(normalizedBookUrl)) {
+      return;
+    }
+    this.contentVariableWarmupTriedBookUrls.add(normalizedBookUrl);
+
+    try {
+      const request = await this.analyzeRequestUrl(normalizedBookUrl);
+      const response = await this.executeRequest(request);
+      if (!response) {
+        logger.warn(TAG, `正文变量预热失败: 书籍详情请求无响应, bookUrl=${normalizedBookUrl}`);
+        return;
+      }
+
+      const parsedBook = this.parseBookInfo(response, request.url, normalizedBookUrl);
+      if (!parsedBook) {
+        logger.warn(TAG, `正文变量预热失败: 详情解析为空, bookUrl=${normalizedBookUrl}`);
+        return;
+      }
+
+      this.contentVariableWarmupReadyBookUrls.add(normalizedBookUrl);
+      logger.info(TAG, `正文变量预热完成: ${parsedBook.name || normalizedBookUrl}`);
+    } catch (error) {
+      logger.warn(TAG, `正文变量预热异常: ${String(error)}`);
+    }
+  }
+
+  private async prepareContentRuleVariables(chapter: LegadoChapter): Promise<void> {
+    const chapterVariables = this.collectChapterRuleVariables(chapter);
+    this.applyVariablesToUrlAnalyzer(chapterVariables, '章节上下文');
+
+    const chapterUrl = (chapter.url || '').trim();
+    if (!this.needsContentRuleVariableWarmup(chapterUrl)) {
+      return;
+    }
+
+    const chapterBookUrl = (chapter.bookUrl || '').trim();
+    if (chapterBookUrl.length > 0) {
+      await this.warmupVariablesFromBookInfo(chapterBookUrl);
+      // 书籍详情中的变量同步后，再次应用章节变量兜底，避免被覆盖
+      this.applyVariablesToUrlAnalyzer(chapterVariables, '章节兜底');
+    }
+  }
+
+  // ==================== 发现页功能 ====================
   getExploreKinds(): LegadoExploreKind[] {
     if (!this.source.exploreUrl) {
       return [];
@@ -1317,6 +1551,39 @@ export class NovelSourceExecutor {
     }
   }
 
+  private buildChapterVariablePayload(variables: Record<string, string>): string {
+    const keys = Object.keys(variables);
+    if (keys.length <= 0) {
+      return '';
+    }
+    const payload: Record<string, string> = {};
+    let payloadCount = 0;
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = variables[key];
+      if (!key || !value) {
+        continue;
+      }
+      const trimmedKey = key.trim();
+      const trimmedValue = value.trim();
+      if (trimmedKey.length <= 0 || trimmedValue.length <= 0) {
+        continue;
+      }
+      if (trimmedKey.startsWith('__') || trimmedValue.length > 512) {
+        continue;
+      }
+      payload[trimmedKey] = trimmedValue;
+      payloadCount++;
+      if (payloadCount >= 24) {
+        break;
+      }
+    }
+    if (payloadCount <= 0) {
+      return '';
+    }
+    return JSON.stringify(payload);
+  }
+
   private extractFallbackBookName(content: string): string {
     const trimmedContent = content.trim();
     if (!trimmedContent) {
@@ -1491,6 +1758,7 @@ export class NovelSourceExecutor {
       const url = chapterUrlRule.length > 0 ? await itemAnalyzer.getStringAsync(chapterUrlRule) : '';
       const fallbackUrl = this.resolveChapterUrlWithFallback(url, title, isVolume, startIndex + i, baseUrl);
       const updateTag = rule.updateTime ? await itemAnalyzer.getStringAsync(rule.updateTime) : '';
+      const chapterVariable = this.buildChapterVariablePayload(itemAnalyzer.getVariablesSnapshot());
 
       const chapter: LegadoChapter = {
         id: this.generateId(),
@@ -1501,6 +1769,7 @@ export class NovelSourceExecutor {
         isVolume: isVolume,
         isVip: this.parseTruthyFlag(isVipRaw),
         isPay: this.parseTruthyFlag(isPayRaw),
+        variable: chapterVariable.length > 0 ? chapterVariable : undefined,
         tag: updateTag
       };
 
@@ -1538,6 +1807,21 @@ export class NovelSourceExecutor {
     if (!content) {
       const emptyResult: ContentParseResult = { content: '', nextUrl: null };
       return emptyResult;
+    }
+
+    if (this.source.bookSourceType === LegadoBookSourceType.AUDIO) {
+      let audioContent = content.trim();
+      if (audioContent.indexOf('&') > -1) {
+        audioContent = HtmlFormatter.unescapeHtml(audioContent);
+      }
+      let nextUrl: string | null = null;
+      if (rule.nextContentUrl) {
+        const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
+        nextUrl = this.extractFirstNonEmptyLine(nextUrlStr);
+      }
+      logger.debug(TAG, `听书源正文保持原始模式: chapter=${chapter.title}, contentLength=${audioContent.length}`);
+      const audioResult: ContentParseResult = { content: audioContent, nextUrl: nextUrl };
+      return audioResult;
     }
 
     content = HtmlFormatter.format(content, false);

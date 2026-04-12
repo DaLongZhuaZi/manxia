@@ -1,5 +1,5 @@
 import { promptAction, LengthMetrics } from '@kit.ArkUI';
-import { HdsNavDestination } from '@kit.UIDesignKit';
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
@@ -7,6 +7,8 @@ import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
+import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
 import {
   NovelAudioReadAloudLaunchParams,
   NovelAudioReadAloudSnapshot,
@@ -38,7 +40,12 @@ export struct ReadAloudPlayerPage {
   @State chapterTitle: string = '';
   @State coverUrl: string = '';
   @State progressPercent: number = 0;
+  @State progressSliderValue: number = 0;
   @State progressText: string = '0%';
+  @State progressDragPreviewText: string = '';
+  @State isProgressDragging: boolean = false;
+  @State isInfoPanelCollapsed: boolean = false;
+  @State activeButtonKey: string = '';
   @State statusText: string = '未播放';
   @State chapterInfoText: string = '--';
   @State pageInfoText: string = '--';
@@ -72,6 +79,9 @@ export struct ReadAloudPlayerPage {
   private displayRestoreTimer: number = -1;
   private sleepTimerRefreshTimer: number = -1;
   private uiContext: UIContext | null = null;
+  private pendingSeekPercent: number = -1;
+  private isApplyingProgressSeek: boolean = false;
+  private progressPreviewHintToken: number = 0;
 
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (_payload: IEventPayload): void => {
     this.refreshPlayerState();
@@ -127,6 +137,19 @@ export struct ReadAloudPlayerPage {
 
   onPageHide(): void {
     this.clearDisplayRestoreTimer();
+    const isInBackground = this.isAppInBackground();
+    if (this.isNovelAudioMode) {
+      this.novelAudioSessionManager.handlePageHide(isInBackground);
+      return;
+    }
+    if (isInBackground) {
+      this.readAloudController.handlePageHide();
+    }
+  }
+
+  private isAppInBackground(): boolean {
+    const backgroundFlag = AppStorage.get<boolean>('isInBackground');
+    return backgroundFlag === true;
   }
 
   private ensureUiContext(): UIContext | null {
@@ -313,6 +336,181 @@ export struct ReadAloudPlayerPage {
     return `${seconds}秒`;
   }
 
+  private resolveButtonScale(buttonKey: string): number {
+    return this.activeButtonKey === buttonKey ? 0.94 : 1;
+  }
+
+  private runAnimatedButtonAction(buttonKey: string, action: () => void): void {
+    animateTo({ duration: 90, curve: Curve.EaseOut }, () => {
+      this.activeButtonKey = buttonKey;
+    });
+    setTimeout(() => {
+      animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+        if (this.activeButtonKey === buttonKey) {
+          this.activeButtonKey = '';
+        }
+      });
+    }, 90);
+    action();
+  }
+
+  private resolveSeekDurationMsForTextMode(snapshot: ReadAloudStateSnapshot, context: ReadAloudSessionContext | null): number {
+    if (snapshot.totalDurationMs > 0) {
+      return Math.max(1, Math.floor(snapshot.totalDurationMs));
+    }
+    if (!context || !context.content || context.content.length <= 0) {
+      return -1;
+    }
+    const speed = Math.max(0.5, snapshot.settings.speed ?? 1);
+    const estimatedMs = Math.floor((context.content.length / Math.max(1, 11 * speed)) * 1000);
+    return Math.max(1, estimatedMs);
+  }
+
+  private resolveSeekDurationMsForCurrentMode(): number {
+    if (this.isNovelAudioMode) {
+      const audioSnapshot = this.novelAudioSessionManager.getSnapshot();
+      if (audioSnapshot.audioDurationMs > 0) {
+        return Math.max(1, Math.floor(audioSnapshot.audioDurationMs));
+      }
+      return -1;
+    }
+    const snapshot = this.readAloudController.getSnapshot();
+    const context = this.readAloudController.getContextSnapshot();
+    return this.resolveSeekDurationMsForTextMode(snapshot, context);
+  }
+
+  private updateProgressSliderValueFromState(): void {
+    if (this.isProgressDragging || this.isApplyingProgressSeek || this.pendingSeekPercent >= 0) {
+      return;
+    }
+    this.progressSliderValue = Math.max(0, Math.min(100, this.progressPercent));
+  }
+
+  private updateProgressDragPreviewText(percent: number): void {
+    const safePercent = Math.max(0, Math.min(100, percent));
+    const durationMs = this.resolveSeekDurationMsForCurrentMode();
+    if (durationMs > 0) {
+      const targetMs = Math.floor((safePercent / 100) * durationMs);
+      this.progressDragPreviewText = `定位预览：${this.formatDuration(targetMs)} / ${this.formatDuration(durationMs)}`;
+      return;
+    }
+    this.progressDragPreviewText = `定位预览：${Math.round(safePercent)}%`;
+  }
+
+  private onProgressSliderChange(value: number, mode: SliderChangeMode): void {
+    const safeValue = Math.max(0, Math.min(100, value));
+    this.progressSliderValue = safeValue;
+    this.updateProgressDragPreviewText(safeValue);
+    if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
+      this.isProgressDragging = true;
+      return;
+    }
+    this.isProgressDragging = false;
+    if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+      this.enqueueProgressSeek(safeValue);
+    }
+  }
+
+  private enqueueProgressSeek(percent: number): void {
+    const safePercent = Math.max(0, Math.min(100, percent));
+    this.pendingSeekPercent = safePercent;
+    if (this.isApplyingProgressSeek) {
+      return;
+    }
+    this.isApplyingProgressSeek = true;
+    void this.flushQueuedProgressSeek();
+  }
+
+  private async flushQueuedProgressSeek(): Promise<void> {
+    try {
+      while (this.pendingSeekPercent >= 0) {
+        const targetPercent = this.pendingSeekPercent;
+        this.pendingSeekPercent = -1;
+        await this.commitProgressSeekFromSlider(targetPercent);
+      }
+    } finally {
+      this.isApplyingProgressSeek = false;
+      this.updateProgressSliderValueFromState();
+      this.scheduleProgressPreviewClear(900);
+    }
+  }
+
+  private scheduleProgressPreviewClear(delayMs: number): void {
+    const clearToken = this.progressPreviewHintToken + 1;
+    this.progressPreviewHintToken = clearToken;
+    setTimeout(() => {
+      if (this.progressPreviewHintToken !== clearToken) {
+        return;
+      }
+      if (this.isProgressDragging || this.isApplyingProgressSeek || this.pendingSeekPercent >= 0) {
+        return;
+      }
+      this.progressDragPreviewText = '';
+    }, delayMs);
+  }
+
+  private resetProgressSeekState(): void {
+    this.pendingSeekPercent = -1;
+    this.isApplyingProgressSeek = false;
+    this.progressPreviewHintToken += 1;
+  }
+
+  private getProgressHintText(): string {
+    if (this.isProgressDragging) {
+      return this.progressDragPreviewText.length > 0 ? this.progressDragPreviewText : '松手后会定位到目标进度';
+    }
+    if (this.isApplyingProgressSeek || this.pendingSeekPercent >= 0) {
+      return this.progressDragPreviewText.length > 0 ? this.progressDragPreviewText : '正在定位到目标进度...';
+    }
+    return '拖动或点击进度条可快速定位，播放不中断';
+  }
+
+  private async commitProgressSeekFromSlider(percent: number): Promise<void> {
+    if (!this.hasSession) {
+      this.progressDragPreviewText = '';
+      return;
+    }
+    const safePercent = Math.max(0, Math.min(100, percent));
+    if (this.isNovelAudioMode) {
+      const snapshot = this.novelAudioSessionManager.getSnapshot();
+      const durationMs = Math.max(0, Math.floor(snapshot.audioDurationMs));
+      if (durationMs <= 0) {
+        promptAction.showToast({ message: '当前音频时长未就绪，暂无法定位', duration: 1400 });
+        this.progressDragPreviewText = '';
+        return;
+      }
+      const targetMs = Math.floor((safePercent / 100) * durationMs);
+      const success = await this.novelAudioSessionManager.seekToPosition(targetMs, 'player_progress_slider');
+      if (!success) {
+        promptAction.showToast({ message: '拖动定位失败，请稍后重试', duration: 1400 });
+      }
+      this.refreshPlayerState();
+      this.progressDragPreviewText = `已定位：${this.formatDuration(targetMs)} / ${this.formatDuration(durationMs)}`;
+      this.scheduleProgressPreviewClear(900);
+      return;
+    }
+
+    const snapshot = this.readAloudController.getSnapshot();
+    const context = this.readAloudController.getContextSnapshot();
+    const durationMs = this.resolveSeekDurationMsForTextMode(snapshot, context);
+    if (durationMs <= 0) {
+      this.progressDragPreviewText = '';
+      return;
+    }
+    const targetMs = Math.floor((safePercent / 100) * durationMs);
+    this.readAloudController.seekToPositionMs(targetMs, 'player_progress_slider');
+    this.readAloudController.refreshMediaSession();
+    this.refreshPlayerState();
+    this.progressDragPreviewText = `已定位：${Math.round(safePercent)}%`;
+    this.scheduleProgressPreviewClear(900);
+  }
+
+  private toggleInfoPanelCollapsed(): void {
+    animateTo({ duration: 260, curve: Curve.EaseInOut }, () => {
+      this.isInfoPanelCollapsed = !this.isInfoPanelCollapsed;
+    });
+  }
+
   private resolveCoverSource(raw: string): ResourceStr {
     if (!raw || raw.length <= 0) {
       return '';
@@ -453,7 +651,7 @@ export struct ReadAloudPlayerPage {
 
     logger.info(
       TAG,
-      `Initialize novel audio session: sourceId=${finalLaunchParams.sourceId}, chapterIndex=${finalLaunchParams.chapterIndex}, autoStart=${finalLaunchParams.autoStartReadAloud === true}, chapterUrl=${(finalLaunchParams.chapterUrl || '').substring(0, 160)}`
+      `初始化听书小说会话: 图源=${finalLaunchParams.sourceId}, 章节索引=${finalLaunchParams.chapterIndex}, 自动播放=${finalLaunchParams.autoStartReadAloud === true}, 章节地址=${(finalLaunchParams.chapterUrl || '').substring(0, 160)}`
     );
 
     // 听书小说改为 AVPlayer 独立链路，避免与 ReadAloudController 会话互相影响
@@ -461,10 +659,10 @@ export struct ReadAloudPlayerPage {
     const started = await this.novelAudioSessionManager.startSession(finalLaunchParams);
     if (started) {
       this.isNovelAudioMode = true;
-      logger.info(TAG, `ReadAloudPlayerPage active audio session: sourceId=${finalLaunchParams.sourceId}, chapterIndex=${finalLaunchParams.chapterIndex}`);
+      logger.info(TAG, `听书播放器页会话已激活: 图源=${finalLaunchParams.sourceId}, 章节索引=${finalLaunchParams.chapterIndex}`);
     } else {
       this.isNovelAudioMode = this.novelAudioSessionManager.hasActiveSession();
-      logger.warn(TAG, `ReadAloudPlayerPage audio session init returned false: sourceId=${finalLaunchParams.sourceId}, chapterIndex=${finalLaunchParams.chapterIndex}`);
+      logger.warn(TAG, `听书播放器页会话初始化返回false: 图源=${finalLaunchParams.sourceId}, 章节索引=${finalLaunchParams.chapterIndex}`);
     }
     this.refreshPlayerState();
   }
@@ -484,6 +682,10 @@ export struct ReadAloudPlayerPage {
       this.coverUrl = '';
       this.progressPercent = 0;
       this.progressText = '0%';
+      this.resetProgressSeekState();
+      this.isProgressDragging = false;
+      this.progressDragPreviewText = '';
+      this.progressSliderValue = 0;
       this.chapterInfoText = '--';
       this.pageInfoText = '--';
       this.charInfoText = '--';
@@ -509,6 +711,7 @@ export struct ReadAloudPlayerPage {
     this.progressText = durationMs > 0
       ? `${this.formatDuration(positionMs)} / ${this.formatDuration(durationMs)}`
       : '0%';
+    this.updateProgressSliderValueFromState();
     this.chapterInfoText = snapshot.totalChapters > 0
       ? `${snapshot.chapterIndex + 1}/${snapshot.totalChapters}`
       : `第${snapshot.chapterIndex + 1}章`;
@@ -550,6 +753,10 @@ export struct ReadAloudPlayerPage {
       this.coverUrl = '';
       this.progressPercent = 0;
       this.progressText = '0%';
+      this.resetProgressSeekState();
+      this.isProgressDragging = false;
+      this.progressDragPreviewText = '';
+      this.progressSliderValue = 0;
       this.chapterInfoText = '--';
       this.pageInfoText = '--';
       this.charInfoText = '--';
@@ -570,6 +777,7 @@ export struct ReadAloudPlayerPage {
     const percent = this.calculateProgressPercent(snapshot, context);
     this.progressPercent = percent;
     this.progressText = `${Math.round(percent)}%`;
+    this.updateProgressSliderValueFromState();
     const contentLength = Math.max(0, context.content.length);
     const maxCharIndex = Math.max(0, contentLength - 1);
     const rawCharIndex = snapshot.currentCharIndex >= 0 ? snapshot.currentCharIndex : (context.resumeCharIndex ?? 0);
@@ -787,6 +995,28 @@ export struct ReadAloudPlayerPage {
       logger.warn(TAG, `返回失败: ${String(error)}`);
     }
   }
+  private getSleepDialogThemeColor(
+    colorType: 'text_primary' | 'text_secondary' | 'text_tertiary' | 'accent_primary' |
+    'comp_background_secondary' | 'comp_divider'
+  ): Resource {
+    return ThemeAwareHelper.getTestManagementThemedColor(colorType, this.themeState.currentTheme);
+  }
+
+  private getDialogMaskColor(): ResourceColor {
+    return DialogSurfaceStyleHelper.getPopupMaskColor();
+  }
+
+  private getDialogMaskBlurStyle(): BlurStyle {
+    return DialogSurfaceStyleHelper.getPopupMaskBlurStyle();
+  }
+
+  private getDialogMaskBlurOptions(): BackgroundBlurStyleOptions {
+    return DialogSurfaceStyleHelper.getPopupMaskBlurOptions();
+  }
+
+  private getDialogMaskBackgroundEffect(): BackgroundEffectOptions | undefined {
+    return DialogSurfaceStyleHelper.getPopupMaskBackgroundEffect();
+  }
 
   @Builder
   private buildCoverCard(): void {
@@ -945,7 +1175,11 @@ export struct ReadAloudPlayerPage {
           .backgroundColor($r('app.color.accent_primary'))
           .fontColor(Color.White)
           .borderRadius(12)
-          .onClick(() => this.showSleepTimerDialogWithAnimation())
+          .scale({ x: this.resolveButtonScale('sleep_timer_open'), y: this.resolveButtonScale('sleep_timer_open') })
+          .animation({ duration: 150, curve: Curve.EaseOut })
+          .onClick(() => {
+            this.runAnimatedButtonAction('sleep_timer_open', () => this.showSleepTimerDialogWithAnimation());
+          })
 
         if (this.sleepTimerActive) {
           Button('取消定时')
@@ -956,7 +1190,11 @@ export struct ReadAloudPlayerPage {
             .backgroundColor($r('app.color.background_secondary'))
             .fontColor($r('app.color.text_primary'))
             .borderRadius(12)
-            .onClick(() => this.cancelSleepTimer())
+            .scale({ x: this.resolveButtonScale('sleep_timer_cancel'), y: this.resolveButtonScale('sleep_timer_cancel') })
+            .animation({ duration: 150, curve: Curve.EaseOut })
+            .onClick(() => {
+              this.runAnimatedButtonAction('sleep_timer_cancel', () => this.cancelSleepTimer());
+            })
         }
       }
       .width('100%')
@@ -970,187 +1208,229 @@ export struct ReadAloudPlayerPage {
   @Builder
   private buildSleepTimerDialog(): void {
     Stack({ alignContent: Alignment.Center }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('rgba(0,0,0,0.42)')
-        .opacity(this.sleepTimerDialogOpacity)
-        .onClick(() => this.hideSleepTimerDialogWithAnimation())
+      SourceDialogScaffold({
+        themeState: this.themeState,
+        onMaskTap: () => this.hideSleepTimerDialogWithAnimation(),
+        dialogWidth: '88%',
+        maxWidth: 520,
+        maxHeight: '82%',
+        contentPadding: 20,
+        dialogRadius: 24,
+        zIndexValue: 3000,
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskBlurOptions: this.getDialogMaskBlurOptions(),
+        maskColor: this.getDialogMaskColor(),
+        maskBackgroundEffect: this.getDialogMaskBackgroundEffect()
+      }) {
+        Column({ space: 16 }) {
+          Row() {
+            Text('定时关闭')
+              .fontSize(20)
+              .fontFamily(this.appFontFamily)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.getSleepDialogThemeColor('text_primary'))
+            Blank()
+            Button('关闭')
+              .height(34)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(this.getSleepDialogThemeColor('comp_background_secondary'))
+              .fontColor(this.getSleepDialogThemeColor('text_primary'))
+              .borderRadius(17)
+              .scale({ x: this.resolveButtonScale('sleep_dialog_close'), y: this.resolveButtonScale('sleep_dialog_close') })
+              .animation({ duration: 150, curve: Curve.EaseOut })
+              .onClick(() => {
+                this.runAnimatedButtonAction('sleep_dialog_close', () => this.hideSleepTimerDialogWithAnimation());
+              })
+          }
+          .width('100%')
 
-      Column({ space: 16 }) {
-        Row() {
-          Text('定时关闭')
-            .fontSize(20)
-            .fontFamily(this.appFontFamily)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-          Blank()
-          Button('关闭')
-            .height(34)
+          Text('选择一个预设时长，或输入自定义分钟/小时。时间到后会自动停止当前听书播放。')
             .fontSize(13)
             .fontFamily(this.appFontFamily)
-            .backgroundColor($r('app.color.background_secondary'))
-            .fontColor($r('app.color.text_primary'))
-            .borderRadius(17)
-            .onClick(() => this.hideSleepTimerDialogWithAnimation())
-        }
-        .width('100%')
-
-        Text('选择一个预设时长，或输入自定义分钟/小时。时间到后会自动停止当前听书播放。')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor($r('app.color.text_secondary'))
-          .lineHeight(21)
-          .width('100%')
-
-        Column({ space: 10 }) {
-          Row({ space: 10 }) {
-            Button('5 分钟')
-              .height(42)
-              .layoutWeight(1)
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor($r('app.color.background_secondary'))
-              .fontColor($r('app.color.text_primary'))
-              .borderRadius(12)
-              .onClick(() => this.applySleepTimer(5 * 60 * 1000))
-
-            Button('15 分钟')
-              .height(42)
-              .layoutWeight(1)
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor($r('app.color.background_secondary'))
-              .fontColor($r('app.color.text_primary'))
-              .borderRadius(12)
-              .onClick(() => this.applySleepTimer(15 * 60 * 1000))
-          }
-          .width('100%')
-
-          Row({ space: 10 }) {
-            Button('30 分钟')
-              .height(42)
-              .layoutWeight(1)
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor($r('app.color.background_secondary'))
-              .fontColor($r('app.color.text_primary'))
-              .borderRadius(12)
-              .onClick(() => this.applySleepTimer(30 * 60 * 1000))
-
-            Button('1 小时')
-              .height(42)
-              .layoutWeight(1)
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor($r('app.color.background_secondary'))
-              .fontColor($r('app.color.text_primary'))
-              .borderRadius(12)
-              .onClick(() => this.applySleepTimer(60 * 60 * 1000))
-          }
-          .width('100%')
-
-          Button('2 小时')
-            .height(42)
+            .fontColor(this.getSleepDialogThemeColor('text_secondary'))
+            .lineHeight(21)
             .width('100%')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor($r('app.color.background_secondary'))
-            .fontColor($r('app.color.text_primary'))
-            .borderRadius(12)
-            .onClick(() => this.applySleepTimer(2 * 60 * 60 * 1000))
-        }
-        .width('100%')
 
-        Column({ space: 12 }) {
-          Text('自定义时长')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontColor($r('app.color.text_primary'))
+          Column({ space: 10 }) {
+            Row({ space: 10 }) {
+              Button('5 分钟')
+                .height(42)
+                .layoutWeight(1)
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(this.getSleepDialogThemeColor('comp_background_secondary'))
+                .fontColor(this.getSleepDialogThemeColor('text_primary'))
+                .borderRadius(12)
+                .scale({ x: this.resolveButtonScale('sleep_preset_5m'), y: this.resolveButtonScale('sleep_preset_5m') })
+                .animation({ duration: 150, curve: Curve.EaseOut })
+                .onClick(() => {
+                  this.runAnimatedButtonAction('sleep_preset_5m', () => this.applySleepTimer(5 * 60 * 1000));
+                })
+
+              Button('15 分钟')
+                .height(42)
+                .layoutWeight(1)
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(this.getSleepDialogThemeColor('comp_background_secondary'))
+                .fontColor(this.getSleepDialogThemeColor('text_primary'))
+                .borderRadius(12)
+                .scale({ x: this.resolveButtonScale('sleep_preset_15m'), y: this.resolveButtonScale('sleep_preset_15m') })
+                .animation({ duration: 150, curve: Curve.EaseOut })
+                .onClick(() => {
+                  this.runAnimatedButtonAction('sleep_preset_15m', () => this.applySleepTimer(15 * 60 * 1000));
+                })
+            }
             .width('100%')
-            .textAlign(TextAlign.Start)
 
-          TextInput({ text: this.customSleepTimerValue, placeholder: '请输入数字' })
-            .height(46)
+            Row({ space: 10 }) {
+              Button('30 分钟')
+                .height(42)
+                .layoutWeight(1)
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(this.getSleepDialogThemeColor('comp_background_secondary'))
+                .fontColor(this.getSleepDialogThemeColor('text_primary'))
+                .borderRadius(12)
+                .scale({ x: this.resolveButtonScale('sleep_preset_30m'), y: this.resolveButtonScale('sleep_preset_30m') })
+                .animation({ duration: 150, curve: Curve.EaseOut })
+                .onClick(() => {
+                  this.runAnimatedButtonAction('sleep_preset_30m', () => this.applySleepTimer(30 * 60 * 1000));
+                })
+
+              Button('1 小时')
+                .height(42)
+                .layoutWeight(1)
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(this.getSleepDialogThemeColor('comp_background_secondary'))
+                .fontColor(this.getSleepDialogThemeColor('text_primary'))
+                .borderRadius(12)
+                .scale({ x: this.resolveButtonScale('sleep_preset_1h'), y: this.resolveButtonScale('sleep_preset_1h') })
+                .animation({ duration: 150, curve: Curve.EaseOut })
+                .onClick(() => {
+                  this.runAnimatedButtonAction('sleep_preset_1h', () => this.applySleepTimer(60 * 60 * 1000));
+                })
+            }
             .width('100%')
-            .type(InputType.Number)
-            .fontSize(15)
-            .fontFamily(this.appFontFamily)
-            .fontColor($r('app.color.text_primary'))
-            .placeholderColor($r('app.color.text_secondary'))
-            .backgroundColor($r('app.color.background_secondary'))
-            .borderRadius(12)
-            .onChange((value: string) => {
-              this.customSleepTimerValue = value.replace(/[^0-9]/g, '');
-            })
 
-          Row({ space: 10 }) {
-            Button('分钟')
-              .height(40)
-              .layoutWeight(1)
+            Button('2 小时')
+              .height(42)
+              .width('100%')
               .fontSize(14)
               .fontFamily(this.appFontFamily)
-              .backgroundColor(
-                this.customSleepTimerUnit === 'minute'
-                  ? $r('app.color.accent_primary')
-                  : $r('app.color.background_secondary')
-              )
-              .fontColor(
-                this.customSleepTimerUnit === 'minute'
-                  ? Color.White
-                  : $r('app.color.text_primary')
-              )
+              .backgroundColor(this.getSleepDialogThemeColor('comp_background_secondary'))
+              .fontColor(this.getSleepDialogThemeColor('text_primary'))
               .borderRadius(12)
+              .scale({ x: this.resolveButtonScale('sleep_preset_2h'), y: this.resolveButtonScale('sleep_preset_2h') })
+              .animation({ duration: 150, curve: Curve.EaseOut })
               .onClick(() => {
-                this.customSleepTimerUnit = 'minute';
-              })
-
-            Button('小时')
-              .height(40)
-              .layoutWeight(1)
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor(
-                this.customSleepTimerUnit === 'hour'
-                  ? $r('app.color.accent_primary')
-                  : $r('app.color.background_secondary')
-              )
-              .fontColor(
-                this.customSleepTimerUnit === 'hour'
-                  ? Color.White
-                  : $r('app.color.text_primary')
-              )
-              .borderRadius(12)
-              .onClick(() => {
-                this.customSleepTimerUnit = 'hour';
+                this.runAnimatedButtonAction('sleep_preset_2h', () => this.applySleepTimer(2 * 60 * 60 * 1000));
               })
           }
           .width('100%')
 
-          Button('确认设置')
-            .height(44)
+          Column({ space: 12 }) {
+            Text('自定义时长')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSleepDialogThemeColor('text_primary'))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+
+            TextInput({ text: this.customSleepTimerValue, placeholder: '请输入数字' })
+              .height(46)
+              .width('100%')
+              .type(InputType.Number)
+              .fontSize(15)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSleepDialogThemeColor('text_primary'))
+              .placeholderColor(this.getSleepDialogThemeColor('text_tertiary'))
+              .backgroundColor(this.getSleepDialogThemeColor('comp_background_secondary'))
+              .borderRadius(12)
+              .border({ width: 1, color: this.getSleepDialogThemeColor('comp_divider') })
+              .onChange((value: string) => {
+                this.customSleepTimerValue = value.replace(/[^0-9]/g, '');
+              })
+
+            Row({ space: 10 }) {
+              Button('分钟')
+                .height(40)
+                .layoutWeight(1)
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(
+                  this.customSleepTimerUnit === 'minute'
+                    ? this.getSleepDialogThemeColor('accent_primary')
+                    : this.getSleepDialogThemeColor('comp_background_secondary')
+                )
+                .fontColor(
+                  this.customSleepTimerUnit === 'minute'
+                    ? Color.White
+                    : this.getSleepDialogThemeColor('text_primary')
+                )
+                .borderRadius(12)
+                .scale({ x: this.resolveButtonScale('sleep_custom_minute'), y: this.resolveButtonScale('sleep_custom_minute') })
+                .animation({ duration: 150, curve: Curve.EaseOut })
+                .onClick(() => {
+                  this.runAnimatedButtonAction('sleep_custom_minute', () => {
+                    this.customSleepTimerUnit = 'minute';
+                  });
+                })
+
+              Button('小时')
+                .height(40)
+                .layoutWeight(1)
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(
+                  this.customSleepTimerUnit === 'hour'
+                    ? this.getSleepDialogThemeColor('accent_primary')
+                    : this.getSleepDialogThemeColor('comp_background_secondary')
+                )
+                .fontColor(
+                  this.customSleepTimerUnit === 'hour'
+                    ? Color.White
+                    : this.getSleepDialogThemeColor('text_primary')
+                )
+                .borderRadius(12)
+                .scale({ x: this.resolveButtonScale('sleep_custom_hour'), y: this.resolveButtonScale('sleep_custom_hour') })
+                .animation({ duration: 150, curve: Curve.EaseOut })
+                .onClick(() => {
+                  this.runAnimatedButtonAction('sleep_custom_hour', () => {
+                    this.customSleepTimerUnit = 'hour';
+                  });
+                })
+            }
             .width('100%')
-            .fontSize(15)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor($r('app.color.accent_primary'))
-            .fontColor(Color.White)
-            .borderRadius(14)
-            .onClick(() => this.applyCustomSleepTimer())
+
+            Button('确认设置')
+              .height(44)
+              .width('100%')
+              .fontSize(15)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(this.getSleepDialogThemeColor('accent_primary'))
+              .fontColor(Color.White)
+              .borderRadius(14)
+              .scale({ x: this.resolveButtonScale('sleep_custom_apply'), y: this.resolveButtonScale('sleep_custom_apply') })
+              .animation({ duration: 150, curve: Curve.EaseOut })
+              .onClick(() => {
+                this.runAnimatedButtonAction('sleep_custom_apply', () => this.applyCustomSleepTimer());
+              })
+          }
+          .width('100%')
         }
         .width('100%')
+        .scale({ x: this.sleepTimerDialogScale, y: this.sleepTimerDialogScale })
+        .animation({ duration: 180, curve: Curve.EaseOut })
       }
-      .width('88%')
-      .padding(20)
-      .constraintSize({ maxWidth: 520, maxHeight: '82%' })
-      .backgroundColor($r('app.color.background_primary'))
-      .borderRadius(24)
-      .border({ width: 1, color: 'rgba(255,255,255,0.08)' })
-      .opacity(this.sleepTimerDialogOpacity)
-      .scale({ x: this.sleepTimerDialogScale, y: this.sleepTimerDialogScale })
-      .onClick(() => {})
     }
     .width('100%')
     .height('100%')
+    .opacity(this.sleepTimerDialogOpacity)
+    .animation({ duration: 180, curve: Curve.EaseOut })
   }
 
   @Builder
@@ -1162,26 +1442,44 @@ export struct ReadAloudPlayerPage {
           .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.text_secondary'))
         Blank()
-        Text(this.progressText)
+        Text(this.isProgressDragging ? `${Math.round(this.progressSliderValue)}%` : this.progressText)
           .fontSize(13)
           .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.text_primary'))
       }
       .width('100%')
 
-      Progress({
-        value: this.progressPercent,
-        total: 100,
-        type: ProgressType.Linear
+      Slider({
+        value: this.progressSliderValue,
+        min: 0,
+        max: 100,
+        step: 1,
+        style: SliderStyle.OutSet
       })
         .width('100%')
-        .height(8)
-        .color($r('app.color.accent_primary'))
+        .trackColor($r('app.color.divider_primary'))
+        .selectedColor($r('app.color.accent_primary'))
+        .blockColor($r('app.color.accent_primary'))
+        .enabled(this.hasSession)
+        .onChange((value: number, mode: SliderChangeMode) => {
+          this.onProgressSliderChange(value, mode);
+        })
+        .animation({ duration: 150, curve: Curve.EaseOut })
+
+      Text(this.getProgressHintText())
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+        .opacity(this.hasSession ? 1 : 0.6)
+        .animation({ duration: 180, curve: Curve.EaseOut })
     }
     .width('100%')
     .padding(16)
     .backgroundColor($r('app.color.background_secondary'))
     .borderRadius(16)
+    .scale({ x: this.isProgressDragging ? 1.01 : 1, y: this.isProgressDragging ? 1.01 : 1 })
+    .animation({ duration: 180, curve: Curve.EaseOut })
   }
 
   @Builder
@@ -1267,6 +1565,61 @@ export struct ReadAloudPlayerPage {
   }
 
   @Builder
+  private buildInfoPanelSection(): void {
+    Column({ space: 10 }) {
+      Row() {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.info_circle'))
+            .fontSize(14)
+            .fontColor([$r('app.color.text_secondary')])
+          Text('信息展示面板')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        Blank()
+        Button() {
+          Row({ space: 4 }) {
+            Text(this.isInfoPanelCollapsed ? '展开' : '收起')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor($r('app.color.text_primary'))
+            SymbolGlyph($r('sys.symbol.chevron_down'))
+              .fontSize(12)
+              .fontColor([$r('app.color.text_primary')])
+              .rotate({ angle: this.isInfoPanelCollapsed ? -90 : 0 })
+              .animation({ duration: 220, curve: Curve.EaseInOut })
+          }
+        }
+        .height(30)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor($r('app.color.background_secondary'))
+        .borderRadius(15)
+        .scale({ x: this.resolveButtonScale('toggle_info_panel'), y: this.resolveButtonScale('toggle_info_panel') })
+        .animation({ duration: 150, curve: Curve.EaseOut })
+        .onClick(() => {
+          this.runAnimatedButtonAction('toggle_info_panel', () => this.toggleInfoPanelCollapsed());
+        })
+      }
+      .width('100%')
+
+      if (!this.isInfoPanelCollapsed) {
+        Column({ space: 12 }) {
+          this.buildSessionInfoCard()
+          if (!this.isNovelAudioMode) {
+            this.buildRemoteStatusCard()
+          }
+          this.buildExcerptCard()
+        }
+        .width('100%')
+        .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: -10 })))
+      }
+    }
+    .width('100%')
+    .animation({ duration: 260, curve: Curve.EaseInOut })
+  }
+
+  @Builder
   private buildExcerptCard(): void {
     Column({ space: 8 }) {
       Text('当前朗读片段')
@@ -1304,7 +1657,11 @@ export struct ReadAloudPlayerPage {
         .borderRadius(26)
         .backgroundColor($r('app.color.background_secondary'))
         .enabled(this.hasSession)
-        .onClick(() => this.skipPrevious())
+        .scale({ x: this.resolveButtonScale('control_previous'), y: this.resolveButtonScale('control_previous') })
+        .animation({ duration: 150, curve: Curve.EaseOut })
+        .onClick(() => {
+          this.runAnimatedButtonAction('control_previous', () => this.skipPrevious());
+        })
 
         Button() {
           SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
@@ -1316,7 +1673,11 @@ export struct ReadAloudPlayerPage {
         .borderRadius(36)
         .backgroundColor($r('app.color.accent_primary'))
         .enabled(this.hasSession)
-        .onClick(() => this.togglePlayPause())
+        .scale({ x: this.resolveButtonScale('control_play_pause'), y: this.resolveButtonScale('control_play_pause') })
+        .animation({ duration: 150, curve: Curve.EaseOut })
+        .onClick(() => {
+          this.runAnimatedButtonAction('control_play_pause', () => this.togglePlayPause());
+        })
 
         Button() {
           SymbolGlyph($r('sys.symbol.arrow_right'))
@@ -1328,7 +1689,11 @@ export struct ReadAloudPlayerPage {
         .borderRadius(26)
         .backgroundColor($r('app.color.background_secondary'))
         .enabled(this.hasSession)
-        .onClick(() => this.skipNext())
+        .scale({ x: this.resolveButtonScale('control_next'), y: this.resolveButtonScale('control_next') })
+        .animation({ duration: 150, curve: Curve.EaseOut })
+        .onClick(() => {
+          this.runAnimatedButtonAction('control_next', () => this.skipNext());
+        })
       }
       .justifyContent(FlexAlign.Center)
       .width('100%')
@@ -1341,7 +1706,11 @@ export struct ReadAloudPlayerPage {
         .backgroundColor($r('app.color.background_secondary'))
         .fontColor($r('app.color.text_primary'))
         .enabled(this.hasSession)
-        .onClick(() => this.stopPlayback())
+        .scale({ x: this.resolveButtonScale('control_stop'), y: this.resolveButtonScale('control_stop') })
+        .animation({ duration: 150, curve: Curve.EaseOut })
+        .onClick(() => {
+          this.runAnimatedButtonAction('control_stop', () => this.stopPlayback());
+        })
 
       if (this.isNovelAudioMode) {
         Button(this.speedInfoText === '缓存中' ? '正在缓存本章...' : '缓存当前章节')
@@ -1352,8 +1721,12 @@ export struct ReadAloudPlayerPage {
           .backgroundColor($r('app.color.background_secondary'))
           .fontColor($r('app.color.text_primary'))
           .enabled(this.hasSession && this.speedInfoText !== '缓存中')
+          .scale({ x: this.resolveButtonScale('control_cache_chapter'), y: this.resolveButtonScale('control_cache_chapter') })
+          .animation({ duration: 150, curve: Curve.EaseOut })
           .onClick(() => {
-            void this.cacheCurrentNovelAudioChapter();
+            this.runAnimatedButtonAction('control_cache_chapter', () => {
+              void this.cacheCurrentNovelAudioChapter();
+            });
           })
       }
     }
@@ -1391,12 +1764,8 @@ export struct ReadAloudPlayerPage {
             Blank().height(PLAYER_TOP_CONTENT_PADDING)
             this.buildCoverCard()
             this.buildProgressCard()
-            this.buildSessionInfoCard()
-            if (!this.isNovelAudioMode) {
-              this.buildRemoteStatusCard()
-            }
+            this.buildInfoPanelSection()
             this.buildSleepTimerCard()
-            this.buildExcerptCard()
             this.buildControlCard()
             Blank()
           }
@@ -1478,5 +1847,3 @@ export struct ReadAloudPlayerPage {
     })
   }
 }
-
-

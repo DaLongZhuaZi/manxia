@@ -19,6 +19,7 @@ import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
+import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
@@ -205,6 +206,7 @@ interface RecommendationItem {
   title: string;
   coverUrl: string;
   contentType: UnifiedContentType;
+  isFavorited: boolean;
   isLocal: boolean;
   sourceId?: string;
   sourceName?: string;
@@ -213,6 +215,12 @@ interface RecommendationItem {
   navContentId: string;
   /** 导航时使用的图源ID（在线内容） */
   navSourceId?: string;
+}
+
+interface TagChipItem {
+  id: string;
+  rawLabel: string;
+  isGenre: boolean;
 }
 
 @Component
@@ -400,6 +408,7 @@ export struct UnifiedDetailPage {
   // UI状态
   @State isFavorite: boolean = false;
   @State showFullDescription: boolean = false;
+  @State expandedTagChipIds: string[] = [];
   @State descriptionSelectedText: string = '';  // 简介中当前选中的文本
   @State showChapterPanel: boolean = false;
   @State chapterFilter: ChapterFilterType = ChapterFilterType.ALL;
@@ -491,15 +500,162 @@ export struct UnifiedDetailPage {
     return (this.content.sourceId || this.pageParams?.sourceId || '').trim();
   }
 
-  private getCurrentNovelSourceType(): LegadoBookSourceType {
+  private getCurrentNovelBookUrl(): string {
     if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
-      return LegadoBookSourceType.TEXT;
+      return '';
     }
-    const sourceId = this.getCurrentNovelSourceId();
+    const contentId: string = typeof this.content.id === 'string' ? this.content.id.trim() : '';
+    if (contentId.length > 0) {
+      return contentId;
+    }
+    return this.pageParams ? this.pageParams.contentId : '';
+  }
+
+  private normalizeNovelSourceLookupId(sourceId: string): string {
+    let normalized: string = sourceId.trim();
+    const extensionSeparator: number = normalized.indexOf('##');
+    if (extensionSeparator >= 0) {
+      normalized = normalized.substring(0, extensionSeparator).trim();
+    }
+    const fragmentIndex: number = normalized.indexOf('#');
+    if (fragmentIndex >= 0) {
+      normalized = normalized.substring(0, fragmentIndex).trim();
+    }
+    if (normalized.length > 1 && normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
+  }
+
+  private appendNovelSourceLookupCandidate(candidates: string[], candidate: string): void {
+    const normalizedCandidate: string = candidate.trim();
+    if (normalizedCandidate.length <= 0) {
+      return;
+    }
+    if (!candidates.includes(normalizedCandidate)) {
+      candidates.push(normalizedCandidate);
+    }
+  }
+
+  private extractNovelSourceDomainId(sourceId: string): string {
+    const match = sourceId.match(/^(https?:\/\/[^\/?#]+)/i);
+    if (match && match[1]) {
+      return match[1];
+    }
+    return sourceId;
+  }
+
+  private buildNovelSourceLookupCandidates(sourceId: string): string[] {
+    const candidates: string[] = [];
+    const trimmedSourceId: string = sourceId.trim();
+    const normalizedSourceId: string = this.normalizeNovelSourceLookupId(trimmedSourceId);
+    this.appendNovelSourceLookupCandidate(candidates, trimmedSourceId);
+    this.appendNovelSourceLookupCandidate(candidates, normalizedSourceId);
+    if (normalizedSourceId.length > 0) {
+      this.appendNovelSourceLookupCandidate(candidates, `${normalizedSourceId}/`);
+    }
+
+    const domainId: string = this.extractNovelSourceDomainId(normalizedSourceId);
+    this.appendNovelSourceLookupCandidate(candidates, domainId);
+    if (domainId.length > 0) {
+      this.appendNovelSourceLookupCandidate(candidates, `${domainId}/`);
+    }
+
+    if (normalizedSourceId.startsWith('http://')) {
+      const httpsVariant: string = `https://${normalizedSourceId.substring('http://'.length)}`;
+      this.appendNovelSourceLookupCandidate(candidates, httpsVariant);
+      this.appendNovelSourceLookupCandidate(candidates, `${httpsVariant}/`);
+    } else if (normalizedSourceId.startsWith('https://')) {
+      const httpVariant: string = `http://${normalizedSourceId.substring('https://'.length)}`;
+      this.appendNovelSourceLookupCandidate(candidates, httpVariant);
+      this.appendNovelSourceLookupCandidate(candidates, `${httpVariant}/`);
+    } else if (normalizedSourceId.length > 0 && normalizedSourceId.indexOf('://') < 0) {
+      const httpsVariantNoScheme: string = `https://${normalizedSourceId}`;
+      const httpVariantNoScheme: string = `http://${normalizedSourceId}`;
+      this.appendNovelSourceLookupCandidate(candidates, httpsVariantNoScheme);
+      this.appendNovelSourceLookupCandidate(candidates, `${httpsVariantNoScheme}/`);
+      this.appendNovelSourceLookupCandidate(candidates, httpVariantNoScheme);
+      this.appendNovelSourceLookupCandidate(candidates, `${httpVariantNoScheme}/`);
+    }
+
+    return candidates;
+  }
+
+  private extractNovelHostFromUrl(url: string): string {
+    const match = url.trim().match(/^(?:https?:\/\/)?([^\/?#]+)/i);
+    if (match && match[1]) {
+      return match[1].toLowerCase();
+    }
+    return '';
+  }
+
+  private areNovelSourceHostsCompatible(sourceUrl: string, bookUrl: string): boolean {
+    const sourceHost: string = this.extractNovelHostFromUrl(sourceUrl);
+    const bookHost: string = this.extractNovelHostFromUrl(bookUrl);
+    if (sourceHost.length <= 0 || bookHost.length <= 0) {
+      return true;
+    }
+    if (sourceHost === bookHost) {
+      return true;
+    }
+    if (sourceHost.endsWith(`.${bookHost}`) || bookHost.endsWith(`.${sourceHost}`)) {
+      return true;
+    }
+    return false;
+  }
+
+  private normalizeNovelSourceName(sourceName: string): string {
+    return sourceName.trim().replace(/\s+/g, '').toLowerCase();
+  }
+
+  private isNovelSourceNameCompatible(expectedSourceName: string, actualSourceName: string): boolean {
+    const normalizedExpected: string = this.normalizeNovelSourceName(expectedSourceName);
+    const normalizedActual: string = this.normalizeNovelSourceName(actualSourceName);
+    if (normalizedExpected.length <= 0 || normalizedActual.length <= 0) {
+      return true;
+    }
+    if (normalizedExpected === normalizedActual) {
+      return true;
+    }
+    if (normalizedExpected.includes(normalizedActual) || normalizedActual.includes(normalizedExpected)) {
+      return true;
+    }
+    return false;
+  }
+
+  private resolveCurrentNovelSource(): LegadoBookSource | null {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return null;
+    }
+    const sourceId: string = this.getCurrentNovelSourceId();
     if (sourceId.length <= 0) {
-      return LegadoBookSourceType.TEXT;
+      return null;
     }
-    const source = this.novelSourceManager.getSource(sourceId);
+    const sourceName: string = typeof this.content.sourceName === 'string' ? this.content.sourceName.trim() : '';
+    const bookUrl: string = this.getCurrentNovelBookUrl();
+    const lookupCandidates: string[] = this.buildNovelSourceLookupCandidates(sourceId);
+
+    for (const candidate of lookupCandidates) {
+      const source = this.novelSourceManager.getSource(candidate);
+      if (!source) {
+        continue;
+      }
+      const sourceUrl: string = typeof source.bookSourceUrl === 'string' ? source.bookSourceUrl.trim() : '';
+      const sourceBookName: string = typeof source.bookSourceName === 'string' ? source.bookSourceName.trim() : '';
+      if (!this.isNovelSourceNameCompatible(sourceName, sourceBookName)) {
+        continue;
+      }
+      if (!this.areNovelSourceHostsCompatible(sourceUrl, bookUrl)) {
+        continue;
+      }
+      return source;
+    }
+
+    return null;
+  }
+
+  private getCurrentNovelSourceType(): LegadoBookSourceType {
+    const source: LegadoBookSource | null = this.resolveCurrentNovelSource();
     if (!source) {
       return LegadoBookSourceType.TEXT;
     }
@@ -533,6 +689,40 @@ export struct UnifiedDetailPage {
 
   private getNovelCacheWorkingLabel(): string {
     return this.isCurrentNovelAudioSource() ? '正在缓存听书音频...' : '正在缓存中...';
+  }
+
+  private getCacheActionButtonLabel(): string {
+    if (!this.content) {
+      return '缓存';
+    }
+    if (this.content.contentType === UnifiedContentType.NOVEL) {
+      return this.getNovelCacheActionTitle();
+    }
+    if (this.content.contentType === UnifiedContentType.MANGA) {
+      return '缓存章节';
+    }
+    return '缓存';
+  }
+
+  private openCacheDialogFromDetail(trigger: string): void {
+    if (!this.content) {
+      return;
+    }
+    if (this.content.contentType === UnifiedContentType.NOVEL) {
+      logger.info(
+        TAG,
+        `打开小说缓存对话框: 触发源=${trigger}, 听书源=${this.isCurrentNovelAudioSource()}, 图源=${this.getCurrentNovelSourceId()}`
+      );
+      this.showDownloadOptions();
+      return;
+    }
+    if (this.content.contentType === UnifiedContentType.MANGA) {
+      logger.info(TAG, `打开漫画缓存对话框: 触发源=${trigger}`);
+      this.showDownloadOptions();
+      return;
+    }
+    logger.info(TAG, `打开通用缓存对话框: 触发源=${trigger}, 内容类型=${this.content.contentType}`);
+    this.showDownloadOptions();
   }
   
   /**
@@ -761,6 +951,7 @@ export struct UnifiedDetailPage {
     try {
       this.isLoading = true;
       this.errorMessage = '';
+      this.expandedTagChipIds = [];
 
       switch (this.pageParams.contentType) {
         case UnifiedContentType.MANGA:
@@ -2054,7 +2245,7 @@ export struct UnifiedDetailPage {
       : LegadoBookSourceType.TEXT;
 
     if (sourceType === LegadoBookSourceType.AUDIO) {
-      logger.info(TAG, `听书内容跳过翻书动画，直接打开播放器页: chapterIndex=${chapterIndex}, sourceId=${sourceId}`);
+      logger.info(TAG, `听书内容跳过翻书动画，直接打开播放器页: 章节索引=${chapterIndex}, 图源=${sourceId}`);
       this.openNovelReadAloudPage(chapterIndex);
       return;
     }
@@ -2181,7 +2372,7 @@ export struct UnifiedDetailPage {
       AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', 'UnifiedDetailPage');
       AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
       AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
-      logger.info(TAG, `开始听书直达播放器页: chapterIndex=${chapterIndex}, sourceId=${sourceId}, chapterUrl=${params.chapterUrl}`);
+      logger.info(TAG, `开始听书直达播放器页: 章节索引=${chapterIndex}, 图源=${sourceId}, 章节地址=${params.chapterUrl}`);
       this.pathStack.pushPathByName('ReadAloudPlayerPage', params);
       return;
     }
@@ -2252,10 +2443,10 @@ export struct UnifiedDetailPage {
     // 应用过滤
     switch (this.chapterFilter) {
       case ChapterFilterType.UNREAD:
-        chapters = chapters.filter(c => !c.isRead);
+        chapters = chapters.filter((chapter: UnifiedChapter) => !this.isNovelChapterReadForDisplay(chapter));
         break;
       case ChapterFilterType.DOWNLOADED:
-        chapters = chapters.filter(c => c.isDownloaded);
+        chapters = chapters.filter((chapter: UnifiedChapter) => this.isNovelChapterCachedForDisplay(chapter));
         break;
       case ChapterFilterType.BOOKMARKED:
         chapters = chapters.filter(c => c.isBookmarked);
@@ -2268,6 +2459,85 @@ export struct UnifiedDetailPage {
     }
 
     return chapters;
+  }
+
+  private getSafeLastReadChapterIndexForDisplay(): number {
+    if (!this.content) {
+      return -1;
+    }
+    const rawIndex = this.content.lastReadChapterIndex;
+    if (!Number.isFinite(rawIndex)) {
+      return -1;
+    }
+    const safeIndex = Math.floor(rawIndex);
+    if (safeIndex < 0 || safeIndex >= this.content.chapters.length) {
+      return -1;
+    }
+    return safeIndex;
+  }
+
+  private isNovelChapterCachedForDisplay(chapter: UnifiedChapter): boolean {
+    if (this.isCurrentNovelAudioSource()) {
+      const summaryChapter = this.readAloudCacheSummary?.chapters[chapter.index];
+      if (summaryChapter) {
+        return summaryChapter.cached;
+      }
+    }
+    return chapter.isDownloaded;
+  }
+
+  private isNovelChapterReadForDisplay(chapter: UnifiedChapter): boolean {
+    if (!this.isCurrentNovelAudioSource()) {
+      return chapter.isRead;
+    }
+    if (chapter.isRead) {
+      return true;
+    }
+    const lastReadChapterIndex = this.getSafeLastReadChapterIndexForDisplay();
+    return lastReadChapterIndex >= 0 && chapter.index < lastReadChapterIndex;
+  }
+
+  private isNovelChapterCurrentForDisplay(chapter: UnifiedChapter): boolean {
+    return chapter.index === this.getSafeLastReadChapterIndexForDisplay();
+  }
+
+  private getNovelChapterProgressStatusLabel(chapter: UnifiedChapter): string {
+    if (this.isCurrentNovelAudioSource()) {
+      if (this.isNovelChapterCurrentForDisplay(chapter)) {
+        return '播放中';
+      }
+      if (this.isNovelChapterReadForDisplay(chapter)) {
+        return '已播放';
+      }
+      return '未播放';
+    }
+    if (this.isNovelChapterReadForDisplay(chapter)) {
+      return '已读';
+    }
+    if (this.isNovelChapterCurrentForDisplay(chapter)) {
+      return '阅读中';
+    }
+    return '';
+  }
+
+  private getNovelChapterProgressStatusColor(chapter: UnifiedChapter): ResourceColor {
+    if (this.isNovelChapterCurrentForDisplay(chapter)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    if (this.isNovelChapterReadForDisplay(chapter)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+  }
+
+  private getNovelChapterProgressStatusBackground(chapter: UnifiedChapter): ResourceColor {
+    if (this.isNovelChapterCurrentForDisplay(chapter)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15';
+    }
+    if (this.isNovelChapterReadForDisplay(chapter)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '15';
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme);
   }
 
   /**
@@ -2730,6 +3000,10 @@ export struct UnifiedDetailPage {
   }
 
   private openReadAloudCacheDialog(): void {
+    if (this.isCurrentNovelAudioSource()) {
+      this.openCacheDialogFromDetail('read_aloud_cache_section');
+      return;
+    }
     if (!this.supportsReadAloudCacheSection()) {
       return;
     }
@@ -3883,6 +4157,37 @@ export struct UnifiedDetailPage {
     return Math.round(score);
   }
 
+  private async getFavoritedMangaIdSet(): Promise<Set<string>> {
+    const favoritedIds: Set<string> = new Set<string>();
+    try {
+      const favorites = await this.dataManager.getUserFavorites('default_user');
+      for (let index = 0; index < favorites.length; index++) {
+        const favoriteComicId = favorites[index].comicId;
+        if (favoriteComicId && favoriteComicId.trim().length > 0) {
+          favoritedIds.add(favoriteComicId);
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `加载漫画收藏ID列表失败: ${String(error)}`);
+    }
+    return favoritedIds;
+  }
+
+  private async isOnlineRecommendationFavorited(
+    recommendationContentId: string,
+    recommendationType: UnifiedContentType,
+    favoritedMangaIds: Set<string>
+  ): Promise<boolean> {
+    if (recommendationType === UnifiedContentType.MANGA) {
+      return favoritedMangaIds.has(recommendationContentId);
+    }
+    if (recommendationType === UnifiedContentType.EBOOK) {
+      const ebook = await this.ebookDataManager.getEBookById(recommendationContentId);
+      return ebook !== null && ebook.isFavorite;
+    }
+    return false;
+  }
+
   /**
    * 触发智能推荐加载（内容加载完成后调用）
    */
@@ -3920,6 +4225,7 @@ export struct UnifiedDetailPage {
     const allCurrentTags: string[] = [...currentGenres, ...currentTags].filter((t: string) => t.length > 0);
 
     const candidates: RecommendationItem[] = [];
+    const favoritedMangaIds = await this.getFavoritedMangaIdSet();
 
     // ---- 查询本地漫画 ----
     // [性能优化] 使用 SQL LIKE 预过滤，缩小候选集
@@ -3928,6 +4234,7 @@ export struct UnifiedDetailPage {
       for (let ci = 0; ci < comics.length; ci++) {
         const comic = comics[ci];
         if (comic.id === currentId) continue;
+        if (!favoritedMangaIds.has(comic.id)) continue;
         const cTitle = (comic.title || '').toLowerCase().trim();
         const cAuthor = (comic.author || '').toLowerCase().trim();
         const cTags = (comic.tags || []).map((t: string) => t.toLowerCase().trim());
@@ -3939,6 +4246,7 @@ export struct UnifiedDetailPage {
             title: comic.title || '未知标题',
             coverUrl: coverUrl,
             contentType: UnifiedContentType.MANGA,
+            isFavorited: true,
             isLocal: true,
             score: score,
             navContentId: comic.id
@@ -3957,6 +4265,7 @@ export struct UnifiedDetailPage {
         const ebook = ebooks[ei];
         if (!ebook.metadata) continue;
         if (ebook.id === currentId) continue;
+        if (!ebook.isFavorite) continue;
         const cTitle = (ebook.metadata.title || '').toLowerCase().trim();
         const cAuthor = (ebook.metadata.author || '').toLowerCase().trim();
         const cTags = (ebook.metadata.tags || []).map((t: string) => t.toLowerCase().trim());
@@ -3967,6 +4276,7 @@ export struct UnifiedDetailPage {
             title: ebook.metadata.title || '未知标题',
             coverUrl: ebook.metadata.coverImagePath || '',
             contentType: UnifiedContentType.EBOOK,
+            isFavorited: true,
             isLocal: true,
             score: score,
             navContentId: ebook.id
@@ -3984,6 +4294,7 @@ export struct UnifiedDetailPage {
       for (let ni = 0; ni < novels.length; ni++) {
         const novel = novels[ni];
         if (novel.bookUrl === currentId || novel.id === currentId) continue;
+        if (!novel.isFavorite) continue;
         const cTitle = (novel.name || '').toLowerCase().trim();
         const cAuthor = (novel.author || '').toLowerCase().trim();
         // kind 字段存放分类/标签，按逗号等分隔
@@ -3998,6 +4309,7 @@ export struct UnifiedDetailPage {
             title: novel.name || '未知标题',
             coverUrl: novel.coverLocalPath || novel.coverUrl || '',
             contentType: UnifiedContentType.NOVEL,
+            isFavorited: true,
             isLocal: false,
             sourceName: novel.sourceName,
             score: score,
@@ -4014,7 +4326,7 @@ export struct UnifiedDetailPage {
     // 按相关度降序排列，取前 RECOMMEND_MAX_COUNT 条
     candidates.sort((a: RecommendationItem, b: RecommendationItem) => b.score - a.score);
     this.recommendedItems = candidates.slice(0, RECOMMEND_MAX_COUNT);
-    logger.info(TAG, `本地推荐加载完成: ${this.recommendedItems.length} 条`);
+    logger.info(TAG, `本地推荐加载完成: ${this.recommendedItems.length} 条（仅已收藏）`);
   }
 
   /**
@@ -4042,6 +4354,9 @@ export struct UnifiedDetailPage {
     const results: RecommendationItem[] = [];
     const seenIds = new Set<string>();
     seenIds.add(currentContentId);
+    const favoritedMangaIds = this.content.contentType === UnifiedContentType.MANGA
+      ? await this.getFavoritedMangaIdSet()
+      : new Set<string>();
 
     try {
       logger.info(TAG, `在线推荐搜索: sourceId=${sourceIdNum}, keyword="${searchKeyword}"`);
@@ -4055,6 +4370,12 @@ export struct UnifiedDetailPage {
         if (!comic) continue;
         const comicId = comic.id || comic.url || '';
         if (!comicId || seenIds.has(comicId)) continue;
+        const isFavorited = await this.isOnlineRecommendationFavorited(
+          comicId,
+          this.content.contentType,
+          favoritedMangaIds
+        );
+        if (!isFavorited) continue;
         seenIds.add(comicId);
 
         const recItem: RecommendationItem = {
@@ -4062,6 +4383,7 @@ export struct UnifiedDetailPage {
           title: item.title || '未知标题',
           coverUrl: item.coverUrl || '',
           contentType: this.content.contentType,
+          isFavorited: true,
           isLocal: false,
           sourceId: String(sourceIdNum),
           sourceName: this.content.sourceName,
@@ -4076,7 +4398,7 @@ export struct UnifiedDetailPage {
     }
 
     this.recommendedItems = results;
-    logger.info(TAG, `在线推荐加载完成: ${this.recommendedItems.length} 条`);
+    logger.info(TAG, `在线推荐加载完成: ${this.recommendedItems.length} 条（仅已收藏）`);
   }
 
   /**
@@ -4664,6 +4986,14 @@ export struct UnifiedDetailPage {
     return SettingsGlassStyleHelper.getSheetShadowColor();
   }
 
+  private getDialogMaskColor(): ResourceColor {
+    return DialogSurfaceStyleHelper.getPopupMaskColor();
+  }
+
+  private getDialogMaskBlurStyle(): BlurStyle {
+    return DialogSurfaceStyleHelper.getPopupMaskBlurStyle();
+  }
+
   private getDialogChromeTopEdgeColor(): ResourceColor {
     return this.themeState.currentTheme === ThemeType.DARK
       ? 'rgba(255, 255, 255, 0.18)'
@@ -4784,6 +5114,192 @@ export struct UnifiedDetailPage {
   }
 
 
+  private getTagChipItems(): TagChipItem[] {
+    const result: TagChipItem[] = [];
+    if (!this.content) {
+      return result;
+    }
+
+    const genres = this.content.genres ? this.content.genres : [];
+    for (let index = 0; index < genres.length; index++) {
+      const rawLabel = genres[index];
+      if (this.normalizeTagLabel(rawLabel).length === 0) {
+        continue;
+      }
+      result.push({
+        id: `genre_${index}_${this.normalizeTagLabel(rawLabel)}`,
+        rawLabel: rawLabel,
+        isGenre: true
+      });
+    }
+
+    const tags = this.content.tags ? this.content.tags : [];
+    for (let index = 0; index < tags.length; index++) {
+      const rawLabel = tags[index];
+      if (this.normalizeTagLabel(rawLabel).length === 0) {
+        continue;
+      }
+      result.push({
+        id: `tag_${index}_${this.normalizeTagLabel(rawLabel)}`,
+        rawLabel: rawLabel,
+        isGenre: false
+      });
+    }
+    return result;
+  }
+
+  private normalizeTagLabel(rawLabel: string): string {
+    return this.stripHtmlTags(rawLabel).trim();
+  }
+
+  private estimateTagLabelUnits(label: string): number {
+    let units = 0;
+    for (let index = 0; index < label.length; index++) {
+      const code = label.charCodeAt(index);
+      const isWideChar = (code >= 0x4E00 && code <= 0x9FFF)
+        || (code >= 0x3400 && code <= 0x4DBF)
+        || (code >= 0x3040 && code <= 0x30FF)
+        || (code >= 0xAC00 && code <= 0xD7AF)
+        || (code >= 0xFF01 && code <= 0xFF60)
+        || (code >= 0xFFE0 && code <= 0xFFEE);
+      units += isWideChar ? 2 : 1;
+    }
+    return units;
+  }
+
+  private getTagChipExpandLimit(compact: boolean): number {
+    return compact ? 22 : 24;
+  }
+
+  private shouldShowTagChipExpandToggle(label: string, compact: boolean): boolean {
+    return this.estimateTagLabelUnits(label) > this.getTagChipExpandLimit(compact);
+  }
+
+  private isTagChipExpanded(tagChipId: string): boolean {
+    return this.expandedTagChipIds.indexOf(tagChipId) >= 0;
+  }
+
+  private toggleTagChipExpansion(tagChipId: string): void {
+    const expanded = this.isTagChipExpanded(tagChipId);
+    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+      const nextIds: string[] = [];
+      for (let index = 0; index < this.expandedTagChipIds.length; index++) {
+        const currentId = this.expandedTagChipIds[index];
+        if (currentId !== tagChipId) {
+          nextIds.push(currentId);
+        }
+      }
+      if (!expanded) {
+        nextIds.push(tagChipId);
+      }
+      this.expandedTagChipIds = nextIds;
+    });
+  }
+
+  private toggleDescriptionExpanded(): void {
+    animateTo({ duration: 240, curve: Curve.EaseInOut }, () => {
+      this.showFullDescription = !this.showFullDescription;
+    });
+  }
+
+  private getTagChipLabel(item: TagChipItem): string {
+    return this.normalizeTagLabel(item.rawLabel);
+  }
+
+  private canExpandTagChip(item: TagChipItem, compact: boolean): boolean {
+    return this.shouldShowTagChipExpandToggle(this.getTagChipLabel(item), compact);
+  }
+
+  private getTagChipTextMaxWidth(item: TagChipItem, compact: boolean): number {
+    if (this.canExpandTagChip(item, compact)) {
+      return compact ? 96 : 136;
+    }
+    return compact ? 164 : 200;
+  }
+
+  private getTagChipMaxWidth(compact: boolean): number {
+    return compact ? 180 : 220;
+  }
+
+  private getTagChipPrimaryColor(): ResourceColor {
+    return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+  }
+
+  private getTagChipTextColor(item: TagChipItem): ResourceColor {
+    if (item.isGenre) {
+      return this.getTagChipPrimaryColor();
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme);
+  }
+
+  private getTagChipBackgroundColor(item: TagChipItem, compact: boolean): ResourceColor {
+    if (compact) {
+      if (item.isGenre) {
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme);
+      }
+      return ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme);
+    }
+    if (item.isGenre) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '16';
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme);
+  }
+
+  private getTagChipBorderColor(item: TagChipItem): ResourceColor {
+    if (item.isGenre) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '28';
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme);
+  }
+
+  @Builder
+  private buildTagChip(item: TagChipItem, compact: boolean) {
+    Row({ space: compact ? 4 : 6 }) {
+      Text(this.getTagChipLabel(item))
+        .fontSize(compact ? 11 : 12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getTagChipTextColor(item))
+        .maxLines(this.canExpandTagChip(item, compact) && this.isTagChipExpanded(item.id) ? 4 : 1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .constraintSize({ maxWidth: this.getTagChipTextMaxWidth(item, compact) })
+        .onClick(() => {
+          this.navigateToSearch(this.getTagChipLabel(item));
+        })
+
+      if (this.canExpandTagChip(item, compact)) {
+        Row({ space: 2 }) {
+          Text(this.isTagChipExpanded(item.id) ? '收起' : '展开')
+            .fontSize(compact ? 9 : 10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getTagChipPrimaryColor())
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(compact ? 9 : 10)
+            .fontColor([this.getTagChipPrimaryColor()])
+            .rotate({ angle: this.isTagChipExpanded(item.id) ? 180 : 0 })
+            .animation({ duration: 220, curve: Curve.EaseInOut })
+        }
+        .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .borderRadius(compact ? 9 : 10)
+        .onClick(() => {
+          this.toggleTagChipExpansion(item.id);
+        })
+      }
+    }
+    .constraintSize({ maxWidth: this.getTagChipMaxWidth(compact) })
+    .padding(compact
+      ? { left: 8, right: 8, top: 4, bottom: 4 }
+      : { left: 12, right: 12, top: 6, bottom: 6 })
+    .backgroundColor(this.getTagChipBackgroundColor(item, compact))
+    .borderRadius(compact ? 12 : 14)
+    .border(compact
+      ? { width: 0, color: Color.Transparent }
+      : { width: 1, color: this.getTagChipBorderColor(item) })
+    .margin(compact ? { right: 6, bottom: 6 } : { right: 8, bottom: 8 })
+    .transition(TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 })))
+    .animation({ duration: 220, curve: Curve.EaseInOut })
+  }
+
   @Builder
   buildDescription() {
     Stack({ alignContent: Alignment.TopStart }) {
@@ -4801,44 +5317,14 @@ export struct UnifiedDetailPage {
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             }
+            .width('100%')
 
             Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
-              ForEach(this.content.genres || [], (genre: string) => {
-                Text(this.stripHtmlTags(genre))
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .constraintSize({ maxWidth: 220 })
-                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '16')
-                  .borderRadius(14)
-                  .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '28' })
-                  .margin({ right: 8, bottom: 8 })
-                  .onClick(() => {
-                    this.navigateToSearch(genre);
-                  })
-              }, (genre: string, index: number) => `genre_${index}_${genre}`)
-
-              ForEach(this.content.tags || [], (tag: string) => {
-                Text(this.stripHtmlTags(tag))
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .constraintSize({ maxWidth: 220 })
-                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                  .borderRadius(14)
-                  .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
-                  .margin({ right: 8, bottom: 8 })
-                  .onClick(() => {
-                    this.navigateToSearch(tag);
-                  })
-              }, (tag: string, index: number) => `tag_${index}_${tag}`)
+              ForEach(this.getTagChipItems(), (item: TagChipItem) => {
+                this.buildTagChip(item, false);
+              }, (item: TagChipItem) => `desc_${item.id}`)
             }
+            .animation({ duration: 240, curve: Curve.EaseInOut })
           }
           .width('100%')
           .padding(12)
@@ -4866,7 +5352,7 @@ export struct UnifiedDetailPage {
                 .borderRadius(14)
                 .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
                 .onClick(() => {
-                  this.showFullDescription = !this.showFullDescription;
+                  this.toggleDescriptionExpanded();
                 })
             }
           }
@@ -4879,6 +5365,7 @@ export struct UnifiedDetailPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(this.showFullDescription ? undefined : 4)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .animation({ duration: 240, curve: Curve.EaseInOut })
             .copyOption(CopyOptions.InApp)
             .onTextSelectionChange((start: number, end: number) => {
               const fullText = this.stripHtmlTags(this.content?.description || '');
@@ -5105,7 +5592,7 @@ export struct UnifiedDetailPage {
                 SymbolGlyph($r('sys.symbol.arrow_down_circle'))
                   .fontSize(16)
                   .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
-                Text('缓存')
+                Text(this.getCacheActionButtonLabel())
                   .fontSize(14)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -5117,7 +5604,7 @@ export struct UnifiedDetailPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
           .borderRadius(18)
           .enabled(!this.isDownloading)
-          .onClick(() => this.showDownloadOptions())
+          .onClick(() => this.openCacheDialogFromDetail('action_bar'))
         }
 
         Button() {
@@ -5324,6 +5811,29 @@ export struct UnifiedDetailPage {
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
           }
           .width('100%')
+
+          if (this.content && this.isOnlineContent()) {
+            Row() {
+              Button() {
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+                    .fontSize(13)
+                    .fontColor([Color.White])
+                  Text(this.getCacheActionButtonLabel())
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(Color.White)
+                }
+              }
+              .height(34)
+              .padding({ left: 14, right: 14 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .borderRadius(17)
+              .enabled(!this.isDownloading)
+              .onClick(() => this.openCacheDialogFromDetail('cache_status_card'))
+            }
+            .width('100%')
+          }
 
           if (this.isDownloading && this.downloadProgressTotal > 0) {
             Column({ space: 8 }) {
@@ -7617,7 +8127,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: 18,
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.52 * this.cacheConfirmDialogOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(18)
@@ -7687,7 +8199,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: 18,
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.52 * this.novelSettingsCloseConfirmOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(18)
@@ -7909,15 +8423,15 @@ export struct UnifiedDetailPage {
               Text(`${chapter.index + 1}`)
                 .fontSize(12)
                 .fontFamily(this.appFontFamily)
-                .fontColor(chapter.isRead 
+                .fontColor(this.isNovelChapterReadForDisplay(chapter)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                   : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                .fontWeight(chapter.isRead ? FontWeight.Bold : FontWeight.Normal)
+                .fontWeight(this.isNovelChapterReadForDisplay(chapter) ? FontWeight.Bold : FontWeight.Normal)
             }
             .width(36)
             .height(36)
             .borderRadius(18)
-            .backgroundColor(chapter.isRead 
+            .backgroundColor(this.isNovelChapterReadForDisplay(chapter)
               ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '20'
               : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .justifyContent(FlexAlign.Center)
@@ -7927,8 +8441,8 @@ export struct UnifiedDetailPage {
               Text(chapter.title)
                 .fontSize(14)
                 .fontFamily(this.appFontFamily)
-                .fontWeight(chapter.isRead ? FontWeight.Normal : FontWeight.Medium)
-                .fontColor(chapter.isRead 
+                .fontWeight(this.isNovelChapterReadForDisplay(chapter) ? FontWeight.Normal : FontWeight.Medium)
+                .fontColor(this.isNovelChapterReadForDisplay(chapter)
                   ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
                   : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .maxLines(1)
@@ -7942,7 +8456,7 @@ export struct UnifiedDetailPage {
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 }
-                if (chapter.isDownloaded) {
+                if (this.isNovelChapterCachedForDisplay(chapter)) {
                   Row({ space: 2 }) {
                     SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
                       .fontSize(10)
@@ -7959,21 +8473,13 @@ export struct UnifiedDetailPage {
             .layoutWeight(1)
 
             // 右侧：阅读状态标签
-            if (chapter.isRead) {
-              Text('已读')
+            if (this.getNovelChapterProgressStatusLabel(chapter).length > 0) {
+              Text(this.getNovelChapterProgressStatusLabel(chapter))
                 .fontSize(10)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                .fontColor(this.getNovelChapterProgressStatusColor(chapter))
                 .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '15')
-                .borderRadius(10)
-            } else if (chapter.index === this.content?.lastReadChapterIndex) {
-              Text('阅读中')
-                .fontSize(10)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+                .backgroundColor(this.getNovelChapterProgressStatusBackground(chapter))
                 .borderRadius(10)
             }
           }
@@ -8668,42 +9174,23 @@ export struct UnifiedDetailPage {
 
         // 标签区域
         if (this.content && ((this.content.genres && this.content.genres.length > 0) || (this.content.tags && this.content.tags.length > 0))) {
-          Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
-            ForEach(this.content.genres || [], (genre: string) => {
-              Text(this.stripHtmlTags(genre))
-                .fontSize(11)
+          Column({ space: 8 }) {
+            Row({ space: 8 }) {
+              Text('标签')
+                .fontSize(13)
+                .fontWeight(FontWeight.Medium)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .constraintSize({ maxWidth: 180 })
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
-                .padding({ left: 8, right: 8 })
-                .height(24)
-                .borderRadius(12)
-                .margin({ right: 6, bottom: 6 })
-                .onClick(() => {
-                  this.navigateToSearch(genre);
-                })
-            }, (genre: string, index: number) => `ls_genre_${index}_${genre}`)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
+            .width('100%')
 
-            ForEach(this.content.tags || [], (tag: string) => {
-              Text(this.stripHtmlTags(tag))
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .constraintSize({ maxWidth: 180 })
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-                .padding({ left: 8, right: 8 })
-                .height(24)
-                .borderRadius(12)
-                .margin({ right: 6, bottom: 6 })
-                .onClick(() => {
-                  this.navigateToSearch(tag);
-                })
-            }, (tag: string, index: number) => `ls_tag_${index}_${tag}`)
+            Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+              ForEach(this.getTagChipItems(), (item: TagChipItem) => {
+                this.buildTagChip(item, true);
+              }, (item: TagChipItem) => `ls_${item.id}`)
+            }
+            .width('100%')
+            .animation({ duration: 240, curve: Curve.EaseInOut })
           }
           .width('100%')
         }
@@ -8722,6 +9209,7 @@ export struct UnifiedDetailPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(this.showFullDescription ? undefined : 4)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .animation({ duration: 240, curve: Curve.EaseInOut })
             .copyOption(CopyOptions.InApp)
             .onTextSelectionChange((start: number, end: number) => {
               const fullText = this.stripHtmlTags(this.content?.description || '');
@@ -8739,7 +9227,7 @@ export struct UnifiedDetailPage {
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .onClick(() => {
-                this.showFullDescription = !this.showFullDescription;
+                this.toggleDescriptionExpanded();
               })
           }
         }
@@ -9568,7 +10056,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: 18,
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.52 * this.readAloudCacheDialogOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(18)
@@ -11608,7 +12098,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: 18,
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.52 * this.novelSettingsDialogOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(18)
@@ -11985,7 +12477,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: 18,
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.52 * this.downloadDialogOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(18)
@@ -12940,7 +13434,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: this.getDialogRadius(),
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.52 * this.dialogOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome()
@@ -13066,7 +13562,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: 20,
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.54 * this.changeSourceDialogOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(20)
@@ -13477,7 +13975,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: 20,
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.5 * this.addToShelfDialogOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(20)
@@ -13665,7 +14165,9 @@ export struct UnifiedDetailPage {
         contentPadding: 0,
         dialogRadius: 20,
         zIndexValue: 120,
-        maskColor: `rgba(8,12,20,${0.54 * this.replaceDialogOpacity})`
+        useMaskBlur: true,
+        maskBlurStyle: this.getDialogMaskBlurStyle(),
+        maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(20)
@@ -14377,4 +14879,5 @@ export struct UnifiedDetailPage {
     }
   }
 }
+
 

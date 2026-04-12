@@ -4,7 +4,7 @@ import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from './GlobalBackgr
 @Component
 export struct SharedPageBackgroundLayer {
   @StorageProp(SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED)
-  nonMainPageGlobalBackgroundEnabled: boolean = false;
+  nonMainPageGlobalBackgroundEnabled: boolean = true;
 
   @Prop defaultBackgroundColor: ResourceStr = $r('app.color.background');
   @Prop mode: GlobalBackgroundLayerMode = GlobalBackgroundLayerMode.DEFAULT;

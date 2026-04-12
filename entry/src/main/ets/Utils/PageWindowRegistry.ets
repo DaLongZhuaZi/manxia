@@ -74,6 +74,7 @@ export class PageWindowRegistry {
     'NovelTxtTocRulePage',
     'OnlineEBookDetailPage',
     'PageSettingsSubPage',
+    'ShortcutSettingsSubPage',
     'ReadingAnalyticsPage',
     'ReadingSettingsSubPage',
     'RssFavoritesPage',
