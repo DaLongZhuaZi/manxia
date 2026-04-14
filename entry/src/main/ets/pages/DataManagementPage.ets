@@ -2287,10 +2287,161 @@ struct DataManagementPage {
       case 'pdf':
         await this.handleNetworkFolderPdfImport(fileUri, resolvedName);
         return;
-      default:
-        logger.warn(TAG, `网络文件夹导入遇到不支持的分类: ${category}`);
-        this.showToast('当前网络文件暂不支持直接导入');
+      case 'backup':
+      case 'json':
+      case 'font':
+      case 'code':
+      case 'avif':
+        this.handoffNetworkFolderImportToMainMenu(category, fileUri, resolvedName);
         return;
+      default:
+        logger.info(TAG, `网络文件夹导入走通用处理流程: ${category}`);
+        await this.handlePendingFile(fileUri, resolvedName);
+        return;
+    }
+  }
+
+  private handoffNetworkFolderImportToMainMenu(category: string, fileUri: string, displayName: string): void {
+    logger.info(TAG, `网络文件夹文件交由首页处理: 分类=${category}, 文件=${displayName}`);
+
+    if (category === 'backup') {
+      AppStorage.setOrCreate('pendingBackupUri', fileUri);
+      AppStorage.setOrCreate('pendingFileCategory', 'backup');
+      AppStorage.setOrCreate('backupImportPending', true);
+      this.navigateToMainMenuForNetworkImport('备份文件');
+      return;
+    }
+
+    if (category === 'json') {
+      AppStorage.setOrCreate('pendingJsonUri', fileUri);
+      AppStorage.setOrCreate('pendingFileCategory', 'json');
+      this.navigateToMainMenuForNetworkImport('JSON 文件');
+      return;
+    }
+
+    if (category === 'font') {
+      AppStorage.setOrCreate('pendingFontUri', fileUri);
+      AppStorage.setOrCreate('pendingFileCategory', 'font');
+      this.navigateToMainMenuForNetworkImport('字体文件');
+      return;
+    }
+
+    if (category === 'code') {
+      AppStorage.setOrCreate('pendingCodeUri', fileUri);
+      AppStorage.setOrCreate('pendingCodeLanguage', this.inferCodeLanguageFromFileName(displayName));
+      AppStorage.setOrCreate('pendingFileCategory', 'code');
+      this.navigateToMainMenuForNetworkImport('代码文件');
+      return;
+    }
+
+    if (category === 'avif') {
+      AppStorage.setOrCreate('pendingAvifUri', fileUri);
+      AppStorage.setOrCreate('pendingFileCategory', 'avif');
+      this.navigateToMainMenuForNetworkImport('AVIF 图片');
+      return;
+    }
+  }
+
+  private navigateToMainMenuForNetworkImport(typeLabel: string): void {
+    try {
+      this.showToast(`已转交首页处理${typeLabel}`);
+      if (this.pathStack.size() > 0) {
+        this.pathStack.pop();
+        logger.info(TAG, `网络文件夹导入后回退首页成功: ${typeLabel}`);
+        return;
+      }
+      this.pathStack.pushPathByName('MainMenuPage', undefined);
+      logger.info(TAG, `网络文件夹导入后兜底跳转首页成功: ${typeLabel}`);
+    } catch (error) {
+      logger.warn(TAG, `跳转首页处理${typeLabel}失败: ${String(error)}`);
+      this.showToast(`请返回首页继续处理${typeLabel}`);
+    }
+  }
+
+  private inferCodeLanguageFromFileName(fileName: string): string {
+    const lowerName = fileName.trim().toLowerCase();
+    const lastDot = lowerName.lastIndexOf('.');
+    if (lastDot < 0 || lastDot >= lowerName.length - 1) {
+      return 'plaintext';
+    }
+    const extension = lowerName.substring(lastDot + 1);
+    switch (extension) {
+      case 'ts':
+      case 'ets':
+      case 'tsx':
+        return 'typescript';
+      case 'js':
+      case 'jsx':
+        return 'javascript';
+      case 'py':
+        return 'python';
+      case 'java':
+        return 'java';
+      case 'cpp':
+      case 'c':
+      case 'h':
+      case 'hpp':
+        return 'cpp';
+      case 'cs':
+        return 'csharp';
+      case 'go':
+        return 'go';
+      case 'rs':
+        return 'rust';
+      case 'swift':
+        return 'swift';
+      case 'kt':
+        return 'kotlin';
+      case 'rb':
+        return 'ruby';
+      case 'php':
+        return 'php';
+      case 'html':
+      case 'htm':
+        return 'html';
+      case 'css':
+        return 'css';
+      case 'scss':
+        return 'scss';
+      case 'less':
+        return 'less';
+      case 'xml':
+        return 'xml';
+      case 'yaml':
+      case 'yml':
+        return 'yaml';
+      case 'md':
+      case 'markdown':
+        return 'markdown';
+      case 'sql':
+        return 'sql';
+      case 'sh':
+      case 'bash':
+      case 'zsh':
+        return 'shell';
+      case 'ps1':
+        return 'powershell';
+      case 'bat':
+      case 'cmd':
+        return 'bat';
+      case 'ini':
+      case 'conf':
+      case 'cfg':
+        return 'ini';
+      case 'toml':
+        return 'toml';
+      case 'lua':
+        return 'lua';
+      case 'r':
+        return 'r';
+      case 'dart':
+        return 'dart';
+      case 'vue':
+        return 'vue';
+      case 'svelte':
+        return 'svelte';
+      default:
+        return 'plaintext';
     }
   }
 

@@ -12,6 +12,7 @@ import { LogCollector, LogEntry } from './LogCollector';
 import { DownloadDirManager } from '../Storage/DownloadDirManager';
 import { ErrorCategory, ErrorRecordManager } from './ErrorRecordManager';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../NGF';
 
 const TAG = 'ErrorMonitorService';
 
@@ -139,6 +140,8 @@ export class ErrorMonitorService {
   private isStarted: boolean = false;
   private errorLogsDir: string = '';
   private logListener: ((entry: LogEntry) => void) | null = null;
+  private ngfInitFailedSubscribed: boolean = false;
+  private readonly ngfInitFailedListenerId: string = 'ErrorMonitorService_NGF_InitFailed';
 
   private lastErrorTime: number = 0;
   private lastErrorMessage: string = '';
@@ -176,6 +179,7 @@ export class ErrorMonitorService {
         this.onLogEntry(entry);
       };
       this.logCollector.addListener(this.logListener);
+      this.attachNGFInitializationFailedListener();
 
       this.isStarted = true;
       console.log(`[NGF] ${TAG}: 错误监控服务已启动`);
@@ -544,6 +548,7 @@ export class ErrorMonitorService {
       this.logCollector.removeListener(this.logListener);
       this.logListener = null;
     }
+    this.detachNGFInitializationFailedListener();
     this.isStarted = false;
     console.log(`[NGF] ${TAG}: 错误监控服务已停止`);
   }
@@ -576,6 +581,42 @@ export class ErrorMonitorService {
       case LogLevel.ERROR: return 'ERROR';
       case LogLevel.FATAL: return 'FATAL';
       default: return 'UNKNOWN';
+    }
+  }
+
+  private attachNGFInitializationFailedListener(): void {
+    if (this.ngfInitFailedSubscribed) {
+      return;
+    }
+
+    const subscribed = ngfEventBusFacade.subscribe(
+      NGFInitializationEventName.INIT_FAILED,
+      this.ngfInitFailedListenerId,
+      (payload: NGFEventPayload): void => {
+        this.onNGFInitializationFailed(payload);
+      }
+    );
+
+    this.ngfInitFailedSubscribed = subscribed;
+  }
+
+  private detachNGFInitializationFailedListener(): void {
+    if (!this.ngfInitFailedSubscribed) {
+      return;
+    }
+
+    ngfEventBusFacade.unsubscribe(NGFInitializationEventName.INIT_FAILED, this.ngfInitFailedListenerId);
+    this.ngfInitFailedSubscribed = false;
+  }
+
+  private onNGFInitializationFailed(payload: NGFEventPayload): void {
+    const message = `NGF初始化失败事件: ${payload.payloadJson}`;
+    try {
+      ErrorRecordManager.getInstance().addRuntimeError(TAG, message, 'ERROR', '', ErrorCategory.SYSTEM);
+      console.error(`[NGF] ${TAG}: ${message}`);
+    } catch (error) {
+      const err = error instanceof Error ? error.message : String(error);
+      console.error(`[NGF] ${TAG}: 记录NGF初始化失败事件异常: ${err}`);
     }
   }
 }

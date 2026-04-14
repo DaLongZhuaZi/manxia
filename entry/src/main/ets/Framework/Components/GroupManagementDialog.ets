@@ -71,6 +71,15 @@ export struct GroupManagementDialog {
   @State splitKeyword: string = '';
   @State searchKeyword: string = '';
 
+  private getSubviewTransition(): TransitionEffect {
+    return TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+        .combine(TransitionEffect.translate({ x: 12 }).animation({ duration: 220, curve: Curve.EaseOut })),
+      TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseIn })
+        .combine(TransitionEffect.translate({ x: -8 }).animation({ duration: 180, curve: Curve.EaseIn }))
+    );
+  }
+
   /**
    * 获取筛选后的分组列表
    */
@@ -236,21 +245,52 @@ export struct GroupManagementDialog {
       .width('100%')
       .margin({ bottom: 16 })
 
-      // 主内容区域
-      if (this.currentView === 'list') {
-        this.buildGroupList();
-      } else if (this.currentView === 'rename') {
-        this.buildRenameView();
-      } else if (this.currentView === 'merge') {
-        this.buildMergeView();
-      } else if (this.currentView === 'split') {
-        this.buildSplitView();
-      }
+      // 主内容区域（带视图切换动画）
+      Stack() {
+        if (this.currentView === 'list') {
+          Column({ space: 0 }) {
+            this.buildGroupList();
+            this.buildBottomActions();
+          }
+          .id('group_management_view_list')
+          .width('100%')
+          .height('100%')
+          .transition(this.getSubviewTransition())
+        }
 
-      // 底部操作按钮
-      if (this.currentView === 'list') {
-        this.buildBottomActions();
+        if (this.currentView === 'rename') {
+          Column() {
+            this.buildRenameView();
+          }
+          .id('group_management_view_rename')
+          .width('100%')
+          .height('100%')
+          .transition(this.getSubviewTransition())
+        }
+
+        if (this.currentView === 'merge') {
+          Column() {
+            this.buildMergeView();
+          }
+          .id('group_management_view_merge')
+          .width('100%')
+          .height('100%')
+          .transition(this.getSubviewTransition())
+        }
+
+        if (this.currentView === 'split') {
+          Column() {
+            this.buildSplitView();
+          }
+          .id('group_management_view_split')
+          .width('100%')
+          .height('100%')
+          .transition(this.getSubviewTransition())
+        }
       }
+      .width('100%')
+      .layoutWeight(1)
+      .clip(true)
     }
     .width('90%')
     .constraintSize({ maxWidth: 680, maxHeight: '80%' })
@@ -271,8 +311,13 @@ export struct GroupManagementDialog {
     .shadow({
       radius: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius + 4,
       color: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.shadowColor,
+      offsetX: 0,
       offsetY: 8
     })
+    .transition(
+      TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 220, curve: Curve.EaseOut }))
+    )
   }
 
   @Builder
@@ -325,17 +370,16 @@ export struct GroupManagementDialog {
 
   @Builder
   buildGroupItem(group: GroupInfo) {
-    Row() {
+    Row({ space: 12 }) {
       // 选择框
       Checkbox({ name: group.name })
         .select(this.selectedGroups.has(group.name))
         .onChange((isChecked: boolean) => {
           this.toggleGroupSelection(group.name);
         })
-        .margin({ right: 12 })
+        .margin({ top: 2 })
 
-      // 分组信息
-      Column({ space: 4 }) {
+      Column({ space: 8 }) {
         Row() {
           Text(group.name)
             .fontSize(15)
@@ -343,12 +387,17 @@ export struct GroupManagementDialog {
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ right: 8 })
           
           Text(`${group.count}`)
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .width(44)
+            .textAlign(TextAlign.End)
         }
         .width('100%')
 
@@ -357,79 +406,90 @@ export struct GroupManagementDialog {
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(AppColors.success)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
           
           Text(`禁用: ${group.disabledCount}`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(AppColors.error)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
           
           Text(`置顶: ${group.pinnedCount}`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(AppColors.info)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
+        .width('100%')
+
+        Row({ space: 6 }) {
+          // 改名按钮
+          Button() {
+            SymbolGlyph($r('sys.symbol.square_and_pencil'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => {
+            this.selectedGroupForOperation = group.name;
+            this.newGroupName = group.name;
+            this.currentView = 'rename';
+          })
+
+          // 拆分按钮
+          Button() {
+            SymbolGlyph($r('sys.symbol.line_arrowtriangle_2_inward'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => {
+            this.selectedGroupForOperation = group.name;
+            this.currentView = 'split';
+          })
+
+          // 删除按钮
+          Button() {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(16)
+              .fontColor([Color.White])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(AppColors.error)
+          .borderRadius(6)
+          .onClick(() => {
+            promptAction.showDialog({
+              title: '确认删除',
+              message: `确定要删除分组"${group.name}"吗？这将移除所有书源的该分组标记。`,
+              buttons: [
+                { text: '取消', color: AppColors.textSecondary },
+                { text: '删除', color: AppColors.error }
+              ]
+            }).then((result) => {
+              if (result.index === 1) {
+                this.deleteGroup(group.name);
+              }
+            });
+          })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.End)
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
-
-      // 操作按钮
-      Row({ space: 6 }) {
-        // 改名按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.square_and_pencil'))
-            .fontSize(16)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-        }
-        .width(32)
-        .height(32)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-        .borderRadius(6)
-        .onClick(() => {
-          this.selectedGroupForOperation = group.name;
-          this.newGroupName = group.name;
-          this.currentView = 'rename';
-        })
-
-        // 拆分按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.line_arrowtriangle_2_inward'))
-            .fontSize(16)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-        }
-        .width(32)
-        .height(32)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-        .borderRadius(6)
-        .onClick(() => {
-          this.selectedGroupForOperation = group.name;
-          this.currentView = 'split';
-        })
-
-        // 删除按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.trash'))
-            .fontSize(16)
-            .fontColor([Color.White])
-        }
-        .width(32)
-        .height(32)
-        .backgroundColor(AppColors.error)
-        .borderRadius(6)
-        .onClick(() => {
-          promptAction.showDialog({
-            title: '确认删除',
-            message: `确定要删除分组"${group.name}"吗？这将移除所有书源的该分组标记。`,
-            buttons: [
-              { text: '取消', color: AppColors.textSecondary },
-              { text: '删除', color: AppColors.error }
-            ]
-          }).then((result) => {
-            if (result.index === 1) {
-              this.deleteGroup(group.name);
-            }
-          });
-        })
-      }
     }
     .width('100%')
     .padding(12)
@@ -534,38 +594,56 @@ export struct GroupManagementDialog {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-        Radio({ value: 'enabled', group: 'splitCondition' })
-          .checked(this.splitConditionType === 'enabled')
-          .onChange((isChecked: boolean) => {
-            if (isChecked) this.splitConditionType = 'enabled';
-          })
-        Text('按启用状态拆分 (启用/禁用)')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .margin({ left: 8 })
+        Row({ space: 8 }) {
+          Radio({ value: 'enabled', group: 'splitCondition' })
+            .checked(this.splitConditionType === 'enabled')
+            .onChange((isChecked: boolean) => {
+              if (isChecked) this.splitConditionType = 'enabled';
+            })
+          Text('按启用状态拆分 (启用/禁用)')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
 
-        Radio({ value: 'pinned', group: 'splitCondition' })
-          .checked(this.splitConditionType === 'pinned')
-          .onChange((isChecked: boolean) => {
-            if (isChecked) this.splitConditionType = 'pinned';
-          })
-        Text('按置顶状态拆分 (置顶/未置顶)')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .margin({ left: 8 })
+        Row({ space: 8 }) {
+          Radio({ value: 'pinned', group: 'splitCondition' })
+            .checked(this.splitConditionType === 'pinned')
+            .onChange((isChecked: boolean) => {
+              if (isChecked) this.splitConditionType = 'pinned';
+            })
+          Text('按置顶状态拆分 (置顶/未置顶)')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
 
-        Radio({ value: 'keyword', group: 'splitCondition' })
-          .checked(this.splitConditionType === 'keyword')
-          .onChange((isChecked: boolean) => {
-            if (isChecked) this.splitConditionType = 'keyword';
-          })
-        Text('按书源名称关键词拆分')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .margin({ left: 8 })
+        Row({ space: 8 }) {
+          Radio({ value: 'keyword', group: 'splitCondition' })
+            .checked(this.splitConditionType === 'keyword')
+            .onChange((isChecked: boolean) => {
+              if (isChecked) this.splitConditionType = 'keyword';
+            })
+          Text('按书源名称关键词拆分')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
 
         if (this.splitConditionType === 'keyword') {
           TextInput({ placeholder: '请输入关键词', text: this.splitKeyword })

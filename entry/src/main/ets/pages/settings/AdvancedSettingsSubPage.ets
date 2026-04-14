@@ -81,12 +81,6 @@ export struct AdvancedSettingsSubPage {
   @State nsfwScopeBookSourceEnabled: boolean = true;
   private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
   
-  // 隐私保护设置
-  @State backgroundBlurEnabled: boolean = false;
-  @State backgroundBlurBgType: string = 'solid'; // 'solid' | 'custom'
-  @State backgroundBlurBgImage: string = '';
-  @State backgroundBlurIconType: string = 'shield'; // 'shield' | 'logo'
-  
   // 日志等级设置
   @State logOutputLevelIndex: number = 0; // 默认关闭 (0=关闭, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL)
   private otherActionsSecretTapCount: number = 0;
@@ -306,24 +300,6 @@ export struct AdvancedSettingsSubPage {
       // 加载NSFW作用域设置
       this.nsfwScopeImageSourceEnabled = this.contentFilterManager.isNsfwScopeImageSourceEnabled();
       this.nsfwScopeBookSourceEnabled = this.contentFilterManager.isNsfwScopeBookSourceEnabled();
-      
-      // 加载后台模糊设置
-      this.backgroundBlurEnabled = this.settingsManager.getBoolean(
-        SettingKeys.BACKGROUND_BLUR_ENABLED,
-        false
-      );
-      this.backgroundBlurBgType = this.settingsManager.getString(
-        SettingKeys.BACKGROUND_BLUR_BG_TYPE,
-        'solid'
-      );
-      this.backgroundBlurBgImage = this.settingsManager.getString(
-        SettingKeys.BACKGROUND_BLUR_BG_IMAGE,
-        ''
-      );
-      this.backgroundBlurIconType = this.settingsManager.getString(
-        SettingKeys.BACKGROUND_BLUR_ICON_TYPE,
-        'shield'
-      );
       
       // 加载日志等级设置
       this.logOutputLevelIndex = this.settingsManager.getNumber(
@@ -629,75 +605,6 @@ export struct AdvancedSettingsSubPage {
         .width('100%')
         .justifyContent(FlexAlign.SpaceBetween)
 
-        Row() {
-          Column({ space: 4 }) {
-            Text('后台模糊遮罩')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            Text('在多任务界面显示模糊效果保护隐私')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          }
-          .alignItems(HorizontalAlign.Start)
-
-          Blank()
-          Toggle({ type: ToggleType.Switch, isOn: this.backgroundBlurEnabled })
-            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .onChange(async (isOn: boolean) => {
-              this.backgroundBlurEnabled = isOn;
-              await this.settingsManager.setBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, isOn);
-              this.settingsManager.syncToAppStorage();
-              // 同步到AppStorage供全局使用
-              AppStorage.setOrCreate('backgroundBlurEnabled', isOn);
-              promptAction.showToast({
-                message: isOn ? '后台模糊遮罩已启用' : '后台模糊遮罩已关闭',
-                duration: 2000
-              });
-            })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
-
-        // 后台遮罩自定义选项（仅在启用时显示）
-        if (this.backgroundBlurEnabled) {
-          // 图标类型选择
-          Row() {
-            Column({ space: 4 }) {
-              Text('遮罩图标')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Text('选择遮罩中央显示的图标')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-
-            Select([
-              { value: '锁定图标' },
-              { value: '应用Logo' }
-            ])
-              .selected(this.backgroundBlurIconType === 'shield' ? 0 : 1)
-              .value(this.backgroundBlurIconType === 'shield' ? '锁定图标' : '应用Logo')
-              .font({ size: 14 })
-              .selectedOptionFont({ size: 14 })
-              .optionFont({ size: 14 })
-              .onSelect(async (index: number) => {
-                const iconType = index === 0 ? 'shield' : 'logo';
-                this.backgroundBlurIconType = iconType;
-                await this.settingsManager.setString(SettingKeys.BACKGROUND_BLUR_ICON_TYPE, iconType);
-                this.settingsManager.syncToAppStorage();
-                AppStorage.setOrCreate('backgroundBlurIconType', iconType);
-              })
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.SpaceBetween)
-        }
-        
         // 日志等级设置
         Row() {
           Column({ space: 4 }) {

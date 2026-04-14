@@ -180,6 +180,7 @@ export interface FTPConfig {
   username: string;
   password: string;
   useFTPS: boolean;
+  useSFTP?: boolean;
   passive: boolean;
   timeoutMs?: number;
 }

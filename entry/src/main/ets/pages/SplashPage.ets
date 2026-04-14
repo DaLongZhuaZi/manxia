@@ -11,6 +11,8 @@ import { common } from '@kit.AbilityKit';
 import { colorMap } from '../Data/ResourceMap';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { getAppInitializationManager, InitializationState, InitPhase, InitProgressCallback } from '../Framework/Managers/AppInitializationManager';
+import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../Framework/NGF';
+import { ngfPlatformWindowControllerFacade, NGFDisplayMode } from '../Framework/NGF/platformOhos/index';
 
 const TAG = 'SplashPage';
 
@@ -37,6 +39,8 @@ struct SplashPage {
   
   // 初始化管理器回调
   private initProgressCallback: InitProgressCallback | null = null;
+  private ngfInitListenerAttached: boolean = false;
+  private readonly ngfInitListenerId: string = 'SplashPage_NGF_InitListener';
 
   // 自定义主题全局状态（用于背景选择）
   @StorageProp(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE) customSplashBackgroundImage: string = '';
@@ -55,6 +59,46 @@ struct SplashPage {
   private readonly MIN_SPLASH_DURATION: number = 1600; // 最小停留时间 1.6 秒
   private readonly MIN_SPLASH_DURATION_SHORTCUT: number = 2200; // 快捷入口启动最小停留时间 2.2 秒
 
+  private isNgfPlatformIntegrated(): boolean {
+    try {
+      return AppStorage.get<boolean>('ngf_platform_integrated') === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private toNgfDisplayMode(mode: DisplayMode): NGFDisplayMode | null {
+    switch (mode) {
+      case DisplayMode.DEFAULT:
+        return NGFDisplayMode.DEFAULT;
+      case DisplayMode.FULL_IMMERSIVE:
+        return NGFDisplayMode.FULL_IMMERSIVE;
+      case DisplayMode.IMMERSIVE_WITH_BARS:
+        return NGFDisplayMode.IMMERSIVE_WITH_BARS;
+      case DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE:
+        return NGFDisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE;
+      case DisplayMode.HIDE_STATUS_BAR:
+      case DisplayMode.HIDE_NAVIGATION_BAR:
+      default:
+        return null;
+    }
+  }
+
+  private applyDisplayModeWithNgfFallback(mode: DisplayMode): void {
+    if (this.isNgfPlatformIntegrated()) {
+      const ngfMode = this.toNgfDisplayMode(mode);
+      if (ngfMode !== null) {
+        try {
+          ngfPlatformWindowControllerFacade.setDisplayMode(ngfMode);
+          return;
+        } catch (error) {
+          logger.warn(TAG, `NGF窗口模式切换失败，回退旧链路: ${String(error)}`);
+        }
+      }
+    }
+    WindowManager.setDisplayMode(mode, this.uiContext);
+  }
+
   aboutToAppear(): void {
     logger.lifecycle('SplashPage', '🚀 启动页面开始加载');
     
@@ -65,7 +109,7 @@ struct SplashPage {
       return;
     }
 
-    WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.uiContext);
+    this.applyDisplayModeWithNgfFallback(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE);
 
     // 检测窗口实际方向（根据窗口尺寸判断，而非物理方向）
     this.detectWindowOrientation();
@@ -188,6 +232,56 @@ struct SplashPage {
     };
     
     initManager.addProgressListener(this.initProgressCallback);
+    this.setupNGFInitializationBridgeListener();
+  }
+
+  private setupNGFInitializationBridgeListener(): void {
+    if (this.ngfInitListenerAttached) {
+      return;
+    }
+
+    const stateSubscribed = ngfEventBusFacade.subscribe(
+      NGFInitializationEventName.INIT_STATE_CHANGED,
+      this.ngfInitListenerId,
+      (payload: NGFEventPayload): void => {
+        logger.debug(TAG, `收到NGF初始化状态事件: ${payload.payloadJson}`);
+      }
+    );
+
+    const failedSubscribed = ngfEventBusFacade.subscribe(
+      NGFInitializationEventName.INIT_FAILED,
+      this.ngfInitListenerId,
+      (payload: NGFEventPayload): void => {
+        logger.warn(TAG, `收到NGF初始化失败事件: ${payload.payloadJson}`);
+        if (!this.isAppInitialized) {
+          this.loadingProgress = '初始化失败';
+        }
+      }
+    );
+
+    const completedSubscribed = ngfEventBusFacade.subscribe(
+      NGFInitializationEventName.INIT_COMPLETED,
+      this.ngfInitListenerId,
+      (payload: NGFEventPayload): void => {
+        logger.info(TAG, `收到NGF初始化完成事件: ${payload.payloadJson}`);
+        if (!this.isAppInitialized) {
+          this.loadingProgress = '准备就绪';
+        }
+      }
+    );
+
+    this.ngfInitListenerAttached = stateSubscribed || failedSubscribed || completedSubscribed;
+  }
+
+  private cleanupNGFInitializationBridgeListener(): void {
+    if (!this.ngfInitListenerAttached) {
+      return;
+    }
+
+    ngfEventBusFacade.unsubscribe(NGFInitializationEventName.INIT_STATE_CHANGED, this.ngfInitListenerId);
+    ngfEventBusFacade.unsubscribe(NGFInitializationEventName.INIT_FAILED, this.ngfInitListenerId);
+    ngfEventBusFacade.unsubscribe(NGFInitializationEventName.INIT_COMPLETED, this.ngfInitListenerId);
+    this.ngfInitListenerAttached = false;
   }
   
   /**
@@ -340,6 +434,7 @@ struct SplashPage {
       initManager.removeProgressListener(this.initProgressCallback);
       this.initProgressCallback = null;
     }
+    this.cleanupNGFInitializationBridgeListener();
   }
 
   /**

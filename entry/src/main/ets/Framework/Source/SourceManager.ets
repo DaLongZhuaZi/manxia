@@ -12,6 +12,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { SourceRepositoryManager } from './SourceRepositoryManager';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { CoverCacheManager } from '../Cache/CoverCacheManager';
+import { ngfSourceRegistryFacade } from '../NGF';
 
 const TAG = 'SourceManager';
 
@@ -220,6 +221,7 @@ export class SourceManager {
       const sourceId: number = sourceRecord ? Number(sourceRecord.id) : 0;
 
       logger.info(TAG, `图源导入成功: ${sourceName} (ID: ${sourceId}, pkg: ${pkg}, 类型: ${configType})`);
+      this.syncNgfSourceRegistry(sourceId, pkg);
 
       // [修复] 图源导入成功后，尝试恢复使用该 pkg 的在线漫画的图源关联
       // 这解决了图源删除后重新导入时，在线漫画无法识别图源的问题
@@ -277,6 +279,7 @@ export class SourceManager {
       });
 
       logger.info(TAG, `图源更新成功: ${sourceName} (ID: ${sourceId})`);
+      this.syncNgfSourceRegistry(sourceId, pkg);
 
       return {
         success: true,
@@ -435,6 +438,7 @@ export class SourceManager {
     
     await this.dataManager.deleteComicSource(sourceId);
     this.executor.clearCache(sourceId);
+    this.removeNgfSourceRegistry(sourceId);
     logger.info(TAG, `图源已删除: ${sourceId}${pkg ? `, pkg: ${pkg}` : ''}`);
   }
 
@@ -562,6 +566,29 @@ export class SourceManager {
   }
 
   // ==================== 工具方法 ====================
+
+  private syncNgfSourceRegistry(sourceId: number, pkg: string): void {
+    const normalizedPkg = pkg.trim();
+    if (sourceId <= 0 || normalizedPkg.length <= 0) {
+      return;
+    }
+
+    const synced = ngfSourceRegistryFacade.registerSource(`${sourceId}`, normalizedPkg);
+    if (!synced) {
+      logger.warn(TAG, `NGF图源注册失败: sourceId=${sourceId}, pkg=${normalizedPkg}`);
+    }
+  }
+
+  private removeNgfSourceRegistry(sourceId: number): void {
+    if (sourceId <= 0) {
+      return;
+    }
+
+    const removed = ngfSourceRegistryFacade.unregisterSource(`${sourceId}`);
+    if (!removed) {
+      logger.debug(TAG, `NGF图源注册表无对应项: sourceId=${sourceId}`);
+    }
+  }
 
   /**
    * 映射到SourceInfo

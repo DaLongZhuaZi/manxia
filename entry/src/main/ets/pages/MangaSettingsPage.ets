@@ -3,16 +3,14 @@
 职责: 漫画设置页面，提供针对单部漫画的阅读设置配置（独立页面，不再复用阅读设置对话框）
 */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, UIContext } from '@kit.ArkUI';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { UIContext } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
-import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ReadingSettings, DEFAULT_READING_SETTINGS, ReadingDirection, ReadingMode, Manga, ImageSourceType, PageTurnAnimationType } from '../Models/MangaModels';
@@ -21,20 +19,22 @@ import { DataService } from '../Framework/Services/DataService';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
-import { eventBus, GameEvent, MangaDeletedPayload, CoverSelectionCompletedPayload, IEventPayload } from '../Framework/EventBus';
+import { eventBus, GameEvent, MangaDeletedPayload } from '../Framework/EventBus';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
-import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Components/CoverSelectionDialog';
-import { CoverSelectionPageParams } from './CoverSelectionPage';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { image } from '@kit.ImageKit';
-import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 
 const TAG: string = 'MangaSettingsPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
 const MAX_PRELOAD_PAGES: number = 50; // 最大预加载页数
 
 // 页面导航参数
@@ -61,9 +61,7 @@ struct MangaSettingsPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
-  private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'MangaSettingsPage';
-  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -100,6 +98,16 @@ struct MangaSettingsPage {
   // 删除确认对话框状态
   @State showDeleteConfirmDialog: boolean = false;
   @State isDeleting: boolean = false;
+  @State showCoverSelectDialog: boolean = false;
+  @State coverSelectDialogVisible: boolean = false;
+  @State coverSelectDialogCandidates: string[] = [];
+  @State coverSelectDialogDisplayCandidates: string[] = [];
+  @State coverSelectDialogImageLoadFailed: boolean[] = [];
+  @State coverSelectDialogSelectedIndex: number = 0;
+  @State coverSelectDialogTitle: string = '';
+  @State isApplyingCoverSelection: boolean = false;
+  private coverSelectDialogAnimationToken: number = 0;
+  private readonly coverSelectDialogAnimationDuration: number = 220;
   
   // 保存状态
   @State isSavingBasicInfo: boolean = false;
@@ -113,59 +121,14 @@ struct MangaSettingsPage {
   // DataManager和DataService实例
   private dataManager: DataManager = DataManager.getInstance();
   private dataService: DataService = DataService.getInstance();
-  // 封面选择事件处理器（用于页面跳转后的结果回传）
-  private onCoverSelectedHandler: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
-    const cs: CoverSelectionCompletedPayload = payload as CoverSelectionCompletedPayload;
-    // 仅处理当前漫画的封面选择
-    if (!cs || !cs.mangaId || cs.mangaId !== this.pageParams.mangaId || !cs.selectedPath) {
-      return;
-    }
-    const mangaId: string = this.pageParams.mangaId as string;
-    const selectedPath: string = cs.selectedPath as string;
-    try {
-      const sandbox: SandboxManager = SandboxManager.getInstance();
-      const comicsDir: string = sandbox.getDirectory('comics');
-      const sourceId: string = (this.currentManga && this.currentManga.sourceInfo && this.currentManga.sourceInfo.sourceId)
-        ? (this.currentManga.sourceInfo.sourceId as string)
-        : 'local_import';
-      const safeSource: string = this.sanitizeFileName(sourceId);
-      const comicTitle: string = this.currentManga ? this.currentManga.title : mangaId;
-      const safeTitle: string = this.sanitizeFileName(comicTitle);
-      const comicRoot: string = `${comicsDir}/${safeSource}/${safeTitle}`;
-      sandbox.createDirectory(comicRoot).then(() => {
-        const ext: string = this.getFileExtension(selectedPath);
-        const coverTarget: string = `${comicRoot}/cover${ext.length > 0 ? '.' + ext : ''}`;
-        sandbox.exists(coverTarget).then(async (exists: boolean) => {
-          if (exists) {
-            await sandbox.deleteFile(coverTarget);
-          }
-          await sandbox.copyFile(selectedPath, coverTarget);
-          await this.dataManager.updateComicCoverUrl(mangaId, coverTarget);
-          this.coverImagePath = coverTarget;
-          this.showToast('封面已更新');
-          logger.info(TAG, `封面选择事件已处理，更新路径: ${coverTarget}`);
-        }).catch((err: Error) => {
-          logger.error(TAG, `封面文件处理失败: ${err.message}`);
-        });
-      }).catch((err: Error) => {
-        logger.error(TAG, `创建漫画目录失败: ${err.message}`);
-      });
-    } catch (error) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `处理封面选择事件失败: ${errorMessage}`);
-    }
-  };
-
   /**
-   * 对齐 MangaReaderPage 的实现：在页面显示时从 AppStorage 绑定全局导航栈，并解析最新参数
+   * 页面出现时声明本页窗口策略，确保沉浸式布局稳定。
    */
   aboutToAppear(): void {
-    // Capture mode before forcing settings page to normal layout.
-    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
     PageWindowCoordinator.applyPagePolicy('MangaSettingsPage', this.getUIContext());
   }
 
-  onPageShow() {
+  onPageShow(): void {
     PageWindowCoordinator.reapplyPagePolicy('MangaSettingsPage', this.getUIContext());
     logger.lifecycle(TAG, '漫画设置页面开始显示');
     try {
@@ -199,7 +162,7 @@ struct MangaSettingsPage {
     logger.lifecycle(TAG, '漫画设置页面显示完成');
   }
 
-  onReady(context: NavDestinationContext) {
+  onReady(context: NavDestinationContext): void {
     logger.info(TAG, 'HdsNavDestination.onReady 已触发');
     
     // 获取UIContext
@@ -239,15 +202,11 @@ struct MangaSettingsPage {
     // 加载当前漫画的阅读设置
     this.loadMangaAndSettings();
 
-    // 订阅封面选择完成事件（用于从 CoverSelectionPage 回传结果）
-    eventBus.subscribe(GameEvent.COVER_SELECTION_COMPLETED, this.onCoverSelectedHandler);
   }
 
   private lifecycle = new PageLifecycleManager('MangaSettingsPage', { enableDebug: true });
 
-  aboutToDisappear() {
-    // Restore the mode of the source page to avoid polluting return layout.
-    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
+  aboutToDisappear(): void {
     this.lifecycle.destroy();
     // 清理主题感知
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -259,8 +218,6 @@ struct MangaSettingsPage {
       this.deviceChangeListener = null;
     }
 
-    // 取消订阅封面选择事件，避免泄漏
-    eventBus.unsubscribe(GameEvent.COVER_SELECTION_COMPLETED, this.onCoverSelectedHandler);
   }
 
   private showMangaSettingsHelp(): void {
@@ -630,35 +587,7 @@ struct MangaSettingsPage {
 
       const selectedUri: string = selectResult.photoUris[0] as string;
       logger.info(TAG, `选择了图片: ${selectedUri}`);
-
-      // 复制到漫画根目录并重命名为 cover.<ext>
-      if (!this.pageParams || !this.pageParams.mangaId) {
-        this.showToast('缺少漫画ID');
-        return;
-      }
-      const mangaId: string = this.pageParams.mangaId as string;
-      const sandbox: SandboxManager = SandboxManager.getInstance();
-      const comicsDir: string = sandbox.getDirectory('comics');
-      const sourceId: string = (this.currentManga && this.currentManga.sourceInfo && this.currentManga.sourceInfo.sourceId)
-        ? (this.currentManga.sourceInfo.sourceId as string)
-        : 'local_import';
-      const safeSource: string = this.sanitizeFileName(sourceId);
-      const comicTitle: string = this.currentManga ? this.currentManga.title : mangaId;
-      const safeTitle: string = this.sanitizeFileName(comicTitle);
-      const comicRoot: string = `${comicsDir}/${safeSource}/${safeTitle}`;
-      await sandbox.createDirectory(comicRoot);
-
-      const ext: string = this.getFileExtension(selectedUri);
-      const coverTarget: string = `${comicRoot}/cover${ext.length > 0 ? '.' + ext : ''}`;
-      if (await sandbox.exists(coverTarget)) {
-        await sandbox.deleteFile(coverTarget);
-      }
-      await sandbox.copyFile(selectedUri, coverTarget);
-
-      // 更新数据库与页面状态
-      await this.dataManager.updateComicCoverUrl(mangaId, coverTarget);
-      this.coverImagePath = coverTarget;
-      this.showToast('封面已更新');
+      await this.applyCoverBySourcePath(selectedUri);
       logger.info(TAG, '封面图片更新成功');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -690,14 +619,17 @@ struct MangaSettingsPage {
         return;
       }
 
-      // 取前三张图片的路径（优先本地路径）
+      // 取前三张图片的路径（优先本地路径），并预处理为可直接显示的路径
       const candidates: string[] = [];
+      const displayCandidates: string[] = [];
       const maxCount: number = pages.length > 3 ? 3 : pages.length;
       for (let i = 0; i < maxCount; i++) {
         const p: PageInfo = pages[i];
         const path: string = (p.localPath && p.localPath.length > 0) ? (p.localPath as string) : p.imageUrl;
         if (path && path.length > 0) {
+          const displayPath: string = this.normalizeCoverCandidateDisplayPath(path);
           candidates.push(path);
+          displayCandidates.push(displayPath);
         }
       }
       if (candidates.length === 0) {
@@ -705,28 +637,161 @@ struct MangaSettingsPage {
         return;
       }
 
-      // 跳转到封面选择页面，交由 CoverSelectionPage 处理选择逻辑
-      const navParam: CoverSelectionPageParams = {
-        mangaId: mangaId,
-        chapterId: firstChapterId,
-        candidatePaths: candidates,
-        fromPage: 'MangaSettingsPage'
-      } as CoverSelectionPageParams;
-
-      // 优先使用全局栈，确保由 MainMenuPage 的路由容器渲染 CoverSelectionPage
-      const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
-      if (globalStack) {
-        logger.debug(TAG, `导航到 CoverSelectionPage（全局栈），候选数=${candidates.length}, mangaId=${mangaId}, chapterId=${firstChapterId}`);
-        globalStack.pushPath({ name: 'CoverSelectionPage', param: navParam as Object });
-      } else {
-        logger.debug(TAG, `导航到 CoverSelectionPage（本地栈），候选数=${candidates.length}, mangaId=${mangaId}, chapterId=${firstChapterId}`);
-        this.pathStack.pushPath({ name: 'CoverSelectionPage', param: navParam as Object });
-      }
+      this.openCoverSelectDialog(
+        candidates,
+        displayCandidates,
+        this.currentManga ? this.currentManga.title : mangaId
+      );
+      logger.info(TAG, `打开封面选择对话框: candidates=${candidates.length}, mangaId=${mangaId}, chapterId=${firstChapterId}`);
     } catch (error) {
       const errMsg: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `从漫画页面设置封面失败: ${errMsg}`);
       this.showToast('设置封面失败');
     }
+  }
+
+  private normalizeCoverCandidateDisplayPath(rawPath: string): string {
+    if (!rawPath || rawPath.length === 0) {
+      return '';
+    }
+    const lowerRawPath: string = rawPath.toLowerCase();
+    const hasUriScheme: boolean = rawPath.indexOf('://') > 0;
+    if (hasUriScheme &&
+      lowerRawPath.indexOf('http://') !== 0 &&
+      lowerRawPath.indexOf('https://') !== 0 &&
+      lowerRawPath.indexOf('file://') !== 0 &&
+      lowerRawPath.indexOf('$rawfile(') !== 0) {
+      return rawPath;
+    }
+    const sourceType: ImageSourceType = this.detectImageSourceType(rawPath);
+    return this.normalizeDisplayPath(rawPath, sourceType);
+  }
+
+  private buildCoverCandidateLoadFlags(length: number): boolean[] {
+    const flags: boolean[] = [];
+    for (let i = 0; i < length; i++) {
+      flags.push(false);
+    }
+    return flags;
+  }
+
+  private openCoverSelectDialog(candidates: string[], displayCandidates: string[], title: string): void {
+    this.coverSelectDialogAnimationToken += 1;
+    const token: number = this.coverSelectDialogAnimationToken;
+    this.coverSelectDialogCandidates = candidates;
+    this.coverSelectDialogDisplayCandidates = displayCandidates;
+    this.coverSelectDialogImageLoadFailed = this.buildCoverCandidateLoadFlags(displayCandidates.length);
+    this.coverSelectDialogSelectedIndex = 0;
+    this.coverSelectDialogTitle = title;
+    this.showCoverSelectDialog = true;
+    this.coverSelectDialogVisible = false;
+    setTimeout(() => {
+      if (this.coverSelectDialogAnimationToken === token && this.showCoverSelectDialog) {
+        this.coverSelectDialogVisible = true;
+      }
+    }, 0);
+  }
+
+  private closeCoverSelectDialog(forceClose: boolean = false): void {
+    if (this.isApplyingCoverSelection && !forceClose) {
+      return;
+    }
+    if (!this.showCoverSelectDialog) {
+      return;
+    }
+    this.coverSelectDialogAnimationToken += 1;
+    const token: number = this.coverSelectDialogAnimationToken;
+    this.coverSelectDialogVisible = false;
+    setTimeout(() => {
+      if (this.coverSelectDialogAnimationToken !== token) {
+        return;
+      }
+      this.showCoverSelectDialog = false;
+      this.coverSelectDialogCandidates = [];
+      this.coverSelectDialogDisplayCandidates = [];
+      this.coverSelectDialogImageLoadFailed = [];
+      this.coverSelectDialogSelectedIndex = 0;
+      this.coverSelectDialogTitle = '';
+    }, this.coverSelectDialogAnimationDuration);
+  }
+
+  private getCoverSelectCandidateDisplaySource(index: number): string | ResourceStr {
+    if (index < 0 || index >= this.coverSelectDialogDisplayCandidates.length) {
+      return $r('app.media.mangabook');
+    }
+    if (index < this.coverSelectDialogImageLoadFailed.length && this.coverSelectDialogImageLoadFailed[index]) {
+      return $r('app.media.mangabook');
+    }
+    const displayPath: string = this.coverSelectDialogDisplayCandidates[index];
+    if (displayPath && displayPath.length > 0) {
+      return displayPath;
+    }
+    return $r('app.media.mangabook');
+  }
+
+  private markCoverSelectCandidateLoadFailed(index: number): void {
+    if (index < 0 || index >= this.coverSelectDialogImageLoadFailed.length) {
+      return;
+    }
+    if (this.coverSelectDialogImageLoadFailed[index]) {
+      return;
+    }
+    const nextFlags: boolean[] = [];
+    for (let i = 0; i < this.coverSelectDialogImageLoadFailed.length; i++) {
+      nextFlags.push(this.coverSelectDialogImageLoadFailed[i]);
+    }
+    nextFlags[index] = true;
+    this.coverSelectDialogImageLoadFailed = nextFlags;
+    const rawPath: string = index < this.coverSelectDialogCandidates.length ? this.coverSelectDialogCandidates[index] : '';
+    const displayPath: string = index < this.coverSelectDialogDisplayCandidates.length ? this.coverSelectDialogDisplayCandidates[index] : '';
+    logger.warn(TAG, `封面候选图加载失败: index=${index}, raw='${rawPath}', display='${displayPath}'`);
+  }
+
+  private async confirmCoverSelectDialog(): Promise<void> {
+    if (this.coverSelectDialogSelectedIndex < 0 || this.coverSelectDialogSelectedIndex >= this.coverSelectDialogCandidates.length) {
+      this.showToast('请选择封面图片');
+      return;
+    }
+    const selectedPath: string = this.coverSelectDialogCandidates[this.coverSelectDialogSelectedIndex];
+    this.isApplyingCoverSelection = true;
+    try {
+      await this.applyCoverBySourcePath(selectedPath);
+      this.closeCoverSelectDialog(true);
+    } catch (error) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `应用封面选择失败: ${errorMessage}`);
+      this.showToast('设置封面失败');
+    } finally {
+      this.isApplyingCoverSelection = false;
+    }
+  }
+
+  private async applyCoverBySourcePath(sourcePath: string): Promise<void> {
+    if (!this.pageParams || !this.pageParams.mangaId) {
+      throw new Error('缺少漫画ID');
+    }
+    const mangaId: string = this.pageParams.mangaId;
+    const sandbox: SandboxManager = SandboxManager.getInstance();
+    const comicsDir: string = sandbox.getDirectory('comics');
+    const sourceId: string = (this.currentManga && this.currentManga.sourceInfo && this.currentManga.sourceInfo.sourceId)
+      ? (this.currentManga.sourceInfo.sourceId as string)
+      : 'local_import';
+    const safeSource: string = this.sanitizeFileName(sourceId);
+    const comicTitle: string = this.currentManga ? this.currentManga.title : mangaId;
+    const safeTitle: string = this.sanitizeFileName(comicTitle);
+    const comicRoot: string = `${comicsDir}/${safeSource}/${safeTitle}`;
+    await sandbox.createDirectory(comicRoot);
+
+    const ext: string = this.getFileExtension(sourcePath);
+    const coverTarget: string = `${comicRoot}/cover${ext.length > 0 ? '.' + ext : ''}`;
+    if (await sandbox.exists(coverTarget)) {
+      await sandbox.deleteFile(coverTarget);
+    }
+    await sandbox.copyFile(sourcePath, coverTarget);
+    await this.dataManager.updateComicCoverUrl(mangaId, coverTarget);
+    this.coverImagePath = coverTarget;
+    this.showToast('封面已更新');
+    logger.info(TAG, `封面路径已更新: ${coverTarget}`);
   }
 
   // 与导入页一致的文件名清理
@@ -1147,6 +1212,9 @@ struct MangaSettingsPage {
                   .height(40)
                   .fontFamily(this.appFontFamily)
                   .fontSize(14)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+                  .borderRadius(10)
                   .onClick(() => { this.selectCoverFromMangaPages(); })
 
                 Button('从相册选择封面')
@@ -1155,6 +1223,9 @@ struct MangaSettingsPage {
                   .height(40)
                   .fontFamily(this.appFontFamily)
                   .fontSize(14)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+                  .borderRadius(10)
                   .onClick(() => { this.selectCoverImage(); })
               }
               .width('100%')
@@ -1248,6 +1319,9 @@ struct MangaSettingsPage {
                 .height(40)
                 .fontFamily(this.appFontFamily)
                 .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+                .borderRadius(10)
                 .onClick(() => { this.selectCoverFromMangaPages(); })
 
               Button('从相册选择封面')
@@ -1256,6 +1330,9 @@ struct MangaSettingsPage {
                 .height(40)
                 .fontFamily(this.appFontFamily)
                 .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+                .borderRadius(10)
                 .onClick(() => { this.selectCoverImage(); })
             }
             .width('100%')
@@ -1287,9 +1364,19 @@ struct MangaSettingsPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   /**
@@ -1329,10 +1416,11 @@ struct MangaSettingsPage {
         
         // 展开/收起按钮
         Button() {
-          Text(this.basicInfoExpanded ? '▲' : '▼')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .rotate({ angle: this.basicInfoExpanded ? 180 : 0 })
+            .animation({ duration: 220, curve: Curve.EaseOut })
         }
         .width(36)
         .height(36)
@@ -1432,7 +1520,7 @@ struct MangaSettingsPage {
               .height(40)
               .fontSize(14)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
               .onClick(() => {
                 this.initEditingState();
@@ -1454,13 +1542,27 @@ struct MangaSettingsPage {
           .margin({ top: 8 })
         }
         .width('100%')
+        .transition(
+          TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+            .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 220, curve: Curve.EaseOut }))
+        )
       }
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   // 构建设置项：阅读方向
@@ -1581,9 +1683,19 @@ struct MangaSettingsPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   // 构建设置项：阅读模式
@@ -1610,7 +1722,7 @@ struct MangaSettingsPage {
             .height(36)
             .backgroundColor(
               this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
             )
             .borderRadius(8)
@@ -1628,7 +1740,7 @@ struct MangaSettingsPage {
             .height(36)
             .backgroundColor(
               this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
             )
             .borderRadius(8)
@@ -1646,7 +1758,7 @@ struct MangaSettingsPage {
             .height(36)
             .backgroundColor(
               this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
             )
             .borderRadius(8)
@@ -1668,7 +1780,7 @@ struct MangaSettingsPage {
             .height(36)
             .backgroundColor(
               this.readingSettings.readingMode === ReadingMode.WEBTOON
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
             )
             .borderRadius(8)
@@ -1686,7 +1798,7 @@ struct MangaSettingsPage {
             .height(36)
             .backgroundColor(
               this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
             )
             .borderRadius(8)
@@ -1699,9 +1811,19 @@ struct MangaSettingsPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   // 构建设置项：基础开关
@@ -1777,9 +1899,19 @@ struct MangaSettingsPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   // 构建设置项：预加载设置
@@ -1850,9 +1982,19 @@ struct MangaSettingsPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   // 构建设置项：高级设置（可展开）
@@ -1867,10 +2009,17 @@ struct MangaSettingsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
         
-        Text(this.advancedSettingsExpanded ? '收起' : '展开')
-          .fontSize(14)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        Row({ space: 4 }) {
+          Text(this.advancedSettingsExpanded ? '收起' : '展开')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+            .rotate({ angle: this.advancedSettingsExpanded ? 180 : 0 })
+            .animation({ duration: 220, curve: Curve.EaseOut })
+        }
           .onClick(() => {
             this.advancedSettingsExpanded = !this.advancedSettingsExpanded;
           })
@@ -1891,7 +2040,7 @@ struct MangaSettingsPage {
                 .fontSize(14)
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             }
             .width('100%')
             .justifyContent(FlexAlign.SpaceBetween)
@@ -1903,9 +2052,9 @@ struct MangaSettingsPage {
               step: 1,
               style: SliderStyle.InSet
             })
-              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .trackThickness(4)
               .onChange((value: number) => {
                 this.setPageSpacing(Math.round(value));
@@ -1924,7 +2073,7 @@ struct MangaSettingsPage {
                 .fontSize(14)
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             }
             .width('100%')
             .justifyContent(FlexAlign.SpaceBetween)
@@ -1936,9 +2085,9 @@ struct MangaSettingsPage {
               step: 1,
               style: SliderStyle.InSet
             })
-              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .trackThickness(4)
               .onChange((value: number) => {
                 this.setAutoPageTurnInterval(Math.round(value));
@@ -2115,12 +2264,26 @@ struct MangaSettingsPage {
         }
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 16 })
+        .transition(
+          TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+            .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 220, curve: Curve.EaseOut }))
+        )
       }
     }
     .width('100%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   // 构建操作按钮区域
@@ -2133,11 +2296,11 @@ struct MangaSettingsPage {
           Text('重置为默认设置')
             .fontSize(16)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
           .width('100%')
           .height(44)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
           .borderRadius(12)
           .onClick(() => {
             this.readingSettings = DEFAULT_READING_SETTINGS;
@@ -2169,7 +2332,133 @@ struct MangaSettingsPage {
       .width('100%')
     }
     .width('100%')
-    .padding({ top: 16, bottom: 24 })
+    .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+  }
+
+  @Builder
+  private buildCoverSelectDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      closeOnMaskTap: !this.isApplyingCoverSelection,
+      dialogWidth: '92%',
+      maxWidth: 580,
+      maxHeight: '84%',
+      contentPadding: 18,
+      zIndexValue: 2600,
+      onMaskTap: () => {
+        this.closeCoverSelectDialog();
+      }
+    }) {
+      Column({ space: 14 }) {
+        Text('选择封面图片')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+
+        if (this.coverSelectDialogTitle.length > 0) {
+          Text(`漫画：${this.coverSelectDialogTitle}`)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+
+        if (this.coverSelectDialogCandidates.length > 0) {
+          Row({ space: 10 }) {
+            ForEach(this.coverSelectDialogCandidates, (path: string, index: number) => {
+              Column({ space: 8 }) {
+                Stack({ alignContent: Alignment.Bottom }) {
+                  Image(this.getCoverSelectCandidateDisplaySource(index))
+                    .width('100%')
+                    .height('100%')
+                    .objectFit(ImageFit.Cover)
+                    .borderRadius(12)
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                    .onError(() => {
+                      this.markCoverSelectCandidateLoadFailed(index);
+                    })
+                    .onClick(() => {
+                      this.coverSelectDialogSelectedIndex = index;
+                    })
+                  if (this.coverSelectDialogSelectedIndex === index) {
+                    Column()
+                      .width('100%')
+                      .height('100%')
+                      .border({
+                        width: 2,
+                        color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                      })
+                      .borderRadius(12)
+                      .backgroundColor('rgba(39, 124, 255, 0.08)')
+                  }
+                }
+                .width('100%')
+                .aspectRatio(0.72)
+                .clip(true)
+
+                Text(`第${index + 1}张`)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.coverSelectDialogSelectedIndex === index
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+            }, (item: string) => item)
+          }
+          .width('100%')
+        }
+
+        Row({ space: 12 }) {
+          Button('取消')
+            .layoutWeight(1)
+            .height(42)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
+            .borderRadius(10)
+            .enabled(!this.isApplyingCoverSelection)
+            .onClick(() => {
+              this.closeCoverSelectDialog();
+            })
+
+          Button(this.isApplyingCoverSelection ? '应用中...' : '设为封面')
+            .layoutWeight(1)
+            .height(42)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .borderRadius(10)
+            .enabled(!this.isApplyingCoverSelection)
+            .onClick(() => {
+              void this.confirmCoverSelectDialog();
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+    }
   }
 
   // 构建删除确认对话框
@@ -2180,7 +2469,7 @@ struct MangaSettingsPage {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor('#80000000')
+        .backgroundColor('rgba(14, 20, 31, 0.24)')
         .onClick(() => {
           if (!this.isDeleting) {
             this.showDeleteConfirmDialog = false;
@@ -2262,23 +2551,46 @@ struct MangaSettingsPage {
       }
       .width('85%')
       .padding(24)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
-      .shadow({ radius: 24, color: '#40000000', offsetX: 0, offsetY: 4 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4)
+      .clip(true)
+      .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 8,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 10
+      })
     }
     .width('100%')
     .height('100%')
     .zIndex(2000)
   }
 
+  private buildImmersiveTitleActions(): SettingsImmersiveTitleActionItem[] {
+    const actions: SettingsImmersiveTitleActionItem[] = [{
+      id: 'help',
+      symbol: $r('sys.symbol.questionmark_circle'),
+      label: '帮助',
+      onClick: (): void => {
+        this.showMangaSettingsHelp();
+      }
+    }];
+    return actions;
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 内容层
@@ -2288,8 +2600,9 @@ struct MangaSettingsPage {
             // 左侧：漫画封面和基本信息（添加滚动支持）
             Scroll() {
               Column() {
-                Blank().height(TITLE_BAR_HEIGHT_MINI)
+                Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
                 this.buildMangaInfoSection()
+                Blank().height(40)
               }
               .width('100%')
             }
@@ -2303,7 +2616,7 @@ struct MangaSettingsPage {
             // 右侧：各种设置选项
             Scroll(this.scroller) {
               Column({ space: 16 }) {
-                Blank().height(TITLE_BAR_HEIGHT_MINI)
+                Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
                 
                 this.buildBasicInfoEditSection()
                 this.buildReadingDirectionSettings()
@@ -2312,9 +2625,9 @@ struct MangaSettingsPage {
                 this.buildPreloadSettings()
                 this.buildAdvancedSettings()
                 this.buildActionButtons()
+                Blank().height(40)
               }
               .width('100%')
-              .padding({ bottom: 40 })
             }
             .width('60%')
             .height('100%')
@@ -2326,12 +2639,11 @@ struct MangaSettingsPage {
           .width('100%')
           .height('100%')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
         } else {
           // 竖屏布局：原有布局
           Scroll(this.scroller) {
             Column({ space: 16 }) {
-              Blank().height(TITLE_BAR_HEIGHT_MINI)
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
               this.buildMangaInfoSection()
               this.buildBasicInfoEditSection()
@@ -2341,18 +2653,39 @@ struct MangaSettingsPage {
               this.buildPreloadSettings()
               this.buildAdvancedSettings()
               this.buildActionButtons()
+              Blank().height(40)
             }
             .width('100%')
             .constraintSize({ maxWidth: this.responsive_maxContentWidth })
-            .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
+            .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
           }
           .width('100%')
           .height('100%')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
           .align(Alignment.TopStart)
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
+        }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '漫画设置',
+          appFontFamily: this.appFontFamily,
+          contentPadding: this.responsive_contentPadding,
+          maxContentWidth: this.responsive_maxContentWidth,
+          pathStack: this.pathStack,
+          actions: this.buildImmersiveTitleActions()
+        })
+
+        if (this.showCoverSelectDialog) {
+          Stack() {
+            this.buildCoverSelectDialog()
+          }
+            .width('100%')
+            .height('100%')
+            .opacity(this.coverSelectDialogVisible ? 1 : 0)
+            .scale({ x: this.coverSelectDialogVisible ? 1 : 0.96, y: this.coverSelectDialogVisible ? 1 : 0.96 })
+            .animation({ duration: this.coverSelectDialogAnimationDuration, curve: Curve.EaseOut })
         }
 
         // 删除确认对话框
@@ -2361,36 +2694,8 @@ struct MangaSettingsPage {
         }
       }
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '漫画设置' },
-        menu: {
-          value: [{
-            content: {
-              label: '帮助',
-              icon: $r('sys.symbol.questionmark_circle'),
-              isEnabled: true,
-              action: () => {
-                this.showMangaSettingsHelp();
-              }
-            }
-          }]
-        }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onReady((context: NavDestinationContext) => {
       this.onReady(context);
     })

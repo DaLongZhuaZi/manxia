@@ -1,6 +1,6 @@
 /**
  * FTP Native Client Header
- * 使用libcurl实现FTP/FTPS协议支持
+ * 使用libcurl实现 FTP/FTPS/SFTP 协议支持
  * 
  * 文件路径: entry/src/main/cpp/webdav/ftp_client.h
  */
@@ -37,6 +37,7 @@ struct Config {
     std::string username;
     std::string password;
     bool useFTPS = false;
+    bool useSFTP = false;
     bool passive = true;
     int timeoutMs = 30000;
 };
@@ -127,6 +128,7 @@ private:
     class Impl;
     std::unique_ptr<Impl> pImpl;
 
+    std::string buildFTPUrl(const std::string& remotePath, bool encodePathSegments) const;
     std::string buildFTPUrl(const std::string& remotePath) const;
 };
 

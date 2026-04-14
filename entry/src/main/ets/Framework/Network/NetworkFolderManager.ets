@@ -18,6 +18,7 @@ import {
   WebDAVNativeListResult
 } from '../WebDAV/WebDAVNativeClient';
 import { SandboxManager } from '../Storage/SandboxManager';
+import DownloadDirManager from '../Storage/DownloadDirManager';
 import {
   NetworkFolderBrowseResult,
   NetworkFolderCacheDetail,
@@ -27,8 +28,8 @@ import {
   NetworkFolderConnection,
   NetworkFolderDownloadResult,
   NetworkFolderEntry,
+  NetworkFolderImportCategory,
   inferNetworkFolderImportCategory,
-  isNetworkFolderImportSupported,
   joinRelativeNetworkFolderPath,
   normalizeConnectionBasePath,
   normalizeRelativeNetworkFolderPath
@@ -64,6 +65,7 @@ interface CachedDownloadEntry {
   versionTag: string;
   cachedAt: number;
   lastAccessedAt: number;
+  importCategory: NetworkFolderImportCategory;
 }
 
 interface PersistedNetworkFolderState {
@@ -117,6 +119,7 @@ export class NetworkFolderManager {
   private context: common.UIAbilityContext | null = null;
   private pref: preferences.Preferences | null = null;
   private sandboxManager: SandboxManager = SandboxManager.getInstance();
+  private downloadDirManager = DownloadDirManager;
   private smbClient: SMBClientAdapter = new SMBClientAdapter();
   private initialized: boolean = false;
 
@@ -147,13 +150,14 @@ export class NetworkFolderManager {
     logger.info(TAG, '开始初始化网络文件夹管理器');
     this.context = context;
     await this.sandboxManager.initialize(context);
+    this.downloadDirManager.setContext(context);
 
     this.rootDir = `${this.sandboxManager.getDirectory('files')}/network_folder`;
-    this.downloadsDir = `${this.sandboxManager.getDirectory('cache')}/network_folder/downloads`;
+    this.downloadsDir = '';
     this.stateFilePath = `${this.rootDir}/${STATE_FILE_NAME}`;
 
     this.ensureDir(this.rootDir);
-    this.ensureDir(this.downloadsDir);
+    this.tryResolveDownloadCacheRootFromManager();
 
     this.pref = await preferences.getPreferences(context, { name: PREF_NAME });
 
@@ -249,7 +253,7 @@ export class NetworkFolderManager {
       }
     }
 
-    if (connection.protocol === 'ftp' || connection.protocol === 'ftps') {
+    if (connection.protocol === 'ftp' || connection.protocol === 'ftps' || connection.protocol === 'sftp') {
       const client = new FTPNativeClient(this.buildFTPConfig(connection));
       try {
         const result = await client.testConnection();
@@ -311,7 +315,7 @@ export class NetworkFolderManager {
     let remoteResult: NetworkFolderBrowseResult;
     if (connection.protocol === 'webdav') {
       remoteResult = await this.browseWebDAV(connection, normalizedPath);
-    } else if (connection.protocol === 'ftp' || connection.protocol === 'ftps') {
+    } else if (connection.protocol === 'ftp' || connection.protocol === 'ftps' || connection.protocol === 'sftp') {
       remoteResult = await this.browseFTP(connection, normalizedPath);
     } else {
       remoteResult = await this.browseSMB(connection, normalizedPath);
@@ -362,9 +366,6 @@ export class NetworkFolderManager {
     if (entry.isDirectory) {
       return this.buildDownloadFailure('目录不支持直接缓存');
     }
-    if (!isNetworkFolderImportSupported(entry.importCategory)) {
-      return this.buildDownloadFailure('当前文件类型暂不支持缓存或导入');
-    }
 
     const connection = this.requireConnection(connectionId);
     logger.info(TAG, `开始缓存远程文件：${connection.name} ${entry.relativePath}`);
@@ -376,6 +377,26 @@ export class NetworkFolderManager {
 
     if (cachedEntry && cachedEntry.versionTag === versionTag && this.fileExists(cachedEntry.localPath)) {
       cachedEntry.lastAccessedAt = now;
+      this.tryResolveDownloadCacheRootFromManager();
+      const preferredCacheDir = this.getConnectionFileCacheDir(connectionId, normalizedRelativePath);
+      if (preferredCacheDir.length > 0) {
+        this.ensureDir(preferredCacheDir);
+        const preferredPath = `${preferredCacheDir}/${this.buildDownloadFileName(entry.name)}`;
+        if (preferredPath !== cachedEntry.localPath) {
+          try {
+            if (this.fileExists(preferredPath)) {
+              this.deleteFileIfExists(cachedEntry.localPath);
+              cachedEntry.localPath = preferredPath;
+            } else {
+              fs.renameSync(cachedEntry.localPath, preferredPath);
+              cachedEntry.localPath = preferredPath;
+            }
+            logger.info(TAG, `已将缓存文件路径更新为原文件名策略：${entry.name}`);
+          } catch (error) {
+            logger.warn(TAG, `迁移缓存文件名失败，继续使用旧路径：${String(error)}`);
+          }
+        }
+      }
       this.downloadCache.set(downloadKey, cachedEntry);
       await this.markConnectionUsed(connectionId, this.getParentRelativePath(normalizedRelativePath));
       await this.persistCacheState();
@@ -389,13 +410,22 @@ export class NetworkFolderManager {
       };
     }
 
+    try {
+      await this.ensureDownloadCacheRootReady();
+    } catch (error) {
+      return this.buildDownloadFailure(`准备 Download 应用目录失败：${String(error)}`);
+    }
     const connectionDir = this.getConnectionDownloadsDir(connectionId);
+    if (connectionDir.length === 0) {
+      return this.buildDownloadFailure('Download 应用目录未就绪，无法缓存远程文件');
+    }
     this.ensureDir(connectionDir);
 
-    const finalPath = `${connectionDir}/${this.buildDownloadFileName(connectionId, normalizedRelativePath, versionTag, entry.name)}`;
+    const fileCacheDir = this.getConnectionFileCacheDir(connectionId, normalizedRelativePath);
+    this.ensureDir(fileCacheDir);
+    const finalPath = `${fileCacheDir}/${this.buildDownloadFileName(entry.name)}`;
     const tempPath = `${finalPath}.part`;
     this.deleteFileIfExists(tempPath);
-    this.deleteFileIfExists(finalPath);
 
     let downloadMessage = '远程文件下载完成';
     let downloadSuccess = false;
@@ -410,7 +440,7 @@ export class NetworkFolderManager {
         } finally {
           client.destroy();
         }
-      } else if (connection.protocol === 'ftp' || connection.protocol === 'ftps') {
+      } else if (connection.protocol === 'ftp' || connection.protocol === 'ftps' || connection.protocol === 'sftp') {
         const client = new FTPNativeClient(this.buildFTPConfig(connection));
         try {
           const result = await client.download(this.resolveActualPath(connection, normalizedRelativePath), tempPath);
@@ -434,6 +464,9 @@ export class NetworkFolderManager {
         return this.buildDownloadFailure('文件下载完成，但缓存文件不存在');
       }
 
+      if (this.fileExists(finalPath)) {
+        this.deleteFileIfExists(finalPath);
+      }
       fs.renameSync(tempPath, finalPath);
       const stat = fs.statSync(finalPath);
       const nextCachedEntry: CachedDownloadEntry = {
@@ -444,7 +477,8 @@ export class NetworkFolderManager {
         size: Number(stat.size) || entry.size || 0,
         versionTag: versionTag,
         cachedAt: now,
-        lastAccessedAt: now
+        lastAccessedAt: now,
+        importCategory: entry.importCategory
       };
 
       if (cachedEntry && cachedEntry.localPath !== finalPath) {
@@ -530,6 +564,7 @@ export class NetworkFolderManager {
         versionTag: item.versionTag,
         cachedAt: item.cachedAt,
         lastAccessedAt: item.lastAccessedAt,
+        importCategory: item.importCategory,
         fileExists: this.fileExists(item.localPath)
       });
     }
@@ -546,6 +581,50 @@ export class NetworkFolderManager {
       directories: directories,
       files: files
     };
+  }
+
+  public async deleteCachedFile(connectionId: string, relativePath: string, localPath: string): Promise<boolean> {
+    this.ensureInitialized();
+
+    const normalizedConnectionId = connectionId.trim();
+    const normalizedRelativePath = normalizeRelativeNetworkFolderPath(relativePath);
+    const normalizedLocalPath = localPath.trim();
+    logger.info(TAG, `删除文件缓存：connection=${normalizedConnectionId}, path=${normalizedRelativePath}`);
+
+    let removed = false;
+    const targetKey = this.buildDownloadCacheKey(normalizedConnectionId, normalizedRelativePath);
+    const targetEntry = this.downloadCache.get(targetKey);
+    if (targetEntry) {
+      this.deleteFileIfExists(targetEntry.localPath);
+      this.downloadCache.delete(targetKey);
+      removed = true;
+    }
+
+    if (!removed && normalizedLocalPath.length > 0) {
+      const downloadPairs = this.getDownloadCachePairs();
+      for (const pair of downloadPairs) {
+        if (pair.value.connectionId !== normalizedConnectionId) {
+          continue;
+        }
+        if (pair.value.localPath === normalizedLocalPath) {
+          this.deleteFileIfExists(pair.value.localPath);
+          this.downloadCache.delete(pair.key);
+          removed = true;
+          break;
+        }
+      }
+    }
+
+    if (!removed && normalizedLocalPath.length > 0) {
+      this.deleteFileIfExists(normalizedLocalPath);
+      logger.warn(TAG, `缓存记录不存在，已尝试删除本地文件：${normalizedLocalPath}`);
+    }
+
+    await this.persistCacheState();
+    if (removed) {
+      logger.info(TAG, `文件缓存删除完成：connection=${normalizedConnectionId}, path=${normalizedRelativePath}`);
+    }
+    return removed;
   }
 
   public async clearCacheForConnection(connectionId: string): Promise<void> {
@@ -572,7 +651,9 @@ export class NetworkFolderManager {
     downloadKeys.forEach((key: string) => this.downloadCache.delete(key));
 
     const connectionDir = this.getConnectionDownloadsDir(connectionId);
-    this.deleteDirectoryIfExists(connectionDir);
+    if (connectionDir.length > 0) {
+      this.deleteDirectoryIfExists(connectionDir);
+    }
     await this.persistCacheState();
     logger.info(TAG, `指定连接缓存清理完成：${connectionId}`);
   }
@@ -587,7 +668,9 @@ export class NetworkFolderManager {
 
     this.directoryCache.clear();
     this.downloadCache.clear();
-    this.deleteDirectoryContents(this.downloadsDir);
+    if (this.downloadsDir.length > 0) {
+      this.deleteDirectoryContents(this.downloadsDir);
+    }
     await this.persistCacheState();
     logger.info(TAG, '全部网络文件夹缓存清理完成');
   }
@@ -637,13 +720,14 @@ export class NetworkFolderManager {
     connection: NetworkFolderConnection,
     relativePath: string
   ): Promise<NetworkFolderBrowseResult> {
+    const protocolLabel = connection.protocol === 'sftp' ? 'SFTP' : 'FTP';
     const client = new FTPNativeClient(this.buildFTPConfig(connection));
     try {
       const result: FTPListResult = await client.listWithResult(this.resolveActualPath(connection, relativePath));
       if (!result.success) {
         return {
           success: false,
-          message: result.message || '加载 FTP 目录失败',
+          message: result.message || `加载 ${protocolLabel} 目录失败`,
           entries: [],
           fromCache: false,
           stale: false,
@@ -654,7 +738,7 @@ export class NetworkFolderManager {
       const entries = this.normalizeFTPEntries(connection, relativePath, result.files);
       return {
         success: true,
-        message: result.message || `FTP 目录加载完成，共 ${entries.length} 项`,
+        message: result.message || `${protocolLabel} 目录加载完成，共 ${entries.length} 项`,
         entries: entries,
         fromCache: false,
         stale: false,
@@ -663,7 +747,7 @@ export class NetworkFolderManager {
     } catch (error) {
       return {
         success: false,
-        message: `加载 FTP 目录失败：${String(error)}`,
+        message: `加载 ${protocolLabel} 目录失败：${String(error)}`,
         entries: [],
         fromCache: false,
         stale: false,
@@ -974,6 +1058,10 @@ export class NetworkFolderManager {
           return;
         }
         const normalizedPath = normalizeRelativeNetworkFolderPath(item.relativePath);
+        const inferredImportCategory = inferNetworkFolderImportCategory(item.fileName || '');
+        const normalizedImportCategory = item.importCategory && item.importCategory !== 'unsupported'
+          ? item.importCategory
+          : inferredImportCategory;
         this.downloadCache.set(this.buildDownloadCacheKey(item.connectionId, normalizedPath), {
           connectionId: item.connectionId,
           relativePath: normalizedPath,
@@ -982,7 +1070,8 @@ export class NetworkFolderManager {
           size: Number(item.size) || 0,
           versionTag: item.versionTag || '',
           cachedAt: Number(item.cachedAt) || 0,
-          lastAccessedAt: Number(item.lastAccessedAt) || Number(item.cachedAt) || 0
+          lastAccessedAt: Number(item.lastAccessedAt) || Number(item.cachedAt) || 0,
+          importCategory: normalizedImportCategory
         });
       });
     } catch (error) {
@@ -993,6 +1082,7 @@ export class NetworkFolderManager {
   private async pruneCaches(): Promise<void> {
     const now = Date.now();
     const validConnectionIds = this.buildConnectionIdSet();
+    const canValidateLocalFiles = this.downloadDirManager.isReady();
     let changed = false;
 
     const directoryPairs = this.getDirectoryCachePairs();
@@ -1023,7 +1113,9 @@ export class NetworkFolderManager {
     const downloadPairs = this.getDownloadCachePairs();
     for (const pair of downloadPairs) {
       const expired = now - pair.value.lastAccessedAt > DOWNLOAD_CACHE_MAX_AGE_MS;
-      const invalid = !validConnectionIds.has(pair.value.connectionId) || !this.fileExists(pair.value.localPath);
+      const invalidConnection = !validConnectionIds.has(pair.value.connectionId);
+      const missingLocalFile = canValidateLocalFiles && !this.fileExists(pair.value.localPath);
+      const invalid = invalidConnection || missingLocalFile;
       if (expired || invalid) {
         this.deleteFileIfExists(pair.value.localPath);
         this.downloadCache.delete(pair.key);
@@ -1198,6 +1290,7 @@ export class NetworkFolderManager {
       username: connection.username,
       password: connection.password,
       useFTPS: connection.protocol === 'ftps',
+      useSFTP: connection.protocol === 'sftp',
       passive: connection.passive,
       timeoutMs: connection.timeoutMs
     };
@@ -1367,7 +1460,10 @@ export class NetworkFolderManager {
   }
 
   private normalizeConnection(connection: NetworkFolderConnection): NetworkFolderConnection {
-    const protocol = connection.protocol === 'ftp' || connection.protocol === 'ftps' || connection.protocol === 'smb'
+    const protocol = connection.protocol === 'ftp' ||
+      connection.protocol === 'ftps' ||
+      connection.protocol === 'sftp' ||
+      connection.protocol === 'smb'
       ? connection.protocol
       : 'webdav';
     const normalizedHost = protocol === 'smb'
@@ -1390,7 +1486,7 @@ export class NetworkFolderManager {
       clientIP: String(connection.clientIP || '').trim(),
       port: Number(connection.port) > 0
         ? Math.floor(Number(connection.port))
-        : (protocol === 'ftps' ? 990 : protocol === 'ftp' ? 21 : protocol === 'smb' ? 445 : 443),
+        : (protocol === 'ftps' ? 990 : protocol === 'ftp' ? 21 : protocol === 'sftp' ? 22 : protocol === 'smb' ? 445 : 443),
       username: String(connection.username || '').trim(),
       password: String(connection.password || ''),
       basePath: normalizedBasePath,
@@ -1404,6 +1500,10 @@ export class NetworkFolderManager {
 
   private normalizeCachedEntry(entry: NetworkFolderEntry): NetworkFolderEntry {
     const relativePath = normalizeRelativeNetworkFolderPath(entry.relativePath || '/');
+    const inferredImportCategory = inferNetworkFolderImportCategory(entry.name || '');
+    const normalizedImportCategory = entry.importCategory && entry.importCategory !== 'unsupported'
+      ? entry.importCategory
+      : inferredImportCategory;
     const normalized: NetworkFolderEntry = {
       key: entry.key || relativePath,
       name: entry.name || relativePath.split('/').pop() || '',
@@ -1415,7 +1515,7 @@ export class NetworkFolderManager {
       etag: entry.etag || '',
       contentType: entry.contentType || '',
       permissions: entry.permissions || '',
-      importCategory: entry.importCategory || inferNetworkFolderImportCategory(entry.name || ''),
+      importCategory: normalizedImportCategory,
       cacheStatus: 'none',
       cachedLocalPath: '',
       versionTag: entry.versionTag || ''
@@ -1496,19 +1596,62 @@ export class NetworkFolderManager {
     return totalBytes;
   }
 
+  private tryResolveDownloadCacheRootFromManager(): void {
+    if (!this.downloadDirManager.isReady()) {
+      return;
+    }
+    try {
+      this.downloadsDir = this.downloadDirManager.ensureDirectory('cache/network_folder/downloads');
+      this.ensureDir(this.downloadsDir);
+      logger.info(TAG, `网络文件夹缓存目录已准备：${this.downloadsDir}`);
+    } catch (error) {
+      logger.warn(TAG, `初始化 Download 缓存目录失败，将在首次缓存时重试：${String(error)}`);
+      this.downloadsDir = '';
+    }
+  }
+
+  private async ensureDownloadCacheRootReady(): Promise<void> {
+    if (this.downloadsDir.length > 0 && this.fileExists(this.downloadsDir)) {
+      return;
+    }
+    if (!this.context) {
+      throw new Error('上下文未初始化，无法准备 Download 应用目录');
+    }
+    this.downloadDirManager.setContext(this.context);
+    if (!this.downloadDirManager.isReady()) {
+      const granted = await this.downloadDirManager.requestAccess();
+      if (!granted || !this.downloadDirManager.isReady()) {
+        throw new Error('未授予 Download 应用目录权限');
+      }
+    }
+    this.downloadsDir = this.downloadDirManager.ensureDirectory('cache/network_folder/downloads');
+    this.ensureDir(this.downloadsDir);
+    logger.info(TAG, `网络文件夹缓存目录已就绪：${this.downloadsDir}`);
+  }
+
   private getConnectionDownloadsDir(connectionId: string): string {
+    if (this.downloadsDir.length === 0) {
+      return '';
+    }
     return `${this.downloadsDir}/${this.hashString(connectionId)}`;
   }
 
+  private getConnectionFileCacheDir(connectionId: string, relativePath: string): string {
+    const baseDir = this.getConnectionDownloadsDir(connectionId);
+    if (baseDir.length === 0) {
+      return '';
+    }
+    const parentRelativePath = this.getParentRelativePath(relativePath);
+    if (parentRelativePath === '/') {
+      return `${baseDir}/_root`;
+    }
+    return `${baseDir}/${this.hashString(parentRelativePath)}`;
+  }
+
   private buildDownloadFileName(
-    connectionId: string,
-    relativePath: string,
-    versionTag: string,
     fileName: string
   ): string {
-    const safeName = sanitizeFileName(fileName, 'remote_file', 120);
-    const hash = this.hashString(`${connectionId}|${relativePath}|${versionTag}`);
-    return `${hash}_${safeName}`;
+    return sanitizeFileName(fileName, 'remote_file', 120);
   }
 
   private getParentRelativePath(relativePath: string): string {
