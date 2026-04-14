@@ -1,8 +1,8 @@
 /**
  * FTP Native Client ArkTS Wrapper
- * 封装Native C++ libcurl模块，提供FTP协议支持
+ * 封装Native C++ libcurl模块，提供 FTP/FTPS/SFTP 协议支持
  * 
- * 支持的FTP操作：
+ * 支持的协议操作：
  * - 连接测试
  * - 目录列表
  * - 上传文件
@@ -28,6 +28,7 @@ export interface FTPConfig {
   username: string;
   password: string;
   useFTPS: boolean; // 是否使用FTPS (FTP over SSL)
+  useSFTP?: boolean; // 是否使用SFTP (SSH File Transfer Protocol)
   passive: boolean; // 是否使用被动模式
   timeoutMs?: number;
 }
@@ -140,8 +141,9 @@ export class FTPNativeClient {
    * 获取FTP URL
    */
   private getFTPUrl(path: string = ''): string {
-    const protocol = this.config.useFTPS ? 'ftps' : 'ftp';
-    const port = this.config.port || (this.config.useFTPS ? 990 : 21);
+    const useSFTP = this.config.useSFTP === true;
+    const protocol = useSFTP ? 'sftp' : (this.config.useFTPS ? 'ftps' : 'ftp');
+    const port = this.config.port || (useSFTP ? 22 : (this.config.useFTPS ? 990 : 21));
     const fullPath = path.startsWith('/') ? path : `/${path}`;
     return `${protocol}://${this.config.host}:${port}${fullPath}`;
   }
@@ -158,7 +160,8 @@ export class FTPNativeClient {
     }
 
     try {
-      logger.info(TAG, `初始化FTP客户端: ${this.config.host}:${this.config.port}`);
+      const protocol = this.config.useSFTP === true ? 'sftp' : (this.config.useFTPS ? 'ftps' : 'ftp');
+      logger.info(TAG, `初始化FTP客户端: ${protocol}://${this.config.host}:${this.config.port}`);
       
       const initConfig: FTPConfig = {
         host: this.config.host,
@@ -166,6 +169,7 @@ export class FTPNativeClient {
         username: this.config.username,
         password: this.config.password,
         useFTPS: this.config.useFTPS,
+        useSFTP: this.config.useSFTP === true,
         passive: this.config.passive,
         timeoutMs: this.config.timeoutMs || 30000
       };
@@ -442,6 +446,7 @@ export const DEFAULT_FTP_CONFIG: FTPConfig = {
   username: '',
   password: '',
   useFTPS: false,
+  useSFTP: false,
   passive: true,
   timeoutMs: 30000
 };

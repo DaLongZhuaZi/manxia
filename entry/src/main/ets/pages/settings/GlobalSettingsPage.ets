@@ -100,7 +100,7 @@ export struct GlobalSettingsPage {
       id: 'source_features',
       title: '源功能设置',
       subtitle: '控制图源/书源相关入口、标签、按钮与信息展示',
-      icon: $r('sys.symbol.slider_horizontal_2_square'),
+      icon: $r('sys.symbol.root'),
       targetPage: 'SourceFeatureSettingsSubPage'
     },
     {
@@ -130,6 +130,13 @@ export struct GlobalSettingsPage {
       subtitle: '查看设备材质能力，管理系统自适应与手动档位',
       icon: $r('sys.symbol.lightbulb'),
       targetPage: 'VisualEffectsSettingsSubPage'
+    },
+    {
+      id: 'ngf_framework_status',
+      title: 'NGF框架状态',
+      subtitle: '查看NGF模块可检测状态、核心桥接与运行健康度',
+      icon: $r('sys.symbol.device_develop'),
+      targetPage: 'NGFFrameworkStatusPage'
     },
     {
       id: 'tracking',
@@ -471,6 +478,8 @@ export struct GlobalSettingsPage {
         return '动画设置';
       case 'VisualEffectsSettingsSubPage':
         return '视觉效果';
+      case 'NGFFrameworkStatusPage':
+        return 'NGF框架状态';
       case 'TrackingSettingsSubPage':
         return '进度记录';
       case 'NetworkSettingsSubPage':

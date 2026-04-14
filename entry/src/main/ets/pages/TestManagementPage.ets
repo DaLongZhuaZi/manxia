@@ -45,6 +45,7 @@ struct TestManagementPage {
     { id: 'system_resource_demo', title: '系统资源展示', description: '展示系统颜色资源和文件资源的博物馆式页面', icon: '🏛️', routeName: 'SystemResourceDemoPage', isAvailable: true, category: '演示页面' },
     { id: 'hello_world', title: 'Hello World', description: '基础的Hello World测试页面', icon: '👋', routeName: 'HelloWorldPage', isAvailable: true, category: '系统测试' },
     { id: 'system_status', title: '系统状态', description: '显示系统运行状态和性能信息', icon: '📊', routeName: 'SystemStatusPage', isAvailable: true, category: '系统测试' },
+    { id: 'ngf_framework_status', title: 'NGF框架状态', description: '展示NGF模块可检测状态、核心运行时和事件桥接健康度', icon: '🧩', routeName: 'NGFFrameworkStatusPage', isAvailable: true, category: '系统测试' },
     { id: 'webview_configurable_system_test', title: 'WebView可配置系统测试', description: '测试JSON配置系统、扩展模块、统一操作接口等功能', icon: '⚙️', routeName: 'WebViewConfigurableSystemTestPage', isAvailable: true, category: '系统测试' },
     // 数据管理测试入口已移除
     // { id: 'webview_image_test', title: 'WebView图片测试', description: '验证WebView图片加载功能、缓存机制和性能表现', icon: '🌐', routeName: 'WebViewImageTestPage', isAvailable: true, category: '功能测试' }, // 已移除，不符合JSON驱动系统

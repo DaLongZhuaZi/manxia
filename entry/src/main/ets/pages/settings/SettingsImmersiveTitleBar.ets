@@ -1,5 +1,6 @@
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
+import { ngfNavigationShellFacade } from '../../Framework/NGF/uiShell/index';
 
 interface SettingsImmersiveThemeState {
   currentTheme: ThemeType;
@@ -298,6 +299,26 @@ export struct SettingsImmersiveTitleBar {
     }
   }
 
+  private isNgfUiShellIntegrated(): boolean {
+    try {
+      return AppStorage.get<boolean>('ngf_ui_shell_integrated') === true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private tryPopByNgfNavigationShell(): boolean {
+    if (!this.isNgfUiShellIntegrated()) {
+      return false;
+    }
+
+    try {
+      return ngfNavigationShellFacade.pop();
+    } catch (_err) {
+      return false;
+    }
+  }
+
   private goBack(): void {
     if (this.backAction) {
       try {
@@ -306,6 +327,10 @@ export struct SettingsImmersiveTitleBar {
         }
       } catch (_err) {
       }
+    }
+
+    if (this.tryPopByNgfNavigationShell()) {
+      return;
     }
 
     try {

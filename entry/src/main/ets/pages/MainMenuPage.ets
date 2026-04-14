@@ -43,6 +43,7 @@ import { SystemAnimationDemoPage } from './SystemAnimationDemoPage';
 import { SystemResourceDemoPage } from './SystemResourceDemoPage';
 import { HelloWorldPage } from './HelloWorldPage';
 import { SystemStatusPage } from './SystemStatusPage';
+import { NGFFrameworkStatusPage } from './settings/NGFFrameworkStatusPage';
 import { SearchPage } from './SearchPage';
 import { GlobalSearchPage } from './GlobalSearchPage';
 import { MangaSettingsPage } from './MangaSettingsPage';
@@ -217,7 +218,7 @@ import { SourceUpdateManager } from '../Framework/Managers/SourceUpdateManager';
 import { getVersionHistoryManager, VersionRepositoryUpdateCheckResult, MANXIA_EXTENSIONS_REPOSITORY_KEY } from '../Framework/Managers/VersionHistoryManager';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
-import { PrivacyAuthDialog } from '../components/PrivacyAuthDialog';
+import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
 import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
@@ -394,6 +395,7 @@ enum TabIndex {
 }
 
 type TabletTopBarPosition = 'top' | 'bottom' | 'left' | 'right';
+type PrivacyAuthDialogMode = 'verify' | 'setup';
 
 /**
  * 书库内容类型枚举
@@ -559,6 +561,16 @@ struct MainMenuPage {
   
   // 隐私模式状态
   @State private isPrivacyMode: boolean = false;
+  @State private showPrivacyAuthDialog: boolean = false;
+  @State private privacyAuthDialogVisible: boolean = false;
+  @State private privacyAuthDialogMode: PrivacyAuthDialogMode = 'verify';
+  @State private privacyAuthPasswordInput: string = '';
+  @State private privacyAuthPasswordConfirmInput: string = '';
+  @State private privacyAuthShowPassword: boolean = false;
+  @State private privacyAuthErrorMessage: string = '';
+  @State private privacyAuthSubmitting: boolean = false;
+  private privacyAuthDialogAnimationToken: number = 0;
+  private readonly PRIVACY_AUTH_DIALOG_ANIMATION_DURATION: number = 220;
   // 隐私模式进入前的视图模式（用于退出时恢复）
   private prePrivacyViewMode: LibraryViewMode = LibraryViewMode.GRID;
   private readonly PRIVACY_VIRTUAL_SHELF_ID: string = 'system_privacy_virtual';
@@ -7528,6 +7540,11 @@ struct MainMenuPage {
       if (this.lastObservedNavStackSize > 0 && currentSize === 0) {
         this.mainMenuReentryNeedsTransition = true;
         this.applyMainMenuWindowModeWithTransition();
+        // 某些子页面回退到根页面时不会触发 onPageShow，这里兜底触发一次待导入检查
+        setTimeout(() => {
+          logger.info(TAG, '检测到导航栈返回首页，执行待导入文件兜底检查');
+          this.checkPendingFileImport();
+        }, 80);
       }
       this.lastObservedNavStackSize = currentSize;
     }, this.WINDOW_MODE_TRANSITION_TRIGGER_RETRY_INTERVAL);
@@ -8886,6 +8903,10 @@ struct MainMenuPage {
   /**
    * 处理隐私模式验证
    */
+  private shouldSkipPrivacyBiometricAuth(): boolean {
+    return this.settingsManager.getBoolean(SettingKeys.PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH, false);
+  }
+
   private async handlePrivacyModeAuth(): Promise<void> {
     try {
       // 触发震动反馈
@@ -8899,6 +8920,18 @@ struct MainMenuPage {
         this.showToast('已退出隐私书库');
         return;
       }
+
+      const skipBiometricAuth: boolean = this.shouldSkipPrivacyBiometricAuth();
+      if (skipBiometricAuth) {
+        logger.info(TAG, '隐私书库验证策略：已关闭指纹识别，直接使用密码验证');
+        if (this.privacyModeManager.hasPrivacyPassword()) {
+          this.openPrivacyAuthDialog('verify');
+        } else {
+          this.showToast('请先初始化隐私密码');
+          this.openPrivacyAuthDialog('setup');
+        }
+        return;
+      }
       
       // 尝试生物识别验证
       const success = await this.privacyModeManager.enterPrivacyMode();
@@ -8906,41 +8939,285 @@ struct MainMenuPage {
       if (success) {
         this.showToast('已进入隐私书库');
       } else {
-        // 生物识别失败，显示密码输入对话框
-        this.showPrivacyPasswordDialog();
+        // 生物识别失败后回退到密码验证；若未初始化密码则引导先设置密码
+        if (this.privacyModeManager.hasPrivacyPassword()) {
+          this.openPrivacyAuthDialog('verify');
+        } else {
+          this.showToast('请先初始化隐私密码');
+          this.openPrivacyAuthDialog('setup');
+        }
       }
     } catch (error) {
       logger.error(TAG, `隐私模式验证失败: ${JSON.stringify(error)}`);
       this.showToast('验证失败，请重试');
     }
   }
-  
-  // 隐私密码对话框控制器
-  private privacyAuthDialogController: CustomDialogController | null = null;
 
-  /**
-   * 显示隐私密码输入对话框
-   */
-  private showPrivacyPasswordDialog(): void {
-    this.privacyAuthDialogController = new CustomDialogController({
-      builder: PrivacyAuthDialog({
-        onConfirm: async (password: string): Promise<void> => {
-          const success = await this.privacyModeManager.enterPrivacyModeWithPassword(password);
-          if (success) {
-            this.showToast('已进入隐私书库');
-          } else {
-            this.showToast('密码错误');
-          }
-        },
-        onCancel: () => {
-          logger.info(TAG, '用户取消隐私密码验证');
+  private resetPrivacyAuthDialogInputs(): void {
+    this.privacyAuthPasswordInput = '';
+    this.privacyAuthPasswordConfirmInput = '';
+    this.privacyAuthShowPassword = false;
+    this.privacyAuthErrorMessage = '';
+  }
+
+  private openPrivacyAuthDialog(mode: PrivacyAuthDialogMode): void {
+    this.privacyAuthDialogAnimationToken += 1;
+    const token: number = this.privacyAuthDialogAnimationToken;
+    this.privacyAuthDialogMode = mode;
+    this.privacyAuthSubmitting = false;
+    this.resetPrivacyAuthDialogInputs();
+    this.showPrivacyAuthDialog = true;
+    this.privacyAuthDialogVisible = false;
+    setTimeout(() => {
+      if (this.privacyAuthDialogAnimationToken !== token || !this.showPrivacyAuthDialog) {
+        return;
+      }
+      this.privacyAuthDialogVisible = true;
+    }, 0);
+  }
+
+  private closePrivacyAuthDialog(forceClose: boolean = false): void {
+    if (this.privacyAuthSubmitting && !forceClose) {
+      return;
+    }
+    if (!this.showPrivacyAuthDialog) {
+      return;
+    }
+    this.privacyAuthDialogAnimationToken += 1;
+    const token: number = this.privacyAuthDialogAnimationToken;
+    this.privacyAuthDialogVisible = false;
+    setTimeout(() => {
+      if (this.privacyAuthDialogAnimationToken !== token) {
+        return;
+      }
+      this.showPrivacyAuthDialog = false;
+      this.privacyAuthSubmitting = false;
+      this.resetPrivacyAuthDialogInputs();
+    }, this.PRIVACY_AUTH_DIALOG_ANIMATION_DURATION);
+  }
+
+  private validatePrivacyAuthInput(): boolean {
+    const trimmedPassword: string = this.privacyAuthPasswordInput.trim();
+    if (trimmedPassword.length === 0) {
+      this.privacyAuthErrorMessage = '请输入密码';
+      return false;
+    }
+    if (this.privacyAuthDialogMode === 'setup') {
+      if (trimmedPassword.length < 6) {
+        this.privacyAuthErrorMessage = '密码长度至少为6位';
+        return false;
+      }
+      if (this.privacyAuthPasswordInput !== this.privacyAuthPasswordConfirmInput) {
+        this.privacyAuthErrorMessage = '两次输入的密码不一致';
+        return false;
+      }
+    }
+    this.privacyAuthErrorMessage = '';
+    return true;
+  }
+
+  private async submitPrivacyAuthDialog(): Promise<void> {
+    if (this.privacyAuthSubmitting) {
+      return;
+    }
+    if (!this.validatePrivacyAuthInput()) {
+      return;
+    }
+    this.privacyAuthSubmitting = true;
+    try {
+      const password: string = this.privacyAuthPasswordInput;
+      if (this.privacyAuthDialogMode === 'setup') {
+        await this.privacyModeManager.setPrivacyPassword(password);
+        const setupSuccess: boolean = await this.privacyModeManager.enterPrivacyModeWithPassword(password);
+        if (!setupSuccess) {
+          this.privacyAuthErrorMessage = '初始化成功，但进入隐私书库失败，请重试';
+          return;
         }
-      }),
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      customStyle: true
-    });
-    this.privacyAuthDialogController.open();
+        this.closePrivacyAuthDialog(true);
+        this.showToast('隐私密码已初始化，已进入隐私书库');
+        return;
+      }
+
+      if (!this.privacyModeManager.hasPrivacyPassword()) {
+        this.privacyAuthDialogMode = 'setup';
+        this.privacyAuthPasswordInput = '';
+        this.privacyAuthPasswordConfirmInput = '';
+        this.privacyAuthErrorMessage = '未检测到隐私密码，请先初始化';
+        return;
+      }
+
+      const success: boolean = await this.privacyModeManager.enterPrivacyModeWithPassword(password);
+      if (success) {
+        this.closePrivacyAuthDialog(true);
+        this.showToast('已进入隐私书库');
+      } else {
+        this.privacyAuthErrorMessage = '密码错误，请重试';
+      }
+    } catch (error) {
+      logger.error(TAG, `隐私密码验证流程异常: ${String(error)}`);
+      this.privacyAuthErrorMessage = '验证失败，请稍后重试';
+    } finally {
+      this.privacyAuthSubmitting = false;
+    }
+  }
+
+  private getPrivacyAuthDialogTitle(): string {
+    return this.privacyAuthDialogMode === 'setup' ? '初始化隐私密码' : '验证身份';
+  }
+
+  private getPrivacyAuthDialogDescription(): string {
+    const skipBiometricAuth: boolean = this.shouldSkipPrivacyBiometricAuth();
+    if (this.privacyAuthDialogMode === 'setup') {
+      if (skipBiometricAuth) {
+        return '已关闭指纹识别，请先设置隐私密码用于进入隐私书库。';
+      }
+      return '当前设备无法通过指纹直接验证，请先设置隐私密码用于后续进入隐私书库。';
+    }
+    if (skipBiometricAuth) {
+      return '已关闭指纹识别，请输入隐私密码继续。';
+    }
+    return '指纹验证不可用或未通过，请输入隐私密码继续。';
+  }
+
+  private getPrivacyAuthConfirmButtonText(): string {
+    if (this.privacyAuthSubmitting) {
+      return this.privacyAuthDialogMode === 'setup' ? '初始化中...' : '验证中...';
+    }
+    return this.privacyAuthDialogMode === 'setup' ? '设置并进入' : '验证进入';
+  }
+
+  @Builder
+  private buildPrivacyAuthDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      closeOnMaskTap: !this.privacyAuthSubmitting,
+      dialogWidth: '88%',
+      maxWidth: 480,
+      maxHeight: '84%',
+      contentPadding: 18,
+      zIndexValue: 9400,
+      onMaskTap: () => {
+        this.closePrivacyAuthDialog();
+      }
+    }) {
+      Column({ space: 14 }) {
+        Text(this.getPrivacyAuthDialogTitle())
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+
+        Text(this.getPrivacyAuthDialogDescription())
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .lineHeight(20)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+
+        Column({ space: 10 }) {
+          TextInput({ placeholder: '请输入隐私密码', text: this.privacyAuthPasswordInput })
+            .type(this.privacyAuthShowPassword ? InputType.Normal : InputType.Password)
+            .width('100%')
+            .height(44)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .borderRadius(10)
+            .onChange((value: string) => {
+              this.privacyAuthPasswordInput = value;
+              if (this.privacyAuthErrorMessage.length > 0) {
+                this.privacyAuthErrorMessage = '';
+              }
+            })
+            .onSubmit(() => {
+              void this.submitPrivacyAuthDialog();
+            })
+
+          if (this.privacyAuthDialogMode === 'setup') {
+            TextInput({ placeholder: '请再次输入隐私密码', text: this.privacyAuthPasswordConfirmInput })
+              .type(this.privacyAuthShowPassword ? InputType.Normal : InputType.Password)
+              .width('100%')
+              .height(44)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .borderRadius(10)
+              .onChange((value: string) => {
+                this.privacyAuthPasswordConfirmInput = value;
+                if (this.privacyAuthErrorMessage.length > 0) {
+                  this.privacyAuthErrorMessage = '';
+                }
+              })
+              .onSubmit(() => {
+                void this.submitPrivacyAuthDialog();
+              })
+          }
+
+          Row({ space: 8 }) {
+            Button() {
+              SymbolGlyph($r(this.privacyAuthShowPassword ? 'sys.symbol.eye_slash' : 'sys.symbol.eye'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            }
+            .width(34)
+            .height(34)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+            .borderRadius(17)
+            .onClick(() => {
+              this.privacyAuthShowPassword = !this.privacyAuthShowPassword;
+            })
+
+            Text(this.privacyAuthShowPassword ? '隐藏密码' : '显示密码')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+        }
+        .width('100%')
+
+        if (this.privacyAuthErrorMessage.length > 0) {
+          Text(this.privacyAuthErrorMessage)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+        }
+
+        Row({ space: 12 }) {
+          Button(this.privacyAuthDialogMode === 'setup' ? '暂不设置' : '取消')
+            .layoutWeight(1)
+            .height(40)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+            .borderRadius(10)
+            .enabled(!this.privacyAuthSubmitting)
+            .onClick(() => {
+              this.closePrivacyAuthDialog();
+            })
+
+          Button(this.getPrivacyAuthConfirmButtonText())
+            .layoutWeight(1)
+            .height(40)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .borderRadius(10)
+            .enabled(!this.privacyAuthSubmitting)
+            .onClick(() => {
+              void this.submitPrivacyAuthDialog();
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+    }
   }
 
   /**
@@ -28311,6 +28588,8 @@ struct MainMenuPage {
         HelloWorldPage()
       } else if (name === 'SystemStatusPage') {
         SystemStatusPage()
+      } else if (name === 'NGFFrameworkStatusPage') {
+        NGFFrameworkStatusPage()
       } else if (name === 'GlobalSettingsPage') {
         GlobalSettingsPage()
       } else if (name === 'ReadingSettingsSubPage') {
@@ -30156,6 +30435,21 @@ struct MainMenuPage {
           .height('100%')
           .zIndex(2001)
           .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+        }
+
+        if (this.showPrivacyAuthDialog) {
+          Stack() {
+            this.buildPrivacyAuthDialog()
+          }
+          .width('100%')
+          .height('100%')
+          .opacity(this.privacyAuthDialogVisible ? 1 : 0)
+          .scale({
+            x: this.privacyAuthDialogVisible ? 1 : 0.96,
+            y: this.privacyAuthDialogVisible ? 1 : 0.96
+          })
+          .animation({ duration: this.PRIVACY_AUTH_DIALOG_ANIMATION_DURATION, curve: Curve.EaseOut })
+          .zIndex(9400)
         }
 
         // 书源筛选对话框（提升到根层，确保遮罩可沉浸到系统状态栏）

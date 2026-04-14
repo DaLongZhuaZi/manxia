@@ -81,6 +81,7 @@ enum TabIndex {
 }
 
 type TabletTopBarPosition = 'top' | 'bottom' | 'left' | 'right';
+type BackgroundBlurIconType = 'shield' | 'logo';
 
 /**
  * 设置键常量
@@ -122,6 +123,8 @@ export struct PageSettingsSubPage {
   @State recommendationEnabled: boolean = true;
   @State shelfContentEnabled: boolean = true;
   @State nonMainPageGlobalBackgroundEnabled: boolean = true;
+  @State backgroundBlurEnabled: boolean = false;
+  @State backgroundBlurIconType: BackgroundBlurIconType = 'shield';
 
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -252,12 +255,23 @@ export struct PageSettingsSubPage {
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
       true
     );
+    this.backgroundBlurEnabled = this.settingsManager.getBoolean(
+      SettingKeys.BACKGROUND_BLUR_ENABLED,
+      false
+    );
+    const savedBackgroundBlurIconType = this.settingsManager.getString(
+      SettingKeys.BACKGROUND_BLUR_ICON_TYPE,
+      'shield'
+    );
+    this.backgroundBlurIconType = savedBackgroundBlurIconType === 'logo' ? 'logo' : 'shield';
     AppStorage.setOrCreate(
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
       this.nonMainPageGlobalBackgroundEnabled
     );
+    AppStorage.setOrCreate('backgroundBlurEnabled', this.backgroundBlurEnabled);
+    AppStorage.setOrCreate('backgroundBlurIconType', this.backgroundBlurIconType);
 
-    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
+    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, backgroundBlur=${this.backgroundBlurEnabled}, blurIcon=${this.backgroundBlurIconType}`);
   }
 
   private applyPendingSearchTarget(): void {
@@ -391,6 +405,8 @@ export struct PageSettingsSubPage {
     this.settingsManager.setString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, this.novelDetailPageType);
     this.settingsManager.setBoolean(SettingKeys.RECOMMENDATION_ENABLED, this.recommendationEnabled);
     this.settingsManager.setBoolean(SettingKeys.SHELF_CONTENT_ENABLED, this.shelfContentEnabled);
+    this.settingsManager.setBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, this.backgroundBlurEnabled);
+    this.settingsManager.setString(SettingKeys.BACKGROUND_BLUR_ICON_TYPE, this.backgroundBlurIconType);
     this.settingsManager.setBoolean(
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
       this.nonMainPageGlobalBackgroundEnabled
@@ -399,13 +415,33 @@ export struct PageSettingsSubPage {
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
       this.nonMainPageGlobalBackgroundEnabled
     );
+    AppStorage.setOrCreate('backgroundBlurEnabled', this.backgroundBlurEnabled);
+    AppStorage.setOrCreate('backgroundBlurIconType', this.backgroundBlurIconType);
 
-    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
+    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, backgroundBlur=${this.backgroundBlurEnabled}, blurIcon=${this.backgroundBlurIconType}`);
 
     promptAction.showToast({
       message: '设置已保存',
       duration: 1500
     });
+  }
+
+  private async setBackgroundBlurEnabled(enabled: boolean): Promise<void> {
+    this.backgroundBlurEnabled = enabled;
+    await this.settingsManager.setBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, enabled);
+    this.settingsManager.syncToAppStorage();
+    AppStorage.setOrCreate('backgroundBlurEnabled', enabled);
+    promptAction.showToast({
+      message: enabled ? '后台模糊遮罩已启用' : '后台模糊遮罩已关闭',
+      duration: 2000
+    });
+  }
+
+  private async setBackgroundBlurIconType(iconType: BackgroundBlurIconType): Promise<void> {
+    this.backgroundBlurIconType = iconType;
+    await this.settingsManager.setString(SettingKeys.BACKGROUND_BLUR_ICON_TYPE, iconType);
+    this.settingsManager.syncToAppStorage();
+    AppStorage.setOrCreate('backgroundBlurIconType', iconType);
   }
 
   /**
@@ -705,10 +741,90 @@ export struct PageSettingsSubPage {
             this.recommendationEnabled = true;
             this.shelfContentEnabled = true;
             this.nonMainPageGlobalBackgroundEnabled = true;
+            this.backgroundBlurEnabled = false;
+            this.backgroundBlurIconType = 'shield';
             this.saveSettings();
           }
         });
       })
+  }
+
+  @Builder
+  buildBackgroundBlurSettings() {
+    Column({ space: 12 }) {
+      Row() {
+        Column({ space: 4 }) {
+          Text('后台模糊遮罩')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('在多任务界面显示模糊效果保护隐私')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.backgroundBlurEnabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .switchPointColor(Color.White)
+          .onChange((isOn: boolean) => {
+            void this.setBackgroundBlurEnabled(isOn);
+          })
+      }
+      .width('100%')
+
+      if (this.backgroundBlurEnabled) {
+        Row() {
+          Column({ space: 4 }) {
+            Text('遮罩图标')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('选择遮罩中央显示的图标')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Select([
+            { value: '锁定图标' },
+            { value: '应用Logo' }
+          ])
+            .selected(this.backgroundBlurIconType === 'shield' ? 0 : 1)
+            .value(this.backgroundBlurIconType === 'shield' ? '锁定图标' : '应用Logo')
+            .font({ size: 14 })
+            .selectedOptionFont({ size: 14 })
+            .optionFont({ size: 14 })
+            .onSelect((index: number) => {
+              const iconType: BackgroundBlurIconType = index === 0 ? 'shield' : 'logo';
+              void this.setBackgroundBlurIconType(iconType);
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
   }
 
   /**
@@ -1255,6 +1371,8 @@ export struct PageSettingsSubPage {
                 this.nonMainPageGlobalBackgroundEnabled = !this.nonMainPageGlobalBackgroundEnabled;
                 this.saveSettings();
               })
+
+              this.buildBackgroundBlurSettings()
 
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')

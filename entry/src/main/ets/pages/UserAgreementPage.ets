@@ -8,6 +8,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger } from '../Utils/Logger';
 import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { ngfPagePolicyHostFacade } from '../Framework/NGF/uiShell/index';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
@@ -31,10 +32,42 @@ export struct UserAgreementPage {
   // 滚动控制器
   private scroller: Scroller = new Scroller();
 
+  private isNgfUiShellIntegrated(): boolean {
+    try {
+      return AppStorage.get<boolean>('ngf_ui_shell_integrated') === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private applyPagePolicyWithNgf(pageName: string): void {
+    if (this.isNgfUiShellIntegrated()) {
+      try {
+        ngfPagePolicyHostFacade.applyPolicy(pageName);
+        return;
+      } catch (error) {
+        logger.warn(TAG, `NGF 页面策略应用失败，回退旧链路: ${String(error)}`);
+      }
+    }
+    PageWindowCoordinator.applyPagePolicy(pageName, this.getUIContext());
+  }
+
+  private reapplyPagePolicyWithNgf(pageName: string): void {
+    if (this.isNgfUiShellIntegrated()) {
+      try {
+        ngfPagePolicyHostFacade.reapplyPolicy(pageName);
+        return;
+      } catch (error) {
+        logger.warn(TAG, `NGF 页面策略重放失败，回退旧链路: ${String(error)}`);
+      }
+    }
+    PageWindowCoordinator.reapplyPagePolicy(pageName, this.getUIContext());
+  }
+
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
     this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
-    PageWindowCoordinator.applyPagePolicy('UserAgreementPage', this.getUIContext());
+    this.applyPagePolicyWithNgf('UserAgreementPage');
     
     ThemeAwareHelper.initializeThemeAware(
       this.componentId,
@@ -242,10 +275,10 @@ export struct UserAgreementPage {
     .hideTitleBar(true)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onWillAppear(() => {
-      PageWindowCoordinator.applyPagePolicy('UserAgreementPage', this.getUIContext());
+      this.applyPagePolicyWithNgf('UserAgreementPage');
     })
     .onWillShow(() => {
-      PageWindowCoordinator.reapplyPagePolicy('UserAgreementPage', this.getUIContext());
+      this.reapplyPagePolicyWithNgf('UserAgreementPage');
     })
   }
 

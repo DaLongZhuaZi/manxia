@@ -12,6 +12,9 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
 
 const TAG = 'SystemResourcePreviewPage';
+const GROUP_BATCH_SIZE: number = 8;
+const GRID_ITEM_BATCH_SIZE: number = 120;
+const SEARCH_RESULT_BATCH_SIZE: number = 160;
 
 /**
  * 资源分类
@@ -180,13 +183,16 @@ export struct SystemResourcePreviewPage {
   @Local private selectedCategory: ResourceCategory = ResourceCategory.SYMBOL;
   @Local private selectedGroupIndex: number = 0;
   @Local private searchText: string = '';
-  @Local private loadedGroups: number[] = [0]; // 按需加载的分组索引
+  @Local private visibleGroupCount: number = GROUP_BATCH_SIZE;
+  @Local private visibleGridItemCount: number = GRID_ITEM_BATCH_SIZE;
+  @Local private visibleSearchResultCount: number = SEARCH_RESULT_BATCH_SIZE;
   @Local private isSearching: boolean = false; // 是否正在搜索
   @Local private searchResults: string[] = []; // 搜索结果
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
   
   aboutToAppear(): void {
     logger.info(TAG, '系统资源预览页面初始化');
+    this.resetSegmentedLoading();
     // 使用getActualTheme获取实际显示的主题
     this.themeManager.getActualTheme().then((theme: ThemeType) => {
       this.themeState = { currentTheme: theme };
@@ -205,15 +211,49 @@ export struct SystemResourcePreviewPage {
     }
   }
   
+  private resetSegmentedLoading(): void {
+    this.visibleGroupCount = GROUP_BATCH_SIZE;
+    this.visibleGridItemCount = GRID_ITEM_BATCH_SIZE;
+    this.visibleSearchResultCount = SEARCH_RESULT_BATCH_SIZE;
+  }
+
+  private resetGridItemLoading(): void {
+    this.visibleGridItemCount = GRID_ITEM_BATCH_SIZE;
+  }
+
+  private getVisibleItems<T>(items: T[], limit: number): T[] {
+    if (limit >= items.length) {
+      return items;
+    }
+
+    const visibleItems: T[] = [];
+    const maxCount = Math.min(items.length, limit);
+    for (let index = 0; index < maxCount; index++) {
+      visibleItems.push(items[index]);
+    }
+    return visibleItems;
+  }
+
+  private getVisibleGroupCount(): number {
+    return Math.min(this.getCurrentGroups().length, this.visibleGroupCount);
+  }
+
+  private hasMoreGroups(): boolean {
+    return this.getVisibleGroupCount() < this.getCurrentGroups().length;
+  }
+
   /**
-   * 加载更多分组
+   * 加载更多分组（分段）
    */
   private loadMoreGroups(): void {
     const groups = this.getCurrentGroups();
-    const nextIndex = this.loadedGroups.length;
-    if (nextIndex < groups.length) {
-      this.loadedGroups = [...this.loadedGroups, nextIndex];
+    if (this.visibleGroupCount < groups.length) {
+      this.visibleGroupCount = Math.min(groups.length, this.visibleGroupCount + GROUP_BATCH_SIZE);
     }
+  }
+
+  private getVisibleGroups(): SystemSymbolResourceGroup[] {
+    return this.getVisibleItems<SystemSymbolResourceGroup>(this.getCurrentGroups(), this.visibleGroupCount);
   }
   
   /**
@@ -246,6 +286,60 @@ export struct SystemResourcePreviewPage {
       return MEDIA_GROUPS[this.selectedGroupIndex].items;
     }
     return [];
+  }
+
+  private getCurrentGridItems(): string[] {
+    if (this.selectedCategory === ResourceCategory.SYMBOL) {
+      return this.getSymbolItems();
+    }
+    if (this.selectedCategory === ResourceCategory.MEDIA) {
+      return this.getMediaItems();
+    }
+    return [];
+  }
+
+  private getVisibleCurrentGridItems(): string[] {
+    return this.getVisibleItems<string>(this.getCurrentGridItems(), this.visibleGridItemCount);
+  }
+
+  private getCurrentGridItemCount(): number {
+    return this.getCurrentGridItems().length;
+  }
+
+  private getVisibleCurrentGridItemCount(): number {
+    return Math.min(this.getCurrentGridItemCount(), this.visibleGridItemCount);
+  }
+
+  private hasMoreCurrentGridItems(): boolean {
+    return this.getVisibleCurrentGridItemCount() < this.getCurrentGridItemCount();
+  }
+
+  private loadMoreCurrentGridItems(): void {
+    const totalCount = this.getCurrentGridItemCount();
+    if (this.visibleGridItemCount < totalCount) {
+      this.visibleGridItemCount = Math.min(totalCount, this.visibleGridItemCount + GRID_ITEM_BATCH_SIZE);
+    }
+  }
+
+  private getVisibleSearchResults(): string[] {
+    return this.getVisibleItems<string>(this.searchResults, this.visibleSearchResultCount);
+  }
+
+  private getVisibleSearchResultCount(): number {
+    return Math.min(this.searchResults.length, this.visibleSearchResultCount);
+  }
+
+  private hasMoreSearchResults(): boolean {
+    return this.getVisibleSearchResultCount() < this.searchResults.length;
+  }
+
+  private loadMoreSearchResults(): void {
+    if (this.visibleSearchResultCount < this.searchResults.length) {
+      this.visibleSearchResultCount = Math.min(
+        this.searchResults.length,
+        this.visibleSearchResultCount + SEARCH_RESULT_BATCH_SIZE
+      );
+    }
   }
 
   private getMediaResourceCount(): number {
@@ -283,6 +377,7 @@ export struct SystemResourcePreviewPage {
     if (!this.searchText || this.searchText.trim() === '') {
       this.isSearching = false;
       this.searchResults = [];
+      this.visibleSearchResultCount = SEARCH_RESULT_BATCH_SIZE;
       return;
     }
     
@@ -318,6 +413,7 @@ export struct SystemResourcePreviewPage {
     }
     
     this.searchResults = results;
+    this.visibleSearchResultCount = SEARCH_RESULT_BATCH_SIZE;
     logger.info(TAG, `搜索 "${keyword}" 找到 ${results.length} 个结果`);
   }
   
@@ -328,6 +424,7 @@ export struct SystemResourcePreviewPage {
     this.searchText = '';
     this.isSearching = false;
     this.searchResults = [];
+    this.visibleSearchResultCount = SEARCH_RESULT_BATCH_SIZE;
   }
   
   /**
@@ -381,10 +478,10 @@ export struct SystemResourcePreviewPage {
    */
   @Builder
   buildSearchResultGrid() {
-    Column() {
+    Column({ space: 8 }) {
       // 搜索结果统计
       Row() {
-        Text(`找到 ${this.searchResults.length} 个结果`)
+        Text(`找到 ${this.searchResults.length} 个结果，已加载 ${this.getVisibleSearchResultCount()}`)
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
@@ -419,7 +516,7 @@ export struct SystemResourcePreviewPage {
         // 搜索结果网格
         Scroll() {
           Grid() {
-            ForEach(this.searchResults, (itemName: string) => {
+            ForEach(this.getVisibleSearchResults(), (itemName: string) => {
               GridItem() {
                 Column({ space: 6 }) {
                   if (this.selectedCategory === ResourceCategory.SYMBOL) {
@@ -470,6 +567,19 @@ export struct SystemResourcePreviewPage {
         .layoutWeight(1)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
+
+        if (this.hasMoreSearchResults()) {
+          Button(`加载更多结果 (${this.getVisibleSearchResultCount()}/${this.searchResults.length})`)
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .height(36)
+            .borderRadius(18)
+            .margin({ left: 16, right: 16, bottom: 8 })
+            .onClick(() => {
+              this.loadMoreSearchResults();
+            })
+        }
       }
     }
     .width('100%')
@@ -495,7 +605,9 @@ export struct SystemResourcePreviewPage {
         .onClick(() => {
           this.selectedCategory = ResourceCategory.SYMBOL;
           this.selectedGroupIndex = 0;
-          this.loadedGroups = [0];
+          this.isSearching = false;
+          this.searchResults = [];
+          this.resetSegmentedLoading();
         })
       
       Button(this.getCategoryLabel(ResourceCategory.MEDIA))
@@ -507,7 +619,9 @@ export struct SystemResourcePreviewPage {
         .onClick(() => {
           this.selectedCategory = ResourceCategory.MEDIA;
           this.selectedGroupIndex = 0;
-          this.loadedGroups = [0];
+          this.isSearching = false;
+          this.searchResults = [];
+          this.resetSegmentedLoading();
         })
       
       Button(this.getCategoryLabel(ResourceCategory.COLOR))
@@ -518,6 +632,9 @@ export struct SystemResourcePreviewPage {
         .backgroundColor(Color.Transparent)
         .onClick(() => {
           this.selectedCategory = ResourceCategory.COLOR;
+          this.isSearching = false;
+          this.searchResults = [];
+          this.resetSegmentedLoading();
         })
     }
     .width('100%')
@@ -539,7 +656,7 @@ export struct SystemResourcePreviewPage {
 
         Blank()
 
-        Text(this.getCurrentGroups().length.toString() + ' groups')
+        Text(this.getVisibleGroupCount().toString() + '/' + this.getCurrentGroups().length.toString() + ' groups')
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       }
@@ -548,7 +665,7 @@ export struct SystemResourcePreviewPage {
 
       Scroll() {
         Row({ space: 8 }) {
-          ForEach(this.getCurrentGroups(), (group: SystemSymbolResourceGroup, index: number) => {
+          ForEach(this.getVisibleGroups(), (group: SystemSymbolResourceGroup, index: number) => {
             Button(`${group.name} ${group.items.length}`)
               .fontSize(13)
               .fontColor(this.selectedGroupIndex === index 
@@ -561,9 +678,7 @@ export struct SystemResourcePreviewPage {
               .height(32)
               .onClick(() => {
                 this.selectedGroupIndex = index;
-                if (!this.loadedGroups.includes(index)) {
-                  this.loadedGroups = [...this.loadedGroups, index];
-                }
+                this.resetGridItemLoading();
               })
           })
         }
@@ -573,6 +688,19 @@ export struct SystemResourcePreviewPage {
       .scrollBar(BarState.Off)
       .width('100%')
       .height(40)
+
+      if (this.hasMoreGroups()) {
+        Button(`加载更多分组 (${this.getVisibleGroupCount()}/${this.getCurrentGroups().length})`)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .height(32)
+          .borderRadius(16)
+          .margin({ left: 16, right: 16, top: 2 })
+          .onClick(() => {
+            this.loadMoreGroups();
+          })
+      }
     }
     .width('100%')
     .padding({ top: 4, bottom: 4 })
@@ -583,41 +711,60 @@ export struct SystemResourcePreviewPage {
    */
   @Builder
   buildSymbolGrid() {
-    Scroll() {
-      Grid() {
-        ForEach(this.getSymbolItems(), (itemName: string) => {
-          GridItem() {
-            Column({ space: 6 }) {
-              SymbolGlyph($r(`sys.symbol.${itemName}`))
-                .fontSize(26)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-              
-              Text(itemName)
-                .fontSize(9)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .textAlign(TextAlign.Center)
+    Column({ space: 8 }) {
+      Scroll() {
+        Grid() {
+          ForEach(this.getVisibleCurrentGridItems(), (itemName: string) => {
+            GridItem() {
+              Column({ space: 6 }) {
+                SymbolGlyph($r(`sys.symbol.${itemName}`))
+                  .fontSize(26)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                
+                Text(itemName)
+                  .fontSize(9)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .textAlign(TextAlign.Center)
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding(6)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .borderRadius(8)
+              .onClick(() => {
+                this.copyToClipboard('symbol', itemName);
+              })
             }
-            .width('100%')
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .padding(6)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .borderRadius(8)
-            .onClick(() => {
-              this.copyToClipboard('symbol', itemName);
-            })
-          }
-          .aspectRatio(1)
-        })
+            .aspectRatio(1)
+          })
+        }
+        .columnsTemplate('1fr 1fr 1fr 1fr')
+        .rowsGap(10)
+        .columnsGap(10)
+        .padding(12)
+        .width('100%')
       }
-      .columnsTemplate('1fr 1fr 1fr 1fr')
-      .rowsGap(10)
-      .columnsGap(10)
-      .padding(12)
-      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+
+      if (this.hasMoreCurrentGridItems()) {
+        Button(`加载更多图标 (${this.getVisibleCurrentGridItemCount()}/${this.getCurrentGridItemCount()})`)
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .height(36)
+          .borderRadius(18)
+          .margin({ left: 16, right: 16, bottom: 8 })
+          .onClick(() => {
+            this.loadMoreCurrentGridItems();
+          })
+      }
     }
+    .width('100%')
     .layoutWeight(1)
   }
   
@@ -626,42 +773,61 @@ export struct SystemResourcePreviewPage {
    */
   @Builder
   buildMediaGrid() {
-    Scroll() {
-      Grid() {
-        ForEach(this.getMediaItems(), (itemName: string) => {
-          GridItem() {
-            Column({ space: 6 }) {
-              Image($r(`sys.media.${itemName}`))
-                .width(28)
-                .height(28)
-                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              
-              Text(itemName)
-                .fontSize(9)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .textAlign(TextAlign.Center)
+    Column({ space: 8 }) {
+      Scroll() {
+        Grid() {
+          ForEach(this.getVisibleCurrentGridItems(), (itemName: string) => {
+            GridItem() {
+              Column({ space: 6 }) {
+                Image($r(`sys.media.${itemName}`))
+                  .width(28)
+                  .height(28)
+                  .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                
+                Text(itemName)
+                  .fontSize(9)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .textAlign(TextAlign.Center)
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding(6)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .borderRadius(8)
+              .onClick(() => {
+                this.copyToClipboard('media', itemName);
+              })
             }
-            .width('100%')
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .padding(6)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .borderRadius(8)
-            .onClick(() => {
-              this.copyToClipboard('media', itemName);
-            })
-          }
-          .aspectRatio(1)
-        })
+            .aspectRatio(1)
+          })
+        }
+        .columnsTemplate('1fr 1fr 1fr 1fr')
+        .rowsGap(10)
+        .columnsGap(10)
+        .padding(12)
+        .width('100%')
       }
-      .columnsTemplate('1fr 1fr 1fr 1fr')
-      .rowsGap(10)
-      .columnsGap(10)
-      .padding(12)
-      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+
+      if (this.hasMoreCurrentGridItems()) {
+        Button(`加载更多图标 (${this.getVisibleCurrentGridItemCount()}/${this.getCurrentGridItemCount()})`)
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .height(36)
+          .borderRadius(18)
+          .margin({ left: 16, right: 16, bottom: 8 })
+          .onClick(() => {
+            this.loadMoreCurrentGridItems();
+          })
+      }
     }
+    .width('100%')
     .layoutWeight(1)
   }
   

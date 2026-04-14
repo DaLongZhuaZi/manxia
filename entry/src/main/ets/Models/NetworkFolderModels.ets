@@ -2,9 +2,20 @@
  * Network folder models and helpers.
  */
 
-export type NetworkFolderProtocol = 'webdav' | 'ftp' | 'ftps' | 'smb';
+export type NetworkFolderProtocol = 'webdav' | 'ftp' | 'ftps' | 'sftp' | 'smb';
 
-export type NetworkFolderImportCategory = 'comic' | 'ebook' | 'pdf' | 'unsupported';
+export type NetworkFolderImportCategory =
+  'comic' |
+  'ebook' |
+  'pdf' |
+  'backup' |
+  'json' |
+  'font' |
+  'code' |
+  'avif' |
+  'image' |
+  'unknown' |
+  'unsupported';
 
 export interface NetworkFolderConnection {
   id: string;
@@ -92,6 +103,7 @@ export interface NetworkFolderDownloadCacheDetail {
   versionTag: string;
   cachedAt: number;
   lastAccessedAt: number;
+  importCategory: NetworkFolderImportCategory;
   fileExists: boolean;
 }
 
@@ -109,6 +121,44 @@ export interface NetworkFolderDownloadResult {
   reusedCache: boolean;
   importCategory: NetworkFolderImportCategory;
 }
+
+const NETWORK_FOLDER_COMIC_EXTENSIONS: string[] = [
+  'zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'lzma'
+];
+
+const NETWORK_FOLDER_EBOOK_EXTENSIONS: string[] = [
+  'epub', 'mobi', 'azw', 'azw3', 'txt'
+];
+
+const NETWORK_FOLDER_BACKUP_EXTENSIONS: string[] = [
+  'mxbak', 'mxbackup'
+];
+
+const NETWORK_FOLDER_JSON_EXTENSIONS: string[] = [
+  'json', 'json5'
+];
+
+const NETWORK_FOLDER_FONT_EXTENSIONS: string[] = [
+  'ttf', 'otf', 'ttc', 'woff', 'woff2'
+];
+
+const NETWORK_FOLDER_AVIF_EXTENSIONS: string[] = [
+  'avif'
+];
+
+const NETWORK_FOLDER_IMAGE_EXTENSIONS: string[] = [
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'svg'
+];
+
+const NETWORK_FOLDER_CODE_EXTENSIONS: string[] = [
+  'ets', 'ts', 'tsx', 'js', 'jsx',
+  'jsonc', 'xml', 'yaml', 'yml', 'md', 'markdown',
+  'java', 'kt', 'c', 'cpp', 'h', 'hpp', 'py', 'rs',
+  'cs', 'go', 'swift', 'rb', 'php', 'html', 'htm',
+  'css', 'scss', 'less', 'sql', 'sh', 'bash', 'zsh',
+  'ps1', 'bat', 'cmd', 'log', 'ini', 'conf', 'cfg',
+  'toml', 'lua', 'r', 'dart', 'vue', 'svelte'
+];
 
 export function createEmptyNetworkFolderDraft(): NetworkFolderConnectionDraft {
   const draft: NetworkFolderConnectionDraft = {
@@ -222,25 +272,76 @@ export function joinRelativeNetworkFolderPath(parentPath: string, name: string):
   return `${cleanParent}/${cleanName}`;
 }
 
+function normalizeNetworkFolderFileNameForDetect(fileName: string): string {
+  const trimmed = fileName.trim();
+  if (trimmed.length === 0) {
+    return '';
+  }
+  const queryIndex = trimmed.indexOf('?');
+  const hashIndex = trimmed.indexOf('#');
+  let endIndex = trimmed.length;
+  if (queryIndex >= 0 && hashIndex >= 0) {
+    endIndex = Math.min(queryIndex, hashIndex);
+  } else if (queryIndex >= 0) {
+    endIndex = queryIndex;
+  } else if (hashIndex >= 0) {
+    endIndex = hashIndex;
+  }
+
+  const withoutQuery = trimmed.substring(0, endIndex);
+  try {
+    return decodeURIComponent(withoutQuery).trim().toLowerCase();
+  } catch {
+    return withoutQuery.trim().toLowerCase();
+  }
+}
+
+export function getNetworkFolderFileExtension(fileName: string): string {
+  const normalizedName = normalizeNetworkFolderFileNameForDetect(fileName);
+  if (normalizedName.length === 0) {
+    return '';
+  }
+  const lastDotIndex = normalizedName.lastIndexOf('.');
+  if (lastDotIndex < 0 || lastDotIndex >= normalizedName.length - 1) {
+    return '';
+  }
+  return normalizedName.substring(lastDotIndex + 1);
+}
+
 export function inferNetworkFolderImportCategory(fileName: string): NetworkFolderImportCategory {
-  const lowerName = fileName.trim().toLowerCase();
-  if (lowerName.length === 0) {
+  const extension = getNetworkFolderFileExtension(fileName);
+  if (extension.length === 0) {
     return 'unsupported';
   }
 
-  const mangaExtensions: string[] = ['.zip', '.cbz', '.rar', '.cbr', '.7z', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.lzma'];
-  const ebookExtensions: string[] = ['.epub', '.mobi', '.azw', '.azw3', '.txt'];
-
-  if (mangaExtensions.some((ext: string) => lowerName.endsWith(ext))) {
+  if (NETWORK_FOLDER_BACKUP_EXTENSIONS.includes(extension)) {
+    return 'backup';
+  }
+  if (NETWORK_FOLDER_COMIC_EXTENSIONS.includes(extension)) {
     return 'comic';
   }
-  if (lowerName.endsWith('.pdf')) {
+  if (extension === 'pdf') {
     return 'pdf';
   }
-  if (ebookExtensions.some((ext: string) => lowerName.endsWith(ext))) {
+  if (NETWORK_FOLDER_EBOOK_EXTENSIONS.includes(extension)) {
     return 'ebook';
   }
-  return 'unsupported';
+  if (NETWORK_FOLDER_JSON_EXTENSIONS.includes(extension)) {
+    return 'json';
+  }
+  if (NETWORK_FOLDER_FONT_EXTENSIONS.includes(extension)) {
+    return 'font';
+  }
+  if (NETWORK_FOLDER_AVIF_EXTENSIONS.includes(extension)) {
+    return 'avif';
+  }
+  if (NETWORK_FOLDER_IMAGE_EXTENSIONS.includes(extension)) {
+    return 'image';
+  }
+  if (NETWORK_FOLDER_CODE_EXTENSIONS.includes(extension)) {
+    return 'code';
+  }
+  return 'unknown';
 }
 
 export function isNetworkFolderImportSupported(category: NetworkFolderImportCategory): boolean {
@@ -255,6 +356,8 @@ export function getNetworkFolderProtocolLabel(protocol: NetworkFolderProtocol): 
       return 'FTP';
     case 'ftps':
       return 'FTPS';
+    case 'sftp':
+      return 'SFTP';
     case 'smb':
       return 'SMB';
     default:
@@ -275,6 +378,9 @@ function sanitizePort(protocol: NetworkFolderProtocol, port: number): number {
   }
   if (protocol === 'ftp') {
     return 21;
+  }
+  if (protocol === 'sftp') {
+    return 22;
   }
   if (protocol === 'smb') {
     return 445;

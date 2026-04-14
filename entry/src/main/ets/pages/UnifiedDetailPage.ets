@@ -16,6 +16,7 @@ import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd, preferences } from '@kit.ArkData';
 import { logger } from '../Utils/Logger';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
@@ -235,7 +236,6 @@ export struct UnifiedDetailPage {
   // 沉浸式显示状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
-  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -759,9 +759,30 @@ export struct UnifiedDetailPage {
   @State recommendedItems: RecommendationItem[] = [];
   @State isLoadingRecommendations: boolean = false;
 
+  private applyPageDisplayMode(mode: DisplayMode): void {
+    WindowManager.setDisplayMode(mode, this.getUIContext());
+  }
+
+  private navigateWithManagedWindowTransition(targetPageName: string, params: Object | null): void {
+    const navigateAction = (): void => {
+      this.pathStack.pushPathByName(targetPageName, params);
+    };
+    try {
+      PageWindowCoordinator.navigateWithManagedTransition(
+        'UnifiedDetailPage',
+        targetPageName,
+        navigateAction,
+        this.getUIContext(),
+        WindowManager.getCurrentMode()
+      );
+    } catch (error) {
+      logger.warn(TAG, `统一详情页托管窗口跳转失败，回退直接跳转: target=${targetPageName}, error=${String(error)}`);
+      navigateAction();
+    }
+  }
+
   aboutToAppear(): void {
-    this.previousDisplayMode = WindowManager.getCurrentMode();
-    WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
+    this.applyPageDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE);
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -869,7 +890,8 @@ export struct UnifiedDetailPage {
   private lifecycle = new PageLifecycleManager('UnifiedDetailPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+    // 注意：不要在离开时强制恢复窗口模式，避免前进跳转过程中覆盖目标页沉浸策略。
+    // 目标页由各自的页面策略接管；本页在 aboutToAppear/onShown 时重新声明自身模式。
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -2080,7 +2102,7 @@ export struct UnifiedDetailPage {
       sourceId: this.content.sourceId || ''
     };
 
-    this.pathStack.pushPathByName('ZLibraryReaderPage', params);
+    this.navigateWithManagedWindowTransition('ZLibraryReaderPage', params);
   }
 
   /**
@@ -2154,7 +2176,7 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '漫画翻开过渡动画触发导航');
-        this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+        this.navigateWithManagedWindowTransition('MangaReaderPage', readerParams);
       },
       undefined,
       {
@@ -2213,9 +2235,9 @@ export struct UnifiedDetailPage {
             `firstChapterImageRelativePath=${(firstChapter?.resourceImageRelativePath || '').substring(0, 96)}`
         );
         if (txtNovelReaderParams && originalEBook?.format === EBookFormat.TXT) {
-          this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
+          this.navigateWithManagedWindowTransition('NovelReaderPage', txtNovelReaderParams);
         } else {
-          this.pathStack.pushPathByName(ebookRouteName, params);
+          this.navigateWithManagedWindowTransition(ebookRouteName, params);
         }
       },
       ebookBackground,
@@ -2279,7 +2301,7 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '小说翻开过渡动画触发导航');
-        this.pathStack.pushPathByName('NovelReaderPage', params);
+        this.navigateWithManagedWindowTransition('NovelReaderPage', params);
       },
       undefined,
       {
@@ -2373,12 +2395,12 @@ export struct UnifiedDetailPage {
       AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
       AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
       logger.info(TAG, `开始听书直达播放器页: 章节索引=${chapterIndex}, 图源=${sourceId}, 章节地址=${params.chapterUrl}`);
-      this.pathStack.pushPathByName('ReadAloudPlayerPage', params);
+      this.navigateWithManagedWindowTransition('ReadAloudPlayerPage', params);
       return;
     }
     params.autoStartReadAloud = true;
     params.autoOpenReadAloudPlayer = true;
-    this.pathStack.pushPathByName('NovelReaderPage', params);
+    this.navigateWithManagedWindowTransition('NovelReaderPage', params);
   }
 
   private openLocalTxtEBookReadAloudPage(chapterIndex: number): void {
@@ -2400,7 +2422,7 @@ export struct UnifiedDetailPage {
     }
     params.autoStartReadAloud = true;
     params.autoOpenReadAloudPlayer = true;
-    this.pathStack.pushPathByName('NovelReaderPage', params);
+    this.navigateWithManagedWindowTransition('NovelReaderPage', params);
   }
 
   /**
@@ -4055,7 +4077,7 @@ export struct UnifiedDetailPage {
     };
     
     logger.info(TAG, `快捷搜索: keyword="${cleanKeyword}", contentType=${initialContentType}, sourceType=${initialSourceType}`);
-    this.pathStack.pushPathByName('GlobalSearchPage', params);
+    this.navigateWithManagedWindowTransition('GlobalSearchPage', params);
   }
 
   // ==================== 智能推荐功能 ====================
@@ -4416,7 +4438,7 @@ export struct UnifiedDetailPage {
       cachedCover: item.coverUrl
     };
     logger.info(TAG, `跳转推荐内容: type=${item.contentType}, id=${item.navContentId}`);
-    this.pathStack.pushPathByName('UnifiedDetailPage', params);
+    this.navigateWithManagedWindowTransition('UnifiedDetailPage', params);
   }
 
   // ==================== 同书架内容功能 ====================
@@ -4534,7 +4556,7 @@ export struct UnifiedDetailPage {
       cachedCover: item.coverUrl
     };
     logger.info(TAG, `跳转同书架内容: type=${item.contentType}, id=${item.navContentId}`);
-    this.pathStack.pushPathByName('UnifiedDetailPage', params);
+    this.navigateWithManagedWindowTransition('UnifiedDetailPage', params);
   }
 
   /**
@@ -6861,7 +6883,7 @@ export struct UnifiedDetailPage {
       mangaId: this.content.id,
       fromPage: 'UnifiedDetailPage'
     };
-    this.pathStack.pushPathByName('MangaSettingsPage', params);
+    this.navigateWithManagedWindowTransition('MangaSettingsPage', params);
   }
 
   private async refetchOnlineMangaInfo(): Promise<void> {
@@ -7080,7 +7102,7 @@ export struct UnifiedDetailPage {
     const params: EBookSettingsPageParams = {
       bookId: this.content.id
     };
-    this.pathStack.pushPathByName('EBookSettingsPage', params);
+    this.navigateWithManagedWindowTransition('EBookSettingsPage', params);
   }
 
   private async openNovelSettings(): Promise<void> {
@@ -7482,7 +7504,7 @@ export struct UnifiedDetailPage {
   private openNovelTxtTocRulePage(): void {
     void this.requestCloseNovelSettingsDialog(() => {
       try {
-        this.pathStack.pushPathByName('NovelTxtTocRulePage', null);
+        this.navigateWithManagedWindowTransition('NovelTxtTocRulePage', null);
       } catch (error) {
         logger.error(TAG, `打开TXT目录规则页失败: ${String(error)}`);
       }
@@ -7492,7 +7514,7 @@ export struct UnifiedDetailPage {
   private openNovelReplaceRulePage(): void {
     void this.requestCloseNovelSettingsDialog(() => {
       try {
-        this.pathStack.pushPathByName('NovelReplaceRulePage', null);
+        this.navigateWithManagedWindowTransition('NovelReplaceRulePage', null);
       } catch (error) {
         logger.error(TAG, `打开净化规则页失败: ${String(error)}`);
       }
@@ -9612,7 +9634,7 @@ export struct UnifiedDetailPage {
       }, 80);
     })
     .onShown(() => {
-      WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
+      this.applyPageDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE);
       // 页面显示时刷新阅读记录（从阅读器返回时）
       this.refreshReadingProgress();
       void this.loadReadAloudCacheSummary();

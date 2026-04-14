@@ -1,6 +1,6 @@
 /**
  * FTP NAPI Interface
- * 将FTP C++客户端暴露给ArkTS
+ * 将 FTP/FTPS/SFTP C++ 客户端暴露给ArkTS
  * 
  * 文件路径: entry/src/main/cpp/webdav/ftp_napi.cpp
  */
@@ -113,6 +113,15 @@ static napi_value FtpInit(napi_env env, napi_callback_info info) {
             napi_get_value_bool(env, value, &config.useFTPS);
         }
     }
+
+    // useSFTP
+    if (napi_get_named_property(env, args[0], "useSFTP", &value) == napi_ok) {
+        napi_valuetype type;
+        napi_typeof(env, value, &type);
+        if (type == napi_boolean) {
+            napi_get_value_bool(env, value, &config.useSFTP);
+        }
+    }
     
     // passive
     if (napi_get_named_property(env, args[0], "passive", &value) == napi_ok) {
@@ -134,8 +143,14 @@ static napi_value FtpInit(napi_env env, napi_callback_info info) {
         }
     }
     
-    OH_LOG_INFO(LOG_APP, "FTP Init: host=%{public}s, port=%{public}d, useFTPS=%{public}d",
-                config.host.c_str(), config.port, config.useFTPS);
+    OH_LOG_INFO(
+        LOG_APP,
+        "FTP Init: host=%{public}s, port=%{public}d, useFTPS=%{public}d, useSFTP=%{public}d",
+        config.host.c_str(),
+        config.port,
+        config.useFTPS,
+        config.useSFTP
+    );
     
     // 创建客户端
     g_ftpClient = std::make_unique<ftp::FTPClient>(config);

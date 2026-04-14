@@ -1,0 +1,11 @@
+﻿export { IDataFacade, NGFDataQueryResult } from './contracts/IDataFacade';
+export { ISettingsStore } from './contracts/ISettingsStore';
+export { ICacheStore } from './contracts/ICacheStore';
+export { IStorageProvider } from './contracts/IStorageProvider';
+export { IDbMigrator } from './contracts/IDbMigrator';
+export { DataFacade, ngfDataFacade } from './facades/DataFacade';
+export { SettingsStoreFacade, ngfSettingsStoreFacade } from './facades/SettingsStoreFacade';
+export { CacheStoreFacade, ngfCacheStoreFacade } from './facades/CacheStoreFacade';
+export { StorageProviderFacade, ngfStorageProviderFacade } from './facades/StorageProviderFacade';
+export { DbMigratorFacade, ngfDbMigratorFacade } from './facades/DbMigratorFacade';
+export { NGFDataIntegrationFacade, ngfDataIntegrationFacade } from './facades/NGFDataIntegrationFacade';

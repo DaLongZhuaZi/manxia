@@ -60,6 +60,7 @@ export class PageWindowRegistry {
     'MainMenuSettingsSubPage',
     'NetworkSettingsSubPage',
     'NetworkFolderPage',
+    'NGFFrameworkStatusPage',
     'NotificationSettingsSubPage',
     'NovelBookshelfPage',
     'NovelDetailPage',

@@ -3,30 +3,21 @@
  * 导入、删除、测试书源
  * 使用 HdsNavDestination 实现统一的导航体验
  * 
- * 改进：
- * 1. 使用标准titleBar + 图标入口
- * 2. 添加书源搜索功能
- * 3. 书源置顶功能
- * 4. 分页加载（首次100个，滚动到60-70时静默加载更多）
- * 5. 点击书源进入专属搜索页面
- * 
  * 文件路径: entry/src/main/ets/pages/NovelSourceManagementPage.ets
  */
 
-import { HdsNavDestination } from '@kit.UIDesignKit';
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
-import { pasteboard } from '@kit.BasicServicesKit';
 import { http } from '@kit.NetworkKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceValidator, ValidationConfig, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
-import { getNovelLoginManager } from '../Framework/Novel/NovelLoginManager';
 import { NovelSourceInfo } from '../Models/NovelModels';
 import { LegadoSourceImportResult, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -34,10 +25,9 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { NovelSourceManagementPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
-import { NovelSourceLoginPageParams } from './NovelSourceLoginPage';
+import { NovelSearchPageParams } from './NovelBookshelfPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
-import { GroupManagementDialog, GroupInfo, GroupOperationCallback, SplitCondition } from '../Framework/Components/GroupManagementDialog';
+import { GroupManagementDialog, GroupInfo, SplitCondition } from '../Framework/Components/GroupManagementDialog';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { FileEditorParams } from './FileEditorPage';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
@@ -45,6 +35,7 @@ import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from '.
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
 
 const TAG = 'NovelSourceManagementPage';
 
@@ -54,15 +45,51 @@ const PRELOAD_THRESHOLD = 60;  // 预加载触发阈值（当显示到第60-70�
 const VALIDATION_CONCURRENCY_DEFAULT = 10;
 const VALIDATION_CONCURRENCY_MAX = 50;
 const VALIDATION_CONCURRENCY_OPTIONS: [number, number, number, number, number, number] = [10, 15, 20, 30, 40, 50];
+const NETWORK_IMPORT_MAX_DEPTH = 4;
+const MULTI_SELECT_BAR_ANIMATED_HEIGHT = 178;
+const QUICK_ACTION_PANEL_ANIMATED_HEIGHT = 184;
+const GROUP_FILTER_SINGLE_HEIGHT = 52;
 type ImportErrorValue = Object | string | number | boolean | null | undefined;
 
-/**
- * 书源操作菜单项
- */
-interface SourceMenuItem {
+interface NetworkImportSummary {
+  successCount: number;
+  failCount: number;
+  fetchedCount: number;
+}
+
+type SourceUrlCollectionValue = string | string[] | null | undefined;
+type GlassActionButtonTone = 'primary' | 'neutral' | 'success' | 'warning' | 'danger' | 'accent';
+type SourceContextMenuAction = 'search' | 'edit' | 'debug' | 'pin' | 'delete' | '';
+
+interface NetworkSourceUrlIndexPayload {
+  sourceUrls?: SourceUrlCollectionValue;
+  bookSourceUrls?: SourceUrlCollectionValue;
+}
+
+type GroupPickerMode = 'add' | 'remove';
+type DeleteConfirmMode = 'single' | 'batch';
+enum ValidationPresetMode {
+  QUICK = 0,
+  STANDARD = 1,
+  FULL = 2
+}
+
+enum GroupFilterDisplayMode {
+  COLLAPSED = 0,
+  SINGLE_LINE = 1,
+  FULL = 2
+}
+
+interface ValidationDialogScope {
+  sourceIds: string[];
+  validateAll: boolean;
+}
+
+interface DeleteDialogPayload {
+  mode: DeleteConfirmMode;
+  sourceIds: string[];
   title: string;
-  icon: Resource;
-  action: string;
+  message: string;
 }
 
 @Component
@@ -83,6 +110,7 @@ export struct NovelSourceManagementPage {
   // 筛选后的书源（用于搜索和分组筛选）
   @State filteredSources: NovelSourceInfo[] = [];
   @State isLoading: boolean = true;
+  @State showImportEntryDialog: boolean = false;
   @State showImportDialog: boolean = false;
   @State showImportUrlDialog: boolean = false;
   @State importText: string = '';
@@ -97,9 +125,13 @@ export struct NovelSourceManagementPage {
   // 书源搜索
   @State searchKeyword: string = '';
   @State showSearchBar: boolean = false;
+  @State showQuickActionPanel: boolean = true;
+  @State groupFilterDisplayMode: GroupFilterDisplayMode = GroupFilterDisplayMode.SINGLE_LINE;
   // 多选模式
   @State isMultiSelectMode: boolean = false;
   @State selectedSourceIds: Set<string> = new Set();
+  @State showGroupInputDialog: boolean = false;
+  @State groupInputValue: string = '';
   // 操作加载状态（导入/删除等）
   @State isOperating: boolean = false;
   @State operatingMessage: string = '';
@@ -124,9 +156,33 @@ export struct NovelSourceManagementPage {
   // 书源长按菜单状态
   @State showSourceContextMenu: boolean = false;
   @State contextMenuSource: NovelSourceInfo | null = null;
+  @State contextMenuHoverAction: SourceContextMenuAction = '';
   // 排序模式状态
   @State isSortMode: boolean = false;
   @State isSavingOrder: boolean = false;
+  // 校验配置对话框状态
+  @State showValidationSetupDialog: boolean = false;
+  @State validationPresetMode: ValidationPresetMode = ValidationPresetMode.STANDARD;
+  @State validationKeywordInput: string = '我的';
+  @State validationConcurrencyInput: number = VALIDATION_CONCURRENCY_DEFAULT;
+  @State validationTargetCount: number = 0;
+  @State isValidationTargetAll: boolean = true;
+  private validationDialogScope: ValidationDialogScope = {
+    sourceIds: [],
+    validateAll: true
+  };
+  // 分组选择对话框状态（替代截断的 ActionMenu）
+  @State showGroupPickerDialog: boolean = false;
+  @State groupPickerMode: GroupPickerMode = 'add';
+  @State groupPickerKeyword: string = '';
+  @State groupPickerGroups: string[] = [];
+  @State groupPickerFilteredGroups: string[] = [];
+  // 删除确认对话框状态（统一玻璃样式）
+  @State showDeleteConfirmDialog: boolean = false;
+  @State deleteConfirmTitle: string = '';
+  @State deleteConfirmMessage: string = '';
+  @State deleteConfirmMode: DeleteConfirmMode = 'single';
+  private pendingDeleteSourceIds: string[] = [];
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -327,6 +383,164 @@ export struct NovelSourceManagementPage {
     }
   }
 
+  private toggleQuickActionPanel(): void {
+    this.showQuickActionPanel = !this.showQuickActionPanel;
+  }
+
+  private cycleGroupFilterDisplayMode(): void {
+    if (this.groupFilterDisplayMode === GroupFilterDisplayMode.COLLAPSED) {
+      this.groupFilterDisplayMode = GroupFilterDisplayMode.SINGLE_LINE;
+      return;
+    }
+    if (this.groupFilterDisplayMode === GroupFilterDisplayMode.SINGLE_LINE) {
+      this.groupFilterDisplayMode = GroupFilterDisplayMode.FULL;
+      return;
+    }
+    this.groupFilterDisplayMode = GroupFilterDisplayMode.COLLAPSED;
+  }
+
+  private getGroupFilterSwitchLabel(): string {
+    if (this.groupFilterDisplayMode === GroupFilterDisplayMode.COLLAPSED) {
+      return '单行';
+    }
+    if (this.groupFilterDisplayMode === GroupFilterDisplayMode.SINGLE_LINE) {
+      return '全部';
+    }
+    return '收起';
+  }
+
+  private getGroupFilterContainerHeight(): number {
+    if (this.groupFilterDisplayMode === GroupFilterDisplayMode.COLLAPSED) {
+      return 0;
+    }
+    if (this.groupFilterDisplayMode === GroupFilterDisplayMode.SINGLE_LINE) {
+      return GROUP_FILTER_SINGLE_HEIGHT;
+    }
+
+    const totalChipCount = this.sourceGroups.length + 1;
+    const chipsPerRow = 3;
+    const rowCount = Math.max(1, Math.ceil(totalChipCount / chipsPerRow));
+    const rowHeight = 34;
+    const rowGap = 8;
+    const verticalPadding = 12;
+    const computedHeight = rowCount * rowHeight + (rowCount - 1) * rowGap + verticalPadding;
+    return Math.min(220, computedHeight);
+  }
+
+  private buildStandardValidationConfig(): Partial<ValidationConfig> {
+    return {
+      checkSearch: true,
+      checkDiscovery: false,
+      checkInfo: true,
+      checkCategory: true,
+      checkContent: false,
+      timeout: 120000,
+      keyword: '我的',
+      concurrency: this.getValidationConcurrency()
+    };
+  }
+
+  private quickValidateSources(sourceIds?: string[]): void {
+    const config = this.buildStandardValidationConfig();
+    void this.doValidateSources(sourceIds, config);
+  }
+
+  private getGlassActionButtonBackground(tone: GlassActionButtonTone): Resource {
+    switch (tone) {
+      case 'primary':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme);
+      case 'success':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_success', this.themeState.currentTheme);
+      case 'warning':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme);
+      case 'danger':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme);
+      case 'accent':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_purple', this.themeState.currentTheme);
+      case 'neutral':
+      default:
+        return ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme);
+    }
+  }
+
+  private getGlassActionButtonTextColor(tone: GlassActionButtonTone): Resource {
+    switch (tone) {
+      case 'neutral':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme);
+      case 'primary':
+      case 'success':
+      case 'warning':
+      case 'danger':
+      case 'accent':
+      default:
+        return ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme);
+    }
+  }
+
+  private getGlassActionButtonBorderColor(tone: GlassActionButtonTone): Resource {
+    switch (tone) {
+      case 'primary':
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+      case 'success':
+        return ThemeAwareHelper.getTestManagementThemedColor('success_border', this.themeState.currentTheme);
+      case 'warning':
+        return ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme);
+      case 'danger':
+        return ThemeAwareHelper.getTestManagementThemedColor('error_border', this.themeState.currentTheme);
+      case 'accent':
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_secondary', this.themeState.currentTheme);
+      case 'neutral':
+      default:
+        return ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme);
+    }
+  }
+
+  private getGlassActionButtonBlurStyle(): BlurStyle | undefined {
+    return SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme);
+  }
+
+  private getGlassActionButtonBlurOptions(): BackgroundBlurStyleOptions {
+    return SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme);
+  }
+
+  private getGlassActionButtonBackgroundEffect(): BackgroundEffectOptions | undefined {
+    return SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme);
+  }
+
+  private getGlassActionButtonGradient(): LinearGradient {
+    return SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme);
+  }
+
+  private getGlassActionButtonShadowColor(): string {
+    return SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme);
+  }
+
+  private isContextMenuActionHighlighted(action: SourceContextMenuAction): boolean {
+    return this.contextMenuHoverAction === action;
+  }
+
+  private updateContextMenuHoverState(action: SourceContextMenuAction, isHovering: boolean): void {
+    if (isHovering) {
+      this.contextMenuHoverAction = action;
+      return;
+    }
+    if (this.contextMenuHoverAction === action) {
+      this.contextMenuHoverAction = '';
+    }
+  }
+
+  private updateContextMenuTouchState(action: SourceContextMenuAction, event: TouchEvent): void {
+    if (event.type === TouchType.Down || event.type === TouchType.Move) {
+      this.contextMenuHoverAction = action;
+      return;
+    }
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      if (this.contextMenuHoverAction === action) {
+        this.contextMenuHoverAction = '';
+      }
+    }
+  }
+
   private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
     return [
       {
@@ -355,18 +569,18 @@ export struct NovelSourceManagementPage {
       },
       {
         id: 'validate',
-        label: '校验书源',
+        label: '一键校验',
         symbol: $r('sys.symbol.wrench_arrow_counterclockwise'),
         onClick: () => {
-          void this.validateAllSources();
+          this.quickValidateSources();
         }
       },
       {
-        id: 'more',
-        label: '更多',
-        symbol: $r('sys.symbol.more'),
+        id: 'quickPanel',
+        label: this.showQuickActionPanel ? '收起快捷' : '展开快捷',
+        symbol: $r('sys.symbol.line_3_horizontal_circle'),
         onClick: () => {
-          this.showMoreOptions();
+          this.toggleQuickActionPanel();
         }
       }
     ];
@@ -404,10 +618,15 @@ export struct NovelSourceManagementPage {
           .clip(true)
           .animation({ duration: 200, curve: Curve.EaseOut })
           
-          // 多选操作栏
-          if (this.isMultiSelectMode) {
+          // 多选操作栏（展开/收起动画参考搜索栏）
+          Column() {
             this.buildMultiSelectBar()
           }
+          .width('100%')
+          .height(this.isMultiSelectMode ? MULTI_SELECT_BAR_ANIMATED_HEIGHT : 0)
+          .opacity(this.isMultiSelectMode ? 1 : 0)
+          .clip(true)
+          .animation({ duration: 200, curve: Curve.EaseOut })
           
           // 排序模式操作栏
           if (this.isSortMode) {
@@ -419,7 +638,19 @@ export struct NovelSourceManagementPage {
             this.buildStats()
           }
 
-          this.buildListGuideHeader()
+          // 一级快捷操作（展开/收起动画参考搜索栏）
+          Column() {
+            this.buildQuickActionPanel()
+          }
+          .width('100%')
+          .height(!this.isSortMode && !this.isMultiSelectMode && this.showQuickActionPanel
+            ? QUICK_ACTION_PANEL_ANIMATED_HEIGHT
+            : 0)
+          .opacity(!this.isSortMode && !this.isMultiSelectMode && this.showQuickActionPanel ? 1 : 0)
+          .clip(true)
+          .animation({ duration: 200, curve: Curve.EaseOut })
+
+          this.buildListGuideHeader(!this.isSortMode && !this.isMultiSelectMode && this.showQuickActionPanel)
           
           // 书源列表
           if (this.isLoading) {
@@ -435,12 +666,32 @@ export struct NovelSourceManagementPage {
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 导入对话框
+        if (this.showImportEntryDialog) {
+          this.buildImportEntryDialog()
+        }
+
         if (this.showImportDialog) {
           this.buildImportDialog()
         }
 
         if (this.showImportUrlDialog) {
           this.buildImportUrlDialog()
+        }
+
+        if (this.showGroupInputDialog) {
+          this.buildGroupInputDialog()
+        }
+
+        if (this.showValidationSetupDialog) {
+          this.buildValidationSetupDialog()
+        }
+
+        if (this.showGroupPickerDialog) {
+          this.buildGroupPickerDialog()
+        }
+
+        if (this.showDeleteConfirmDialog) {
+          this.buildDeleteConfirmDialog()
         }
         
         // 操作加载遮罩层
@@ -472,69 +723,19 @@ export struct NovelSourceManagementPage {
   }
 
   @Builder
-  buildTitleBar() {
-    Row() {
-      SymbolGlyph($r('sys.symbol.chevron_left'))
-        .fontSize(24)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
-        .margin({ left: 16 })
-        .onClick(() => this.pathStack.pop())
-      
-      Text('书源管理')
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .margin({ left: 16 })
-      
-      Blank()
-      
-      // 搜索图标
-      SymbolGlyph($r('sys.symbol.magnifyingglass'))
-        .fontSize(24)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
-        .margin({ right: 12 })
-        .onClick(() => {
-          this.showSearchBar = !this.showSearchBar;
-          if (!this.showSearchBar) {
-            this.searchKeyword = '';
-            this.applyFilter();
-          }
-        })
-      
-      // 导入图标
-      SymbolGlyph($r('sys.symbol.plus'))
-        .fontSize(24)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
-        .margin({ right: 12 })
-        .onClick(() => this.showImportOptions())
-      
-      // 校验图标
-      SymbolGlyph($r('sys.symbol.checkmark'))
-        .fontSize(24)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
-        .margin({ right: 12 })
-        .onClick(() => this.validateAllSources())
-      
-      // 更多操作图标
-      SymbolGlyph($r('sys.symbol.ellipsis_circle'))
-        .fontSize(24)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
-        .margin({ right: 16 })
-        .onClick(() => this.showMoreOptions())
-    }
-    .width('100%')
-    .height(56)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-  }
-
-  @Builder
   buildSearchBar() {
     Row() {
       TextInput({ placeholder: '搜索书源名称、分组或网址...', text: this.searchKeyword })
         .layoutWeight(1)
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+        .linearGradient(this.getGlassActionButtonGradient())
+        .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+        .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+        .border({
+          width: 1,
+          color: this.getGlassActionButtonBorderColor('neutral')
+        })
         .borderRadius(20)
         .padding({ left: 16, right: 16 })
         .onChange((value: string) => {
@@ -591,25 +792,78 @@ export struct NovelSourceManagementPage {
         Blank()
         
         // 全选按钮
-        Text('全选')
-          .fontSize(13)
+        Button('全选')
+          .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('primary'))
+          .backgroundColor(this.getGlassActionButtonBackground('primary'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('primary')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
+          .height(30)
           .margin({ right: 8 })
           .onClick(() => this.selectAll())
         
         // 反选按钮
-        Text('反选')
-          .fontSize(13)
+        Button('反选')
+          .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('primary'))
+          .backgroundColor(this.getGlassActionButtonBackground('primary'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('primary')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
+          .height(30)
+          .margin({ right: 8 })
           .onClick(() => this.invertSelection())
+
+        // 退出多选
+        Button('退出')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(30)
+          .onClick(() => {
+            this.selectedSourceIds = new Set();
+            this.isMultiSelectMode = false;
+          })
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -619,9 +873,22 @@ export struct NovelSourceManagementPage {
         // 批量置顶
         Button('置顶')
           .fontSize(12)
-          .fontColor('#FFFFFF')
+          .fontColor(this.getGlassActionButtonTextColor('primary'))
           .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .backgroundColor(this.getGlassActionButtonBackground('primary'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('primary')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
@@ -633,8 +900,21 @@ export struct NovelSourceManagementPage {
         Button('取消置顶')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
@@ -646,8 +926,21 @@ export struct NovelSourceManagementPage {
         Button('启用')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#52C41A')
+          .fontColor(this.getGlassActionButtonTextColor('success'))
+          .backgroundColor(this.getGlassActionButtonBackground('success'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('success')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
@@ -663,8 +956,21 @@ export struct NovelSourceManagementPage {
         Button('禁用')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
@@ -676,8 +982,21 @@ export struct NovelSourceManagementPage {
         Button('校验')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#FF9800')
+          .fontColor(this.getGlassActionButtonTextColor('warning'))
+          .backgroundColor(this.getGlassActionButtonBackground('warning'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('warning')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
@@ -689,8 +1008,21 @@ export struct NovelSourceManagementPage {
         Button('删除')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor('#FFFFFF')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('danger'))
+          .backgroundColor(this.getGlassActionButtonBackground('danger'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('danger')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
@@ -706,8 +1038,21 @@ export struct NovelSourceManagementPage {
         Button('添加分组')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#9C27B0')
+          .fontColor(this.getGlassActionButtonTextColor('accent'))
+          .backgroundColor(this.getGlassActionButtonBackground('accent'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('accent')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
@@ -719,8 +1064,21 @@ export struct NovelSourceManagementPage {
         Button('移除分组')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
@@ -728,45 +1086,35 @@ export struct NovelSourceManagementPage {
           .enabled(this.selectedSourceIds.size > 0)
           .onClick(() => this.showRemoveFromGroupDialog())
         
-        // 分组管理
-        Button('管理分组')
+        // 退出多选
+        Button('退出多选')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(16)
           .height(32)
           .layoutWeight(1)
-          .onClick(() => this.showGroupManageDialog())
+          .onClick(() => {
+            this.selectedSourceIds = new Set();
+            this.isMultiSelectMode = false;
+          })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })
-      
-      // 排序模式按钮
-      Row() {
-        Button() {
-          Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.line_3_horizontal_circle'))
-              .fontSize(16)
-              .fontColor(['#FFFFFF'])
-            Text('进入排序模式')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor('#FFFFFF')
-          }
-        }
-        .width('100%')
-        .height(36)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .borderRadius(18)
-        .onClick(() => {
-          this.isMultiSelectMode = false;
-          this.selectedSourceIds.clear();
-          this.enterSortMode();
-        })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 12 })
     }
     .width('100%')
     .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
@@ -822,8 +1170,21 @@ export struct NovelSourceManagementPage {
         Button('取消')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(20)
           .height(36)
           .layoutWeight(1)
@@ -834,8 +1195,21 @@ export struct NovelSourceManagementPage {
         Button('保存排序')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
-          .fontColor('#FFFFFF')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('primary'))
+          .backgroundColor(this.getGlassActionButtonBackground('primary'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('primary')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .borderRadius(20)
           .height(36)
           .layoutWeight(1)
@@ -867,50 +1241,10 @@ export struct NovelSourceManagementPage {
   }
 
   /**
-   * 显示导入选项菜单
+   * 显示导入选项弹窗
    */
   showImportOptions(): void {
-    promptAction.showActionMenu({
-      title: '导入书源',
-      buttons: [
-        { text: '从文件导入', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '从剪贴板导入', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '网络导入', color: $r('sys.color.ohos_id_color_text_primary') }
-      ]
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index === 0) {
-        this.importFromFile();
-      } else if (result.index === 1) {
-        this.showImportDialog = true;
-      } else if (result.index === 2) {
-        this.showImportUrlDialog = true;
-      }
-    }).catch(() => {});
-  }
-
-  /**
-   * 显示更多操作菜单
-   */
-  showMoreOptions(): void {
-    promptAction.showActionMenu({
-      title: '更多操作',
-      buttons: [
-        { text: '排序书源', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '替换规则', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '批量启用', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '批量禁用', color: $r('sys.color.ohos_id_color_text_primary') }
-      ]
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index === 0) {
-        this.enterSortMode();
-      } else if (result.index === 1) {
-        this.goToReplaceRules();
-      } else if (result.index === 2) {
-        this.batchEnableSources(true);
-      } else if (result.index === 3) {
-        this.batchEnableSources(false);
-      }
-    }).catch(() => {});
+    this.showImportEntryDialog = true;
   }
 
   /**
@@ -1040,10 +1374,6 @@ export struct NovelSourceManagementPage {
     this.loadSources();
   }
 
-  goToReplaceRules(): void {
-    this.pathStack.pushPathByName('NovelReplaceRulePage', null);
-  }
-
   @Builder
   buildStats() {
     Column() {
@@ -1083,41 +1413,125 @@ export struct NovelSourceManagementPage {
         .layoutWeight(1)
       }
       .width('100%')
-      .padding(16)
+      .padding({ left: 16, right: 16, top: 16, bottom: 12 })
       
       // 分组筛选
       if (this.sourceGroups.length > 0) {
-        Scroll() {
-          Row() {
-            // 全部按钮
-            Text('全部')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(this.selectedGroup === '' ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .backgroundColor(this.selectedGroup === '' ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .borderRadius(16)
-              .margin({ right: 8 })
-              .onClick(() => this.selectGroup(''))
-            
-            // 分组按钮
-            ForEach(this.sourceGroups, (group: string) => {
-              Text(`${group}(${this.groupCounts.get(group) || 0})`)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(this.selectedGroup === group ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .backgroundColor(this.selectedGroup === group ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                .borderRadius(16)
-                .margin({ right: 8 })
-                .onClick(() => this.selectGroup(group))
+        Row() {
+          Text('分组筛选')
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Button(this.getGroupFilterSwitchLabel())
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('neutral')
             })
+            .borderRadius(14)
+            .height(28)
+            .padding({ left: 12, right: 12 })
+            .onClick(() => {
+              this.cycleGroupFilterDisplayMode();
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 8 })
+
+        Column() {
+          if (this.groupFilterDisplayMode === GroupFilterDisplayMode.FULL) {
+            Scroll() {
+              Flex({ wrap: FlexWrap.Wrap }) {
+                Text('全部')
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.selectedGroup === ''
+                    ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .backgroundColor(this.selectedGroup === '' ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .borderRadius(16)
+                  .margin({ right: 8, bottom: 8 })
+                  .onClick(() => this.selectGroup(''))
+                
+                ForEach(this.sourceGroups, (group: string) => {
+                  Text(`${group}(${this.groupCounts.get(group) || 0})`)
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.selectedGroup === group
+                      ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                      : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    .backgroundColor(this.selectedGroup === group ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .borderRadius(16)
+                    .margin({ right: 8, bottom: 8 })
+                    .onClick(() => this.selectGroup(group))
+                })
+              }
+              .width('100%')
+            }
+            .scrollBar(BarState.Auto)
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 12 })
+            .transition(
+              TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+                .combine(TransitionEffect.translate({ y: 6 }).animation({ duration: 200, curve: Curve.EaseOut }))
+            )
+          } else {
+            Scroll() {
+              Row() {
+                // 全部按钮
+                Text('全部')
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.selectedGroup === ''
+                    ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .backgroundColor(this.selectedGroup === '' ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .borderRadius(16)
+                  .margin({ right: 8 })
+                  .onClick(() => this.selectGroup(''))
+                
+                // 分组按钮
+                ForEach(this.sourceGroups, (group: string) => {
+                  Text(`${group}(${this.groupCounts.get(group) || 0})`)
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.selectedGroup === group
+                      ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                      : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    .backgroundColor(this.selectedGroup === group ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .borderRadius(16)
+                    .margin({ right: 8 })
+                    .onClick(() => this.selectGroup(group))
+                })
+              }
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 12 })
+            .transition(
+              TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+                .combine(TransitionEffect.translate({ y: -6 }).animation({ duration: 200, curve: Curve.EaseOut }))
+            )
           }
         }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
         .width('100%')
-        .padding({ left: 16, right: 16, bottom: 12 })
+        .height(this.getGroupFilterContainerHeight())
+        .opacity(this.groupFilterDisplayMode === GroupFilterDisplayMode.COLLAPSED ? 0 : 1)
+        .clip(true)
+        .animation({ duration: 200, curve: Curve.EaseOut })
       }
     }
     .width('100%')
@@ -1145,18 +1559,318 @@ export struct NovelSourceManagementPage {
   }
 
   @Builder
-  buildListGuideHeader() {
-    Row() {
-      Text('书源列表')
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-      Blank()
-      Text(`${this.filteredSources.length} 项`)
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+  buildQuickActionPanel() {
+    Column({ space: 8 }) {
+      Row() {
+        Text('快捷操作')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Button('收起')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .borderRadius(14)
+          .height(28)
+          .padding({ left: 12, right: 12 })
+          .onClick(() => {
+            this.toggleQuickActionPanel();
+          })
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14, top: 10 })
+
+      // 校验相关
+      Row({ space: 8 }) {
+        Button('一键校验')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('warning'))
+          .backgroundColor(this.getGlassActionButtonBackground('warning'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('warning')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => this.quickValidateSources())
+
+        Button('高级校验')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('accent'))
+          .backgroundColor(this.getGlassActionButtonBackground('accent'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('accent')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => this.showValidationConfigDialog())
+
+        Blank()
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14 })
+
+      // 管理相关
+      Row({ space: 8 }) {
+        Button('多选管理')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => this.toggleMultiSelectMode())
+
+        Button('分组管理')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('accent'))
+          .backgroundColor(this.getGlassActionButtonBackground('accent'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('accent')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => this.showGroupManageDialog())
+
+        Button('排序模式')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => this.enterSortMode())
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14 })
+
+      // 书源维护相关
+      Row({ space: 8 }) {
+        Button('导入书源')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('primary'))
+          .backgroundColor(this.getGlassActionButtonBackground('primary'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('primary')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => this.showImportOptions())
+
+        Button('全部启用')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('success'))
+          .backgroundColor(this.getGlassActionButtonBackground('success'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('success')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => {
+            void this.batchEnableSources(true);
+          })
+
+        Button('全部禁用')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .borderRadius(16)
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => {
+            void this.batchEnableSources(false);
+          })
+      }
+      .width('100%')
+      .padding({ left: 14, right: 14, bottom: 12 })
+    }
+    .width('100%')
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .margin({ top: 8 })
+  }
+
+  @Builder
+  buildListGuideHeader(showGuideDetail: boolean) {
+    Column({ space: 4 }) {
+      Row() {
+        Text('书源列表')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.filteredSources.length} 项`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        if (!this.isSortMode && !this.isMultiSelectMode && !this.showQuickActionPanel) {
+          Button('展开')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('neutral')
+            })
+            .borderRadius(14)
+            .height(28)
+            .padding({ left: 12, right: 12 })
+            .margin({ left: 10 })
+            .onClick(() => {
+              this.toggleQuickActionPanel();
+            })
+        }
+      }
+      .width('100%')
+
+      Column() {
+        Text('点击卡片进入搜索，点击右侧更多按钮进行编辑/调试/置顶/删除')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .height(showGuideDetail ? 16 : 0)
+      .opacity(showGuideDetail ? 1 : 0)
+      .clip(true)
+      .animation({ duration: 200, curve: Curve.EaseOut })
     }
       .width('100%')
       .padding({ left: 16, right: 16, top: 10, bottom: 8 })
@@ -1185,16 +1899,43 @@ export struct NovelSourceManagementPage {
   @Builder
   buildLoading() {
     Column() {
-      LoadingProgress()
-        .width(48)
-        .height(48)
-        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      Column({ space: 12 }) {
+        LoadingProgress()
+          .width(48)
+          .height(48)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        Text('正在加载书源...')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+      }
+      .padding({ left: 26, right: 26, top: 24, bottom: 24 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
@@ -1246,31 +1987,45 @@ export struct NovelSourceManagementPage {
   @Builder
   buildEmpty() {
     Column() {
-      Text('暂无书源')
-        .fontSize(14)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+      Column() {
+        Text('暂无书源')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
 
-      Text('点击右上角"导入"添加书源')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .margin({ top: 8 })
-
-      Button('从剪贴板导入')
-        .fontSize(14)
-        .fontFamily(this.appFontFamily)
-        .fontColor('#FFFFFF')
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .borderRadius(20)
-        .margin({ top: 24 })
-        .onClick(() => this.importFromClipboard())
+        Text('点击右上角"导入"添加书源')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .margin({ top: 8 })
+      }
+      .padding({ left: 24, right: 24, top: 24, bottom: 24 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 8
+      })
     }
     .width('100%')
     .height('100%')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
@@ -1432,7 +2187,20 @@ export struct NovelSourceManagementPage {
           }
           .width(32)
           .height(32)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .enabled(index > 0)
           .onClick(() => this.moveSourceToTop(index))
 
@@ -1446,7 +2214,20 @@ export struct NovelSourceManagementPage {
           }
           .width(32)
           .height(32)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .enabled(index > 0)
           .onClick(() => this.moveSourceInList(index, index - 1))
 
@@ -1460,7 +2241,20 @@ export struct NovelSourceManagementPage {
           }
           .width(32)
           .height(32)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .enabled(index < this.filteredSources.length - 1)
           .onClick(() => this.moveSourceInList(index, index + 1))
 
@@ -1474,17 +2268,56 @@ export struct NovelSourceManagementPage {
           }
           .width(32)
           .height(32)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
           .enabled(index < this.filteredSources.length - 1)
           .onClick(() => this.moveSourceToBottom(index))
         }
       } else {
-        // 开关
-        Toggle({ type: ToggleType.Switch, isOn: source.enabled })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
-            this.toggleSource(source, isOn);
+        Row({ space: 8 }) {
+          Toggle({ type: ToggleType.Switch, isOn: source.enabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .onChange((isOn: boolean) => {
+              this.toggleSource(source, isOn);
+            })
+
+          Button({ type: ButtonType.Circle }) {
+            SymbolGlyph($r('sys.symbol.more'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          }
+          .width(30)
+          .height(30)
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
           })
+          .shadow({
+            radius: 8,
+            color: this.getGlassActionButtonShadowColor(),
+            offsetX: 0,
+            offsetY: 3
+          })
+          .onClick(() => {
+            this.showSourceActionMenu(source);
+          })
+        }
       }
     }
     .width('100%')
@@ -1534,8 +2367,8 @@ export struct NovelSourceManagementPage {
     .bindPopup(this.showSourceContextMenu && this.contextMenuSource?.id === source.id, {
       builder: this.buildSourceContextMenu(source),
       placement: Placement.Bottom,
-      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
-      enableArrow: true,
+      popupColor: Color.Transparent,
+      enableArrow: false,
       autoCancel: true,
       onStateChange: (e) => {
         if (!e.isVisible) {
@@ -1568,7 +2401,23 @@ export struct NovelSourceManagementPage {
       .width('100%')
       .height(40)
       .padding({ left: 12, right: 12 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.isContextMenuActionHighlighted('search')
+        ? SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme)
+        : Color.Transparent)
+      .backgroundBlurStyle(
+        this.isContextMenuActionHighlighted('search') ? this.getGlassActionButtonBlurStyle() : undefined,
+        this.getGlassActionButtonBlurOptions()
+      )
+      .backgroundEffect(this.isContextMenuActionHighlighted('search')
+        ? this.getGlassActionButtonBackgroundEffect()
+        : undefined)
+      .borderRadius(6)
+      .onHover((isHover: boolean) => {
+        this.updateContextMenuHoverState('search', isHover);
+      })
+      .onTouch((event: TouchEvent) => {
+        this.updateContextMenuTouchState('search', event);
+      })
       .onClick(() => {
         const sourceToSearch = this.contextMenuSource;
         this.hideSourceContextMenu();
@@ -1596,7 +2445,23 @@ export struct NovelSourceManagementPage {
       .width('100%')
       .height(40)
       .padding({ left: 12, right: 12 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.isContextMenuActionHighlighted('edit')
+        ? SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme)
+        : Color.Transparent)
+      .backgroundBlurStyle(
+        this.isContextMenuActionHighlighted('edit') ? this.getGlassActionButtonBlurStyle() : undefined,
+        this.getGlassActionButtonBlurOptions()
+      )
+      .backgroundEffect(this.isContextMenuActionHighlighted('edit')
+        ? this.getGlassActionButtonBackgroundEffect()
+        : undefined)
+      .borderRadius(6)
+      .onHover((isHover: boolean) => {
+        this.updateContextMenuHoverState('edit', isHover);
+      })
+      .onTouch((event: TouchEvent) => {
+        this.updateContextMenuTouchState('edit', event);
+      })
       .onClick(() => {
         const sourceToEdit = this.contextMenuSource;
         this.hideSourceContextMenu();
@@ -1624,7 +2489,23 @@ export struct NovelSourceManagementPage {
       .width('100%')
       .height(40)
       .padding({ left: 12, right: 12 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.isContextMenuActionHighlighted('debug')
+        ? SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme)
+        : Color.Transparent)
+      .backgroundBlurStyle(
+        this.isContextMenuActionHighlighted('debug') ? this.getGlassActionButtonBlurStyle() : undefined,
+        this.getGlassActionButtonBlurOptions()
+      )
+      .backgroundEffect(this.isContextMenuActionHighlighted('debug')
+        ? this.getGlassActionButtonBackgroundEffect()
+        : undefined)
+      .borderRadius(6)
+      .onHover((isHover: boolean) => {
+        this.updateContextMenuHoverState('debug', isHover);
+      })
+      .onTouch((event: TouchEvent) => {
+        this.updateContextMenuTouchState('debug', event);
+      })
       .onClick(() => {
         const sourceToDebug = this.contextMenuSource;
         this.hideSourceContextMenu();
@@ -1652,7 +2533,23 @@ export struct NovelSourceManagementPage {
       .width('100%')
       .height(40)
       .padding({ left: 12, right: 12 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.isContextMenuActionHighlighted('pin')
+        ? SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme)
+        : Color.Transparent)
+      .backgroundBlurStyle(
+        this.isContextMenuActionHighlighted('pin') ? this.getGlassActionButtonBlurStyle() : undefined,
+        this.getGlassActionButtonBlurOptions()
+      )
+      .backgroundEffect(this.isContextMenuActionHighlighted('pin')
+        ? this.getGlassActionButtonBackgroundEffect()
+        : undefined)
+      .borderRadius(6)
+      .onHover((isHover: boolean) => {
+        this.updateContextMenuHoverState('pin', isHover);
+      })
+      .onTouch((event: TouchEvent) => {
+        this.updateContextMenuTouchState('pin', event);
+      })
       .onClick(() => {
         const sourceToPin = this.contextMenuSource;
         this.hideSourceContextMenu();
@@ -1680,7 +2577,23 @@ export struct NovelSourceManagementPage {
       .width('100%')
       .height(40)
       .padding({ left: 12, right: 12 })
-      .backgroundColor(Color.Transparent)
+      .backgroundColor(this.isContextMenuActionHighlighted('delete')
+        ? SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme)
+        : Color.Transparent)
+      .backgroundBlurStyle(
+        this.isContextMenuActionHighlighted('delete') ? this.getGlassActionButtonBlurStyle() : undefined,
+        this.getGlassActionButtonBlurOptions()
+      )
+      .backgroundEffect(this.isContextMenuActionHighlighted('delete')
+        ? this.getGlassActionButtonBackgroundEffect()
+        : undefined)
+      .borderRadius(6)
+      .onHover((isHover: boolean) => {
+        this.updateContextMenuHoverState('delete', isHover);
+      })
+      .onTouch((event: TouchEvent) => {
+        this.updateContextMenuTouchState('delete', event);
+      })
       .onClick(() => {
         const sourceToDelete = this.contextMenuSource;
         this.hideSourceContextMenu();
@@ -1689,8 +2602,27 @@ export struct NovelSourceManagementPage {
         }
       })
     }
-    .width(120)
-    .borderRadius(8)
+    .width(144)
+    .padding(6)
+    .backgroundColor(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundColor)
+    .backgroundBlurStyle(
+      SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurStyle,
+      SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurOptions
+    )
+    .backgroundEffect(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundEffect)
+    .linearGradient(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.surfaceGradient)
+    .borderRadius(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius)
+    .clip(true)
+    .shadow({
+      radius: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius + 2,
+      color: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.shadowColor,
+      offsetX: 0,
+      offsetY: 4
+    })
+    .transition(
+      TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 180, curve: Curve.EaseOut }))
+    )
   }
 
   /**
@@ -1721,12 +2653,153 @@ export struct NovelSourceManagementPage {
       Button('删除')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
-        .fontColor('#FFFFFF')
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
+        .fontColor(this.getGlassActionButtonTextColor('danger'))
+        .backgroundColor(this.getGlassActionButtonBackground('danger'))
+        .linearGradient(this.getGlassActionButtonGradient())
+        .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+        .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+        .border({
+          width: 1,
+          color: this.getGlassActionButtonBorderColor('danger')
+        })
+        .shadow({
+          radius: 8,
+          color: this.getGlassActionButtonShadowColor(),
+          offsetX: 0,
+          offsetY: 3
+        })
+        .borderRadius(8)
         .width(80)
         .height('100%')
         .onClick(() => this.deleteSource(source))
     }
+  }
+
+  @Builder
+  buildImportEntryDialog() {
+    Stack({ alignContent: Alignment.Center }) {
+      // 透明点击层：用于点空白关闭，不使用遮罩效果
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .onClick(() => {
+          if (!this.isImporting) {
+            this.showImportEntryDialog = false;
+          }
+        })
+
+      Column({ space: 12 }) {
+        Text('导入书源')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text('兼容 Legado：文件、网络链接导入')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+
+        Column({ space: 10 }) {
+          Button('从文件导入')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('neutral')
+            })
+            .borderRadius(10)
+            .height(42)
+            .width('100%')
+            .onClick(() => {
+              this.showImportEntryDialog = false;
+              void this.importFromFile();
+            })
+
+          Button('网络导入（含 Legado 链接）')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('primary'))
+            .backgroundColor(this.getGlassActionButtonBackground('primary'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('primary')
+            })
+            .borderRadius(10)
+            .height(42)
+            .width('100%')
+            .onClick(() => {
+              this.showImportEntryDialog = false;
+              this.showImportUrlDialog = true;
+            })
+        }
+        .width('100%')
+        .margin({ top: 8 })
+
+        Button('取消')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .borderRadius(8)
+          .height(34)
+          .width('100%')
+          .margin({ top: 4 })
+          .onClick(() => {
+            this.showImportEntryDialog = false;
+          })
+      }
+      .width('90%')
+      .constraintSize({ maxWidth: 680, maxHeight: '80%' })
+      .padding(24)
+      .backgroundColor(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundColor)
+      .backgroundBlurStyle(
+        SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurStyle,
+        SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurOptions
+      )
+      .backgroundEffect(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundEffect)
+      .linearGradient(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.surfaceGradient)
+      .borderRadius(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius)
+      .clip(true)
+      .border({
+        width: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderWidth,
+        color: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderColor
+      })
+      .shadow({
+        radius: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius + 4,
+        color: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.shadowColor,
+        offsetX: 0,
+        offsetY: 8
+      })
+      .transition(
+        TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+          .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 220, curve: Curve.EaseOut }))
+      )
+      .onClick(() => {
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .position({ x: 0, y: 0 })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .zIndex(3000)
   }
 
   @Builder
@@ -1756,7 +2829,14 @@ export struct NovelSourceManagementPage {
           .width('100%')
           .height(200)
           .margin({ top: 16 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .borderRadius(8)
@@ -1764,40 +2844,43 @@ export struct NovelSourceManagementPage {
             this.importText = value;
           })
 
-        Row() {
-          Button('从剪贴板粘贴')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
-            .borderRadius(8)
-            .height(34)
-            .layoutWeight(1)
-            .margin({ right: 8 })
-            .onClick(() => this.pasteFromClipboard())
-
-          Button(this.isImporting ? '导入中...' : '导入')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontColor('#FFFFFF')
-            .backgroundColor(this.isImporting ?
-              ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .borderRadius(8)
-            .height(34)
-            .layoutWeight(1)
-            .margin({ left: 8 })
-            .enabled(!this.isImporting)
-            .onClick(() => this.doImport())
-        }
-        .width('100%')
-        .margin({ top: 16 })
+        Button(this.isImporting ? '导入中...' : '导入')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.isImporting ?
+            this.getGlassActionButtonTextColor('neutral') :
+            this.getGlassActionButtonTextColor('primary'))
+          .backgroundColor(this.isImporting ?
+            this.getGlassActionButtonBackground('neutral') :
+            this.getGlassActionButtonBackground('primary'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.isImporting ?
+              this.getGlassActionButtonBorderColor('neutral') :
+              this.getGlassActionButtonBorderColor('primary')
+          })
+          .borderRadius(8)
+          .height(34)
+          .width('100%')
+          .margin({ top: 16 })
+          .enabled(!this.isImporting)
+          .onClick(() => this.doImport())
 
         Button('取消')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
           .borderRadius(8)
           .height(34)
           .width('100%')
@@ -1813,14 +2896,19 @@ export struct NovelSourceManagementPage {
 
   @Builder
   buildImportUrlDialog() {
-    SourceDialogScaffold({
-      themeState: this.themeState,
-      onMaskTap: () => {
-        if (!this.isImporting) {
-          this.showImportUrlDialog = false;
-        }
-      }
-    }) {
+    Stack({ alignContent: Alignment.Center }) {
+      // 透明点击层：用于点空白关闭，不使用遮罩效果
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .onClick(() => {
+          if (!this.isImporting) {
+            this.showImportUrlDialog = false;
+          }
+        })
+
       Column() {
         Text('网络导入书源')
           .fontSize(18)
@@ -1828,17 +2916,24 @@ export struct NovelSourceManagementPage {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-        Text('输入 JSON 链接，下载后按文件方式导入')
+        Text('支持 http/https 链接，或 legado://import/... 的 src 参数')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 8 })
 
-        TextInput({ placeholder: '请输入 http/https 链接', text: this.importUrl })
+        TextInput({ placeholder: '请输入链接', text: this.importUrl })
           .width('100%')
           .height(44)
           .margin({ top: 16 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .borderRadius(8)
@@ -1851,8 +2946,15 @@ export struct NovelSourceManagementPage {
           Button('取消')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('neutral')
+            })
             .borderRadius(8)
             .height(34)
             .layoutWeight(1)
@@ -1865,10 +2967,21 @@ export struct NovelSourceManagementPage {
           Button(this.isImporting ? '导入中...' : '下载并导入')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .fontColor('#FFFFFF')
+            .fontColor(this.isImporting ?
+              this.getGlassActionButtonTextColor('neutral') :
+              this.getGlassActionButtonTextColor('primary'))
             .backgroundColor(this.isImporting ?
-              ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              this.getGlassActionButtonBackground('neutral') :
+              this.getGlassActionButtonBackground('primary'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.isImporting ?
+                this.getGlassActionButtonBorderColor('neutral') :
+                this.getGlassActionButtonBorderColor('primary')
+            })
             .borderRadius(8)
             .height(34)
             .layoutWeight(1)
@@ -1879,30 +2992,550 @@ export struct NovelSourceManagementPage {
         .width('100%')
         .margin({ top: 20 })
       }
+      .width('90%')
+      .constraintSize({ maxWidth: 680, maxHeight: '80%' })
+      .padding(24)
+      .backgroundColor(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundColor)
+      .backgroundBlurStyle(
+        SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurStyle,
+        SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.blurOptions
+      )
+      .backgroundEffect(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.backgroundEffect)
+      .linearGradient(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.surfaceGradient)
+      .borderRadius(SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius)
+      .clip(true)
+      .border({
+        width: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderWidth,
+        color: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.borderColor
+      })
+      .shadow({
+        radius: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.radius + 4,
+        color: SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).surface.shadowColor,
+        offsetX: 0,
+        offsetY: 8
+      })
+      .transition(
+        TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+          .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 220, curve: Curve.EaseOut }))
+      )
+      .onClick(() => {
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .position({ x: 0, y: 0 })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .zIndex(3000)
+  }
+
+  @Builder
+  buildGroupInputDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        this.showGroupInputDialog = false;
+      }
+    }) {
+      Column({ space: 14 }) {
+        Text('新建并添加分组')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text('输入分组名称后，将当前选中的书源直接加入该分组')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+
+        TextInput({ placeholder: '请输入分组名称', text: this.groupInputValue })
+          .width('100%')
+          .height(44)
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .borderRadius(8)
+          .padding({ left: 12, right: 12 })
+          .onChange((value: string) => {
+            this.groupInputValue = value;
+          })
+
+        Row({ space: 12 }) {
+          Button('取消')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('neutral')
+            })
+            .onClick(() => {
+              this.showGroupInputDialog = false;
+            })
+
+          Button('确认添加')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('primary'))
+            .backgroundColor(this.getGlassActionButtonBackground('primary'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('primary')
+            })
+            .onClick(() => {
+              this.confirmGroupInputAndAdd();
+            })
+        }
+        .width('100%')
+      }
       .width('100%')
     }
   }
 
-  async pasteFromClipboard(): Promise<void> {
-    try {
-      const pasteData: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
-      const data: pasteboard.PasteData = await pasteData.getData();
-      if (data.hasType(pasteboard.MIMETYPE_TEXT_PLAIN)) {
-        const text: string = data.getPrimaryText();
-        if (text) {
-          this.importText = text;
+  @Builder
+  buildValidationSetupDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        if (!this.isValidating) {
+          this.showValidationSetupDialog = false;
         }
       }
-    } catch (error) {
-      logger.error(TAG, `读取剪贴板失败: ${String(error)}`);
-      promptAction.showToast({ message: '读取剪贴板失败' });
+    }) {
+      Column({ space: 14 }) {
+        Text('高级校验配置')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text(
+          this.isValidationTargetAll
+            ? `将校验全部书源（${this.validationTargetCount} 个）`
+            : `将校验已选书源（${this.validationTargetCount} 个）`
+        )
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+
+        Text('校验模式')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+
+        Row({ space: 8 }) {
+          Button('快速')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.validationPresetMode === ValidationPresetMode.QUICK
+              ? this.getGlassActionButtonTextColor('primary')
+              : this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.validationPresetMode === ValidationPresetMode.QUICK
+              ? this.getGlassActionButtonBackground('primary')
+              : this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.validationPresetMode === ValidationPresetMode.QUICK
+                ? this.getGlassActionButtonBorderColor('primary')
+                : this.getGlassActionButtonBorderColor('neutral')
+            })
+            .onClick(() => {
+              this.validationPresetMode = ValidationPresetMode.QUICK;
+            })
+
+          Button('标准')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.validationPresetMode === ValidationPresetMode.STANDARD
+              ? this.getGlassActionButtonTextColor('primary')
+              : this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.validationPresetMode === ValidationPresetMode.STANDARD
+              ? this.getGlassActionButtonBackground('primary')
+              : this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.validationPresetMode === ValidationPresetMode.STANDARD
+                ? this.getGlassActionButtonBorderColor('primary')
+                : this.getGlassActionButtonBorderColor('neutral')
+            })
+            .onClick(() => {
+              this.validationPresetMode = ValidationPresetMode.STANDARD;
+            })
+
+          Button('完整')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.validationPresetMode === ValidationPresetMode.FULL
+              ? this.getGlassActionButtonTextColor('primary')
+              : this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.validationPresetMode === ValidationPresetMode.FULL
+              ? this.getGlassActionButtonBackground('primary')
+              : this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.validationPresetMode === ValidationPresetMode.FULL
+                ? this.getGlassActionButtonBorderColor('primary')
+                : this.getGlassActionButtonBorderColor('neutral')
+            })
+            .onClick(() => {
+              this.validationPresetMode = ValidationPresetMode.FULL;
+            })
+        }
+        .width('100%')
+
+        Text(this.getValidationPresetDescription(this.validationPresetMode))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .width('100%')
+
+        Text('并发线程')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+
+        Scroll() {
+          Row({ space: 8 }) {
+            ForEach(VALIDATION_CONCURRENCY_OPTIONS, (concurrency: number) => {
+              Button(`${concurrency} 线程`)
+                .height(32)
+                .borderRadius(8)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.validationConcurrencyInput === concurrency
+                  ? this.getGlassActionButtonTextColor('primary')
+                  : this.getGlassActionButtonTextColor('neutral'))
+                .backgroundColor(this.validationConcurrencyInput === concurrency
+                  ? this.getGlassActionButtonBackground('primary')
+                  : this.getGlassActionButtonBackground('neutral'))
+                .linearGradient(this.getGlassActionButtonGradient())
+                .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+                .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+                .border({
+                  width: 1,
+                  color: this.validationConcurrencyInput === concurrency
+                    ? this.getGlassActionButtonBorderColor('primary')
+                    : this.getGlassActionButtonBorderColor('neutral')
+                })
+                .onClick(() => {
+                  this.validationConcurrencyInput = concurrency;
+                })
+            })
+          }
+        }
+        .width('100%')
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+
+        TextInput({ placeholder: '请输入校验关键词', text: this.validationKeywordInput })
+          .width('100%')
+          .height(44)
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .borderRadius(8)
+          .padding({ left: 12, right: 12 })
+          .onChange((value: string) => {
+            this.validationKeywordInput = value;
+          })
+
+        Row({ space: 12 }) {
+          Button('取消')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('neutral')
+            })
+            .enabled(!this.isValidating)
+            .onClick(() => {
+              this.showValidationSetupDialog = false;
+            })
+
+          Button(this.isValidating ? '校验中...' : '开始校验')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('warning'))
+            .backgroundColor(this.getGlassActionButtonBackground('warning'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('warning')
+            })
+            .enabled(!this.isValidating)
+            .onClick(() => {
+              this.confirmValidationSetupDialog();
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
     }
   }
 
-  async importFromClipboard(): Promise<void> {
-    await this.pasteFromClipboard();
-    if (this.importText) {
-      this.showImportDialog = true;
+  @Builder
+  buildGroupPickerDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        this.showGroupPickerDialog = false;
+      }
+    }) {
+      Column({ space: 12 }) {
+        Text(this.groupPickerMode === 'add' ? '添加到分组' : '从分组移除')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text(this.groupPickerMode === 'add'
+          ? '请选择目标分组，或新建分组后添加'
+          : '请选择要移除的分组')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+
+        TextInput({ placeholder: '搜索分组名称', text: this.groupPickerKeyword })
+          .width('100%')
+          .height(42)
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .borderRadius(8)
+          .padding({ left: 12, right: 12 })
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .onChange((value: string) => {
+            this.updateGroupPickerKeyword(value);
+          })
+
+        if (this.groupPickerFilteredGroups.length > 0) {
+          List() {
+            ForEach(this.groupPickerFilteredGroups, (groupName: string) => {
+              ListItem() {
+                Button(groupName)
+                  .width('100%')
+                  .height(38)
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.getGlassActionButtonTextColor('neutral'))
+                  .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+                  .linearGradient(this.getGlassActionButtonGradient())
+                  .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+                  .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+                  .border({
+                    width: 1,
+                    color: this.getGlassActionButtonBorderColor('neutral')
+                  })
+                  .borderRadius(8)
+                  .onClick(() => {
+                    this.selectGroupFromPicker(groupName);
+                  })
+              }
+              .padding({ top: 4, bottom: 4 })
+            })
+          }
+          .width('100%')
+          .height(220)
+          .divider({
+            strokeWidth: 0.5,
+            color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme),
+            startMargin: 0,
+            endMargin: 0
+          })
+        } else {
+          Column() {
+            Text(this.groupPickerKeyword.trim().length > 0 ? '未找到匹配的分组' : '暂无可用分组')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .height(120)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .borderRadius(8)
+        }
+
+        if (this.groupPickerMode === 'add') {
+          Button('新建分组并添加')
+            .width('100%')
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('accent'))
+            .backgroundColor(this.getGlassActionButtonBackground('accent'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('accent')
+            })
+            .onClick(() => {
+              this.showGroupPickerDialog = false;
+              this.groupInputValue = '';
+              this.showGroupInputDialog = true;
+            })
+        }
+
+        Button('取消')
+          .width('100%')
+          .height(34)
+          .borderRadius(8)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('neutral'))
+          .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('neutral')
+          })
+          .onClick(() => {
+            this.showGroupPickerDialog = false;
+          })
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  buildDeleteConfirmDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        if (!this.isOperating) {
+          this.dismissDeleteConfirmDialog();
+        }
+      }
+    }) {
+      Column({ space: 14 }) {
+        Text(this.deleteConfirmTitle)
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text(this.deleteConfirmMessage)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Row({ space: 12 }) {
+          Button('取消')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('neutral')
+            })
+            .enabled(!this.isOperating)
+            .onClick(() => {
+              this.dismissDeleteConfirmDialog();
+            })
+
+          Button(this.isOperating ? '删除中...' : '确认删除')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('danger'))
+            .backgroundColor(this.getGlassActionButtonBackground('danger'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('danger')
+            })
+            .enabled(!this.isOperating)
+            .onClick(() => {
+              void this.confirmDeleteDialogAction();
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
     }
   }
 
@@ -1958,6 +3591,217 @@ export struct NovelSourceManagementPage {
     return /^https?:\/\/.+/i.test(url);
   }
 
+  private decodeQueryValue(rawValue: string): string {
+    const plusNormalized = rawValue.replace(/\+/g, ' ');
+    try {
+      return decodeURIComponent(plusNormalized);
+    } catch (_error) {
+      return plusNormalized;
+    }
+  }
+
+  private readQueryParamValue(query: string, targetKey: string): string {
+    const queryParts = query.split('&');
+    const normalizedTargetKey = targetKey.toLowerCase();
+    for (const queryPart of queryParts) {
+      const eqIndex = queryPart.indexOf('=');
+      const rawKey = eqIndex >= 0 ? queryPart.substring(0, eqIndex) : queryPart;
+      const rawValue = eqIndex >= 0 ? queryPart.substring(eqIndex + 1) : '';
+      const decodedKey = this.decodeQueryValue(rawKey).trim().toLowerCase();
+      if (decodedKey === normalizedTargetKey) {
+        return this.decodeQueryValue(rawValue).trim();
+      }
+    }
+    return '';
+  }
+
+  private resolveNetworkImportUrl(input: string): string {
+    const trimmed = input.trim();
+    if (trimmed.length === 0) {
+      return '';
+    }
+    if (this.isHttpUrl(trimmed)) {
+      return trimmed;
+    }
+
+    const lowerInput = trimmed.toLowerCase();
+    if (!lowerInput.startsWith('legado://')) {
+      return '';
+    }
+
+    const queryIndex = trimmed.indexOf('?');
+    if (queryIndex < 0 || queryIndex >= trimmed.length - 1) {
+      return '';
+    }
+    const query = trimmed.substring(queryIndex + 1);
+    const srcValue = this.readQueryParamValue(query, 'src');
+    return this.isHttpUrl(srcValue) ? srcValue : '';
+  }
+
+  private appendNetworkUrl(target: string[], rawUrl: string): void {
+    const normalizedUrl = this.resolveNetworkImportUrl(rawUrl);
+    if (normalizedUrl.length === 0) {
+      return;
+    }
+    if (!target.includes(normalizedUrl)) {
+      target.push(normalizedUrl);
+    }
+  }
+
+  private collectSourceUrlsFromValue(target: string[], value: SourceUrlCollectionValue): void {
+    if (value === undefined || value === null) {
+      return;
+    }
+    if (typeof value === 'string') {
+      this.appendNetworkUrl(target, value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string') {
+          this.appendNetworkUrl(target, item);
+        }
+      }
+    }
+  }
+
+  private extractSourceUrlsFromContent(content: string): string[] {
+    const trimmedContent = content.trim();
+    if (trimmedContent.length === 0) {
+      return [];
+    }
+
+    if (this.isHttpUrl(trimmedContent) || trimmedContent.toLowerCase().startsWith('legado://')) {
+      const directUrl = this.resolveNetworkImportUrl(trimmedContent);
+      return directUrl.length > 0 ? [directUrl] : [];
+    }
+
+    if (!trimmedContent.startsWith('{')) {
+      return [];
+    }
+
+    try {
+      const parsed: Object = JSON.parse(trimmedContent) as Object;
+      if (Array.isArray(parsed)) {
+        return [];
+      }
+      const container = parsed as NetworkSourceUrlIndexPayload;
+      const sourceUrls: string[] = [];
+      this.collectSourceUrlsFromValue(sourceUrls, container.sourceUrls);
+      this.collectSourceUrlsFromValue(sourceUrls, container.bookSourceUrls);
+      return sourceUrls;
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  private async fetchNetworkText(url: string): Promise<string> {
+    let request: http.HttpRequest | null = null;
+    try {
+      request = http.createHttp();
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000,
+        header: {
+          'Accept': 'application/json,text/plain,*/*'
+        }
+      });
+
+      const statusCode: number = response.responseCode;
+      if (statusCode < 200 || statusCode >= 300) {
+        throw new Error(`HTTP请求失败: ${statusCode}`);
+      }
+
+      const responseText = (response.result as string).trim();
+      if (responseText.length === 0) {
+        throw new Error('网络导入内容为空');
+      }
+      return responseText;
+    } finally {
+      if (request) {
+        try {
+          request.destroy();
+        } catch (destroyError) {
+          logger.warn(TAG, `网络请求资源释放失败: ${this.resolveImportErrorText(destroyError as ImportErrorValue)}`);
+        }
+      }
+    }
+  }
+
+  private async importNetworkJsonContent(content: string, sourceUrl: string): Promise<[number, number]> {
+    this.operatingMessage = '正在导入网络书源...';
+    const results = await this.sourceManager.importFromJSON(content);
+    if (results.length === 0) {
+      throw new Error(`未识别到有效书源: ${sourceUrl}`);
+    }
+    const successCount = results.filter((r: LegadoSourceImportResult) => r.success).length;
+    const failCount = results.filter((r: LegadoSourceImportResult) => !r.success).length;
+    return [successCount, failCount];
+  }
+
+  private async importNetworkSourceRecursive(
+    url: string,
+    visitedUrls: Set<string>,
+    depth: number
+  ): Promise<NetworkImportSummary> {
+    if (depth > NETWORK_IMPORT_MAX_DEPTH) {
+      throw new Error(`网络导入层级过深，已超过 ${NETWORK_IMPORT_MAX_DEPTH} 层`);
+    }
+
+    const normalizedUrl = this.resolveNetworkImportUrl(url);
+    if (!this.isHttpUrl(normalizedUrl)) {
+      throw new Error(`链接格式不正确: ${url}`);
+    }
+
+    if (visitedUrls.has(normalizedUrl)) {
+      logger.info(TAG, `跳过重复网络导入链接: ${normalizedUrl}`);
+      return {
+        successCount: 0,
+        failCount: 0,
+        fetchedCount: 0
+      };
+    }
+    visitedUrls.add(normalizedUrl);
+
+    this.operatingMessage = `正在下载网络书源... (${visitedUrls.size})`;
+    logger.info(TAG, `开始拉取网络书源: depth=${depth}, url=${normalizedUrl}`);
+    const content = await this.fetchNetworkText(normalizedUrl);
+    logger.info(TAG, `网络下载完成: url=${normalizedUrl}, length=${content.length}`);
+
+    const nestedUrls = this.extractSourceUrlsFromContent(content);
+    if (nestedUrls.length > 0) {
+      logger.info(TAG, `检测到远程 sourceUrls 索引: url=${normalizedUrl}, count=${nestedUrls.length}`);
+      let totalSuccess = 0;
+      let totalFail = 0;
+      let totalFetched = 1;
+      for (const nestedUrl of nestedUrls) {
+        try {
+          const childResult = await this.importNetworkSourceRecursive(nestedUrl, visitedUrls, depth + 1);
+          totalSuccess += childResult.successCount;
+          totalFail += childResult.failCount;
+          totalFetched += childResult.fetchedCount;
+        } catch (error) {
+          totalFail += 1;
+          logger.warn(TAG, `远程 sourceUrls 子任务失败: url=${nestedUrl}, ${this.resolveImportErrorText(error as ImportErrorValue)}`);
+        }
+      }
+      return {
+        successCount: totalSuccess,
+        failCount: totalFail,
+        fetchedCount: totalFetched
+      };
+    }
+
+    const importResult = await this.importNetworkJsonContent(content, normalizedUrl);
+    return {
+      successCount: importResult[0],
+      failCount: importResult[1],
+      fetchedCount: 1
+    };
+  }
+
   private async importSingleFilePath(fileUri: string, fileProcessed: number, fileCount: number): Promise<[number, number]> {
     this.operatingMessage = `正在处理文件 ${fileProcessed}/${fileCount}...`;
     logger.info(TAG, `处理文件 ${fileProcessed}/${fileCount}: ${fileUri}`);
@@ -1997,98 +3841,44 @@ export struct NovelSourceManagementPage {
   }
 
   async importFromNetwork(): Promise<void> {
-    const url = this.importUrl.trim();
-    if (url.length === 0) {
+    const rawInput = this.importUrl.trim();
+    if (rawInput.length === 0) {
       promptAction.showToast({ message: '请输入网络导入链接' });
       return;
     }
-    if (!this.isHttpUrl(url)) {
-      promptAction.showToast({ message: '链接格式不正确，请输入 http 或 https 链接' });
+    const normalizedUrl = this.resolveNetworkImportUrl(rawInput);
+    if (!this.isHttpUrl(normalizedUrl)) {
+      promptAction.showToast({ message: '链接格式不正确，请输入 http/https 或 legado://import/... 链接' });
       return;
     }
 
-    let tempFilePath: string = '';
-    let request: http.HttpRequest | null = null;
     this.isOperating = true;
     this.isImporting = true;
     this.operatingMessage = '正在下载网络书源...';
 
     try {
-      logger.info(TAG, `开始网络导入书源: url=${url}`);
-      request = http.createHttp();
-      const response = await request.request(url, {
-        method: http.RequestMethod.GET,
-        expectDataType: http.HttpDataType.STRING,
-        connectTimeout: 15000,
-        readTimeout: 20000,
-        header: {
-          'Accept': 'application/json,text/plain,*/*'
-        }
-      });
-
-      const statusCode: number = response.responseCode;
-      if (statusCode < 200 || statusCode >= 300) {
-        throw new Error(`HTTP请求失败: ${statusCode}`);
-      }
-
-      const responseText = (response.result as string).trim();
-      if (responseText.length === 0) {
-        throw new Error('网络导入内容为空');
-      }
-      logger.info(TAG, `网络下载完成: status=${statusCode}, length=${responseText.length}`);
-
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      if (!context || !context.cacheDir) {
-        throw new Error('无法获取应用缓存目录');
-      }
-
-      this.operatingMessage = '正在写入临时文件...';
-      tempFilePath = `${context.cacheDir}/novel_source_import_${Date.now()}.json`;
-      const tempFile = fs.openSync(tempFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      try {
-        fs.writeSync(tempFile.fd, responseText);
-      } finally {
-        fs.closeSync(tempFile);
-      }
-      logger.info(TAG, `网络导入临时文件已写入: ${tempFilePath}`);
-
-      const result = await this.importSingleFilePath(tempFilePath, 1, 1);
-      const successCount = result[0];
-      const failCount = result[1];
+      logger.info(TAG, `开始网络导入书源: raw=${rawInput}, normalized=${normalizedUrl}`);
+      const importResult = await this.importNetworkSourceRecursive(normalizedUrl, new Set<string>(), 0);
+      const successCount = importResult.successCount;
+      const failCount = importResult.failCount;
+      const fetchedCount = importResult.fetchedCount;
 
       this.showImportUrlDialog = false;
       this.importUrl = '';
       if (successCount > 0) {
         this.loadSources();
         promptAction.showToast({
-          message: `成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}`
+          message: `成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}${fetchedCount > 1 ? `（共拉取 ${fetchedCount} 个远程文件）` : ''}`
         });
       } else {
-        promptAction.showToast({ message: '导入失败，请检查JSON内容' });
+        promptAction.showToast({ message: '导入失败，请检查链接或内容格式' });
       }
-      logger.info(TAG, `网络导入书源完成: 成功${successCount}个, 失败${failCount}个`);
+      logger.info(TAG, `网络导入书源完成: 成功${successCount}个, 失败${failCount}个, 拉取${fetchedCount}个远程文件`);
     } catch (error) {
       const errorText = this.resolveImportErrorText(error as ImportErrorValue);
       logger.error(TAG, `网络导入书源失败: ${errorText}`);
       promptAction.showToast({ message: `网络导入失败: ${errorText}` });
     } finally {
-      if (request) {
-        try {
-          request.destroy();
-        } catch (destroyError) {
-          logger.warn(TAG, `网络请求资源释放失败: ${this.resolveImportErrorText(destroyError as ImportErrorValue)}`);
-        }
-      }
-
-      if (tempFilePath.length > 0) {
-        try {
-          fs.unlinkSync(tempFilePath);
-          logger.info(TAG, `网络导入临时文件已删除: ${tempFilePath}`);
-        } catch (cleanupError) {
-          logger.warn(TAG, `网络导入临时文件删除失败: ${tempFilePath}, ${this.resolveImportErrorText(cleanupError as ImportErrorValue)}`);
-        }
-      }
-
       this.isImporting = false;
       this.isOperating = false;
       this.operatingMessage = '';
@@ -2136,30 +3926,68 @@ export struct NovelSourceManagementPage {
     this.loadSources();
   }
 
-  deleteSource(source: NovelSourceInfo): void {
-    promptAction.showDialog({
-      title: '确认删除',
-      message: `确定要删除书源“${source.name}”吗？`,
-      buttons: [
-        { text: '取消', color: '#666666' },
-        { text: '删除', color: '#FF4D4F' }
-      ]
-    }).then(async (result) => {
-      if (result.index === 1) {
-        this.isOperating = true;
-        this.operatingMessage = '正在删除...';
-        try {
-          await this.sourceManager.deleteSource(source.id);
-          this.loadSources();
-          promptAction.showToast({ message: '已删除' });
-        } catch (error) {
-          logger.error(TAG, `删除失败: ${String(error)}`);
-          promptAction.showToast({ message: '删除失败' });
-        }
-        this.isOperating = false;
-        this.operatingMessage = '';
+  private openDeleteConfirmDialog(payload: DeleteDialogPayload): void {
+    if (payload.sourceIds.length === 0) {
+      promptAction.showToast({ message: '没有可删除的书源' });
+      return;
+    }
+    this.pendingDeleteSourceIds = payload.sourceIds.slice();
+    this.deleteConfirmMode = payload.mode;
+    this.deleteConfirmTitle = payload.title;
+    this.deleteConfirmMessage = payload.message;
+    this.showDeleteConfirmDialog = true;
+  }
+
+  private dismissDeleteConfirmDialog(): void {
+    this.showDeleteConfirmDialog = false;
+    this.pendingDeleteSourceIds = [];
+  }
+
+  private async confirmDeleteDialogAction(): Promise<void> {
+    if (this.pendingDeleteSourceIds.length === 0) {
+      this.dismissDeleteConfirmDialog();
+      promptAction.showToast({ message: '没有可删除的书源' });
+      return;
+    }
+    this.isOperating = true;
+    this.operatingMessage = this.deleteConfirmMode === 'single' ? '正在删除书源...' : '正在批量删除书源...';
+
+    let successCount = 0;
+    for (const sourceId of this.pendingDeleteSourceIds) {
+      try {
+        await this.sourceManager.deleteSource(sourceId);
+        successCount++;
+      } catch (error) {
+        logger.error(TAG, `删除失败: ${String(error)}`);
       }
-    });
+    }
+
+    this.isOperating = false;
+    this.operatingMessage = '';
+    this.dismissDeleteConfirmDialog();
+
+    if (this.deleteConfirmMode === 'batch') {
+      this.selectedSourceIds = new Set();
+      this.isMultiSelectMode = false;
+    }
+
+    this.loadSources();
+
+    if (successCount > 0) {
+      promptAction.showToast({ message: `已删除 ${successCount} 个书源` });
+    } else {
+      promptAction.showToast({ message: '删除失败，请稍后重试' });
+    }
+  }
+
+  deleteSource(source: NovelSourceInfo): void {
+    const payload: DeleteDialogPayload = {
+      mode: 'single',
+      sourceIds: [source.id],
+      title: '确认删除',
+      message: `确定要删除书源“${source.name}”吗？`
+    };
+    this.openDeleteConfirmDialog(payload);
   }
 
   /**
@@ -2256,6 +4084,7 @@ export struct NovelSourceManagementPage {
   showSourceActionMenu(source: NovelSourceInfo): void {
     logger.info(TAG, `显示书源操作菜单: ${source.name}`);
     this.contextMenuSource = source;
+    this.contextMenuHoverAction = '';
     this.showSourceContextMenu = true;
   }
 
@@ -2264,6 +4093,7 @@ export struct NovelSourceManagementPage {
    */
   hideSourceContextMenu(): void {
     this.showSourceContextMenu = false;
+    this.contextMenuHoverAction = '';
     this.contextMenuSource = null;
   }
 
@@ -2325,48 +4155,6 @@ export struct NovelSourceManagementPage {
     }
   }
 
-  async validateSingleSource(source: NovelSourceInfo): Promise<void> {
-    promptAction.showToast({ message: `正在校验 ${source.name}...` });
-    
-    try {
-      const validator = getNovelSourceValidator();
-      const rawSource = this.sourceManager.getSource(source.id);
-      
-      if (!rawSource) {
-        promptAction.showToast({ message: '书源不存在' });
-        return;
-      }
-      
-      const result = await validator.validateSource(rawSource);
-      
-      if (result.isValid) {
-        promptAction.showToast({ 
-          message: `✓ ${source.name} 可用 (${result.searchTime}ms, ${result.bookCount}本)` 
-        });
-      } else {
-        promptAction.showToast({ 
-          message: `✗ ${source.name} 不可用: ${result.error || '未知错误'}` 
-        });
-      }
-    } catch (error) {
-      promptAction.showToast({ message: `校验失败: ${String(error)}` });
-    }
-  }
-
-  goToLogin(source: NovelSourceInfo): void {
-    const rawSource = this.sourceManager.getSource(source.id);
-    
-    if (!rawSource || !rawSource.loginUrl) {
-      promptAction.showToast({ message: '该书源不支持登录' });
-      return;
-    }
-    
-    const params: NovelSourceLoginPageParams = {
-      sourceId: source.id
-    };
-    this.pathStack.pushPathByName('NovelSourceLoginPage', params);
-  }
-
   private normalizeValidationConcurrency(value: number): number {
     if (!Number.isFinite(value)) {
       return VALIDATION_CONCURRENCY_DEFAULT;
@@ -2392,102 +4180,110 @@ export struct NovelSourceManagementPage {
     }
   }
 
-  private showValidationConcurrencyDialog(config: Partial<ValidationConfig>, sourceIds?: string[]): void {
-    const currentConcurrency = this.getValidationConcurrency();
-    promptAction.showActionMenu({
-      title: `选择校验并发数（当前 ${currentConcurrency}）`,
-      buttons: [
-        { text: '10 线程', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '15 线程', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '20 线程', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '30 线程', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '40 线程', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '50 线程', color: $r('sys.color.ohos_id_color_text_primary') }
-      ]
-    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index < 0 || result.index >= VALIDATION_CONCURRENCY_OPTIONS.length) {
-        return;
-      }
-      const selectedConcurrency = VALIDATION_CONCURRENCY_OPTIONS[result.index];
-      config.concurrency = selectedConcurrency;
-      await this.saveValidationConcurrency(selectedConcurrency);
-      promptAction.showToast({ message: `校验并发已设置为 ${selectedConcurrency} 线程` });
-      this.showKeywordInputDialog(config, sourceIds);
-    }).catch(() => {});
+  private getValidationPresetDescription(mode: ValidationPresetMode): string {
+    switch (mode) {
+      case ValidationPresetMode.QUICK:
+        return '快速：仅检测搜索流程，适合批量排查。';
+      case ValidationPresetMode.FULL:
+        return '完整：搜索 + 发现 + 详情 + 分类 + 内容，耗时更长。';
+      case ValidationPresetMode.STANDARD:
+      default:
+        return '标准：搜索 + 详情 + 分类，兼顾速度与准确性。';
+    }
+  }
+
+  private buildValidationPresetConfig(mode: ValidationPresetMode): Partial<ValidationConfig> {
+    switch (mode) {
+      case ValidationPresetMode.QUICK:
+        return {
+          checkSearch: true,
+          checkDiscovery: false,
+          checkInfo: false,
+          checkCategory: false,
+          checkContent: false,
+          timeout: 60000
+        };
+      case ValidationPresetMode.FULL:
+        return {
+          checkSearch: true,
+          checkDiscovery: true,
+          checkInfo: true,
+          checkCategory: true,
+          checkContent: true,
+          timeout: 180000
+        };
+      case ValidationPresetMode.STANDARD:
+      default:
+        return {
+          checkSearch: true,
+          checkDiscovery: false,
+          checkInfo: true,
+          checkCategory: true,
+          checkContent: false,
+          timeout: 120000
+        };
+    }
+  }
+
+  private resolveValidationDialogScope(sourceIds?: string[]): ValidationDialogScope {
+    if (sourceIds && sourceIds.length > 0) {
+      return {
+        sourceIds: sourceIds.slice(),
+        validateAll: false
+      };
+    }
+    return {
+      sourceIds: [],
+      validateAll: true
+    };
+  }
+
+  private confirmValidationSetupDialog(): void {
+    const keyword = this.validationKeywordInput.trim();
+    if (keyword.length === 0) {
+      promptAction.showToast({ message: '请输入校验关键词' });
+      return;
+    }
+    const normalizedConcurrency = this.normalizeValidationConcurrency(this.validationConcurrencyInput);
+    const presetConfig = this.buildValidationPresetConfig(this.validationPresetMode);
+    const finalConfig: Partial<ValidationConfig> = {
+      timeout: presetConfig.timeout,
+      checkSearch: presetConfig.checkSearch,
+      checkDiscovery: presetConfig.checkDiscovery,
+      checkInfo: presetConfig.checkInfo,
+      checkCategory: presetConfig.checkCategory,
+      checkContent: presetConfig.checkContent,
+      keyword: keyword,
+      concurrency: normalizedConcurrency
+    };
+    this.showValidationSetupDialog = false;
+    this.validationConcurrencyInput = normalizedConcurrency;
+    void this.saveValidationConcurrency(normalizedConcurrency);
+    if (this.validationDialogScope.validateAll) {
+      void this.doValidateSources(undefined, finalConfig);
+      return;
+    }
+    const selectedSourceIds = this.validationDialogScope.sourceIds.slice();
+    void this.doValidateSources(selectedSourceIds, finalConfig);
   }
 
   /**
    * 显示校验配置对话框
    */
   showValidationConfigDialog(sourceIds?: string[]): void {
-    // 使用ActionMenu显示校验选项
-    promptAction.showActionMenu({
-      title: '选择校验方式',
-      buttons: [
-        { text: '快速校验（仅搜索）', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '标准校验（搜索+详情+目录）', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '完整校验（文本正文/听书音频）', color: $r('sys.color.ohos_id_color_text_primary') }
-      ]
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      let config: Partial<ValidationConfig>;
-      switch (result.index) {
-        case 0: // 快速校验
-          config = {
-            checkSearch: true,
-            checkDiscovery: false,
-            checkInfo: false,
-            checkCategory: false,
-            checkContent: false,
-            timeout: 60000
-          };
-          break;
-        case 1: // 标准校验
-          config = {
-            checkSearch: true,
-            checkDiscovery: false,
-            checkInfo: true,
-            checkCategory: true,
-            checkContent: false,
-            timeout: 120000
-          };
-          break;
-        case 2: // 完整校验
-          config = {
-            checkSearch: true,
-            checkDiscovery: true,
-            checkInfo: true,
-            checkCategory: true,
-            checkContent: true,
-            timeout: 180000
-          };
-          break;
-        default:
-          return; // 取消
-      }
-      
-      // 选择校验并发
-      this.showValidationConcurrencyDialog(config, sourceIds);
-    }).catch(() => {});
-  }
-
-  /**
-   * 显示关键词输入对话框
-   */
-  showKeywordInputDialog(config: Partial<ValidationConfig>, sourceIds?: string[]): void {
-    // 直接使用默认关键词开始校验
-    const mergedConfig: Partial<ValidationConfig> = {
-      timeout: config.timeout,
-      checkSearch: config.checkSearch,
-      checkDiscovery: config.checkDiscovery,
-      checkInfo: config.checkInfo,
-      checkCategory: config.checkCategory,
-      checkContent: config.checkContent,
-      keyword: '我的',
-      concurrency: config.concurrency !== undefined
-        ? this.normalizeValidationConcurrency(config.concurrency)
-        : this.getValidationConcurrency()
-    };
-    this.doValidateSources(sourceIds, mergedConfig);
+    const scope = this.resolveValidationDialogScope(sourceIds);
+    const targetCount = scope.validateAll ? this.allSources.length : scope.sourceIds.length;
+    if (targetCount === 0) {
+      promptAction.showToast({ message: '暂无可校验的书源' });
+      return;
+    }
+    this.validationDialogScope = scope;
+    this.isValidationTargetAll = scope.validateAll;
+    this.validationTargetCount = targetCount;
+    this.validationPresetMode = ValidationPresetMode.STANDARD;
+    this.validationKeywordInput = '我的';
+    this.validationConcurrencyInput = this.getValidationConcurrency();
+    this.showValidationSetupDialog = true;
   }
 
   /**
@@ -2498,6 +4294,12 @@ export struct NovelSourceManagementPage {
       promptAction.showToast({ message: '正在校验中...' });
       return;
     }
+
+    const idsToValidate = sourceIds ? sourceIds.slice() : this.allSources.map(s => s.id);
+    if (idsToValidate.length === 0) {
+      promptAction.showToast({ message: '暂无可校验的书源' });
+      return;
+    }
     
     this.isValidating = true;
     this.isOperating = true;
@@ -2505,7 +4307,6 @@ export struct NovelSourceManagementPage {
     this.operatingMessage = '准备校验...';
     
     const validator = getNovelSourceValidator();
-    const idsToValidate = sourceIds || this.allSources.map(s => s.id);
     
     // 设置 UIAbility 上下文（后台长时任务所需）
     const context = getContext(this) as common.UIAbilityContext;
@@ -2675,10 +4476,6 @@ export struct NovelSourceManagementPage {
     });
     
     this.validationDialogController.open();
-  }
-
-  async validateAllSources(): Promise<void> {
-    this.showValidationConfigDialog();
   }
 
   /**
@@ -2860,9 +4657,8 @@ export struct NovelSourceManagementPage {
       return;
     }
 
-    // 显示校验配置对话框
     const sourceIds = Array.from(this.selectedSourceIds);
-    this.showValidationConfigDialog(sourceIds);
+    this.quickValidateSources(sourceIds);
     
     // 退出多选模式
     this.selectedSourceIds = new Set();
@@ -2878,30 +4674,14 @@ export struct NovelSourceManagementPage {
       return;
     }
 
-    promptAction.showDialog({
-      title: '确认删除',
-      message: `确定要删除选中的 ${this.selectedSourceIds.size} 个书源吗？`,
-      buttons: [
-        { text: '取消', color: '#666666' },
-        { text: '删除', color: '#FF4D4F' }
-      ]
-    }).then(async (result) => {
-      if (result.index === 1) {
-        let count = 0;
-        for (const sourceId of this.selectedSourceIds) {
-          try {
-            await this.sourceManager.deleteSource(sourceId);
-            count++;
-          } catch (error) {
-            logger.error(TAG, `删除失败: ${String(error)}`);
-          }
-        }
-        promptAction.showToast({ message: `已删除 ${count} 个书源` });
-        this.selectedSourceIds = new Set();
-        this.isMultiSelectMode = false;
-        this.loadSources();
-      }
-    });
+    const sourceIds = Array.from(this.selectedSourceIds);
+    const payload: DeleteDialogPayload = {
+      mode: 'batch',
+      sourceIds: sourceIds,
+      title: '确认批量删除',
+      message: `确定要删除选中的 ${sourceIds.length} 个书源吗？`
+    };
+    this.openDeleteConfirmDialog(payload);
   }
 
   // ==================== 分组管理功能 ====================
@@ -2910,90 +4690,18 @@ export struct NovelSourceManagementPage {
    * 显示添加到分组对话框
    */
   showAddToGroupDialog(): void {
-    if (this.selectedSourceIds.size === 0) {
-      promptAction.showToast({ message: '请先选择书源' });
+    this.openGroupPickerDialog('add');
+  }
+
+  private confirmGroupInputAndAdd(): void {
+    const groupName = this.groupInputValue.trim();
+    if (groupName.length === 0) {
+      promptAction.showToast({ message: '请输入分组名称' });
       return;
     }
-
-    const existingGroups = this.sourceManager.getAllGroups();
-    
-    // 构建按钮列表 - 使用元组类型
-    const buttonList: promptAction.Button[] = [];
-    for (let i = 0; i < existingGroups.length; i++) {
-      const btn: promptAction.Button = { text: existingGroups[i], color: '#333333' };
-      buttonList.push(btn);
-    }
-    
-    // 添加"新建分组"选项
-    buttonList.push({ text: '+ 新建分组', color: '#9C27B0' });
-    buttonList.push({ text: '取消', color: '#666666' });
-
-    // 转换为元组类型
-    const buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?] = 
-      [buttonList[0], buttonList[1], buttonList[2], buttonList[3], buttonList[4], buttonList[5]];
-
-    promptAction.showActionMenu({
-      title: '选择分组',
-      buttons: buttons
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index === buttons.length - 1) {
-        // 取消
-        return;
-      } else if (result.index === buttons.length - 2) {
-        // 新建分组
-        this.showCreateGroupDialog();
-      } else {
-        // 选择现有分组
-        const groupName = existingGroups[result.index];
-        this.addSelectedSourcesToGroup(groupName);
-      }
-    }).catch(() => {});
-  }
-
-  /**
-   * 显示创建分组对话框
-   */
-  showCreateGroupDialog(): void {
-    // 使用简单的提示让用户输入分组名
-    promptAction.showDialog({
-      title: '新建分组',
-      message: '请在下方输入分组名称后点击确定',
-      buttons: [
-        { text: '取消', color: '#666666' },
-        { text: '确定', color: '#9C27B0' }
-      ]
-    }).then((result) => {
-      if (result.index === 1) {
-        // 由于系统对话框不支持输入，使用预设的分组名
-        const defaultGroups = ['精品', '常用', '备用', '测试'];
-        this.showSelectDefaultGroupDialog(defaultGroups);
-      }
-    });
-  }
-
-  /**
-   * 显示选择预设分组对话框
-   */
-  showSelectDefaultGroupDialog(defaultGroups: string[]): void {
-    const buttonList: promptAction.Button[] = [];
-    for (let i = 0; i < defaultGroups.length; i++) {
-      const btn: promptAction.Button = { text: defaultGroups[i], color: '#333333' };
-      buttonList.push(btn);
-    }
-    buttonList.push({ text: '取消', color: '#666666' });
-
-    const buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?] = 
-      [buttonList[0], buttonList[1], buttonList[2], buttonList[3], buttonList[4], buttonList[5]];
-
-    promptAction.showActionMenu({
-      title: '选择分组名称',
-      buttons: buttons
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index < defaultGroups.length) {
-        const groupName = defaultGroups[result.index];
-        this.addSelectedSourcesToGroup(groupName);
-      }
-    }).catch(() => {});
+    this.showGroupInputDialog = false;
+    this.groupInputValue = '';
+    void this.addSelectedSourcesToGroup(groupName);
   }
 
   /**
@@ -3023,37 +4731,51 @@ export struct NovelSourceManagementPage {
    * 显示从分组移除对话框
    */
   showRemoveFromGroupDialog(): void {
+    this.openGroupPickerDialog('remove');
+  }
+
+  private openGroupPickerDialog(mode: GroupPickerMode): void {
     if (this.selectedSourceIds.size === 0) {
       promptAction.showToast({ message: '请先选择书源' });
       return;
     }
 
     const existingGroups = this.sourceManager.getAllGroups();
-    if (existingGroups.length === 0) {
+    if (mode === 'remove' && existingGroups.length === 0) {
       promptAction.showToast({ message: '暂无分组' });
       return;
     }
 
-    const buttonList: promptAction.Button[] = [];
-    const groupsToShow = existingGroups.slice(0, 5);
-    for (let i = 0; i < groupsToShow.length; i++) {
-      const btn: promptAction.Button = { text: groupsToShow[i], color: '#333333' };
-      buttonList.push(btn);
+    this.groupPickerMode = mode;
+    this.groupPickerGroups = existingGroups.slice();
+    this.groupPickerKeyword = '';
+    this.groupPickerFilteredGroups = existingGroups.slice();
+    this.showGroupPickerDialog = true;
+  }
+
+  private updateGroupPickerKeyword(keyword: string): void {
+    this.groupPickerKeyword = keyword;
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    if (normalizedKeyword.length === 0) {
+      this.groupPickerFilteredGroups = this.groupPickerGroups.slice();
+      return;
     }
-    buttonList.push({ text: '取消', color: '#666666' });
-
-    const buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?] = 
-      [buttonList[0], buttonList[1], buttonList[2], buttonList[3], buttonList[4], buttonList[5]];
-
-    promptAction.showActionMenu({
-      title: '从哪个分组移除？',
-      buttons: buttons
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index < existingGroups.length && result.index < 5) {
-        const groupName = existingGroups[result.index];
-        this.removeSelectedSourcesFromGroup(groupName);
+    const filtered: string[] = [];
+    for (const groupName of this.groupPickerGroups) {
+      if (groupName.toLowerCase().includes(normalizedKeyword)) {
+        filtered.push(groupName);
       }
-    }).catch(() => {});
+    }
+    this.groupPickerFilteredGroups = filtered;
+  }
+
+  private selectGroupFromPicker(groupName: string): void {
+    this.showGroupPickerDialog = false;
+    if (this.groupPickerMode === 'add') {
+      void this.addSelectedSourcesToGroup(groupName);
+      return;
+    }
+    void this.removeSelectedSourcesFromGroup(groupName);
   }
 
   /**
@@ -3306,136 +5028,4 @@ export struct NovelSourceManagementPage {
     }
   }
 
-  /**
-   * 显示重命名分组对话框（旧版，保留以防兼容性问题）
-   */
-  showRenameGroupDialog(): void {
-    const existingGroups = this.sourceManager.getAllGroups();
-    const buttonList: promptAction.Button[] = [];
-    const groupsToShow = existingGroups.slice(0, 5);
-    for (let i = 0; i < groupsToShow.length; i++) {
-      const btn: promptAction.Button = { text: groupsToShow[i], color: '#333333' };
-      buttonList.push(btn);
-    }
-    buttonList.push({ text: '取消', color: '#666666' });
-
-    const buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?] = 
-      [buttonList[0], buttonList[1], buttonList[2], buttonList[3], buttonList[4], buttonList[5]];
-
-    promptAction.showActionMenu({
-      title: '选择要重命名的分组',
-      buttons: buttons
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index < existingGroups.length && result.index < 5) {
-        const oldName = existingGroups[result.index];
-        this.showSelectNewGroupNameDialog(oldName);
-      }
-    }).catch(() => {});
-  }
-
-  /**
-   * 显示选择新分组名对话框
-   */
-  showSelectNewGroupNameDialog(oldName: string): void {
-    const allNames = ['精品', '常用', '备用', '测试', '失效'];
-    const newNames: string[] = [];
-    for (let i = 0; i < allNames.length; i++) {
-      if (allNames[i] !== oldName) {
-        newNames.push(allNames[i]);
-      }
-    }
-    const buttonList: promptAction.Button[] = [];
-    for (let i = 0; i < newNames.length; i++) {
-      const btn: promptAction.Button = { text: newNames[i], color: '#333333' };
-      buttonList.push(btn);
-    }
-    buttonList.push({ text: '取消', color: '#666666' });
-
-    const buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?] = 
-      [buttonList[0], buttonList[1], buttonList[2], buttonList[3], buttonList[4], buttonList[5]];
-
-    promptAction.showActionMenu({
-      title: `将 "${oldName}" 重命名为`,
-      buttons: buttons
-    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index < newNames.length) {
-        const newName = newNames[result.index];
-        this.isOperating = true;
-        this.operatingMessage = '正在重命名分组...';
-        
-        try {
-          const count = await this.sourceManager.renameGroup(oldName, newName);
-          promptAction.showToast({ message: `已将 ${count} 个书源的分组从 "${oldName}" 改为 "${newName}"` });
-          this.loadSources();
-        } catch (error) {
-          promptAction.showToast({ message: `重命名失败: ${String(error)}` });
-        }
-        
-        this.isOperating = false;
-        this.operatingMessage = '';
-      }
-    }).catch(() => {});
-  }
-
-  /**
-   * 显示删除分组对话框
-   */
-  showDeleteGroupDialog(): void {
-    const existingGroups = this.sourceManager.getAllGroups();
-    const buttonList: promptAction.Button[] = [];
-    const groupsToShow = existingGroups.slice(0, 5);
-    for (let i = 0; i < groupsToShow.length; i++) {
-      const btn: promptAction.Button = { text: groupsToShow[i], color: '#FF4D4F' };
-      buttonList.push(btn);
-    }
-    buttonList.push({ text: '取消', color: '#666666' });
-
-    const buttons: [promptAction.Button, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?, promptAction.Button?] = 
-      [buttonList[0], buttonList[1], buttonList[2], buttonList[3], buttonList[4], buttonList[5]];
-
-    promptAction.showActionMenu({
-      title: '选择要删除的分组（仅移除标签，不删除书源）',
-      buttons: buttons
-    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index < existingGroups.length && result.index < 5) {
-        const groupName = existingGroups[result.index];
-        
-        this.isOperating = true;
-        this.operatingMessage = '正在删除分组...';
-        
-        try {
-          const count = await this.sourceManager.deleteGroup(groupName);
-          promptAction.showToast({ message: `已删除分组 "${groupName}"，影响 ${count} 个书源` });
-          this.loadSources();
-        } catch (error) {
-          promptAction.showToast({ message: `删除失败: ${String(error)}` });
-        }
-        
-        this.isOperating = false;
-        this.operatingMessage = '';
-      }
-    }).catch(() => {});
-  }
-
-  /**
-   * 显示分组统计
-   */
-  showGroupStats(): void {
-    const existingGroups = this.sourceManager.getAllGroups();
-    const stats: string[] = [];
-    
-    for (const group of existingGroups) {
-      const count = this.sourceManager.getSourcesByGroup(group).length;
-      stats.push(`${group}: ${count}个`);
-    }
-    
-    const noGroupCount = this.sourceManager.getSourcesWithoutGroup().length;
-    stats.push(`未分组: ${noGroupCount}个`);
-    
-    promptAction.showDialog({
-      title: '分组统计',
-      message: stats.join('\n'),
-      buttons: [{ text: '确定', color: $r('sys.color.ohos_id_color_text_primary') }]
-    });
-  }
 }

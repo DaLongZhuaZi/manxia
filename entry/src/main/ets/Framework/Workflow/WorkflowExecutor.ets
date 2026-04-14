@@ -8,8 +8,36 @@ import { logger } from '../../Utils/Logger';
 import WorkflowCapabilities, { type WorkflowContext, type CapabilityType } from './WorkflowCapabilities';
 import { MangaSourceAPIEngine } from '../WebView/MangaSourceAPIEngine';
 import { type UserAgentRotationConfig } from '../Network/UserAgentManager';
+import { ngfWorkflowEngineFacade } from '../NGF';
 
 const TAG = 'WorkflowExecutor';
+const NGF_WORKFLOW_SHADOW_FLAG_KEY = 'ngf_content_workflow_shadow_mode';
+
+class NGFWorkflowShadowContext {
+  sourceId: number;
+  workflowName: string;
+  variablesJson: string;
+  stepCount: number;
+
+  constructor(sourceId: number, workflowName: string, variablesJson: string, stepCount: number) {
+    this.sourceId = sourceId;
+    this.workflowName = workflowName;
+    this.variablesJson = variablesJson;
+    this.stepCount = stepCount;
+  }
+}
+
+class NGFWorkflowShadowInput {
+  actionType: string;
+  actionJson: string;
+  contextJson: string;
+
+  constructor(actionType: string, actionJson: string, contextJson: string) {
+    this.actionType = actionType;
+    this.actionJson = actionJson;
+    this.contextJson = contextJson;
+  }
+}
 
 /**
  * 工作流步骤
@@ -73,6 +101,7 @@ export class WorkflowExecutor {
   ): Promise<ExecutionResult> {
     logger.info(TAG, `开始执行工作流: ${workflow.name}`);
     logger.debug(TAG, this.capabilities.getCapabilityStats(context));
+    this.runNgfWorkflowShadow(workflow, context);
 
     try {
       let result: Object = {};
@@ -117,6 +146,57 @@ export class WorkflowExecutor {
       };
       
       return executionResult;
+    }
+  }
+
+  private runNgfWorkflowShadow(workflow: WorkflowDefinition, context: WorkflowContext): void {
+    if (!this.isNgfWorkflowShadowEnabled()) {
+      return;
+    }
+
+    const stepCount = workflow.steps.length;
+    const firstStep = stepCount > 0 ? workflow.steps[0] : undefined;
+    const actionType = firstStep ? firstStep.type : 'extract';
+    const actionJson = firstStep ? this.safeToJson(firstStep as Object) : '{}';
+    const contextJson = this.safeToJson(
+      new NGFWorkflowShadowContext(
+        context.sourceId,
+        workflow.name,
+        this.safeToJson(context.variables as Object),
+        stepCount
+      )
+    );
+    const input = new NGFWorkflowShadowInput(actionType, actionJson, contextJson);
+    void this.dispatchNgfWorkflowShadow(workflow.name, `${context.sourceId}`, input);
+  }
+
+  private async dispatchNgfWorkflowShadow(
+    workflowName: string,
+    sourceId: string,
+    input: NGFWorkflowShadowInput
+  ): Promise<void> {
+    try {
+      const result = await ngfWorkflowEngineFacade.executeWorkflow(
+        workflowName,
+        sourceId,
+        this.safeToJson(input as Object)
+      );
+      logger.debug(TAG, `NGF workflow shadow result: success=${result.success}, source=${sourceId}`);
+    } catch (error) {
+      logger.warn(TAG, `NGF workflow shadow failed: ${String(error)}`);
+    }
+  }
+
+  private isNgfWorkflowShadowEnabled(): boolean {
+    const flag = AppStorage.get<boolean>(NGF_WORKFLOW_SHADOW_FLAG_KEY);
+    return flag === true;
+  }
+
+  private safeToJson(value: Object): string {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '{}';
     }
   }
 

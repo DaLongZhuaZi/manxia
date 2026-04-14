@@ -1,0 +1,331 @@
+/**
+ * Network folder models and helpers.
+ */
+
+export type NetworkFolderProtocol = 'webdav' | 'ftp' | 'ftps' | 'smb';
+
+export type NetworkFolderImportCategory = 'comic' | 'ebook' | 'pdf' | 'unsupported';
+
+export interface NetworkFolderConnection {
+  id: string;
+  name: string;
+  protocol: NetworkFolderProtocol;
+  serverUrl: string;
+  host: string;
+  shareName: string;
+  domain: string;
+  clientIP: string;
+  port: number;
+  username: string;
+  password: string;
+  basePath: string;
+  passive: boolean;
+  verifySSL: boolean;
+  timeoutMs: number;
+  createdAt: number;
+  lastUsedAt: number;
+}
+
+export interface NetworkFolderConnectionDraft {
+  id?: string;
+  name: string;
+  protocol: NetworkFolderProtocol;
+  serverUrl: string;
+  host: string;
+  shareName: string;
+  domain: string;
+  clientIP: string;
+  port: number;
+  username: string;
+  password: string;
+  basePath: string;
+  passive: boolean;
+  verifySSL: boolean;
+  timeoutMs: number;
+}
+
+export interface NetworkFolderEntry {
+  key: string;
+  name: string;
+  relativePath: string;
+  actualPath: string;
+  size: number;
+  isDirectory: boolean;
+  lastModified: number;
+  etag: string;
+  contentType: string;
+  permissions: string;
+  importCategory: NetworkFolderImportCategory;
+  cacheStatus: 'none' | 'cached' | 'stale';
+  cachedLocalPath: string;
+  versionTag: string;
+}
+
+export interface NetworkFolderBrowseResult {
+  success: boolean;
+  message: string;
+  entries: NetworkFolderEntry[];
+  fromCache: boolean;
+  stale: boolean;
+  loadedAt: number;
+}
+
+export interface NetworkFolderCacheStats {
+  directoryCount: number;
+  fileCount: number;
+  totalBytes: number;
+}
+
+export interface NetworkFolderDirectoryCacheDetail {
+  connectionId: string;
+  relativePath: string;
+  fetchedAt: number;
+  entryCount: number;
+}
+
+export interface NetworkFolderDownloadCacheDetail {
+  connectionId: string;
+  relativePath: string;
+  localPath: string;
+  fileName: string;
+  size: number;
+  versionTag: string;
+  cachedAt: number;
+  lastAccessedAt: number;
+  fileExists: boolean;
+}
+
+export interface NetworkFolderCacheDetail {
+  stats: NetworkFolderCacheStats;
+  directories: NetworkFolderDirectoryCacheDetail[];
+  files: NetworkFolderDownloadCacheDetail[];
+}
+
+export interface NetworkFolderDownloadResult {
+  success: boolean;
+  message: string;
+  localPath: string;
+  fileUri: string;
+  reusedCache: boolean;
+  importCategory: NetworkFolderImportCategory;
+}
+
+const NETWORK_FOLDER_COMIC_EXTENSIONS: string[] = [
+  'zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'lzma'
+];
+
+const NETWORK_FOLDER_EBOOK_EXTENSIONS: string[] = [
+  'epub', 'mobi', 'azw', 'azw3', 'txt'
+];
+
+export function createEmptyNetworkFolderDraft(): NetworkFolderConnectionDraft {
+  const draft: NetworkFolderConnectionDraft = {
+    name: '',
+    protocol: 'webdav',
+    serverUrl: '',
+    host: '',
+    shareName: '',
+    domain: '',
+    clientIP: '',
+    port: 443,
+    username: '',
+    password: '',
+    basePath: '/',
+    passive: true,
+    verifySSL: true,
+    timeoutMs: 30000
+  };
+  return draft;
+}
+
+export function createNetworkFolderConnection(
+  draft: NetworkFolderConnectionDraft,
+  existingId?: string
+): NetworkFolderConnection {
+  const now = Date.now();
+  const connection: NetworkFolderConnection = {
+    id: existingId ?? generateNetworkFolderConnectionId(),
+    name: draft.name.trim(),
+    protocol: draft.protocol,
+    serverUrl: draft.serverUrl.trim(),
+    host: draft.host.trim(),
+    shareName: draft.shareName.trim(),
+    domain: draft.domain.trim(),
+    clientIP: draft.clientIP.trim(),
+    port: sanitizePort(draft.protocol, draft.port),
+    username: draft.username.trim(),
+    password: draft.password,
+    basePath: normalizeConnectionBasePath(draft.basePath),
+    passive: draft.passive,
+    verifySSL: draft.verifySSL,
+    timeoutMs: sanitizeTimeout(draft.timeoutMs),
+    createdAt: now,
+    lastUsedAt: 0
+  };
+  return connection;
+}
+
+export function draftFromNetworkFolderConnection(
+  connection: NetworkFolderConnection
+): NetworkFolderConnectionDraft {
+  const draft: NetworkFolderConnectionDraft = {
+    id: connection.id,
+    name: connection.name,
+    protocol: connection.protocol,
+    serverUrl: connection.serverUrl,
+    host: connection.host,
+    shareName: connection.shareName,
+    domain: connection.domain,
+    clientIP: connection.clientIP,
+    port: connection.port,
+    username: connection.username,
+    password: connection.password,
+    basePath: connection.basePath,
+    passive: connection.passive,
+    verifySSL: connection.verifySSL,
+    timeoutMs: connection.timeoutMs
+  };
+  return draft;
+}
+
+export function normalizeConnectionBasePath(path: string): string {
+  if (!path || path.trim().length === 0) {
+    return '/';
+  }
+  let normalized = path.trim().replace(/\\/g, '/');
+  if (!normalized.startsWith('/')) {
+    normalized = `/${normalized}`;
+  }
+  normalized = normalized.replace(/\/+/g, '/');
+  if (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.substring(0, normalized.length - 1);
+  }
+  return normalized.length > 0 ? normalized : '/';
+}
+
+export function normalizeRelativeNetworkFolderPath(path: string): string {
+  if (!path || path.trim().length === 0 || path === '/') {
+    return '/';
+  }
+  let normalized = path.trim().replace(/\\/g, '/');
+  if (!normalized.startsWith('/')) {
+    normalized = `/${normalized}`;
+  }
+  normalized = normalized.replace(/\/+/g, '/');
+  if (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.substring(0, normalized.length - 1);
+  }
+  return normalized.length > 0 ? normalized : '/';
+}
+
+export function joinRelativeNetworkFolderPath(parentPath: string, name: string): string {
+  const cleanParent = normalizeRelativeNetworkFolderPath(parentPath);
+  const cleanName = name.trim().replace(/^\/+/, '').replace(/\/+$/, '');
+  if (cleanName.length === 0) {
+    return cleanParent;
+  }
+  if (cleanParent === '/') {
+    return `/${cleanName}`;
+  }
+  return `${cleanParent}/${cleanName}`;
+}
+
+function normalizeNetworkFolderFileNameForDetect(fileName: string): string {
+  const trimmed = fileName.trim();
+  if (trimmed.length === 0) {
+    return '';
+  }
+  const queryIndex = trimmed.indexOf('?');
+  const hashIndex = trimmed.indexOf('#');
+  let endIndex = trimmed.length;
+  if (queryIndex >= 0 && hashIndex >= 0) {
+    endIndex = Math.min(queryIndex, hashIndex);
+  } else if (queryIndex >= 0) {
+    endIndex = queryIndex;
+  } else if (hashIndex >= 0) {
+    endIndex = hashIndex;
+  }
+
+  const withoutQuery = trimmed.substring(0, endIndex);
+  try {
+    return decodeURIComponent(withoutQuery).trim().toLowerCase();
+  } catch {
+    return withoutQuery.trim().toLowerCase();
+  }
+}
+
+export function getNetworkFolderFileExtension(fileName: string): string {
+  const normalizedName = normalizeNetworkFolderFileNameForDetect(fileName);
+  if (normalizedName.length === 0) {
+    return '';
+  }
+  const lastDotIndex = normalizedName.lastIndexOf('.');
+  if (lastDotIndex < 0 || lastDotIndex >= normalizedName.length - 1) {
+    return '';
+  }
+  return normalizedName.substring(lastDotIndex + 1);
+}
+
+export function inferNetworkFolderImportCategory(fileName: string): NetworkFolderImportCategory {
+  const extension = getNetworkFolderFileExtension(fileName);
+  if (extension.length === 0) {
+    return 'unsupported';
+  }
+
+  if (NETWORK_FOLDER_COMIC_EXTENSIONS.includes(extension)) {
+    return 'comic';
+  }
+  if (extension === 'pdf') {
+    return 'pdf';
+  }
+  if (NETWORK_FOLDER_EBOOK_EXTENSIONS.includes(extension)) {
+    return 'ebook';
+  }
+  return 'unsupported';
+}
+
+export function isNetworkFolderImportSupported(category: NetworkFolderImportCategory): boolean {
+  return category !== 'unsupported';
+}
+
+export function getNetworkFolderProtocolLabel(protocol: NetworkFolderProtocol): string {
+  switch (protocol) {
+    case 'webdav':
+      return 'WebDAV';
+    case 'ftp':
+      return 'FTP';
+    case 'ftps':
+      return 'FTPS';
+    case 'smb':
+      return 'SMB';
+    default:
+      return protocol;
+  }
+}
+
+function generateNetworkFolderConnectionId(): string {
+  return `network_folder_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function sanitizePort(protocol: NetworkFolderProtocol, port: number): number {
+  if (typeof port === 'number' && Number.isFinite(port) && port > 0 && port <= 65535) {
+    return Math.floor(port);
+  }
+  if (protocol === 'ftps') {
+    return 990;
+  }
+  if (protocol === 'ftp') {
+    return 21;
+  }
+  if (protocol === 'smb') {
+    return 445;
+  }
+  return 443;
+}
+
+function sanitizeTimeout(timeoutMs: number): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs)) {
+    return 30000;
+  }
+  return Math.max(5000, Math.min(120000, Math.floor(timeoutMs)));
+}

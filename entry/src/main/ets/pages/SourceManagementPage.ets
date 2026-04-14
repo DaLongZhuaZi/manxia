@@ -80,8 +80,11 @@ export struct SourceManagementPage {
   @State searchText: string = '';
   @State isLoading: boolean = false;
   @State showProxyDialog: boolean = false;
+  @State proxyDialogVisible: boolean = false;
   @State proxyConfig: ProxyConfig = DEFAULT_PROXY_CONFIG;
   @State currentFilter: SourceFilterType = SourceFilterType.ALL;  // 当前筛选类型
+  @State filterListOpacity: number = 1;
+  @State filterListOffsetY: number = 0;
   @State totalCount: number = 0;  // 图源总数
   @State pinnedCount: number = 0;  // 置顶图源数
   @State disabledCount: number = 0;  // 已关闭图源数
@@ -100,6 +103,8 @@ export struct SourceManagementPage {
   private dataManager: DataManager = DataManager.getInstance();
   private proxyManager: ProxyManager = ProxyManager.getInstance();
   private listScroller: Scroller = new Scroller();
+  private filterSwitchToken: number = 0;
+  private proxyDialogAnimationToken: number = 0;
 
   aboutToAppear() {
     // 初始化主题
@@ -235,6 +240,55 @@ export struct SourceManagementPage {
     this.hasMoreData = true;
     // 加载第一页
     this.loadMoreSources(true);
+  }
+
+  private switchFilterWithAnimation(filterType: SourceFilterType): void {
+    if (this.currentFilter === filterType) {
+      return;
+    }
+    this.filterSwitchToken += 1;
+    const switchToken: number = this.filterSwitchToken;
+    this.filterListOpacity = 0;
+    this.filterListOffsetY = 10;
+    setTimeout(() => {
+      if (this.filterSwitchToken !== switchToken) {
+        return;
+      }
+      this.currentFilter = filterType;
+      this.applyFilter();
+      this.filterListOpacity = 1;
+      this.filterListOffsetY = 0;
+    }, 110);
+  }
+
+  private openProxyDialog(): void {
+    this.proxyDialogAnimationToken += 1;
+    const animationToken: number = this.proxyDialogAnimationToken;
+    this.showProxyDialog = true;
+    this.proxyDialogVisible = false;
+    setTimeout(() => {
+      if (this.proxyDialogAnimationToken !== animationToken || !this.showProxyDialog) {
+        return;
+      }
+      this.proxyDialogVisible = true;
+    }, 0);
+  }
+
+  private closeProxyDialog(): void {
+    if (!this.showProxyDialog) {
+      return;
+    }
+    this.proxyDialogAnimationToken += 1;
+    const animationToken: number = this.proxyDialogAnimationToken;
+    this.proxyDialogVisible = false;
+    setTimeout(() => {
+      if (this.proxyDialogAnimationToken !== animationToken) {
+        return;
+      }
+      if (!this.proxyDialogVisible) {
+        this.showProxyDialog = false;
+      }
+    }, 220);
   }
 
   /**
@@ -507,7 +561,17 @@ export struct SourceManagementPage {
 
         // 代理配置对话框
         if (this.showProxyDialog) {
-          Column() {
+          Stack({ alignContent: Alignment.Center }) {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor('rgba(14, 20, 31, 0.24)')
+              .opacity(this.proxyDialogVisible ? 1 : 0)
+              .animation({ duration: 180, curve: Curve.EaseOut })
+              .onClick(() => {
+                this.closeProxyDialog();
+              })
+
             ProxyConfigDialog({
               currentTheme: this.themeState.currentTheme,
               appFontFamily: this.appFontFamily,
@@ -526,23 +590,26 @@ export struct SourceManagementPage {
               onSave: (config: ProxyConfig) => {
                 void this.proxyManager.saveConfig(config);
                 this.proxyConfig = config;
-                this.showProxyDialog = false;
+                this.closeProxyDialog();
               },
               onCancel: () => {
-                this.showProxyDialog = false;
+                this.closeProxyDialog();
               }
             })
+              .opacity(this.proxyDialogVisible ? 1 : 0)
+              .scale({
+                x: this.proxyDialogVisible ? 1 : 0.95,
+                y: this.proxyDialogVisible ? 1 : 0.95
+              })
+              .animation({ duration: 220, curve: Curve.EaseOut })
               .onClick(() => {
               })
           }
           .width('100%')
           .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor('rgba(14, 20, 31, 0.28)')
           .position({ x: 0, y: 0 })
-          .onClick(() => {
-            this.showProxyDialog = false;
-          })
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          .zIndex(3000)
         }
 
         SettingsImmersiveTitleBar({
@@ -591,7 +658,7 @@ export struct SourceManagementPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
         .borderRadius(8)
         .onClick(() => {
-          this.showProxyDialog = true;
+          this.openProxyDialog();
         })
       }
       .width('100%')
@@ -645,22 +712,66 @@ export struct SourceManagementPage {
         .fontSize(11)
         .fontFamily(this.appFontFamily)
         .fontColor(this.currentFilter === filterType ?
-          Color.White :
+          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
           ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .padding({ left: 5, right: 5, top: 1, bottom: 1 })
         .borderRadius(8)
-        .backgroundColor(this.currentFilter === filterType ?
-          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-          ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .linearGradient(this.currentFilter === filterType ? {
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '26', 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme), 0.5],
+            [ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '30', 1]
+          ]
+        } : {
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme), 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme), 1]
+          ]
+        })
+        .border({
+          width: this.currentFilter === filterType ? 1.2 : 1,
+          color: this.currentFilter === filterType ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '99' :
+            ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+        })
     }
     .padding({ left: 10, right: 10, top: 6, bottom: 6 })
     .borderRadius(16)
-    .backgroundColor(this.currentFilter === filterType ?
-      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '20' :
-      Color.Transparent)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .linearGradient(this.currentFilter === filterType ? {
+      angle: 130,
+      colors: [
+        [ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '2B', 0],
+        [ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme), 0.45],
+        [ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '33', 1]
+      ]
+    } : {
+      angle: 130,
+      colors: [
+        [ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme), 0],
+        [ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme), 1]
+      ]
+    })
+    .border({
+      width: this.currentFilter === filterType ? 1.4 : 1,
+      color: this.currentFilter === filterType ?
+        ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + 'B3' :
+        ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: this.currentFilter === filterType ? 9 : 0,
+      color: this.currentFilter === filterType ?
+        ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '33' :
+        Color.Transparent,
+      offsetX: 0,
+      offsetY: 0
+    })
+    .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      this.currentFilter = filterType;
-      this.applyFilter();
+      this.switchFilterWithAnimation(filterType);
     })
   }
 
@@ -754,6 +865,10 @@ export struct SourceManagementPage {
         ListItem() {
           this.buildSourceCard(source)
         }
+        .transition(
+          TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+            .combine(TransitionEffect.translate({ y: 8 }).animation({ duration: 180, curve: Curve.EaseOut }))
+        )
       }, (source: SourceInfo) => String(source.id))
 
       // 加载更多指示器
@@ -786,6 +901,9 @@ export struct SourceManagementPage {
     .width('100%')
     .layoutWeight(1)
     .padding({ left: 16, right: 16, bottom: 8 })
+    .opacity(this.filterListOpacity)
+    .translate({ y: this.filterListOffsetY })
+    .animation({ duration: 220, curve: Curve.EaseOut })
     .scrollBar(BarState.Auto)
     .edgeEffect(EdgeEffect.Spring)
     .onScrollIndex((start: number, end: number) => {
@@ -927,54 +1045,165 @@ export struct SourceManagementPage {
 
       // 操作按钮
       Row({ space: 8 }) {
-        Button(source.isPinned ? '取消置顶' : '置顶')
-          .fontSize(12)
-          .layoutWeight(1)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(source.isPinned ?
-            ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme) :
-            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .onClick(async () => {
-            await this.togglePinSource(source);
-          })
+        Button() {
+          SymbolGlyph(source.isPinned ? $r('sys.symbol.pin_fill') : $r('sys.symbol.pin'))
+            .fontSize(16)
+            .fontColor([source.isPinned ?
+              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + 'B8'])
+        }
+        .layoutWeight(1)
+        .height(34)
+        .borderRadius(8)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .linearGradient(source.isPinned ? {
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '30', 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0.5],
+            [ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '3B', 1]
+          ]
+        } : {
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 1]
+          ]
+        })
+        .border({
+          width: source.isPinned ? 1.4 : 1,
+          color: source.isPinned ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + 'C2' :
+            ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+        })
+        .shadow({
+          radius: source.isPinned ? 8 : 0,
+          color: source.isPinned ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '30' :
+            Color.Transparent,
+          offsetX: 0,
+          offsetY: 0
+        })
+        .onClick(() => {
+          void this.togglePinSource(source);
+        })
 
-        Button(source.isNSFW ? '取消NSFW' : 'NSFW')
-          .fontSize(12)
-          .layoutWeight(1)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(source.isNSFW ?
-            '#FF4444' :
-            ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-          .fontColor(source.isNSFW ? Color.White :
-            ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .onClick(async () => {
-            await this.toggleSourceNSFW(source);
-          })
+        Button() {
+          SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
+            .fontSize(16)
+            .fontColor([source.isNSFW ?
+              ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + 'B8'])
+        }
+        .layoutWeight(1)
+        .height(34)
+        .borderRadius(8)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .linearGradient(source.isNSFW ? {
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '30', 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0.5],
+            [ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '3B', 1]
+          ]
+        } : {
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 1]
+          ]
+        })
+        .border({
+          width: source.isNSFW ? 1.4 : 1,
+          color: source.isNSFW ?
+            ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + 'C2' :
+            ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+        })
+        .shadow({
+          radius: source.isNSFW ? 8 : 0,
+          color: source.isNSFW ?
+            ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '2E' :
+            Color.Transparent,
+          offsetX: 0,
+          offsetY: 0
+        })
+        .onClick(() => {
+          void this.toggleSourceNSFW(source);
+        })
 
-        // Debug mode toggle
-        Button(source.isDebugMode ? '\u5173\u95ed\u8c03\u8bd5' : '\u5f00\u542f\u8c03\u8bd5')
-          .fontSize(12)
-          .layoutWeight(1)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(source.isDebugMode ?
-            ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-            ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-          .fontColor(source.isDebugMode ? Color.White :
-            ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .onClick(async () => {
-            await this.toggleSourceDebugMode(source);
-          })
+        Button() {
+          SymbolGlyph($r('sys.symbol.wrench_and_screwdriver'))
+            .fontSize(16)
+            .fontColor([source.isDebugMode ?
+              ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + 'B8'])
+        }
+        .layoutWeight(1)
+        .height(34)
+        .borderRadius(8)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .linearGradient(source.isDebugMode ? {
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '30', 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0.5],
+            [ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '3B', 1]
+          ]
+        } : {
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 1]
+          ]
+        })
+        .border({
+          width: source.isDebugMode ? 1.4 : 1,
+          color: source.isDebugMode ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + 'C2' :
+            ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+        })
+        .shadow({
+          radius: source.isDebugMode ? 8 : 0,
+          color: source.isDebugMode ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '2E' :
+            Color.Transparent,
+          offsetX: 0,
+          offsetY: 0
+        })
+        .onClick(() => {
+          void this.toggleSourceDebugMode(source);
+        })
 
-
-
-        Button('删除')
-          .fontSize(12)
-          .layoutWeight(1)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-          .onClick(async () => {
-            await this.deleteSource(source);
-          })
+        Button() {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)])
+        }
+        .layoutWeight(1)
+        .height(34)
+        .borderRadius(8)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .linearGradient({
+          angle: 130,
+          colors: [
+            [ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '26', 0],
+            [ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme), 0.5],
+            [ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '33', 1]
+          ]
+        })
+        .border({
+          width: 1.4,
+          color: ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + 'B8'
+        })
+        .shadow({
+          radius: 8,
+          color: ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme) + '2E',
+          offsetX: 0,
+          offsetY: 0
+        })
+        .onClick(() => {
+          void this.deleteSource(source);
+        })
       }
       .width('100%')
     }

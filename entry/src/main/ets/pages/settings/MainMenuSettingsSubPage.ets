@@ -132,6 +132,7 @@ export struct MainMenuSettingsSubPage {
   @State recommendationEnabled: boolean = true;
   @State shelfContentEnabled: boolean = true;
   @State libraryCoverOpenReaderEnabled: boolean = true;
+  @State privacyLibrarySkipBiometricAuth: boolean = false;
   @State mainPageBottomBarAnimationEnabled: boolean = DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled;
   @State suwayomiBrowsePageAsEntryEnabled: boolean = false;
   @State komgaBrowsePageAsEntryEnabled: boolean = true;
@@ -349,11 +350,12 @@ export struct MainMenuSettingsSubPage {
     this.recommendationEnabled = this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true);
     this.shelfContentEnabled = this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true);
     this.libraryCoverOpenReaderEnabled = this.settingsManager.getBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, true);
+    this.privacyLibrarySkipBiometricAuth = this.settingsManager.getBoolean(SettingKeys.PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH, false);
     this.tabletTopBarPosition = this.normalizeTabletTopBarPosition(tabletTopBarPosition);
     AppStorage.setOrCreate('main_menu_tablet_top_bar_position', this.tabletTopBarPosition);
     this.mainPageBottomBarAnimationEnabled = this.animationSettingsManager.getSettings().mainPageBottomBarAnimationEnabled;
 
-    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}`);
+    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}, skipPrivacyBiometric=${this.privacyLibrarySkipBiometricAuth}`);
   }
 
   private async loadSuwayomiEntrySettings(): Promise<void> {
@@ -531,8 +533,9 @@ export struct MainMenuSettingsSubPage {
     this.settingsManager.setBoolean(SettingKeys.RECOMMENDATION_ENABLED, this.recommendationEnabled);
     this.settingsManager.setBoolean(SettingKeys.SHELF_CONTENT_ENABLED, this.shelfContentEnabled);
     this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, this.libraryCoverOpenReaderEnabled);
+    this.settingsManager.setBoolean(SettingKeys.PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH, this.privacyLibrarySkipBiometricAuth);
 
-    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}`);
+    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}, skipPrivacyBiometric=${this.privacyLibrarySkipBiometricAuth}`);
 
     promptAction.showToast({
       message: '设置已保存',
@@ -546,6 +549,24 @@ export struct MainMenuSettingsSubPage {
       this.mainPageBottomBarAnimationEnabled = enabled;
     } catch (error) {
       logger.error(TAG, '保存主页面底栏动画设置失败', String(error));
+      promptAction.showToast({
+        message: '保存失败，请重试',
+        duration: 1500
+      });
+    }
+  }
+
+  private async savePrivacyLibrarySkipBiometricAuthSetting(enabled: boolean): Promise<void> {
+    try {
+      await this.settingsManager.setBoolean(SettingKeys.PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH, enabled);
+      this.privacyLibrarySkipBiometricAuth = enabled;
+      promptAction.showToast({
+        message: '设置已保存',
+        duration: 1500
+      });
+    } catch (error) {
+      logger.error(TAG, '保存隐私书库验证方式设置失败', String(error));
+      this.privacyLibrarySkipBiometricAuth = !enabled;
       promptAction.showToast({
         message: '保存失败，请重试',
         duration: 1500
@@ -1016,9 +1037,11 @@ export struct MainMenuSettingsSubPage {
         }).then(async (result) => {
           if (result.index === 1) {
             this.libraryCoverOpenReaderEnabled = true;
+            this.privacyLibrarySkipBiometricAuth = false;
             this.mainPageBottomBarAnimationEnabled = DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled;
             this.suwayomiBrowsePageAsEntryEnabled = false;
-            this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, true);
+            await this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, true);
+            await this.settingsManager.setBoolean(SettingKeys.PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH, false);
             await this.saveMainPageBottomBarAnimationSetting(DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled);
             await this.saveSuwayomiBrowseEntrySetting(false);
             this.resetTabsToDefault();
@@ -1395,7 +1418,7 @@ export struct MainMenuSettingsSubPage {
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .padding({ left: 4 })
 
-              Text('控制主页面书库点击行为、底栏动画，以及 Suwayomi / Komga 入口跳转行为')
+              Text('控制主页面书库点击行为、隐私书库验证方式、底栏动画，以及 Suwayomi / Komga 入口跳转行为')
                 .fontSize(13)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1430,6 +1453,47 @@ export struct MainMenuSettingsSubPage {
                       message: '设置已保存',
                       duration: 1500
                     });
+                  })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
+
+              Row() {
+                Column({ space: 4 }) {
+                  Text('不使用指纹识别')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('开启后，每次进入隐私书库将直接显示密码对话框，不再尝试指纹验证')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.privacyLibrarySkipBiometricAuth })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    this.privacyLibrarySkipBiometricAuth = isOn;
+                    void this.savePrivacyLibrarySkipBiometricAuthSetting(isOn);
                   })
               }
               .width('100%')

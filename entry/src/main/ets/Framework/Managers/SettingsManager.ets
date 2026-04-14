@@ -163,6 +163,7 @@ export class SettingKeys {
   static readonly BACKGROUND_BLUR_BG_TYPE = 'background_blur_bg_type'; // 后台遮罩背景类型: 'solid' | 'custom'
   static readonly BACKGROUND_BLUR_BG_IMAGE = 'background_blur_bg_image'; // 自定义背景图片路径
   static readonly BACKGROUND_BLUR_ICON_TYPE = 'background_blur_icon_type'; // 图标类型: 'shield' | 'logo'
+  static readonly PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH = 'privacy_library_skip_biometric_auth'; // 进入隐私书库时跳过指纹识别，直接走密码验证
   
   // 动画设置
   static readonly ANIMATION_BOOK_OPEN_ENABLED = 'animation_book_open_enabled'; // 书籍打开动画开关

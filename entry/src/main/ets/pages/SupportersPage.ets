@@ -12,6 +12,7 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { ngfPagePolicyHostFacade } from '../Framework/NGF/uiShell/index';
 
 const TAG = 'SupportersPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -86,10 +87,30 @@ export struct SupportersPage {
   ];
   // ==================================================
 
+  private isNgfUiShellIntegrated(): boolean {
+    try {
+      return AppStorage.get<boolean>('ngf_ui_shell_integrated') === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private applyPagePolicyWithNgf(pageName: string): void {
+    if (this.isNgfUiShellIntegrated()) {
+      try {
+        ngfPagePolicyHostFacade.applyPolicy(pageName);
+        return;
+      } catch (error) {
+        logger.warn(TAG, `NGF 页面策略应用失败，回退旧链路: ${String(error)}`);
+      }
+    }
+    PageWindowCoordinator.applyPagePolicy(pageName, this.getUIContext());
+  }
+
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
     this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
-    PageWindowCoordinator.applyPagePolicy('SupportersPage', this.getUIContext());
+    this.applyPagePolicyWithNgf('SupportersPage');
 
     // 初始化主题状态
     ThemeAwareHelper.initializeThemeAware(

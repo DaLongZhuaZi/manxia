@@ -10,6 +10,7 @@ import { SourceManager, ImportResult } from './SourceManager';
 import { http } from '@kit.NetworkKit';
 import { ProxyManager } from '../Network/ProxyManager';
 import { DataManager } from '../Data/DataManager';
+import { ngfSourceLoaderFacade, ngfSourceRepositoryFacade } from '../NGF';
 
 const TAG = 'SourceRepositoryManager';
 const REPOSITORY_PROXY_GH: string = 'https://gh-proxy.org/';
@@ -287,6 +288,12 @@ export class SourceRepositoryManager {
   private async saveIndexFile(index: SourceRepositoryIndex): Promise<void> {
     try {
       const jsonContent = JSON.stringify(index, null, 2);
+      const savedByNgf = ngfSourceRepositoryFacade.updateIndexJson(jsonContent);
+      if (savedByNgf) {
+        logger.info(TAG, '索引文件保存成功（NGF facade）');
+        return;
+      }
+      logger.warn(TAG, 'NGF facade 保存索引失败，回退旧写入路径');
       const file = fileIo.openSync(this.indexFilePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
       fileIo.writeSync(file.fd, jsonContent);
       fileIo.closeSync(file);
@@ -303,6 +310,30 @@ export class SourceRepositoryManager {
    */
   async readIndexFile(): Promise<SourceRepositoryIndex> {
     try {
+      const indexJsonFromNgf = ngfSourceRepositoryFacade.readIndexJson().trim();
+      if (indexJsonFromNgf.length > 0) {
+        try {
+          const parsedByNgf = JSON.parse(indexJsonFromNgf) as SourceRepositoryIndex;
+          if (parsedByNgf.sources && parsedByNgf.sources.length > 0) {
+            return parsedByNgf;
+          }
+
+          let hasLegacyIndexFile = false;
+          try {
+            hasLegacyIndexFile = fileIo.accessSync(this.indexFilePath);
+          } catch {
+            hasLegacyIndexFile = false;
+          }
+          if (!hasLegacyIndexFile) {
+            return parsedByNgf;
+          }
+
+          logger.debug(TAG, 'NGF facade 返回空索引，检测到旧索引文件存在，回退旧读取路径');
+        } catch {
+          logger.warn(TAG, 'NGF facade 索引解析失败，回退旧读取路径');
+        }
+      }
+
       const file = fileIo.openSync(this.indexFilePath, fileIo.OpenMode.READ_ONLY);
       const buffer = new ArrayBuffer(10 * 1024 * 1024); // 10MB
       const readLen = fileIo.readSync(file.fd, buffer);
@@ -641,6 +672,11 @@ export class SourceRepositoryManager {
    * @returns 图标文件路径，如果不存在返回 null
    */
   getSourceIconPath(pkg: string): string | null {
+    const ngfIconPath = ngfSourceLoaderFacade.loadIconPath(pkg);
+    if (ngfIconPath.length > 0) {
+      return ngfIconPath;
+    }
+
     // 检查 repositoryDir 是否已初始化
     if (!this.repositoryDir || this.repositoryDir.trim() === '') {
       logger.warn(TAG, `getSourceIconPath: repositoryDir 未初始化，无法获取图标路径: ${pkg}`);
@@ -809,6 +845,11 @@ export class SourceRepositoryManager {
    */
   async importSourceFromRepository(pkg: string): Promise<ImportResult> {
     try {
+      const sourceJsonFromNgf = ngfSourceLoaderFacade.loadSourceJson(pkg);
+      if (sourceJsonFromNgf.trim().length > 0) {
+        return await this.sourceManager.importFromJSON(sourceJsonFromNgf);
+      }
+
       const filePath = `${this.repositoryDir}/${pkg}.json`;
       const exists = fileIo.accessSync(filePath);
       

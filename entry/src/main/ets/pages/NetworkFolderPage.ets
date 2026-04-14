@@ -1,5 +1,6 @@
-import { common } from '@kit.AbilityKit';
+import { common, Want } from '@kit.AbilityKit';
 import { LengthMetrics } from '@kit.ArkUI';
+import { fileUri } from '@kit.CoreFileKit';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
@@ -16,11 +17,13 @@ import {
   createEmptyNetworkFolderDraft,
   createNetworkFolderConnection,
   draftFromNetworkFolderConnection,
+  getNetworkFolderFileExtension,
   getNetworkFolderProtocolLabel,
   NetworkFolderCacheStats,
   NetworkFolderConnection,
   NetworkFolderConnectionDraft,
   NetworkFolderEntry,
+  NetworkFolderImportCategory,
   NetworkFolderProtocol
 } from '../Models/NetworkFolderModels';
 
@@ -33,6 +36,8 @@ const ACTION_STYLE_NEUTRAL: number = 0;
 const ACTION_STYLE_PRIMARY: number = 1;
 const ACTION_STYLE_INFO: number = 2;
 const ACTION_STYLE_DANGER: number = 3;
+const ENTRY_NAME_MARQUEE_INTERVAL_MS: number = 260;
+const ENTRY_NAME_MARQUEE_GAP: string = '   ';
 
 interface NavDestinationContext {
   pathStack: NavPathStack;
@@ -56,7 +61,7 @@ export struct NetworkFolderPage {
   private manager: NetworkFolderManager = getNetworkFolderManager();
   private componentId: string = TAG;
   private pathStack: NavPathStack = new NavPathStack();
-  private protocolOptions: NetworkFolderProtocol[] = ['webdav', 'ftp', 'ftps', 'smb'];
+  private protocolOptions: NetworkFolderProtocol[] = ['webdav', 'ftp', 'ftps', 'sftp', 'smb'];
 
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
@@ -67,7 +72,7 @@ export struct NetworkFolderPage {
   @State currentPath: string = '/';
   @State entries: NetworkFolderEntry[] = [];
   @State cacheStats: NetworkFolderCacheStats = { directoryCount: 0, fileCount: 0, totalBytes: 0 };
-  @State statusMessage: string = '支持 WebDAV、FTP、FTPS、SMB，可浏览远程目录、缓存文件并直接导入。';
+  @State statusMessage: string = '支持 WebDAV、FTP、FTPS、SFTP、SMB，可浏览远程目录、缓存文件并直接导入。';
   @State isInitializing: boolean = false;
   @State isLoadingDirectory: boolean = false;
   @State isCaching: boolean = false;
@@ -83,11 +88,17 @@ export struct NetworkFolderPage {
   @State isPageRefreshing: boolean = false;
   @State showFloatingCapsule: boolean = false;
   @State floatingCapsuleText: string = '';
+  @State entryNameMarqueeTick: number = 0;
 
   @State dialogMounted: boolean = false;
   @State dialogMode: string = 'create';
   @State dialogDraft: NetworkFolderConnectionDraft = createEmptyNetworkFolderDraft();
   @State dialogStatusMessage: string = '请填写连接信息。';
+  @State dialogStatusExpanded: boolean = false;
+  @State dialogStatusDetailVisible: boolean = false;
+  @State dialogStatusDetailHeight: number = 0;
+  @State dialogStatusDetailOpacity: number = 0;
+  @State dialogStatusDetailTranslateY: number = -6;
   @State dialogTesting: boolean = false;
   @State dialogSaving: boolean = false;
   @State dialogBackdropOpacity: number = 0;
@@ -100,16 +111,19 @@ export struct NetworkFolderPage {
   @State cacheFileDetails: NetworkFolderDownloadCacheDetail[] = [];
   private cacheReturnView: string = 'connections';
   private floatingCapsuleTimer: number = -1;
+  private entryNameMarqueeTimer: number = -1;
 
   aboutToAppear(): void {
     void ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, undefined, (newState: ThemeAwareState) => {
       this.themeState = newState;
     });
+    this.startEntryNameMarqueeTicker();
   }
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     this.hideFloatingCapsuleImmediately();
+    this.stopEntryNameMarqueeTicker();
   }
 
   private handleTitleBarBack(): boolean {
@@ -133,9 +147,44 @@ export struct NetworkFolderPage {
   }
 
   private color(type: 'background' | 'panel_background' | 'comp_background_tertiary' | 'comp_background_secondary' |
-    'text_primary' | 'text_secondary' | 'text_muted' | 'text_white' | 'button_secondary' |
+    'text_primary' | 'text_secondary' | 'text_muted' | 'text_white' | 'text_black' | 'button_secondary' |
     'button_text_secondary' | 'icon_primary' | 'accent_primary'): Resource {
     return ThemeAwareHelper.getTestManagementThemedColor(type, this.themeState.currentTheme);
+  }
+
+  private startEntryNameMarqueeTicker(): void {
+    if (this.entryNameMarqueeTimer >= 0) {
+      clearInterval(this.entryNameMarqueeTimer);
+      this.entryNameMarqueeTimer = -1;
+    }
+    this.entryNameMarqueeTimer = setInterval(() => {
+      if (this.viewMode !== 'browser' || this.entries.length === 0) {
+        return;
+      }
+      this.entryNameMarqueeTick = (this.entryNameMarqueeTick + 1) % 4096;
+    }, ENTRY_NAME_MARQUEE_INTERVAL_MS);
+  }
+
+  private stopEntryNameMarqueeTicker(): void {
+    if (this.entryNameMarqueeTimer < 0) {
+      return;
+    }
+    clearInterval(this.entryNameMarqueeTimer);
+    this.entryNameMarqueeTimer = -1;
+  }
+
+  private getMarqueeDisplayText(sourceText: string, windowSize: number): string {
+    const normalizedText = sourceText.trim();
+    if (normalizedText.length <= 0) {
+      return '';
+    }
+    if (this.viewMode !== 'browser' || normalizedText.length <= windowSize) {
+      return normalizedText;
+    }
+    const paddedText = `${normalizedText}${ENTRY_NAME_MARQUEE_GAP}`;
+    const start = this.entryNameMarqueeTick % paddedText.length;
+    const doubledText = `${paddedText}${paddedText}`;
+    return doubledText.substring(start, start + windowSize);
   }
 
   private async initializePage(): Promise<void> {
@@ -489,6 +538,7 @@ export struct NetworkFolderPage {
       if (this.viewMode === 'cache') {
         this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
       }
+      this.markEntryCached(entry.relativePath, result.localPath);
       await this.loadDirectory(false);
       logger.info(TAG, `远程文件缓存完成：${entry.relativePath}`);
     } catch (error) {
@@ -512,25 +562,356 @@ export struct NetworkFolderPage {
         this.showToast(result.message);
         return;
       }
-
-      AppStorage.setOrCreate('pendingFileUri', result.fileUri);
-      AppStorage.setOrCreate('pendingFileType', entry.name);
-      AppStorage.setOrCreate('pendingFileCategory', result.importCategory);
-      AppStorage.setOrCreate('pendingFileSource', 'network_folder');
-      AppStorage.setOrCreate('pendingFileTarget', 'download_dir');
-      AppStorage.setOrCreate('pendingFileDisplayName', entry.name);
-      AppStorage.setOrCreate('fileImportPending', true);
-
-      const navParam: NetworkFolderImportNavParam = {
-        fromPage: 'NetworkFolderPage',
-        timestamp: Date.now()
-      };
-      this.pathStack.pushPathByName('DataManagementPage', navParam);
-      this.statusMessage = `已准备导入文件：${entry.name}`;
-      logger.info(TAG, `远程文件已交给数据管理页导入：${entry.relativePath}，分类 ${result.importCategory}`);
+      this.dispatchImportFromNetworkFolder(result.fileUri, entry.name, result.importCategory);
+      this.markEntryCached(entry.relativePath, result.localPath);
+      logger.info(TAG, `远程文件导入任务已分发：${entry.relativePath}，分类 ${result.importCategory}`);
     } catch (error) {
       logger.error(TAG, `导入远程文件异常：${String(error)}`);
       this.showToast(`导入失败：${String(error)}`);
+    } finally {
+      this.isCaching = false;
+    }
+  }
+
+  private cloneEntryForState(entry: NetworkFolderEntry): NetworkFolderEntry {
+    return {
+      key: entry.key,
+      name: entry.name,
+      relativePath: entry.relativePath,
+      actualPath: entry.actualPath,
+      size: entry.size,
+      isDirectory: entry.isDirectory,
+      lastModified: entry.lastModified,
+      etag: entry.etag,
+      contentType: entry.contentType,
+      permissions: entry.permissions,
+      importCategory: entry.importCategory,
+      cacheStatus: entry.cacheStatus,
+      cachedLocalPath: entry.cachedLocalPath,
+      versionTag: entry.versionTag
+    };
+  }
+
+  private markEntryCached(relativePath: string, localPath: string): void {
+    if (relativePath.length === 0 || localPath.length === 0) {
+      return;
+    }
+    const nextEntries: NetworkFolderEntry[] = [];
+    for (const item of this.entries) {
+      const cloned = this.cloneEntryForState(item);
+      if (!cloned.isDirectory && cloned.relativePath === relativePath) {
+        cloned.cacheStatus = 'cached';
+        cloned.cachedLocalPath = localPath;
+      }
+      nextEntries.push(cloned);
+    }
+    this.entries = nextEntries;
+  }
+
+  private markEntryCacheRemoved(relativePath: string): void {
+    if (relativePath.length === 0) {
+      return;
+    }
+    const nextEntries: NetworkFolderEntry[] = [];
+    for (const item of this.entries) {
+      const cloned = this.cloneEntryForState(item);
+      if (!cloned.isDirectory && cloned.relativePath === relativePath) {
+        cloned.cacheStatus = 'none';
+        cloned.cachedLocalPath = '';
+      }
+      nextEntries.push(cloned);
+    }
+    this.entries = nextEntries;
+  }
+
+  private async importCachedFile(detail: NetworkFolderDownloadCacheDetail): Promise<void> {
+    if (!detail.fileExists) {
+      this.showToast('缓存文件不存在，无法导入');
+      return;
+    }
+    const localUri = fileUri.getUriFromPath(detail.localPath);
+    this.dispatchImportFromNetworkFolder(localUri, detail.fileName, detail.importCategory);
+  }
+
+  private dispatchImportFromNetworkFolder(
+    fileUri: string,
+    fileName: string,
+    importCategory: NetworkFolderImportCategory
+  ): void {
+    if (this.shouldRouteToDownloadSyncImport(importCategory)) {
+      this.preparePendingImportForDownloadSync(fileUri, fileName, importCategory);
+      this.navigateToDataManagementForImport();
+      this.statusMessage = `已按 Download 同步逻辑导入：${fileName}`;
+      this.showToast('已按 Download 同步导入流程处理');
+      return;
+    }
+
+    this.preparePendingImportForMainMenu(fileUri, fileName, importCategory);
+    this.navigateToMainMenuForImport();
+    this.statusMessage = `已转交首页处理导入：${fileName}`;
+    this.showToast('已按首页导入流程处理');
+  }
+
+  private shouldRouteToDownloadSyncImport(importCategory: NetworkFolderImportCategory): boolean {
+    return importCategory === 'comic' || importCategory === 'ebook' || importCategory === 'pdf';
+  }
+
+  private clearPendingImportMarkers(): void {
+    AppStorage.delete('pendingFileUri');
+    AppStorage.delete('pendingFileType');
+    AppStorage.delete('pendingFileCategory');
+    AppStorage.delete('pendingFileSource');
+    AppStorage.delete('pendingFileTarget');
+    AppStorage.delete('pendingFileDisplayName');
+    AppStorage.delete('fileImportPending');
+
+    AppStorage.delete('pendingBackupUri');
+    AppStorage.delete('backupImportPending');
+    AppStorage.delete('pendingJsonUri');
+    AppStorage.delete('pendingFontUri');
+    AppStorage.delete('pendingCodeUri');
+    AppStorage.delete('pendingCodeLanguage');
+    AppStorage.delete('pendingAvifUri');
+  }
+
+  private preparePendingImportForDownloadSync(
+    fileUri: string,
+    fileName: string,
+    importCategory: NetworkFolderImportCategory
+  ): void {
+    this.clearPendingImportMarkers();
+    AppStorage.setOrCreate('pendingFileUri', fileUri);
+    AppStorage.setOrCreate('pendingFileType', fileName);
+    AppStorage.setOrCreate('pendingFileCategory', importCategory);
+    AppStorage.setOrCreate('pendingFileSource', 'network_folder');
+    AppStorage.setOrCreate('pendingFileTarget', 'download_dir');
+    AppStorage.setOrCreate('pendingFileDisplayName', fileName);
+    AppStorage.setOrCreate('fileImportPending', true);
+  }
+
+  private preparePendingImportForMainMenu(
+    fileUri: string,
+    fileName: string,
+    importCategory: NetworkFolderImportCategory
+  ): void {
+    this.clearPendingImportMarkers();
+
+    if (importCategory === 'backup') {
+      AppStorage.setOrCreate('pendingBackupUri', fileUri);
+      AppStorage.setOrCreate('pendingFileCategory', 'backup');
+      AppStorage.setOrCreate('backupImportPending', true);
+      return;
+    }
+
+    if (importCategory === 'json') {
+      AppStorage.setOrCreate('pendingJsonUri', fileUri);
+      AppStorage.setOrCreate('pendingFileCategory', 'json');
+      return;
+    }
+
+    if (importCategory === 'font') {
+      AppStorage.setOrCreate('pendingFontUri', fileUri);
+      AppStorage.setOrCreate('pendingFileCategory', 'font');
+      return;
+    }
+
+    if (importCategory === 'code') {
+      AppStorage.setOrCreate('pendingCodeUri', fileUri);
+      AppStorage.setOrCreate('pendingCodeLanguage', this.inferCodeLanguageForMainMenu(fileName));
+      AppStorage.setOrCreate('pendingFileCategory', 'code');
+      return;
+    }
+
+    if (importCategory === 'avif') {
+      AppStorage.setOrCreate('pendingAvifUri', fileUri);
+      AppStorage.setOrCreate('pendingFileCategory', 'avif');
+      return;
+    }
+
+    AppStorage.setOrCreate('pendingFileUri', fileUri);
+    AppStorage.setOrCreate('pendingFileType', fileName);
+    AppStorage.setOrCreate('pendingFileCategory', importCategory);
+  }
+
+  private inferCodeLanguageForMainMenu(fileName: string): string {
+    const extension = getNetworkFolderFileExtension(fileName);
+    if (extension === 'ts' || extension === 'ets' || extension === 'tsx') {
+      return 'typescript';
+    }
+    if (extension === 'js' || extension === 'jsx') {
+      return 'javascript';
+    }
+    if (extension === 'py') {
+      return 'python';
+    }
+    if (extension === 'java') {
+      return 'java';
+    }
+    if (extension === 'cpp' || extension === 'c' || extension === 'h' || extension === 'hpp') {
+      return 'cpp';
+    }
+    if (extension === 'cs') {
+      return 'csharp';
+    }
+    if (extension === 'go') {
+      return 'go';
+    }
+    if (extension === 'rs') {
+      return 'rust';
+    }
+    if (extension === 'swift') {
+      return 'swift';
+    }
+    if (extension === 'kt') {
+      return 'kotlin';
+    }
+    if (extension === 'rb') {
+      return 'ruby';
+    }
+    if (extension === 'php') {
+      return 'php';
+    }
+    if (extension === 'html' || extension === 'htm') {
+      return 'html';
+    }
+    if (extension === 'css' || extension === 'scss' || extension === 'less') {
+      return 'css';
+    }
+    if (extension === 'sql') {
+      return 'sql';
+    }
+    if (extension === 'sh' || extension === 'bash' || extension === 'zsh') {
+      return 'shell';
+    }
+    if (extension === 'ps1' || extension === 'bat' || extension === 'cmd') {
+      return 'powershell';
+    }
+    if (extension === 'json' || extension === 'json5' || extension === 'jsonc') {
+      return 'json';
+    }
+    if (extension === 'xml') {
+      return 'xml';
+    }
+    if (extension === 'yaml' || extension === 'yml') {
+      return 'yaml';
+    }
+    if (extension === 'md' || extension === 'markdown') {
+      return 'markdown';
+    }
+    if (extension === 'ini' || extension === 'conf' || extension === 'cfg' || extension === 'toml') {
+      return 'ini';
+    }
+    if (extension === 'lua') {
+      return 'lua';
+    }
+    if (extension === 'r') {
+      return 'r';
+    }
+    if (extension === 'dart') {
+      return 'dart';
+    }
+    if (extension === 'vue') {
+      return 'vue';
+    }
+    if (extension === 'svelte') {
+      return 'svelte';
+    }
+    return 'plaintext';
+  }
+
+  private navigateToDataManagementForImport(): void {
+    const navParam: NetworkFolderImportNavParam = {
+      fromPage: 'NetworkFolderPage',
+      timestamp: Date.now()
+    };
+    this.pathStack.pushPathByName('DataManagementPage', navParam);
+  }
+
+  private navigateToMainMenuForImport(): void {
+    try {
+      if (this.pathStack.size() > 0) {
+        this.pathStack.pop();
+        logger.info(TAG, '网络文件夹导入后返回首页：已从导航栈回退到 MainMenuPage');
+        return;
+      }
+    } catch (error) {
+      logger.warn(TAG, `网络文件夹导入后回退首页失败，尝试兜底跳转：${String(error)}`);
+    }
+
+    try {
+      this.pathStack.pushPathByName('MainMenuPage', undefined);
+      logger.info(TAG, '网络文件夹导入后返回首页：使用兜底 pushPathByName(MainMenuPage)');
+    } catch (error) {
+      logger.error(TAG, `网络文件夹导入后兜底跳转首页失败：${String(error)}`);
+      this.showToast('请手动返回首页继续导入');
+    }
+  }
+
+  private resolveParentDirectory(filePath: string): string {
+    const normalizedPath = filePath.trim().replace(/\\/g, '/');
+    const lastSlash = normalizedPath.lastIndexOf('/');
+    if (lastSlash <= 0) {
+      return normalizedPath;
+    }
+    return normalizedPath.substring(0, lastSlash);
+  }
+
+  private async openCachedFileLocation(detail: NetworkFolderDownloadCacheDetail): Promise<void> {
+    if (!detail.fileExists) {
+      this.showToast('缓存文件不存在，无法打开位置');
+      return;
+    }
+    try {
+      const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        throw new Error('无法获取应用上下文');
+      }
+      const parentPath = this.resolveParentDirectory(detail.localPath);
+      const want: Want = {
+        action: 'ohos.want.action.viewData',
+        uri: fileUri.getUriFromPath(parentPath)
+      };
+      await context.startAbility(want);
+      this.statusMessage = `已打开文件所在位置：${detail.fileName}`;
+      this.showToast('已打开文件所在位置');
+    } catch (error) {
+      logger.warn(TAG, `打开文件所在位置失败，尝试打开文件本身: ${String(error)}`);
+      try {
+        const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+        if (!context) {
+          throw new Error('无法获取应用上下文');
+        }
+        const fallbackWant: Want = {
+          action: 'ohos.want.action.viewData',
+          uri: fileUri.getUriFromPath(detail.localPath)
+        };
+        await context.startAbility(fallbackWant);
+        this.showToast('已打开缓存文件');
+      } catch (fallbackError) {
+        logger.error(TAG, `打开缓存文件失败：${String(fallbackError)}`);
+        this.showToast(`打开失败：${String(fallbackError)}`);
+      }
+    }
+  }
+
+  private async deleteCachedFile(detail: NetworkFolderDownloadCacheDetail): Promise<void> {
+    if (this.isCaching) {
+      return;
+    }
+    logger.info(TAG, `开始删除缓存文件：${detail.fileName} (${detail.relativePath})`);
+    this.isCaching = true;
+    try {
+      const removed = await this.manager.deleteCachedFile(detail.connectionId, detail.relativePath, detail.localPath);
+      if (this.selectedConnectionId === detail.connectionId) {
+        this.markEntryCacheRemoved(detail.relativePath);
+      }
+      this.refreshCacheStats(this.selectedConnectionId.length > 0 ? this.selectedConnectionId : undefined);
+      this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
+      this.statusMessage = removed ? `缓存文件已删除：${detail.fileName}` : `缓存记录不存在：${detail.fileName}`;
+      this.showToast(removed ? '缓存文件已删除' : '缓存记录不存在，页面已刷新');
+    } catch (error) {
+      logger.error(TAG, `删除缓存文件失败：${String(error)}`);
+      this.showToast(`删除失败：${String(error)}`);
     } finally {
       this.isCaching = false;
     }
@@ -603,6 +984,24 @@ export struct NetworkFolderPage {
     });
   }
 
+  private showDeleteCachedFileDialog(detail: NetworkFolderDownloadCacheDetail): void {
+    AlertDialog.show({
+      title: '删除缓存文件',
+      message: `确定删除缓存文件“${detail.fileName}”吗？该操作会移除本地缓存文件和缓存记录。`,
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: DANGER_COLOR,
+        action: () => {
+          void this.deleteCachedFile(detail);
+        }
+      }
+    });
+  }
+
   private async deleteConnection(connection: NetworkFolderConnection): Promise<void> {
     logger.info(TAG, `开始删除连接：${connection.name}`);
     try {
@@ -660,6 +1059,11 @@ export struct NetworkFolderPage {
 
   private showConnectionDialog(): void {
     this.dialogMounted = true;
+    this.dialogStatusExpanded = false;
+    this.dialogStatusDetailVisible = false;
+    this.dialogStatusDetailHeight = 0;
+    this.dialogStatusDetailOpacity = 0;
+    this.dialogStatusDetailTranslateY = -6;
     this.dialogBackdropOpacity = 0;
     this.dialogOpacity = 0;
     this.dialogScale = 0.96;
@@ -697,12 +1101,53 @@ export struct NetworkFolderPage {
     void this.hideConnectionDialog();
   }
 
+  private getDialogStatusExpandedHeight(): number {
+    const trimmed = this.dialogStatusMessage.trim();
+    const estimatedLines = Math.max(2, Math.ceil(trimmed.length / 22));
+    const targetHeight = 18 + estimatedLines * 18;
+    return Math.max(62, Math.min(184, targetHeight));
+  }
+
+  private toggleDialogStatusExpand(): void {
+    if (this.dialogStatusExpanded) {
+      this.dialogStatusExpanded = false;
+      animateTo({
+        duration: 180,
+        curve: Curve.EaseInOut,
+        onFinish: () => {
+          this.dialogStatusDetailVisible = false;
+        }
+      }, () => {
+        this.dialogStatusDetailHeight = 0;
+        this.dialogStatusDetailOpacity = 0;
+        this.dialogStatusDetailTranslateY = -6;
+      });
+      return;
+    }
+
+    this.expandDialogStatusDetail();
+  }
+
+  private expandDialogStatusDetail(): void {
+    this.dialogStatusExpanded = true;
+    this.dialogStatusDetailVisible = true;
+    this.dialogStatusDetailHeight = 0;
+    this.dialogStatusDetailOpacity = 0;
+    this.dialogStatusDetailTranslateY = -6;
+    const targetHeight = this.getDialogStatusExpandedHeight();
+    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.dialogStatusDetailHeight = targetHeight;
+      this.dialogStatusDetailOpacity = 1;
+      this.dialogStatusDetailTranslateY = 0;
+    });
+  }
+
   private validateDraft(draft: NetworkFolderConnectionDraft): boolean {
     if (draft.protocol === 'webdav' && draft.serverUrl.trim().length === 0) {
       this.showToast('请输入 WebDAV 服务地址');
       return false;
     }
-    if ((draft.protocol === 'ftp' || draft.protocol === 'ftps' || draft.protocol === 'smb') &&
+    if ((draft.protocol === 'ftp' || draft.protocol === 'ftps' || draft.protocol === 'sftp' || draft.protocol === 'smb') &&
       draft.host.trim().length === 0) {
       this.showToast('请输入服务器主机地址');
       return false;
@@ -831,6 +1276,7 @@ export struct NetworkFolderPage {
     } catch (error) {
       logger.error(TAG, `保存连接失败：${String(error)}`);
       this.dialogStatusMessage = `保存失败：${String(error)}`;
+      this.expandDialogStatusDetail();
       this.showToast(`保存失败：${String(error)}`);
     } finally {
       this.dialogSaving = false;
@@ -853,11 +1299,15 @@ export struct NetworkFolderPage {
       this.statusMessage = result.success
         ? `连接测试成功：${connection.name}`
         : `连接测试失败：${result.message}`;
+      if (!result.success) {
+        this.expandDialogStatusDetail();
+      }
       this.showToast(result.success ? '连接测试成功' : '连接测试失败');
       logger.info(TAG, `连接测试结束：${connectionName}，结果 ${result.success ? '成功' : '失败'}，消息：${result.message}`);
     } catch (error) {
       logger.error(TAG, `连接测试异常：${String(error)}`);
       this.dialogStatusMessage = `连接测试失败：${String(error)}`;
+      this.expandDialogStatusDetail();
       this.showToast(`连接测试失败：${String(error)}`);
     } finally {
       this.dialogTesting = false;
@@ -877,6 +1327,10 @@ export struct NetworkFolderPage {
     } else if (protocol === 'ftps') {
       nextDraft.port = 990;
       nextDraft.passive = true;
+      nextDraft.verifySSL = true;
+    } else if (protocol === 'sftp') {
+      nextDraft.port = 22;
+      nextDraft.passive = false;
       nextDraft.verifySSL = true;
     } else {
       nextDraft.port = 445;
@@ -1030,36 +1484,211 @@ export struct NetworkFolderPage {
     if (protocol === 'webdav') {
       return $r('sys.symbol.arrow_clockwise');
     }
+    if (protocol === 'sftp') {
+      return $r('sys.symbol.lock_fill');
+    }
     if (protocol === 'smb') {
       return $r('sys.symbol.externaldrive_fill');
     }
     return $r('sys.symbol.folder');
   }
 
-  private getFileSymbol(entry: NetworkFolderEntry): Resource {
-    if (entry.isDirectory) {
+  private isExtensionMatch(extension: string, candidates: string[]): boolean {
+    if (extension.length <= 0) {
+      return false;
+    }
+    for (let index = 0; index < candidates.length; index++) {
+      if (extension === candidates[index]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isComicArchiveExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'lzma']);
+  }
+
+  private isEBookExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['epub', 'mobi', 'azw', 'azw3', 'txt']);
+  }
+
+  private isBackupExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['mxbak', 'mxbackup']);
+  }
+
+  private isJsonExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['json', 'json5', 'jsonc']);
+  }
+
+  private isImageExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif', 'heic', 'heif', 'svg']);
+  }
+
+  private isVideoExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['mp4', 'm4v', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'ts']);
+  }
+
+  private isAudioExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['mp3', 'flac', 'aac', 'ogg', 'wav', 'm4a', 'opus']);
+  }
+
+  private isFontExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['ttf', 'otf', 'ttc', 'woff', 'woff2']);
+  }
+
+  private isDocumentExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['doc', 'docx', 'rtf', 'odt', 'pages']);
+  }
+
+  private isSpreadsheetExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['xls', 'xlsx', 'csv', 'ods', 'numbers']);
+  }
+
+  private isPresentationExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['ppt', 'pptx', 'odp', 'key']);
+  }
+
+  private isArchiveExtension(extension: string): boolean {
+    return this.isExtensionMatch(extension, ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'lzma', 'cab', 'iso']);
+  }
+
+  private isCodeExtension(extension: string): boolean {
+    return this.isExtensionMatch(
+      extension,
+      [
+        'ets', 'ts', 'tsx', 'js', 'jsx',
+        'jsonc', 'xml', 'yaml', 'yml', 'md', 'markdown',
+        'java', 'kt', 'c', 'cpp', 'h', 'hpp', 'py', 'rs',
+        'cs', 'go', 'swift', 'rb', 'php', 'html', 'htm',
+        'css', 'scss', 'less', 'sql', 'sh', 'bash', 'zsh',
+        'ps1', 'bat', 'cmd', 'ini', 'conf', 'cfg', 'toml',
+        'lua', 'r', 'dart', 'vue', 'svelte'
+      ]
+    );
+  }
+
+  private getSymbolForFileName(fileName: string, isDirectory: boolean): Resource {
+    if (isDirectory) {
       return $r('sys.symbol.folder_fill');
     }
-    if (entry.importCategory === 'ebook') {
+
+    const extension = getNetworkFolderFileExtension(fileName);
+    if (this.isBackupExtension(extension)) {
+      return $r('sys.symbol.externaldrive_fill');
+    }
+    if (this.isComicArchiveExtension(extension)) {
+      return $r('sys.symbol.rectangle_stack');
+    }
+    if (extension === 'pdf') {
+      return $r('sys.symbol.doc_plaintext_2');
+    }
+    if (this.isEBookExtension(extension)) {
       return $r('sys.symbol.text_book_closed');
     }
+    if (this.isJsonExtension(extension)) {
+      return $r('sys.symbol.doc_text');
+    }
+    if (this.isFontExtension(extension)) {
+      return $r('sys.symbol.textformat');
+    }
+    if (this.isImageExtension(extension)) {
+      return $r('sys.symbol.shutter_photo');
+    }
+    if (this.isVideoExtension(extension)) {
+      return $r('sys.symbol.play_circle');
+    }
+    if (this.isAudioExtension(extension)) {
+      return $r('sys.symbol.play_fill');
+    }
+    if (this.isSpreadsheetExtension(extension)) {
+      return $r('sys.symbol.doc_text');
+    }
+    if (this.isPresentationExtension(extension)) {
+      return $r('sys.symbol.doc_plaintext');
+    }
+    if (this.isDocumentExtension(extension)) {
+      return $r('sys.symbol.doc_plaintext');
+    }
+    if (this.isCodeExtension(extension)) {
+      return $r('sys.symbol.doc');
+    }
+    if (this.isArchiveExtension(extension)) {
+      return $r('sys.symbol.archivebox');
+    }
     return $r('sys.symbol.doc_plaintext_fill');
+  }
+
+  private getFileSymbol(entry: NetworkFolderEntry): Resource {
+    return this.getSymbolForFileName(entry.name, entry.isDirectory);
+  }
+
+  private getCacheFileSymbol(fileName: string, fileExists: boolean): Resource {
+    if (!fileExists) {
+      return $r('sys.symbol.exclamationmark_triangle_fill');
+    }
+    return this.getSymbolForFileName(fileName, false);
+  }
+
+  private getImportLabelByCategory(category: string, fileName: string): string {
+    if (category === 'comic') {
+      return '漫画归档';
+    }
+    if (category === 'ebook') {
+      return getNetworkFolderFileExtension(fileName) === 'txt' ? 'TXT 小说' : '电子书';
+    }
+    if (category === 'pdf') {
+      return 'PDF';
+    }
+    if (category === 'backup') {
+      return '备份文件';
+    }
+    if (category === 'json') {
+      return 'JSON 配置';
+    }
+    if (category === 'font') {
+      return '字体文件';
+    }
+    if (category === 'code') {
+      return '代码文件';
+    }
+    if (category === 'avif') {
+      return 'AVIF 图片';
+    }
+    if (category === 'image') {
+      return '图片文件';
+    }
+
+    const extension = getNetworkFolderFileExtension(fileName);
+    if (this.isDocumentExtension(extension)) {
+      return '文档文件';
+    }
+    if (this.isSpreadsheetExtension(extension)) {
+      return '表格文件';
+    }
+    if (this.isPresentationExtension(extension)) {
+      return '演示文件';
+    }
+    if (this.isVideoExtension(extension)) {
+      return '视频文件';
+    }
+    if (this.isAudioExtension(extension)) {
+      return '音频文件';
+    }
+    if (this.isArchiveExtension(extension)) {
+      return '归档文件';
+    }
+    if (extension.length > 0) {
+      return `${extension.toUpperCase()} 文件`;
+    }
+    return '可缓存文件';
   }
 
   private getImportLabel(entry: NetworkFolderEntry): string {
     if (entry.isDirectory) {
       return '文件夹';
     }
-    if (entry.importCategory === 'comic') {
-      return '漫画归档';
-    }
-    if (entry.importCategory === 'ebook') {
-      return '电子书';
-    }
-    if (entry.importCategory === 'pdf') {
-      return 'PDF';
-    }
-    return '暂不支持导入';
+    return this.getImportLabelByCategory(entry.importCategory, entry.name);
   }
 
   private getCacheStatusLabel(entry: NetworkFolderEntry): string {
@@ -1421,6 +2050,21 @@ export struct NetworkFolderPage {
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor('rgba(255, 255, 255, 0.78)')
+    }
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder private buildCacheHeaderOverviewStat(label: string, value: string) {
+    Column({ space: 4 }) {
+      Text(value)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.themeState.isLightTheme() ? this.color('text_black') : this.color('text_primary'))
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.themeState.isLightTheme() ? this.color('text_black') : this.color('text_secondary'))
     }
     .alignItems(HorizontalAlign.Start)
   }
@@ -1887,7 +2531,7 @@ export struct NetworkFolderPage {
     Column({ space: 8 }) {
       Row({ space: 10 }) {
         Column() {
-          SymbolGlyph(detail.fileExists ? $r('sys.symbol.doc_plaintext_fill') : $r('sys.symbol.exclamationmark_triangle_fill'))
+          SymbolGlyph(this.getCacheFileSymbol(detail.fileName, detail.fileExists))
             .fontSize(20)
             .fontColor([detail.fileExists ? this.color('icon_primary') : DANGER_COLOR])
         }
@@ -1911,6 +2555,12 @@ export struct NetworkFolderPage {
             .fontColor(this.color('text_secondary'))
             .width('100%')
             .maxLines(1)
+          Text(`${this.getImportLabelByCategory(detail.importCategory, detail.fileName)} · ${detail.fileExists ? '可导入' : '文件缺失'}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(detail.fileExists ? this.color('text_secondary') : DANGER_COLOR)
+            .width('100%')
+            .maxLines(1)
           Text(`远程路径：${detail.relativePath}`)
             .fontSize(11)
             .fontFamily(this.appFontFamily)
@@ -1932,6 +2582,20 @@ export struct NetworkFolderPage {
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        this.buildActionButton('打开', $r('sys.symbol.folder'), ACTION_STYLE_NEUTRAL, detail.fileExists, () => {
+          void this.openCachedFileLocation(detail);
+        })
+        this.buildActionButton('导入', $r('sys.symbol.square_and_arrow_down'), ACTION_STYLE_INFO,
+          detail.fileExists && detail.importCategory !== 'unsupported', () => {
+          void this.importCachedFile(detail);
+        })
+        this.buildActionButton('删除', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
+          this.showDeleteCachedFileDialog(detail);
+        })
       }
       .width('100%')
     }
@@ -1988,20 +2652,20 @@ export struct NetworkFolderPage {
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
               .fontFamily(this.appFontFamily)
-              .fontColor(this.color('text_primary'))
+              .fontColor(this.themeState.isLightTheme() ? this.color('text_black') : this.color('text_primary'))
               .width('100%')
             Text(this.getCacheDetailSubtitle())
               .fontSize(12)
               .fontFamily(this.appFontFamily)
-              .fontColor(this.color('text_secondary'))
+              .fontColor(this.themeState.isLightTheme() ? this.color('text_black') : this.color('text_secondary'))
               .width('100%')
           }
           .width('100%')
 
           Row({ space: 12 }) {
-            this.buildOverviewStat('目录缓存', `${this.cacheDetailStats.directoryCount}`)
-            this.buildOverviewStat('文件缓存', `${this.cacheDetailStats.fileCount}`)
-            this.buildOverviewStat('占用空间', this.formatBytes(this.cacheDetailStats.totalBytes))
+            this.buildCacheHeaderOverviewStat('目录缓存', `${this.cacheDetailStats.directoryCount}`)
+            this.buildCacheHeaderOverviewStat('文件缓存', `${this.cacheDetailStats.fileCount}`)
+            this.buildCacheHeaderOverviewStat('占用空间', this.formatBytes(this.cacheDetailStats.totalBytes))
           }
           .width('100%')
         }
@@ -2498,7 +3162,7 @@ export struct NetworkFolderPage {
         .borderRadius(16)
 
         Column({ space: 4 }) {
-          Text(entry.name)
+          Text(this.getMarqueeDisplayText(entry.name, 28))
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
@@ -2506,7 +3170,7 @@ export struct NetworkFolderPage {
             .width('100%')
             .maxLines(1)
           Text(entry.isDirectory
-            ? `文件夹 · ${entry.relativePath}`
+            ? this.getMarqueeDisplayText(`文件夹 · ${entry.relativePath}`, 40)
             : `${this.formatBytes(entry.size)} · ${this.formatDateTime(entry.lastModified)}`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
@@ -2542,7 +3206,7 @@ export struct NetworkFolderPage {
             void this.openEntry(entry);
           })
         } else {
-          this.buildActionButton('缓存', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_NEUTRAL, true, () => {
+          this.buildActionButton('缓存', $r('sys.symbol.arrow_down_circle'), ACTION_STYLE_NEUTRAL, true, () => {
             void this.cacheEntry(entry);
           })
           this.buildActionButton('导入', $r('sys.symbol.square_and_arrow_down'), ACTION_STYLE_INFO,
@@ -2743,31 +3407,80 @@ export struct NetworkFolderPage {
     })
   }
   @Builder private buildDialogStatusCard() {
-    Row({ space: 10 }) {
-      Column() {
-        if (this.dialogTesting || this.dialogSaving) {
-          LoadingProgress()
-            .width(16)
-            .height(16)
-            .color(ACCENT_COLOR)
-        } else {
-          SymbolGlyph($r('sys.symbol.info_circle'))
-            .fontSize(16)
-            .fontColor([this.color('accent_primary')])
+    Column({ space: 8 }) {
+      Row({ space: 10 }) {
+        Column() {
+          if (this.dialogTesting || this.dialogSaving) {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color(ACCENT_COLOR)
+          } else {
+            SymbolGlyph($r('sys.symbol.info_circle'))
+              .fontSize(16)
+              .fontColor([this.color('accent_primary')])
+          }
         }
-      }
-      .width(28)
-      .height(28)
-      .justifyContent(FlexAlign.Center)
-      .backgroundColor(this.color('comp_background_tertiary'))
-      .borderRadius(14)
+        .width(28)
+        .height(28)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(14)
 
-      Text(this.dialogStatusMessage)
+        Column({ space: 2 }) {
+          Text('状态信息')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .width('100%')
+          Text(this.dialogStatusMessage)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
         .layoutWeight(1)
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(this.color('text_secondary'))
-        .maxLines(3)
+        .alignItems(HorizontalAlign.Start)
+
+        Button() {
+          Row({ space: 4 }) {
+            Text(this.dialogStatusExpanded ? '收起' : '展开')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+            SymbolGlyph(this.dialogStatusExpanded ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_right'))
+              .fontSize(12)
+              .fontColor([this.color('icon_primary')])
+          }
+        }
+        .height(30)
+        .padding({ left: 10, right: 10 })
+        .borderRadius(15)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .onClick(() => {
+          this.toggleDialogStatusExpand();
+        })
+      }
+      .width('100%')
+
+      if (this.dialogStatusDetailVisible || this.dialogStatusExpanded) {
+        Column() {
+          Text(this.dialogStatusMessage)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .maxLines(12)
+            .width('100%')
+        }
+        .width('100%')
+        .height(this.dialogStatusDetailHeight)
+        .opacity(this.dialogStatusDetailOpacity)
+        .translate({ x: 0, y: this.dialogStatusDetailTranslateY })
+        .clip(true)
+      }
     }
     .width('100%')
     .padding(12)
@@ -2785,35 +3498,18 @@ export struct NetworkFolderPage {
         })
 
       Column({ space: 16 }) {
-        Row() {
-          Column({ space: 4 }) {
-            Text(this.dialogMode === 'create' ? '新建网络连接' : '编辑网络连接')
-              .fontSize(20)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(this.appFontFamily)
-              .fontColor(this.color('text_primary'))
-            Text(this.dialogMode === 'create'
-              ? '填写连接信息，保存后直接进入远程文件浏览页。'
-              : '更新连接信息，测试通过后可继续浏览和导入。')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(this.color('text_secondary'))
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-
-          Button() {
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(16)
-              .fontColor([this.color('text_primary')])
-          }
-          .width(38)
-          .height(38)
-          .borderRadius(19)
-          .backgroundColor(this.color('comp_background_tertiary'))
-          .onClick(() => {
-            this.closeConnectionDialog();
-          })
+        Column({ space: 4 }) {
+          Text(this.dialogMode === 'create' ? '新建网络连接' : '编辑网络连接')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+          Text(this.dialogMode === 'create'
+            ? '填写连接信息，保存后直接进入远程文件浏览页。'
+            : '更新连接信息，测试通过后可继续浏览和导入。')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
         }
         .width('100%')
 
@@ -2844,7 +3540,9 @@ export struct NetworkFolderPage {
                 })
             } else {
               this.buildDialogField($r('sys.symbol.desktop'), '主机地址',
-                this.dialogDraft.protocol === 'smb' ? '192.168.1.10' : 'ftp.example.com',
+                this.dialogDraft.protocol === 'smb'
+                  ? '192.168.1.10'
+                  : (this.dialogDraft.protocol === 'sftp' ? 'sftp.example.com' : 'ftp.example.com'),
                 this.dialogDraft.host, (value: string) => {
                   const nextDraft = this.cloneDraft(this.dialogDraft);
                   nextDraft.host = value;
@@ -2970,7 +3668,7 @@ export struct NetworkFolderPage {
         }
         .width('100%')
         .layoutWeight(1)
-        .scrollBar(BarState.Auto)
+        .scrollBar(BarState.Off)
 
         Row({ space: 10 }) {
           this.buildActionButton('取消', $r('sys.symbol.xmark'), ACTION_STYLE_NEUTRAL, true, () => {

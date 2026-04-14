@@ -27,11 +27,22 @@ import { getChangelogManager } from './Framework/Managers/ChangelogManager';
 import { getAutoBackupScheduler } from './Framework/WebDAV/WebDAVAutoBackupScheduler';
 import { widgetDataSync } from './Utils/WidgetDataSync';
 import { getUnifiedDetailPageEnforcer } from './Framework/Enforcement/UnifiedDetailPageEnforcer';
-import { getAppInitializationManager, InitPhase } from './Framework/Managers/AppInitializationManager';
+import { InitPhase } from './Framework/Managers/AppInitializationManager';
 import { getCrashRecorderService } from './Framework/Debug/CrashRecorderService';
 import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
 import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
 import { getHoldingAwarenessManager } from './Framework/Managers/HoldingAwarenessManager';
+import {
+  ngfContentSourceIntegrationFacade,
+  ngfContentWorkflowIntegrationFacade,
+  ngfCoreEventBridge,
+  ngfCoreIntegrationFacade,
+  ngfDataIntegrationFacade,
+  ngfLifecycleOrchestratorFacade,
+  ngfPlatformOhosIntegrationFacade,
+  ngfSettingsStoreFacade,
+  ngfUiShellIntegrationFacade
+} from './Framework/NGF';
 
 export default class EntryAbility extends UIAbility {
 
@@ -90,20 +101,93 @@ export default class EntryAbility extends UIAbility {
    * 所有初始化按顺序执行，并通过AppInitializationManager报告进度
    */
   private async runManagedInitialization(): Promise<void> {
-    const initManager = getAppInitializationManager();
+    const initManager = ngfLifecycleOrchestratorFacade;
     initManager.startInitialization();
+    ngfCoreEventBridge.publishInitializationState(InitPhase.NOT_STARTED, 'started', '应用初始化流程已启动');
     
     // 阶段1：设置全局上下文
     initManager.beginPhase(InitPhase.CONTEXT_SETUP);
     try {
       setContext(this.context);
       uiContextManager.setAbilityContext(this.context);
+      const ngfIntegrated = ngfCoreIntegrationFacade.bootstrap();
+      if (ngfIntegrated) {
+        logger.info('EntryAbility', '✅ NGF Core 运行时集成完成');
+        ngfCoreEventBridge.publishInitializationState(InitPhase.CONTEXT_SETUP, 'integrated', 'NGF Core 运行时集成完成');
+      } else {
+        logger.warn('EntryAbility', '⚠️ NGF Core 运行时集成失败，继续使用旧路径');
+        ngfCoreEventBridge.publishInitializationState(InitPhase.CONTEXT_SETUP, 'fallback', 'NGF Core 集成失败，使用旧路径');
+      }
+
+      const ngfPlatformIntegrated = ngfPlatformOhosIntegrationFacade.bootstrap();
+      if (ngfPlatformIntegrated) {
+        logger.info('EntryAbility', '✅ NGF Platform OHOS 运行时集成完成');
+        ngfCoreEventBridge.publishInitializationState(InitPhase.CONTEXT_SETUP, 'platform_integrated', 'NGF Platform OHOS 运行时集成完成');
+      } else {
+        logger.warn('EntryAbility', '⚠️ NGF Platform OHOS 运行时集成失败，继续使用旧路径');
+        ngfCoreEventBridge.publishInitializationState(InitPhase.CONTEXT_SETUP, 'platform_fallback', 'NGF Platform OHOS 集成失败，使用旧路径');
+      }
+
+      const ngfUiShellIntegrated = ngfUiShellIntegrationFacade.bootstrap();
+      if (ngfUiShellIntegrated) {
+        logger.info('EntryAbility', '✅ NGF UI Shell 运行时集成完成');
+        ngfCoreEventBridge.publishInitializationState(InitPhase.CONTEXT_SETUP, 'ui_shell_integrated', 'NGF UI Shell 运行时集成完成');
+      } else {
+        logger.warn('EntryAbility', '⚠️ NGF UI Shell 运行时集成失败，继续使用旧路径');
+        ngfCoreEventBridge.publishInitializationState(InitPhase.CONTEXT_SETUP, 'ui_shell_fallback', 'NGF UI Shell 集成失败，使用旧路径');
+      }
+
+      const ngfDataIntegrated = ngfDataIntegrationFacade.bootstrap();
+      if (ngfDataIntegrated) {
+        logger.info('EntryAbility', '✅ NGF Data 运行时集成完成');
+        ngfCoreEventBridge.publishInitializationState(InitPhase.CONTEXT_SETUP, 'data_integrated', 'NGF Data 运行时集成完成');
+      } else {
+        logger.warn('EntryAbility', '⚠️ NGF Data 运行时集成失败，继续使用旧路径');
+        ngfCoreEventBridge.publishInitializationState(InitPhase.CONTEXT_SETUP, 'data_fallback', 'NGF Data 集成失败，使用旧路径');
+      }
+
+      const ngfContentWorkflowIntegrated = ngfContentWorkflowIntegrationFacade.bootstrap();
+      if (ngfContentWorkflowIntegrated) {
+        logger.info('EntryAbility', '✅ NGF Content Workflow 运行时集成完成');
+        ngfCoreEventBridge.publishInitializationState(
+          InitPhase.CONTEXT_SETUP,
+          'content_workflow_integrated',
+          'NGF Content Workflow 运行时集成完成'
+        );
+      } else {
+        logger.warn('EntryAbility', '⚠️ NGF Content Workflow 运行时集成失败，继续使用旧路径');
+        ngfCoreEventBridge.publishInitializationState(
+          InitPhase.CONTEXT_SETUP,
+          'content_workflow_fallback',
+          'NGF Content Workflow 集成失败，使用旧路径'
+        );
+      }
+
+      const ngfContentSourceIntegrated = ngfContentSourceIntegrationFacade.bootstrap();
+      if (ngfContentSourceIntegrated) {
+        logger.info('EntryAbility', '✅ NGF Content Source 运行时集成完成');
+        ngfCoreEventBridge.publishInitializationState(
+          InitPhase.CONTEXT_SETUP,
+          'content_source_integrated',
+          'NGF Content Source 运行时集成完成'
+        );
+      } else {
+        logger.warn('EntryAbility', '⚠️ NGF Content Source 运行时集成失败，继续使用旧路径');
+        ngfCoreEventBridge.publishInitializationState(
+          InitPhase.CONTEXT_SETUP,
+          'content_source_fallback',
+          'NGF Content Source 集成失败，使用旧路径'
+        );
+      }
+
       logger.info('EntryAbility', '✅ GlobalContext 和 UIContextManager 设置成功');
       initManager.completePhase(InitPhase.CONTEXT_SETUP);
+      this.publishInitPhaseCompleted(InitPhase.CONTEXT_SETUP, '上下文设置完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `❌ 上下文设置失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.CONTEXT_SETUP, errorMessage);
+      ngfCoreEventBridge.publishInitializationFailed(InitPhase.CONTEXT_SETUP, errorMessage);
       return; // 关键阶段失败，停止初始化
     }
 
@@ -114,10 +198,12 @@ export default class EntryAbility extends UIAbility {
       const deviceInfo = deviceManager.getDeviceInfo();
       logger.info('EntryAbility', `📱 设备适配: ${deviceInfo.deviceType}, ${deviceInfo.breakpoint}`);
       initManager.completePhase(InitPhase.DEVICE_ADAPTATION);
+      this.publishInitPhaseCompleted(InitPhase.DEVICE_ADAPTATION, '设备适配完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 设备适配失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.DEVICE_ADAPTATION, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.DEVICE_ADAPTATION, errorMessage);
       // 非关键阶段，继续执行
     }
 
@@ -142,6 +228,7 @@ export default class EntryAbility extends UIAbility {
       if (result.success) {
         logger.info('EntryAbility', `✅ 数据系统初始化成功，耗时: ${result.duration}ms`);
         initManager.completePhase(InitPhase.DATA_SYSTEM);
+        this.publishInitPhaseCompleted(InitPhase.DATA_SYSTEM, `数据系统初始化完成，耗时: ${result.duration}ms`);
       } else {
         throw new Error(result.errors.join(', '));
       }
@@ -149,6 +236,7 @@ export default class EntryAbility extends UIAbility {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `❌ 数据系统初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.DATA_SYSTEM, errorMessage);
+      ngfCoreEventBridge.publishInitializationFailed(InitPhase.DATA_SYSTEM, errorMessage);
       return; // 关键阶段失败，停止初始化
     }
 
@@ -157,10 +245,12 @@ export default class EntryAbility extends UIAbility {
     try {
       await this.initializeAppStorage();
       initManager.completePhase(InitPhase.SETTINGS);
+      this.publishInitPhaseCompleted(InitPhase.SETTINGS, '设置管理器初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `❌ 设置管理器初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.SETTINGS, errorMessage);
+      ngfCoreEventBridge.publishInitializationFailed(InitPhase.SETTINGS, errorMessage);
       return; // 关键阶段失败，停止初始化
     }
 
@@ -171,10 +261,12 @@ export default class EntryAbility extends UIAbility {
       await fontManager.initialize(this.context);
       logger.info('EntryAbility', '✅ 字体管理器初始化成功');
       initManager.completePhase(InitPhase.FONT_MANAGER);
+      this.publishInitPhaseCompleted(InitPhase.FONT_MANAGER, '字体管理器初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `❌ 字体管理器初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.FONT_MANAGER, errorMessage);
+      ngfCoreEventBridge.publishInitializationFailed(InitPhase.FONT_MANAGER, errorMessage);
       return; // 关键阶段失败，停止初始化
     }
 
@@ -185,10 +277,12 @@ export default class EntryAbility extends UIAbility {
       await proxyManager.initialize();
       logger.info('EntryAbility', `✅ 代理管理器初始化成功`);
       initManager.completePhase(InitPhase.PROXY_MANAGER);
+      this.publishInitPhaseCompleted(InitPhase.PROXY_MANAGER, '代理管理器初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 代理管理器初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.PROXY_MANAGER, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.PROXY_MANAGER, errorMessage);
     }
 
     // 阶段7：下载同步管理器
@@ -198,10 +292,12 @@ export default class EntryAbility extends UIAbility {
       await downloadSyncManager.initialize();
       logger.info('EntryAbility', '✅ 下载同步管理器初始化成功');
       initManager.completePhase(InitPhase.DOWNLOAD_SYNC);
+      this.publishInitPhaseCompleted(InitPhase.DOWNLOAD_SYNC, '下载同步管理器初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 下载同步管理器初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.DOWNLOAD_SYNC, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.DOWNLOAD_SYNC, errorMessage);
     }
 
     // 阶段8：下载管理器
@@ -213,10 +309,12 @@ export default class EntryAbility extends UIAbility {
       getNovelSourceValidator().setContext(this.context);
       logger.info('EntryAbility', '✅ 下载管理器 & 书源校验器初始化成功');
       initManager.completePhase(InitPhase.DOWNLOAD_MANAGER);
+      this.publishInitPhaseCompleted(InitPhase.DOWNLOAD_MANAGER, '下载管理器与书源校验器初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 下载管理器初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.DOWNLOAD_MANAGER, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.DOWNLOAD_MANAGER, errorMessage);
     }
 
     // 阶段9：自动备份调度器
@@ -226,10 +324,12 @@ export default class EntryAbility extends UIAbility {
       await scheduler.initialize(this.context);
       logger.info('EntryAbility', '✅ 自动备份调度器初始化成功');
       initManager.completePhase(InitPhase.AUTO_BACKUP);
+      this.publishInitPhaseCompleted(InitPhase.AUTO_BACKUP, '自动备份调度器初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 自动备份调度器初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.AUTO_BACKUP, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.AUTO_BACKUP, errorMessage);
     }
 
     // 阶段10：桌面卡片同步
@@ -239,10 +339,12 @@ export default class EntryAbility extends UIAbility {
       await widgetDataSync.syncAllData();
       logger.info('EntryAbility', '✅ 桌面卡片同步初始化成功');
       initManager.completePhase(InitPhase.WIDGET_SYNC);
+      this.publishInitPhaseCompleted(InitPhase.WIDGET_SYNC, '桌面卡片同步初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 桌面卡片同步初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.WIDGET_SYNC, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.WIDGET_SYNC, errorMessage);
     }
 
     // 阶段11：更新日志管理器
@@ -255,10 +357,12 @@ export default class EntryAbility extends UIAbility {
       }
       logger.info('EntryAbility', '✅ 更新日志管理器初始化成功');
       initManager.completePhase(InitPhase.CHANGELOG);
+      this.publishInitPhaseCompleted(InitPhase.CHANGELOG, '更新日志管理器初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 更新日志管理器初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.CHANGELOG, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.CHANGELOG, errorMessage);
     }
 
     // 初始化统一错误记录管理器（必须在 CrashRecorder/ErrorMonitor 之前）
@@ -278,10 +382,12 @@ export default class EntryAbility extends UIAbility {
       crashRecorder.cleanOldCrashLogs();
       logger.info('EntryAbility', '✅ 闪退记录服务初始化成功');
       initManager.completePhase(InitPhase.CRASH_RECORDER);
+      this.publishInitPhaseCompleted(InitPhase.CRASH_RECORDER, '闪退记录服务初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 闪退记录服务初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.CRASH_RECORDER, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.CRASH_RECORDER, errorMessage);
     }
 
     // 阶段13：错误监控服务（延迟500ms启动，确保日志系统完全就绪）
@@ -300,14 +406,25 @@ export default class EntryAbility extends UIAbility {
       }, 500);
       logger.info('EntryAbility', '✅ 错误监控服务初始化成功（将在500ms后启动）');
       initManager.completePhase(InitPhase.ERROR_MONITOR);
+      this.publishInitPhaseCompleted(InitPhase.ERROR_MONITOR, '错误监控服务初始化完成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn('EntryAbility', `⚠️ 错误监控服务初始化失败: ${errorMessage}`);
       initManager.failPhase(InitPhase.ERROR_MONITOR, errorMessage);
+      this.publishInitPhaseFailed(InitPhase.ERROR_MONITOR, errorMessage);
     }
 
     // 所有阶段完成
     initManager.markCompleted();
+    ngfCoreEventBridge.publishInitializationCompleted('应用初始化流程全部完成');
+  }
+
+  private publishInitPhaseCompleted(phase: InitPhase, message: string): void {
+    ngfCoreEventBridge.publishInitializationState(phase, 'completed', message);
+  }
+
+  private publishInitPhaseFailed(phase: InitPhase, errorMessage: string): void {
+    ngfCoreEventBridge.publishInitializationFailed(phase, errorMessage);
   }
   
   /**
@@ -334,14 +451,14 @@ export default class EntryAbility extends UIAbility {
       logger.info('EntryAbility', '✅ 动画设置管理器初始化完成');
 
       // 记录关键设置
-      const advancedMode = settingsManager.getBoolean(SettingKeys.ADVANCED_MODE_ENABLED, true);
+      const advancedMode = ngfSettingsStoreFacade.getBoolean(SettingKeys.ADVANCED_MODE_ENABLED, true);
       logger.info('EntryAbility', `✅ 高级模式设置: ${advancedMode}`);
       
       // 初始化后台模糊遮罩设置到AppStorage
-      const backgroundBlurEnabled = settingsManager.getBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, false);
-      const backgroundBlurBgType = settingsManager.getString(SettingKeys.BACKGROUND_BLUR_BG_TYPE, 'solid');
-      const backgroundBlurBgImage = settingsManager.getString(SettingKeys.BACKGROUND_BLUR_BG_IMAGE, '');
-      const backgroundBlurIconType = settingsManager.getString(SettingKeys.BACKGROUND_BLUR_ICON_TYPE, 'shield');
+      const backgroundBlurEnabled = ngfSettingsStoreFacade.getBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, false);
+      const backgroundBlurBgType = ngfSettingsStoreFacade.getString(SettingKeys.BACKGROUND_BLUR_BG_TYPE, 'solid');
+      const backgroundBlurBgImage = ngfSettingsStoreFacade.getString(SettingKeys.BACKGROUND_BLUR_BG_IMAGE, '');
+      const backgroundBlurIconType = ngfSettingsStoreFacade.getString(SettingKeys.BACKGROUND_BLUR_ICON_TYPE, 'shield');
       AppStorage.setOrCreate('backgroundBlurEnabled', backgroundBlurEnabled);
       AppStorage.setOrCreate('backgroundBlurBgType', backgroundBlurBgType);
       AppStorage.setOrCreate('backgroundBlurBgImage', backgroundBlurBgImage);
@@ -351,7 +468,7 @@ export default class EntryAbility extends UIAbility {
       logger.info('EntryAbility', `✅ 后台模糊遮罩设置: enabled=${backgroundBlurEnabled}, bgType=${backgroundBlurBgType}, iconType=${backgroundBlurIconType}`);
       
       // 初始化日志等级设置
-      const logOutputLevel = settingsManager.getNumber(SettingKeys.LOG_OUTPUT_LEVEL, 0); // 默认关闭
+      const logOutputLevel = ngfSettingsStoreFacade.getNumber(SettingKeys.LOG_OUTPUT_LEVEL, 0); // 默认关闭
       logger.initializeHilogLevelFromIndex(logOutputLevel);
       
       // 初始化并执行统一详情页强制覆盖

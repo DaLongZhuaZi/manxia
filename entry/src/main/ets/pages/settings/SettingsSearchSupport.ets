@@ -68,10 +68,12 @@ export class SettingsSearchSupport {
     // 页面设置
     { id: 'page_detail_type', title: '详情页类型', description: '漫画/电子书/小说详情页类型与统一详情页', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['详情页设置', '漫画详情页', '电子书详情页', '小说详情页', '统一详情页'] },
     { id: 'page_recommendation', title: '相关推荐', description: '统一详情页相关推荐开关', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['相关推荐', '同书架内容'] },
+    { id: 'page_background_blur', title: '后台模糊遮罩', description: '多任务界面隐私保护模糊遮罩与图标类型', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['后台模糊遮罩', '隐私遮罩', '后台遮罩', '遮罩图标', '锁定图标', '应用Logo'] },
     { id: 'shortcut_tip', title: '快捷方式说明', description: '桌面长按菜单最多显示4项，可长按拖动快捷方式到桌面', targetPage: 'ShortcutSettingsSubPage', anchorId: 'shortcut_info', scrollOffset: 0, keywords: ['快捷方式', '长按', '拖动到桌面', '桌面快捷'] },
     { id: 'shortcut_select', title: '快捷方式选择', description: '从5个预设中选择最多4个展示项', targetPage: 'ShortcutSettingsSubPage', anchorId: 'shortcut_core', scrollOffset: 380, keywords: ['快捷方式选择', '最多4个', '阅读报告', '全局搜索', '继续阅读', '继续听书', '灵感'] },
     { id: 'main_menu_library_view', title: '主页面书库显示模式', description: '平铺/书架视图切换，重启后生效', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['书库默认视图', '书架视图', '默认视图', '分类书架', '主页面书库显示模式', '平铺', '书架'] },
     { id: 'main_menu_cover_click', title: '书库封面点击行为', description: '书库封面点击直达阅读开关', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['封面点击', '直达阅读', '书库封面'] },
+    { id: 'main_menu_privacy_auth', title: '隐私书库验证方式', description: '可关闭指纹识别并改为直接密码验证', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['不使用指纹识别', '隐私书库验证', '跳过指纹', '密码验证'] },
     { id: 'main_menu_suwayomi_entry', title: 'Suwayomi入口行为', description: '主页面 Suwayomi 入口直达浏览页', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['Suwayomi入口', '浏览页面作为入口'] },
     { id: 'main_menu_nav_tabs', title: '主导航栏标签显示与顺序', description: '自定义主导航栏标签及顺序', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_navigation', scrollOffset: 820, keywords: ['主导航栏自定义', '标签顺序', '已启用', '未启用', '保存配置'] },
     { id: 'main_menu_tablet_nav', title: '平板横屏主导航栏位置', description: '平板/折叠屏主导航布局位置', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_adaptive_nav', scrollOffset: 1360, keywords: ['平板横屏主导航栏位置', '折叠屏主导航布局', '上方', '下方', '左侧', '右侧'] },
@@ -124,7 +126,7 @@ export class SettingsSearchSupport {
     { id: 'notification_core', title: '通知设置', description: '下载完成通知与更新通知', targetPage: 'NotificationSettingsSubPage', anchorId: 'notification_core', scrollOffset: 0, keywords: ['通知设置', '下载完成通知', '更新通知'] },
 
     // 高级设置
-    { id: 'advanced_debug', title: '调试设置', description: '高级模式、日志、布局、SFW、更新与隐私遮罩', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_debug', scrollOffset: 0, keywords: ['调试设置', '高级模式', '日志悬浮窗', '强制平板模式', '强制横屏模式', '预加载调试信息', 'SFW模式', '自动检查更新', '后台模糊遮罩', '日志等级'] },
+    { id: 'advanced_debug', title: '调试设置', description: '高级模式、日志、布局、SFW、更新与日志等级', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_debug', scrollOffset: 0, keywords: ['调试设置', '高级模式', '日志悬浮窗', '强制平板模式', '强制横屏模式', '预加载调试信息', 'SFW模式', '自动检查更新', '日志等级'] },
     { id: 'advanced_tools', title: '开发者工具', description: '生命周期监控、日志管理、系统资源预览', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_tools', scrollOffset: 930, keywords: ['开发者工具', '生命周期监控', '日志管理', '系统资源预览'] },
     { id: 'advanced_actions', title: '高级其他操作', description: '重播引导页面等操作', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_actions', scrollOffset: 1560, keywords: ['其他操作', '重播引导页面', '需要重启应用'] },
 
