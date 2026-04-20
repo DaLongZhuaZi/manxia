@@ -1,0 +1,1421 @@
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { promptAction } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
+import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { SettingsManager } from '../Framework/Managers/SettingsManager';
+import { getTypeShelfManager, ShelfType, TypeShelf, TypeShelfManager } from '../Framework/Data/TypeShelfManager';
+import {
+  getSubscriptionInitializer,
+  getSubscriptionManager,
+  SubscriptionActionType,
+  SubscriptionCondition,
+  SubscriptionConditionType,
+  SubscriptionContentType,
+  SubscriptionExecutionRecord,
+  SubscriptionExecutionStatus,
+  SubscriptionProviderType,
+  SubscriptionRule,
+  SubscriptionRuleCreateOptions,
+  SubscriptionRuleRunResult,
+  SubscriptionTargetPreview,
+  SubscriptionTargetPreviewCandidate,
+  SubscriptionTargetPreviewCounter,
+  SubscriptionTargetType,
+  SubscriptionManager
+} from '../Framework/Subscription';
+import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+
+const TAG = 'SubscriptionManagementPage';
+
+enum SubscriptionCreateMode {
+  SHELF = 'shelf',
+  SUWAYOMI_LIBRARY = 'suwayomi_library',
+  KOMGA_LIBRARY = 'komga_library'
+}
+
+interface RuleStatsSummary {
+  totalCount: number;
+  enabledCount: number;
+  shelfCount: number;
+  providerLibraryCount: number;
+}
+
+@Component
+export struct SubscriptionManagementPage {
+  @Consume('NavPathStack') pathStack: NavPathStack;
+
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  private readonly componentId: string = `SubscriptionManagementPage_${Date.now()}`;
+
+  @State rules: SubscriptionRule[] = [];
+  @State executions: SubscriptionExecutionRecord[] = [];
+  @State shelves: TypeShelf[] = [];
+  @State isLoading: boolean = true;
+  @State isBusy: boolean = false;
+  @State runningRuleId: string = '';
+  @State showCreateDialog: boolean = false;
+  @State createMode: SubscriptionCreateMode = SubscriptionCreateMode.SHELF;
+  @State createRuleName: string = '';
+  @State createSelectedShelfId: string = '';
+  @State createCheckIntervalText: string = '180';
+  @State createAutoDownloadCountText: string = '0';
+  @State createMinNewItemsText: string = '1';
+  @State createRequireFavorite: boolean = true;
+  @State createEnableNotify: boolean = true;
+  @State createKomgaInstanceId: string = '';
+  @State createKomgaInstanceName: string = '';
+  @State showDeleteDialog: boolean = false;
+  @State deletingRuleId: string = '';
+  @State showPreviewDialog: boolean = false;
+  @State isPreviewLoading: boolean = false;
+  @State previewRuleName: string = '';
+  @State previewTarget: SubscriptionTargetPreview | null = null;
+
+  private readonly lifecycle: PageLifecycleManager = new PageLifecycleManager('SubscriptionManagementPage', { enableDebug: true });
+  private readonly settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readonly typeShelfManager: TypeShelfManager = getTypeShelfManager();
+  private readonly manager: SubscriptionManager = getSubscriptionManager();
+
+  aboutToAppear(): void {
+    ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (_theme: ThemeType) => {
+    });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
+    void this.initializeAndLoad();
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.destroy();
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
+  }
+
+  private async initializeAndLoad(): Promise<void> {
+    this.isLoading = true;
+    try {
+      if (!this.settingsManager.isInitialized()) {
+        await this.settingsManager.initialize();
+        this.settingsManager.syncToAppStorage();
+      }
+      await this.typeShelfManager.initialize();
+      const context = getContext(this) as common.UIAbilityContext;
+      await getSubscriptionInitializer().initialize(context);
+      await this.loadData();
+      logger.info(TAG, `统一内容跟踪管理页初始化完成: 规则=${this.rules.length}`);
+    } catch (error) {
+      logger.error(TAG, `统一内容跟踪管理页初始化失败: ${String(error)}`);
+      promptAction.showToast({ message: `初始化失败: ${String(error)}` });
+    }
+    this.isLoading = false;
+  }
+
+  private async loadData(): Promise<void> {
+    const loadedRules = await this.manager.getAllRules();
+    loadedRules.sort((left: SubscriptionRule, right: SubscriptionRule): number => right.updateTime - left.updateTime);
+    const loadedExecutions = await this.manager.getExecutions('', 200);
+    const loadedShelves = this.typeShelfManager.getShelves().concat();
+    loadedShelves.sort((left: TypeShelf, right: TypeShelf): number => left.order - right.order);
+    this.rules = loadedRules;
+    this.executions = loadedExecutions;
+    this.shelves = loadedShelves;
+    if (this.createSelectedShelfId.length <= 0 && loadedShelves.length > 0) {
+      this.createSelectedShelfId = loadedShelves[0].id;
+    }
+  }
+
+  private getStatsSummary(): RuleStatsSummary {
+    let enabledCount = 0;
+    let shelfCount = 0;
+    let providerLibraryCount = 0;
+    for (let index = 0; index < this.rules.length; index++) {
+      const rule = this.rules[index];
+      if (rule.enabled) {
+        enabledCount++;
+      }
+      if (rule.targetType === SubscriptionTargetType.SHELF || rule.targetType === SubscriptionTargetType.DYNAMIC_SHELF) {
+        shelfCount++;
+      } else if (rule.targetType === SubscriptionTargetType.PROVIDER_LIBRARY) {
+        providerLibraryCount++;
+      }
+    }
+    return {
+      totalCount: this.rules.length,
+      enabledCount: enabledCount,
+      shelfCount: shelfCount,
+      providerLibraryCount: providerLibraryCount
+    };
+  }
+
+  private getLatestExecution(ruleId: string): SubscriptionExecutionRecord | null {
+    for (let index = 0; index < this.executions.length; index++) {
+      const execution = this.executions[index];
+      if (execution.ruleId === ruleId) {
+        return execution;
+      }
+    }
+    return null;
+  }
+
+  private formatTimestamp(timestamp: number): string {
+    if (timestamp <= 0) {
+      return '未执行';
+    }
+    try {
+      return new Date(timestamp).toLocaleString();
+    } catch (_error) {
+      return `${timestamp}`;
+    }
+  }
+
+  private getStatusText(status: SubscriptionExecutionStatus): string {
+    if (status === SubscriptionExecutionStatus.SUCCESS) {
+      return '发现更新';
+    }
+    if (status === SubscriptionExecutionStatus.NO_UPDATE) {
+      return '无更新';
+    }
+    if (status === SubscriptionExecutionStatus.SKIPPED) {
+      return '已跳过';
+    }
+    if (status === SubscriptionExecutionStatus.FAILED) {
+      return '执行失败';
+    }
+    return '暂不支持';
+  }
+
+  private getStatusColor(status: SubscriptionExecutionStatus): string {
+    if (status === SubscriptionExecutionStatus.SUCCESS) {
+      return '#2E7D32';
+    }
+    if (status === SubscriptionExecutionStatus.NO_UPDATE) {
+      return '#1565C0';
+    }
+    if (status === SubscriptionExecutionStatus.SKIPPED) {
+      return '#6D4C41';
+    }
+    if (status === SubscriptionExecutionStatus.FAILED) {
+      return '#C62828';
+    }
+    return '#5E35B1';
+  }
+
+  private getTargetTypeText(rule: SubscriptionRule): string {
+    if (rule.targetType === SubscriptionTargetType.SHELF) {
+      return '书架';
+    }
+    if (rule.targetType === SubscriptionTargetType.DYNAMIC_SHELF) {
+      return '动态书架';
+    }
+    if (rule.targetType === SubscriptionTargetType.PROVIDER_LIBRARY) {
+      return '远程库';
+    }
+    return '作品';
+  }
+
+  private getProviderText(rule: SubscriptionRule): string {
+    if (rule.providerType === SubscriptionProviderType.SUWAYOMI) {
+      return 'Suwayomi';
+    }
+    if (rule.providerType === SubscriptionProviderType.KOMGA) {
+      return 'Komga';
+    }
+    if (rule.providerType === SubscriptionProviderType.LEGADO) {
+      return 'Legado';
+    }
+    if (rule.providerType === SubscriptionProviderType.WEBVIEW) {
+      return 'WebView';
+    }
+    return '通用';
+  }
+
+  private getContentTypeText(rule: SubscriptionRule): string {
+    if (rule.contentType === SubscriptionContentType.NOVEL) {
+      return '小说';
+    }
+    if (rule.contentType === SubscriptionContentType.EBOOK) {
+      return '电子书';
+    }
+    if (rule.contentType === SubscriptionContentType.MIXED) {
+      return '混合';
+    }
+    return '漫画';
+  }
+
+  private getConditionSummary(rule: SubscriptionRule): string {
+    const parts: string[] = [`间隔 ${rule.checkIntervalMin} 分钟`];
+    const minNewItems = this.getMinNewItems(rule.conditions);
+    parts.push(`最少新增 ${minNewItems}`);
+    if (this.requiresFavorite(rule.conditions)) {
+      parts.push('仅收藏');
+    }
+    return this.joinTextParts(parts);
+  }
+
+  private getActionSummary(rule: SubscriptionRule): string {
+    const parts: string[] = [];
+    for (let index = 0; index < rule.actions.length; index++) {
+      const action = rule.actions[index];
+      if (!action.enabled) {
+        continue;
+      }
+      if (action.type === SubscriptionActionType.NOTIFY) {
+        parts.push('通知');
+      } else if (action.type === SubscriptionActionType.AUTO_DOWNLOAD_NEW) {
+        parts.push(`自动下载 ${action.limitCount > 0 ? action.limitCount : '全部'}`);
+      }
+    }
+    if (parts.length <= 0) {
+      return '仅检查更新';
+    }
+    return this.joinTextParts(parts);
+  }
+
+  private getMinNewItems(conditions: SubscriptionCondition[]): number {
+    for (let index = 0; index < conditions.length; index++) {
+      const condition = conditions[index];
+      if (condition.type === SubscriptionConditionType.MIN_NEW_ITEMS && condition.enabled) {
+        return condition.numericValue > 0 ? condition.numericValue : 1;
+      }
+    }
+    return 1;
+  }
+
+  private requiresFavorite(conditions: SubscriptionCondition[]): boolean {
+    for (let index = 0; index < conditions.length; index++) {
+      const condition = conditions[index];
+      if (condition.type === SubscriptionConditionType.ONLY_IF_FAVORITE && condition.enabled) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private joinTextParts(parts: string[]): string {
+    if (parts.length <= 0) {
+      return '';
+    }
+    let result = parts[0];
+    for (let index = 1; index < parts.length; index++) {
+      result += ` · ${parts[index]}`;
+    }
+    return result;
+  }
+
+  private async refreshRules(): Promise<void> {
+    if (this.isBusy) {
+      return;
+    }
+    this.isBusy = true;
+    try {
+      await this.loadData();
+      promptAction.showToast({ message: '规则列表已刷新' });
+    } catch (error) {
+      logger.warn(TAG, `刷新内容跟踪规则失败: ${String(error)}`);
+      promptAction.showToast({ message: `刷新失败: ${String(error)}` });
+    }
+    this.isBusy = false;
+  }
+
+  private async runDueRules(): Promise<void> {
+    if (this.isBusy) {
+      return;
+    }
+    this.isBusy = true;
+    try {
+      const results = await this.manager.maybeRunDueRules('manual');
+      await this.loadData();
+      promptAction.showToast({ message: this.buildRunDueToast(results.length) });
+    } catch (error) {
+      logger.error(TAG, `手动执行到期内容跟踪规则失败: ${String(error)}`);
+      promptAction.showToast({ message: `执行失败: ${String(error)}` });
+    }
+    this.isBusy = false;
+  }
+
+  private buildRunDueToast(resultCount: number): string {
+    if (resultCount <= 0) {
+      return '没有到期规则需要执行';
+    }
+    return `已执行 ${resultCount} 条到期规则`;
+  }
+
+  private openCreateDialog(): void {
+    this.createMode = SubscriptionCreateMode.SHELF;
+    this.createRuleName = '';
+    this.createCheckIntervalText = '180';
+    this.createAutoDownloadCountText = '0';
+    this.createMinNewItemsText = '1';
+    this.createRequireFavorite = true;
+    this.createEnableNotify = true;
+    this.createKomgaInstanceId = '';
+    this.createKomgaInstanceName = '';
+    if (this.shelves.length > 0) {
+      this.createSelectedShelfId = this.shelves[0].id;
+    }
+    this.showCreateDialog = true;
+  }
+
+  private closeCreateDialog(): void {
+    this.showCreateDialog = false;
+  }
+
+  private parsePositiveInteger(text: string, defaultValue: number, minValue: number): number {
+    const parsedValue = Number(text.trim());
+    if (Number.isNaN(parsedValue) || !Number.isFinite(parsedValue)) {
+      return defaultValue;
+    }
+    const normalizedValue = Math.floor(parsedValue);
+    if (normalizedValue < minValue) {
+      return minValue;
+    }
+    return normalizedValue;
+  }
+
+  private buildCreateOptions(): Partial<SubscriptionRuleCreateOptions> {
+    return {
+      ruleName: this.createRuleName.trim(),
+      checkIntervalMin: this.parsePositiveInteger(this.createCheckIntervalText, 180, 1),
+      autoDownloadCount: this.parsePositiveInteger(this.createAutoDownloadCountText, 0, 0),
+      minNewItems: this.parsePositiveInteger(this.createMinNewItemsText, 1, 1),
+      requireFavorite: this.createRequireFavorite,
+      enableNotify: this.createEnableNotify
+    };
+  }
+
+  private hasExistingTargetRule(targetType: SubscriptionTargetType, targetId: string, providerType: SubscriptionProviderType): boolean {
+    for (let index = 0; index < this.rules.length; index++) {
+      const rule = this.rules[index];
+      if (rule.targetType === targetType && rule.targetId === targetId && rule.providerType === providerType) {
+        return true;
+      }
+      if ((targetType === SubscriptionTargetType.SHELF || targetType === SubscriptionTargetType.DYNAMIC_SHELF) &&
+        (rule.targetType === SubscriptionTargetType.SHELF || rule.targetType === SubscriptionTargetType.DYNAMIC_SHELF) &&
+        rule.targetId === targetId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async confirmCreateRule(): Promise<void> {
+    if (this.isBusy) {
+      return;
+    }
+    this.isBusy = true;
+    try {
+      const options = this.buildCreateOptions();
+      if (this.createMode === SubscriptionCreateMode.SHELF) {
+        if (this.createSelectedShelfId.length <= 0) {
+          promptAction.showToast({ message: '请先选择书架' });
+          this.isBusy = false;
+          return;
+        }
+        const targetShelf = this.findShelfById(this.createSelectedShelfId);
+        if (targetShelf === null) {
+          promptAction.showToast({ message: '所选书架不存在' });
+          this.isBusy = false;
+          return;
+        }
+        const targetType = targetShelf.shelfType === ShelfType.DYNAMIC
+          ? SubscriptionTargetType.DYNAMIC_SHELF
+          : SubscriptionTargetType.SHELF;
+        if (this.hasExistingTargetRule(targetType, targetShelf.id, SubscriptionProviderType.NONE)) {
+          promptAction.showToast({ message: '该书架已存在跟踪规则' });
+          this.isBusy = false;
+          return;
+        }
+        await this.manager.createShelfRule(targetShelf.id, options);
+      } else if (this.createMode === SubscriptionCreateMode.SUWAYOMI_LIBRARY) {
+        if (this.hasExistingTargetRule(
+          SubscriptionTargetType.PROVIDER_LIBRARY,
+          SubscriptionProviderType.SUWAYOMI,
+          SubscriptionProviderType.SUWAYOMI
+        )) {
+          promptAction.showToast({ message: 'Suwayomi 收藏库规则已存在' });
+          this.isBusy = false;
+          return;
+        }
+        await this.manager.createSuwayomiLibraryRule(options);
+      } else {
+        const komgaInstanceId = this.createKomgaInstanceId.trim();
+        const targetId = komgaInstanceId.length > 0 ? komgaInstanceId : SubscriptionProviderType.KOMGA;
+        if (this.hasExistingTargetRule(
+          SubscriptionTargetType.PROVIDER_LIBRARY,
+          targetId,
+          SubscriptionProviderType.KOMGA
+        )) {
+          promptAction.showToast({ message: '该 Komga 远程库规则已存在' });
+          this.isBusy = false;
+          return;
+        }
+        await this.manager.createKomgaLibraryRule(
+          komgaInstanceId,
+          this.createKomgaInstanceName.trim(),
+          options
+        );
+      }
+      this.closeCreateDialog();
+      await this.loadData();
+      promptAction.showToast({ message: '内容跟踪规则已创建' });
+    } catch (error) {
+      logger.error(TAG, `创建内容跟踪规则失败: ${String(error)}`);
+      promptAction.showToast({ message: `创建失败: ${String(error)}` });
+    }
+    this.isBusy = false;
+  }
+
+  private findShelfById(shelfId: string): TypeShelf | null {
+    for (let index = 0; index < this.shelves.length; index++) {
+      if (this.shelves[index].id === shelfId) {
+        return this.shelves[index];
+      }
+    }
+    return null;
+  }
+
+  private async toggleRuleEnabled(rule: SubscriptionRule): Promise<void> {
+    if (this.isBusy) {
+      return;
+    }
+    this.isBusy = true;
+    try {
+      await this.manager.setRuleEnabled(rule.id, !rule.enabled);
+      await this.loadData();
+      promptAction.showToast({ message: !rule.enabled ? '规则已启用' : '规则已停用' });
+    } catch (error) {
+      logger.warn(TAG, `切换规则启用状态失败: ${String(error)}`);
+      promptAction.showToast({ message: `操作失败: ${String(error)}` });
+    }
+    this.isBusy = false;
+  }
+
+  private async runRuleNow(rule: SubscriptionRule): Promise<void> {
+    if (this.runningRuleId.length > 0) {
+      return;
+    }
+    this.runningRuleId = rule.id;
+    try {
+      const result = await this.manager.runRuleNow(rule.id, 'manual');
+      await this.loadData();
+      promptAction.showToast({ message: this.buildRunRuleToast(result) });
+    } catch (error) {
+      logger.error(TAG, `立即执行内容跟踪规则失败: ${String(error)}`);
+      promptAction.showToast({ message: `执行失败: ${String(error)}` });
+    }
+    this.runningRuleId = '';
+  }
+
+  private buildRunRuleToast(result: SubscriptionRuleRunResult): string {
+    if (result.status === SubscriptionExecutionStatus.SUCCESS) {
+      return result.deltaCount > 0 ? `发现 ${result.deltaCount} 个新内容` : '规则执行完成';
+    }
+    return result.message.length > 0 ? result.message : '规则执行完成';
+  }
+
+  private requestDeleteRule(rule: SubscriptionRule): void {
+    this.deletingRuleId = rule.id;
+    this.showDeleteDialog = true;
+  }
+
+  private closeDeleteDialog(): void {
+    this.showDeleteDialog = false;
+    this.deletingRuleId = '';
+  }
+
+  private getDeletingRule(): SubscriptionRule | null {
+    if (this.deletingRuleId.length <= 0) {
+      return null;
+    }
+    for (let index = 0; index < this.rules.length; index++) {
+      if (this.rules[index].id === this.deletingRuleId) {
+        return this.rules[index];
+      }
+    }
+    return null;
+  }
+
+  private async confirmDeleteRule(): Promise<void> {
+    const rule = this.getDeletingRule();
+    if (rule === null) {
+      this.closeDeleteDialog();
+      return;
+    }
+    if (this.isBusy) {
+      return;
+    }
+    this.isBusy = true;
+    try {
+      await this.manager.deleteRule(rule.id);
+      this.closeDeleteDialog();
+      await this.loadData();
+      promptAction.showToast({ message: '规则已删除' });
+    } catch (error) {
+      logger.error(TAG, `删除内容跟踪规则失败: ${String(error)}`);
+      promptAction.showToast({ message: `删除失败: ${String(error)}` });
+    }
+    this.isBusy = false;
+  }
+
+  private async previewRule(rule: SubscriptionRule): Promise<void> {
+    this.previewRuleName = rule.name;
+    this.previewTarget = null;
+    this.showPreviewDialog = true;
+    this.isPreviewLoading = true;
+    try {
+      this.previewTarget = await this.manager.previewRuleTarget(rule.id);
+    } catch (error) {
+      logger.warn(TAG, `预览内容跟踪规则目标失败: ${String(error)}`);
+      promptAction.showToast({ message: `预览失败: ${String(error)}` });
+    }
+    this.isPreviewLoading = false;
+  }
+
+  private closePreviewDialog(): void {
+    this.showPreviewDialog = false;
+    this.previewTarget = null;
+    this.previewRuleName = '';
+    this.isPreviewLoading = false;
+  }
+
+  private getPreviewCandidates(): SubscriptionTargetPreviewCandidate[] {
+    if (this.previewTarget === null) {
+      return [];
+    }
+    if (this.previewTarget.candidates.length <= 30) {
+      return this.previewTarget.candidates;
+    }
+    return this.previewTarget.candidates.slice(0, 30);
+  }
+
+  private getActionItems(): SettingsImmersiveTitleActionItem[] {
+    return [
+      {
+        id: 'create',
+        label: '新增',
+        symbol: $r('sys.symbol.plus'),
+        enabled: !this.isBusy && !this.isLoading,
+        onClick: () => {
+          this.openCreateDialog();
+        }
+      },
+      {
+        id: 'run_due',
+        label: '执行到期',
+        symbol: $r('sys.symbol.arrow_trianglehead_clockwise'),
+        enabled: !this.isBusy && !this.isLoading,
+        onClick: () => {
+          void this.runDueRules();
+        }
+      },
+      {
+        id: 'refresh',
+        label: '刷新',
+        symbol: $r('sys.symbol.arrow_clockwise'),
+        enabled: !this.isBusy && !this.isLoading,
+        onClick: () => {
+          void this.refreshRules();
+        }
+      }
+    ];
+  }
+
+  @Builder
+  private buildStatsCard() {
+    const stats = this.getStatsSummary();
+    Row() {
+      this.buildSingleStatItem(`${stats.totalCount}`, '总规则');
+      this.buildSingleStatItem(`${stats.enabledCount}`, '启用中');
+      this.buildSingleStatItem(`${stats.shelfCount}`, '书架规则');
+      this.buildSingleStatItem(`${stats.providerLibraryCount}`, '远程库规则');
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+  }
+
+  @Builder
+  private buildSingleStatItem(valueText: string, labelText: string) {
+    Column({ space: 4 }) {
+      Text(valueText)
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      Text(labelText)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .layoutWeight(1)
+  }
+
+  @Builder
+  private buildHintCard() {
+    Column({ space: 8 }) {
+      Text('这是应用内的统一内容跟踪机制')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+      Text('它和 RSS 订阅源管理不是一回事。当前页先支持书架级、Suwayomi 整库级、Komga 整库级跟踪规则，并可预览目标覆盖范围。作品级入口现已接到统一详情页。')
+        .fontSize(12)
+        .lineHeight(18)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+  }
+
+  @Builder
+  private buildRuleListItem(rule: SubscriptionRule, index: number) {
+    const execution = this.getLatestExecution(rule.id);
+    Column({ space: 10 }) {
+      Row() {
+        Column({ space: 4 }) {
+          Text(rule.name)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .maxLines(1)
+          Text(`${this.getTargetTypeText(rule)} · ${rule.targetTitle}`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .maxLines(1)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Text(rule.enabled ? '已启用' : '已停用')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor('#FFFFFF')
+          .backgroundColor(rule.enabled ? '#2E7D32' : '#78909C')
+          .borderRadius(999)
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+      }
+      .width('100%')
+
+      Text(`${this.getProviderText(rule)} · ${this.getContentTypeText(rule)}`)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+
+      Text(this.getConditionSummary(rule))
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+
+      Text(this.getActionSummary(rule))
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+
+      if (execution !== null) {
+        Row() {
+          Text(this.getStatusText(execution.status))
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor('#FFFFFF')
+            .backgroundColor(this.getStatusColor(execution.status))
+            .borderRadius(999)
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          Text(execution.message.length > 0 ? execution.message : '暂无执行摘要')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ left: 8 })
+        }
+        .width('100%')
+      } else {
+        Text(`最近执行: ${this.formatTimestamp(rule.lastCheckTime)}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+      }
+
+      Text(`上次检查: ${this.formatTimestamp(rule.lastCheckTime)}`)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+
+      Row({ space: 8 }) {
+        this.buildActionButton(
+          this.runningRuleId === rule.id ? '执行中...' : '立即执行',
+          '#1976D2',
+          this.runningRuleId.length <= 0,
+          () => {
+            void this.runRuleNow(rule);
+          }
+        )
+        this.buildActionButton(
+          '预览目标',
+          '#5E35B1',
+          !this.isPreviewLoading,
+          () => {
+            void this.previewRule(rule);
+          }
+        )
+        this.buildActionButton(
+          rule.enabled ? '停用' : '启用',
+          rule.enabled ? '#6D4C41' : '#2E7D32',
+          !this.isBusy,
+          () => {
+            void this.toggleRuleEnabled(rule);
+          }
+        )
+        this.buildActionButton(
+          '删除',
+          '#C62828',
+          !this.isBusy,
+          () => {
+            this.requestDeleteRule(rule);
+          }
+        )
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+  }
+
+  @Builder
+  private buildActionButton(label: string, backgroundColor: string, enabled: boolean, onClick: () => void) {
+    Button(label)
+      .height(32)
+      .fontSize(11)
+      .fontFamily(this.appFontFamily)
+      .fontColor('#FFFFFF')
+      .backgroundColor(backgroundColor)
+      .borderRadius(999)
+      .opacity(enabled ? 1 : 0.5)
+      .layoutWeight(1)
+      .onClick(() => {
+        if (!enabled) {
+          return;
+        }
+        onClick();
+      })
+  }
+
+  @Builder
+  private buildEmptyState() {
+    Column({ space: 12 }) {
+      Text('暂时还没有内容跟踪规则')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Text('点击右上角“新增”开始创建书架或远程库跟踪规则')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      Button('创建规则')
+        .height(36)
+        .fontFamily(this.appFontFamily)
+        .fontColor('#FFFFFF')
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(999)
+        .onClick(() => {
+          this.openCreateDialog();
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ left: 20, right: 20, bottom: this.navigationBarHeight })
+  }
+
+  @Builder
+  private buildCreateModeButton(mode: SubscriptionCreateMode, title: string) {
+    Button(title)
+      .height(34)
+      .fontSize(12)
+      .fontFamily(this.appFontFamily)
+      .fontColor(this.createMode === mode ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      .backgroundColor(this.createMode === mode
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+      .borderRadius(999)
+      .layoutWeight(1)
+      .onClick(() => {
+        this.createMode = mode;
+      })
+  }
+
+  @Builder
+  private buildCreateDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      maxHeight: '88%',
+      contentScrollable: true,
+      onMaskTap: () => {
+        this.closeCreateDialog();
+      }
+    }) {
+      Column({ space: 12 }) {
+        Text('创建内容跟踪规则')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+
+        Text('这里创建的是应用内内容更新跟踪规则，不是 RSS 订阅源。当前页先支持书架级与远程库级规则，适合批量检查、聚合通知与自动下载。')
+          .fontSize(12)
+          .lineHeight(18)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+
+        Row({ space: 8 }) {
+          this.buildCreateModeButton(SubscriptionCreateMode.SHELF, '书架规则')
+          this.buildCreateModeButton(SubscriptionCreateMode.SUWAYOMI_LIBRARY, 'Suwayomi')
+          this.buildCreateModeButton(SubscriptionCreateMode.KOMGA_LIBRARY, 'Komga')
+        }
+        .width('100%')
+
+        TextInput({ placeholder: '规则名称，可留空使用默认名称', text: $$this.createRuleName })
+          .width('100%')
+          .height(42)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .borderRadius(8)
+
+        if (this.createMode === SubscriptionCreateMode.SHELF) {
+          Column({ space: 8 }) {
+            Text('选择目标书架')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .width('100%')
+            Column({ space: 8 }) {
+              ForEach(this.shelves, (shelf: TypeShelf) => {
+                Button(`${shelf.name} · ${shelf.shelfType === ShelfType.DYNAMIC ? '动态书架' : '普通书架'}`)
+                  .width('100%')
+                  .height(36)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.createSelectedShelfId === shelf.id ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .backgroundColor(this.createSelectedShelfId === shelf.id
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+                  .borderRadius(8)
+                  .onClick(() => {
+                    this.createSelectedShelfId = shelf.id;
+                  })
+              }, (shelf: TypeShelf): string => shelf.id)
+            }
+            .width('100%')
+          }
+          .width('100%')
+        }
+
+        if (this.createMode === SubscriptionCreateMode.KOMGA_LIBRARY) {
+          Column({ space: 8 }) {
+            Text('可选：限定 Komga 实例')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .width('100%')
+            TextInput({ placeholder: '实例 ID，留空表示所有 Komga 实例', text: $$this.createKomgaInstanceId })
+              .width('100%')
+              .height(42)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .borderRadius(8)
+            TextInput({ placeholder: '实例名称，仅用于展示标题', text: $$this.createKomgaInstanceName })
+              .width('100%')
+              .height(42)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .borderRadius(8)
+          }
+          .width('100%')
+        }
+
+        Column({ space: 6 }) {
+          Text('检查间隔（分钟）')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          TextInput({ placeholder: '检查间隔（分钟）', text: $$this.createCheckIntervalText })
+            .width('100%')
+            .height(42)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(8)
+        }
+        .width('100%')
+
+        Column({ space: 6 }) {
+          Text('最少新增内容数')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          TextInput({ placeholder: '最少新增内容数', text: $$this.createMinNewItemsText })
+            .width('100%')
+            .height(42)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(8)
+        }
+        .width('100%')
+
+        Column({ space: 6 }) {
+          Text('自动下载数量（0 表示关闭）')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          TextInput({ placeholder: '自动下载数量（0 表示关闭）', text: $$this.createAutoDownloadCountText })
+            .width('100%')
+            .height(42)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(8)
+        }
+        .width('100%')
+
+        this.buildToggleRow('启用通知', '检测到更新时发送聚合通知', this.createEnableNotify, (value: boolean) => {
+          this.createEnableNotify = value;
+        })
+
+        this.buildToggleRow('仅收藏目标', '成员作品未收藏时跳过执行', this.createRequireFavorite, (value: boolean) => {
+          this.createRequireFavorite = value;
+        })
+
+        Row({ space: 12 }) {
+          Button('取消')
+            .height(36)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+            .borderRadius(999)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.closeCreateDialog();
+            })
+          Button('创建')
+            .height(36)
+            .fontFamily(this.appFontFamily)
+            .fontColor('#FFFFFF')
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .borderRadius(999)
+            .layoutWeight(1)
+            .onClick(() => {
+              void this.confirmCreateRule();
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  private buildToggleRow(titleText: string, subtitleText: string, isOn: boolean, onChange: (value: boolean) => void) {
+    Row() {
+      Column({ space: 4 }) {
+        Text(titleText)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text(subtitleText)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      Toggle({ type: ToggleType.Switch, isOn: isOn })
+        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .onChange((value: boolean) => {
+          onChange(value);
+        })
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(8)
+  }
+
+  @Builder
+  private buildDeleteDialog() {
+    const deletingRule = this.getDeletingRule();
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        this.closeDeleteDialog();
+      }
+    }) {
+      Column({ space: 12 }) {
+        Text('删除内容跟踪规则')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+        Text(deletingRule !== null ? `确认删除「${deletingRule.name}」？相关执行记录会保留，规则与基线将被删除。` : '确认删除当前规则？')
+          .fontSize(13)
+          .lineHeight(20)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+        Row({ space: 12 }) {
+          Button('取消')
+            .height(36)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+            .borderRadius(999)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.closeDeleteDialog();
+            })
+          Button('删除')
+            .height(36)
+            .fontFamily(this.appFontFamily)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#C62828')
+            .borderRadius(999)
+            .layoutWeight(1)
+            .onClick(() => {
+              void this.confirmDeleteRule();
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  private buildPreviewDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      maxHeight: '88%',
+      contentScrollable: true,
+      onMaskTap: () => {
+        this.closePreviewDialog();
+      }
+    }) {
+      Column({ space: 12 }) {
+        Text(this.previewRuleName.length > 0 ? `目标预览 - ${this.previewRuleName}` : '目标预览')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+
+        if (this.isPreviewLoading) {
+          Column({ space: 10 }) {
+            LoadingProgress()
+              .width(32)
+              .height(32)
+            Text('正在分析规则目标...')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .padding({ top: 24, bottom: 24 })
+          .alignItems(HorizontalAlign.Center)
+        } else if (this.previewTarget === null) {
+          Text('暂无可展示的目标预览结果')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+        } else {
+          this.buildPreviewSummaryCard(this.previewTarget)
+          this.buildPreviewBreakdownCard('内容类型分布', this.previewTarget.contentTypeBreakdown)
+          this.buildPreviewBreakdownCard('来源分布', this.previewTarget.providerTypeBreakdown)
+          this.buildPreviewCandidateSection()
+        }
+
+        Button('关闭')
+          .width('100%')
+          .height(36)
+          .fontFamily(this.appFontFamily)
+          .fontColor('#FFFFFF')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .borderRadius(999)
+          .onClick(() => {
+            this.closePreviewDialog();
+          })
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  private buildPreviewSummaryCard(preview: SubscriptionTargetPreview) {
+    Column({ space: 8 }) {
+      Text(`${preview.targetTitle} · ${preview.totalCandidateCount} 项`)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+      Text(`可执行 ${preview.supportedCandidateCount} 项，暂不支持 ${preview.unsupportedCandidateCount} 项`)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(10)
+  }
+
+  @Builder
+  private buildPreviewBreakdownCard(titleText: string, counters: SubscriptionTargetPreviewCounter[]) {
+    Column({ space: 8 }) {
+      Text(titleText)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(counters, (counter: SubscriptionTargetPreviewCounter) => {
+          Text(`${counter.key} · ${counter.count}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+            .borderRadius(999)
+            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+            .margin({ right: 8, bottom: 8 })
+        }, (counter: SubscriptionTargetPreviewCounter): string => counter.key)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(10)
+  }
+
+  @Builder
+  private buildPreviewCandidateSection() {
+    const candidates = this.getPreviewCandidates();
+    Column({ space: 8 }) {
+      Text(`目标成员预览（最多显示 ${candidates.length} 项）`)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+
+      Column({ space: 8 }) {
+        ForEach(candidates, (candidate: SubscriptionTargetPreviewCandidate, index: number) => {
+          Column({ space: 6 }) {
+            Row() {
+              Text(candidate.title)
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(candidate.supported ? '可执行' : '未接入')
+                .fontSize(10)
+                .fontFamily(this.appFontFamily)
+                .fontColor('#FFFFFF')
+                .backgroundColor(candidate.supported ? '#2E7D32' : '#8E24AA')
+                .borderRadius(999)
+                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            }
+            .width('100%')
+
+            Text(`${candidate.providerType} · ${candidate.contentType} · 本地 ${candidate.localCount}`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .width('100%')
+            if (!candidate.supported && candidate.unsupportedReason.length > 0) {
+              Text(candidate.unsupportedReason)
+                .fontSize(10)
+                .lineHeight(16)
+                .fontFamily(this.appFontFamily)
+                .fontColor('#C62828')
+                .width('100%')
+            }
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .borderRadius(8)
+        }, (candidate: SubscriptionTargetPreviewCandidate, index: number): string => `${candidate.itemId}_${index}`)
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
+          .width('100%')
+          .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        Column({ space: 12 }) {
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+          this.buildStatsCard()
+          this.buildHintCard()
+
+          if (this.isLoading) {
+            Column({ space: 10 }) {
+              LoadingProgress()
+                .width(36)
+                .height(36)
+              Text('正在加载内容跟踪规则...')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+          } else if (this.rules.length <= 0) {
+            this.buildEmptyState()
+          } else {
+            List({ space: 12 }) {
+              ForEach(this.rules, (rule: SubscriptionRule, index: number) => {
+                ListItem() {
+                  this.buildRuleListItem(rule, index)
+                }
+              }, (rule: SubscriptionRule): string => rule.id)
+            }
+            .width('100%')
+            .height('100%')
+            .layoutWeight(1)
+            .padding({ left: 16, right: 16, bottom: 16 + this.navigationBarHeight })
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ left: 16, right: 16, bottom: this.navigationBarHeight })
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        if (this.showCreateDialog) {
+          this.buildCreateDialog()
+        }
+        if (this.showDeleteDialog) {
+          this.buildDeleteDialog()
+        }
+        if (this.showPreviewDialog) {
+          this.buildPreviewDialog()
+        }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '统一内容跟踪',
+          appFontFamily: this.appFontFamily,
+          maxDirectActions: 3,
+          actions: this.getActionItems()
+        })
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    .backgroundColor(Color.Transparent)
+  }
+}

@@ -30,7 +30,13 @@ type KomgaSettingsColorKey =
   'comp_background_tertiary' |
   'panel_background' |
   'text_muted' |
-  'text_primary';
+  'text_primary' |
+  'button_text_primary' |
+  'button_text_secondary' |
+  'border_active' |
+  'comp_divider' |
+  'color_success' |
+  'color_error';
 
 @Component
 export struct KomgaSettingsPage {
@@ -78,6 +84,18 @@ export struct KomgaSettingsPage {
 
   private color(name: KomgaSettingsColorKey): ResourceColor {
     return ThemeAwareHelper.getTestManagementThemedColor(name, this.themeState.currentTheme);
+  }
+
+  private getChipTextColor(selected: boolean): ResourceColor {
+    return selected ? this.color('button_text_primary') : this.color('button_text_secondary');
+  }
+
+  private getChipBackgroundColor(selected: boolean): ResourceColor {
+    return selected ? this.color('accent_blue') : this.color('comp_background_tertiary');
+  }
+
+  private getChipBorderColor(selected: boolean): ResourceColor {
+    return selected ? this.color('border_active') : this.color('comp_divider');
   }
 
   private toast(message: string): void {
@@ -408,11 +426,12 @@ export struct KomgaSettingsPage {
   private buildChip(label: string, selected: boolean, action: () => void) {
     Button(label)
       .fontSize(12)
-      .fontColor(selected ? Color.White : this.color('text_primary'))
+      .fontColor(this.getChipTextColor(selected))
       .fontFamily(this.appFontFamily)
       .constraintSize({ minHeight: 0 })
       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      .backgroundColor(selected ? this.color('accent_blue') : this.color('comp_background_tertiary'))
+      .backgroundColor(this.getChipBackgroundColor(selected))
+      .border({ width: 1, color: this.getChipBorderColor(selected) })
       .borderRadius(999)
       .margin({ right: 8, bottom: 8 })
       .stateEffect(false)
@@ -451,13 +470,13 @@ export struct KomgaSettingsPage {
               Button('新增实例')
                 .layoutWeight(1)
                 .backgroundColor(this.color('comp_background_tertiary'))
-                .fontColor(this.color('text_primary'))
+                .fontColor(this.color('button_text_secondary'))
                 .fontFamily(this.appFontFamily)
                 .onClick(() => this.addInstance())
               Button('删除当前')
                 .layoutWeight(1)
                 .backgroundColor(this.color('comp_background_tertiary'))
-                .fontColor(this.color('text_primary'))
+                .fontColor(this.color('button_text_secondary'))
                 .fontFamily(this.appFontFamily)
                 .onClick(() => this.removeCurrentInstance())
             }
@@ -573,7 +592,7 @@ export struct KomgaSettingsPage {
               Button(this.isTesting ? '测试中...' : '测试连接')
                 .layoutWeight(1)
                 .backgroundColor(this.color('accent_blue'))
-                .fontColor(Color.White)
+                .fontColor(this.color('button_text_primary'))
                 .fontFamily(this.appFontFamily)
                 .enabled(!this.isTesting)
                 .onClick(() => {
@@ -582,7 +601,7 @@ export struct KomgaSettingsPage {
               Button(this.isLoadingLibraries ? '加载中...' : '加载库列表')
                 .layoutWeight(1)
                 .backgroundColor(this.color('comp_background_tertiary'))
-                .fontColor(this.color('text_primary'))
+                .fontColor(this.color('button_text_secondary'))
                 .fontFamily(this.appFontFamily)
                 .enabled(!this.isLoadingLibraries)
                 .onClick(() => {
@@ -594,7 +613,7 @@ export struct KomgaSettingsPage {
             if (this.testResult.length > 0) {
               Text(this.testResult)
                 .fontSize(13)
-                .fontColor(this.testSuccess ? '#10B981' : '#FF6B6B')
+                .fontColor(this.testSuccess ? this.color('color_success') : this.color('color_error'))
                 .fontFamily(this.appFontFamily)
                 .width('100%')
             }
@@ -687,7 +706,7 @@ export struct KomgaSettingsPage {
             Button('清除配置')
               .layoutWeight(1)
               .backgroundColor(this.color('comp_background_tertiary'))
-              .fontColor(this.color('text_primary'))
+              .fontColor(this.color('button_text_secondary'))
               .fontFamily(this.appFontFamily)
               .onClick(() => {
                 void this.clearConfig();
@@ -695,7 +714,7 @@ export struct KomgaSettingsPage {
             Button(this.isLoading ? '保存中...' : '保存配置')
               .layoutWeight(1)
               .backgroundColor(this.color('accent_blue'))
-              .fontColor(Color.White)
+              .fontColor(this.color('button_text_primary'))
               .fontFamily(this.appFontFamily)
               .enabled(!this.isLoading)
               .onClick(() => {
@@ -707,7 +726,7 @@ export struct KomgaSettingsPage {
           Button('保存并打开浏览页')
             .width('100%')
             .backgroundColor(this.color('accent_blue'))
-            .fontColor(Color.White)
+            .fontColor(this.color('button_text_primary'))
             .fontFamily(this.appFontFamily)
             .enabled(!this.isLoading)
             .onClick(() => {

@@ -64,6 +64,7 @@ import { SuwayomiWebUIPage } from './settings/SuwayomiWebUIPage';
 import { KomgaSettingsPage } from './settings/KomgaSettingsPage';
 import { SuwayomiBrowsePage } from './SuwayomiBrowsePage';
 import { KomgaBrowsePage } from './KomgaBrowsePage';
+import { KomgaLibraryDetailPage } from './KomgaLibraryDetailPage';
 import { SuwayomiSourceBrowsePage, SuwayomiSourceBrowseParams } from './SuwayomiSourceBrowsePage';
 import { getSuwayomiTracker } from '../Framework/Tracking/trackers/SuwayomiTracker';
 import { getKomgaTracker } from '../Framework/Tracking/trackers/KomgaTracker';
@@ -126,6 +127,7 @@ import { RssSubscriptionPage } from './RssSubscriptionPage';
 import { RssFavoritesPage } from './RssFavoritesPage';
 import { RssSubscriptionManagementPage } from './RssSubscriptionManagementPage';
 import { RssSourceDebugPage } from './RssSourceDebugPage';
+import { SubscriptionManagementPage } from './SubscriptionManagementPage';
 import { JsvmPlaygroundPage } from './JsvmPlaygroundPage';
 import { LifecycleMonitorPage } from './LifecycleMonitorPage';
 import { FileEditorPage, FileEditorParams } from './FileEditorPage';
@@ -28622,6 +28624,8 @@ struct MainMenuPage {
         SuwayomiBrowsePage()
       } else if (name === 'KomgaBrowsePage') {
         KomgaBrowsePage()
+      } else if (name === 'KomgaLibraryDetailPage') {
+        KomgaLibraryDetailPage()
       } else if (name === 'SuwayomiSourceBrowsePage') {
         SuwayomiSourceBrowsePage()
       } else if (name === 'SuwayomiMangaDetailPage') {
@@ -28706,6 +28710,8 @@ struct MainMenuPage {
         RssSubscriptionManagementPage()
       } else if (name === 'RssSourceDebugPage') {
         RssSourceDebugPage()
+      } else if (name === 'SubscriptionManagementPage') {
+        SubscriptionManagementPage()
       } else if (name === 'NovelTxtTocRulePage') {
         NovelTxtTocRulePage()
       } else if (name === 'NovelDictRulePage') {

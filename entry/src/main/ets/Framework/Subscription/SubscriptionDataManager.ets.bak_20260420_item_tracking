@@ -1,0 +1,585 @@
+import { relationalStore } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
+import { logger } from '../../Utils/Logger';
+import {
+  SubscriptionAction,
+  SubscriptionActionType,
+  SubscriptionCheckpoint,
+  SubscriptionCondition,
+  SubscriptionConditionType,
+  SubscriptionContentType,
+  SubscriptionExecutionRecord,
+  SubscriptionExecutionStatus,
+  SubscriptionProviderType,
+  SubscriptionRule,
+  SubscriptionTargetType
+} from '../../Models/SubscriptionModels';
+import {
+  SUBSCRIPTION_CREATE_INDEX_SQL,
+  SUBSCRIPTION_CREATE_TABLE_SQL
+} from './SubscriptionDatabaseSchema';
+
+const TAG = 'SubscriptionDataManager';
+
+const RULE_SELECT_COLUMNS = `
+  id, name, enabled, targetType, contentType, targetId, targetTitle, sourceId, sourceName,
+  providerType, checkIntervalMin, conditionsJson, actionsJson, lastCheckTime, lastSuccessTime,
+  lastError, lastTriggeredScene, createTime, updateTime
+`;
+
+const EXECUTION_SELECT_COLUMNS = `
+  id, ruleId, status, triggerScene, targetId, targetTitle, contentType, checkedAt, localCount,
+  remoteCount, deltaCount, downloadedCount, message, actionSummary, createTime
+`;
+
+const CHECKPOINT_SELECT_COLUMNS = `
+  ruleId, targetId, contentId, contentType, remoteFingerprint, remoteCount, localCount,
+  latestItemTitle, lastSeenTime, updateTime
+`;
+
+interface SubscriptionTableInfo {
+  name: string;
+  sql: string;
+}
+
+export class SubscriptionDataManager {
+  private static instance: SubscriptionDataManager | null = null;
+  private store: relationalStore.RdbStore | null = null;
+  private isInitialized: boolean = false;
+
+  private constructor() {
+  }
+
+  public static getInstance(): SubscriptionDataManager {
+    if (SubscriptionDataManager.instance === null) {
+      SubscriptionDataManager.instance = new SubscriptionDataManager();
+    }
+    return SubscriptionDataManager.instance;
+  }
+
+  public async initialize(context: common.UIAbilityContext): Promise<void> {
+    if (this.isInitialized) {
+      logger.debug(TAG, '统一订阅数据库已初始化，跳过重复初始化');
+      return;
+    }
+
+    const config: relationalStore.StoreConfig = {
+      name: 'manxia_comic.db',
+      securityLevel: relationalStore.SecurityLevel.S1,
+      encrypt: false
+    };
+
+    logger.info(TAG, '开始初始化统一订阅数据库');
+    this.store = await relationalStore.getRdbStore(context, config);
+    await this.createTables();
+    await this.createIndexes();
+    this.isInitialized = true;
+    logger.info(TAG, '统一订阅数据库初始化完成');
+  }
+
+  public isReady(): boolean {
+    return this.isInitialized;
+  }
+
+  private getStore(): relationalStore.RdbStore {
+    if (this.store === null) {
+      throw new Error('统一订阅数据库尚未初始化');
+    }
+    return this.store;
+  }
+
+  private async createTables(): Promise<void> {
+    const tables: SubscriptionTableInfo[] = [
+      { name: 'subscription_rule', sql: SUBSCRIPTION_CREATE_TABLE_SQL.SUBSCRIPTION_RULE },
+      { name: 'subscription_execution', sql: SUBSCRIPTION_CREATE_TABLE_SQL.SUBSCRIPTION_EXECUTION },
+      { name: 'subscription_checkpoint', sql: SUBSCRIPTION_CREATE_TABLE_SQL.SUBSCRIPTION_CHECKPOINT }
+    ];
+
+    const store = this.getStore();
+    for (let index = 0; index < tables.length; index++) {
+      const table = tables[index];
+      try {
+        await store.executeSql(table.sql);
+      } catch (error) {
+        logger.warn(TAG, `创建数据表失败: ${table.name}, ${String(error)}`);
+      }
+    }
+  }
+
+  private async createIndexes(): Promise<void> {
+    const store = this.getStore();
+    for (let index = 0; index < SUBSCRIPTION_CREATE_INDEX_SQL.length; index++) {
+      const sql = SUBSCRIPTION_CREATE_INDEX_SQL[index];
+      try {
+        await store.executeSql(sql);
+      } catch (_error) {
+      }
+    }
+  }
+
+  private generateId(): string {
+    return `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  private getColumnIndex(rs: relationalStore.ResultSet, columnName: string): number {
+    try {
+      return rs.getColumnIndex(columnName);
+    } catch (_error) {
+      return -1;
+    }
+  }
+
+  private getStringValue(rs: relationalStore.ResultSet, columnName: string, defaultValue: string = ''): string {
+    const index = this.getColumnIndex(rs, columnName);
+    if (index < 0) {
+      return defaultValue;
+    }
+    try {
+      const value = rs.getString(index);
+      return value !== undefined && value !== null ? value : defaultValue;
+    } catch (_error) {
+      return defaultValue;
+    }
+  }
+
+  private getLongValue(rs: relationalStore.ResultSet, columnName: string, defaultValue: number = 0): number {
+    const index = this.getColumnIndex(rs, columnName);
+    if (index < 0) {
+      return defaultValue;
+    }
+    try {
+      return rs.getLong(index);
+    } catch (_error) {
+      return defaultValue;
+    }
+  }
+
+  private getBoolValue(rs: relationalStore.ResultSet, columnName: string, defaultValue: boolean = false): boolean {
+    return this.getLongValue(rs, columnName, defaultValue ? 1 : 0) === 1;
+  }
+
+  private normalizeString(value: string | undefined, fallback: string): string {
+    if (value === undefined || value === null) {
+      return fallback;
+    }
+    return value.trim();
+  }
+
+  private normalizeBoolean(value: boolean | undefined, fallback: boolean): boolean {
+    if (value === undefined || value === null) {
+      return fallback;
+    }
+    return value;
+  }
+
+  private normalizeNumber(value: number | undefined, fallback: number, min: number = 0): number {
+    if (value === undefined || value === null || Number.isNaN(value) || !Number.isFinite(value)) {
+      return fallback;
+    }
+    const integer = Math.floor(value);
+    if (integer < min) {
+      return min;
+    }
+    return integer;
+  }
+
+  private parseConditions(jsonText: string): SubscriptionCondition[] {
+    const trimmedText = jsonText.trim();
+    if (trimmedText.length === 0) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(trimmedText) as SubscriptionCondition[];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      const result: SubscriptionCondition[] = [];
+      for (let index = 0; index < parsed.length; index++) {
+        const item = parsed[index];
+        if (item && item.type) {
+          result.push(this.normalizeCondition(item));
+        }
+      }
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `解析订阅条件失败: ${String(error)}`);
+      return [];
+    }
+  }
+
+  private normalizeCondition(condition: SubscriptionCondition): SubscriptionCondition {
+    return {
+      type: condition.type || SubscriptionConditionType.MIN_NEW_ITEMS,
+      enabled: condition.enabled === true,
+      numericValue: this.normalizeNumber(condition.numericValue, 0, 0),
+      booleanValue: condition.booleanValue === true,
+      textValue: this.normalizeString(condition.textValue, '')
+    };
+  }
+
+  private parseActions(jsonText: string): SubscriptionAction[] {
+    const trimmedText = jsonText.trim();
+    if (trimmedText.length === 0) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(trimmedText) as SubscriptionAction[];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      const result: SubscriptionAction[] = [];
+      for (let index = 0; index < parsed.length; index++) {
+        const item = parsed[index];
+        if (item && item.type) {
+          result.push(this.normalizeAction(item));
+        }
+      }
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `解析订阅动作失败: ${String(error)}`);
+      return [];
+    }
+  }
+
+  private normalizeAction(action: SubscriptionAction): SubscriptionAction {
+    return {
+      type: action.type || SubscriptionActionType.CHECK_UPDATE,
+      enabled: action.enabled === true,
+      limitCount: this.normalizeNumber(action.limitCount, 0, 0),
+      notifyTitle: this.normalizeString(action.notifyTitle, ''),
+      notifyText: this.normalizeString(action.notifyText, '')
+    };
+  }
+
+  private serializeConditions(conditions: SubscriptionCondition[]): string {
+    const normalized: SubscriptionCondition[] = [];
+    for (let index = 0; index < conditions.length; index++) {
+      normalized.push(this.normalizeCondition(conditions[index]));
+    }
+    return JSON.stringify(normalized);
+  }
+
+  private serializeActions(actions: SubscriptionAction[]): string {
+    const normalized: SubscriptionAction[] = [];
+    for (let index = 0; index < actions.length; index++) {
+      normalized.push(this.normalizeAction(actions[index]));
+    }
+    return JSON.stringify(normalized);
+  }
+
+  private toRuleFromRow(rs: relationalStore.ResultSet): SubscriptionRule {
+    return {
+      id: this.getStringValue(rs, 'id'),
+      name: this.getStringValue(rs, 'name'),
+      enabled: this.getBoolValue(rs, 'enabled', true),
+      targetType: this.getStringValue(rs, 'targetType', SubscriptionTargetType.ITEM) as SubscriptionTargetType,
+      contentType: this.getStringValue(rs, 'contentType', SubscriptionContentType.MANGA) as SubscriptionContentType,
+      targetId: this.getStringValue(rs, 'targetId'),
+      targetTitle: this.getStringValue(rs, 'targetTitle'),
+      sourceId: this.getStringValue(rs, 'sourceId'),
+      sourceName: this.getStringValue(rs, 'sourceName'),
+      providerType: this.getStringValue(rs, 'providerType', SubscriptionProviderType.NONE) as SubscriptionProviderType,
+      checkIntervalMin: this.getLongValue(rs, 'checkIntervalMin', 180),
+      conditions: this.parseConditions(this.getStringValue(rs, 'conditionsJson', '[]')),
+      actions: this.parseActions(this.getStringValue(rs, 'actionsJson', '[]')),
+      lastCheckTime: this.getLongValue(rs, 'lastCheckTime', 0),
+      lastSuccessTime: this.getLongValue(rs, 'lastSuccessTime', 0),
+      lastError: this.getStringValue(rs, 'lastError'),
+      lastTriggeredScene: this.getStringValue(rs, 'lastTriggeredScene'),
+      createTime: this.getLongValue(rs, 'createTime', 0),
+      updateTime: this.getLongValue(rs, 'updateTime', 0)
+    };
+  }
+
+  private toExecutionFromRow(rs: relationalStore.ResultSet): SubscriptionExecutionRecord {
+    return {
+      id: this.getStringValue(rs, 'id'),
+      ruleId: this.getStringValue(rs, 'ruleId'),
+      status: this.getStringValue(rs, 'status', SubscriptionExecutionStatus.SUCCESS) as SubscriptionExecutionStatus,
+      triggerScene: this.getStringValue(rs, 'triggerScene'),
+      targetId: this.getStringValue(rs, 'targetId'),
+      targetTitle: this.getStringValue(rs, 'targetTitle'),
+      contentType: this.getStringValue(rs, 'contentType', SubscriptionContentType.MANGA) as SubscriptionContentType,
+      checkedAt: this.getLongValue(rs, 'checkedAt', 0),
+      localCount: this.getLongValue(rs, 'localCount', 0),
+      remoteCount: this.getLongValue(rs, 'remoteCount', 0),
+      deltaCount: this.getLongValue(rs, 'deltaCount', 0),
+      downloadedCount: this.getLongValue(rs, 'downloadedCount', 0),
+      message: this.getStringValue(rs, 'message'),
+      actionSummary: this.getStringValue(rs, 'actionSummary'),
+      createTime: this.getLongValue(rs, 'createTime', 0)
+    };
+  }
+
+  private toCheckpointFromRow(rs: relationalStore.ResultSet): SubscriptionCheckpoint {
+    return {
+      ruleId: this.getStringValue(rs, 'ruleId'),
+      targetId: this.getStringValue(rs, 'targetId'),
+      contentId: this.getStringValue(rs, 'contentId'),
+      contentType: this.getStringValue(rs, 'contentType', SubscriptionContentType.MANGA) as SubscriptionContentType,
+      remoteFingerprint: this.getStringValue(rs, 'remoteFingerprint'),
+      remoteCount: this.getLongValue(rs, 'remoteCount', 0),
+      localCount: this.getLongValue(rs, 'localCount', 0),
+      latestItemTitle: this.getStringValue(rs, 'latestItemTitle'),
+      lastSeenTime: this.getLongValue(rs, 'lastSeenTime', 0),
+      updateTime: this.getLongValue(rs, 'updateTime', 0)
+    };
+  }
+
+  public async getRuleById(ruleId: string): Promise<SubscriptionRule | null> {
+    const store = this.getStore();
+    const rs = await store.querySql(
+      `SELECT ${RULE_SELECT_COLUMNS} FROM subscription_rule WHERE id = ? LIMIT 1`,
+      [ruleId]
+    );
+    if (!rs.goToFirstRow()) {
+      rs.close();
+      return null;
+    }
+    const rule = this.toRuleFromRow(rs);
+    rs.close();
+    return rule;
+  }
+
+  public async getAllRules(): Promise<SubscriptionRule[]> {
+    const store = this.getStore();
+    const rs = await store.querySql(
+      `SELECT ${RULE_SELECT_COLUMNS} FROM subscription_rule ORDER BY updateTime DESC, createTime DESC`
+    );
+    const list: SubscriptionRule[] = [];
+    if (rs.goToFirstRow()) {
+      do {
+        list.push(this.toRuleFromRow(rs));
+      } while (rs.goToNextRow());
+    }
+    rs.close();
+    return list;
+  }
+
+  public async getEnabledRules(): Promise<SubscriptionRule[]> {
+    const store = this.getStore();
+    const rs = await store.querySql(
+      `SELECT ${RULE_SELECT_COLUMNS}
+       FROM subscription_rule
+       WHERE enabled = 1
+       ORDER BY updateTime DESC, createTime DESC`
+    );
+    const list: SubscriptionRule[] = [];
+    if (rs.goToFirstRow()) {
+      do {
+        list.push(this.toRuleFromRow(rs));
+      } while (rs.goToNextRow());
+    }
+    rs.close();
+    return list;
+  }
+
+  public async saveRule(rule: SubscriptionRule): Promise<SubscriptionRule> {
+    const store = this.getStore();
+    const now = Date.now();
+    const existing = rule.id ? await this.getRuleById(rule.id) : null;
+    const id = rule.id && rule.id.trim().length > 0 ? rule.id : this.generateId();
+    const createTime = existing ? existing.createTime : (rule.createTime > 0 ? rule.createTime : now);
+
+    await store.executeSql(
+      `INSERT OR REPLACE INTO subscription_rule
+      (id, name, enabled, targetType, contentType, targetId, targetTitle, sourceId, sourceName, providerType,
+       checkIntervalMin, conditionsJson, actionsJson, lastCheckTime, lastSuccessTime, lastError,
+       lastTriggeredScene, createTime, updateTime)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        this.normalizeString(rule.name, existing ? existing.name : ''),
+        this.normalizeBoolean(rule.enabled, existing ? existing.enabled : true) ? 1 : 0,
+        this.normalizeString(rule.targetType, existing ? existing.targetType : SubscriptionTargetType.ITEM),
+        this.normalizeString(rule.contentType, existing ? existing.contentType : SubscriptionContentType.MANGA),
+        this.normalizeString(rule.targetId, existing ? existing.targetId : ''),
+        this.normalizeString(rule.targetTitle, existing ? existing.targetTitle : ''),
+        this.normalizeString(rule.sourceId, existing ? existing.sourceId : ''),
+        this.normalizeString(rule.sourceName, existing ? existing.sourceName : ''),
+        this.normalizeString(rule.providerType, existing ? existing.providerType : SubscriptionProviderType.NONE),
+        this.normalizeNumber(rule.checkIntervalMin, existing ? existing.checkIntervalMin : 180, 1),
+        this.serializeConditions(rule.conditions),
+        this.serializeActions(rule.actions),
+        this.normalizeNumber(rule.lastCheckTime, existing ? existing.lastCheckTime : 0, 0),
+        this.normalizeNumber(rule.lastSuccessTime, existing ? existing.lastSuccessTime : 0, 0),
+        this.normalizeString(rule.lastError, existing ? existing.lastError : ''),
+        this.normalizeString(rule.lastTriggeredScene, existing ? existing.lastTriggeredScene : ''),
+        createTime,
+        now
+      ]
+    );
+
+    const saved = await this.getRuleById(id);
+    if (saved === null) {
+      throw new Error('保存订阅规则失败');
+    }
+    return saved;
+  }
+
+  public async updateRuleRuntimeState(
+    ruleId: string,
+    lastCheckTime: number,
+    lastSuccessTime: number,
+    lastError: string,
+    lastTriggeredScene: string
+  ): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      `UPDATE subscription_rule
+       SET lastCheckTime = ?, lastSuccessTime = ?, lastError = ?, lastTriggeredScene = ?, updateTime = ?
+       WHERE id = ?`,
+      [lastCheckTime, lastSuccessTime, lastError, lastTriggeredScene, Date.now(), ruleId]
+    );
+  }
+
+  public async setRuleEnabled(ruleId: string, enabled: boolean): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      'UPDATE subscription_rule SET enabled = ?, updateTime = ? WHERE id = ?',
+      [enabled ? 1 : 0, Date.now(), ruleId]
+    );
+  }
+
+  public async deleteRule(ruleId: string): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql('DELETE FROM subscription_checkpoint WHERE ruleId = ?', [ruleId]);
+    await store.executeSql('DELETE FROM subscription_execution WHERE ruleId = ?', [ruleId]);
+    await store.executeSql('DELETE FROM subscription_rule WHERE id = ?', [ruleId]);
+  }
+
+  public async saveExecution(record: SubscriptionExecutionRecord): Promise<void> {
+    const store = this.getStore();
+    const id = record.id && record.id.trim().length > 0 ? record.id : this.generateId();
+    const now = Date.now();
+    await store.executeSql(
+      `INSERT OR REPLACE INTO subscription_execution
+      (id, ruleId, status, triggerScene, targetId, targetTitle, contentType, checkedAt,
+       localCount, remoteCount, deltaCount, downloadedCount, message, actionSummary, createTime)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        record.ruleId,
+        record.status,
+        this.normalizeString(record.triggerScene, ''),
+        this.normalizeString(record.targetId, ''),
+        this.normalizeString(record.targetTitle, ''),
+        record.contentType,
+        record.checkedAt > 0 ? record.checkedAt : now,
+        this.normalizeNumber(record.localCount, 0, 0),
+        this.normalizeNumber(record.remoteCount, 0, 0),
+        this.normalizeNumber(record.deltaCount, 0, 0),
+        this.normalizeNumber(record.downloadedCount, 0, 0),
+        this.normalizeString(record.message, ''),
+        this.normalizeString(record.actionSummary, ''),
+        now
+      ]
+    );
+  }
+
+  public async getExecutions(ruleId: string = '', limit: number = 50): Promise<SubscriptionExecutionRecord[]> {
+    const store = this.getStore();
+    const safeLimit = limit > 0 ? Math.floor(limit) : 50;
+    let rs: relationalStore.ResultSet;
+    if (ruleId.trim().length > 0) {
+      rs = await store.querySql(
+        `SELECT ${EXECUTION_SELECT_COLUMNS}
+         FROM subscription_execution
+         WHERE ruleId = ?
+         ORDER BY checkedAt DESC, createTime DESC
+         LIMIT ?`,
+        [ruleId, safeLimit]
+      );
+    } else {
+      rs = await store.querySql(
+        `SELECT ${EXECUTION_SELECT_COLUMNS}
+         FROM subscription_execution
+         ORDER BY checkedAt DESC, createTime DESC
+         LIMIT ?`,
+        [safeLimit]
+      );
+    }
+
+    const list: SubscriptionExecutionRecord[] = [];
+    if (rs.goToFirstRow()) {
+      do {
+        list.push(this.toExecutionFromRow(rs));
+      } while (rs.goToNextRow());
+    }
+    rs.close();
+    return list;
+  }
+
+  public async trimExecutions(ruleId: string, maxCount: number = 80): Promise<void> {
+    const safeMaxCount = maxCount > 0 ? Math.floor(maxCount) : 80;
+    const store = this.getStore();
+    const rs = await store.querySql(
+      `SELECT id
+       FROM subscription_execution
+       WHERE ruleId = ?
+       ORDER BY checkedAt DESC, createTime DESC
+       LIMIT -1 OFFSET ?`,
+      [ruleId, safeMaxCount]
+    );
+
+    const ids: string[] = [];
+    if (rs.goToFirstRow()) {
+      do {
+        ids.push(rs.getString(0));
+      } while (rs.goToNextRow());
+    }
+    rs.close();
+
+    for (let index = 0; index < ids.length; index++) {
+      await store.executeSql('DELETE FROM subscription_execution WHERE id = ?', [ids[index]]);
+    }
+  }
+
+  public async getCheckpoint(ruleId: string, targetId: string, contentId: string): Promise<SubscriptionCheckpoint | null> {
+    const store = this.getStore();
+    const rs = await store.querySql(
+      `SELECT ${CHECKPOINT_SELECT_COLUMNS}
+       FROM subscription_checkpoint
+       WHERE ruleId = ? AND targetId = ? AND contentId = ?
+       LIMIT 1`,
+      [ruleId, targetId, contentId]
+    );
+    if (!rs.goToFirstRow()) {
+      rs.close();
+      return null;
+    }
+    const checkpoint = this.toCheckpointFromRow(rs);
+    rs.close();
+    return checkpoint;
+  }
+
+  public async upsertCheckpoint(checkpoint: SubscriptionCheckpoint): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      `INSERT OR REPLACE INTO subscription_checkpoint
+      (ruleId, targetId, contentId, contentType, remoteFingerprint, remoteCount, localCount,
+       latestItemTitle, lastSeenTime, updateTime)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        checkpoint.ruleId,
+        checkpoint.targetId,
+        checkpoint.contentId,
+        checkpoint.contentType,
+        this.normalizeString(checkpoint.remoteFingerprint, ''),
+        this.normalizeNumber(checkpoint.remoteCount, 0, 0),
+        this.normalizeNumber(checkpoint.localCount, 0, 0),
+        this.normalizeString(checkpoint.latestItemTitle, ''),
+        this.normalizeNumber(checkpoint.lastSeenTime, Date.now(), 0),
+        Date.now()
+      ]
+    );
+  }
+}
+
+export function getSubscriptionDataManager(): SubscriptionDataManager {
+  return SubscriptionDataManager.getInstance();
+}

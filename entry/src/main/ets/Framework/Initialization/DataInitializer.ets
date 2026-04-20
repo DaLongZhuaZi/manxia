@@ -12,6 +12,7 @@ import { initializeNovelModule } from '../Novel/NovelInitializer';
 import { DiskCacheManager } from '../Cache/DiskCacheManager';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { DataManager } from '../Data/DataManager';
+import { getSubscriptionInitializer } from '../Subscription/SubscriptionInitializer';
 
 const TAG = 'DataInitializer';
 
@@ -226,6 +227,16 @@ export class DataInitializer {
       } catch (error) {
         const warningMsg = `小说模块初始化失败: ${error}`;
         warnings.push(warningMsg); // 小说模块初始化失败不影响核心功能
+        logger.warn(TAG, warningMsg + String(error));
+      }
+
+      // 第六步三刻：初始化统一内容跟踪模块
+      try {
+        await getSubscriptionInitializer().initialize(context);
+        logger.info(TAG, '统一内容跟踪模块初始化完成');
+      } catch (error) {
+        const warningMsg = `统一内容跟踪模块初始化失败: ${error}`;
+        warnings.push(warningMsg);
         logger.warn(TAG, warningMsg + String(error));
       }
 

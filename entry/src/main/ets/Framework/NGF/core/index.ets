@@ -11,3 +11,4 @@ export { LifecycleOrchestratorFacade, ngfLifecycleOrchestratorFacade } from './f
 export { ServiceContainerFacade, ngfServiceContainerFacade } from './facades/ServiceContainerFacade';
 export { NGFCoreIntegrationFacade, ngfCoreIntegrationFacade } from './facades/NGFCoreIntegrationFacade';
 export { NGFCoreEventBridge, NGFInitializationEventName, ngfCoreEventBridge } from './facades/NGFCoreEventBridge';
+export { NGFStarterKernel, NGFStarterServiceToken, NGFStarterEventName, ngfStarterKernel } from './starter/index';

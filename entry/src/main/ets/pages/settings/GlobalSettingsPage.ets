@@ -140,8 +140,8 @@ export struct GlobalSettingsPage {
     },
     {
       id: 'tracking',
-      title: '进度记录',
-      subtitle: 'MAL、AniList、Bangumi等进度同步',
+      title: '进度记录与服务器',
+      subtitle: 'MAL、AniList、Bangumi 进度同步，Suwayomi、Komga 服务器配置',
       icon: $r('sys.symbol.mobiledata_and_cloud'),
       targetPage: 'TrackingSettingsSubPage'
     },
@@ -481,7 +481,7 @@ export struct GlobalSettingsPage {
       case 'NGFFrameworkStatusPage':
         return 'NGF框架状态';
       case 'TrackingSettingsSubPage':
-        return '进度记录';
+        return '进度记录与服务器';
       case 'NetworkSettingsSubPage':
         return '下载与网络';
       case 'NotificationSettingsSubPage':
@@ -1143,7 +1143,7 @@ export struct GlobalSettingsPage {
         .backgroundColor(this.getSettingsCardBottomEdgeColor())
 
       Column({ space: 8 }) {
-      Search({ value: this.searchKeyword, placeholder: '搜索设置项（如：翻页动画、主导航栏）' })
+      Search({ value: this.searchKeyword, placeholder: '搜索设置项（如：进度记录与服务器、翻页动画、主导航栏）' })
         .searchButton('搜索')
         .onChange((value: string) => {
           this.updateSearchResults(value);
@@ -1222,7 +1222,7 @@ export struct GlobalSettingsPage {
             .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
             .fontColor(this.getSettingsRowTitleColor())
-          Text('可尝试搜索：阅读模式、翻页动画、主导航栏、备份、日志')
+          Text('可尝试搜索：进度记录与服务器、Suwayomi服务器、Komga服务器、翻页动画')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(this.getSettingsRowSubtitleColor())
