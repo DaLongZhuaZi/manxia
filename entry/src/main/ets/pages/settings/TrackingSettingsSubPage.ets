@@ -1,7 +1,7 @@
 // 文件路径: entry/src/main/ets/pages/settings/TrackingSettingsSubPage.ets
 /**
- * 进度记录设置子页面
- * 管理第三方进度记录（MAL、AniList、Kitsu等）的登录和配置
+ * 进度记录与服务器设置子页面
+ * 管理第三方进度记录（MAL、AniList、Bangumi）与服务器（Suwayomi、Komga）的登录和配置
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
@@ -593,9 +593,9 @@ export struct TrackingSettingsSubPage {
       case TrackerId.SUWAYOMI:
         return '自托管漫画服务器同步';
       case TrackerId.KOMGA:
-        return 'Komga 自托管漫画库连接';
+        return 'Komga 自托管漫画服务器连接';
       default:
-        return '进度记录';
+        return '进度记录与服务器';
     }
   }
 
@@ -625,14 +625,14 @@ export struct TrackingSettingsSubPage {
   @Builder
   buildTrackerSection() {
     Column({ space: 16 }) {
-      Text('进度记录')
+      Text('进度记录与服务器')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
-      Text('连接第三方服务以同步您的阅读进度。登录后，您的阅读进度将自动同步到这些平台。')
+      Text('连接进度记录平台与自托管服务器以同步阅读进度。Suwayomi 和 Komga 属于服务器，AniList 等属于进度记录平台。')
         .fontSize(13)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -665,22 +665,67 @@ export struct TrackingSettingsSubPage {
   @Builder
   buildInfoSection() {
     Column({ space: 12 }) {
-      Text('关于进度记录')
+      Text('关于进度记录与服务器')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
-      Text('进度记录允许您将阅读进度同步到第三方平台。当您阅读完一个章节时，进度会自动更新到已连接的服务。')
+      Text('本页同时管理两类能力：进度记录平台（如 MAL、AniList、Bangumi）和自托管服务器（Suwayomi、Komga）。阅读章节后，进度会同步到已连接目标。')
         .fontSize(13)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
 
-      Text('注意：跟踪是单向的（本应用 → 进度记录）。在其他设备上的阅读进度不会自动同步回本应用。')
+      Text('注意：跟踪是单向的（本应用 → 平台/服务器）。在其他设备上的阅读进度不会自动同步回本应用。')
         .fontSize(13)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+  }
+
+  @Builder
+  buildSubscriptionSection() {
+    Column({ space: 12 }) {
+      Text('内容更新跟踪')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Text('这里管理的是应用内的通用内容跟踪规则，不是 RSS 订阅源。它用于跟踪书架、远程库和后续各类在线内容的更新，并按规则执行通知、自动下载等操作。')
+        .fontSize(13)
+        .lineHeight(20)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+      Button('进入统一跟踪管理')
+        .height(38)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor('#FFFFFF')
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(999)
+        .onClick(() => {
+          this.pathStack.pushPathByName('SubscriptionManagementPage', null);
+        })
     }
     .width('100%')
     .padding(16)
@@ -785,6 +830,38 @@ export struct TrackingSettingsSubPage {
             }
             .width('100%')
 
+            Column() {
+              this.buildSubscriptionSection()
+            }
+            .width('100%')
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'subscription_tracking'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'subscription_tracking') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'subscription_tracking'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'subscription_tracking', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'subscription_tracking', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'subscription_tracking',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
+            .margin({ bottom: 16 })
+
             Blank().height(40)
           }
           .enabled(this.settingsTapEnabled)
@@ -803,7 +880,7 @@ export struct TrackingSettingsSubPage {
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         SettingsImmersiveTitleBar({
           themeState: this.themeState,
-          title: '进度记录',
+          title: '进度记录与服务器',
           appFontFamily: this.appFontFamily,
           contentPadding: this.responsive_contentPadding,
           maxContentWidth: this.responsive_maxContentWidth,

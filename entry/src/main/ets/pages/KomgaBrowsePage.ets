@@ -40,6 +40,12 @@ interface KomgaDetailParams {
   title: string;
 }
 
+interface KomgaLibraryDetailParams {
+  libraryId: string;
+  libraryName: string;
+  instanceId: string;
+}
+
 type KomgaDisplayMode = 'grid' | 'list';
 type KomgaBrowseColorKey =
   'accent_blue' |
@@ -598,6 +604,17 @@ export struct KomgaBrowsePage {
     this.pathStack.pushPathByName('KomgaMangaDetailPage', params);
   }
 
+  private openLibraryDetail(library: KomgaLibraryOption): void {
+    const instanceId = this.currentInstanceId.length > 0 ? this.currentInstanceId : this.executor.getCurrentInstanceId();
+    const params: KomgaLibraryDetailParams = {
+      libraryId: library.id,
+      libraryName: library.name,
+      instanceId: instanceId
+    };
+    logger.info(TAG, `打开 Komga 库详情: libraryId=${library.id}, libraryName=${library.name}, instanceId=${instanceId || '-'}`);
+    this.pathStack.pushPathByName('KomgaLibraryDetailPage', params);
+  }
+
   private getCurrentInstanceLabel(): string {
     const instance: KomgaInstanceConfig | undefined = this.instances.find((item: KomgaInstanceConfig) => item.id === this.currentInstanceId);
     if (instance !== undefined) {
@@ -703,6 +720,51 @@ export struct KomgaBrowsePage {
       .fontWeight(FontWeight.Medium)
       .fontFamily(this.appFontFamily)
       .fontColor(this.color('text_primary'))
+  }
+
+  @Builder
+  private buildLibraryEntryCard(library: KomgaLibraryOption) {
+    Row({ space: 10 }) {
+      Stack() {
+        SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+          .fontSize(18)
+          .fontColor([this.color('accent_blue')])
+      }
+      .width(34)
+      .height(34)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(10)
+
+      Column({ space: 3 }) {
+        Text(library.name)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.color('text_primary'))
+          .fontFamily(this.appFontFamily)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text('进入库详情页查看并选择具体内容')
+          .fontSize(11)
+          .fontColor(this.color('text_muted'))
+          .fontFamily(this.appFontFamily)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([this.color('text_muted')])
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(14)
+    .border({ width: 1, color: this.color('panel_border') })
+    .onClick(() => {
+      this.openLibraryDetail(library);
+    })
   }
 
   @Builder
@@ -1023,6 +1085,26 @@ export struct KomgaBrowsePage {
       .backgroundColor(this.color('panel_background'))
       .borderRadius(20)
       .border({ width: 1, color: this.color('panel_border') })
+
+      if (this.browseMode === 'library' && this.filterOptions.libraries.length > 0) {
+        Column({ space: 10 }) {
+          this.buildPanelTitle('库入口')
+          Text('先打开对应库详情，再进入具体漫画/阅读列表/书籍内容。')
+            .fontSize(12)
+            .lineHeight(18)
+            .fontColor(this.color('text_muted'))
+            .fontFamily(this.appFontFamily)
+            .width('100%')
+          ForEach(this.filterOptions.libraries, (library: KomgaLibraryOption) => {
+            this.buildLibraryEntryCard(library)
+          }, (library: KomgaLibraryOption) => library.id)
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(this.color('panel_background'))
+        .borderRadius(18)
+        .border({ width: 1, color: this.color('panel_border') })
+      }
 
       Row() {
         Text(this.items.length > 0 ? `当前显示 ${this.items.length} 项` : '等待加载内容')

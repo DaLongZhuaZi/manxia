@@ -37,6 +37,12 @@ interface KomgaDetailParams {
   title: string;
 }
 
+interface KomgaLibraryDetailParams {
+  libraryId: string;
+  libraryName: string;
+  instanceId: string;
+}
+
 type KomgaDisplayMode = 'grid' | 'list';
 type KomgaColorKey =
   'accent_blue' | 'background_dark' | 'comp_background_tertiary' |
@@ -703,6 +709,17 @@ export struct MainMenuKomgaTabContent {
     this.pathStack.pushPathByName('KomgaMangaDetailPage', params);
   }
 
+  private openLibraryDetail(library: KomgaLibraryOption): void {
+    const instanceId = this.currentInstanceId.length > 0 ? this.currentInstanceId : this.executor.getCurrentInstanceId();
+    const params: KomgaLibraryDetailParams = {
+      libraryId: library.id,
+      libraryName: library.name,
+      instanceId: instanceId
+    };
+    logger.info(TAG, `打开 Komga 库详情: libraryId=${library.id}, libraryName=${library.name}, instanceId=${instanceId || '-'}`);
+    this.pathStack.pushPathByName('KomgaLibraryDetailPage', params);
+  }
+
 
   private getBrowseModeLabel(): string {
     return this.browseMode === 'library' ? '库模式' : '发现模式';
@@ -787,6 +804,50 @@ export struct MainMenuKomgaTabContent {
       .fontWeight(FontWeight.Medium)
       .fontFamily(this.appFontFamily)
       .fontColor(this.color('text_primary'))
+  }
+
+  @Builder
+  private buildLibraryEntryCard(library: KomgaLibraryOption) {
+    Row({ space: 10 }) {
+      Stack() {
+        SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+          .fontSize(17)
+          .fontColor([this.color('accent_blue')])
+      }
+      .width(32)
+      .height(32)
+      .backgroundColor(this.color('comp_background_tertiary'))
+      .borderRadius(10)
+
+      Column({ space: 2 }) {
+        Text(library.name)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text('进入库详情后再查看具体内容')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_muted'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([this.color('text_muted')])
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(12)
+    .onClick(() => {
+      this.openLibraryDetail(library);
+    })
   }
 
   @Builder
@@ -1026,6 +1087,27 @@ export struct MainMenuKomgaTabContent {
             .scrollBar(BarState.Off)
             .width('100%')
             .height(44)
+
+            if (this.browseMode === 'library' && this.filterOptions.libraries.length > 0) {
+              Column({ space: 8 }) {
+                Text('库入口')
+                  .fontSize(12)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_primary'))
+                Text('打开对应库详情后，可按不同内容类型和排序方式查看库内漫画。')
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_muted'))
+                  .lineHeight(16)
+                  .width('100%')
+                ForEach(this.filterOptions.libraries, (library: KomgaLibraryOption) => {
+                  this.buildLibraryEntryCard(library)
+                }, (library: KomgaLibraryOption) => library.id)
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+            }
 
             if (this.showFilters) {
               Column() {

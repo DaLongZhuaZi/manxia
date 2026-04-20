@@ -1,0 +1,16 @@
+﻿{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "NGF starter entry module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "NGF starter ability"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "NGF Start"
+    }
+  ]
+}
