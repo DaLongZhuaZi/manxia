@@ -837,6 +837,8 @@ export interface TextChapter {
   index: number;
   /** 章节内容 */
   content: string;
+  /** 章节字数（可选，便于预加载阶段提前统计） */
+  wordCount?: number;
   /** 章节起始字符位置（在全文中） */
   startPosition: number;
   /** 章节结束字符位置（在全文中） */

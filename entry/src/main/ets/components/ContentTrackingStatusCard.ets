@@ -87,9 +87,9 @@ export struct ContentTrackingStatusCard {
       return '暂不支持';
     }
     if (!this.state.hasRule) {
-      return '未跟踪';
+      return '未开启';
     }
-    return this.state.enabled ? '已启用' : '已停用';
+    return this.state.enabled ? '已开启' : '已暂停';
   }
 
   private getStatusPillColor(): ResourceColor {
@@ -129,20 +129,20 @@ export struct ContentTrackingStatusCard {
 
   private getHeadlineText(): string {
     if (this.state.isLoading) {
-      return '正在读取当前内容的跟踪状态';
+      return '正在读取提醒状态';
     }
     if (!this.state.supported) {
       return this.state.unsupportedReason.length > 0
         ? this.state.unsupportedReason
-        : '当前内容暂不支持自动跟踪';
+        : '这类内容暂时还不能自动检查';
     }
     if (!this.state.hasRule) {
-      return '当前内容尚未建立跟踪规则';
+      return '这本内容还没开始提醒';
     }
     if (this.state.statusText.length > 0) {
       return this.state.statusText;
     }
-    return this.state.enabled ? '当前规则已启用' : '当前规则已停用';
+    return this.state.enabled ? '更新提醒已开启' : '更新提醒已暂停';
   }
 
   private getChapterSummaryText(): string {
@@ -150,18 +150,18 @@ export struct ContentTrackingStatusCard {
       return this.state.chapterSummary;
     }
     if (!this.state.supported) {
-      return '当前内容暂不支持跟踪';
+      return '暂不支持';
     }
     if (!this.state.hasRule) {
-      return '尚未建立跟踪';
+      return '还没有提醒';
     }
     if (!this.state.enabled) {
-      return '跟踪已暂停';
+      return '已暂停自动检查';
     }
     if (this.state.latestItemTitle.length > 0) {
       return this.state.latestItemTitle;
     }
-    return '等待首次检查';
+    return '还没检查过';
   }
 
   private toggleExpanded(): void {
@@ -355,7 +355,7 @@ export struct ContentTrackingStatusCard {
   @Builder
   private buildActionSection() {
     Column({ space: 10 }) {
-      Text('快速操作')
+      Text('快捷操作')
         .fontSize(11)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -365,7 +365,7 @@ export struct ContentTrackingStatusCard {
         Row({ space: 10 }) {
           Column() {
             this.buildActionButton(
-              this.state.hasRule ? '编辑跟踪' : '创建跟踪',
+              this.state.hasRule ? '调整提醒' : '开启提醒',
               $r('sys.symbol.gearshape'),
               true,
               !this.state.isBusy,
@@ -377,8 +377,8 @@ export struct ContentTrackingStatusCard {
           if (this.state.hasRule) {
             Column() {
               this.buildActionButton(
-                this.state.isBusy ? '检查中...' : '立即检查',
-                $r('sys.symbol.arrow_clockwise'),
+                this.state.isBusy ? '检查中...' : '现在检查',
+                $r('sys.symbol.bookshelf_badge_checkmark'),
                 false,
                 !this.state.isBusy,
                 this.callbacks.onRunNow
@@ -388,8 +388,8 @@ export struct ContentTrackingStatusCard {
           } else {
             Column() {
               this.buildActionButton(
-                '管理页',
-                $r('sys.symbol.rectangle_stack'),
+                '打开提醒页',
+                $r('sys.symbol.bookshelf_badge_checkmark'),
                 false,
                 !this.state.isBusy,
                 this.callbacks.onOpenManagement
@@ -405,7 +405,7 @@ export struct ContentTrackingStatusCard {
         Row({ space: 10 }) {
           Column() {
             this.buildActionButton(
-              this.state.enabled ? '暂停跟踪' : '启用跟踪',
+              this.state.enabled ? '暂停提醒' : '恢复提醒',
               this.state.enabled ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'),
               false,
               !this.state.isBusy,
@@ -416,8 +416,8 @@ export struct ContentTrackingStatusCard {
 
           Column() {
             this.buildActionButton(
-              '管理页',
-              $r('sys.symbol.rectangle_stack'),
+              '打开提醒页',
+              $r('sys.symbol.bookshelf_badge_checkmark'),
               false,
               !this.state.isBusy,
               this.callbacks.onOpenManagement
@@ -430,8 +430,8 @@ export struct ContentTrackingStatusCard {
 
       if (!this.state.supported) {
         this.buildActionButton(
-          '管理页',
-          $r('sys.symbol.rectangle_stack'),
+          '打开提醒页',
+          $r('sys.symbol.bookshelf_badge_checkmark'),
           false,
           !this.state.isBusy,
           this.callbacks.onOpenManagement
@@ -445,10 +445,10 @@ export struct ContentTrackingStatusCard {
     Column({ space: 12 }) {
       Row() {
         Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+          SymbolGlyph($r('sys.symbol.bookshelf_badge_checkmark'))
             .fontSize(16)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('内容跟踪')
+          Text('更新提醒')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontFamily(this.appFontFamily)
@@ -471,18 +471,24 @@ export struct ContentTrackingStatusCard {
         this.buildSummaryRow('当前状态', this.getHeadlineText(), this.getStatusPillColor())
         this.buildSummaryRow(
           '上次检查',
-          this.state.lastCheckText.length > 0 ? this.state.lastCheckText : '尚未执行',
+          this.state.lastCheckText.length > 0 ? this.state.lastCheckText : '还没检查过',
           ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
         )
         this.buildSummaryRow(
-          '章节情况',
+          '更新情况',
           this.getChapterSummaryText(),
           this.getChapterSummaryAccentColor()
         )
+        Text('自动检查目前只会在 APP 回到前台时补查，后台不会定时执行。')
+          .fontSize(11)
+          .lineHeight(17)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
 
         Button() {
           Row({ space: 8 }) {
-            Text(this.isExpanded ? '收起详细信息' : '展开详细信息')
+            Text(this.isExpanded ? '收起更多设置' : '展开更多设置')
               .fontSize(12)
               .fontWeight(FontWeight.Medium)
               .fontFamily(this.appFontFamily)
@@ -514,7 +520,7 @@ export struct ContentTrackingStatusCard {
         Column({ space: 12 }) {
           if (this.state.providerText.length > 0) {
             this.buildExpandedDetailItem(
-              '跟踪来源',
+              '内容来源',
               this.state.providerText,
               ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
             )
@@ -522,7 +528,7 @@ export struct ContentTrackingStatusCard {
 
           if (this.state.ruleName.length > 0) {
             this.buildExpandedDetailItem(
-              '规则名称',
+              '提醒名称',
               this.state.ruleName,
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             )
@@ -530,7 +536,7 @@ export struct ContentTrackingStatusCard {
 
           if (this.state.latestItemTitle.length > 0) {
             this.buildExpandedDetailItem(
-              '最近动态',
+              '最近更新',
               this.state.latestItemTitle,
               ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
             )
@@ -538,23 +544,23 @@ export struct ContentTrackingStatusCard {
 
           if (this.state.hasRule) {
             this.buildExpandedDetailItem(
-              '检查条件',
-              this.state.conditionSummary.length > 0 ? this.state.conditionSummary : '未配置',
+              '怎么检查',
+              this.state.conditionSummary.length > 0 ? this.state.conditionSummary : '按默认方式',
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             )
             this.buildExpandedDetailItem(
-              '更新动作',
-              this.state.actionSummary.length > 0 ? this.state.actionSummary : '仅检查更新',
+              '发现更新后',
+              this.state.actionSummary.length > 0 ? this.state.actionSummary : '只检查，不自动处理',
               ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
             )
           }
 
           if (this.state.conditionHighlights.length > 0) {
-            this.buildHighlightSection('条件细项', this.state.conditionHighlights)
+            this.buildHighlightSection('检查细节', this.state.conditionHighlights)
           }
 
           if (this.state.actionHighlights.length > 0) {
-            this.buildHighlightSection('执行细项', this.state.actionHighlights)
+            this.buildHighlightSection('处理方式', this.state.actionHighlights)
           }
 
           this.buildActionSection()

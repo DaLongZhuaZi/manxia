@@ -38,16 +38,21 @@ import {
 import {
   getSubscriptionInitializer,
   getSubscriptionManager,
+  convertSubscriptionIntervalDisplayToMinutes,
   SubscriptionActionType,
   SubscriptionConditionMatchMode,
   SubscriptionConditionType,
   SubscriptionContentType,
   SubscriptionExecutionRecord,
   SubscriptionExecutionStatus,
+  SubscriptionIntervalUnit,
   SubscriptionProviderType,
   SubscriptionRule,
   SubscriptionRuleCreateOptions,
-  SubscriptionManager
+  SubscriptionManager,
+  formatSubscriptionIntervalSchedule,
+  getSubscriptionIntervalUnitLabel,
+  splitSubscriptionIntervalMinutesForDisplay
 } from '../Framework/Subscription';
 
 import {
@@ -474,7 +479,9 @@ export struct UnifiedDetailPage {
   @State trackingDialogOpacity: number = 0;
   @State trackingDialogScale: number = 0.8;
   @State trackingDialogTranslateY: number = 36;
-  @State trackingCheckIntervalText: string = '180';
+  @State trackingSettingsActiveTab: number = 0;
+  @State trackingCheckIntervalText: string = '3';
+  @State trackingCheckIntervalUnit: SubscriptionIntervalUnit = SubscriptionIntervalUnit.HOUR;
   @State trackingMinNewItemsText: string = '1';
   @State trackingAutoDownloadCountText: string = '0';
   @State trackingConditionMatchMode: SubscriptionConditionMatchMode = SubscriptionConditionMatchMode.ALL;
@@ -1152,7 +1159,7 @@ export struct UnifiedDetailPage {
   private async resolveCurrentTrackingTargetInfo(): Promise<UnifiedDetailTrackingTargetInfo> {
     const unsupportedTarget: UnifiedDetailTrackingTargetInfo = {
       supported: false,
-      unsupportedReason: '当前内容暂不支持自动跟踪',
+      unsupportedReason: '这类内容暂时还不能自动检查',
       contentType: SubscriptionContentType.MIXED,
       targetId: '',
       targetTitle: this.content?.title || '',
@@ -1161,7 +1168,7 @@ export struct UnifiedDetailPage {
       providerType: SubscriptionProviderType.NONE
     };
     if (!this.content) {
-      unsupportedTarget.unsupportedReason = '当前内容尚未加载完成';
+      unsupportedTarget.unsupportedReason = '内容还在加载中';
       return unsupportedTarget;
     }
 
@@ -1169,7 +1176,7 @@ export struct UnifiedDetailPage {
       const sourceId = this.getCurrentNovelSourceId();
       const bookUrl = this.normalizeTrackingText(typeof this.content.id === 'string' ? this.content.id : '');
       if (sourceId.length <= 0 || bookUrl.length <= 0) {
-        unsupportedTarget.unsupportedReason = '当前小说缺少有效书源标识，暂时无法创建内容跟踪';
+        unsupportedTarget.unsupportedReason = '这本小说缺少来源信息，暂时不能开启提醒';
         unsupportedTarget.contentType = SubscriptionContentType.NOVEL;
         unsupportedTarget.providerType = SubscriptionProviderType.LEGADO;
         return unsupportedTarget;
@@ -1212,14 +1219,14 @@ export struct UnifiedDetailPage {
       unsupportedTarget.contentType = SubscriptionContentType.MANGA;
       unsupportedTarget.providerType = providerType;
       unsupportedTarget.unsupportedReason = this.content.isLocal
-        ? '本地漫画暂未接入后台内容跟踪执行'
-        : '普通 WebView 在线漫画的后台内容跟踪执行将在后续阶段接入';
+        ? '本地漫画暂时还不能自动检查'
+        : '这种在线漫画暂时还不能自动检查';
       return unsupportedTarget;
     }
 
     if (this.content.contentType === UnifiedContentType.EBOOK) {
       unsupportedTarget.contentType = SubscriptionContentType.EBOOK;
-      unsupportedTarget.unsupportedReason = '电子书内容跟踪执行将在后续阶段接入';
+      unsupportedTarget.unsupportedReason = '电子书的更新提醒还在准备中';
       return unsupportedTarget;
     }
 
@@ -1247,13 +1254,13 @@ export struct UnifiedDetailPage {
 
   private async ensureNovelTrackingBookId(): Promise<string> {
     if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
-      throw new Error('当前不是小说内容，无法创建小说跟踪记录');
+      throw new Error('当前内容不是小说，暂时不能这样开启提醒');
     }
 
     const sourceId = this.getCurrentNovelSourceId();
     const bookUrl = this.normalizeTrackingText(typeof this.content.id === 'string' ? this.content.id : '');
     if (sourceId.length <= 0 || bookUrl.length <= 0) {
-      throw new Error('当前小说缺少有效书源标识，无法创建跟踪记录');
+      throw new Error('这本小说缺少来源信息，暂时不能开启提醒');
     }
 
     const existingBookId = await this.resolveExistingNovelTrackingBookId(sourceId, bookUrl);
@@ -1358,20 +1365,20 @@ export struct UnifiedDetailPage {
       return '发现更新';
     }
     if (status === SubscriptionExecutionStatus.NO_UPDATE) {
-      return '无更新';
+      return '没有更新';
     }
     if (status === SubscriptionExecutionStatus.SKIPPED) {
       return '已跳过';
     }
     if (status === SubscriptionExecutionStatus.FAILED) {
-      return '执行失败';
+      return '检查失败';
     }
     return '暂不支持';
   }
 
   private formatTrackingTimestamp(timestamp: number): string {
     if (timestamp <= 0) {
-      return '尚未执行';
+      return '还没检查过';
     }
     try {
       return new Date(timestamp).toLocaleString();
@@ -1434,8 +1441,8 @@ export struct UnifiedDetailPage {
       return '';
     }
     return this.getTrackingConditionMatchMode(rule) === SubscriptionConditionMatchMode.ANY
-      ? '任一条件命中'
-      : '全部条件命中';
+      ? '满足任意一项'
+      : '需要全部满足';
   }
 
   private trackingExcludesNSFW(rule: SubscriptionRule): boolean {
@@ -1462,28 +1469,28 @@ export struct UnifiedDetailPage {
     if (rule === null) {
       return '';
     }
-    const parts: string[] = [`间隔 ${rule.checkIntervalMin} 分钟`, `最少新增 ${this.getTrackingMinNewItems(rule)}`];
+    const parts: string[] = [formatSubscriptionIntervalSchedule(rule.checkIntervalMin), `至少新增 ${this.getTrackingMinNewItems(rule)}`];
     const matchModeSummary = this.getTrackingConditionMatchModeSummary(rule);
     if (matchModeSummary.length > 0) {
       parts.push(matchModeSummary);
     }
     if (this.trackingRequiresFavorite(rule)) {
-      parts.push('仅收藏时执行');
+      parts.push('只检查已收藏的内容');
     }
     if (this.trackingExcludesNSFW(rule)) {
-      parts.push('排除 NSFW');
+      parts.push('跳过 NSFW');
     }
     const titleKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.TITLE_KEYWORD);
     if (titleKeyword.length > 0) {
-      parts.push(`标题匹配 ${titleKeyword}`);
+      parts.push(`标题包含 ${titleKeyword}`);
     }
     const tagKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.TAG_KEYWORD);
     if (tagKeyword.length > 0) {
-      parts.push(`标签匹配 ${tagKeyword}`);
+      parts.push(`标签包含 ${tagKeyword}`);
     }
     const sourceKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.SOURCE_KEYWORD);
     if (sourceKeyword.length > 0) {
-      parts.push(`来源匹配 ${sourceKeyword}`);
+      parts.push(`来源包含 ${sourceKeyword}`);
     }
     return parts.join(' · ');
   }
@@ -1499,13 +1506,13 @@ export struct UnifiedDetailPage {
         continue;
       }
       if (action.type === SubscriptionActionType.NOTIFY) {
-        parts.push('通知');
+        parts.push('提醒我');
       } else if (action.type === SubscriptionActionType.AUTO_DOWNLOAD_NEW) {
         parts.push(`自动下载 ${action.limitCount > 0 ? action.limitCount : '全部'}`);
       }
     }
     if (parts.length <= 0) {
-      return '仅检查更新';
+      return '只检查，不自动处理';
     }
     return parts.join(' · ');
   }
@@ -1531,26 +1538,26 @@ export struct UnifiedDetailPage {
     if (this.trackingAutoCreatedThisSession) {
       highlights.push(this.createTrackingHighlight(
         'auto_created',
-        '首次进入自动建立',
+        '这次已自动开启',
         ContentTrackingHighlightTone.INFO
       ));
     }
 
     highlights.push(this.createTrackingHighlight(
       'interval',
-      `${rule.checkIntervalMin} 分钟检查`,
+      formatSubscriptionIntervalSchedule(rule.checkIntervalMin),
       ContentTrackingHighlightTone.NEUTRAL
     ));
     highlights.push(this.createTrackingHighlight(
       'min_new_items',
-      `最少新增 ${this.getTrackingMinNewItems(rule)}`,
+      `至少新增 ${this.getTrackingMinNewItems(rule)}`,
       ContentTrackingHighlightTone.INFO
     ));
 
     if (this.getTrackingPositiveConditionCount(rule) > 1) {
       highlights.push(this.createTrackingHighlight(
         'match_mode',
-        this.getTrackingConditionMatchMode(rule) === SubscriptionConditionMatchMode.ANY ? '任一条件命中' : '全部条件命中',
+        this.getTrackingConditionMatchMode(rule) === SubscriptionConditionMatchMode.ANY ? '满足任意一项' : '需要全部满足',
         ContentTrackingHighlightTone.PRIMARY
       ));
     }
@@ -1558,7 +1565,7 @@ export struct UnifiedDetailPage {
     if (this.trackingRequiresFavorite(rule)) {
       highlights.push(this.createTrackingHighlight(
         'favorite_only',
-        '仅收藏目标',
+        '只看已收藏',
         ContentTrackingHighlightTone.INFO
       ));
     }
@@ -1566,7 +1573,7 @@ export struct UnifiedDetailPage {
     if (this.trackingExcludesNSFW(rule)) {
       highlights.push(this.createTrackingHighlight(
         'exclude_nsfw',
-        '排除 NSFW',
+        '跳过 NSFW',
         ContentTrackingHighlightTone.WARNING
       ));
     }
@@ -1617,7 +1624,7 @@ export struct UnifiedDetailPage {
       if (action.type === SubscriptionActionType.NOTIFY) {
         highlights.push(this.createTrackingHighlight(
           'notify',
-          '更新通知',
+          '提醒我',
           ContentTrackingHighlightTone.INFO
         ));
       } else if (action.type === SubscriptionActionType.AUTO_DOWNLOAD_NEW) {
@@ -1632,7 +1639,7 @@ export struct UnifiedDetailPage {
     if (!hasExtraAction) {
       highlights.push(this.createTrackingHighlight(
         'check_only',
-        '仅检查更新',
+        '只检查更新',
         ContentTrackingHighlightTone.NEUTRAL
       ));
     }
@@ -1643,10 +1650,10 @@ export struct UnifiedDetailPage {
     if (!this.trackingSupported) {
       return this.trackingUnsupportedReason.length > 0
         ? this.trackingUnsupportedReason
-        : '当前内容暂不支持自动跟踪';
+        : '这类内容暂时还不能自动检查';
     }
     if (this.trackingRule === null) {
-      return '尚未为当前内容建立跟踪规则';
+      return '这本内容还没开始提醒';
     }
     if (this.trackingExecution !== null) {
       const label = this.getTrackingExecutionStatusLabel(this.trackingExecution.status);
@@ -1656,46 +1663,46 @@ export struct UnifiedDetailPage {
       return label;
     }
     if (this.trackingAutoCreatedThisSession) {
-      return '首次进入已自动建立默认跟踪，后续会按规则检查更新';
+      return '已自动开启提醒，之后会在 APP 回到前台时按设置补查';
     }
     if (!this.trackingRule.enabled) {
-      return '规则已存在，但当前处于停用状态';
+      return '提醒已存在，当前已暂停';
     }
-    return '规则已创建，等待首次检查';
+    return '提醒已开启，还没检查过';
   }
 
   private getTrackingChapterSummaryText(): string {
     if (!this.trackingSupported) {
-      return '当前内容暂不支持跟踪';
+      return '暂不支持';
     }
     if (this.trackingRule === null) {
-      return '尚未建立跟踪';
+      return '还没有提醒';
     }
     if (this.trackingExecution !== null) {
       if (this.trackingExecution.deltaCount > 0) {
-        return `新增 ${this.trackingExecution.deltaCount} 个条目`;
+        return `发现 ${this.trackingExecution.deltaCount} 个新内容`;
       }
       if (this.trackingExecution.status === SubscriptionExecutionStatus.NO_UPDATE) {
-        return '最近无新增内容';
+        return '最近没发现新内容';
       }
       if (this.trackingExecution.status === SubscriptionExecutionStatus.FAILED) {
-        return '最近检查失败';
+        return '上次检查失败';
       }
       if (this.trackingExecution.status === SubscriptionExecutionStatus.SKIPPED) {
-        return '本次检查已跳过';
+        return '这次没有检查';
       }
       if (this.trackingExecution.status === SubscriptionExecutionStatus.SUCCESS) {
-        return '已发现更新';
+        return '已经发现更新';
       }
-      return '当前内容暂不支持跟踪';
+      return '暂不支持';
     }
     if (this.trackingAutoCreatedThisSession) {
-      return '已自动建立默认跟踪';
+      return '已自动开启提醒';
     }
     if (!this.trackingRule.enabled) {
-      return '跟踪已暂停';
+      return '已暂停自动检查';
     }
-    return '等待首次检查';
+    return '还没检查过';
   }
 
   private buildTrackingCardState(): ContentTrackingCardState {
@@ -1715,9 +1722,9 @@ export struct UnifiedDetailPage {
 
     let latestInfoText = '';
     if (this.trackingExecution !== null && this.trackingExecution.deltaCount > 0) {
-      latestInfoText = `本次新增 ${this.trackingExecution.deltaCount} 个条目`;
+      latestInfoText = `这次发现 ${this.trackingExecution.deltaCount} 个新内容`;
     } else if (this.trackingAutoCreatedThisSession && this.trackingRule !== null) {
-      latestInfoText = '已自动开启默认跟踪';
+      latestInfoText = '这次已自动开启提醒';
     }
 
     return {
@@ -1786,7 +1793,7 @@ export struct UnifiedDetailPage {
         this.trackingRule = null;
         this.trackingExecution = null;
         this.trackingSupported = false;
-        this.trackingUnsupportedReason = '内容跟踪模块初始化失败';
+        this.trackingUnsupportedReason = '更新提醒暂时没准备好';
         return;
       }
 
@@ -1816,9 +1823,9 @@ export struct UnifiedDetailPage {
       this.trackingRule = null;
       this.trackingExecution = null;
       this.trackingSupported = false;
-      this.trackingUnsupportedReason = '读取内容跟踪状态失败';
+      this.trackingUnsupportedReason = '没能读到提醒状态';
       if (showToastOnError) {
-        promptAction.showToast({ message: `读取内容跟踪状态失败: ${String(error)}`, duration: 2000 });
+        promptAction.showToast({ message: `没能读到提醒状态: ${String(error)}`, duration: 2000 });
       }
     } finally {
       this.isTrackingLoading = false;
@@ -1839,7 +1846,8 @@ export struct UnifiedDetailPage {
 
   private fillTrackingDialogFromRule(rule: SubscriptionRule | null): void {
     if (rule === null) {
-      this.trackingCheckIntervalText = '180';
+      this.trackingCheckIntervalText = '3';
+      this.trackingCheckIntervalUnit = SubscriptionIntervalUnit.HOUR;
       this.trackingMinNewItemsText = '1';
       this.trackingAutoDownloadCountText = '0';
       this.trackingConditionMatchMode = SubscriptionConditionMatchMode.ALL;
@@ -1852,7 +1860,9 @@ export struct UnifiedDetailPage {
       return;
     }
 
-    this.trackingCheckIntervalText = `${rule.checkIntervalMin > 0 ? rule.checkIntervalMin : 180}`;
+    const intervalDisplay = splitSubscriptionIntervalMinutesForDisplay(rule.checkIntervalMin);
+    this.trackingCheckIntervalText = intervalDisplay.valueText;
+    this.trackingCheckIntervalUnit = intervalDisplay.unit;
     this.trackingMinNewItemsText = `${this.getTrackingMinNewItems(rule)}`;
     this.trackingAutoDownloadCountText = '0';
     this.trackingConditionMatchMode = this.getTrackingConditionMatchMode(rule);
@@ -1874,7 +1884,11 @@ export struct UnifiedDetailPage {
 
   private buildTrackingCreateOptions(): Partial<SubscriptionRuleCreateOptions> {
     return {
-      checkIntervalMin: this.parseTrackingPositiveInteger(this.trackingCheckIntervalText, 180, 1),
+      checkIntervalMin: convertSubscriptionIntervalDisplayToMinutes(
+        this.trackingCheckIntervalText,
+        this.trackingCheckIntervalUnit,
+        180
+      ),
       minNewItems: this.parseTrackingPositiveInteger(this.trackingMinNewItemsText, 1, 1),
       autoDownloadCount: this.parseTrackingPositiveInteger(this.trackingAutoDownloadCountText, 0, 0),
       conditionMatchMode: this.trackingConditionMatchMode,
@@ -1896,13 +1910,14 @@ export struct UnifiedDetailPage {
     }
     if (!this.trackingSupported) {
       promptAction.showToast({
-        message: this.trackingUnsupportedReason.length > 0 ? this.trackingUnsupportedReason : '当前内容暂不支持内容跟踪',
+        message: this.trackingUnsupportedReason.length > 0 ? this.trackingUnsupportedReason : '这类内容暂时还不能添加提醒',
         duration: 2000
       });
       return;
     }
 
     this.fillTrackingDialogFromRule(this.trackingRule);
+    this.trackingSettingsActiveTab = 0;
     this.showTrackingSettingsDialog = true;
     animateTo({
       duration: 300,
@@ -1934,7 +1949,7 @@ export struct UnifiedDetailPage {
     }
     const targetInfo = this.trackingTargetInfo;
     if (targetInfo === null || !targetInfo.supported) {
-      promptAction.showToast({ message: '当前内容暂不支持创建内容跟踪', duration: 2000 });
+      promptAction.showToast({ message: '这类内容暂时还不能在这里开启提醒', duration: 2000 });
       return;
     }
 
@@ -1949,13 +1964,15 @@ export struct UnifiedDetailPage {
         (targetInfo.providerType === SubscriptionProviderType.SUWAYOMI || targetInfo.providerType === SubscriptionProviderType.KOMGA)) {
         this.trackingRule = await this.subscriptionManager.createOrUpdateRemoteMangaItemRule(targetInfo.targetId, createOptions);
       } else {
-        throw new Error('当前内容类型暂不支持在详情页创建内容跟踪');
+        throw new Error('这类内容暂时还不能在详情页开启提醒');
       }
 
       await this.refreshTrackingState();
       this.closeTrackingSettingsDialog();
       promptAction.showToast({
-        message: hadExistingRule ? '内容跟踪配置已更新' : '已为当前内容创建跟踪规则',
+        message: hadExistingRule
+          ? '提醒设置已更新，之后会在 APP 回到前台时补查'
+          : '已为当前内容开启提醒，之后会在 APP 回到前台时补查',
         duration: 1800
       });
     } catch (error) {
@@ -1975,7 +1992,7 @@ export struct UnifiedDetailPage {
       const result = await this.subscriptionManager.runRuleNow(this.trackingRule.id, 'detail_page_manual');
       await this.refreshTrackingState();
       promptAction.showToast({
-        message: result.message.length > 0 ? result.message : '已执行当前内容的跟踪检查',
+        message: result.message.length > 0 ? result.message : '已开始检查当前内容',
         duration: 2000
       });
     } catch (error) {
@@ -1995,7 +2012,9 @@ export struct UnifiedDetailPage {
       await this.subscriptionManager.setRuleEnabled(this.trackingRule.id, !this.trackingRule.enabled);
       await this.refreshTrackingState();
       promptAction.showToast({
-        message: this.trackingRule !== null && this.trackingRule.enabled ? '内容跟踪已启用' : '内容跟踪已停用',
+        message: this.trackingRule !== null && this.trackingRule.enabled
+          ? '已开启更新提醒，APP 回到前台时会自动补查'
+          : '已暂停更新提醒',
         duration: 1600
       });
     } catch (error) {
@@ -2014,11 +2033,11 @@ export struct UnifiedDetailPage {
       ? this.trackingRule.name
       : (this.content ? this.content.title : '当前内容');
     promptAction.showDialog({
-      title: '移除内容跟踪',
-      message: `确认移除「${ruleName}」的内容跟踪规则？`,
+      title: '关闭更新提醒',
+      message: `确认关闭「${ruleName}」的更新提醒？`,
       buttons: [
         { text: '取消', color: '#666666' },
-        { text: '移除', color: '#FF4D4F' }
+        { text: '关闭', color: '#FF4D4F' }
       ]
     }).then((dialogResult: DialogResult) => {
       if (dialogResult.index === 1) {
@@ -2036,7 +2055,7 @@ export struct UnifiedDetailPage {
       await this.subscriptionManager.deleteRule(this.trackingRule.id);
       this.closeTrackingSettingsDialog();
       await this.refreshTrackingState();
-      promptAction.showToast({ message: '已移除当前内容的跟踪规则', duration: 1800 });
+      promptAction.showToast({ message: '已关闭当前内容的更新提醒', duration: 1800 });
     } catch (error) {
       logger.error(TAG, `删除内容跟踪规则失败: ${String(error)}`);
       promptAction.showToast({ message: `删除失败: ${String(error)}`, duration: 2000 });
@@ -6738,10 +6757,94 @@ export struct UnifiedDetailPage {
     .borderRadius(12)
   }
 
+  private getTrackingIntervalPreviewText(): string {
+    const totalMinutes = convertSubscriptionIntervalDisplayToMinutes(
+      this.trackingCheckIntervalText,
+      this.trackingCheckIntervalUnit,
+      180
+    );
+    return `当前会按 ${formatSubscriptionIntervalSchedule(totalMinutes)}，并在 APP 回到前台时补查`;
+  }
+
+  @Builder
+  private buildTrackingIntervalUnitOption(unit: SubscriptionIntervalUnit) {
+    Button(getSubscriptionIntervalUnitLabel(unit))
+      .layoutWeight(1)
+      .height(34)
+      .fontSize(12)
+      .fontWeight(FontWeight.Medium)
+      .fontFamily(this.appFontFamily)
+      .fontColor(this.trackingCheckIntervalUnit === unit
+        ? Color.White
+        : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      .backgroundColor(this.trackingCheckIntervalUnit === unit
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+      .borderRadius(12)
+      .border({
+        width: 1,
+        color: this.trackingCheckIntervalUnit === unit
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      })
+      .onClick(() => {
+        this.trackingCheckIntervalUnit = unit;
+      })
+  }
+
+  @Builder
+  private buildTrackingIntervalInput() {
+    Column({ space: 8 }) {
+      Column({ space: 6 }) {
+        Text('多久检查一次')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+        TextInput({ placeholder: '例如 3', text: $$this.trackingCheckIntervalText })
+          .width('100%')
+          .height(40)
+          .type(InputType.Number)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .padding({ left: 10, right: 10 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(12)
+      }
+      .width('100%')
+
+      Column({ space: 8 }) {
+        Text('时间单位')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+        Row({ space: 8 }) {
+          this.buildTrackingIntervalUnitOption(SubscriptionIntervalUnit.MINUTE)
+          this.buildTrackingIntervalUnitOption(SubscriptionIntervalUnit.HOUR)
+          this.buildTrackingIntervalUnitOption(SubscriptionIntervalUnit.DAY)
+          this.buildTrackingIntervalUnitOption(SubscriptionIntervalUnit.WEEK)
+        }
+        .width('100%')
+        Text(this.getTrackingIntervalPreviewText())
+          .fontSize(11)
+          .lineHeight(17)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
   @Builder
   private buildTrackingConditionMatchModeSelector() {
     Column({ space: 8 }) {
-      Text('条件命中方式')
+      Text('条件怎么判断')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -6749,13 +6852,13 @@ export struct UnifiedDetailPage {
       Row({ space: 8 }) {
         this.buildTrackingConditionMatchModeOption(
           SubscriptionConditionMatchMode.ALL,
-          '全部命中',
-          '所有已启用条件都满足时才执行'
+          '全部满足',
+          '设定的条件都满足时才继续'
         )
         this.buildTrackingConditionMatchModeOption(
           SubscriptionConditionMatchMode.ANY,
-          '任一命中',
-          '命中其中任意一个条件即可执行'
+          '任意一项',
+          '满足其中一项就继续'
         )
       }
       .width('100%')
@@ -6802,6 +6905,456 @@ export struct UnifiedDetailPage {
   }
 
   @Builder
+  private buildTrackingSettingsTabButton(label: string, icon: Resource, index: number) {
+    Row({ space: 6 }) {
+      SymbolGlyph(icon)
+        .fontSize(13)
+        .fontColor([this.trackingSettingsActiveTab === index
+          ? Color.White
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+      Text(label)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.trackingSettingsActiveTab === index
+          ? Color.White
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .layoutWeight(1)
+    .height(34)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(this.trackingSettingsActiveTab === index
+      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+      : Color.Transparent)
+    .borderRadius(14)
+    .scale({
+      x: this.trackingSettingsActiveTab === index ? 1 : 0.97,
+      y: this.trackingSettingsActiveTab === index ? 1 : 0.97
+    })
+    .animation({ duration: 160, curve: Curve.EaseOut })
+    .onClick(() => {
+      this.handleTrackingSettingsDialogTabChange(index);
+    })
+  }
+
+  private handleTrackingSettingsDialogTabChange(index: number): void {
+    if (this.trackingSettingsActiveTab === index) {
+      return;
+    }
+    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+      this.trackingSettingsActiveTab = index;
+    });
+  }
+
+  private getTrackingDialogStatusColor(): ResourceColor {
+    if (this.trackingExecution !== null) {
+      if (this.trackingExecution.status === SubscriptionExecutionStatus.SUCCESS) {
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme);
+      }
+      if (this.trackingExecution.status === SubscriptionExecutionStatus.NO_UPDATE) {
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+      }
+      if (this.trackingExecution.status === SubscriptionExecutionStatus.SKIPPED) {
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
+      }
+      if (this.trackingExecution.status === SubscriptionExecutionStatus.FAILED) {
+        return ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme);
+      }
+    }
+    if (this.trackingRule !== null && !this.trackingRule.enabled) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+  }
+
+  private getTrackingDialogLastCheckText(): string {
+    if (this.trackingExecution !== null) {
+      return this.formatTrackingTimestamp(this.trackingExecution.checkedAt);
+    }
+    if (this.trackingRule !== null && this.trackingRule.lastCheckTime > 0) {
+      return this.formatTrackingTimestamp(this.trackingRule.lastCheckTime);
+    }
+    if (this.trackingAutoCreatedThisSession && this.trackingRule !== null) {
+      return '本次已自动开启';
+    }
+    return '还没检查过';
+  }
+
+  private isTrackingRuleEnabled(): boolean {
+    return this.trackingRule !== null && this.trackingRule.enabled;
+  }
+
+  private getTrackingDialogFooterHintText(): string {
+    if (this.trackingRule === null) {
+      return '保存后会开始记录，但自动检查只会在 APP 回到前台时补查。';
+    }
+    if (this.trackingSettingsActiveTab === 0) {
+      return this.isTrackingRuleEnabled()
+        ? '可以先手动检查一次；自动检查目前只会在 APP 回到前台时补查。'
+        : '提醒当前已暂停，重新开启后也只会在 APP 回到前台时自动补查。';
+    }
+    if (this.trackingSettingsActiveTab === 1) {
+      return '这些筛选条件会决定哪些更新会被算进去；自动检查仍只会在 APP 回到前台时补查。';
+    }
+    return '这里决定发现更新后要提醒你，还是顺手自动下载；这些动作会跟着前台补查一起执行。';
+  }
+
+  private getTrackingOverviewInlineText(): string {
+    const parts: string[] = [];
+    const providerText = this.getTrackingProviderText().trim();
+    if (providerText.length > 0) {
+      parts.push(providerText);
+    }
+
+    if (this.trackingRule === null) {
+      parts.push('还没开启提醒');
+    } else if (!this.trackingRule.enabled) {
+      parts.push('已暂停');
+    } else if (this.trackingExecution !== null) {
+      parts.push(this.getTrackingExecutionStatusLabel(this.trackingExecution.status));
+    } else if (this.trackingAutoCreatedThisSession) {
+      parts.push('本次已自动开启');
+    } else {
+      parts.push('已开启');
+    }
+
+    const lastCheckText = this.getTrackingDialogLastCheckText();
+    if (lastCheckText.length > 0) {
+      parts.push(`上次 ${lastCheckText}`);
+    }
+
+    if (this.trackingExecution !== null && this.trackingExecution.deltaCount > 0) {
+      parts.push(`新增 ${this.trackingExecution.deltaCount}`);
+    }
+
+    return parts.join(' · ');
+  }
+
+  @Builder
+  private buildTrackingSettingsMetricCard(labelText: string, valueText: string, accentColor: ResourceColor) {
+    Column({ space: 6 }) {
+      Text(labelText)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+      Text(valueText)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(accentColor)
+        .width('100%')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .layoutWeight(1)
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private buildTrackingSettingsOverviewCard() {
+    Column({ space: 6 }) {
+      Text(this.getTrackingOverviewInlineText())
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Text('当前版本只会在 APP 回到前台时自动补查，后台不会定时执行。')
+        .fontSize(11)
+        .lineHeight(17)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  @Builder
+  private buildTrackingSettingsDialogFooter() {
+    Column({ space: 10 }) {
+      Row() {
+        Text(this.getTrackingDialogFooterHintText())
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (this.trackingRule !== null) {
+          Text(this.getTrackingDialogLastCheckText())
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+      }
+      .width('100%')
+
+      if (this.trackingRule !== null && this.trackingSettingsActiveTab === 0) {
+        Row({ space: 10 }) {
+          Button(this.isTrackingRuleEnabled() ? '暂停提醒' : '开启提醒')
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .fontColor(this.isTrackingRuleEnabled()
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+            .borderRadius(18)
+            .enabled(!this.isTrackingBusy)
+            .onClick(() => {
+              void this.toggleCurrentContentTrackingEnabled();
+            })
+
+          Button(this.isTrackingBusy ? '检查中...' : '立即检查')
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(Color.White)
+            .borderRadius(18)
+            .enabled(!this.isTrackingBusy)
+            .onClick(() => {
+              void this.runCurrentContentTrackingNow();
+            })
+        }
+        .width('100%')
+      } else if (this.trackingRule !== null && this.trackingSettingsActiveTab === 2) {
+        Row({ space: 10 }) {
+          Button('关闭提醒')
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
+            .borderRadius(18)
+            .enabled(!this.isTrackingBusy)
+            .onClick(() => {
+              this.confirmDeleteCurrentContentTracking();
+            })
+
+          Button(this.isTrackingBusy ? '保存中...' : '保存设置')
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(Color.White)
+            .borderRadius(18)
+            .enabled(!this.isTrackingBusy)
+            .onClick(() => {
+              void this.saveCurrentContentTracking();
+            })
+        }
+        .width('100%')
+      } else {
+        Row({ space: 10 }) {
+          Button('取消')
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .borderRadius(18)
+            .enabled(!this.isTrackingBusy)
+            .onClick(() => {
+              this.closeTrackingSettingsDialog();
+            })
+
+          Button(this.isTrackingBusy ? '保存中...' : (this.trackingRule !== null ? '保存设置' : '开启提醒'))
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(Color.White)
+            .borderRadius(18)
+            .enabled(!this.isTrackingBusy)
+            .onClick(() => {
+              void this.saveCurrentContentTracking();
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .animation({ duration: 200, curve: Curve.EaseOut })
+  }
+
+  @Builder
+  private buildTrackingDialogHintCard(titleText: string, descriptionText: string) {
+    Column({ space: 6 }) {
+      Text(titleText)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+      Text(descriptionText)
+        .fontSize(11)
+        .lineHeight(17)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(14)
+  }
+
+  @Builder
+  private buildTrackingBasicSettingsTab() {
+    Column({ space: 12 }) {
+      this.buildTrackingDialogHintCard('基础设置', '先决定多久检查一次，以及最少出现多少新内容时再提醒你。当前版本只会在 APP 回到前台时自动补查。')
+
+      Column({ space: 12 }) {
+        this.buildTrackingIntervalInput()
+
+        Column({ space: 6 }) {
+          Text('至少新增多少才提醒')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          TextInput({ placeholder: '例如 1', text: $$this.trackingMinNewItemsText })
+            .width('100%')
+            .height(40)
+            .type(InputType.Number)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .borderRadius(12)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(14)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildTrackingFilterSettingsTab() {
+    Column({ space: 12 }) {
+      this.buildTrackingDialogHintCard('筛选条件', '这些条件会先帮你筛一遍内容。你可以选“全部满足”或“任意一项”；同一个输入框里用逗号分隔多个词，命中一个就算通过。')
+
+      Column({ space: 12 }) {
+        this.buildTrackingConditionMatchModeSelector()
+
+        Column({ space: 6 }) {
+          Text('标题包含')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          TextInput({ placeholder: '例如：番外，合集', text: $$this.trackingTitleKeywordText })
+            .width('100%')
+            .height(40)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            .borderRadius(12)
+        }
+        .width('100%')
+
+        Column({ space: 6 }) {
+          Text('标签包含')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          TextInput({ placeholder: '例如：校园，悬疑', text: $$this.trackingTagKeywordText })
+            .width('100%')
+            .height(40)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            .borderRadius(12)
+        }
+        .width('100%')
+
+        Column({ space: 6 }) {
+          Text('来源包含')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          TextInput({ placeholder: '例如：Suwayomi，Komga，书源名', text: $$this.trackingSourceKeywordText })
+            .width('100%')
+            .height(40)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            .borderRadius(12)
+        }
+        .width('100%')
+
+        this.buildTrackingToggleRow('只检查已收藏的内容', '取消收藏后会自动跳过。', this.trackingRequireFavorite, (value: boolean) => {
+          this.trackingRequireFavorite = value;
+        })
+
+        this.buildTrackingToggleRow('跳过 NSFW 内容', '内容带有 NSFW 标记时会直接跳过。', this.trackingExcludeNSFW, (value: boolean) => {
+          this.trackingExcludeNSFW = value;
+        })
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(14)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildTrackingActionSettingsTab() {
+    Column({ space: 12 }) {
+      this.buildTrackingDialogHintCard('发现更新后', '这里决定发现更新以后要做什么。支持的内容可以自动下载，不需要的也可以只提醒；这些动作会跟着前台补查一起执行。')
+
+      Column({ space: 12 }) {
+        Column({ space: 6 }) {
+          Text('自动下载数量（填 0 关闭）')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          TextInput({ placeholder: '例如 0 / 3 / 10', text: $$this.trackingAutoDownloadCountText })
+            .width('100%')
+            .height(40)
+            .type(InputType.Number)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .borderRadius(12)
+        }
+        .width('100%')
+
+        this.buildTrackingToggleRow('更新时提醒我', '有更新时发应用内通知。提醒会跟着前台补查一起触发。', this.trackingEnableNotify, (value: boolean) => {
+          this.trackingEnableNotify = value;
+        })
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(14)
+    }
+    .width('100%')
+  }
+
+  @Builder
   private buildTrackingSettingsDialog() {
     if (this.showTrackingSettingsDialog && this.content) {
       SourceDialogScaffold({
@@ -6813,7 +7366,6 @@ export struct UnifiedDetailPage {
         },
         dialogWidth: '90%',
         maxWidth: 620,
-        maxHeight: '88%',
         contentPadding: 0,
         dialogRadius: 18,
         zIndexValue: 121,
@@ -6823,9 +7375,9 @@ export struct UnifiedDetailPage {
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
           this.buildDialogChrome(18)
-          Column({ space: 14 }) {
+          Column({ space: 16 }) {
             Row() {
-              Text(this.trackingRule !== null ? '编辑内容跟踪' : '创建内容跟踪')
+              Text(this.trackingRule !== null ? '调整更新提醒' : '开启更新提醒')
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
@@ -6846,224 +7398,49 @@ export struct UnifiedDetailPage {
             }
             .width('100%')
 
-            Text('这里配置的是应用内针对当前内容的更新跟踪规则，不是 RSS 订阅源。它会按你的规则去检查更新、通知，以及在已支持的类型上自动下载；高级条件也会在执行前参与筛选。')
-              .fontSize(12)
-              .lineHeight(18)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .width('100%')
+            this.buildTrackingSettingsOverviewCard()
 
-            Column({ space: 6 }) {
-              Text(this.content.title)
-                .fontSize(15)
-                .fontWeight(FontWeight.Medium)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .width('100%')
-              Text(this.getTrackingProviderText())
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-                .width('100%')
-              if (this.trackingRule !== null) {
-                Text(this.trackingRule.name)
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  .width('100%')
-              }
+            Row({ space: 8 }) {
+              this.buildTrackingSettingsTabButton('基础', $r('sys.symbol.bookshelf_badge_checkmark'), 0)
+              this.buildTrackingSettingsTabButton('筛选', $r('sys.symbol.bookshelf_badge_checkmark'), 1)
+              this.buildTrackingSettingsTabButton('操作', $r('sys.symbol.gearshape'), 2)
             }
             .width('100%')
-            .padding(12)
+            .padding(4)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .borderRadius(14)
+            .borderRadius(18)
 
             Scroll() {
               Column({ space: 12 }) {
-                Column({ space: 6 }) {
-                  Text('检查间隔（分钟）')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                    .width('100%')
-                  TextInput({ placeholder: '例如 180', text: $$this.trackingCheckIntervalText })
-                    .width('100%')
-                    .height(40)
-                    .type(InputType.Number)
-                    .fontSize(13)
-                    .fontFamily(this.appFontFamily)
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                    .borderRadius(12)
+                if (this.trackingSettingsActiveTab === 0) {
+                  this.buildTrackingBasicSettingsTab()
+                } else if (this.trackingSettingsActiveTab === 1) {
+                  this.buildTrackingFilterSettingsTab()
+                } else {
+                  this.buildTrackingActionSettingsTab()
                 }
-                .width('100%')
-
-                Column({ space: 6 }) {
-                  Text('最少新增内容数')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                    .width('100%')
-                  TextInput({ placeholder: '例如 1', text: $$this.trackingMinNewItemsText })
-                    .width('100%')
-                    .height(40)
-                    .type(InputType.Number)
-                    .fontSize(13)
-                    .fontFamily(this.appFontFamily)
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                    .borderRadius(12)
-                }
-                .width('100%')
-
-                Column({ space: 10 }) {
-                  Text('高级条件')
-                    .fontSize(13)
-                    .fontWeight(FontWeight.Medium)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .width('100%')
-                  Text('你可以选择“全部命中”或“任一命中”；单个关键词字段内部仍支持逗号分隔多个词，命中任意一个即通过。作品级规则上也可以用它们做保护条件。')
-                    .fontSize(11)
-                    .lineHeight(17)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                    .width('100%')
-                  this.buildTrackingConditionMatchModeSelector()
-                  Column({ space: 6 }) {
-                    Text('标题关键词')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                      .width('100%')
-                    TextInput({ placeholder: '例如：番外，合集', text: $$this.trackingTitleKeywordText })
-                      .width('100%')
-                      .height(40)
-                      .fontSize(13)
-                      .fontFamily(this.appFontFamily)
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
-                      .borderRadius(12)
-                  }
-                  .width('100%')
-                  Column({ space: 6 }) {
-                    Text('标签关键词')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                      .width('100%')
-                    TextInput({ placeholder: '例如：校园，悬疑', text: $$this.trackingTagKeywordText })
-                      .width('100%')
-                      .height(40)
-                      .fontSize(13)
-                      .fontFamily(this.appFontFamily)
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
-                      .borderRadius(12)
-                  }
-                  .width('100%')
-                  Column({ space: 6 }) {
-                    Text('来源关键词')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                      .width('100%')
-                    TextInput({ placeholder: '例如：Suwayomi，Komga，书源名', text: $$this.trackingSourceKeywordText })
-                      .width('100%')
-                      .height(40)
-                      .fontSize(13)
-                      .fontFamily(this.appFontFamily)
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
-                      .borderRadius(12)
-                  }
-                  .width('100%')
-                  this.buildTrackingToggleRow('排除 NSFW 内容', '当当前内容带有 NSFW 标记时，本规则会直接跳过。', this.trackingExcludeNSFW, (value: boolean) => {
-                    this.trackingExcludeNSFW = value;
-                  })
-                }
-                .width('100%')
-                .padding(12)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .borderRadius(14)
-
-                Column({ space: 6 }) {
-                  Text('自动下载数量（0 表示关闭）')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                    .width('100%')
-                  TextInput({ placeholder: '例如 0 / 3 / 10', text: $$this.trackingAutoDownloadCountText })
-                    .width('100%')
-                    .height(40)
-                    .type(InputType.Number)
-                    .fontSize(13)
-                    .fontFamily(this.appFontFamily)
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                    .borderRadius(12)
-                }
-                .width('100%')
-
-                this.buildTrackingToggleRow('启用通知', '检测到更新后发送应用内通知。', this.trackingEnableNotify, (value: boolean) => {
-                  this.trackingEnableNotify = value;
-                })
-
-                this.buildTrackingToggleRow('仅收藏时执行', '当内容已取消收藏时，本规则会自动跳过。', this.trackingRequireFavorite, (value: boolean) => {
-                  this.trackingRequireFavorite = value;
-                })
               }
               .width('100%')
+              .alignItems(HorizontalAlign.Start)
+              .animation({ duration: 220, curve: Curve.EaseOut })
             }
             .width('100%')
-            .layoutWeight(1)
-            .scrollBar(BarState.Off)
+            .constraintSize({ maxHeight: 420 })
+            .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
 
-            if (this.trackingRule !== null) {
-              Button('移除当前内容跟踪')
-                .width('100%')
-                .height(38)
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor('#FFFFFF')
-                .backgroundColor('#E53935')
-                .borderRadius(19)
-                .enabled(!this.isTrackingBusy)
-                .onClick(() => {
-                  this.confirmDeleteCurrentContentTracking();
-                })
-            }
-
-            Row({ space: 12 }) {
-              Button('取消')
-                .height(38)
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-                .borderRadius(19)
-                .layoutWeight(1)
-                .enabled(!this.isTrackingBusy)
-                .onClick(() => {
-                  this.closeTrackingSettingsDialog();
-                })
-              Button(this.isTrackingBusy ? '保存中...' : (this.trackingRule !== null ? '保存设置' : '创建跟踪'))
-                .height(38)
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor('#FFFFFF')
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .borderRadius(19)
-                .layoutWeight(1)
-                .enabled(!this.isTrackingBusy)
-                .onClick(() => {
-                  void this.saveCurrentContentTracking();
-                })
-            }
-            .width('100%')
+            this.buildTrackingSettingsDialogFooter()
           }
           .width('100%')
-          .height('100%')
-          .padding(18)
+          .padding(20)
+          .scale({ x: this.trackingDialogScale, y: this.trackingDialogScale })
+          .translate({ y: this.trackingDialogTranslateY })
+          .opacity(this.trackingDialogOpacity)
+          .borderRadius(18)
+          .clip(true)
+          .onClick(() => {
+          })
         }
-        .opacity(this.trackingDialogOpacity)
-        .scale({ x: this.trackingDialogScale, y: this.trackingDialogScale })
-        .translate({ x: 0, y: this.trackingDialogTranslateY })
       }
     }
   }

@@ -3558,6 +3558,7 @@ struct EBookReaderPage {
         title: ch.title,
         index: i,
         content: ch.content || '',
+        wordCount: ch.wordCount || (ch.content || '').length,
         startPosition: 0,
         endPosition: (ch.content || '').length
       };

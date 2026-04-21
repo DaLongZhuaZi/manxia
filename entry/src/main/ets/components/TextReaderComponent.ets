@@ -94,6 +94,18 @@ interface CompactTextMapping {
   originIndices: number[];
 }
 
+interface ChapterPaginationCacheEntry {
+  cacheKey: string;
+  chapterId: string;
+  chapterIndex: number;
+  paginationSignature: string;
+  contentFingerprint: string;
+  wordCount: number;
+  pageCount: number;
+  pages: TextPage[];
+  lastAccessTime: number;
+}
+
 /**
  * 分页模式枚举
   */
@@ -113,7 +125,7 @@ export struct TextReaderComponent {
   /** 文本内容 */
   @Prop @Watch('onContentChange') content: string = '';
   /** 章节列表（可选） */
-  @Prop chapters: TextChapter[] = [];
+  @Prop @Watch('onChaptersChange') chapters: TextChapter[] = [];
   /** 阅读设置 */
   @Link @Watch('onSettingsChange') settings: TextReaderSettings;
   /** 当前章节索引 */
@@ -259,10 +271,12 @@ export struct TextReaderComponent {
   private static readonly MAX_PAGINATION_RETRIES: number = 10;// 最大分页重试次数
   private areaChangeDebounceTimer: number = -1;// onAreaChange防抖定时器
   private static readonly AREA_CHANGE_DEBOUNCE_MS: number = 100;// 防抖时间(100ms)
+  private adjacentChapterPreloadTimer: number = -1;
   private settingsRepaginateDebounceTimer: number = -1;
   private static readonly SETTINGS_REPAGINATE_DEBOUNCE_MS: number = 60;
   private static readonly MIN_CONTENT_WIDTH_VP: number = 120;
   private static readonly MIN_CONTENT_LINE_COUNT: number = 2;
+  private static readonly MAX_CHAPTER_PAGINATION_CACHE: number = 6;
   private lastContentAreaWidth: number = 0;// 上次内容区域宽度
   private lastContentAreaHeight: number = 0;// 上次内容区域高度
   private lastPaginationSignature: string = '';
@@ -270,6 +284,7 @@ export struct TextReaderComponent {
   private pendingRelayoutAnimation: boolean = false;
   private lastReadAloudHighlightLogTime: number = 0;
   private lastReadAloudScrollFollowTime: number = 0;
+  private chapterPaginationCache: Map<string, ChapterPaginationCacheEntry> = new Map<string, ChapterPaginationCacheEntry>();
   @State private isLoading: boolean = false;// 加载状态
   
   // ========== 手势状态 ==========
@@ -422,6 +437,12 @@ export struct TextReaderComponent {
       this.isAnimating = false;
       this.showCurlEffect = false;
       this.clearAutoPageTurnTimer();
+
+      if (this.tryApplyCachedPaginationForCurrentContent()) {
+        this.isPaginating = false;
+        this.isLoading = false;
+        return;
+      }
       
       // 异步分页
       this.paginateContentAsync();
@@ -492,40 +513,7 @@ export struct TextReaderComponent {
         this.isLoading = false;
       }
       
-          // 双页模式：跳转到最后一对页面（偶数索引）
-      if (this.shouldJumpToLastPage && this.totalPages > 0) {
-        if (this.isDualPageMode()) {
-          // 双页模式：跳转到最后一对页面（偶数索引）
-          this.dualPageBaseIndex = this.totalPages - 1 - ((this.totalPages - 1) % 2);
-          this.currentPageIndex = this.dualPageBaseIndex;
-        } else {
-          this.currentPageIndex = this.totalPages - 1;
-        }
-        this.lastExternalPageIndex = this.currentPageIndex;
-        this.shouldJumpToLastPage = false;
-        this.pendingAnchorCharIndex = -1;
-        logger.info(TAG, `分页完成，跳转到最后一页: ${this.currentPageIndex + 1}/${this.totalPages}`);
-      }
-
-      this.restorePageIndexByAnchor();
-      
-      // 每次分页完成都更新签名，确保与当前设置同步
-      this.updatePageContents();
-      if (this.isScrollMode()) {
-        this.syncScrollModePositionForCurrentPage(false);
-      }
-      
-      // 通知页面变化（确保进度正确保存）
-      this.lastRenderSignature = this.getRenderSignature();
-      this.lastPaginationSignature = this.getPaginationSignature();
-      
-      // 通知分页完成
-      this.notifyPageChange();
-      this.finishScrollModeChapterTransition();
-      
-      // 通知分页完成
-      this.onReady();
-      this.finishPendingRelayoutIfNeeded();
+      this.applyPostPaginationState('paginate_async');
     }, 50);// 延迟 50ms 让 UI 有机会更新
   }
   
@@ -542,6 +530,10 @@ export struct TextReaderComponent {
     }
   }
 
+  private onChaptersChange(): void {
+    this.scheduleAdjacentChapterPaginationPreload('chapters_change');
+  }
+
   private onSettingsChange(): void {
     this.updateVolumeKeyListener();
     this.syncAutoPageTurnState('settings-change');
@@ -556,6 +548,8 @@ export struct TextReaderComponent {
     if (nextSignature === this.lastPaginationSignature) {
       return;
     }
+
+    this.chapterPaginationCache.clear();
 
     if (this.settingsRepaginateDebounceTimer !== -1) {
       clearTimeout(this.settingsRepaginateDebounceTimer);
@@ -583,6 +577,405 @@ export struct TextReaderComponent {
       `${ts.fontSize}|${ts.lineHeight}|` +
       `${ts.letterSpacing}|${ts.paragraphSpacing}|${ts.firstLineIndent}|${pm.top}|${pm.bottom}|${pm.left}|${pm.right}|` +
       `${this.getEffectiveBottomBarHeight()}|${this.componentWidth}|${this.componentHeight}`;
+  }
+
+  private buildTextChapterIdentity(chapterIndex: number): string {
+    if (chapterIndex >= 0 && chapterIndex < this.chapters.length) {
+      const chapter = this.chapters[chapterIndex];
+      if (chapter && (chapter.id || '').length > 0) {
+        return chapter.id;
+      }
+    }
+    return `chapter_${chapterIndex}`;
+  }
+
+  private buildChapterContentFingerprint(content: string): string {
+    const safeContent = content || '';
+    const head = safeContent.substring(0, 24);
+    const tailStart = Math.max(0, safeContent.length - 24);
+    const tail = safeContent.substring(tailStart);
+    return `${safeContent.length}|${head}|${tail}`;
+  }
+
+  private calculateTextWordCount(content: string): number {
+    if (!content) {
+      return 0;
+    }
+    const compactContent = content.replace(/\s+/g, '');
+    if (compactContent.length > 0) {
+      return compactContent.length;
+    }
+    return content.length;
+  }
+
+  private clonePageList(pages: TextPage[]): TextPage[] {
+    return pages.map((page: TextPage): TextPage => {
+      return {
+        index: page.index,
+        content: page.content,
+        startCharIndex: page.startCharIndex,
+        endCharIndex: page.endCharIndex
+      };
+    });
+  }
+
+  private createChapterPaginationCacheKey(
+    chapterId: string,
+    paginationSignature: string,
+    contentFingerprint: string
+  ): string {
+    return `${chapterId}|${paginationSignature}|${contentFingerprint}`;
+  }
+
+  private touchChapterPaginationCacheEntry(entry: ChapterPaginationCacheEntry): void {
+    entry.lastAccessTime = Date.now();
+  }
+
+  private getLinesPerPageForCurrentLayout(): number {
+    const actualLineHeight = this.getEffectiveTextLineHeight();
+    if (this.contentAreaHeight <= 0 || actualLineHeight <= 0) {
+      return 0;
+    }
+    return Math.floor(this.contentAreaHeight / actualLineHeight);
+  }
+
+  private buildPagesForContent(content: string, linesPerPage: number): TextPage[] {
+    if (!content || linesPerPage <= 0 || this.contentAreaWidth <= 0 || this.contentAreaHeight <= 0) {
+      return [];
+    }
+    if (this.getResolvedPaginationMode() === PaginationMode.ONLINE) {
+      return this.buildOnlinePagesForContent(content, linesPerPage);
+    }
+    return this.buildLocalPagesForContent(content, linesPerPage);
+  }
+
+  private buildOnlinePagesForContent(content: string, linesPerPage: number): TextPage[] {
+    const avgCharWidth = this.getAvgCharWidth();
+    const letterSpacing = this.settings.textStyle.letterSpacing;
+    const firstLineIndent = this.settings.textStyle.firstLineIndent;
+    const charsPerLine = Math.max(1, Math.floor((this.contentAreaWidth + letterSpacing) / (avgCharWidth + letterSpacing)));
+    const charsPerPage = charsPerLine * linesPerPage;
+    const paragraphs = content.split(/\n/);
+    const pages: TextPage[] = [];
+    let currentPageParagraphs: string[] = [];
+    let currentPageCharCount = 0;
+    let charIndex = 0;
+    let pageStartCharIndex = 0;
+
+    for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+      const paragraph = paragraphs[pIdx];
+      if (!paragraph.trim()) {
+        const emptyLineChars = charsPerLine;
+        if (currentPageCharCount + emptyLineChars > charsPerPage && currentPageParagraphs.length > 0) {
+          this.pushOnlinePage(
+            pages,
+            currentPageParagraphs,
+            pageStartCharIndex,
+            charIndex
+          );
+          pageStartCharIndex = charIndex;
+          currentPageParagraphs = [];
+          currentPageCharCount = 0;
+        }
+        currentPageParagraphs.push('');
+        currentPageCharCount += emptyLineChars;
+        charIndex += paragraph.length + 1;
+        continue;
+      }
+
+      const indentChars = Math.floor(firstLineIndent);
+      const paragraphCharsWithIndent = paragraph.length + indentChars;
+      const paragraphLines = Math.ceil(paragraphCharsWithIndent / charsPerLine);
+      const paragraphCharCost = paragraphLines * charsPerLine;
+
+      if (currentPageCharCount + paragraphCharCost > charsPerPage && currentPageParagraphs.length > 0) {
+        const remainingLines = Math.floor((charsPerPage - currentPageCharCount) / charsPerLine);
+        if (remainingLines >= 2) {
+          const remainingChars = remainingLines * charsPerLine - indentChars;
+          if (remainingChars > charsPerLine / 2) {
+            const splitPoint = this.findParagraphSplitPoint(paragraph, remainingChars);
+            if (splitPoint > 0 && splitPoint < paragraph.length - charsPerLine / 2) {
+              const firstPart = paragraph.substring(0, splitPoint);
+              const secondPart = paragraph.substring(splitPoint);
+              currentPageParagraphs.push('  '.repeat(indentChars) + firstPart);
+              this.pushOnlinePage(
+                pages,
+                currentPageParagraphs,
+                pageStartCharIndex,
+                charIndex + splitPoint
+              );
+              pageStartCharIndex = charIndex + splitPoint;
+              currentPageParagraphs = [secondPart];
+              const secondPartLines = Math.ceil(secondPart.length / charsPerLine);
+              currentPageCharCount = secondPartLines * charsPerLine;
+              charIndex += paragraph.length + 1;
+              continue;
+            }
+          }
+        }
+
+        this.pushOnlinePage(
+          pages,
+          currentPageParagraphs,
+          pageStartCharIndex,
+          charIndex
+        );
+        pageStartCharIndex = charIndex;
+        currentPageParagraphs = [];
+        currentPageCharCount = 0;
+      }
+
+      currentPageParagraphs.push('  '.repeat(indentChars) + paragraph);
+      currentPageCharCount += paragraphCharCost;
+      charIndex += paragraph.length + 1;
+    }
+
+    if (currentPageParagraphs.length > 0) {
+      this.pushOnlinePage(
+        pages,
+        currentPageParagraphs,
+        pageStartCharIndex,
+        charIndex
+      );
+    }
+    return pages;
+  }
+
+  private buildLocalPagesForContent(content: string, linesPerPage: number): TextPage[] {
+    const paragraphs = content.split(/\n+/);
+    const pages: TextPage[] = [];
+    let currentPageLines: string[] = [];
+    let currentLineCount = 0;
+    let charIndex = 0;
+    let pageStartCharIndex = 0;
+
+    for (const paragraph of paragraphs) {
+      if (!paragraph.trim()) {
+        charIndex += paragraph.length + 1;
+        continue;
+      }
+
+      const paragraphLines = this.splitTextToLines(
+        paragraph.trim(),
+        this.contentAreaWidth,
+        true
+      );
+
+      for (let i = 0; i < paragraphLines.length; i++) {
+        const line = paragraphLines[i];
+        currentPageLines.push(line);
+        currentLineCount++;
+
+        if (currentLineCount >= linesPerPage) {
+          const pageContent = currentPageLines.join('\n');
+          const endCharIndex = charIndex + pageContent.length;
+          pages.push({
+            index: pages.length,
+            content: pageContent,
+            startCharIndex: pageStartCharIndex,
+            endCharIndex: endCharIndex
+          });
+          pageStartCharIndex = endCharIndex;
+          currentPageLines = [];
+          currentLineCount = 0;
+        }
+      }
+
+      if (currentLineCount > 0 && currentLineCount < linesPerPage) {
+        currentPageLines.push('');
+        currentLineCount++;
+      }
+
+      charIndex += paragraph.length + 1;
+    }
+
+    if (currentPageLines.length > 0) {
+      pages.push({
+        index: pages.length,
+        content: currentPageLines.join('\n'),
+        startCharIndex: pageStartCharIndex,
+        endCharIndex: charIndex
+      });
+    }
+    return pages;
+  }
+
+  private applyPaginatedPages(pages: TextPage[]): void {
+    this.pages = pages;
+    this.totalPages = pages.length;
+  }
+
+  private buildChapterPaginationCacheEntry(chapterIndex: number, content: string): ChapterPaginationCacheEntry | null {
+    if (!content || this.contentAreaWidth <= 0 || this.contentAreaHeight <= 0) {
+      return null;
+    }
+    const linesPerPage = this.getLinesPerPageForCurrentLayout();
+    if (linesPerPage <= 0) {
+      return null;
+    }
+    const paginationSignature = this.getPaginationSignature();
+    const chapterId = this.buildTextChapterIdentity(chapterIndex);
+    const contentFingerprint = this.buildChapterContentFingerprint(content);
+    const cacheKey = this.createChapterPaginationCacheKey(chapterId, paginationSignature, contentFingerprint);
+    const pages = this.buildPagesForContent(content, linesPerPage);
+    const entry: ChapterPaginationCacheEntry = {
+      cacheKey: cacheKey,
+      chapterId: chapterId,
+      chapterIndex: chapterIndex,
+      paginationSignature: paginationSignature,
+      contentFingerprint: contentFingerprint,
+      wordCount: this.calculateTextWordCount(content),
+      pageCount: pages.length,
+      pages: this.clonePageList(pages),
+      lastAccessTime: Date.now()
+    };
+    return entry;
+  }
+
+  private trimChapterPaginationCache(): void {
+    if (this.chapterPaginationCache.size <= TextReaderComponent.MAX_CHAPTER_PAGINATION_CACHE) {
+      return;
+    }
+    const entries = Array.from(this.chapterPaginationCache.values()).sort((a: ChapterPaginationCacheEntry, b: ChapterPaginationCacheEntry) => {
+      const distanceA = Math.abs(a.chapterIndex - this.currentChapterIndex);
+      const distanceB = Math.abs(b.chapterIndex - this.currentChapterIndex);
+      if (distanceA !== distanceB) {
+        return distanceB - distanceA;
+      }
+      return a.lastAccessTime - b.lastAccessTime;
+    });
+    while (this.chapterPaginationCache.size > TextReaderComponent.MAX_CHAPTER_PAGINATION_CACHE && entries.length > 0) {
+      const entry = entries.shift();
+      if (!entry) {
+        break;
+      }
+      this.chapterPaginationCache.delete(entry.cacheKey);
+    }
+  }
+
+  private cacheCurrentChapterPagination(): void {
+    if (!this.content || this.pages.length <= 0) {
+      return;
+    }
+    const paginationSignature = this.getPaginationSignature();
+    const chapterId = this.buildTextChapterIdentity(this.currentChapterIndex);
+    const contentFingerprint = this.buildChapterContentFingerprint(this.content);
+    const cacheKey = this.createChapterPaginationCacheKey(chapterId, paginationSignature, contentFingerprint);
+    const entry: ChapterPaginationCacheEntry = {
+      cacheKey: cacheKey,
+      chapterId: chapterId,
+      chapterIndex: this.currentChapterIndex,
+      paginationSignature: paginationSignature,
+      contentFingerprint: contentFingerprint,
+      wordCount: this.calculateTextWordCount(this.content),
+      pageCount: this.pages.length,
+      pages: this.clonePageList(this.pages),
+      lastAccessTime: Date.now()
+    };
+    this.chapterPaginationCache.set(entry.cacheKey, entry);
+    this.trimChapterPaginationCache();
+  }
+
+  private getCachedChapterPaginationEntry(chapterIndex: number, content: string): ChapterPaginationCacheEntry | null {
+    if (!content) {
+      return null;
+    }
+    const chapterId = this.buildTextChapterIdentity(chapterIndex);
+    const paginationSignature = this.getPaginationSignature();
+    const contentFingerprint = this.buildChapterContentFingerprint(content);
+    const cacheKey = this.createChapterPaginationCacheKey(chapterId, paginationSignature, contentFingerprint);
+    const entry = this.chapterPaginationCache.get(cacheKey);
+    if (!entry) {
+      return null;
+    }
+    this.touchChapterPaginationCacheEntry(entry);
+    return entry;
+  }
+
+  private applyPostPaginationState(reason: string): void {
+    if (this.shouldJumpToLastPage && this.totalPages > 0) {
+      if (this.isDualPageMode()) {
+        this.dualPageBaseIndex = this.totalPages - 1 - ((this.totalPages - 1) % 2);
+        this.currentPageIndex = this.dualPageBaseIndex;
+      } else {
+        this.currentPageIndex = this.totalPages - 1;
+      }
+      this.lastExternalPageIndex = this.currentPageIndex;
+      this.shouldJumpToLastPage = false;
+      this.pendingAnchorCharIndex = -1;
+      logger.info(TAG, `分页完成，跳转到最后一页: ${this.currentPageIndex + 1}/${this.totalPages}, reason=${reason}`);
+    }
+
+    this.restorePageIndexByAnchor();
+    this.updatePageContents();
+    if (this.isScrollMode()) {
+      this.syncScrollModePositionForCurrentPage(false);
+    }
+    this.lastRenderSignature = this.getRenderSignature();
+    this.lastPaginationSignature = this.getPaginationSignature();
+    this.cacheCurrentChapterPagination();
+    this.notifyPageChange();
+    this.finishScrollModeChapterTransition();
+    this.onReady();
+    this.finishPendingRelayoutIfNeeded();
+    this.scheduleAdjacentChapterPaginationPreload(`post_paginate:${reason}`);
+  }
+
+  private tryApplyCachedPaginationForCurrentContent(): boolean {
+    const cachedEntry = this.getCachedChapterPaginationEntry(this.currentChapterIndex, this.content);
+    if (!cachedEntry) {
+      return false;
+    }
+    this.applyPaginatedPages(this.clonePageList(cachedEntry.pages));
+    logger.info(
+      TAG,
+      `命中章节分页预缓存: chapterIndex=${cachedEntry.chapterIndex}, pages=${cachedEntry.pageCount}, wordCount=${cachedEntry.wordCount}`
+    );
+    this.applyPostPaginationState('cache_hit');
+    return true;
+  }
+
+  private scheduleAdjacentChapterPaginationPreload(reason: string): void {
+    if (this.adjacentChapterPreloadTimer !== -1) {
+      clearTimeout(this.adjacentChapterPreloadTimer);
+    }
+    if (this.contentAreaWidth <= 0 || this.contentAreaHeight <= 0 || this.isPaginating || this.isLoading) {
+      return;
+    }
+    this.adjacentChapterPreloadTimer = setTimeout(() => {
+      this.adjacentChapterPreloadTimer = -1;
+      this.preloadAdjacentChapterPaginationCaches(reason);
+    }, 30);
+  }
+
+  private preloadAdjacentChapterPaginationCaches(reason: string): void {
+    const chapterIndexes: number[] = [];
+    if (this.currentChapterIndex + 1 < this.chapters.length) {
+      chapterIndexes.push(this.currentChapterIndex + 1);
+    }
+    if (this.currentChapterIndex - 1 >= 0) {
+      chapterIndexes.push(this.currentChapterIndex - 1);
+    }
+    for (const chapterIndex of chapterIndexes) {
+      const chapter = this.chapters[chapterIndex];
+      if (!chapter || (chapter.content || '').length <= 0) {
+        continue;
+      }
+      const chapterContent = chapter.content || '';
+      if (this.getCachedChapterPaginationEntry(chapterIndex, chapterContent) !== null) {
+        continue;
+      }
+      const entry = this.buildChapterPaginationCacheEntry(chapterIndex, chapterContent);
+      if (!entry) {
+        continue;
+      }
+      this.chapterPaginationCache.set(entry.cacheKey, entry);
+      this.trimChapterPaginationCache();
+      logger.debug(
+        TAG,
+        `预热相邻章节分页: chapterIndex=${chapterIndex}, pages=${entry.pageCount}, wordCount=${entry.wordCount}, reason=${reason}`
+      );
+    }
   }
 
   /**
@@ -737,6 +1130,7 @@ export struct TextReaderComponent {
     this.contentAreaHeight = newContentHeight;
     this.lastContentAreaWidth = newContentWidth;
     this.lastContentAreaHeight = newContentHeight;
+    this.chapterPaginationCache.clear();
     logger.debug(TAG, `内容区域变化: ${this.contentAreaWidth.toFixed(0)}x${this.contentAreaHeight.toFixed(0)}`);
     return true;
   }
@@ -1337,6 +1731,7 @@ export struct TextReaderComponent {
     logger.info(TAG, '文本阅读器组件销毁');
     this.unregisterVolumeKeyListener();
     this.releaseAllPixelMapCache();
+    this.chapterPaginationCache.clear();
     this.stopCurlAnimation();
     // 清理防抖定时器
     this.stopTimeUpdate();
@@ -1346,6 +1741,10 @@ export struct TextReaderComponent {
     if (this.areaChangeDebounceTimer !== -1) {
       clearTimeout(this.areaChangeDebounceTimer);
       this.areaChangeDebounceTimer = -1;
+    }
+    if (this.adjacentChapterPreloadTimer !== -1) {
+      clearTimeout(this.adjacentChapterPreloadTimer);
+      this.adjacentChapterPreloadTimer = -1;
     }
     if (this.settingsRepaginateDebounceTimer !== -1) {
       clearTimeout(this.settingsRepaginateDebounceTimer);
@@ -1800,7 +2199,7 @@ export struct TextReaderComponent {
     const actualLineHeight = this.getEffectiveTextLineHeight();
     
     // 计算每页可容纳的行数
-    const linesPerPage = Math.floor(this.contentAreaHeight / actualLineHeight);
+    const linesPerPage = this.getLinesPerPageForCurrentLayout();
     
     logger.info(TAG, `分页参数: fontSize=${fontSize}, lineHeight=${lineHeight}, actualLineHeight=${actualLineHeight}, contentAreaHeight=${this.contentAreaHeight}, linesPerPage=${linesPerPage}`);
     
@@ -1808,14 +2207,9 @@ export struct TextReaderComponent {
       logger.warn(TAG, `每页行数计算异常: contentAreaHeight=${this.contentAreaHeight}, actualLineHeight=${actualLineHeight}`);
       return;
     }
-    
-    // 更新当前页面内容
-    const resolvedPaginationMode = this.getResolvedPaginationMode();
-    if (resolvedPaginationMode === PaginationMode.ONLINE) {
-      this.paginateContentOnlineMode(linesPerPage);
-    } else {
-      this.paginateContentLocalMode(linesPerPage);
-    }
+
+    const pages = this.buildPagesForContent(this.content, linesPerPage);
+    this.applyPaginatedPages(pages);
     
     // 分页完成后预加载相邻页面的 PixelMap（用于卷页动画）
     this.updatePageContents();
@@ -1834,123 +2228,8 @@ export struct TextReaderComponent {
   * 这样JUSTIFY会正确生效，避免右边空白问题
   */
   private paginateContentOnlineMode(linesPerPage: number): void {
-    const avgCharWidth = this.getAvgCharWidth();
-    const letterSpacing = this.settings.textStyle.letterSpacing;
-    const firstLineIndent = this.settings.textStyle.firstLineIndent;
-    
-    // 每页大约能容纳的字符数（考虑首行缩进占用的字符数）
-    const charsPerLine = Math.max(1, Math.floor((this.contentAreaWidth + letterSpacing) / (avgCharWidth + letterSpacing)));
-    // 分段处理，保留原始段落结构
-    const charsPerPage = charsPerLine * linesPerPage;
-    
-    logger.info(TAG, `[ONLINE分页] charsPerLine=${charsPerLine}, charsPerPage=${charsPerPage}`);
-    
-    // 分段处理，保留原始段落结构
-    const paragraphs = this.content.split(/\n/);
-    const pages: TextPage[] = [];
-    let currentPageParagraphs: string[] = [];
-    let currentPageCharCount = 0;
-    let charIndex = 0;
-    let pageStartCharIndex = 0;
-    
-    for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
-      const paragraph = paragraphs[pIdx];
-      
-          // 当前页已满，创建新页
-      if (!paragraph.trim()) {
-          // 当前页已满，创建新页
-        const emptyLineChars = charsPerLine;
-        if (currentPageCharCount + emptyLineChars > charsPerPage && currentPageParagraphs.length > 0) {
-          // 当前页已满，创建新页
-          this.pushOnlinePage(
-            pages,
-            currentPageParagraphs,
-            pageStartCharIndex,
-            charIndex
-          );
-          pageStartCharIndex = charIndex;
-          currentPageParagraphs = [];
-          currentPageCharCount = 0;
-        }
-        currentPageParagraphs.push('');
-        currentPageCharCount += emptyLineChars;
-        charIndex += paragraph.length + 1;
-        continue;
-      }
-      
-      // 检查是否能放入当前页
-      const indentChars = Math.floor(firstLineIndent);
-      const paragraphCharsWithIndent = paragraph.length + indentChars;
-      const paragraphLines = Math.ceil(paragraphCharsWithIndent / charsPerLine);
-      const paragraphCharCost = paragraphLines * charsPerLine;
-      
-        // 计算当前页还能容纳多少行
-      if (currentPageCharCount + paragraphCharCost > charsPerPage && currentPageParagraphs.length > 0) {
-          // 至少能放2行，尝试分割段落
-          // 至少能放2行，尝试分割段落
-        const remainingLines = Math.floor((charsPerPage - currentPageCharCount) / charsPerLine);
-        
-        if (remainingLines >= 2) {
-            // 能放下足够的内容，分割段落
-          const remainingChars = remainingLines * charsPerLine - indentChars;
-          if (remainingChars > charsPerLine / 2) {
-              // 分割段落
-            const splitPoint = this.findParagraphSplitPoint(paragraph, remainingChars);
-            if (splitPoint > 0 && splitPoint < paragraph.length - charsPerLine / 2) {
-              // 首部分添加到当前页（带首行缩进）
-              const firstPart = paragraph.substring(0, splitPoint);
-              const secondPart = paragraph.substring(splitPoint);
-              
-              // 首部分添加到当前页（带首行缩进）
-          currentPageParagraphs.push('  '.repeat(indentChars) + firstPart);
-              this.pushOnlinePage(
-                pages,
-                currentPageParagraphs,
-                pageStartCharIndex,
-                charIndex + splitPoint
-              );
-              
-              // 开始新页，放剩余部分（不需要首行缩进，因为是段落中间）
-              pageStartCharIndex = charIndex + splitPoint;
-              currentPageParagraphs = [secondPart];
-              const secondPartLines = Math.ceil(secondPart.length / charsPerLine);
-              currentPageCharCount = secondPartLines * charsPerLine;
-              charIndex += paragraph.length + 1;
-              continue;
-            }
-          }
-        }
-        
-        // 无法分割或不值得分割，直接换页
-        this.pushOnlinePage(
-          pages,
-          currentPageParagraphs,
-          pageStartCharIndex,
-          charIndex
-        );
-        pageStartCharIndex = charIndex;
-        currentPageParagraphs = [];
-        currentPageCharCount = 0;
-      }
-      
-    // 处理最后一页
-          currentPageParagraphs.push('  '.repeat(indentChars) + paragraph);
-      currentPageCharCount += paragraphCharCost;
-      charIndex += paragraph.length + 1;
-    }
-    
-    // 处理最后一页
-    if (currentPageParagraphs.length > 0) {
-      this.pushOnlinePage(
-        pages,
-        currentPageParagraphs,
-        pageStartCharIndex,
-        charIndex
-      );
-    }
-    
-    this.pages = pages;
-    this.totalPages = pages.length;
+    const pages = this.buildOnlinePagesForContent(this.content, linesPerPage);
+    this.applyPaginatedPages(pages);
   }
 
   /**
@@ -2039,70 +2318,8 @@ export struct TextReaderComponent {
   * LOCAL模式分页：按行分页，精确控制每行内容
   */
   private paginateContentLocalMode(linesPerPage: number): void {
-    const paragraphs = this.content.split(/\n+/);
-    const pages: TextPage[] = [];
-    let currentPageLines: string[] = [];
-    let currentLineCount = 0;
-    let charIndex = 0;
-    let pageStartCharIndex = 0;
-    
-    for (const paragraph of paragraphs) {
-      if (!paragraph.trim()) {
-        charIndex += paragraph.length + 1;
-        continue;
-      }
-      
-      // 使用精确测量将段落分成行
-      const paragraphLines = this.splitTextToLines(
-        paragraph.trim(),
-        this.contentAreaWidth,
-        true// 段落首行需要缩进
-      );
-      
-      for (let i = 0; i < paragraphLines.length; i++) {
-        const line = paragraphLines[i];
-        currentPageLines.push(line);
-        currentLineCount++;
-        
-        // 检查是否需要换页
-        if (currentLineCount >= linesPerPage) {
-          const pageContent = currentPageLines.join('\n');
-          const endCharIndex = charIndex + pageContent.length;
-          
-          pages.push({
-            index: pages.length,
-            content: pageContent,
-            startCharIndex: pageStartCharIndex,
-            endCharIndex: endCharIndex
-          });
-          
-          pageStartCharIndex = endCharIndex;
-          currentPageLines = [];
-          currentLineCount = 0;
-        }
-      }
-      
-      // 段落结束后添加段落间距（如果还有空间）
-      if (currentLineCount > 0 && currentLineCount < linesPerPage) {
-        currentPageLines.push('');
-        currentLineCount++;
-      }
-      
-      charIndex += paragraph.length + 1;
-    }
-    
-    // 处理最后一页
-    if (currentPageLines.length > 0) {
-      pages.push({
-        index: pages.length,
-        content: currentPageLines.join('\n'),
-        startCharIndex: pageStartCharIndex,
-        endCharIndex: charIndex
-      });
-    }
-    
-    this.pages = pages;
-    this.totalPages = pages.length;
+    const pages = this.buildLocalPagesForContent(this.content, linesPerPage);
+    this.applyPaginatedPages(pages);
   }
   
   /**
@@ -3623,8 +3840,12 @@ export struct TextReaderComponent {
       return;
     }
     if (this.currentPageIndex >= this.totalPages - 1) {
-      // 已是最后一页，提供边界反馈
-      this.provideBoundaryFeedback();
+      if (this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1) {
+        this.notifyUserPageTurnStartIfNeeded(source);
+        this.switchToNextChapter();
+      } else {
+        this.provideBoundaryFeedback();
+      }
       return;
     }
 
@@ -3659,8 +3880,12 @@ export struct TextReaderComponent {
       return;
     }
     if (this.currentPageIndex <= 0) {
-      // 已是第一页，提供边界反馈
-      this.provideBoundaryFeedback();
+      if (this.currentChapterIndex > 0) {
+        this.notifyUserPageTurnStartIfNeeded(source);
+        this.switchToPrevChapter();
+      } else {
+        this.provideBoundaryFeedback();
+      }
       return;
     }
 
