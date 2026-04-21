@@ -10,7 +10,7 @@ interface SettingsImmersiveThemeState {
 export struct SettingsImmersiveTitleActionButton {
   @Prop themeState: SettingsImmersiveThemeState;
   @Prop glyph: Resource;
-  buttonEnabled: boolean = true;
+  @Prop buttonEnabled: boolean = true;
   tapHandler: () => void = () => {};
   @State private isPressed: boolean = false;
 
@@ -194,6 +194,13 @@ export struct SettingsImmersiveTitleBar {
     return visibleActions.slice(this.maxDirectActions);
   }
 
+  private getActionRenderKey(action: SettingsImmersiveTitleActionItem): string {
+    const labelPart = action.label ? action.label : '';
+    const enabledPart = action.enabled === false ? 'disabled' : 'enabled';
+    const visiblePart = action.visible === false ? 'hidden' : 'visible';
+    return `${action.id}_${labelPart}_${enabledPart}_${visiblePart}`;
+  }
+
   private getOverflowPopupBackgroundColor(): ResourceColor {
     return this.getCurrentTheme() === ThemeType.DARK
       ? 'rgba(24, 32, 46, 0.96)'
@@ -267,7 +274,7 @@ export struct SettingsImmersiveTitleBar {
           .onClick(() => {
             this.handleOverflowAction(action);
           })
-      }, (action: SettingsImmersiveTitleActionItem) => action.id)
+      }, (action: SettingsImmersiveTitleActionItem) => this.getActionRenderKey(action))
     }
     .width('100%')
     .padding(6)
@@ -400,7 +407,7 @@ export struct SettingsImmersiveTitleBar {
                 buttonEnabled: action.enabled === false ? false : true,
                 tapHandler: action.onClick
               })
-            }, (action: SettingsImmersiveTitleActionItem) => action.id)
+            }, (action: SettingsImmersiveTitleActionItem) => this.getActionRenderKey(action))
 
             if (this.getOverflowActions().length > 0) {
               SettingsImmersiveTitleActionButton({

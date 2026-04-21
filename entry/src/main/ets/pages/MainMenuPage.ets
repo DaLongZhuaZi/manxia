@@ -6934,7 +6934,9 @@ struct MainMenuPage {
       case TabIndex.KOMGA:
         return 'Komga 标签用于连接自建漫画服务器';
       case TabIndex.SETTINGS:
-        return '管理标签汇总主题、导入、备份与帮助';
+        return this.sourceFeaturesEnabled
+          ? '管理标签汇总主题、灵感、更新提醒与系统工具'
+          : '管理标签汇总主题、灵感与系统工具';
       case TabIndex.HOME:
         return '首页标签负责承接最近阅读与快捷入口';
       default:
@@ -6957,7 +6959,9 @@ struct MainMenuPage {
       case TabIndex.KOMGA:
         return '这里用于接入 Komga 服务器内容，适合在主页面直接浏览实例、筛选系列与阅读列表，并继续进入详情页和阅读器。';
       case TabIndex.SETTINGS:
-        return '这里集中放置主题设置、全局设置、导入、备份、帮助中心等管理项。接下来我会按当前页面里真实显示的顺序继续介绍。';
+        return this.sourceFeaturesEnabled
+          ? '这里集中放置主题设置、全局设置、灵感、更新提醒、备份和帮助等管理项。接下来我会按当前页面里真实显示的顺序继续介绍。'
+          : '这里集中放置主题设置、全局设置、灵感、备份和帮助等管理项。接下来我会按当前页面里真实显示的顺序继续介绍。';
       case TabIndex.HOME:
         return '这里会优先展示最近阅读、推荐内容和快捷入口，适合作为每次回到应用后的起点。';
       default:
@@ -6992,6 +6996,15 @@ struct MainMenuPage {
         guideMessage: '这里可以查看和管理所有内容产生的书签、划线和想法，适合后续统一回顾阅读记录。'
       }
     ];
+
+    if (this.sourceFeaturesEnabled) {
+      items.push({
+        anchorId: 'guide_main_setting_subscription_management',
+        title: '更新提醒',
+        guideTitle: '更新提醒会统一盯住作品、书架和远程库',
+        guideMessage: '这里可以集中查看更新提醒、批量检查更新，并按设置自动提醒或自动下载。当前版本只会在 APP 回到前台时补查。'
+      });
+    }
 
     if (this.advancedModeEnabled) {
       items.push({
@@ -28218,6 +28231,17 @@ struct MainMenuPage {
               this.showToast('打开灵感页面失败');
             }
           }, 'guide_main_setting_inspiration')
+          if (this.sourceFeaturesEnabled) {
+            this.buildSettingItem('更新提醒', '统一管理作品、书架和远程库的更新提醒', $r('sys.symbol.bookshelf_badge_checkmark'), () => {
+              try {
+                this.pathStack.pushPathByName('SubscriptionManagementPage', null);
+                logger.info(TAG, '导航到更新提醒页面');
+              } catch (error) {
+                logger.error(TAG, '导航到更新提醒页面失败', String(error));
+                this.showToast('打开更新提醒页面失败');
+              }
+            }, 'guide_main_setting_subscription_management')
+          }
           // 下载管理仅在高级模式下显示
           if (this.advancedModeEnabled) {
             this.buildSettingItem('下载管理', '离线下载管理', $r('sys.symbol.arrow_down_circle'), () => {

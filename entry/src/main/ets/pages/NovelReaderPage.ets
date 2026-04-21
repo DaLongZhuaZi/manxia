@@ -96,6 +96,11 @@ interface LocalTextDomPosition {
   chapterIndex: number;
 }
 
+interface PreparedTextChapter {
+  content: string;
+  wordCount: number;
+}
+
 @Component
 export struct NovelReaderPage {
   private static readonly READ_ALOUD_RESUME_KEY_PREFIX: string = 'novel_read_aloud_resume_char_';
@@ -222,7 +227,7 @@ export struct NovelReaderPage {
   private replaceRulesEnabled: boolean = true;
   private scopedReplaceRuleIds: string[] | null = null;
   private prefetchGeneration: number = 0;
-  private preparsedChapterContent: Map<number, string> = new Map<number, string>();
+  private preparsedChapterContent: Map<number, PreparedTextChapter> = new Map<number, PreparedTextChapter>();
   private prefetchingChapterIndexes: Set<number> = new Set<number>();
 
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
@@ -1221,18 +1226,124 @@ export struct NovelReaderPage {
     return processResult.content;
   }
 
+  private countPreparedTextChapterWords(content: string): number {
+    if (!content) {
+      return 0;
+    }
+    const compactContent = content.replace(/\s+/g, '');
+    if (compactContent.length > 0) {
+      return compactContent.length;
+    }
+    return content.length;
+  }
+
+  private buildPreparedTextChapter(content: string): PreparedTextChapter {
+    const safeContent = content || '';
+    return {
+      content: safeContent,
+      wordCount: this.countPreparedTextChapterWords(safeContent)
+    };
+  }
+
+  private updatePreparedTextChapterState(chapterIndex: number, preparedChapter: PreparedTextChapter): void {
+    if (chapterIndex < 0 || chapterIndex >= this.chapters.length) {
+      return;
+    }
+    const currentChapter = this.chapters[chapterIndex];
+    if (!currentChapter) {
+      return;
+    }
+    const currentWordCount = currentChapter.wordCount || 0;
+    const nextEndPosition = preparedChapter.content.length > 0
+      ? preparedChapter.content.length
+      : currentChapter.endPosition;
+    if (
+      currentChapter.content === preparedChapter.content &&
+      currentWordCount === preparedChapter.wordCount &&
+      currentChapter.endPosition === nextEndPosition
+    ) {
+      return;
+    }
+
+    const nextChapter: TextChapter = {
+      id: currentChapter.id,
+      title: currentChapter.title,
+      index: currentChapter.index,
+      content: preparedChapter.content,
+      wordCount: preparedChapter.wordCount,
+      startPosition: currentChapter.startPosition,
+      endPosition: nextEndPosition
+    };
+    const nextChapters = this.chapters.slice();
+    nextChapters[chapterIndex] = nextChapter;
+    this.chapters = nextChapters;
+  }
+
+  private clearPreparedTextChapterContentState(chapterIndex: number): void {
+    if (chapterIndex < 0 || chapterIndex >= this.chapters.length) {
+      return;
+    }
+    const currentChapter = this.chapters[chapterIndex];
+    if (!currentChapter || currentChapter.content.length <= 0) {
+      return;
+    }
+    const clearedChapter: TextChapter = {
+      id: currentChapter.id,
+      title: currentChapter.title,
+      index: currentChapter.index,
+      content: '',
+      wordCount: currentChapter.wordCount || 0,
+      startPosition: currentChapter.startPosition,
+      endPosition: currentChapter.endPosition
+    };
+    const nextChapters = this.chapters.slice();
+    nextChapters[chapterIndex] = clearedChapter;
+    this.chapters = nextChapters;
+  }
+
+  private clearPreparedTextChapterStates(): void {
+    if (this.chapters.length <= 0) {
+      return;
+    }
+    for (let chapterIndex = 0; chapterIndex < this.chapters.length; chapterIndex++) {
+      if (chapterIndex === this.currentChapterIndex) {
+        continue;
+      }
+      this.clearPreparedTextChapterContentState(chapterIndex);
+    }
+  }
+
   private getEffectivePrefetchCount(): number {
     if (!this.preloadWhileReadingEnabled) {
       return 0;
     }
-    const remaining = this.totalChapters - this.currentChapterIndex - 1;
-    if (remaining <= 0) {
+    const maxDistance = Math.max(this.currentChapterIndex, this.totalChapters - this.currentChapterIndex - 1);
+    if (maxDistance <= 0) {
       return 0;
     }
     if (this.preloadChapterCount >= 9999) {
-      return remaining;
+      return maxDistance;
     }
-    return Math.max(0, Math.min(this.preloadChapterCount, remaining));
+    return Math.max(0, Math.min(this.preloadChapterCount, maxDistance));
+  }
+
+  private buildPrefetchChapterIndexes(preloadCount: number): number[] {
+    const indexes: number[] = [];
+    if (preloadCount <= 0 || this.totalChapters <= 0) {
+      return indexes;
+    }
+    const radius = Math.max(0, Math.min(preloadCount, MAX_PREPARSED_CHAPTER_CACHE - 1));
+    for (let offset = 1; offset <= radius; offset++) {
+      const nextIndex = this.currentChapterIndex + offset;
+      if (nextIndex < this.totalChapters) {
+        indexes.push(nextIndex);
+      }
+      const prevIndex = this.currentChapterIndex - offset;
+      if (prevIndex >= 0) {
+        indexes.push(prevIndex);
+      }
+    }
+    return indexes;
   }
 
   private stopCrossChapterPrefetch(clearPreparedCache: boolean): void {
@@ -1240,6 +1351,7 @@ export struct NovelReaderPage {
     if (clearPreparedCache) {
       this.prefetchingChapterIndexes.clear();
       this.preparsedChapterContent.clear();
+      this.clearPreparedTextChapterStates();
     }
   }
 
@@ -1247,36 +1359,44 @@ export struct NovelReaderPage {
     if (this.preparsedChapterContent.size <= MAX_PREPARSED_CHAPTER_CACHE) {
       return;
     }
-    const indexes = Array.from(this.preparsedChapterContent.keys()).sort((a: number, b: number) => a - b);
+    const indexes = Array.from(this.preparsedChapterContent.keys()).sort((a: number, b: number) => {
+      const distanceA = Math.abs(a - this.currentChapterIndex);
+      const distanceB = Math.abs(b - this.currentChapterIndex);
+      if (distanceA !== distanceB) {
+        return distanceB - distanceA;
+      }
+      return a - b;
+    });
     while (this.preparsedChapterContent.size > MAX_PREPARSED_CHAPTER_CACHE && indexes.length > 0) {
-      const oldest = indexes.shift();
-      if (oldest === undefined) {
+      const removableIndex = indexes.shift();
+      if (removableIndex === undefined) {
         break;
       }
-      if (oldest === this.currentChapterIndex) {
+      if (removableIndex === this.currentChapterIndex) {
         continue;
       }
-      this.preparsedChapterContent.delete(oldest);
+      this.preparsedChapterContent.delete(removableIndex);
+      this.clearPreparedTextChapterContentState(removableIndex);
     }
   }
 
   private scheduleCrossChapterPrefetch(): void {
     const preloadCount = this.getEffectivePrefetchCount();
-    if (preloadCount <= 0 || this.chapterList.length === 0) {
-      return;
-    }
-    const startIndex = this.currentChapterIndex + 1;
-    const endIndex = Math.min(this.totalChapters - 1, this.currentChapterIndex + preloadCount);
-    if (startIndex > endIndex) {
+    const chapterIndexes = this.buildPrefetchChapterIndexes(preloadCount);
+    if (chapterIndexes.length <= 0 || this.chapterList.length === 0) {
       return;
     }
     const generation = ++this.prefetchGeneration;
-    logger.info(TAG, `schedule chapter prefetch: range=${startIndex}-${endIndex}, generation=${generation}`);
-    void this.prefetchChapterRange(generation, startIndex, endIndex);
+    const previewIndexes = chapterIndexes.slice(0, 6).join(',');
+    logger.info(
+      TAG,
+      `schedule chapter prefetch: targets=${previewIndexes}${chapterIndexes.length > 6 ? ',...' : ''}, generation=${generation}`
+    );
+    void this.prefetchChapterIndexes(generation, chapterIndexes);
   }
 
-  private async prefetchChapterRange(generation: number, startIndex: number, endIndex: number): Promise<void> {
-    for (let chapterIndex = startIndex; chapterIndex <= endIndex; chapterIndex++) {
+  private async prefetchChapterIndexes(generation: number, chapterIndexes: number[]): Promise<void> {
+    for (const chapterIndex of chapterIndexes) {
       if (generation !== this.prefetchGeneration) {
         logger.debug(TAG, `prefetch canceled: generation=${generation}, current=${this.prefetchGeneration}`);
         return;
@@ -1316,7 +1436,9 @@ export struct NovelReaderPage {
           continue;
         }
         const parsedContent = this.processChapterContent(rawContent, chapter.title, chapterIndex, 'prefetch');
-        this.preparsedChapterContent.set(chapterIndex, parsedContent);
+        const preparedChapter = this.buildPreparedTextChapter(parsedContent);
+        this.preparsedChapterContent.set(chapterIndex, preparedChapter);
+        this.updatePreparedTextChapterState(chapterIndex, preparedChapter);
         this.trimPreparsedChapterCache();
       } catch (error) {
         logger.warn(TAG, `prefetch chapter failed: index=${chapterIndex}, error=${String(error)}`);
@@ -1391,7 +1513,8 @@ export struct NovelReaderPage {
       const preparsedContent = this.preparsedChapterContent.get(this.currentChapterIndex);
       if (preparsedContent !== undefined) {
         this.preparsedChapterContent.delete(this.currentChapterIndex);
-        this.content = preparsedContent;
+        this.content = preparsedContent.content;
+        this.updatePreparedTextChapterState(this.currentChapterIndex, preparsedContent);
         logger.info(TAG, `hit preparsed chapter cache: index=${this.currentChapterIndex}`);
         this.reportTransitionLoadingProgress(0.62, 'chapter_content_ready');
       } else {
@@ -1406,12 +1529,14 @@ export struct NovelReaderPage {
         if (!rawContent) {
           this.content = 'Load failed, please retry';
         } else {
-          this.content = this.processChapterContent(
+          const preparedChapter = this.buildPreparedTextChapter(this.processChapterContent(
             rawContent,
             this.chapterTitle,
             this.currentChapterIndex,
             'current_chapter_load'
-          );
+          ));
+          this.content = preparedChapter.content;
+          this.updatePreparedTextChapterState(this.currentChapterIndex, preparedChapter);
         }
       }
       this.reportTransitionLoadingProgress(0.76, 'content_processed');
@@ -1483,6 +1608,7 @@ export struct NovelReaderPage {
             id: chapter.id || `chapter_${index}`,
             title: chapter.title || `Chapter ${index + 1}`,
             content: '',
+            wordCount: chapter.wordCount || 0,
             index: index,
             startPosition: chapter.startPosition,
             endPosition: chapter.endPosition
@@ -1549,6 +1675,7 @@ export struct NovelReaderPage {
             id: chapter.id || `chapter_${index}`,
             title: chapter.title,
             content: '', // 内容将在切换章节时加载
+            wordCount: 0,
             index: index,
             startPosition: 0,// 小说章节独立加载，不需要全文位置
             endPosition: 0

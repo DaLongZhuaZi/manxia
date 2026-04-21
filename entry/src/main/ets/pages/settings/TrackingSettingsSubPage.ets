@@ -677,7 +677,7 @@ export struct TrackingSettingsSubPage {
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
 
-      Text('注意：跟踪是单向的（本应用 → 平台/服务器）。在其他设备上的阅读进度不会自动同步回本应用。')
+      Text('注意：这里的检查是单向的，只会从本应用去查看平台内容。你在其他设备上的阅读进度不会自动同步回来。')
         .fontSize(13)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -702,20 +702,20 @@ export struct TrackingSettingsSubPage {
   @Builder
   buildSubscriptionSection() {
     Column({ space: 12 }) {
-      Text('内容更新跟踪')
+      Text('更新提醒')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
-      Text('这里管理的是应用内的通用内容跟踪规则，不是 RSS 订阅源。它用于跟踪书架、远程库和后续各类在线内容的更新，并按规则执行通知、自动下载等操作。')
+      Text('这里管理的是应用里的更新提醒，不是 RSS。它可以帮你盯住书架、远程库和支持的在线内容；你也可以从管理标签里的“更新提醒”直接进入。当前版本只会在 APP 回到前台时补查，后台不会定时执行。')
         .fontSize(13)
         .lineHeight(20)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
 
-      Button('进入统一跟踪管理')
+      Button('打开更新提醒')
         .height(38)
         .fontSize(13)
         .fontWeight(FontWeight.Medium)

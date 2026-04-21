@@ -117,7 +117,7 @@ export class SettingsSearchSupport {
     // 进度记录与服务器
     { id: 'tracking_services', title: '进度记录与服务器', description: 'MAL/AniList/Bangumi 进度同步，以及 Suwayomi/Komga 服务器配置', targetPage: 'TrackingSettingsSubPage', anchorId: 'tracking_services', scrollOffset: 0, keywords: ['进度记录与服务器', '进度记录', '服务器', '同步服务', 'AniList', 'MAL', 'Bangumi', 'Suwayomi服务器', 'Komga服务器', 'Suwayomi', 'Komga'] },
     { id: 'tracking_info', title: '进度记录与服务器说明', description: '跟踪机制、服务器角色与同步规则说明', targetPage: 'TrackingSettingsSubPage', anchorId: 'tracking_info', scrollOffset: 680, keywords: ['关于进度记录与服务器', '跟踪是单向的', 'Suwayomi是服务器', 'Komga是服务器'] },
-    { id: 'subscription_tracking', title: '内容更新跟踪', description: '管理应用内书架、远程库与作品级的内容跟踪规则', targetPage: 'TrackingSettingsSubPage', anchorId: 'subscription_tracking', scrollOffset: 1180, keywords: ['内容更新跟踪', '内容跟踪', '统一跟踪管理', '更新跟踪规则', '自动检查更新', '自动下载', '书架跟踪', '远程库跟踪'] },
+    { id: 'subscription_tracking', title: '内容更新跟踪', description: '管理应用内书架、远程库与作品级的提醒规则，当前版本会在回到前台时补查', targetPage: 'TrackingSettingsSubPage', anchorId: 'subscription_tracking', scrollOffset: 1180, keywords: ['内容更新跟踪', '内容跟踪', '统一跟踪管理', '更新跟踪规则', '自动检查更新', '自动下载', '书架跟踪', '远程库跟踪', '前台补查', '后台不检查'] },
 
     // 网络设置
     { id: 'network_download', title: '下载设置', description: '仅 WiFi 下载与最大并发下载数', targetPage: 'NetworkSettingsSubPage', anchorId: 'network_download', scrollOffset: 0, keywords: ['下载设置', '仅WiFi下载', '最大并发下载数'] },

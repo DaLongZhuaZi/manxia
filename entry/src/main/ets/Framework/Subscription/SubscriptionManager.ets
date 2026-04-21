@@ -139,7 +139,7 @@ export class SubscriptionManager {
 
   private ensureInitialized(): void {
     if (!this.isReady()) {
-      throw new Error('统一内容跟踪模块尚未初始化');
+      throw new Error('更新提醒还没准备好');
     }
   }
 
@@ -356,7 +356,7 @@ export class SubscriptionManager {
     this.ensureInitialized();
     const book = await this.novelDataManager.getBook(bookId);
     if (book === null) {
-      throw new Error('小说不存在，无法创建跟踪规则');
+      throw new Error('找不到这本小说，不能创建提醒');
     }
 
     const mergedOptions = this.mergeCreateOptions(options);
@@ -365,7 +365,7 @@ export class SubscriptionManager {
     const source = this.novelSourceManager.getSource(book.sourceId);
     const rule: SubscriptionRule = {
       id: '',
-      name: mergedOptions.ruleName.length > 0 ? mergedOptions.ruleName : `小说内容跟踪 - ${book.name}`,
+      name: mergedOptions.ruleName.length > 0 ? mergedOptions.ruleName : `小说提醒 - ${book.name}`,
       enabled: true,
       targetType: SubscriptionTargetType.ITEM,
       contentType: SubscriptionContentType.NOVEL,
@@ -410,7 +410,7 @@ export class SubscriptionManager {
     this.ensureInitialized();
     const book = await this.novelDataManager.getBook(bookId);
     if (book === null) {
-      throw new Error('小说不存在，无法创建跟踪规则');
+      throw new Error('找不到这本小说，不能创建提醒');
     }
 
     const existingRule = await this.getItemRule(SubscriptionContentType.NOVEL, book.id);
@@ -427,7 +427,7 @@ export class SubscriptionManager {
     this.ensureInitialized();
     const baselineManga = await this.remoteLibraryBridge.loadRemoteMangaDetail(null, mangaId);
     if (baselineManga === null) {
-      throw new Error('远程漫画不存在，无法创建跟踪规则');
+      throw new Error('找不到这部漫画，不能创建提醒');
     }
 
     const mergedOptions = this.mergeCreateOptions(options);
@@ -436,7 +436,7 @@ export class SubscriptionManager {
     const providerType = this.resolveMangaProviderType(baselineManga);
     const rule: SubscriptionRule = {
       id: '',
-      name: mergedOptions.ruleName.length > 0 ? mergedOptions.ruleName : `远程漫画内容跟踪 - ${baselineManga.title}`,
+      name: mergedOptions.ruleName.length > 0 ? mergedOptions.ruleName : `漫画提醒 - ${baselineManga.title}`,
       enabled: true,
       targetType: SubscriptionTargetType.ITEM,
       contentType: SubscriptionContentType.MANGA,
@@ -495,12 +495,12 @@ export class SubscriptionManager {
     this.ensureInitialized();
     const shelfReady = await this.ensureShelfManagersReady();
     if (!shelfReady) {
-      throw new Error('书架管理器尚未就绪，无法创建书架跟踪规则');
+      throw new Error('书架还没准备好，暂时不能创建提醒');
     }
 
     const shelf = this.typeShelfManager.getShelf(shelfId);
     if (shelf === undefined) {
-      throw new Error('书架不存在，无法创建跟踪规则');
+      throw new Error('找不到这个书架，不能创建提醒');
     }
 
     const mergedOptions = this.mergeCreateOptions(options);
@@ -508,7 +508,7 @@ export class SubscriptionManager {
       id: '',
       name: mergedOptions.ruleName.length > 0
         ? mergedOptions.ruleName
-        : `${shelf.shelfType === ShelfType.DYNAMIC ? '动态书架内容跟踪' : '书架内容跟踪'} - ${shelf.name}`,
+        : `${shelf.shelfType === ShelfType.DYNAMIC ? '动态书架提醒' : '书架提醒'} - ${shelf.name}`,
       enabled: true,
       targetType: shelf.shelfType === ShelfType.DYNAMIC
         ? SubscriptionTargetType.DYNAMIC_SHELF
@@ -558,7 +558,7 @@ export class SubscriptionManager {
   ): Promise<SubscriptionRule> {
     this.ensureInitialized();
     if (providerType !== SubscriptionProviderType.SUWAYOMI && providerType !== SubscriptionProviderType.KOMGA) {
-      throw new Error('当前仅支持为 Suwayomi 或 Komga 创建远程库跟踪规则');
+      throw new Error('目前只支持给 Suwayomi 或 Komga 远程库创建提醒');
     }
 
     const normalizedInstanceId = this.normalizeProviderLibraryInstanceId(providerType, instanceId);
@@ -569,7 +569,7 @@ export class SubscriptionManager {
       id: '',
       name: mergedOptions.ruleName.length > 0
         ? mergedOptions.ruleName
-        : `远程库内容跟踪 - ${targetTitle}`,
+        : `远程库提醒 - ${targetTitle}`,
       enabled: true,
       targetType: SubscriptionTargetType.PROVIDER_LIBRARY,
       contentType: SubscriptionContentType.MANGA,
@@ -600,12 +600,12 @@ export class SubscriptionManager {
     this.ensureInitialized();
     const shelfReady = await this.ensureShelfManagersReady();
     if (!shelfReady) {
-      throw new Error('书架管理器尚未就绪，无法预览书架内容跟踪目标');
+      throw new Error('书架还没准备好，暂时不能查看包含内容');
     }
 
     const shelf = this.typeShelfManager.getShelf(shelfId);
     if (shelf === undefined) {
-      throw new Error('书架不存在，无法预览书架内容跟踪目标');
+      throw new Error('找不到这个书架，暂时不能查看包含内容');
     }
 
     const targetType = shelf.shelfType === ShelfType.DYNAMIC
@@ -628,7 +628,7 @@ export class SubscriptionManager {
   ): Promise<SubscriptionTargetPreview> {
     this.ensureInitialized();
     if (providerType !== SubscriptionProviderType.SUWAYOMI && providerType !== SubscriptionProviderType.KOMGA) {
-      throw new Error('当前仅支持预览 Suwayomi 或 Komga 远程库内容跟踪目标');
+      throw new Error('目前只能查看 Suwayomi 或 Komga 远程库会包含哪些内容');
     }
 
     const normalizedInstanceId = this.normalizeProviderLibraryInstanceId(providerType, instanceId);
@@ -646,17 +646,17 @@ export class SubscriptionManager {
     this.ensureInitialized();
     const rule = await this.dataManager.getRuleById(ruleId);
     if (rule === null) {
-      throw new Error('内容跟踪规则不存在，无法预览目标');
+      throw new Error('找不到这条提醒，暂时不能查看包含内容');
     }
 
     if (rule.targetType === SubscriptionTargetType.SHELF || rule.targetType === SubscriptionTargetType.DYNAMIC_SHELF) {
       const shelfReady = await this.ensureShelfManagersReady();
       if (!shelfReady) {
-        throw new Error('书架管理器尚未就绪，无法预览书架内容跟踪目标');
+        throw new Error('书架还没准备好，暂时不能查看包含内容');
       }
       const shelf = this.typeShelfManager.getShelf(rule.targetId);
       if (shelf === undefined) {
-        throw new Error('书架不存在，无法预览书架内容跟踪目标');
+        throw new Error('找不到这个书架，暂时不能查看包含内容');
       }
       const candidates = await this.resolveShelfCandidates(shelf, true);
       return this.buildTargetPreview(
@@ -882,7 +882,7 @@ export class SubscriptionManager {
     this.ensureInitialized();
     const rule = await this.dataManager.getRuleById(ruleId);
     if (rule === null) {
-      throw new Error('内容跟踪规则不存在');
+      throw new Error('找不到这条提醒');
     }
     return this.executeRuleInternal(rule, scene);
   }
@@ -911,7 +911,7 @@ export class SubscriptionManager {
         result = this.buildSimpleResult(
           rule,
           SubscriptionExecutionStatus.UNSUPPORTED,
-          '当前目标类型的内容跟踪执行尚未接入'
+          '这种对象暂时还不能自动检查'
         );
       } else if (rule.contentType === SubscriptionContentType.NOVEL) {
         result = await this.executeNovelRule(rule, scene);
@@ -921,11 +921,11 @@ export class SubscriptionManager {
         result = this.buildSimpleResult(
           rule,
           SubscriptionExecutionStatus.UNSUPPORTED,
-          '当前内容类型的内容跟踪执行尚未接入'
+          '这类内容暂时还不能自动检查'
         );
       }
     } catch (error) {
-      const errorMessage = `内容跟踪执行失败: ${String(error)}`;
+      const errorMessage = `检查失败: ${String(error)}`;
       logger.error(TAG, `${rule.name} 执行异常: ${errorMessage}`);
       result = this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, errorMessage);
     }
@@ -985,7 +985,7 @@ export class SubscriptionManager {
   private async executeNovelRule(rule: SubscriptionRule, scene: string): Promise<SubscriptionRuleRunResult> {
     const book = await this.novelDataManager.getBook(rule.targetId);
     if (book === null) {
-      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '小说已不存在');
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '这本小说已经不存在了');
     }
 
     const conditionSubject = this.buildConditionSubjectFromNovel(book);
@@ -999,7 +999,7 @@ export class SubscriptionManager {
     const remoteBook = this.buildLegadoBook(book, source);
     const chapters = await this.novelSourceManager.getChapterList(book.sourceId, remoteBook);
     if (chapters.length <= 0) {
-      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '未获取到远端章节列表');
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '没拿到章节列表');
     }
 
     const localCount = book.chapterCount;
@@ -1012,8 +1012,8 @@ export class SubscriptionManager {
     if (deltaCount < minNewItems) {
       const status = deltaCount > 0 ? SubscriptionExecutionStatus.NO_UPDATE : SubscriptionExecutionStatus.NO_UPDATE;
       const message = deltaCount > 0
-        ? `发现 ${deltaCount} 个新章节，但未达到阈值 ${minNewItems}`
-        : '小说暂无更新';
+        ? `发现 ${deltaCount} 个新章节，但还没达到你设定的 ${minNewItems}`
+        : '这本小说还没有新章节';
       return {
         rule: rule,
         status: status,
@@ -1066,7 +1066,7 @@ export class SubscriptionManager {
       remoteCount: remoteCount,
       deltaCount: 0,
       downloadedCount: 0,
-      message: '小说暂无更新',
+      message: '这本小说还没有新章节',
       actionSummary: '',
       latestItemTitle: latestItemTitle,
       checkpoint: this.buildCheckpoint(rule, localCount, remoteCount, latestItemTitle)
@@ -1077,14 +1077,14 @@ export class SubscriptionManager {
     const cachedManga = await this.remoteLibraryBridge.getCachedMangaById(rule.targetId);
     const remoteManga = await this.remoteLibraryBridge.loadRemoteMangaDetail(cachedManga, rule.targetId);
     if (remoteManga === null) {
-      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '未获取到远程漫画详情');
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '没拿到漫画详情');
     }
 
     if (!this.remoteLibraryBridge.isRemoteProviderManga(remoteManga)) {
       return this.buildSimpleResult(
         rule,
         SubscriptionExecutionStatus.UNSUPPORTED,
-        '普通 WebView 在线漫画的后台内容跟踪检查将在下一阶段接入'
+        '这种在线漫画暂时还不能自动检查'
       );
     }
 
@@ -1104,8 +1104,8 @@ export class SubscriptionManager {
 
     if (deltaCount < minNewItems) {
       const message = deltaCount > 0
-        ? `发现 ${deltaCount} 个新章节，但未达到阈值 ${minNewItems}`
-        : '远程漫画暂无更新';
+        ? `发现 ${deltaCount} 个新章节，但还没达到你设定的 ${minNewItems}`
+        : '这部漫画还没有新章节';
       return {
         rule: rule,
         status: SubscriptionExecutionStatus.NO_UPDATE,
@@ -1158,7 +1158,7 @@ export class SubscriptionManager {
       remoteCount: remoteCount,
       deltaCount: 0,
       downloadedCount: 0,
-      message: '远程漫画暂无更新',
+      message: '这部漫画还没有新章节',
       actionSummary: '',
       latestItemTitle: latestItemTitle,
       checkpoint: this.buildCheckpoint(rule, localCount, remoteCount, latestItemTitle)
@@ -1184,12 +1184,12 @@ export class SubscriptionManager {
   private async executeShelfRule(rule: SubscriptionRule, scene: string): Promise<SubscriptionRuleRunResult> {
     const shelfReady = await this.ensureShelfManagersReady();
     if (!shelfReady) {
-      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '书架管理器尚未就绪');
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '书架还没准备好');
     }
 
     const shelf = this.typeShelfManager.getShelf(rule.targetId);
     if (shelf === undefined) {
-      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '目标书架不存在');
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '找不到这个书架');
     }
 
     const candidates = await this.resolveShelfCandidates(shelf, true);
@@ -1197,14 +1197,14 @@ export class SubscriptionManager {
       rule,
       candidates,
       scene,
-      '目标书架当前无可检查内容',
-      '书架跟踪更新'
+      '这个书架里暂时没有可检查的内容',
+      '书架有更新'
     );
   }
 
   private async executeProviderLibraryRule(rule: SubscriptionRule, scene: string): Promise<SubscriptionRuleRunResult> {
     if (rule.providerType !== SubscriptionProviderType.SUWAYOMI && rule.providerType !== SubscriptionProviderType.KOMGA) {
-      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.UNSUPPORTED, '当前仅支持 Suwayomi 或 Komga 远程库内容跟踪');
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.UNSUPPORTED, '目前只支持检查 Suwayomi 或 Komga 远程库');
     }
 
     const instanceId = this.normalizeProviderLibraryInstanceId(rule.providerType, rule.targetId);
@@ -1213,8 +1213,8 @@ export class SubscriptionManager {
       rule,
       candidates,
       scene,
-      '目标远程库当前无可检查内容',
-      '远程库跟踪更新'
+      '这个远程库里暂时没有可检查的内容',
+      '远程库有更新'
     );
   }
 
@@ -1398,15 +1398,15 @@ export class SubscriptionManager {
     failedTargetCount: number,
     unsupportedTargetCount: number
   ): string {
-    const parts: string[] = [`共检查 ${processedTargetCount} 项`];
+    const parts: string[] = [`检查了 ${processedTargetCount} 项`];
     if (updatedTargetCount > 0) {
-      parts.push(`更新 ${updatedTargetCount} 项`);
+      parts.push(`${updatedTargetCount} 项有更新`);
     }
     if (totalDeltaCount > 0) {
-      parts.push(`新增 ${totalDeltaCount} 个内容`);
+      parts.push(`共发现 ${totalDeltaCount} 个新内容`);
     }
     if (totalDownloadedCount > 0) {
-      parts.push(`已触发下载 ${totalDownloadedCount} 项`);
+      parts.push(`已开始下载 ${totalDownloadedCount} 项`);
     }
     if (skippedTargetCount > 0) {
       parts.push(`跳过 ${skippedTargetCount} 项`);
@@ -1813,7 +1813,7 @@ export class SubscriptionManager {
       novelBook: null,
       remoteManga: null,
       supported: false,
-      unsupportedReason: '电子书内容跟踪执行将在下一阶段接入'
+      unsupportedReason: '电子书的更新提醒还在准备中'
     };
   }
 
@@ -1851,7 +1851,7 @@ export class SubscriptionManager {
       novelBook: null,
       remoteManga: isRemoteProvider ? manga : null,
       supported: isRemoteProvider,
-      unsupportedReason: isRemoteProvider ? '' : '普通WebView在线漫画和本地漫画暂未支持书架内容跟踪执行'
+      unsupportedReason: isRemoteProvider ? '' : '这类漫画暂时还不能用于书架提醒'
     };
   }
 
@@ -1880,7 +1880,7 @@ export class SubscriptionManager {
       novelBook: null,
       remoteManga: null,
       supported: parsedProvider !== null,
-      unsupportedReason: parsedProvider !== null ? '' : '普通WebView在线漫画和本地漫画暂未支持书架内容跟踪执行'
+      unsupportedReason: parsedProvider !== null ? '' : '这类漫画暂时还不能用于书架提醒'
     };
   }
 
@@ -2043,7 +2043,7 @@ export class SubscriptionManager {
       id: this.buildNotificationId(rule.id, updatedTargetCount + deltaCount),
       title: `${titlePrefix}: ${rule.targetTitle.length > 0 ? rule.targetTitle : rule.name}`,
       text: `发现 ${updatedTargetCount} 个作品有更新`,
-      additionalText: latestItemTitle.length > 0 ? latestItemTitle : `累计新增 ${deltaCount} 个内容`,
+      additionalText: latestItemTitle.length > 0 ? latestItemTitle : `一共新增 ${deltaCount} 个内容`,
       type: NotificationType.UPDATE_AVAILABLE
     });
   }
@@ -2219,7 +2219,7 @@ export class SubscriptionManager {
     subject: SubscriptionConditionSubject
   ): string {
     if (this.shouldSkipByExcludeNsfwCondition(conditions, subject.isNSFW)) {
-      return '目标为 NSFW 内容，已按规则跳过';
+      return '因为开启了跳过 NSFW，这次没有检查';
     }
 
     const evaluations = this.buildPositiveConditionEvaluations(conditions, subject);
@@ -2237,7 +2237,7 @@ export class SubscriptionManager {
       if (evaluations.length === 1) {
         return evaluations[0].failureReason;
       }
-      return `未命中任一条件（${this.joinConditionEvaluationLabels(evaluations)}）`;
+      return `这些条件都没满足（${this.joinConditionEvaluationLabels(evaluations)}）`;
     }
 
     for (let index = 0; index < evaluations.length; index++) {
@@ -2255,27 +2255,27 @@ export class SubscriptionManager {
     const evaluations: SubscriptionConditionEvaluation[] = [];
     if (this.hasEnabledCondition(conditions, SubscriptionConditionType.ONLY_IF_FAVORITE)) {
       evaluations.push({
-        label: '仅收藏',
+        label: '已收藏',
         matched: subject.isFavorite,
-        failureReason: '未满足仅收藏目标条件'
+        failureReason: '这条提醒只检查已收藏的内容'
       });
     }
 
     const titleKeyword = this.resolveConditionText(conditions, SubscriptionConditionType.TITLE_KEYWORD);
     if (titleKeyword.length > 0) {
       evaluations.push({
-        label: '标题关键词',
+        label: '标题',
         matched: this.matchesKeywordCondition(subject.title, titleKeyword),
-        failureReason: `标题未命中关键词「${titleKeyword}」`
+        failureReason: `标题里没有匹配到「${titleKeyword}」`
       });
     }
 
     const tagKeyword = this.resolveConditionText(conditions, SubscriptionConditionType.TAG_KEYWORD);
     if (tagKeyword.length > 0) {
       evaluations.push({
-        label: '标签关键词',
+        label: '标签',
         matched: this.matchesKeywordListCondition(subject.tags, tagKeyword),
-        failureReason: `标签未命中关键词「${tagKeyword}」`
+        failureReason: `标签里没有匹配到「${tagKeyword}」`
       });
     }
 
@@ -2283,9 +2283,9 @@ export class SubscriptionManager {
     if (sourceKeyword.length > 0) {
       const sourceValues: string[] = [subject.sourceName, this.getProviderDisplayName(subject.providerType)];
       evaluations.push({
-        label: '来源关键词',
+        label: '来源',
         matched: this.matchesKeywordListCondition(sourceValues, sourceKeyword),
-        failureReason: `来源未命中关键词「${sourceKeyword}」`
+        failureReason: `来源里没有匹配到「${sourceKeyword}」`
       });
     }
     return evaluations;
@@ -2401,10 +2401,10 @@ export class SubscriptionManager {
 
   private async sendUpdateNotification(rule: SubscriptionRule, deltaCount: number, latestItemTitle: string): Promise<void> {
     const safeTitle = rule.targetTitle.length > 0 ? rule.targetTitle : rule.name;
-    const latestText = latestItemTitle.length > 0 ? latestItemTitle : '最新条目已更新';
+    const latestText = latestItemTitle.length > 0 ? latestItemTitle : '有新内容了';
     await this.notificationManager.sendNotification({
       id: this.buildNotificationId(rule.id, deltaCount),
-      title: `内容跟踪更新: ${safeTitle}`,
+      title: `更新提醒: ${safeTitle}`,
       text: `发现 ${deltaCount} 个新内容`,
       additionalText: latestText,
       type: NotificationType.UPDATE_AVAILABLE
