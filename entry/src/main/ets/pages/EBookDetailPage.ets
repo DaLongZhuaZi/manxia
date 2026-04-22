@@ -428,8 +428,8 @@ export struct EBookDetailPage {
     try {
       this.ebook.isFavorite = !this.ebook.isFavorite;
       this.ebook.lastUpdateTime = Date.now();
-      
-      await this.ebookDataManager.saveEBook(this.ebook);
+
+      await this.ebookDataManager.saveEBook(this.ebook, { skipReadingSettings: true });
       logger.info(TAG, `收藏状态已更新: ${this.ebook.isFavorite}`);
     } catch (error) {
       logger.error(TAG, `更新收藏状态失败: ${String(error)}`);
@@ -473,9 +473,9 @@ export struct EBookDetailPage {
       this.ebook.metadata.isbn = this.editIsbn;
       this.ebook.metadata.description = this.editDescription;
       this.ebook.lastUpdateTime = Date.now();
-      
+
       // 保存到数据库
-      await this.ebookDataManager.saveEBook(this.ebook);
+      await this.ebookDataManager.saveEBook(this.ebook, { skipReadingSettings: true });
       
       this.showEditDialog = false;
       logger.info(TAG, '书籍信息已保存');
@@ -577,7 +577,7 @@ export struct EBookDetailPage {
 
     try {
       // 保存到数据库
-      await this.ebookDataManager.saveEBook(this.ebook);
+      await this.ebookDataManager.saveEBook(this.ebook, { skipReadingSettings: true });
       logger.info(TAG, '刮削结果已保存');
     } catch (error) {
       logger.error(TAG, `保存刮削结果失败: ${String(error)}`);

@@ -124,6 +124,7 @@ export class PageWindowRegistry {
     'MangaReaderPage',
     'EBookReaderPage',
     'EBookImageReaderPage',
+    'EpubWebViewReaderPage',
     'KomgaReaderPage',
     'NovelReaderPage',
     'SuwayomiReaderPage',

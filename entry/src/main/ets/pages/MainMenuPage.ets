@@ -91,6 +91,7 @@ import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/W
 import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { EBookReaderPage, EBookReaderParams } from './EBookReaderPage';
 import { EBookImageReaderPage } from './EBookImageReaderPage';
+import { EpubWebViewReaderPage } from './EpubWebViewReaderPage';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
@@ -28686,6 +28687,8 @@ struct MainMenuPage {
         EBookReaderPage()
       } else if (name === 'EBookImageReaderPage') {
         EBookImageReaderPage()
+      } else if (name === 'EpubWebViewReaderPage') {
+        EpubWebViewReaderPage()
       } else if (name === 'EBookDetailPage') {
         EBookDetailPage()
       } else if (name === 'EBookSettingsPage') {
