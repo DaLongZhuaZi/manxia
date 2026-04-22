@@ -20,3 +20,20 @@ export async function setReaderKitEnabled(enabled: boolean): Promise<void> {
   } catch (_ignored) {
   }
 }
+
+export function isEpubWebViewEnabled(): boolean {
+  try {
+    const settingsManager = SettingsManager.getInstance();
+    return settingsManager.getBoolean(SettingKeys.EPUB_WEBVIEW_RENDERER_ENABLED, false);
+  } catch (_ignored) {
+    return false;
+  }
+}
+
+export async function setEpubWebViewEnabled(enabled: boolean): Promise<void> {
+  try {
+    const settingsManager = SettingsManager.getInstance();
+    await settingsManager.setBoolean(SettingKeys.EPUB_WEBVIEW_RENDERER_ENABLED, enabled);
+  } catch (_ignored) {
+  }
+}

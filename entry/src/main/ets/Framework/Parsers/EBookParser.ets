@@ -23,6 +23,7 @@ import { bookParser } from '@kit.ReaderKit';
 import { zlib } from '@kit.BasicServicesKit';
 import { TxtMetadataExtractor } from './TxtMetadataExtractor';
 import { isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
+import { convertMobiToExtractedDir } from './MobiParser';
 
 const TAG = 'EBookParser';
 const EPUB_IMAGE_RESOURCE_PATTERN = /<(?:img|image)\b[^>]+(?:src|href|xlink:href)\s*=\s*["']([^"']+)["']/ig;
@@ -33,6 +34,11 @@ interface ReaderKitBookParserHandler {
   getBookInfo(): Promise<Object>;
   getCatalogList(): Promise<Object>;
   getResourceContent(spineIndex: number, resourcePath: string): ArrayBuffer;
+}
+
+interface EpubManifestItem {
+  href: string;
+  mediaType: string;
 }
 
 function isReaderKitUnavailableError(message: string): boolean {
@@ -644,11 +650,11 @@ class ReaderKitEBookParser extends EBookParser {
       }
 
       if (this.isFixedLayoutEpub(infoObj, opfText)) {
-        logger.info(TAG, '[ReaderKit] 检测到固定版式 EPUB，暂保留 Reader Kit 作为默认引擎');
+        logger.info(TAG, '[ReaderKit] 检测到固定版式 EPUB，使用 WebView 引擎渲染');
         return {
           chapters: enhancedChapters,
           contentMode: EBookContentMode.FIXED_LAYOUT_HTML,
-          preferredReaderEngine: EBookReaderEngine.READER_KIT,
+          preferredReaderEngine: EBookReaderEngine.WEBVIEW,
           extractedRootPath: extractedRootPath
         };
       }
@@ -665,6 +671,99 @@ class ReaderKitEBookParser extends EBookParser {
     }
   }
 
+  public async getExtractionRoot(): Promise<string> {
+    try {
+      return await this.ensureEpubExtractionRoot();
+    } catch (e) {
+      logger.warn(TAG, `[ReaderKit] 懒提取失败: ${String(e)}`);
+      return '';
+    }
+  }
+
+  public parseSpineFromOpf(extractedRoot: string): EBookChapter[] {
+    try {
+      const opfPath = this.resolveEpubPackageDocumentPath(extractedRoot);
+      if (!opfPath || !this.pathExists(opfPath)) {
+        logger.warn(TAG, `[SpineParse] OPF 文件未找到: extractedRoot=${extractedRoot}`);
+        return [];
+      }
+      const opfText = this.readTextFileSync(opfPath);
+      const packageRoot = this.getParentDir(opfPath);
+
+      // 解析 manifest: id -> href + media-type
+      const manifestItems = new Map<string, EpubManifestItem>();
+      const manifestPattern = /<item\b([^>]+)\/>/gi;
+      let manifestMatch = manifestPattern.exec(opfText);
+      while (manifestMatch !== null) {
+        const attrs = manifestMatch[1];
+        const idMatch = attrs.match(/\bid\s*=\s*["']([^"']+)["']/i);
+        const hrefMatch = attrs.match(/\bhref\s*=\s*["']([^"']+)["']/i);
+        const mtMatch = attrs.match(/\bmedia-type\s*=\s*["']([^"']+)["']/i);
+        if (idMatch && hrefMatch) {
+          const manifestItem: EpubManifestItem = {
+            href: hrefMatch[1],
+            mediaType: mtMatch ? mtMatch[1] : ''
+          };
+          manifestItems.set(idMatch[1], manifestItem);
+        }
+        manifestMatch = manifestPattern.exec(opfText);
+      }
+
+      // 解析 spine: itemref idref 顺序
+      const spinePattern = /<itemref\b[^>]+idref\s*=\s*["']([^"']+)["'][^>]*\/?>/gi;
+      const spineIds: string[] = [];
+      let spineMatch = spinePattern.exec(opfText);
+      while (spineMatch !== null) {
+        spineIds.push(spineMatch[1]);
+        spineMatch = spinePattern.exec(opfText);
+      }
+
+      if (spineIds.length === 0) {
+        logger.warn(TAG, '[SpineParse] OPF spine 中无 itemref');
+        return [];
+      }
+
+      const result: EBookChapter[] = [];
+      for (let i = 0; i < spineIds.length; i++) {
+        const idref = spineIds[i];
+        const item = manifestItems.get(idref);
+        if (!item) {
+          continue;
+        }
+        const normalizedHref = this.normalizeRelativeResourcePath(item.href);
+        const absolutePath = this.joinNormalizedPath(packageRoot, normalizedHref);
+        const lowerHref = normalizedHref.toLowerCase();
+        const isHtmlLike = lowerHref.endsWith('.html') || lowerHref.endsWith('.xhtml') ||
+          lowerHref.endsWith('.htm') || lowerHref.endsWith('.svg');
+        if (!isHtmlLike && !item.mediaType.includes('html') && !item.mediaType.includes('xml')) {
+          continue;
+        }
+        const chapter: EBookChapter = {
+          id: idref,
+          bookId: '',
+          chapterNumber: i + 1,
+          title: `Chapter ${i + 1}`,
+          content: '',
+          startPosition: 0,
+          endPosition: 0,
+          wordCount: 0,
+          resourceHref: normalizedHref,
+          resourceFile: this.buildRelativePath(extractedRoot, absolutePath) || normalizedHref,
+          resourceMediaType: item.mediaType,
+          resourceLayoutType: 'TEXT_HTML',
+          createTime: Date.now()
+        };
+        result.push(chapter);
+      }
+
+      logger.info(TAG, `[SpineParse] 直接解析 OPF 得到 ${result.length} 个 spine 项`);
+      return result;
+    } catch (e) {
+      logger.warn(TAG, `[SpineParse] OPF 解析失败: ${String(e)}`);
+      return [];
+    }
+  }
+
   private async ensureEpubExtractionRoot(): Promise<string> {
     const extractionRoot = this.buildEpubExtractionPath();
     const containerPath = `${extractionRoot}/META-INF/container.xml`;
@@ -676,6 +775,9 @@ class ReaderKitEBookParser extends EBookParser {
       fileIo.mkdirSync(extractionRoot, true);
     }
     await zlib.decompressFile(this.normalizeFsPath(this.filePath), extractionRoot);
+    if (!this.pathExists(containerPath)) {
+      throw new Error('EPUB 解压完成但缺少 META-INF/container.xml，文件可能已损坏');
+    }
     return extractionRoot;
   }
 
@@ -1395,23 +1497,103 @@ export class EBookCoverExtractor {
 }
 
 /**
+ * MOBI/AZW/AZW3 解析器
+ * 将 MOBI 文件转换为伪 EPUB 目录结构，然后用 WebView 引擎渲染
+ */
+class MobiEBookParser extends EBookParser {
+  constructor(filePath: string, format: EBookFormat) {
+    super(filePath, format);
+  }
+
+  public static isSupportedFormat(format: EBookFormat): boolean {
+    return format === EBookFormat.MOBI || format === EBookFormat.AZW;
+  }
+
+  public async parse(): Promise<EBook> {
+    try {
+      logger.info(TAG, `开始 MOBI 解析: ${this.filePath}`);
+      const result = await convertMobiToExtractedDir(this.filePath);
+
+      // KF8/AZW3 or other unsupported — fall back silently to ReaderKit
+      if (!result.success && result.errorMessage === 'KF8_FALLBACK') {
+        logger.info(TAG, 'MOBI 为 KF8 格式，回退到 ReaderKit');
+        return new ReaderKitEBookParser(this.filePath, this.format).parse();
+      }
+
+      if (!result.success) {
+        logger.warn(TAG, `MOBI 转换失败，回退 ReaderKit: ${result.errorMessage}`);
+        return new ReaderKitEBookParser(this.filePath, this.format).parse();
+      }
+
+      // Build spine from the extracted OPF
+      const spineChapters = EBookParserFactory.parseEpubSpineItems(result.extractedRootPath);
+
+      const metadata: EBookMetadata = {
+        title: result.title || this.extractTitleFromFileName(this.getFileNameFromPath(this.filePath)),
+        author: result.author || '未知作者',
+        publisher: '',
+        publishDate: '',
+        isbn: '',
+        language: 'zh-CN',
+        description: `${this.format} 电子书`,
+        coverImagePath: result.coverImagePath,
+        tags: [],
+        rating: 0
+      };
+
+      const fileHandle = fileIo.openSync(this.filePath.startsWith('file://') ? this.filePath.substring(7) : this.filePath, fileIo.OpenMode.READ_ONLY);
+      const fileSize = fileIo.statSync(fileHandle.fd).size;
+      fileIo.closeSync(fileHandle);
+
+      const ebook = this.generateDefaultEBook(this.filePath, this.format, metadata);
+      ebook.fileSize = fileSize;
+      ebook.chapters = spineChapters;
+      ebook.extractedRootPath = result.extractedRootPath;
+      ebook.contentMode = EBookContentMode.REFLOWABLE_TEXT;
+      ebook.preferredReaderEngine = EBookReaderEngine.WEBVIEW;
+
+      logger.info(TAG, `MOBI 解析完成: "${result.title}", ${spineChapters.length} 章`);
+      return ebook;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(TAG, `MobiEBookParser 失败，回退 ReaderKit: ${msg}`);
+      return new ReaderKitEBookParser(this.filePath, this.format).parse();
+    }
+  }
+}
+
+/**
  * 电子书解析器工厂
  */
 export class EBookParserFactory {
   /**
    * 根据文件路径创建对应的解析器
-   * 
+   *
    * 解析策略：
-   * - EPUB/MOBI/AZW/AZW3: 优先使用 Reader Kit（官方 API）
+   * - MOBI/AZW: 使用 MobiEBookParser 转换为伪 EPUB 目录，WebView 引擎渲染
+   * - AZW3: 使用 Reader Kit（KF8 格式）
+   * - EPUB: 使用 Reader Kit（官方 API）
    * - PDF: 使用 Web 组件预览方案
    * - TXT: 使用文件读取 + 自定义解析
    */
   public static createParser(filePath: string): EBookParser | null {
     const format = EBookParserFactory.detectFormat(filePath);
-    
+
     if (!format) {
       logger.warn(TAG, `无法识别的电子书格式: ${filePath}`);
       return null;
+    }
+
+    // MOBI/AZW: use MobiEBookParser for WebView-based rendering
+    if (MobiEBookParser.isSupportedFormat(format)) {
+      logger.info(TAG, `使用 MobiEBookParser: ${format}`);
+      return new MobiEBookParser(filePath, format);
+    }
+
+    // AZW3 uses ReaderKit (KF8 format — MobiParser will fall back automatically if needed)
+    if (format === EBookFormat.AZW3) {
+      logger.info(TAG, `使用 ReaderKit 解析 AZW3: ${format}`);
+      return new ReaderKitEBookParser(filePath, format);
     }
 
     // 优先使用 Reader Kit 解析支持的格式（除了 TXT，TXT 我们有自定义实现）
@@ -1423,7 +1605,7 @@ export class EBookParserFactory {
       }
       return new ReaderKitEBookParser(filePath, format);
     }
-    
+
     // 其他格式使用自定义解析器
     switch (format) {
       case EBookFormat.TXT:
@@ -1458,6 +1640,30 @@ export class EBookParserFactory {
       default:
         return null;
     }
+  }
+
+  /**
+   * 对 EPUB 文件执行懒解压（不触发完整解析），返回解压根路径
+   * 供阅读器在 extractedRootPath 为空时按需调用
+   */
+  public static async ensureEpubExtracted(filePath: string): Promise<string> {
+    if (!filePath || !filePath.toLowerCase().endsWith('.epub')) {
+      return '';
+    }
+    const parser = new ReaderKitEBookParser(filePath, EBookFormat.EPUB);
+    return parser.getExtractionRoot();
+  }
+
+  /**
+   * 直接解析已解压 EPUB 的 OPF 文件，返回 spine 章节列表
+   * 供阅读器在 Reader Kit catalog 章节缺少资源路径时作为兜底
+   */
+  public static parseEpubSpineItems(extractedRoot: string): EBookChapter[] {
+    if (!extractedRoot || extractedRoot.trim().length === 0) {
+      return [];
+    }
+    const parser = new ReaderKitEBookParser('', EBookFormat.EPUB);
+    return parser.parseSpineFromOpf(extractedRoot);
   }
 }
 

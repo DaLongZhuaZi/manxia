@@ -215,6 +215,20 @@ export class EBookDataManager {
 
     logger.info(TAG, `[封面诊断] saveEBookInfo: id=${ebook.id}, coverImagePath='${metadata.coverImagePath}'`);
 
+    const existingRecords = await this.dbManager.querySql('SELECT id, extractedRootPath FROM ebook_info WHERE id = ? LIMIT 1', [ebook.id]);
+
+    // Never overwrite a non-empty extractedRootPath with an empty value.
+    // This prevents stale saveEBook calls (with extractedRootPath='') from clearing a
+    // path that was correctly saved by a prior session's lazy-extraction step.
+    let safeExtractedRootPath = ebook.extractedRootPath || '';
+    if (safeExtractedRootPath === '' && existingRecords && existingRecords.length > 0) {
+      const existingPath = String(getRecordValue(existingRecords[0], 'extractedRootPath', ''));
+      if (existingPath.length > 0) {
+        safeExtractedRootPath = existingPath;
+        logger.info(TAG, `saveEBookInfo: 保留已存在的 extractedRootPath=${safeExtractedRootPath}，避免被空值覆盖 (bookId=${ebook.id})`);
+      }
+    }
+
     const commonParams = [
       ebook.format,
       ebook.filePath,
@@ -234,13 +248,12 @@ export class EBookDataManager {
       ebook.totalWordCount,
       ebook.contentMode || EBookContentMode.UNKNOWN,
       ebook.preferredReaderEngine || EBookReaderEngine.READER_KIT,
-      ebook.extractedRootPath || '',
+      safeExtractedRootPath,
       ebook.addTime,
       ebook.lastUpdateTime,
-      ebook.isPrivate ? 1 : 0  // isPrivate默认为0（普通内容）
+      ebook.isPrivate ? 1 : 0
       , ebook.isNSFW ? 1 : 0
     ];
-    const existingRecords = await this.dbManager.querySql('SELECT id FROM ebook_info WHERE id = ? LIMIT 1', [ebook.id]);
     if (existingRecords && existingRecords.length > 0) {
       await this.dbManager.executeSql(updateSql, [...commonParams, ebook.id]);
       return;
@@ -646,7 +659,7 @@ export class EBookDataManager {
 
       logger.info(
         TAG,
-        `写入阅读设置：参数数量=${insertParams.length}，背景类型=${bgType}，背景图片路径=${bgImagePath}`
+        `写入阅读设置：参数数量=${insertParams.length}，fontSize=${finalSettings.fontSize}，lineHeight=${finalSettings.lineHeight}，pageMargin=${finalSettings.pageMargin}，背景类型=${bgType}，背景图片路径=${bgImagePath}`
       );
       if (existingRowId > 0) {
         await this.dbManager.executeSql(updateSql, [...commonParams, now, existingRowId]);
@@ -812,6 +825,23 @@ export class EBookDataManager {
     return this.cloneImageReaderSettings(state.latestSettings);
   }
 
+  private async persistRecoveredImageReaderSettings(
+    bookId: string,
+    settings: ImageReaderSettings,
+    source: string
+  ): Promise<void> {
+    const normalized = this.normalizeImageReaderSettings(settings);
+    try {
+      await this.saveImageReaderSettings(bookId, normalized);
+      logger.info(
+        TAG,
+        `已将${source}图片阅读设置回写到数据库：书籍ID=${bookId}，阅读模式=${normalized.readingMode}，翻页动画=${normalized.pageTurnAnimation}`
+      );
+    } catch (error) {
+      logger.warn(TAG, `回写${source}图片阅读设置失败：书籍ID=${bookId}，错误=${String(error)}`);
+    }
+  }
+
   private normalizeImageReaderSettings(settings: ImageReaderSettings | null | undefined): ImageReaderSettings {
     const base = settings || DEFAULT_IMAGE_READING_SETTINGS;
     const filterSettings = base.filterSettings || DEFAULT_IMAGE_READING_SETTINGS.filterSettings;
@@ -864,9 +894,7 @@ export class EBookDataManager {
         TAG,
         `图片阅读设置缺失，已从旧版单书设置迁移：书籍ID=${bookId}，阅读模式=${normalized.readingMode}，翻页动画=${normalized.pageTurnAnimation}`
       );
-      void this.saveImageReaderSettings(bookId, normalized).catch((error: Error) => {
-        logger.warn(TAG, `图片阅读设置迁移回写失败：书籍ID=${bookId}，错误=${String(error)}`);
-      });
+      await this.persistRecoveredImageReaderSettings(bookId, normalized, '旧版迁移');
       return normalized;
     } catch (error) {
       logger.warn(TAG, `读取旧版图片阅读设置失败：书籍ID=${bookId}，错误=${String(error)}`);
@@ -1090,6 +1118,7 @@ export class EBookDataManager {
           TAG,
           `读取图片阅读设置：来源=内存兜底快照，书籍ID=${bookId}，阅读模式=${rememberedSnapshot.readingMode}，翻页动画=${rememberedSnapshot.pageTurnAnimation}`
         );
+        await this.persistRecoveredImageReaderSettings(bookId, rememberedSnapshot, '内存兜底快照');
         return rememberedSnapshot;
       }
 
@@ -1099,14 +1128,19 @@ export class EBookDataManager {
       }
 
       const defaults = this.cloneImageReaderSettings(DEFAULT_IMAGE_READING_SETTINGS);
+      this.rememberImageReaderSettingsSnapshot(bookId, defaults);
       logger.info(
         TAG,
         `读取图片阅读设置：来源=内置默认值，书籍ID=${bookId}，阅读模式=${defaults.readingMode}，翻页动画=${defaults.pageTurnAnimation}`
       );
+      await this.persistRecoveredImageReaderSettings(bookId, defaults, '内置默认值');
       return defaults;
     } catch (error) {
       logger.warn(TAG, `加载图片阅读默认设置失败，改用内置默认值：书籍ID=${bookId}，错误=${String(error)}`);
-      return this.cloneImageReaderSettings(DEFAULT_IMAGE_READING_SETTINGS);
+      const defaults = this.cloneImageReaderSettings(DEFAULT_IMAGE_READING_SETTINGS);
+      this.rememberImageReaderSettingsSnapshot(bookId, defaults);
+      await this.persistRecoveredImageReaderSettings(bookId, defaults, '异常兜底默认值');
+      return defaults;
     }
   }
 
@@ -1223,7 +1257,10 @@ export class EBookDataManager {
         return settings;
       }
       if (!this.shouldApplyGlobalDefaultsForNewBook(settings)) {
-        logger.info(TAG, `检测到自定义设置，跳过套用全局默认值：书籍ID=${bookId}`);
+        logger.info(
+          TAG,
+          `检测到自定义设置，跳过套用全局默认值：书籍ID=${bookId}，fontSize=${settings.fontSize}，lineHeight=${settings.lineHeight}，pageMargin=${settings.pageMargin}`
+        );
         return settings;
       }
 
@@ -1357,7 +1394,7 @@ export class EBookDataManager {
     if (settings.followSystemTheme === false) {
       return false;
     }
-    if (settings.backgroundImagePath && settings.backgroundImagePath.length > 0) {
+    if ((settings.backgroundImagePath ?? '').length > 0) {
       return false;
     }
 
@@ -1365,7 +1402,59 @@ export class EBookDataManager {
     const currentText = (settings.textColor || '').toUpperCase();
     const defaultBg = (DEFAULT_EBOOK_READING_SETTINGS.backgroundColor || '').toUpperCase();
     const defaultText = (DEFAULT_EBOOK_READING_SETTINGS.textColor || '').toUpperCase();
-    return currentBg === defaultBg && currentText === defaultText;
+    const currentFontFamily = settings.fontFamily ?? DEFAULT_EBOOK_READING_SETTINGS.fontFamily;
+    const defaultFontFamily = DEFAULT_EBOOK_READING_SETTINGS.fontFamily;
+    const currentFontPath = settings.fontPath ?? DEFAULT_EBOOK_READING_SETTINGS.fontPath ?? '';
+    const defaultFontPath = DEFAULT_EBOOK_READING_SETTINGS.fontPath ?? '';
+    const currentFontWeight = settings.fontWeight ?? DEFAULT_EBOOK_READING_SETTINGS.fontWeight ?? 400;
+    const defaultFontWeight = DEFAULT_EBOOK_READING_SETTINGS.fontWeight ?? 400;
+    const currentThemeBgImage = settings.themeBgImage ?? DEFAULT_EBOOK_READING_SETTINGS.themeBgImage ?? '';
+    const defaultThemeBgImage = DEFAULT_EBOOK_READING_SETTINGS.themeBgImage ?? '';
+    const currentNightMode = settings.nightMode ?? DEFAULT_EBOOK_READING_SETTINGS.nightMode;
+    const defaultNightMode = DEFAULT_EBOOK_READING_SETTINGS.nightMode;
+    const currentLetterSpacing = settings.letterSpacing ?? 0;
+    const currentParagraphSpacing = settings.paragraphSpacing ?? 8;
+    const currentFirstLineIndent = settings.firstLineIndent ?? 2;
+    const currentTextAlignment = settings.textAlignment ?? 'JUSTIFY';
+    const currentPageTurnAnimation = settings.pageTurnAnimation ?? 'SLIDE';
+    const currentTapToTurn = settings.tapToTurn ?? true;
+    const currentVolumeKeyNavigation = settings.volumeKeyNavigation ?? true;
+    const currentKeepScreenOn = settings.keepScreenOn ?? false;
+    const currentShowPageNumber = settings.showPageNumber ?? true;
+    const currentShowProgress = settings.showProgress ?? false;
+    const currentShowTime = settings.showTime ?? true;
+    const currentShowBattery = settings.showBattery ?? false;
+    const currentBackgroundType = settings.backgroundType ?? 'COLOR';
+    const currentBackgroundImageOpacity = settings.backgroundImageOpacity ?? 0.3;
+
+    return settings.fontSize === DEFAULT_EBOOK_READING_SETTINGS.fontSize &&
+      Math.abs(settings.lineHeight - DEFAULT_EBOOK_READING_SETTINGS.lineHeight) < 0.001 &&
+      settings.pageMargin === DEFAULT_EBOOK_READING_SETTINGS.pageMargin &&
+      currentFontFamily === defaultFontFamily &&
+      currentFontPath === defaultFontPath &&
+      currentFontWeight === defaultFontWeight &&
+      currentBg === defaultBg &&
+      currentText === defaultText &&
+      currentThemeBgImage === defaultThemeBgImage &&
+      currentNightMode === defaultNightMode &&
+      settings.pageMode === DEFAULT_EBOOK_READING_SETTINGS.pageMode &&
+      settings.brightness === DEFAULT_EBOOK_READING_SETTINGS.brightness &&
+      settings.autoSave === DEFAULT_EBOOK_READING_SETTINGS.autoSave &&
+      settings.saveInterval === DEFAULT_EBOOK_READING_SETTINGS.saveInterval &&
+      Math.abs(currentLetterSpacing) < 0.001 &&
+      currentParagraphSpacing === 8 &&
+      currentFirstLineIndent === 2 &&
+      currentTextAlignment === 'JUSTIFY' &&
+      currentPageTurnAnimation === 'SLIDE' &&
+      currentTapToTurn &&
+      currentVolumeKeyNavigation &&
+      !currentKeepScreenOn &&
+      currentShowPageNumber &&
+      !currentShowProgress &&
+      currentShowTime &&
+      !currentShowBattery &&
+      currentBackgroundType === 'COLOR' &&
+      Math.abs(currentBackgroundImageOpacity - 0.3) < 0.001;
   }
 
   public async updateEBookCover(bookId: string, coverPath: string): Promise<void> {
@@ -1789,7 +1878,10 @@ export class EBookDataManager {
           backgroundImageOpacity: Number(getRecordValue(record, 'backgroundImageOpacity', 0.3))
         };
         
-        logger.info(TAG, `读取阅读设置: volumeKeyNavigation=${settings.volumeKeyNavigation}, tapToTurn=${settings.tapToTurn}, bgType=${settings.backgroundType}, bgColor=${settings.backgroundColor}, textColor=${settings.textColor}, bgImagePath=${settings.backgroundImagePath}, followSystemTheme=${settings.followSystemTheme}`);
+        logger.info(
+          TAG,
+          `读取阅读设置: fontSize=${settings.fontSize}, lineHeight=${settings.lineHeight}, pageMargin=${settings.pageMargin}, volumeKeyNavigation=${settings.volumeKeyNavigation}, tapToTurn=${settings.tapToTurn}, bgType=${settings.backgroundType}, bgColor=${settings.backgroundColor}, textColor=${settings.textColor}, bgImagePath=${settings.backgroundImagePath}, followSystemTheme=${settings.followSystemTheme}`
+        );
         return settings;
       }
 

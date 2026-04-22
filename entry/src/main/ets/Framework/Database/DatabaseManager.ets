@@ -1135,6 +1135,10 @@ export class DatabaseManager {
         record.backgroundImagePath = value;
       } else if (columnName === 'backgroundImageOpacity') {
         record.backgroundImageOpacity = value;
+      } else if (columnName === 'imageReaderSettingsJson') {
+        record.imageReaderSettingsJson = value;
+      } else if (columnName === 'imageReaderSettingsJsonLength') {
+        record.imageReaderSettingsJsonLength = value;
       } else if (columnName === 'type') {
         record.type = value;
       } else if (columnName === 'requireProxy') {
@@ -1335,6 +1339,8 @@ export class DatabaseManager {
     m.set('backgroundType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.backgroundType = v; });
     m.set('backgroundImagePath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.backgroundImagePath = v; });
     m.set('backgroundImageOpacity', (r: GenericQueryRecord, v: DatabaseValue): void => { r.backgroundImageOpacity = v; });
+    m.set('imageReaderSettingsJson', (r: GenericQueryRecord, v: DatabaseValue): void => { r.imageReaderSettingsJson = v; });
+    m.set('imageReaderSettingsJsonLength', (r: GenericQueryRecord, v: DatabaseValue): void => { r.imageReaderSettingsJsonLength = v; });
     this.columnSetterMap = m;
     return m;
   }

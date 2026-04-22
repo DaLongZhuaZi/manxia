@@ -1101,7 +1101,7 @@ struct EBookReaderPage {
           const safeIndex = Math.max(0, Math.min(ebook.readingProgress.currentChapterIndex, ebook.chapters.length - 1));
           ebook.readingProgress.currentChapterId = ebook.chapters[safeIndex].id;
         }
-        await this.ebookDataManager.saveEBook(ebook);
+        await this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
         logger.info(TAG, `电子书解析数据修复完成: ${ebook.metadata.title}`);
       } else {
         logger.info(TAG, `电子书解析数据无需更新: ${ebook.id}`);

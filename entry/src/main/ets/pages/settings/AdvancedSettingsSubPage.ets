@@ -19,7 +19,7 @@ import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
-import { setReaderKitEnabled } from '../../Framework/Initialization/ReaderKitFeatureGate';
+import { setReaderKitEnabled, isEpubWebViewEnabled, setEpubWebViewEnabled } from '../../Framework/Initialization/ReaderKitFeatureGate';
 import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
@@ -72,6 +72,7 @@ export struct AdvancedSettingsSubPage {
   @State forceTabletMode: boolean = false;
   @State forceLandscapeMode: boolean = false;
   @State readerKitEnabled: boolean = true;
+  @State epubWebViewEnabled: boolean = false;
   @State preloadDebugMode: string = 'off';
   @State showRestartDialog: boolean = false;
   
@@ -288,6 +289,7 @@ export struct AdvancedSettingsSubPage {
         SettingKeys.READER_KIT_ENABLED,
         true
       );
+      this.epubWebViewEnabled = isEpubWebViewEnabled();
 
       this.preloadDebugMode = this.settingsManager.getString(
         SettingKeys.PRELOAD_DEBUG_MODE,
@@ -493,6 +495,31 @@ export struct AdvancedSettingsSubPage {
             .onChange(async (isOn: boolean) => {
               this.readerKitEnabled = isOn;
               await setReaderKitEnabled(isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('EPUB WebView 渲染引擎')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('开启后文字型 EPUB 使用 WebView 渲染，提供更好的排版控制（固定版式 EPUB 默认使用 WebView）')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.epubWebViewEnabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.epubWebViewEnabled = isOn;
+              await setEpubWebViewEnabled(isOn);
               this.settingsManager.syncToAppStorage();
             })
         }

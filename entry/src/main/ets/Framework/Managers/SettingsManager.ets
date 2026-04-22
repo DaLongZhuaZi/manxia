@@ -187,6 +187,7 @@ export class SettingKeys {
   static readonly SHELF_CONTENT_ENABLED = 'shelf_content_enabled'; // 统一详情页同书架内容功能开关（默认开启）
   static readonly MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED = 'main_menu_library_cover_open_reader_enabled'; // 主页面书库封面点击直接阅读开关（默认开启）
   static readonly READER_KIT_ENABLED = 'reader_kit_enabled'; // ReaderKit 能力开关（默认开启）
+  static readonly EPUB_WEBVIEW_RENDERER_ENABLED = 'epub_webview_renderer_enabled'; // 文字型 EPUB 使用 WebView 渲染引擎（默认关闭）
   static readonly NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED = 'non_main_page_global_background_enabled'; // 非主页面全局背景开关（默认开启）
 }
 

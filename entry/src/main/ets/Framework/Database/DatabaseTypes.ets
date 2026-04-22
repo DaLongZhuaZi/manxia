@@ -1070,6 +1070,8 @@ export interface GenericQueryRecord {
   backgroundType?: DatabaseValue;  // 背景类型 (COLOR/IMAGE)
   backgroundImagePath?: DatabaseValue;  // 背景图片路径
   backgroundImageOpacity?: DatabaseValue;  // 背景图片透明度
+  imageReaderSettingsJson?: DatabaseValue;  // 图片阅读设置 JSON
+  imageReaderSettingsJsonLength?: DatabaseValue;  // 图片阅读设置 JSON 长度
 
   // unified_annotation 字段
   contentType?: DatabaseValue;

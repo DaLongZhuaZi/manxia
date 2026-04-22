@@ -2,6 +2,7 @@ import { EBook, EBookChapter, EBookContentMode, EBookFormat, EBookReaderEngine }
 import { DownloadStatus } from '../Types/StatusEnums';
 import { ImageSourceType, MangaChapter, MangaPage, ReadingSettings } from '../../Models/MangaModels';
 import { logger } from '../../Utils/Logger';
+import { isEpubWebViewEnabled } from '../Initialization/ReaderKitFeatureGate';
 
 const TAG = 'EBookImageReaderAdapter';
 
@@ -221,7 +222,40 @@ export function shouldUseEBookImageReaderRoute(ebook: EBook | null): boolean {
 }
 
 export function resolveEBookReaderRouteName(ebook: EBook | null): string {
-  return shouldUseEBookImageReaderRoute(ebook) ? 'EBookImageReaderPage' : 'EBookReaderPage';
+  if (shouldUseEBookImageReaderRoute(ebook)) {
+    return 'EBookImageReaderPage';
+  }
+  if (shouldUseEpubWebViewReaderRoute(ebook)) {
+    return 'EpubWebViewReaderPage';
+  }
+  if (shouldUseMobiWebViewReaderRoute(ebook)) {
+    return 'EpubWebViewReaderPage';
+  }
+  return 'EBookReaderPage';
+}
+
+function shouldUseEpubWebViewReaderRoute(ebook: EBook | null): boolean {
+  if (!ebook || ebook.format !== EBookFormat.EPUB) {
+    return false;
+  }
+  if (ebook.contentMode === EBookContentMode.FIXED_LAYOUT_HTML ||
+    ebook.preferredReaderEngine === EBookReaderEngine.WEBVIEW) {
+    return true;
+  }
+  return isEpubWebViewEnabled();
+}
+
+function shouldUseMobiWebViewReaderRoute(ebook: EBook | null): boolean {
+  if (!ebook) {
+    return false;
+  }
+  if (ebook.format !== EBookFormat.MOBI &&
+    ebook.format !== EBookFormat.AZW &&
+    ebook.format !== EBookFormat.AZW3) {
+    return false;
+  }
+  return ebook.preferredReaderEngine === EBookReaderEngine.WEBVIEW &&
+    (ebook.extractedRootPath || '').length > 0;
 }
 
 export function parseImageReaderDomPos(domPos: string): number {
