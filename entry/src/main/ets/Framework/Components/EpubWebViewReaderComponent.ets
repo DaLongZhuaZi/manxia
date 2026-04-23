@@ -38,7 +38,12 @@ interface ViewportDims {
   visualScale: number;
 }
 
-type EpubPageLayoutKind = 'horizontal_paged' | 'vertical_paged' | 'double_page';
+type EpubPageLayoutKind =
+  'horizontal_paged' |
+  'vertical_paged' |
+  'double_page' |
+  'continuous_horizontal' |
+  'continuous_vertical';
 export type EpubSpineTransitionDirection = 'prev' | 'next' | 'none';
 
 interface ViewportAnimationState {
@@ -83,6 +88,31 @@ interface PaginationMetrics {
 interface PageCommandResult {
   pageIndex: number;
   offset: number;
+  pageCount: number;
+  pageExtent: number;
+  maxOffset: number;
+}
+
+interface PaginationUpdatePayload {
+  source: string;
+  layoutKind: string;
+  pageCount: number;
+  currentPage: number;
+  currentOffset: number;
+  pageExtent: number;
+  maxOffset: number;
+  atStart: boolean;
+  atEnd: boolean;
+}
+
+interface ReaderTapPayload {
+  xRatio: number;
+  yRatio: number;
+}
+
+interface EpubReaderJsProxy {
+  onPaginationChanged: (payloadJson: string) => void;
+  onReaderTap: (payloadJson: string) => void;
 }
 
 interface PendingSpineTransitionState {
@@ -111,6 +141,7 @@ export interface EpubWebViewReaderCallbacks {
   onSpineChangeRequested: (direction: 'prev' | 'next') => void;
   onReady: (controller: EpubWebViewReaderController) => void;
   onError: (msg: string) => void;
+  onReaderTap?: (xRatio: number, yRatio: number) => void;
 }
 
 export interface EpubWebViewReaderParams {
@@ -212,6 +243,14 @@ export struct EpubWebViewReaderComponent {
   private applySettingsTimer: number = -1;
   private pageTurnPhaseTimer: number = -1;
   private pendingSpineTransition: PendingSpineTransitionState | null = null;
+  private boundarySwitchTimer: number = -1;
+  private currentLayoutKind: EpubPageLayoutKind = 'horizontal_paged';
+  private lastPaginationOffset: number = 0;
+  private lastPaginationMaxOffset: number = 0;
+  private lastPaginationPageExtent: number = 0;
+  private lastProgressRatio: number = 0;
+  private lastBoundarySwitchTime: number = 0;
+  private boundarySuppressionUntil: number = 0;
   private activeTextSettings: EBookReadingSettings = {
     fontSize: DEFAULT_EBOOK_READING_SETTINGS.fontSize,
     fontFamily: DEFAULT_EBOOK_READING_SETTINGS.fontFamily,
@@ -230,6 +269,8 @@ export struct EpubWebViewReaderComponent {
     saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval
   };
   private activePageSettings: MangaReadingSettings = DEFAULT_READING_SETTINGS;
+  private hostWidthVp: number = 0;
+  private hostHeightVp: number = 0;
   private fallbackVpW: number = 0;
   private fallbackVpH: number = 0;
   private lastVpW: number = 0;
@@ -237,6 +278,14 @@ export struct EpubWebViewReaderComponent {
   private lastVisualVpW: number = 0;
   private lastVisualVpH: number = 0;
   private lastVisualVpScale: number = 1;
+  private jsProxy: EpubReaderJsProxy = {
+    onPaginationChanged: (payloadJson: string): void => {
+      this.handlePaginationChanged(payloadJson);
+    },
+    onReaderTap: (payloadJson: string): void => {
+      this.handleReaderTap(payloadJson);
+    }
+  };
 
   @State private viewportOpacity: number = 1;
   @State private viewportMatrix: matrix4.Matrix4Transit = matrix4.identity();
@@ -283,6 +332,14 @@ export struct EpubWebViewReaderComponent {
   private clearDeferredWork(): void {
     this.clearApplySettingsTimer();
     this.clearPageTurnPhaseTimer();
+    this.clearBoundarySwitchTimer();
+  }
+
+  private clearBoundarySwitchTimer(): void {
+    if (this.boundarySwitchTimer !== -1) {
+      clearTimeout(this.boundarySwitchTimer);
+      this.boundarySwitchTimer = -1;
+    }
   }
 
   private resolveUiContext(): UIContext | null {
@@ -465,6 +522,12 @@ export struct EpubWebViewReaderComponent {
   }
 
   private getLayoutKind(settings: MangaReadingSettings, vpW: number, vpH: number): EpubPageLayoutKind {
+    if (this.isContinuousVerticalMode(settings)) {
+      return 'continuous_vertical';
+    }
+    if (this.isContinuousHorizontalMode(settings)) {
+      return 'continuous_horizontal';
+    }
     if (settings.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
       return 'vertical_paged';
     }
@@ -473,6 +536,35 @@ export struct EpubWebViewReaderComponent {
       return 'double_page';
     }
     return 'horizontal_paged';
+  }
+
+  private isContinuousVerticalMode(settings: MangaReadingSettings = this.activePageSettings): boolean {
+    return settings.readingMode === ReadingMode.WEBTOON ||
+      settings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+      settings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+  }
+
+  private isContinuousHorizontalMode(settings: MangaReadingSettings = this.activePageSettings): boolean {
+    return settings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
+  }
+
+  private isContinuousMode(settings: MangaReadingSettings = this.activePageSettings): boolean {
+    return this.isContinuousVerticalMode(settings) || this.isContinuousHorizontalMode(settings);
+  }
+
+  private computeProgressRatio(
+    pageIndex: number,
+    pageCount: number,
+    currentOffset: number,
+    maxOffset: number
+  ): number {
+    if (maxOffset > 0) {
+      return this.clamp(currentOffset / maxOffset, 0, 1);
+    }
+    if (pageCount > 1) {
+      return this.clamp(pageIndex / Math.max(1, pageCount - 1), 0, 1);
+    }
+    return 0;
   }
 
   private normalizeAnimationType(animationType: PageTurnAnimationType): PageTurnAnimationType {
@@ -520,7 +612,7 @@ export struct EpubWebViewReaderComponent {
   }
 
   private getAnimationDirectionSign(layoutKind: EpubPageLayoutKind, forward: boolean): number {
-    if (layoutKind === 'vertical_paged') {
+    if (layoutKind === 'vertical_paged' || layoutKind === 'continuous_vertical') {
       return forward ? -1 : 1;
     }
     if (this.activePageSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT) {
@@ -529,15 +621,153 @@ export struct EpubWebViewReaderComponent {
     return forward ? -1 : 1;
   }
 
+  private getAnimationViewportWidthVp(): number {
+    if (this.hostWidthVp > 1) {
+      return this.hostWidthVp;
+    }
+    if (this.fallbackVpW > 1) {
+      return this.fallbackVpW;
+    }
+    const dm = display.getDefaultDisplaySync();
+    return px2vp(dm.width);
+  }
+
+  private getAnimationViewportHeightVp(): number {
+    if (this.hostHeightVp > 1) {
+      return this.hostHeightVp;
+    }
+    if (this.fallbackVpH > 1) {
+      return this.fallbackVpH;
+    }
+    const dm = display.getDefaultDisplaySync();
+    return px2vp(dm.height);
+  }
+
+  private shouldUseTextSafeAnimationProfile(): boolean {
+    return !this.params.isFixedLayout;
+  }
+
+  private createTextSafeAnimationProfile(
+    layoutKind: EpubPageLayoutKind,
+    forward: boolean,
+    animationType: PageTurnAnimationType
+  ): PageTurnAnimationProfile {
+    const viewportW = this.getAnimationViewportWidthVp();
+    const viewportH = this.getAnimationViewportHeightVp();
+    const isVertical = layoutKind === 'vertical_paged' || layoutKind === 'continuous_vertical';
+    const extent = isVertical ? viewportH : viewportW;
+    const sign = this.getAnimationDirectionSign(layoutKind, forward);
+    const axisX = isVertical ? 0 : extent * sign;
+    const axisY = isVertical ? extent * sign : 0;
+    const incomingX = -axisX;
+    const incomingY = -axisY;
+
+    switch (animationType) {
+      case PageTurnAnimationType.SLIDE:
+        return {
+          outgoing: {
+            opacity: 0.82,
+            matrix: this.buildMatrix(axisX * 0.08, axisY * 0.08, 0, 1, 1, 0, 0)
+          },
+          incoming: {
+            opacity: 1,
+            matrix: this.buildMatrix(incomingX * 0.16, incomingY * 0.16, 0, 1, 1, 0, 0)
+          },
+          outDuration: 90,
+          inDuration: 170,
+          outCurve: Curve.EaseIn,
+          inCurve: Curve.FastOutSlowIn
+        };
+      case PageTurnAnimationType.FADE:
+        return {
+          outgoing: {
+            opacity: 0.06,
+            matrix: this.buildMatrix(0, 0, 0, 1, 1, 0, 0)
+          },
+          incoming: {
+            opacity: 0.18,
+            matrix: this.buildMatrix(0, 0, 0, 1, 1, 0, 0)
+          },
+          outDuration: 100,
+          inDuration: 160,
+          outCurve: Curve.EaseOut,
+          inCurve: Curve.EaseIn
+        };
+      case PageTurnAnimationType.COVER:
+        return {
+          outgoing: {
+            opacity: 0.92,
+            matrix: this.buildMatrix(axisX * 0.03, axisY * 0.03, 0, 1, 1, 0, 0)
+          },
+          incoming: {
+            opacity: 1,
+            matrix: this.buildMatrix(incomingX * 0.20, incomingY * 0.20, 0, 1, 1, 0, 0)
+          },
+          outDuration: 85,
+          inDuration: 180,
+          outCurve: Curve.EaseOut,
+          inCurve: Curve.FastOutSlowIn
+        };
+      case PageTurnAnimationType.CUBE:
+        return {
+          outgoing: {
+            opacity: 0.54,
+            matrix: this.buildMatrix(axisX * 0.05, axisY * 0.05, 0, 0.995, 0.995, 0, 0)
+          },
+          incoming: {
+            opacity: 0.74,
+            matrix: this.buildMatrix(incomingX * 0.12, incomingY * 0.12, 0, 1, 1, 0, 0)
+          },
+          outDuration: 95,
+          inDuration: 185,
+          outCurve: Curve.EaseInOut,
+          inCurve: Curve.FastOutSlowIn
+        };
+      case PageTurnAnimationType.DEPTH:
+        return {
+          outgoing: {
+            opacity: 0.38,
+            matrix: this.buildMatrix(axisX * 0.02, axisY * 0.02, 0, 0.985, 0.985, 0, 0)
+          },
+          incoming: {
+            opacity: 0.68,
+            matrix: this.buildMatrix(-axisX * 0.03, -axisY * 0.03, 0, 1.015, 1.015, 0, 0)
+          },
+          outDuration: 90,
+          inDuration: 190,
+          outCurve: Curve.EaseIn,
+          inCurve: Curve.FastOutSlowIn
+        };
+      default:
+        return {
+          outgoing: {
+            opacity: 0.12,
+            matrix: this.buildMatrix(0, 0, 0, 1, 1, 0, 0)
+          },
+          incoming: {
+            opacity: 0.22,
+            matrix: this.buildMatrix(0, 0, 0, 1, 1, 0, 0)
+          },
+          outDuration: 90,
+          inDuration: 160,
+          outCurve: Curve.EaseOut,
+          inCurve: Curve.EaseIn
+        };
+    }
+  }
+
   private createAnimationProfile(
     layoutKind: EpubPageLayoutKind,
     forward: boolean,
     animationType: PageTurnAnimationType
   ): PageTurnAnimationProfile {
     const normalizedAnimation = this.normalizeAnimationType(animationType);
-    const viewportW = this.lastVpW > 0 ? this.lastVpW : this.fallbackVpW;
-    const viewportH = this.lastVpH > 0 ? this.lastVpH : this.fallbackVpH;
-    const isVertical = layoutKind === 'vertical_paged';
+    if (this.shouldUseTextSafeAnimationProfile()) {
+      return this.createTextSafeAnimationProfile(layoutKind, forward, normalizedAnimation);
+    }
+    const viewportW = this.getAnimationViewportWidthVp();
+    const viewportH = this.getAnimationViewportHeightVp();
+    const isVertical = layoutKind === 'vertical_paged' || layoutKind === 'continuous_vertical';
     const extent = isVertical ? viewportH : viewportW;
     const sign = this.getAnimationDirectionSign(layoutKind, forward);
     const axisX = isVertical ? 0 : extent * sign;
@@ -802,7 +1032,15 @@ export struct EpubWebViewReaderComponent {
     const bodyOverlayColor = (textSettings.backgroundType ?? 'COLOR').trim().toUpperCase() === 'IMAGE'
       ? this.toRgba(backgroundColor, 0.9)
       : backgroundColor;
-    const contentW = Math.max(1, vpW - margin * 2);
+    const webtoonLeftMargin = this.isContinuousVerticalMode(pageSettings)
+      ? this.clamp(pageSettings.webtoonLeftMargin ?? 0, 0, 50)
+      : 0;
+    const webtoonRightMargin = this.isContinuousVerticalMode(pageSettings)
+      ? this.clamp(pageSettings.webtoonRightMargin ?? 0, 0, 50)
+      : 0;
+    const leftPadding = margin + (this.isContinuousVerticalMode(pageSettings) ? (vpW * webtoonLeftMargin / 100) : 0);
+    const rightPadding = margin + (this.isContinuousVerticalMode(pageSettings) ? (vpW * webtoonRightMargin / 100) : 0);
+    const contentW = Math.max(1, vpW - leftPadding - rightPadding);
     const contentH = Math.max(1, vpH - margin * 2);
     const columnCount = layoutKind === 'double_page' ? 2 : 1;
     const columnWidth = Math.max(1, Math.floor(contentW / columnCount));
@@ -845,6 +1083,79 @@ export struct EpubWebViewReaderComponent {
       }
     `;
 
+    if (layoutKind === 'continuous_vertical') {
+      const imageGap = pageSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP
+        ? this.clamp(pageSettings.pageSpacing ?? 12, 0, 80)
+        : 0;
+      return `
+        ${fontCss}
+        ${backgroundCss}
+        :root {
+          ${rootTextCss}
+        }
+        html {
+          margin: 0 !important;
+          padding: 0 !important;
+          width: 100% !important;
+          min-height: 100% !important;
+          overflow-x: hidden !important;
+          overflow-y: auto !important;
+          overscroll-behavior: contain !important;
+          scroll-behavior: auto !important;
+          scroll-snap-type: none !important;
+          background-color: ${backgroundColor} !important;
+          ${rootTextCss}
+        }
+        body {
+          position: relative !important;
+          z-index: 1 !important;
+          margin: 0 !important;
+          padding-top: ${margin}px !important;
+          padding-right: ${rightPadding}px !important;
+          padding-bottom: ${margin}px !important;
+          padding-left: ${leftPadding}px !important;
+          box-sizing: border-box !important;
+          min-height: ${contentH}px !important;
+          overflow-x: hidden !important;
+          overflow-y: visible !important;
+          background-color: ${bodyOverlayColor} !important;
+          ${commonTextCss}
+        }
+        body * {
+          color: inherit !important;
+          line-height: inherit !important;
+          font-family: inherit !important;
+          font-weight: inherit !important;
+          letter-spacing: inherit !important;
+          text-align: inherit !important;
+        }
+        p, li, div, span, article, section, blockquote, td, th, a, pre, code, dd, dt, figcaption, caption {
+          font-size: inherit !important;
+        }
+        body [style*='font-size'] {
+          font-size: inherit !important;
+        }
+        ${paragraphCss}
+        img, svg, video {
+          max-width: ${contentW}px !important;
+          max-height: none !important;
+          height: auto !important;
+          display: block !important;
+          object-fit: contain !important;
+          margin-left: auto !important;
+          margin-right: auto !important;
+          margin-bottom: ${imageGap}px !important;
+          break-inside: avoid !important;
+        }
+        * {
+          -webkit-tap-highlight-color: transparent !important;
+        }
+        ::-webkit-scrollbar {
+          display: none !important;
+        }
+      `;
+    }
+
     if (layoutKind === 'vertical_paged') {
       return `
         ${fontCss}
@@ -869,7 +1180,10 @@ export struct EpubWebViewReaderComponent {
           position: relative !important;
           z-index: 1 !important;
           margin: 0 !important;
-          padding: ${margin}px !important;
+          padding-top: ${margin}px !important;
+          padding-right: ${rightPadding}px !important;
+          padding-bottom: ${margin}px !important;
+          padding-left: ${leftPadding}px !important;
           box-sizing: border-box !important;
           min-height: ${contentH}px !important;
           overflow-x: hidden !important;
@@ -924,7 +1238,7 @@ export struct EpubWebViewReaderComponent {
         overflow-y: hidden !important;
         overscroll-behavior: contain !important;
         scroll-behavior: auto !important;
-        scroll-snap-type: x mandatory !important;
+        scroll-snap-type: ${layoutKind === 'continuous_horizontal' ? 'none' : 'x mandatory'} !important;
         background-color: ${backgroundColor} !important;
         ${rootTextCss}
       }
@@ -932,7 +1246,10 @@ export struct EpubWebViewReaderComponent {
         position: relative !important;
         z-index: 1 !important;
         margin: 0 !important;
-        padding: ${margin}px !important;
+        padding-top: ${margin}px !important;
+        padding-right: ${rightPadding}px !important;
+        padding-bottom: ${margin}px !important;
+        padding-left: ${leftPadding}px !important;
         box-sizing: border-box !important;
         column-width: ${columnWidth}px !important;
         column-gap: 0px !important;
@@ -1015,7 +1332,7 @@ export struct EpubWebViewReaderComponent {
       window.__mnxRefreshPagination = function() {
         var root = window.__mnxResolveScrollRoot();
         var viewport = window.__mnxGetViewportExtent();
-        var isVertical = window.__mnxLayoutKind === 'vertical_paged';
+        var isVertical = window.__mnxLayoutKind === 'vertical_paged' || window.__mnxLayoutKind === 'continuous_vertical';
         var pageExtent = isVertical ? viewport.height : viewport.width;
         var totalExtent = Math.max(
           root ? (isVertical ? (root.scrollHeight || 0) : (root.scrollWidth || 0)) : 0,
@@ -1062,6 +1379,77 @@ export struct EpubWebViewReaderComponent {
         };
         return window.__mnxPaginationState;
       };
+      window.__mnxNotifyPagination = function(source) {
+        if (!window.arkts || typeof window.arkts.onPaginationChanged !== 'function') {
+          return;
+        }
+        var state = window.__mnxRefreshPagination();
+        window.arkts.onPaginationChanged(JSON.stringify({
+          source: source || 'manual',
+          layoutKind: window.__mnxLayoutKind || '',
+          pageCount: state.pageCount,
+          currentPage: state.currentPage,
+          currentOffset: state.currentOffset,
+          pageExtent: state.pageExtent,
+          maxOffset: state.maxOffset,
+          atStart: state.currentOffset <= 2,
+          atEnd: state.currentOffset >= Math.max(0, state.maxOffset - 2)
+        }));
+      };
+      window.__mnxSchedulePaginationNotify = function(source) {
+        if (window.__mnxNotifyTimer) {
+          clearTimeout(window.__mnxNotifyTimer);
+        }
+        window.__mnxNotifyTimer = setTimeout(function() {
+          window.__mnxNotifyTimer = 0;
+          window.__mnxNotifyPagination(source || 'deferred');
+        }, 56);
+      };
+      window.__mnxInstallArkBridge = function() {
+        var root = window.__mnxResolveScrollRoot();
+        if (window.__mnxScrollRoot && window.__mnxScrollHandler && window.__mnxScrollRoot.removeEventListener) {
+          window.__mnxScrollRoot.removeEventListener('scroll', window.__mnxScrollHandler);
+        }
+        if (window.__mnxWindowScrollHandler) {
+          window.removeEventListener('scroll', window.__mnxWindowScrollHandler);
+        }
+        if (window.__mnxResizeHandler) {
+          window.removeEventListener('resize', window.__mnxResizeHandler);
+        }
+        if (window.__mnxClickHandler) {
+          document.removeEventListener('click', window.__mnxClickHandler, true);
+        }
+        window.__mnxScrollRoot = root;
+        window.__mnxScrollHandler = function() {
+          window.__mnxSchedulePaginationNotify('scroll');
+        };
+        window.__mnxWindowScrollHandler = function() {
+          window.__mnxSchedulePaginationNotify('window_scroll');
+        };
+        window.__mnxResizeHandler = function() {
+          window.__mnxSchedulePaginationNotify('resize');
+        };
+        window.__mnxClickHandler = function(event) {
+          if (!window.arkts || typeof window.arkts.onReaderTap !== 'function') {
+            return;
+          }
+          var viewport = window.__mnxGetViewportExtent();
+          var safeWidth = Math.max(1, viewport.width);
+          var safeHeight = Math.max(1, viewport.height);
+          var clientX = event && typeof event.clientX === 'number' ? event.clientX : 0;
+          var clientY = event && typeof event.clientY === 'number' ? event.clientY : 0;
+          window.arkts.onReaderTap(JSON.stringify({
+            xRatio: Math.max(0, Math.min(1, clientX / safeWidth)),
+            yRatio: Math.max(0, Math.min(1, clientY / safeHeight))
+          }));
+        };
+        if (root && root.addEventListener) {
+          root.addEventListener('scroll', window.__mnxScrollHandler, { passive: true });
+        }
+        window.addEventListener('scroll', window.__mnxWindowScrollHandler, { passive: true });
+        window.addEventListener('resize', window.__mnxResizeHandler, { passive: true });
+        document.addEventListener('click', window.__mnxClickHandler, true);
+      };
       window.__mnxGetPageCount = function() {
         return window.__mnxRefreshPagination().pageCount;
       };
@@ -1071,26 +1459,32 @@ export struct EpubWebViewReaderComponent {
         var normalizedIndex = Math.max(0, Math.min(state.pageCount - 1, Math.floor(pageIndex || 0)));
         var targetOffset = state.pageCount > 0 ? (window.__mnxPageOffsets[normalizedIndex] || 0) : 0;
         if (root && typeof root.scrollTo === 'function') {
-          if (window.__mnxLayoutKind === 'vertical_paged') {
+          if (window.__mnxLayoutKind === 'vertical_paged' || window.__mnxLayoutKind === 'continuous_vertical') {
             root.scrollTo({ left: 0, top: targetOffset, behavior: 'auto' });
           } else {
             root.scrollTo({ left: targetOffset, top: 0, behavior: 'auto' });
           }
         } else if (root) {
-          if (window.__mnxLayoutKind === 'vertical_paged') {
+          if (window.__mnxLayoutKind === 'vertical_paged' || window.__mnxLayoutKind === 'continuous_vertical') {
             root.scrollTop = targetOffset;
           } else {
             root.scrollLeft = targetOffset;
           }
-        } else if (window.__mnxLayoutKind === 'vertical_paged') {
+        } else if (window.__mnxLayoutKind === 'vertical_paged' || window.__mnxLayoutKind === 'continuous_vertical') {
           window.scrollTo(0, targetOffset);
         } else {
           window.scrollTo(targetOffset, 0);
         }
-        state.currentPage = normalizedIndex;
-        state.currentOffset = targetOffset;
+        state = window.__mnxRefreshPagination();
         window.__mnxPaginationState = state;
-        return JSON.stringify({ pageIndex: normalizedIndex, offset: targetOffset });
+        window.__mnxSchedulePaginationNotify('programmatic');
+        return JSON.stringify({
+          pageIndex: state.currentPage,
+          offset: state.currentOffset,
+          pageCount: state.pageCount,
+          pageExtent: state.pageExtent,
+          maxOffset: state.maxOffset
+        });
       };
       window.__mnxGoToPage = window.__mnxGoToPageImmediate;
       window.__mnxGetCurrentPage = function() {
@@ -1105,14 +1499,23 @@ export struct EpubWebViewReaderComponent {
       const parsed = JSON.parse(clean) as PageCommandResult;
       const pageIndex = Number(parsed.pageIndex);
       const offset = Number(parsed.offset);
+      const pageCount = Number(parsed.pageCount);
+      const pageExtent = Number(parsed.pageExtent);
+      const maxOffset = Number(parsed.maxOffset);
       return {
         pageIndex: !isNaN(pageIndex) ? pageIndex : fallbackPage,
-        offset: !isNaN(offset) ? offset : 0
+        offset: !isNaN(offset) ? offset : 0,
+        pageCount: !isNaN(pageCount) && pageCount > 0 ? Math.floor(pageCount) : Math.max(1, this.currentPageCount),
+        pageExtent: !isNaN(pageExtent) ? Math.max(0, pageExtent) : this.lastPaginationPageExtent,
+        maxOffset: !isNaN(maxOffset) ? Math.max(0, maxOffset) : this.lastPaginationMaxOffset
       };
     } catch (_error) {
       return {
         pageIndex: fallbackPage,
-        offset: 0
+        offset: 0,
+        pageCount: Math.max(1, this.currentPageCount),
+        pageExtent: this.lastPaginationPageExtent,
+        maxOffset: this.lastPaginationMaxOffset
       };
     }
   }
@@ -1124,7 +1527,8 @@ export struct EpubWebViewReaderComponent {
     textSettings: EBookReadingSettings,
     pageSettings: MangaReadingSettings,
     notifyReady: boolean,
-    source: string
+    source: string,
+    anchorRatio: number = -1
   ): void {
     this.ready = false;
     this.viewportBackgroundColor = textSettings.backgroundColor ?? DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
@@ -1135,6 +1539,7 @@ export struct EpubWebViewReaderComponent {
     const layoutKind = this.params.isFixedLayout
       ? 'horizontal_paged'
       : this.getLayoutKind(pageSettings, vpW, vpH);
+    this.currentLayoutKind = layoutKind;
     const bridge = this.buildBridgeJs(layoutKind);
     logger.info(
       TAG,
@@ -1181,6 +1586,7 @@ export struct EpubWebViewReaderComponent {
           document.documentElement.style.removeProperty('text-size-adjust');
         }
         ${bridge}
+        window.__mnxInstallArkBridge();
         return 'ok';
       })();
     `;
@@ -1268,7 +1674,15 @@ export struct EpubWebViewReaderComponent {
             }
 
             this.currentPageCount = pageCount;
-            const targetPage = Math.max(0, Math.min(pageOffset, this.currentPageCount - 1));
+            const targetPage = anchorRatio >= 0 && this.currentPageCount > 1
+              ? Math.max(
+                  0,
+                  Math.min(
+                    Math.round(anchorRatio * Math.max(0, this.currentPageCount - 1)),
+                    this.currentPageCount - 1
+                  )
+                )
+              : Math.max(0, Math.min(pageOffset, this.currentPageCount - 1));
             let finished = false;
             const finalize = () => {
               if (finished) {
@@ -1283,6 +1697,16 @@ export struct EpubWebViewReaderComponent {
             this.runJs(`window.__mnxGoToPageImmediate(${targetPage});`, (resultRaw: string) => {
               const result = this.parsePageCommandResult(resultRaw, targetPage);
               this.currentPage = result.pageIndex;
+              this.currentPageCount = result.pageCount;
+              this.lastPaginationOffset = result.offset;
+              this.lastPaginationPageExtent = result.pageExtent;
+              this.lastPaginationMaxOffset = result.maxOffset;
+              this.lastProgressRatio = this.computeProgressRatio(
+                this.currentPage,
+                this.currentPageCount,
+                this.lastPaginationOffset,
+                this.lastPaginationMaxOffset
+              );
               clearTimeout(fallbackTimer);
               finalize();
             });
@@ -1335,12 +1759,21 @@ export struct EpubWebViewReaderComponent {
   private commitPageChange(targetPage: number, afterCommit?: () => void): void {
     let finished = false;
     let resolvedPage = targetPage;
+    let resolvedPageCount = Math.max(1, this.currentPageCount);
+    this.boundarySuppressionUntil = Date.now() + 260;
     const finalize = () => {
       if (finished) {
         return;
       }
       finished = true;
       this.currentPage = resolvedPage;
+      this.currentPageCount = resolvedPageCount;
+      this.lastProgressRatio = this.computeProgressRatio(
+        this.currentPage,
+        this.currentPageCount,
+        this.lastPaginationOffset,
+        this.lastPaginationMaxOffset
+      );
       this.params.callbacks.onPageChange(this.currentPage, this.currentPageCount);
       if (afterCommit) {
         afterCommit();
@@ -1354,6 +1787,10 @@ export struct EpubWebViewReaderComponent {
     this.runJs(`window.__mnxGoToPageImmediate(${targetPage});`, (resultRaw: string) => {
       const result = this.parsePageCommandResult(resultRaw, targetPage);
       resolvedPage = result.pageIndex;
+      resolvedPageCount = result.pageCount;
+      this.lastPaginationOffset = result.offset;
+      this.lastPaginationPageExtent = result.pageExtent;
+      this.lastPaginationMaxOffset = result.maxOffset;
       clearTimeout(fallbackTimer);
       finalize();
     });
@@ -1381,6 +1818,10 @@ export struct EpubWebViewReaderComponent {
     this.ready = false;
     this.currentPageCount = 0;
     this.currentPage = 0;
+    this.lastPaginationOffset = 0;
+    this.lastPaginationPageExtent = 0;
+    this.lastPaginationMaxOffset = 0;
+    this.boundarySuppressionUntil = 0;
     try {
       this.webviewController.loadUrl(`file://${spineFilePath}`);
     } catch (error) {
@@ -1440,6 +1881,7 @@ export struct EpubWebViewReaderComponent {
     totalPages: number,
     notifyReady: boolean
   ): void {
+    this.currentLayoutKind = layoutKind;
     const finalizeReady = () => {
       this.ready = true;
       if (notifyReady) {
@@ -1456,6 +1898,12 @@ export struct EpubWebViewReaderComponent {
 
     this.currentPageCount = totalPages;
     this.currentPage = targetPage;
+    this.lastProgressRatio = this.computeProgressRatio(
+      this.currentPage,
+      this.currentPageCount,
+      this.lastPaginationOffset,
+      this.lastPaginationMaxOffset
+    );
     this.params.callbacks.onPageChange(this.currentPage, this.currentPageCount);
 
     const pendingTransition = this.pendingSpineTransition;
@@ -1560,9 +2008,10 @@ export struct EpubWebViewReaderComponent {
       const vpW = this.lastVpW > 0 ? this.lastVpW : this.fallbackVpW;
       const vpH = this.lastVpH > 0 ? this.lastVpH : this.fallbackVpH;
       const savedPage = this.currentPage;
+      const anchorRatio = this.lastProgressRatio;
       logger.info(
         TAG,
-        `执行排版重应用: reason=${reason}, page=${savedPage}, vp=${vpW}x${vpH}, text(${this.describeTextSettings(this.activeTextSettings)}), page(${this.describePageSettings(this.activePageSettings)})`
+        `执行排版重应用: reason=${reason}, page=${savedPage}, ratio=${anchorRatio.toFixed(3)}, vp=${vpW}x${vpH}, text(${this.describeTextSettings(this.activeTextSettings)}), page(${this.describePageSettings(this.activePageSettings)})`
       );
       this.applyInjectedLayout(
         vpW,
@@ -1571,9 +2020,109 @@ export struct EpubWebViewReaderComponent {
         this.activeTextSettings,
         this.activePageSettings,
         false,
-        `scheduled:${reason}`
+        `scheduled:${reason}`,
+        anchorRatio
       );
     }, delayMs);
+  }
+
+  private scheduleContinuousBoundarySwitch(direction: 'prev' | 'next'): void {
+    const now = Date.now();
+    if ((now - this.lastBoundarySwitchTime) < 420) {
+      return;
+    }
+    this.clearBoundarySwitchTimer();
+    this.boundarySwitchTimer = setTimeout(() => {
+      this.boundarySwitchTimer = -1;
+      if (!this.ready || this.isPageTurnAnimating || !this.isContinuousMode()) {
+        return;
+      }
+      this.lastBoundarySwitchTime = Date.now();
+      this.params.callbacks.onSpineChangeRequested(direction);
+    }, 140);
+  }
+
+  private resetContinuousBoundarySwitch(): void {
+    this.clearBoundarySwitchTimer();
+  }
+
+  private handleContinuousBoundaryUpdate(
+    payload: PaginationUpdatePayload,
+    previousOffset: number
+  ): void {
+    if (!this.isContinuousMode() || !this.ready || this.isPageTurnAnimating) {
+      this.resetContinuousBoundarySwitch();
+      return;
+    }
+    if (Date.now() < this.boundarySuppressionUntil) {
+      this.resetContinuousBoundarySwitch();
+      return;
+    }
+    const delta = payload.currentOffset - previousOffset;
+    const edgeThreshold = Math.max(12, payload.pageExtent * 0.04);
+    const nearEnd = payload.currentOffset >= Math.max(0, payload.maxOffset - edgeThreshold);
+    const nearStart = payload.currentOffset <= edgeThreshold;
+    if (delta > 6 && nearEnd && payload.currentPage >= Math.max(0, payload.pageCount - 1)) {
+      this.scheduleContinuousBoundarySwitch('next');
+      return;
+    }
+    if (delta < -6 && nearStart && payload.currentPage <= 0) {
+      this.scheduleContinuousBoundarySwitch('prev');
+      return;
+    }
+    this.resetContinuousBoundarySwitch();
+  }
+
+  private handlePaginationChanged(payloadJson: string): void {
+    let payload: PaginationUpdatePayload | null = null;
+    try {
+      const clean = this.parseWebViewJson(payloadJson);
+      payload = JSON.parse(clean) as PaginationUpdatePayload;
+    } catch (error) {
+      logger.warn(TAG, `分页状态回传解析失败: ${String(error)}`);
+      return;
+    }
+    if (!payload) {
+      return;
+    }
+    const previousPage = this.currentPage;
+    const previousCount = this.currentPageCount;
+    const previousOffset = this.lastPaginationOffset;
+    const nextCount = Math.max(1, Math.floor(Number(payload.pageCount) || 1));
+    const nextPage = Math.max(0, Math.min(Math.floor(Number(payload.currentPage) || 0), nextCount - 1));
+    this.currentLayoutKind = (payload.layoutKind as EpubPageLayoutKind) || this.currentLayoutKind;
+    this.currentPageCount = nextCount;
+    this.currentPage = nextPage;
+    this.lastPaginationOffset = Math.max(0, Number(payload.currentOffset) || 0);
+    this.lastPaginationPageExtent = Math.max(0, Number(payload.pageExtent) || 0);
+    this.lastPaginationMaxOffset = Math.max(0, Number(payload.maxOffset) || 0);
+    this.lastProgressRatio = this.computeProgressRatio(
+      this.currentPage,
+      this.currentPageCount,
+      this.lastPaginationOffset,
+      this.lastPaginationMaxOffset
+    );
+    if (this.ready && (previousPage !== this.currentPage || previousCount !== this.currentPageCount)) {
+      this.params.callbacks.onPageChange(this.currentPage, this.currentPageCount);
+    }
+    if (this.ready && (payload.source === 'scroll' || payload.source === 'window_scroll')) {
+      this.handleContinuousBoundaryUpdate(payload, previousOffset);
+    }
+  }
+
+  private handleReaderTap(payloadJson: string): void {
+    if (!this.params.callbacks.onReaderTap) {
+      return;
+    }
+    try {
+      const clean = this.parseWebViewJson(payloadJson);
+      const payload = JSON.parse(clean) as ReaderTapPayload;
+      const safeXRatio = this.clamp(Number(payload.xRatio) || 0, 0, 1);
+      const safeYRatio = this.clamp(Number(payload.yRatio) || 0, 0, 1);
+      this.params.callbacks.onReaderTap(safeXRatio, safeYRatio);
+    } catch (error) {
+      logger.warn(TAG, `阅读器点击事件解析失败: ${String(error)}`);
+    }
   }
 
   private buildController(): EpubWebViewReaderController {
@@ -1650,6 +2199,12 @@ export struct EpubWebViewReaderComponent {
         .mixedMode(MixedMode.All)
         .cacheMode(CacheMode.Default)
         .overScrollMode(OverScrollMode.NEVER)
+        .javaScriptProxy({
+          object: this.jsProxy,
+          name: 'arkts',
+          methodList: ['onPaginationChanged', 'onReaderTap'],
+          controller: this.webviewController
+        })
         .transform(this.viewportMatrix)
         .opacity(this.viewportOpacity)
         .onPageEnd((_event) => {
@@ -1719,5 +2274,15 @@ export struct EpubWebViewReaderComponent {
     .width('100%')
     .height('100%')
     .backgroundColor(this.viewportBackgroundColor)
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      const widthVp = Number(newArea.width);
+      const heightVp = Number(newArea.height);
+      if (widthVp > 0) {
+        this.hostWidthVp = widthVp;
+      }
+      if (heightVp > 0) {
+        this.hostHeightVp = heightVp;
+      }
+    })
   }
 }

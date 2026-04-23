@@ -429,16 +429,22 @@ export struct EpubWebViewReaderPage {
     if (normalized.readingDirection === ReadingDirection.VERTICAL) {
       normalized.readingDirection = ReadingDirection.TOP_TO_BOTTOM;
     }
-    if (normalized.readingMode === ReadingMode.CONTINUOUS_SCROLL) {
+    if (normalized.readingMode === ReadingMode.SINGLE_PAGE_LTR) {
       normalized.readingMode = ReadingMode.SINGLE_PAGE;
-      toastMessage = 'WebView EPUB 暂不支持连续横向滚动，已切换为单页模式';
+      normalized.readingDirection = ReadingDirection.LEFT_TO_RIGHT;
+    }
+    if (normalized.readingMode === ReadingMode.SINGLE_PAGE_RTL) {
+      normalized.readingMode = ReadingMode.SINGLE_PAGE;
+      normalized.readingDirection = ReadingDirection.RIGHT_TO_LEFT;
     }
     if (normalized.readingMode === ReadingMode.WEBTOON ||
       normalized.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
       normalized.readingMode === ReadingMode.CONTINUOUS_VERTICAL) {
-      normalized.readingMode = ReadingMode.SINGLE_PAGE_TTB;
       normalized.readingDirection = ReadingDirection.TOP_TO_BOTTOM;
-      toastMessage = 'WebView EPUB 暂不支持条漫滚动，已切换为纵向分页';
+    }
+    if (normalized.readingMode === ReadingMode.CONTINUOUS_SCROLL &&
+      normalized.readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      normalized.readingDirection = ReadingDirection.LEFT_TO_RIGHT;
     }
     if (normalized.readingMode === ReadingMode.SINGLE_PAGE &&
       normalized.readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
@@ -540,9 +546,17 @@ export struct EpubWebViewReaderPage {
     return width > height ? 'landscape' : 'portrait';
   }
 
+  private isContinuousReadingMode(): boolean {
+    return this.pageReadingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL ||
+      this.pageReadingSettings.readingMode === ReadingMode.WEBTOON ||
+      this.pageReadingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+      this.pageReadingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+  }
+
   private isVerticalPagingMode(): boolean {
     return this.pageReadingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
-      this.pageReadingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM;
+      (!this.isContinuousReadingMode() &&
+        this.pageReadingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM);
   }
 
   private isRtlPagingMode(): boolean {
@@ -554,8 +568,16 @@ export struct EpubWebViewReaderPage {
       this.getEffectiveComponentWidth() > this.getEffectiveComponentHeight();
   }
 
+  private shouldUseGestureOverlay(): boolean {
+    return !this.isContinuousReadingMode();
+  }
+
   private handlePageTap(event: ClickEvent): void {
     if (this.areMenusVisible()) {
+      return;
+    }
+    if (this.isContinuousReadingMode()) {
+      this.toggleToolbars();
       return;
     }
     if (!(this.readingSettings.tapToTurn ?? true)) {
@@ -565,7 +587,22 @@ export struct EpubWebViewReaderPage {
     this.processReaderTap(event.x, event.y);
   }
 
+  private handleWebViewTap(xRatio: number, yRatio: number): void {
+    if (this.areMenusVisible()) {
+      return;
+    }
+    const displayWidth = this.getEffectiveComponentWidth();
+    const displayHeight = this.getEffectiveComponentHeight();
+    const safeX = Math.max(0, Math.min(displayWidth, displayWidth * xRatio));
+    const safeY = Math.max(0, Math.min(displayHeight, displayHeight * yRatio));
+    this.processReaderTap(safeX, safeY);
+  }
+
   private processReaderTap(clickX: number, clickY: number): void {
+    if (this.isContinuousReadingMode()) {
+      this.toggleToolbars();
+      return;
+    }
     const displayWidth = this.getEffectiveComponentWidth();
     const displayHeight = this.getEffectiveComponentHeight();
     if (this.isDoublePageMode()) {
@@ -656,6 +693,9 @@ export struct EpubWebViewReaderPage {
 
   private handleSwipe(event: GestureEvent): void {
     if (this.areMenusVisible()) {
+      return;
+    }
+    if (this.isContinuousReadingMode()) {
       return;
     }
     if (this.isVerticalPagingMode()) {
@@ -971,8 +1011,11 @@ export struct EpubWebViewReaderPage {
     const baseTotalReadingTime = ebook.readingProgress?.totalReadingTime ?? 0;
     const sessionSecs = this.sessionStartTimestamp > 0 ? (now - this.sessionStartTimestamp) / 1000 : 0;
     const totalSpines = this.spineItems.length;
+    const chapterProgress = this.totalPagesInSpine > 1
+      ? this.currentPageWithinSpine / Math.max(1, this.totalPagesInSpine - 1)
+      : 0;
     const progressPercent = totalSpines > 0
-      ? Math.min(100, ((this.currentSpineIndex + 1) / totalSpines) * 100)
+      ? Math.min(100, ((this.currentSpineIndex + chapterProgress) / totalSpines) * 100)
       : 0;
     const progress: EBookReadingProgress = {
       bookId: ebook.id,
@@ -1723,6 +1766,9 @@ export struct EpubWebViewReaderPage {
                       logger.warn(TAG, 'WebView 初始加载失败，取消翻开过渡遮罩');
                       cancelTransition();
                     }
+                  },
+                  onReaderTap: (xRatio: number, yRatio: number) => {
+                    this.handleWebViewTap(xRatio, yRatio);
                   }
                 }
               } as EpubWebViewReaderParams
@@ -1758,7 +1804,7 @@ export struct EpubWebViewReaderPage {
         }
 
         // ── 手势截取层 ──
-        if (!this.isLoading && this.errorMessage.trim().length === 0) {
+        if (!this.isLoading && this.errorMessage.trim().length === 0 && this.shouldUseGestureOverlay()) {
           Column()
             .width('100%')
             .height('100%')
