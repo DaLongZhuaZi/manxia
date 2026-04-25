@@ -34,7 +34,9 @@ interface MangaQuickSettingsCallbacks {
 export struct MangaQuickSettings {
   @Prop readingSettings: ReadingSettings;
   @Prop isVisible: boolean;
+  @Prop hideContinuousScrollMode: boolean = false;
   @Prop callbacks: MangaQuickSettingsCallbacks;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
 
   // 内部状态
   @State private panelOpacity: number = 0;
@@ -133,9 +135,14 @@ export struct MangaQuickSettings {
    * 创建新设置对象（复制当前设置）
    */
   private createNewSettings(): ReadingSettings {
+    const readingMode = this.getEffectiveReadingMode();
+    const readingDirection = this.normalizeReadingDirectionForMode(
+      readingMode,
+      this.readingSettings.readingDirection
+    );
     return {
-      readingMode: this.readingSettings.readingMode,
-      readingDirection: this.readingSettings.readingDirection,
+      readingMode: readingMode,
+      readingDirection: readingDirection,
       brightness: this.readingSettings.brightness,
       keepScreenOn: this.readingSettings.keepScreenOn,
       pageSpacing: this.readingSettings.pageSpacing,
@@ -211,13 +218,21 @@ export struct MangaQuickSettings {
    * 判断是否为条漫阅读模式
    */
   private isWebtoonReadingMode(): boolean {
-    return this.readingSettings.readingMode === ReadingMode.WEBTOON ||
-      this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
-      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+    const mode = this.getEffectiveReadingMode();
+    return mode === ReadingMode.WEBTOON ||
+      mode === ReadingMode.WEBTOON_WITH_GAP ||
+      mode === ReadingMode.CONTINUOUS_VERTICAL;
   }
 
   private isContinuousScrollReadingMode(): boolean {
-    return this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
+    return !this.hideContinuousScrollMode && this.getEffectiveReadingMode() === ReadingMode.CONTINUOUS_SCROLL;
+  }
+
+  private getEffectiveReadingMode(): ReadingMode {
+    if (this.hideContinuousScrollMode && this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL) {
+      return ReadingMode.SINGLE_PAGE;
+    }
+    return this.readingSettings.readingMode;
   }
 
   private normalizeReadingDirection(direction: ReadingDirection): ReadingDirection {
@@ -228,6 +243,11 @@ export struct MangaQuickSettings {
 
   private normalizeReadingDirectionForMode(mode: ReadingMode, direction: ReadingDirection): ReadingDirection {
     const normalizedDirection = this.normalizeReadingDirection(direction);
+    if (this.hideContinuousScrollMode && mode === ReadingMode.CONTINUOUS_SCROLL) {
+      return normalizedDirection === ReadingDirection.RIGHT_TO_LEFT
+        ? ReadingDirection.RIGHT_TO_LEFT
+        : ReadingDirection.LEFT_TO_RIGHT;
+    }
     if (mode === ReadingMode.DOUBLE_PAGE && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
       return ReadingDirection.LEFT_TO_RIGHT;
     }
@@ -245,7 +265,7 @@ export struct MangaQuickSettings {
 
   private getSelectedReadingDirection(): ReadingDirection {
     return this.normalizeReadingDirectionForMode(
-      this.readingSettings.readingMode,
+      this.getEffectiveReadingMode(),
       this.readingSettings.readingDirection
     );
   }
@@ -311,7 +331,7 @@ export struct MangaQuickSettings {
    * 判断是否禁用从上到下阅读方向（双页模式下不支持）
    */
   private isTTBDisabled(): boolean {
-    return this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE ||
+    return this.getEffectiveReadingMode() === ReadingMode.DOUBLE_PAGE ||
       this.isContinuousScrollReadingMode();
   }
 
@@ -354,13 +374,18 @@ export struct MangaQuickSettings {
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
         .width('100%')
 
-      // 第一行：单页、双页、连续滚动
+      // 第一行：基础分页模式
       Row({ space: 8 }) {
         this.buildModeButton('单页', ReadingMode.SINGLE_PAGE)
         this.buildModeButton('双页', ReadingMode.DOUBLE_PAGE)
-        this.buildModeButton('连续滚动', ReadingMode.CONTINUOUS_SCROLL)
+        if (this.hideContinuousScrollMode) {
+          Column().layoutWeight(1)
+        } else {
+          this.buildModeButton('连续滚动', ReadingMode.CONTINUOUS_SCROLL)
+        }
       }
       .width('100%')
 
@@ -387,12 +412,14 @@ export struct MangaQuickSettings {
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
           .layoutWeight(1)
 
         if (this.getReadingDirectionHint().length > 0) {
           Text(this.getReadingDirectionHint())
             .fontSize(10)
             .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
         }
       }
       .width('100%')
@@ -418,12 +445,14 @@ export struct MangaQuickSettings {
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
         .width('100%')
 
       Row({ space: 8 }) {
         Column() {
           Text('上下组合')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL ?
               $r('app.color.accent') :
               $r('app.color.text_secondary'))
@@ -439,6 +468,7 @@ export struct MangaQuickSettings {
         Column() {
           Text('左右组合')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ?
               $r('app.color.accent') :
               $r('app.color.text_secondary'))
@@ -466,6 +496,7 @@ export struct MangaQuickSettings {
       Text('音量键翻页')
         .fontSize(14)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
         .layoutWeight(1)
       
       Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.volumeKeyNavigation })
@@ -489,11 +520,13 @@ export struct MangaQuickSettings {
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
           .layoutWeight(1)
 
         Text(`${this.readingSettings.webtoonLeftMargin ?? 0}% / ${this.readingSettings.webtoonRightMargin ?? 0}%`)
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
       }
       .width('100%')
 
@@ -501,6 +534,7 @@ export struct MangaQuickSettings {
         Text('同步调整左右边距')
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
           .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.webtoonMarginSync ?? true })
@@ -517,11 +551,13 @@ export struct MangaQuickSettings {
           Text('左侧留白')
             .fontSize(12)
             .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
             .layoutWeight(1)
 
           Text(`${this.readingSettings.webtoonLeftMargin ?? 0}%`)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
         }
         .width('100%')
 
@@ -547,11 +583,13 @@ export struct MangaQuickSettings {
           Text('右侧留白')
             .fontSize(12)
             .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
             .layoutWeight(1)
 
           Text(`${this.readingSettings.webtoonRightMargin ?? 0}%`)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
         }
         .width('100%')
 
@@ -584,14 +622,15 @@ export struct MangaQuickSettings {
     Column() {
       Text(label)
         .fontSize(12)
-        .fontColor(this.readingSettings.readingMode === mode ? 
-          $r('app.color.accent') : 
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getEffectiveReadingMode() === mode ?
+          $r('app.color.accent') :
           $r('app.color.text_secondary'))
     }
     .layoutWeight(1)
     .padding(10)
-    .backgroundColor(this.readingSettings.readingMode === mode ? 
-      $r('app.color.accent_background') : 
+    .backgroundColor(this.getEffectiveReadingMode() === mode ?
+      $r('app.color.accent_background') :
       Color.Transparent)
     .borderRadius(8)
     .onClick(() => this.updateReadingMode(mode))
@@ -605,6 +644,7 @@ export struct MangaQuickSettings {
     Column() {
       Text(label)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(disabled ?
           $r('app.color.text_secondary') :
           (this.getSelectedReadingDirection() === direction ?
@@ -637,6 +677,7 @@ export struct MangaQuickSettings {
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
           .layoutWeight(1)
 
         Button() {
@@ -682,6 +723,7 @@ export struct MangaQuickSettings {
       Row() {
         Button('完成')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.text_on_accent'))
           .backgroundColor($r('app.color.accent'))
           .layoutWeight(1)
@@ -723,6 +765,7 @@ export struct MangaQuickSettings {
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
             .layoutWeight(1)
 
           Button() {
@@ -767,6 +810,7 @@ export struct MangaQuickSettings {
         // 底部按钮
         Button('完成')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.text_on_accent'))
           .backgroundColor($r('app.color.accent'))
           .width('100%')
@@ -796,6 +840,7 @@ export struct MangaQuickSettings {
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
         .width('100%')
         .margin({ bottom: 6 })
 
@@ -809,7 +854,11 @@ export struct MangaQuickSettings {
 
       // 第二行
       Row({ space: 4 }) {
-        this.buildCompactModeButton('滚动', ReadingMode.CONTINUOUS_SCROLL)
+        if (this.hideContinuousScrollMode) {
+          Column().layoutWeight(1)
+        } else {
+          this.buildCompactModeButton('滚动', ReadingMode.CONTINUOUS_SCROLL)
+        }
         this.buildCompactModeButton('条漫', ReadingMode.WEBTOON)
       }
       .width('100%')
@@ -828,6 +877,7 @@ export struct MangaQuickSettings {
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
         .width('100%')
         .margin({ bottom: 6 })
 
@@ -835,6 +885,7 @@ export struct MangaQuickSettings {
         Text(this.getReadingDirectionHint())
           .fontSize(10)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
           .width('100%')
           .margin({ bottom: 6 })
       }
@@ -860,6 +911,7 @@ export struct MangaQuickSettings {
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
         .width('100%')
         .margin({ bottom: 6 })
 
@@ -867,6 +919,7 @@ export struct MangaQuickSettings {
         Column() {
           Text('上下')
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL ?
               $r('app.color.accent') :
               $r('app.color.text_secondary'))
@@ -882,6 +935,7 @@ export struct MangaQuickSettings {
         Column() {
           Text('左右')
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ?
               $r('app.color.accent') :
               $r('app.color.text_secondary'))
@@ -909,6 +963,7 @@ export struct MangaQuickSettings {
       Text('音量键翻页')
         .fontSize(12)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
         .layoutWeight(1)
       
       Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.volumeKeyNavigation })
@@ -932,11 +987,13 @@ export struct MangaQuickSettings {
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
           .layoutWeight(1)
 
         Text(`${this.readingSettings.webtoonLeftMargin ?? 0}%/${this.readingSettings.webtoonRightMargin ?? 0}%`)
           .fontSize(10)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
       }
       .width('100%')
       .margin({ bottom: 6 })
@@ -945,6 +1002,7 @@ export struct MangaQuickSettings {
         Text('同步')
           .fontSize(10)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
           .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.webtoonMarginSync ?? true })
@@ -960,6 +1018,7 @@ export struct MangaQuickSettings {
         Text('左')
           .fontSize(10)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
           .width(14)
 
         Slider({
@@ -978,6 +1037,7 @@ export struct MangaQuickSettings {
         Text(`${this.readingSettings.webtoonLeftMargin ?? 0}%`)
           .fontSize(10)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
           .width(30)
           .textAlign(TextAlign.End)
       }
@@ -988,6 +1048,7 @@ export struct MangaQuickSettings {
         Text('右')
           .fontSize(10)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
           .width(14)
 
         Slider({
@@ -1006,6 +1067,7 @@ export struct MangaQuickSettings {
         Text(`${this.readingSettings.webtoonRightMargin ?? 0}%`)
           .fontSize(10)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
           .width(30)
           .textAlign(TextAlign.End)
       }
@@ -1023,14 +1085,15 @@ export struct MangaQuickSettings {
     Column() {
       Text(label)
         .fontSize(10)
-        .fontColor(this.readingSettings.readingMode === mode ? 
-          $r('app.color.accent') : 
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getEffectiveReadingMode() === mode ?
+          $r('app.color.accent') :
           $r('app.color.text_secondary'))
     }
     .layoutWeight(1)
     .padding(8)
-    .backgroundColor(this.readingSettings.readingMode === mode ? 
-      $r('app.color.accent_background') : 
+    .backgroundColor(this.getEffectiveReadingMode() === mode ?
+      $r('app.color.accent_background') :
       Color.Transparent)
     .borderRadius(6)
     .onClick(() => this.updateReadingMode(mode))
@@ -1044,6 +1107,7 @@ export struct MangaQuickSettings {
     Column() {
       Text(label)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(disabled ?
           $r('app.color.text_secondary') :
           (this.getSelectedReadingDirection() === direction ?

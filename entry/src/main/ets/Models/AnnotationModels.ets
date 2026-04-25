@@ -86,18 +86,20 @@ export interface CreateBookmarkInput {
 }
 
 /**
- * Highlight creation input (novel only).
+ * Highlight creation input.
  */
 export interface CreateHighlightInput {
+  contentType?: UnifiedContentType;
   contentId: string;
   anchor: AnnotationAnchor;
   style: HighlightStyle;
 }
 
 /**
- * Thought creation input (novel only).
+ * Thought creation input.
  */
 export interface CreateThoughtInput {
+  contentType?: UnifiedContentType;
   contentId: string;
   anchor: AnnotationAnchor;
   textContent?: string;

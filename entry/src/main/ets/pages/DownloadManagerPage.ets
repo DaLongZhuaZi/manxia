@@ -6,6 +6,7 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -15,8 +16,10 @@ import { DownloadStatus } from '../Framework/Types/StatusEnums';
 import { MangaDownloadManager, DownloadTaskInfo, TaskStatus } from '../Framework/Download/DownloadManager';
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
 import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadTask, UnifiedTaskStatus, UnifiedDownloadType } from '../Framework/Download/UnifiedDownloadManager';
+import { OnlineArchiveMigrationItem, OnlineArchiveMigrationStatus, OnlineArchiveMigrationSummary, OnlineMangaArchiveService } from '../Framework/Download/OnlineMangaArchiveService';
 import { PermanentImageCacheManager } from '../Framework/Cache/PermanentImageCacheManager';
 import { DataManager } from '../Framework/Data/DataManager';
+import { eventBus, GameEvent, IEventPayload, MangaCacheUpdatedPayload } from '../Framework/EventBus';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
@@ -39,7 +42,7 @@ interface DownloadTask {
   remainingTime: string; // 剩余时间，如 "3分钟"
 }
 
-type DownloadContentTypeTab = 'downloads' | 'manga_cache';
+type DownloadContentTypeTab = 'downloads' | 'manga_cache' | 'migration';
 
 // 使用NavDestinationContext官方类型
 // @kit.ArkUI提供的NavDestinationContext已包含必要的类型定义
@@ -76,15 +79,29 @@ struct DownloadManagerPage {
   @State mangaCacheList: ContentCacheStats[] = [];
   @State novelCacheList: ContentCacheStats[] = [];
   @State isCacheLoading: boolean = false;
+
+  // 在线漫画CBZ迁移状态
+  @State migrationRunning: boolean = false;
+  @State migrationHasRun: boolean = false;
+  @State migrationSummary: OnlineArchiveMigrationSummary | null = null;
+  @State migrationResults: OnlineArchiveMigrationItem[] = [];
   
   // 下载管理器
   private downloadManager: MangaDownloadManager = MangaDownloadManager.getInstance();
   private unifiedDownloadManager: UnifiedDownloadManager = getUnifiedDownloadManager();
   private cacheStatusService: CacheStatusService = getCacheStatusService();
   private permanentCacheManager: PermanentImageCacheManager = PermanentImageCacheManager.getInstance();
+  private onlineArchiveService: OnlineMangaArchiveService = OnlineMangaArchiveService.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
   private updateTimer: number = -1;
-  private readonly contentTypeTabOrder: DownloadContentTypeTab[] = ['downloads', 'manga_cache'];
+  private readonly contentTypeTabOrder: DownloadContentTypeTab[] = ['downloads', 'manga_cache', 'migration'];
+
+  private onMangaCacheUpdated: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
+    const cachePayload = payload as MangaCacheUpdatedPayload;
+    this.refreshTasks();
+    void this.loadCacheLists();
+    logger.info(TAG, `收到漫画缓存更新事件，刷新下载管理缓存列表: mangaId=${cachePayload.mangaId}, reason=${cachePayload.reason}`);
+  };
 
   onPageShow(): void {
     try {
@@ -99,6 +116,10 @@ struct DownloadManagerPage {
   }
 
   onReady(): void {
+    const hostContext = this.getUIContext().getHostContext();
+    if (hostContext) {
+      this.onlineArchiveService.setContext(hostContext as common.UIAbilityContext);
+    }
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
@@ -109,6 +130,7 @@ struct DownloadManagerPage {
         this.fontState = newState;
       }
     );
+    eventBus.subscribe(GameEvent.MANGA_CACHE_UPDATED, this.onMangaCacheUpdated);
 
     // 加载下载任务
     this.loadDownloadTasks();
@@ -120,6 +142,7 @@ struct DownloadManagerPage {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
+    eventBus.unsubscribe(GameEvent.MANGA_CACHE_UPDATED, this.onMangaCacheUpdated);
     
     // 清除定时器
     if (this.updateTimer !== -1) {
@@ -314,6 +337,64 @@ struct DownloadManagerPage {
     }
   }
 
+  private async startArchiveMigration(): Promise<void> {
+    if (this.migrationRunning) {
+      return;
+    }
+
+    this.migrationRunning = true;
+    this.migrationHasRun = true;
+    try {
+      const summary = await this.onlineArchiveService.runLegacyCacheMigration();
+      this.migrationSummary = summary;
+      this.migrationResults = summary.items;
+      await this.loadCacheLists();
+      logger.info(TAG, `CBZ迁移完成: migrated=${summary.migratedCount}, skipped=${summary.skippedCount}, failed=${summary.failedCount}`);
+    } catch (error) {
+      logger.error(TAG, `CBZ迁移执行失败: ${String(error)}`);
+      const failedSummary: OnlineArchiveMigrationSummary = {
+        totalCandidates: 0,
+        migratedCount: 0,
+        skippedCount: 0,
+        failedCount: 1,
+        totalArchiveSize: 0,
+        startedAt: Date.now(),
+        completedAt: Date.now(),
+        items: []
+      };
+      this.migrationSummary = failedSummary;
+      this.migrationResults = [];
+    } finally {
+      this.migrationRunning = false;
+    }
+  }
+
+  private getMigrationStatusText(status: OnlineArchiveMigrationStatus): string {
+    switch (status) {
+      case OnlineArchiveMigrationStatus.MIGRATED:
+        return '已迁移';
+      case OnlineArchiveMigrationStatus.SKIPPED:
+        return '已跳过';
+      case OnlineArchiveMigrationStatus.FAILED:
+        return '失败';
+      default:
+        return '未知';
+    }
+  }
+
+  private getMigrationStatusColor(status: OnlineArchiveMigrationStatus): ResourceColor {
+    switch (status) {
+      case OnlineArchiveMigrationStatus.MIGRATED:
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme);
+      case OnlineArchiveMigrationStatus.SKIPPED:
+        return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+      case OnlineArchiveMigrationStatus.FAILED:
+        return ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme);
+      default:
+        return ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme);
+    }
+  }
+
   /**
    * 获取过滤后的任务列表
    */
@@ -488,7 +569,7 @@ struct DownloadManagerPage {
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Center)
-      .onClick(() => { this.contentTypeTab = 'downloads'; })
+      .onClick(() => { this.activateContentTypeTab('downloads'); })
       
       // 漫画缓存标签
       Column() {
@@ -524,12 +605,30 @@ struct DownloadManagerPage {
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Center)
-      .onClick(() => { 
-        this.contentTypeTab = 'manga_cache'; 
-        if (this.mangaCacheList.length === 0) {
-          this.loadCacheLists();
+      .onClick(() => { this.activateContentTypeTab('manga_cache'); })
+
+      Column() {
+        Text('缓存迁移')
+          .fontSize(14)
+          .fontWeight(this.contentTypeTab === 'migration' ? FontWeight.Bold : FontWeight.Normal)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.contentTypeTab === 'migration'
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        if (this.contentTypeTab === 'migration') {
+          Divider()
+            .width(40)
+            .height(3)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .margin({ top: 6 })
+        } else {
+          Blank().height(9)
         }
-      })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => { this.activateContentTypeTab('migration'); })
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 4 })
@@ -559,6 +658,8 @@ struct DownloadManagerPage {
     this.contentTypeTab = tab;
     if (tab === 'manga_cache' && this.mangaCacheList.length === 0) {
       this.loadCacheLists();
+    } else if (tab === 'migration' && !this.migrationHasRun && !this.migrationRunning) {
+      this.startArchiveMigration();
     }
   }
 
@@ -655,6 +756,35 @@ struct DownloadManagerPage {
         })
         .onClick(() => {
           this.activateContentTypeTab('manga_cache');
+        })
+        .animation({ duration: 150 })
+
+        Row() {
+          SymbolGlyph($r('sys.symbol.archivebox'))
+            .fontSize(12)
+            .fontColor([this.contentTypeTab === 'migration'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 4 })
+          Text('缓存迁移')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.contentTypeTab === 'migration'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 10 })
+        .height(30)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.contentTypeTab === 'migration'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.contentTypeTab === 'migration' ? 2 : 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.activateContentTypeTab('migration');
         })
         .animation({ duration: 150 })
       }
@@ -869,6 +999,193 @@ struct DownloadManagerPage {
       ForEach(this.mangaCacheList, (stats: ContentCacheStats) => {
         this.buildCacheItem(stats)
       }, (stats: ContentCacheStats) => stats.contentId)
+    }
+  }
+
+  @Builder
+  buildMigrationItem(item: OnlineArchiveMigrationItem) {
+    Column({ space: 8 }) {
+      Row() {
+        Column({ space: 4 }) {
+          Text(item.mangaTitle.length > 0 ? item.mangaTitle : '未知漫画')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(item.chapterTitle.length > 0 ? item.chapterTitle : item.chapterId)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Text(this.getMigrationStatusText(item.status))
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getMigrationStatusColor(item.status))
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .backgroundColor(this.getMigrationStatusColor(item.status) + '20')
+          .borderRadius(12)
+      }
+      .width('100%')
+
+      Text(item.message)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (item.archivePath.length > 0) {
+        Text(`${item.pageCount} 页 · ${this.cacheStatusService.formatSize(item.archiveSize)}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(10)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 14,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+    .margin({ left: 16, right: 16, bottom: 10 })
+  }
+
+  @Builder
+  buildMigrationList() {
+    if (this.migrationRunning) {
+      Column({ space: 16 }) {
+        LoadingProgress()
+          .width(36)
+          .height(36)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        Text('正在迁移旧缓存...')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .height(200)
+      .justifyContent(FlexAlign.Center)
+    } else {
+      Row({ space: 12 }) {
+        Column({ space: 4 }) {
+          Text(`${this.migrationSummary?.migratedCount || 0}`)
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          Text('已迁移')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Center)
+
+        Column({ space: 4 }) {
+          Text(`${this.migrationSummary?.skippedCount || 0}`)
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Text('已跳过')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Center)
+
+        Column({ space: 4 }) {
+          Text(`${this.migrationSummary?.failedCount || 0}`)
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+          Text('失败')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Center)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(10)
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .margin({ left: 16, right: 16, bottom: 12 })
+
+      Button({ stateEffect: true }) {
+        Text('重新扫描并迁移')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+      }
+      .height(40)
+      .width('90%')
+      .margin({ left: 16, right: 16, bottom: 12 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      .borderRadius(8)
+      .onClick(() => {
+        this.startArchiveMigration();
+      })
+
+      if (this.migrationResults.length === 0) {
+        Column({ space: 12 }) {
+          SymbolGlyph($r('sys.symbol.archivebox'))
+            .fontSize(44)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+          Text(this.migrationHasRun ? '没有需要迁移的旧缓存' : '进入后会自动迁移旧缓存')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .height(180)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        ForEach(this.migrationResults, (item: OnlineArchiveMigrationItem) => {
+          this.buildMigrationItem(item)
+        }, (item: OnlineArchiveMigrationItem) => `${item.chapterId}_${item.status}`)
+      }
     }
   }
 
@@ -1179,6 +1496,19 @@ struct DownloadManagerPage {
                 Scroll(this.scroller) {
                   Column() {
                     this.buildCacheList()
+                    Blank().height(24 + this.navigationBarHeight)
+                  }
+                  .width('100%')
+                  .padding({ top: 8 })
+                }
+                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+                .layoutWeight(1)
+                .edgeEffect(EdgeEffect.Spring)
+                .scrollBar(BarState.Auto)
+              } else if (this.contentTypeTab === 'migration') {
+                Scroll(this.scroller) {
+                  Column() {
+                    this.buildMigrationList()
                     Blank().height(24 + this.navigationBarHeight)
                   }
                   .width('100%')

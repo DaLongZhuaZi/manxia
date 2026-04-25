@@ -32,6 +32,7 @@ import { PdfKitViewerComponent, PdfViewerCallbacks, PdfViewerController } from '
 import { ReaderKitViewerComponent, ReaderKitViewerController } from '../Framework/Components/ReaderKitViewerComponent';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
+import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
@@ -89,14 +90,6 @@ import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Mana
 
 const TAG = 'EBookReaderPage';
 
-/**
-* 阅读器页面参数
-*/
-export interface EBookReaderParams {
-  bookId: string;
-  coverComponentId?: string;
-}
-
 interface EBookBookmarkContext {
   chapterId: string;
   chapterTitle: string;
@@ -133,6 +126,8 @@ struct EBookReaderPage {
   private componentId: string = 'EBookReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private lifecycle = new PageLifecycleManager('EBookReaderPage', { enableDebug: true });
+  private routerBackOnClose: boolean = false;
+  private forceReaderKit: boolean = false;
 
   // 电子书数据
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -927,6 +922,33 @@ struct EBookReaderPage {
     return currentHostPage === 'EBookReaderPage';
   }
 
+  private isKindleFormat(format: EBookFormat): boolean {
+    return format === EBookFormat.MOBI || format === EBookFormat.AZW || format === EBookFormat.AZW3;
+  }
+
+  private shouldRedirectKindleToWebViewReader(ebook: EBook): boolean {
+    return !this.forceReaderKit && this.isKindleFormat(ebook.format);
+  }
+
+  private replaceKindleWithWebViewReader(ebook: EBook): void {
+    const params: EBookReaderParams = {
+      bookId: ebook.id,
+      coverComponentId: this.sourceCoverComponentId,
+      routerBackOnClose: this.routerBackOnClose
+    };
+    logger.info(
+      TAG,
+      `Kindle 电子书进入旧阅读页，已切换到 WebView 阅读器: bookId=${ebook.id}, format=${ebook.format}, engine=${ebook.preferredReaderEngine}, extractedRootPath=${ebook.extractedRootPath || ''}`
+    );
+    try {
+      this.pathStack.replacePathByName('EpubWebViewReaderPage', params, false);
+    } catch (error) {
+      logger.error(TAG, `切换到 WebView 阅读器失败: ${String(error)}`);
+      this.errorMessage = 'Kindle 格式请使用新版 WebView 阅读器打开';
+      this.isLoading = false;
+    }
+  }
+
   private reportTransitionLoadingProgress(progress: number, reason: string): void {
     const normalized = Math.max(0, Math.min(1, progress > 1 ? progress / 100 : progress));
     if (normalized <= this.transitionLoadingProgress + 0.001) {
@@ -962,6 +984,9 @@ struct EBookReaderPage {
   }
 
   private shouldRepairReaderKitBookData(ebook: EBook): boolean {
+    if (this.forceReaderKit) {
+      return false;
+    }
     if (!this.isReaderKitSupported(ebook.format)) {
       return false;
     }
@@ -1193,7 +1218,12 @@ struct EBookReaderPage {
       const ebook = await this.ebookDataManager.getEBookById(bookId);
       
       if (!ebook) {
-      throw new Error('电子书不存在');
+        throw new Error('电子书不存在');
+      }
+
+      if (this.shouldRedirectKindleToWebViewReader(ebook)) {
+        this.replaceKindleWithWebViewReader(ebook);
+        return;
       }
 
       await this.tryRepairReaderKitBookData(ebook);
@@ -2766,14 +2796,26 @@ struct EBookReaderPage {
 
       // Pop immediately after transition starts so detail page is visible during shrink.
       this.isCloseTransitionNavigating = true;
-      this.pathStack.pop();
+      this.closeReaderRoute();
     } catch (error) {
       logger.error(TAG, `goBack error: ${error instanceof Error ? error.message : String(error)}`);
       this.isCloseTransitionNavigating = false;
       cancelTransition();
       this.saveReadingProgress();
-      this.pathStack.pop();
+      this.closeReaderRoute();
     }
+  }
+
+  private closeReaderRoute(): void {
+    if (this.routerBackOnClose) {
+      const router = this.getUIContext()?.getRouter();
+      if (router) {
+        router.back();
+        return;
+      }
+      logger.warn(TAG, 'Router 返回不可用，回退到 NavPathStack.pop');
+    }
+    this.pathStack.pop();
   }
 
 
@@ -2979,6 +3021,8 @@ struct EBookReaderPage {
       const params = context.pathInfo.param as EBookReaderParams | null;
       if (params && params.bookId) {
         this.sourceCoverComponentId = params.coverComponentId || '';
+        this.routerBackOnClose = params.routerBackOnClose === true;
+        this.forceReaderKit = params.forceReaderKit === true;
         this.loadEBook(params.bookId);
       } else {
         this.errorMessage = '电子书 ID 参数无效';
@@ -3042,7 +3086,7 @@ struct EBookReaderPage {
         .fontSize(16)
         .fontFamily(this.appFontFamily)
         .onClick(() => {
-          this.pathStack.pop();
+          this.closeReaderRoute();
         })
     }
     .width('100%')
@@ -3059,17 +3103,13 @@ struct EBookReaderPage {
   @Builder
   buildReaderView() {
     if (this.ebook) {
-        // EPUB/MOBI/AZW 格式：使用 Reader Kit 阅读器
       if (this.ebook.format === EBookFormat.PDF) {
-        // EPUB/MOBI/AZW 格式：使用 Reader Kit 阅读器
         this.buildPdfReaderView();
       } else if (this.isUsingImagePageReader()) {
         this.buildImagePageReaderView();
       } else if (this.isReaderKitSupported(this.ebook.format)) {
-        // TXT 等其他格式：使用文本阅读器
         this.buildReaderKitView();
       } else {
-        // TXT 等其他格式：使用文本阅读器
         this.buildTextReaderView();
       }
     }
@@ -3079,13 +3119,13 @@ struct EBookReaderPage {
   * 检查格式是否支持 Reader Kit
   */
   private isReaderKitSupported(format: EBookFormat): boolean {
-    const supportedFormats = [
-      EBookFormat.EPUB,
-      EBookFormat.MOBI,
-      EBookFormat.AZW,
-      EBookFormat.AZW3
-    ];
-    return isReaderKitEnabled() && supportedFormats.includes(format);
+    if (!isReaderKitEnabled()) {
+      return false;
+    }
+    if (this.isKindleFormat(format)) {
+      return this.forceReaderKit;
+    }
+    return format === EBookFormat.EPUB;
   }
 
   /**
@@ -3095,8 +3135,6 @@ struct EBookReaderPage {
     if (!this.ebook) {
       return false;
     }
-    // PDF 使用 PDF Kit，EPUB/MOBI/AZW 使用 Reader Kit
-    // PDF 使用 PDF Kit，EPUB/MOBI/AZW 使用 Reader Kit
     return this.ebook.format === EBookFormat.TXT;
   }
 
@@ -3117,7 +3155,7 @@ struct EBookReaderPage {
   */
   @Builder
   buildReaderKitView() {
-    if (this.ebook) {
+    if (this.ebook && isReaderKitEnabled()) {
       ReaderKitViewerComponent({
         ebook: this.ebook,
         currentChapterIndex: this.currentChapterIndex,

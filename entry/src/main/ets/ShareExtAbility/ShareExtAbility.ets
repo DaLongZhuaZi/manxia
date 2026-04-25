@@ -221,8 +221,11 @@ export default class ShareExtAbility extends UIExtensionAbility {
     }
     
     // 电子书
-    if (lowerUri.endsWith('.epub') || lowerUri.endsWith('.mobi') || 
-        lowerUri.endsWith('.azw3') || lowerUri.endsWith('.txt')) {
+    if (lowerUri.endsWith('.epub') || lowerUri.endsWith('.mobi') ||
+        lowerUri.endsWith('.azw') || lowerUri.endsWith('.azw3') ||
+        lowerUri.endsWith('.txt') || lowerUri.includes('.epub?') ||
+        lowerUri.includes('.mobi?') || lowerUri.includes('.azw?') ||
+        lowerUri.includes('.azw3?') || lowerUri.includes('.txt?')) {
       return 'ebook';
     }
     

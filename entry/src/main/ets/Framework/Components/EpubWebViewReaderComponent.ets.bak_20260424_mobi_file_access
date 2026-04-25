@@ -1,0 +1,3807 @@
+import { webview } from '@kit.ArkWeb';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { image } from '@kit.ImageKit';
+import {
+  curves,
+  display,
+  matrix4,
+  UIContext
+} from '@kit.ArkUI';
+import { logger } from '../../Utils/Logger';
+import {
+  EBookReadingSettings,
+  DEFAULT_EBOOK_READING_SETTINGS
+} from '../../Models/EBookModels';
+import {
+  ReadingSettings as MangaReadingSettings,
+  ReadingMode,
+  ReadingDirection,
+  DoublePagePortraitLayout,
+  DEFAULT_READING_SETTINGS,
+  PageTurnAnimationType
+} from '../../Models/MangaModels';
+import {
+  CurlStartPosition,
+  PageCurlConfigV2,
+  PageCurlEffectV2
+} from '../../components/PageCurlEffectV2';
+
+const TAG = 'EpubWebViewReaderComponent';
+const SETTINGS_APPLY_DELAY_MS = 80;
+const REFLOW_SETTLE_DELAY_MS = 260;
+const INITIAL_LAYOUT_RECONCILE_DELAY_MS = 480;
+const EPUB_WEBVIEW_CAPTURE_COMPONENT_ID = 'epub_webview_reader_content_capture';
+const EPUB_CURL_TARGET_CAPTURE_DELAY_MS = 80;
+const EPUB_CURL_COVER_RENDER_DELAY_MS = 34;
+const IMAGE_RESOURCE_PATH_PATTERN: RegExp = /\.(apng|avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i;
+
+interface FixedLayoutDimension {
+  w: number;
+  h: number;
+}
+
+interface ViewportDims {
+  w: number;
+  h: number;
+  visualW: number;
+  visualH: number;
+  visualScale: number;
+}
+
+type EpubPageLayoutKind =
+  'horizontal_paged' |
+  'vertical_paged' |
+  'double_page' |
+  'continuous_horizontal' |
+  'continuous_vertical';
+export type EpubSpineTransitionDirection = 'prev' | 'next' | 'none';
+
+interface ViewportAnimationState {
+  opacity: number;
+  matrix: matrix4.Matrix4Transit;
+}
+
+interface PageTurnAnimationProfile {
+  outgoing: ViewportAnimationState;
+  incoming: ViewportAnimationState;
+  outDuration: number;
+  inDuration: number;
+  outCurve: Curve;
+  inCurve: Curve;
+}
+
+interface PaginationMetrics {
+  pageCount: number;
+  currentPage: number;
+  currentOffset: number;
+  pageExtent: number;
+  maxOffset: number;
+  contentExtent: number;
+  inlineMediaCount: number;
+  blockMediaCount: number;
+  innerWidth: number;
+  innerHeight: number;
+  visualViewportWidth: number;
+  visualViewportHeight: number;
+  visualViewportScale: number;
+  scrollWidth: number;
+  scrollHeight: number;
+  rootFontSize: string;
+  bodyFontSize: string;
+  bodyLineHeight: string;
+  sampleTagName: string;
+  sampleFontSize: string;
+  sampleLineHeight: string;
+  sampleTextAlign: string;
+  styleTagParent: string;
+  isStyleTagLastChild: boolean;
+  rootTagName: string;
+  contentKind: string;
+}
+
+interface PageCommandResult {
+  pageIndex: number;
+  offset: number;
+  pageCount: number;
+  pageExtent: number;
+  maxOffset: number;
+  requestedOffset: number;
+  physicalOffset: number;
+  usedVirtualOffset: boolean;
+  found?: boolean;
+}
+
+interface PaginationUpdatePayload {
+  source: string;
+  layoutKind: string;
+  pageCount: number;
+  currentPage: number;
+  currentOffset: number;
+  pageExtent: number;
+  maxOffset: number;
+  atStart: boolean;
+  atEnd: boolean;
+}
+
+interface ReaderTapPayload {
+  xRatio: number;
+  yRatio: number;
+}
+
+interface EpubReaderJsProxy {
+  onPaginationChanged: (payloadJson: string) => void;
+  onReaderTap: (payloadJson: string) => void;
+}
+
+interface PendingSpineTransitionState {
+  incoming: ViewportAnimationState;
+  inDuration: number;
+  inCurve: Curve;
+}
+
+export interface EpubWebViewReaderController {
+  loadSpineItem(
+    spineFilePath: string,
+    pageOffset: number,
+    transitionDirection?: EpubSpineTransitionDirection,
+    anchorFragment?: string
+  ): void;
+  flipPage(forward: boolean): boolean;
+  beginInteractiveCurl(forward: boolean, touchX: number, touchY: number): boolean;
+  updateInteractiveCurl(progress: number, touchX: number, touchY: number): void;
+  endInteractiveCurl(complete: boolean): boolean;
+  cancelInteractiveCurl(): void;
+  goToPage(pageIndex: number): boolean;
+  goToAnchor(anchorFragment: string): boolean;
+  getPageCount(): number;
+  getCurrentPage(): number;
+  applyReadingSettings(settings: EBookReadingSettings): void;
+  applyPageSettings(settings: MangaReadingSettings): void;
+  isReady(): boolean;
+}
+
+export interface EpubWebViewReaderCallbacks {
+  onPageChange: (page: number, totalPages: number) => void;
+  onSpineChangeRequested: (direction: 'prev' | 'next') => void;
+  onReady: (controller: EpubWebViewReaderController) => void;
+  onError: (msg: string) => void;
+  onReaderTap?: (xRatio: number, yRatio: number) => void;
+}
+
+export interface EpubWebViewReaderParams {
+  initialSpineFilePath: string;
+  initialPageOffset: number;
+  initialAnchorFragment?: string;
+  contentSafeTopInset?: number;
+  textSettings: EBookReadingSettings;
+  pageSettings: MangaReadingSettings;
+  isFixedLayout: boolean;
+  spineLayoutType?: string;
+  spineMediaType?: string;
+  callbacks: EpubWebViewReaderCallbacks;
+}
+
+class EpubWebViewReaderControllerImpl implements EpubWebViewReaderController {
+  private fnLoad: (
+    path: string,
+    offset: number,
+    transitionDirection: EpubSpineTransitionDirection,
+    anchorFragment: string
+  ) => void;
+  private fnFlip: (forward: boolean) => boolean;
+  private fnBeginInteractiveCurl: (forward: boolean, touchX: number, touchY: number) => boolean;
+  private fnUpdateInteractiveCurl: (progress: number, touchX: number, touchY: number) => void;
+  private fnEndInteractiveCurl: (complete: boolean) => boolean;
+  private fnCancelInteractiveCurl: () => void;
+  private fnGoToPage: (pageIndex: number) => boolean;
+  private fnGoToAnchor: (anchorFragment: string) => boolean;
+  private fnGetCount: () => number;
+  private fnGetCurrent: () => number;
+  private fnApplySettings: (s: EBookReadingSettings) => void;
+  private fnApplyPageSettings: (s: MangaReadingSettings) => void;
+  private fnIsReady: () => boolean;
+
+  constructor(
+    fnLoad: (
+      path: string,
+      offset: number,
+      transitionDirection: EpubSpineTransitionDirection,
+      anchorFragment: string
+    ) => void,
+    fnFlip: (forward: boolean) => boolean,
+    fnBeginInteractiveCurl: (forward: boolean, touchX: number, touchY: number) => boolean,
+    fnUpdateInteractiveCurl: (progress: number, touchX: number, touchY: number) => void,
+    fnEndInteractiveCurl: (complete: boolean) => boolean,
+    fnCancelInteractiveCurl: () => void,
+    fnGoToPage: (pageIndex: number) => boolean,
+    fnGoToAnchor: (anchorFragment: string) => boolean,
+    fnGetCount: () => number,
+    fnGetCurrent: () => number,
+    fnApplySettings: (s: EBookReadingSettings) => void,
+    fnApplyPageSettings: (s: MangaReadingSettings) => void,
+    fnIsReady: () => boolean
+  ) {
+    this.fnLoad = fnLoad;
+    this.fnFlip = fnFlip;
+    this.fnBeginInteractiveCurl = fnBeginInteractiveCurl;
+    this.fnUpdateInteractiveCurl = fnUpdateInteractiveCurl;
+    this.fnEndInteractiveCurl = fnEndInteractiveCurl;
+    this.fnCancelInteractiveCurl = fnCancelInteractiveCurl;
+    this.fnGoToPage = fnGoToPage;
+    this.fnGoToAnchor = fnGoToAnchor;
+    this.fnGetCount = fnGetCount;
+    this.fnGetCurrent = fnGetCurrent;
+    this.fnApplySettings = fnApplySettings;
+    this.fnApplyPageSettings = fnApplyPageSettings;
+    this.fnIsReady = fnIsReady;
+  }
+
+  loadSpineItem(
+    spineFilePath: string,
+    pageOffset: number,
+    transitionDirection: EpubSpineTransitionDirection = 'none',
+    anchorFragment: string = ''
+  ): void {
+    this.fnLoad(spineFilePath, pageOffset, transitionDirection, anchorFragment);
+  }
+
+  flipPage(forward: boolean): boolean {
+    return this.fnFlip(forward);
+  }
+
+  beginInteractiveCurl(forward: boolean, touchX: number, touchY: number): boolean {
+    return this.fnBeginInteractiveCurl(forward, touchX, touchY);
+  }
+
+  updateInteractiveCurl(progress: number, touchX: number, touchY: number): void {
+    this.fnUpdateInteractiveCurl(progress, touchX, touchY);
+  }
+
+  endInteractiveCurl(complete: boolean): boolean {
+    return this.fnEndInteractiveCurl(complete);
+  }
+
+  cancelInteractiveCurl(): void {
+    this.fnCancelInteractiveCurl();
+  }
+
+  goToPage(pageIndex: number): boolean {
+    return this.fnGoToPage(pageIndex);
+  }
+
+  goToAnchor(anchorFragment: string): boolean {
+    return this.fnGoToAnchor(anchorFragment);
+  }
+
+  getPageCount(): number {
+    return this.fnGetCount();
+  }
+
+  getCurrentPage(): number {
+    return this.fnGetCurrent();
+  }
+
+  applyReadingSettings(settings: EBookReadingSettings): void {
+    this.fnApplySettings(settings);
+  }
+
+  applyPageSettings(settings: MangaReadingSettings): void {
+    this.fnApplyPageSettings(settings);
+  }
+
+  isReady(): boolean {
+    return this.fnIsReady();
+  }
+}
+
+@Component
+export struct EpubWebViewReaderComponent {
+  @Prop params: EpubWebViewReaderParams;
+
+  private uiContext: UIContext | null = null;
+  private webviewController: webview.WebviewController = new webview.WebviewController();
+  private currentPageCount: number = 0;
+  private currentPage: number = 0;
+  private ready: boolean = false;
+  private webControllerAttached: boolean = false;
+  private universalAccessRoot: string = '';
+  private isPageTurnAnimating: boolean = false;
+  private pendingPageOffset: number = 0;
+  private pendingSpinePath: string = '';
+  private pendingAnchorFragment: string = '';
+  private applySettingsTimer: number = -1;
+  private pageTurnPhaseTimer: number = -1;
+  private pendingSpineTransition: PendingSpineTransitionState | null = null;
+  private boundarySwitchTimer: number = -1;
+  private currentLayoutKind: EpubPageLayoutKind = 'horizontal_paged';
+  private lastPaginationOffset: number = 0;
+  private lastPaginationMaxOffset: number = 0;
+  private lastPaginationPageExtent: number = 0;
+  private lastProgressRatio: number = 0;
+  private lastBoundarySwitchTime: number = 0;
+  private boundarySuppressionUntil: number = 0;
+  private activeTextSettings: EBookReadingSettings = {
+    fontSize: DEFAULT_EBOOK_READING_SETTINGS.fontSize,
+    fontFamily: DEFAULT_EBOOK_READING_SETTINGS.fontFamily,
+    fontPath: DEFAULT_EBOOK_READING_SETTINGS.fontPath,
+    fontWeight: DEFAULT_EBOOK_READING_SETTINGS.fontWeight,
+    lineHeight: DEFAULT_EBOOK_READING_SETTINGS.lineHeight,
+    backgroundColor: DEFAULT_EBOOK_READING_SETTINGS.backgroundColor,
+    textColor: DEFAULT_EBOOK_READING_SETTINGS.textColor,
+    themeBgImage: DEFAULT_EBOOK_READING_SETTINGS.themeBgImage,
+    nightMode: DEFAULT_EBOOK_READING_SETTINGS.nightMode,
+    followSystemTheme: DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme,
+    pageMargin: DEFAULT_EBOOK_READING_SETTINGS.pageMargin,
+    pageTopMargin: DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin,
+    pageBottomMargin: DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin,
+    pageMode: DEFAULT_EBOOK_READING_SETTINGS.pageMode,
+    brightness: DEFAULT_EBOOK_READING_SETTINGS.brightness,
+    autoSave: DEFAULT_EBOOK_READING_SETTINGS.autoSave,
+    saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval
+  };
+  private activePageSettings: MangaReadingSettings = DEFAULT_READING_SETTINGS;
+  private hostWidthVp: number = 0;
+  private hostHeightVp: number = 0;
+  private fallbackVpW: number = 0;
+  private fallbackVpH: number = 0;
+  private lastVpW: number = 0;
+  private lastVpH: number = 0;
+  private lastVisualVpW: number = 0;
+  private lastVisualVpH: number = 0;
+  private lastVisualVpScale: number = 1;
+  private epubCurlCurrentPixelMap: image.PixelMap | null = null;
+  private epubCurlNextPixelMap: image.PixelMap | null = null;
+  private epubCurlAnimationTimer: number = -1;
+  private epubCurlReleaseTimer: number = -1;
+  private epubCurlInteractiveActive: boolean = false;
+  private epubCurlInteractiveReady: boolean = false;
+  private epubCurlInteractiveEndPending: boolean = false;
+  private epubCurlInteractiveEndComplete: boolean = false;
+  private epubCurlInteractiveOriginalPage: number = -1;
+  private epubCurlInteractiveTargetPage: number = -1;
+  private epubCurlPendingProgress: number = 0;
+  private epubCurlEffectConfig: PageCurlConfigV2 = {
+    stripCount: 24,
+    maxCurlHeight: 100,
+    shadowIntensity: 0.6,
+    animationDuration: 240,
+    enableShadow: true,
+    enableHighlight: true,
+    flipThreshold: 0.35
+  };
+  private jsProxy: EpubReaderJsProxy = {
+    onPaginationChanged: (payloadJson: string): void => {
+      this.handlePaginationChanged(payloadJson);
+    },
+    onReaderTap: (payloadJson: string): void => {
+      this.handleReaderTap(payloadJson);
+    }
+  };
+
+  @State private viewportOpacity: number = 1;
+  @State private viewportMatrix: matrix4.Matrix4Transit = matrix4.identity();
+  @State private viewportBackgroundColor: string = DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
+  @State private showEpubCurlSnapshotCover: boolean = false;
+  @State private showEpubCurlEffect: boolean = false;
+  @State private epubCurlCanvasReady: boolean = false;
+  @State private epubCurlProgress: number = 0;
+  @State private epubCurlRenderToken: number = 0;
+  @State private epubCurlIsForward: boolean = true;
+  @State private epubCurlStartPosition: CurlStartPosition = CurlStartPosition.RIGHT_EDGE;
+  @State private epubCurlTouchX: number = 0;
+  @State private epubCurlTouchY: number = 0;
+
+  aboutToAppear(): void {
+    this.uiContext = this.resolveUiContext();
+    const dm = display.getDefaultDisplaySync();
+    this.fallbackVpW = px2vp(dm.width);
+    this.fallbackVpH = px2vp(dm.height);
+    this.pendingSpinePath = this.params.initialSpineFilePath;
+    this.pendingPageOffset = this.params.initialPageOffset;
+    this.pendingAnchorFragment = this.normalizeAnchorFragment(this.params.initialAnchorFragment ?? '');
+    this.activeTextSettings = this.cloneTextSettings(this.params.textSettings);
+    this.activePageSettings = this.clonePageSettings(this.params.pageSettings);
+    this.viewportBackgroundColor = this.activeTextSettings.backgroundColor;
+    this.resetViewportTransform();
+    logger.info(
+      TAG,
+      `组件初始化: spine=${this.pendingSpinePath}, pageOffset=${this.pendingPageOffset}, anchor=${this.pendingAnchorFragment || 'none'}, fixed=${this.params.isFixedLayout}, text(${this.describeTextSettings(this.activeTextSettings)}), page(${this.describePageSettings(this.activePageSettings)})`
+    );
+  }
+
+  aboutToDisappear(): void {
+    this.clearDeferredWork();
+    this.resetViewportTransform();
+    this.pendingSpineTransition = null;
+    this.resetEpubCurlState(true);
+    this.uiContext = null;
+  }
+
+  private clearApplySettingsTimer(): void {
+    if (this.applySettingsTimer !== -1) {
+      clearTimeout(this.applySettingsTimer);
+      this.applySettingsTimer = -1;
+    }
+  }
+
+  private clearPageTurnPhaseTimer(): void {
+    if (this.pageTurnPhaseTimer !== -1) {
+      clearTimeout(this.pageTurnPhaseTimer);
+      this.pageTurnPhaseTimer = -1;
+    }
+  }
+
+  private clearDeferredWork(): void {
+    this.clearApplySettingsTimer();
+    this.clearPageTurnPhaseTimer();
+    this.clearBoundarySwitchTimer();
+  }
+
+  private clearBoundarySwitchTimer(): void {
+    if (this.boundarySwitchTimer !== -1) {
+      clearTimeout(this.boundarySwitchTimer);
+      this.boundarySwitchTimer = -1;
+    }
+  }
+
+  private resolveUiContext(): UIContext | null {
+    if (this.uiContext) {
+      return this.uiContext;
+    }
+    try {
+      this.uiContext = this.getUIContext();
+      return this.uiContext;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  private runJs(code: string, onResult?: (result: string) => void): void {
+    try {
+      this.webviewController.runJavaScript(code, (error: BusinessError | null, result: string) => {
+        if (error) {
+          logger.warn(TAG, `runJavaScript failed: ${error.message}`);
+          return;
+        }
+        if (onResult) {
+          onResult(result);
+        }
+      });
+    } catch (error) {
+      logger.warn(TAG, `runJavaScript threw: ${String(error)}`);
+    }
+  }
+
+  private parseWebViewJson(raw: string): string {
+    if (raw.startsWith('"') && raw.endsWith('"')) {
+      try {
+        return JSON.parse(raw) as string;
+      } catch (_error) {
+        return raw;
+      }
+    }
+    return raw;
+  }
+
+  private queryViewportThenInject(pageOffset: number, source: string): void {
+    this.runJs(
+      '(function(){return JSON.stringify({w:window.innerWidth,h:window.innerHeight,visualW:window.visualViewport?(window.visualViewport.width||0):0,visualH:window.visualViewport?(window.visualViewport.height||0):0,visualScale:window.visualViewport?(window.visualViewport.scale||0):0});})();',
+      (raw: string) => {
+        let vpW = this.fallbackVpW;
+        let vpH = this.fallbackVpH;
+        let visualW = this.fallbackVpW;
+        let visualH = this.fallbackVpH;
+        let visualScale = 1;
+        try {
+          const clean = this.parseWebViewJson(raw);
+          const dims = JSON.parse(clean) as ViewportDims;
+          if (dims.w > 0) {
+            vpW = dims.w;
+          }
+          if (dims.h > 0) {
+            vpH = dims.h;
+          }
+          if (dims.visualW > 0) {
+            visualW = dims.visualW;
+          }
+          if (dims.visualH > 0) {
+            visualH = dims.visualH;
+          }
+          if (dims.visualScale > 0) {
+            visualScale = dims.visualScale;
+          }
+        } catch (_error) {
+          logger.warn(TAG, 'Viewport JSON parse failed, fallback to display metrics');
+        }
+        this.lastVpW = vpW;
+        this.lastVpH = vpH;
+        this.lastVisualVpW = visualW;
+        this.lastVisualVpH = visualH;
+        this.lastVisualVpScale = visualScale;
+        this.applyInjectedLayout(
+          vpW,
+          vpH,
+          pageOffset,
+          this.activeTextSettings,
+          this.activePageSettings,
+          true,
+          source
+        );
+      }
+    );
+  }
+
+  private cloneTextSettings(settings: EBookReadingSettings): EBookReadingSettings {
+    return {
+      fontSize: settings.fontSize,
+      fontFamily: settings.fontFamily,
+      fontPath: settings.fontPath,
+      fontWeight: settings.fontWeight,
+      lineHeight: settings.lineHeight,
+      backgroundColor: settings.backgroundColor,
+      textColor: settings.textColor,
+      themeBgImage: settings.themeBgImage,
+      nightMode: settings.nightMode,
+      followSystemTheme: settings.followSystemTheme,
+      pageMargin: settings.pageMargin,
+      pageTopMargin: settings.pageTopMargin,
+      pageBottomMargin: settings.pageBottomMargin,
+      pageMode: settings.pageMode,
+      brightness: settings.brightness,
+      autoSave: settings.autoSave,
+      saveInterval: settings.saveInterval,
+      letterSpacing: settings.letterSpacing,
+      paragraphSpacing: settings.paragraphSpacing,
+      firstLineIndent: settings.firstLineIndent,
+      textAlignment: settings.textAlignment,
+      pageTurnAnimation: settings.pageTurnAnimation,
+      tapToTurn: settings.tapToTurn,
+      volumeKeyNavigation: settings.volumeKeyNavigation,
+      keepScreenOn: settings.keepScreenOn,
+      showPageNumber: settings.showPageNumber,
+      showProgress: settings.showProgress,
+      showTime: settings.showTime,
+      showBattery: settings.showBattery,
+      backgroundType: settings.backgroundType,
+      backgroundImagePath: settings.backgroundImagePath,
+      backgroundImageOpacity: settings.backgroundImageOpacity
+    };
+  }
+
+  private clonePageSettings(settings: MangaReadingSettings): MangaReadingSettings {
+    return {
+      readingMode: settings.readingMode,
+      readingDirection: settings.readingDirection,
+      brightness: settings.brightness,
+      keepScreenOn: settings.keepScreenOn,
+      pageSpacing: settings.pageSpacing,
+      showPageInfo: settings.showPageInfo,
+      showPageIndicator: settings.showPageIndicator,
+      fitMode: settings.fitMode,
+      autoPageTurnInterval: settings.autoPageTurnInterval,
+      skipIntroPages: settings.skipIntroPages,
+      pageTurnAnimation: settings.pageTurnAnimation,
+      doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      filterSettings: {
+        enabled: settings.filterSettings.enabled,
+        brightness: settings.filterSettings.brightness,
+        contrast: settings.filterSettings.contrast,
+        saturation: settings.filterSettings.saturation,
+        hue: settings.filterSettings.hue,
+        gamma: settings.filterSettings.gamma,
+        sepia: settings.filterSettings.sepia,
+        invert: settings.filterSettings.invert,
+        grayscale: settings.filterSettings.grayscale,
+        blur: settings.filterSettings.blur
+      },
+      volumeKeyNavigation: settings.volumeKeyNavigation,
+      curlBackOpacity: settings.curlBackOpacity ?? DEFAULT_READING_SETTINGS.curlBackOpacity,
+      webtoonLeftMargin: settings.webtoonLeftMargin ?? DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+      webtoonRightMargin: settings.webtoonRightMargin ?? DEFAULT_READING_SETTINGS.webtoonRightMargin,
+      webtoonMarginSync: settings.webtoonMarginSync ?? DEFAULT_READING_SETTINGS.webtoonMarginSync
+    };
+  }
+
+  private getCurrentSpineLayoutType(): string {
+    return (this.params.spineLayoutType ?? '').trim().toUpperCase();
+  }
+
+  private getCurrentSpineMediaType(): string {
+    return (this.params.spineMediaType ?? '').trim().toLowerCase();
+  }
+
+  private getCurrentSpinePathHint(): string {
+    return this.pendingSpinePath.trim().toLowerCase();
+  }
+
+  private isCurrentSpineImageLike(): boolean {
+    const layoutType = this.getCurrentSpineLayoutType();
+    if (layoutType === 'IMAGE_PAGE') {
+      return true;
+    }
+    const mediaType = this.getCurrentSpineMediaType();
+    if (mediaType.startsWith('image/')) {
+      return true;
+    }
+    const pathHint = this.getCurrentSpinePathHint().replace(/[#?].*$/, '');
+    return IMAGE_RESOURCE_PATH_PATTERN.test(pathHint);
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    const normalized = isNaN(value) ? min : value;
+    return Math.max(min, Math.min(max, normalized));
+  }
+
+  private normalizeAnchorFragment(anchorFragment: string): string {
+    const trimmed = anchorFragment.trim();
+    if (trimmed.length <= 0) {
+      return '';
+    }
+    const normalized = trimmed.startsWith('#') ? trimmed.substring(1) : trimmed;
+    if (normalized.length <= 0) {
+      return '';
+    }
+    try {
+      return decodeURIComponent(normalized);
+    } catch (_error) {
+      return normalized;
+    }
+  }
+
+  private describeTextSettings(settings: EBookReadingSettings): string {
+    return `fontSize=${settings.fontSize}, lineHeight=${settings.lineHeight}, margin=${settings.pageMargin}, top=${settings.pageTopMargin ?? settings.pageMargin}, bottom=${settings.pageBottomMargin ?? settings.pageMargin}, bg=${settings.backgroundColor}, text=${settings.textColor}, align=${settings.textAlignment ?? 'JUSTIFY'}, bgType=${settings.backgroundType ?? 'COLOR'}`;
+  }
+
+  private describePageSettings(settings: MangaReadingSettings): string {
+    return `mode=${settings.readingMode}, direction=${settings.readingDirection}, animation=${settings.pageTurnAnimation}, doublePagePortrait=${settings.doublePagePortraitLayout}`;
+  }
+
+  private getViewportScale(vpW: number, vpH: number): number {
+    const baseW = this.lastVisualVpW > 0 ? this.lastVisualVpW : (this.fallbackVpW > 0 ? this.fallbackVpW : vpW);
+    const baseH = this.lastVisualVpH > 0 ? this.lastVisualVpH : (this.fallbackVpH > 0 ? this.fallbackVpH : vpH);
+    const scaleW = baseW > 0 ? vpW / baseW : 1;
+    const scaleH = baseH > 0 ? vpH / baseH : 1;
+    const safeScaleW = isNaN(scaleW) || scaleW <= 0 ? 1 : scaleW;
+    const safeScaleH = isNaN(scaleH) || scaleH <= 0 ? 1 : scaleH;
+    return this.clamp(Math.min(safeScaleW, safeScaleH), 1, 4);
+  }
+
+  private getCssPxPerHostVp(vpW: number, vpH: number): number {
+    const hostW = this.hostWidthVp > 1 ? this.hostWidthVp : this.fallbackVpW;
+    const hostH = this.hostHeightVp > 1 ? this.hostHeightVp : this.fallbackVpH;
+    const scaleW = hostW > 0 ? vpW / hostW : 1;
+    const scaleH = hostH > 0 ? vpH / hostH : 1;
+    const safeScaleW = isNaN(scaleW) || scaleW <= 0 ? 1 : scaleW;
+    const safeScaleH = isNaN(scaleH) || scaleH <= 0 ? 1 : scaleH;
+    return this.clamp(Math.min(safeScaleW, safeScaleH), 1, 4);
+  }
+
+  private getContentSafeTopInsetCssPx(vpW: number, vpH: number): number {
+    const safeTopInsetVp = this.params.contentSafeTopInset ?? 0;
+    return this.clamp(safeTopInsetVp * this.getCssPxPerHostVp(vpW, vpH), 0, 480);
+  }
+
+  private getLayoutKind(settings: MangaReadingSettings, vpW: number, vpH: number): EpubPageLayoutKind {
+    if (this.isContinuousVerticalMode(settings)) {
+      return 'continuous_vertical';
+    }
+    if (this.isContinuousHorizontalMode(settings)) {
+      return 'continuous_horizontal';
+    }
+    if (settings.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
+      return 'vertical_paged';
+    }
+    if (settings.readingMode === ReadingMode.DOUBLE_PAGE &&
+      (vpW > vpH || settings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL)) {
+      return 'double_page';
+    }
+    return 'horizontal_paged';
+  }
+
+  private isContinuousVerticalMode(settings: MangaReadingSettings = this.activePageSettings): boolean {
+    return settings.readingMode === ReadingMode.WEBTOON ||
+      settings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+      settings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+  }
+
+  private isContinuousHorizontalMode(settings: MangaReadingSettings = this.activePageSettings): boolean {
+    return settings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
+  }
+
+  private isContinuousMode(settings: MangaReadingSettings = this.activePageSettings): boolean {
+    return this.isContinuousVerticalMode(settings) || this.isContinuousHorizontalMode(settings);
+  }
+
+  private computeProgressRatio(
+    pageIndex: number,
+    pageCount: number,
+    currentOffset: number,
+    maxOffset: number
+  ): number {
+    if (maxOffset > 0) {
+      return this.clamp(currentOffset / maxOffset, 0, 1);
+    }
+    if (pageCount > 1) {
+      return this.clamp(pageIndex / Math.max(1, pageCount - 1), 0, 1);
+    }
+    return 0;
+  }
+
+  private normalizeAnimationType(animationType: PageTurnAnimationType): PageTurnAnimationType {
+    if (animationType === PageTurnAnimationType.FLIP) {
+      return PageTurnAnimationType.CUBE;
+    }
+    if (animationType === PageTurnAnimationType.ZOOM) {
+      return PageTurnAnimationType.DEPTH;
+    }
+    return animationType;
+  }
+
+  private normalizeViewportAnimationType(animationType: PageTurnAnimationType): PageTurnAnimationType {
+    const normalized = this.normalizeAnimationType(animationType);
+    if (normalized === PageTurnAnimationType.CURL) {
+      return PageTurnAnimationType.COVER;
+    }
+    return normalized;
+  }
+
+  private buildMatrix(
+    translateX: number,
+    translateY: number,
+    translateZ: number,
+    scaleX: number,
+    scaleY: number,
+    rotateX: number,
+    rotateY: number
+  ): matrix4.Matrix4Transit {
+    let matrix = matrix4.identity();
+    matrix = matrix.translate({ x: translateX, y: translateY, z: translateZ });
+    if (rotateX !== 0) {
+      matrix = matrix.rotate({ x: 1, y: 0, z: 0, angle: rotateX });
+    }
+    if (rotateY !== 0) {
+      matrix = matrix.rotate({ x: 0, y: 1, z: 0, angle: rotateY });
+    }
+    matrix = matrix.scale({ x: scaleX, y: scaleY, z: 1 });
+    return matrix;
+  }
+
+  private resetViewportTransform(): void {
+    this.viewportOpacity = 1;
+    this.viewportMatrix = matrix4.identity();
+  }
+
+  private applyViewportState(state: ViewportAnimationState): void {
+    this.viewportOpacity = state.opacity;
+    this.viewportMatrix = state.matrix;
+  }
+
+  private getAnimationDirectionSign(layoutKind: EpubPageLayoutKind, forward: boolean): number {
+    if (layoutKind === 'vertical_paged' || layoutKind === 'continuous_vertical') {
+      return forward ? -1 : 1;
+    }
+    if (this.activePageSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT) {
+      return forward ? 1 : -1;
+    }
+    return forward ? -1 : 1;
+  }
+
+  private getAnimationViewportWidthVp(): number {
+    if (this.hostWidthVp > 1) {
+      return this.hostWidthVp;
+    }
+    if (this.fallbackVpW > 1) {
+      return this.fallbackVpW;
+    }
+    const dm = display.getDefaultDisplaySync();
+    return px2vp(dm.width);
+  }
+
+  private getAnimationViewportHeightVp(): number {
+    if (this.hostHeightVp > 1) {
+      return this.hostHeightVp;
+    }
+    if (this.fallbackVpH > 1) {
+      return this.fallbackVpH;
+    }
+    const dm = display.getDefaultDisplaySync();
+    return px2vp(dm.height);
+  }
+
+  private shouldUseTextSafeAnimationProfile(): boolean {
+    return !this.params.isFixedLayout;
+  }
+
+  private createTextSafeAnimationProfile(
+    layoutKind: EpubPageLayoutKind,
+    forward: boolean,
+    animationType: PageTurnAnimationType
+  ): PageTurnAnimationProfile {
+    const viewportW = this.getAnimationViewportWidthVp();
+    const viewportH = this.getAnimationViewportHeightVp();
+    const isVertical = layoutKind === 'vertical_paged' || layoutKind === 'continuous_vertical';
+    const extent = isVertical ? viewportH : viewportW;
+    const sign = this.getAnimationDirectionSign(layoutKind, forward);
+    const axisX = isVertical ? 0 : extent * sign;
+    const axisY = isVertical ? extent * sign : 0;
+    const incomingX = -axisX;
+    const incomingY = -axisY;
+
+    switch (animationType) {
+      case PageTurnAnimationType.SLIDE:
+        return {
+          outgoing: {
+            opacity: 0.82,
+            matrix: this.buildMatrix(axisX * 0.08, axisY * 0.08, 0, 1, 1, 0, 0)
+          },
+          incoming: {
+            opacity: 1,
+            matrix: this.buildMatrix(incomingX * 0.16, incomingY * 0.16, 0, 1, 1, 0, 0)
+          },
+          outDuration: 90,
+          inDuration: 170,
+          outCurve: Curve.EaseIn,
+          inCurve: Curve.FastOutSlowIn
+        };
+      case PageTurnAnimationType.FADE:
+        return {
+          outgoing: {
+            opacity: 0.06,
+            matrix: this.buildMatrix(0, 0, 0, 1, 1, 0, 0)
+          },
+          incoming: {
+            opacity: 0.18,
+            matrix: this.buildMatrix(0, 0, 0, 1, 1, 0, 0)
+          },
+          outDuration: 100,
+          inDuration: 160,
+          outCurve: Curve.EaseOut,
+          inCurve: Curve.EaseIn
+        };
+      case PageTurnAnimationType.COVER:
+        return {
+          outgoing: {
+            opacity: 0.92,
+            matrix: this.buildMatrix(axisX * 0.03, axisY * 0.03, 0, 1, 1, 0, 0)
+          },
+          incoming: {
+            opacity: 1,
+            matrix: this.buildMatrix(incomingX * 0.20, incomingY * 0.20, 0, 1, 1, 0, 0)
+          },
+          outDuration: 85,
+          inDuration: 180,
+          outCurve: Curve.EaseOut,
+          inCurve: Curve.FastOutSlowIn
+        };
+      case PageTurnAnimationType.CUBE:
+        return {
+          outgoing: {
+            opacity: 0.54,
+            matrix: this.buildMatrix(axisX * 0.05, axisY * 0.05, 0, 0.995, 0.995, 0, 0)
+          },
+          incoming: {
+            opacity: 0.74,
+            matrix: this.buildMatrix(incomingX * 0.12, incomingY * 0.12, 0, 1, 1, 0, 0)
+          },
+          outDuration: 95,
+          inDuration: 185,
+          outCurve: Curve.EaseInOut,
+          inCurve: Curve.FastOutSlowIn
+        };
+      case PageTurnAnimationType.DEPTH:
+        return {
+          outgoing: {
+            opacity: 0.38,
+            matrix: this.buildMatrix(axisX * 0.02, axisY * 0.02, 0, 0.985, 0.985, 0, 0)
+          },
+          incoming: {
+            opacity: 0.68,
+            matrix: this.buildMatrix(-axisX * 0.03, -axisY * 0.03, 0, 1.015, 1.015, 0, 0)
+          },
+          outDuration: 90,
+          inDuration: 190,
+          outCurve: Curve.EaseIn,
+          inCurve: Curve.FastOutSlowIn
+        };
+      default:
+        return {
+          outgoing: {
+            opacity: 0.12,
+            matrix: this.buildMatrix(0, 0, 0, 1, 1, 0, 0)
+          },
+          incoming: {
+            opacity: 0.22,
+            matrix: this.buildMatrix(0, 0, 0, 1, 1, 0, 0)
+          },
+          outDuration: 90,
+          inDuration: 160,
+          outCurve: Curve.EaseOut,
+          inCurve: Curve.EaseIn
+        };
+    }
+  }
+
+  private createAnimationProfile(
+    layoutKind: EpubPageLayoutKind,
+    forward: boolean,
+    animationType: PageTurnAnimationType
+  ): PageTurnAnimationProfile {
+    const normalizedAnimation = this.normalizeViewportAnimationType(animationType);
+    if (this.shouldUseTextSafeAnimationProfile()) {
+      return this.createTextSafeAnimationProfile(layoutKind, forward, normalizedAnimation);
+    }
+    const viewportW = this.getAnimationViewportWidthVp();
+    const viewportH = this.getAnimationViewportHeightVp();
+    const isVertical = layoutKind === 'vertical_paged' || layoutKind === 'continuous_vertical';
+    const extent = isVertical ? viewportH : viewportW;
+    const sign = this.getAnimationDirectionSign(layoutKind, forward);
+    const axisX = isVertical ? 0 : extent * sign;
+    const axisY = isVertical ? extent * sign : 0;
+    const incomingX = -axisX;
+    const incomingY = -axisY;
+
+    switch (normalizedAnimation) {
+      case PageTurnAnimationType.SLIDE:
+        return {
+          outgoing: {
+            opacity: 0.18,
+            matrix: this.buildMatrix(axisX * 0.28, axisY * 0.28, 0, 0.96, 0.96, 0, 0)
+          },
+          incoming: {
+            opacity: 0.32,
+            matrix: this.buildMatrix(incomingX * 0.72, incomingY * 0.72, -40, 0.96, 0.96, 0, 0)
+          },
+          outDuration: 120,
+          inDuration: 190,
+          outCurve: Curve.EaseIn,
+          inCurve: Curve.FastOutSlowIn
+        };
+      case PageTurnAnimationType.FADE:
+        return {
+          outgoing: {
+            opacity: 0.08,
+            matrix: this.buildMatrix(0, 0, 0, 0.97, 0.97, 0, 0)
+          },
+          incoming: {
+            opacity: 0.14,
+            matrix: this.buildMatrix(0, 0, 0, 1.03, 1.03, 0, 0)
+          },
+          outDuration: 100,
+          inDuration: 180,
+          outCurve: Curve.EaseIn,
+          inCurve: Curve.EaseOut
+        };
+      case PageTurnAnimationType.CUBE:
+        return {
+          outgoing: {
+            opacity: 0.28,
+            matrix: this.buildMatrix(
+              axisX * 0.22,
+              axisY * 0.22,
+              -viewportW * 0.2,
+              0.92,
+              0.92,
+              isVertical ? -sign * 42 : 0,
+              isVertical ? 0 : -sign * 54
+            )
+          },
+          incoming: {
+            opacity: 0.44,
+            matrix: this.buildMatrix(
+              incomingX * 0.18,
+              incomingY * 0.18,
+              -viewportW * 0.2,
+              0.92,
+              0.92,
+              isVertical ? sign * 54 : 0,
+              isVertical ? 0 : sign * 54
+            )
+          },
+          outDuration: 135,
+          inDuration: 215,
+          outCurve: Curve.EaseInOut,
+          inCurve: Curve.EaseInOut
+        };
+      case PageTurnAnimationType.COVER:
+        return {
+          outgoing: {
+            opacity: 0.9,
+            matrix: this.buildMatrix(axisX * 0.04, axisY * 0.04, 0, 0.985, 0.985, 0, 0)
+          },
+          incoming: {
+            opacity: 1,
+            matrix: this.buildMatrix(
+              incomingX * 0.98,
+              incomingY * 0.98,
+              40,
+              1.02,
+              1.02,
+              isVertical ? sign * 4 : 0,
+              isVertical ? 0 : sign * 4
+            )
+          },
+          outDuration: 70,
+          inDuration: 220,
+          outCurve: Curve.EaseOut,
+          inCurve: Curve.FastOutSlowIn
+        };
+      case PageTurnAnimationType.DEPTH:
+        return {
+          outgoing: {
+            opacity: 0.16,
+            matrix: this.buildMatrix(axisX * 0.08, axisY * 0.08, -180, 0.84, 0.84, 0, 0)
+          },
+          incoming: {
+            opacity: 0.38,
+            matrix: this.buildMatrix(
+              -axisX * 0.06,
+              -axisY * 0.06,
+              -260,
+              0.62,
+              0.62,
+              isVertical ? sign * 10 : -6,
+              isVertical ? 0 : sign * 10
+            )
+          },
+          outDuration: 110,
+          inDuration: 240,
+          outCurve: Curve.EaseIn,
+          inCurve: Curve.FastOutSlowIn
+        };
+      default:
+        return {
+          outgoing: {
+            opacity: 0.14,
+            matrix: this.buildMatrix(axisX * 0.24, axisY * 0.24, 0, 0.96, 0.96, 0, 0)
+          },
+          incoming: {
+            opacity: 0.24,
+            matrix: this.buildMatrix(incomingX * 0.58, incomingY * 0.58, 0, 0.96, 0.96, 0, 0)
+          },
+          outDuration: 110,
+          inDuration: 180,
+          outCurve: Curve.EaseIn,
+          inCurve: Curve.FastOutSlowIn
+        };
+    }
+  }
+
+  private escapeJsTemplate(value: string): string {
+    return value.replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+  }
+
+  private escapeJsSingleQuoted(value: string): string {
+    return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+
+  private normalizeFileUrl(rawPath: string): string {
+    const trimmed = rawPath.trim();
+    if (trimmed.length <= 0) {
+      return '';
+    }
+    if (trimmed.startsWith('file://')) {
+      return trimmed;
+    }
+    const normalized = trimmed.replace(/\\/g, '/');
+    const escaped = normalized.replace(/'/g, '%27');
+    if (/^[A-Za-z]:\//.test(escaped)) {
+      return `file:///${escaped}`;
+    }
+    if (escaped.startsWith('/')) {
+      return `file://${escaped}`;
+    }
+    return escaped;
+  }
+
+  private toRgba(color: string, alpha: number): string {
+    const normalizedAlpha = this.clamp(alpha, 0, 1);
+    const trimmed = color.trim();
+    let hex = trimmed.startsWith('#') ? trimmed.substring(1) : trimmed;
+    if (hex.length === 3) {
+      hex = `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`;
+    }
+    if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
+      return `rgba(255,255,255,${normalizedAlpha})`;
+    }
+    const red = parseInt(hex.substring(0, 2), 16);
+    const green = parseInt(hex.substring(2, 4), 16);
+    const blue = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${red},${green},${blue},${normalizedAlpha})`;
+  }
+
+  private resolveTextAlignment(value: string | undefined): string {
+    const normalized = (value ?? 'JUSTIFY').trim().toUpperCase();
+    if (normalized === 'LEFT') {
+      return 'left';
+    }
+    if (normalized === 'CENTER') {
+      return 'center';
+    }
+    if (normalized === 'RIGHT') {
+      return 'right';
+    }
+    return 'justify';
+  }
+
+  private buildFontCss(textSettings: EBookReadingSettings): string {
+    const fontPath = (textSettings.fontPath ?? '').trim();
+    if (fontPath.length <= 0) {
+      return '';
+    }
+    const fontUrl = this.normalizeFileUrl(fontPath);
+    if (fontUrl.length <= 0) {
+      return '';
+    }
+    return `
+      @font-face {
+        font-family: '__mnx_custom_font';
+        src: url('${fontUrl}');
+        font-display: swap;
+      }
+    `;
+  }
+
+  private resolveFontFamily(textSettings: EBookReadingSettings): string {
+    const fontPath = (textSettings.fontPath ?? '').trim();
+    const fontFamily = (textSettings.fontFamily ?? 'HarmonyOS Sans').trim();
+    const escapedFamily = (fontFamily.length > 0 ? fontFamily : 'HarmonyOS Sans').replace(/'/g, "\\'");
+    if (fontPath.length > 0) {
+      return `'__mnx_custom_font', '${escapedFamily}', sans-serif`;
+    }
+    if (fontFamily.length <= 0) {
+      return `'HarmonyOS Sans', sans-serif`;
+    }
+    return `'${escapedFamily}', sans-serif`;
+  }
+
+  private buildBackgroundCss(textSettings: EBookReadingSettings): string {
+    const backgroundType = (textSettings.backgroundType ?? 'COLOR').trim().toUpperCase();
+    const backgroundImagePath = (textSettings.backgroundImagePath ?? '').trim();
+    if (backgroundType !== 'IMAGE' || backgroundImagePath.length <= 0) {
+      return '';
+    }
+    const backgroundUrl = this.normalizeFileUrl(backgroundImagePath);
+    if (backgroundUrl.length <= 0) {
+      return '';
+    }
+    const opacity = this.clamp(textSettings.backgroundImageOpacity ?? 0.3, 0, 1);
+    return `
+      html::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background-image: url('${backgroundUrl}');
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        opacity: ${opacity};
+        pointer-events: none;
+        z-index: 0;
+      }
+    `;
+  }
+
+  private buildReflowCss(
+    vpW: number,
+    vpH: number,
+    textSettings: EBookReadingSettings,
+    pageSettings: MangaReadingSettings
+  ): string {
+    const layoutKind = this.getLayoutKind(pageSettings, vpW, vpH);
+    const viewportScale = this.getViewportScale(vpW, vpH);
+    const sideMargin = this.clamp((textSettings.pageMargin ?? 16) * viewportScale, 0, 240);
+    const userTopMargin = this.clamp(
+      (textSettings.pageTopMargin ?? textSettings.pageMargin ?? 24) * viewportScale,
+      0,
+      240
+    );
+    const safeTopInset = this.getContentSafeTopInsetCssPx(vpW, vpH);
+    const topMargin = this.clamp(userTopMargin + safeTopInset, 0, 360);
+    const rawBottomMargin = this.clamp(
+      (textSettings.pageBottomMargin ?? textSettings.pageMargin ?? 24) * viewportScale,
+      0,
+      240
+    );
+    const fontSize = this.clamp((textSettings.fontSize ?? 18) * viewportScale, 10, 160);
+    const lineHeight = this.clamp(textSettings.lineHeight ?? 1.8, 1.0, 3.2);
+    const fontWeight = this.clamp(textSettings.fontWeight ?? 400, 100, 900);
+    const letterSpacing = this.clamp((textSettings.letterSpacing ?? 0) * viewportScale, -8, 24);
+    const paragraphSpacing = this.clamp((textSettings.paragraphSpacing ?? 8) * viewportScale, 0, 120);
+    const firstLineIndent = this.clamp(textSettings.firstLineIndent ?? 0, 0, 8);
+    const showBottomInfo = !this.isCurrentSpineImageLike() && (
+      textSettings.showPageNumber !== false ||
+      (textSettings.showProgress ?? false) ||
+      textSettings.showTime !== false ||
+      (textSettings.showBattery ?? false)
+    );
+    const bottomInfoHeight = showBottomInfo ? this.clamp(28 * viewportScale, 0, 72) : 0;
+    const bottomMargin = rawBottomMargin + bottomInfoHeight;
+    const backgroundColor = textSettings.backgroundColor ?? '#FFFFFF';
+    const textColor = textSettings.textColor ?? '#000000';
+    const bodyOverlayColor = (textSettings.backgroundType ?? 'COLOR').trim().toUpperCase() === 'IMAGE'
+      ? this.toRgba(backgroundColor, 0.9)
+      : backgroundColor;
+    const webtoonLeftMargin = this.isContinuousVerticalMode(pageSettings)
+      ? this.clamp(pageSettings.webtoonLeftMargin ?? 0, 0, 50)
+      : 0;
+    const webtoonRightMargin = this.isContinuousVerticalMode(pageSettings)
+      ? this.clamp(pageSettings.webtoonRightMargin ?? 0, 0, 50)
+      : 0;
+    const leftPadding = sideMargin + (this.isContinuousVerticalMode(pageSettings) ? (vpW * webtoonLeftMargin / 100) : 0);
+    const rightPadding = sideMargin + (this.isContinuousVerticalMode(pageSettings) ? (vpW * webtoonRightMargin / 100) : 0);
+    const contentW = Math.max(1, vpW - leftPadding - rightPadding);
+    const contentH = Math.max(1, vpH - topMargin - bottomMargin);
+    const inlineMediaMaxWidth = Math.max(24, Math.min(contentW, vpW * 0.4));
+    const columnCount = layoutKind === 'double_page' ? 2 : 1;
+    const pageGap = leftPadding + rightPadding;
+    const columnWidth = Math.max(1, (vpW - columnCount * pageGap) / columnCount);
+    const fontCss = this.buildFontCss(textSettings);
+    const fontFamily = this.resolveFontFamily(textSettings);
+    const backgroundCss = this.buildBackgroundCss(textSettings);
+    const textAlign = this.resolveTextAlignment(textSettings.textAlignment);
+    const rootTextCss = `
+      font-size: ${fontSize}px !important;
+      line-height: ${lineHeight} !important;
+      font-family: ${fontFamily} !important;
+      font-weight: ${fontWeight} !important;
+      letter-spacing: ${letterSpacing}px !important;
+      text-align: ${textAlign} !important;
+      -webkit-text-size-adjust: 100% !important;
+      text-size-adjust: 100% !important;
+    `;
+
+    const commonTextCss = `
+      color: ${textColor} !important;
+      font-size: 1rem !important;
+      line-height: ${lineHeight} !important;
+      font-family: ${fontFamily} !important;
+      font-weight: ${fontWeight} !important;
+      letter-spacing: ${letterSpacing}px !important;
+      text-align: ${textAlign} !important;
+      word-break: break-word !important;
+      overflow-wrap: break-word !important;
+      -webkit-font-smoothing: antialiased !important;
+    `;
+
+    const textInheritanceCss = `
+      body * {
+        color: inherit !important;
+        line-height: inherit !important;
+        font-family: inherit !important;
+        font-weight: inherit !important;
+        letter-spacing: inherit !important;
+        text-align: inherit !important;
+      }
+      p, li, div, span, article, section, blockquote, td, th, a, pre, code, dd, dt, figcaption, caption {
+        font-size: inherit !important;
+      }
+      body [style*='font-size'] {
+        font-size: inherit !important;
+      }
+    `;
+
+    const paragraphCss = `
+      p, li, blockquote {
+        margin-top: 0 !important;
+        margin-bottom: ${paragraphSpacing}px !important;
+        text-indent: ${firstLineIndent}em !important;
+      }
+      p:last-child, li:last-child, blockquote:last-child {
+        margin-bottom: 0 !important;
+      }
+    `;
+
+    const imageLikeDocumentCss = `
+      html[data-mnx-content-kind='image_like'] body,
+      html[data-mnx-content-kind='image_like'] body * {
+        box-sizing: border-box !important;
+      }
+      html[data-mnx-content-kind='image_like'] body > * {
+        width: 100% !important;
+        height: 100% !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
+        margin: 0 auto !important;
+        flex: 1 1 auto !important;
+        overflow: hidden !important;
+      }
+      html[data-mnx-content-kind='image_like'] body > div,
+      html[data-mnx-content-kind='image_like'] body > figure,
+      html[data-mnx-content-kind='image_like'] body > section,
+      html[data-mnx-content-kind='image_like'] body > article,
+      html[data-mnx-content-kind='image_like'] body > main,
+      html[data-mnx-content-kind='image_like'] body > p {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      html[data-mnx-content-kind='image_like'] picture,
+      html[data-mnx-content-kind='image_like'] img,
+      html[data-mnx-content-kind='image_like'] svg,
+      html[data-mnx-content-kind='image_like'] video,
+      html[data-mnx-content-kind='image_like'] canvas {
+        flex: 0 1 auto !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+      }
+      html[data-mnx-content-kind='image_like'] picture,
+      html[data-mnx-content-kind='image_like'] figure,
+      html[data-mnx-content-kind='image_like'] div,
+      html[data-mnx-content-kind='image_like'] section,
+      html[data-mnx-content-kind='image_like'] article,
+      html[data-mnx-content-kind='image_like'] main {
+        max-width: 100% !important;
+        max-height: 100% !important;
+      }
+      html[data-mnx-content-kind='image_like'] img,
+      html[data-mnx-content-kind='image_like'] svg,
+      html[data-mnx-content-kind='image_like'] video,
+      html[data-mnx-content-kind='image_like'] canvas {
+        width: auto !important;
+        height: auto !important;
+        max-width: ${contentW}px !important;
+        max-height: ${contentH}px !important;
+        display: block !important;
+        object-fit: contain !important;
+        margin: 0 auto !important;
+        break-inside: avoid !important;
+        transform: none !important;
+      }
+    `;
+
+    const mixedMediaCss = `
+      html[data-mnx-content-kind='text_like'] img[data-mnx-media-role='inline'],
+      html[data-mnx-content-kind='text_like'] svg[data-mnx-media-role='inline'],
+      html[data-mnx-content-kind='text_like'] video[data-mnx-media-role='inline'],
+      html[data-mnx-content-kind='text_like'] canvas[data-mnx-media-role='inline'],
+      html[data-mnx-content-kind='text_like'] picture[data-mnx-media-role='inline'] {
+        display: inline-block !important;
+        width: auto !important;
+        height: auto !important;
+        max-width: ${inlineMediaMaxWidth}px !important;
+        max-height: 1.35em !important;
+        margin: 0 0.08em !important;
+        padding: 0 !important;
+        object-fit: contain !important;
+        vertical-align: -0.18em !important;
+        break-inside: auto !important;
+        page-break-inside: auto !important;
+        transform: none !important;
+      }
+      html[data-mnx-content-kind='text_like'] sup img[data-mnx-media-role='inline'],
+      html[data-mnx-content-kind='text_like'] sub img[data-mnx-media-role='inline'],
+      html[data-mnx-content-kind='text_like'] sup svg[data-mnx-media-role='inline'],
+      html[data-mnx-content-kind='text_like'] sub svg[data-mnx-media-role='inline'] {
+        max-height: 1em !important;
+        vertical-align: baseline !important;
+      }
+      html[data-mnx-content-kind='text_like'] img[data-mnx-media-role='block'],
+      html[data-mnx-content-kind='text_like'] svg[data-mnx-media-role='block'],
+      html[data-mnx-content-kind='text_like'] video[data-mnx-media-role='block'],
+      html[data-mnx-content-kind='text_like'] canvas[data-mnx-media-role='block'] {
+        display: block !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+        transform: none !important;
+      }
+      html[data-mnx-content-kind='text_like'] picture[data-mnx-media-role='block'],
+      html[data-mnx-content-kind='text_like'] figure[data-mnx-media-role='block'] {
+        display: block !important;
+        max-width: 100% !important;
+        break-inside: avoid !important;
+      }
+    `;
+
+    if (layoutKind === 'continuous_vertical') {
+      const imageGap = pageSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP
+        ? this.clamp(pageSettings.pageSpacing ?? 12, 0, 80)
+        : 0;
+      return `
+        ${fontCss}
+        ${backgroundCss}
+        :root {
+          ${rootTextCss}
+        }
+        html {
+          margin: 0 !important;
+          padding: 0 !important;
+          width: 100% !important;
+          min-width: 100% !important;
+          height: 100% !important;
+          min-height: 100% !important;
+          overflow-x: hidden !important;
+          overflow-y: auto !important;
+          overscroll-behavior: contain !important;
+          scroll-behavior: auto !important;
+          scroll-snap-type: none !important;
+          background-color: ${backgroundColor} !important;
+          ${rootTextCss}
+        }
+        body {
+          position: relative !important;
+          z-index: 1 !important;
+          margin: 0 !important;
+          padding-top: ${topMargin}px !important;
+          padding-right: ${rightPadding}px !important;
+          padding-bottom: ${bottomMargin}px !important;
+          padding-left: ${leftPadding}px !important;
+          box-sizing: border-box !important;
+          width: 100% !important;
+          min-height: 100% !important;
+          overflow-x: hidden !important;
+          overflow-y: visible !important;
+          background-color: ${bodyOverlayColor} !important;
+          ${commonTextCss}
+        }
+        ${textInheritanceCss}
+        ${paragraphCss}
+        ${mixedMediaCss}
+        html[data-mnx-content-kind='text_like'] img[data-mnx-media-role='block'],
+        html[data-mnx-content-kind='text_like'] svg[data-mnx-media-role='block'],
+        html[data-mnx-content-kind='text_like'] video[data-mnx-media-role='block'],
+        html[data-mnx-content-kind='text_like'] canvas[data-mnx-media-role='block'] {
+          max-width: ${contentW}px !important;
+          max-height: none !important;
+          margin-bottom: ${imageGap}px !important;
+          break-inside: avoid !important;
+        }
+        html[data-mnx-content-kind='text_like'] picture[data-mnx-media-role='block'],
+        html[data-mnx-content-kind='text_like'] figure[data-mnx-media-role='block'] {
+          max-width: 100% !important;
+          break-inside: avoid !important;
+        }
+        ${imageLikeDocumentCss}
+        html[data-mnx-content-kind='image_like'] {
+          overflow-x: hidden !important;
+          overflow-y: auto !important;
+          scroll-snap-type: none !important;
+        }
+        html[data-mnx-content-kind='image_like'] body {
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          justify-content: flex-start !important;
+        }
+        html[data-mnx-content-kind='image_like'] img,
+        html[data-mnx-content-kind='image_like'] svg,
+        html[data-mnx-content-kind='image_like'] video,
+        html[data-mnx-content-kind='image_like'] canvas {
+          max-height: none !important;
+          margin-bottom: ${imageGap}px !important;
+        }
+        * {
+          -webkit-tap-highlight-color: transparent !important;
+        }
+        ::-webkit-scrollbar {
+          display: none !important;
+        }
+      `;
+    }
+
+    if (layoutKind === 'vertical_paged') {
+      return `
+        ${fontCss}
+        ${backgroundCss}
+        :root {
+          ${rootTextCss}
+        }
+        html {
+          margin: 0 !important;
+          padding: 0 !important;
+          width: 100% !important;
+          min-width: 100% !important;
+          height: 100% !important;
+          min-height: 100% !important;
+          overflow-x: hidden !important;
+          overflow-y: auto !important;
+          overscroll-behavior: contain !important;
+          scroll-behavior: auto !important;
+          scroll-snap-type: y mandatory !important;
+          background-color: ${backgroundColor} !important;
+          ${rootTextCss}
+        }
+        body {
+          position: relative !important;
+          z-index: 1 !important;
+          margin: 0 !important;
+          padding-top: ${topMargin}px !important;
+          padding-right: ${rightPadding}px !important;
+          padding-bottom: ${bottomMargin}px !important;
+          padding-left: ${leftPadding}px !important;
+          box-sizing: border-box !important;
+          width: 100% !important;
+          min-height: 100% !important;
+          overflow-x: hidden !important;
+          overflow-y: visible !important;
+          background-color: ${bodyOverlayColor} !important;
+          ${commonTextCss}
+        }
+        ${textInheritanceCss}
+        ${paragraphCss}
+        ${mixedMediaCss}
+        html[data-mnx-content-kind='text_like'] img[data-mnx-media-role='block'],
+        html[data-mnx-content-kind='text_like'] svg[data-mnx-media-role='block'],
+        html[data-mnx-content-kind='text_like'] video[data-mnx-media-role='block'],
+        html[data-mnx-content-kind='text_like'] canvas[data-mnx-media-role='block'] {
+          max-width: ${contentW}px !important;
+          max-height: ${contentH}px !important;
+          break-inside: avoid !important;
+        }
+        html[data-mnx-content-kind='text_like'] picture[data-mnx-media-role='block'],
+        html[data-mnx-content-kind='text_like'] figure[data-mnx-media-role='block'] {
+          max-width: 100% !important;
+          break-inside: avoid !important;
+        }
+        ${imageLikeDocumentCss}
+        html[data-mnx-content-kind='image_like'] {
+          overflow-x: hidden !important;
+          overflow-y: hidden !important;
+          scroll-snap-type: none !important;
+        }
+        html[data-mnx-content-kind='image_like'] body {
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          justify-content: center !important;
+          height: 100% !important;
+          min-height: 100% !important;
+          overflow: hidden !important;
+        }
+        * {
+          -webkit-tap-highlight-color: transparent !important;
+        }
+        ::-webkit-scrollbar {
+          display: none !important;
+        }
+      `;
+    }
+
+    return `
+      ${fontCss}
+      ${backgroundCss}
+      :root {
+        ${rootTextCss}
+      }
+      html {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        min-width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        overscroll-behavior: contain !important;
+        scroll-behavior: auto !important;
+        scroll-snap-type: ${layoutKind === 'continuous_horizontal' ? 'none' : 'x mandatory'} !important;
+        background-color: ${backgroundColor} !important;
+        ${rootTextCss}
+      }
+      body {
+        position: relative !important;
+        z-index: 1 !important;
+        margin: 0 !important;
+        padding-top: ${topMargin}px !important;
+        padding-right: ${rightPadding}px !important;
+        padding-bottom: ${bottomMargin}px !important;
+        padding-left: ${leftPadding}px !important;
+        box-sizing: border-box !important;
+        column-width: ${columnWidth}px !important;
+        column-gap: ${pageGap}px !important;
+        column-fill: auto !important;
+        min-width: 100% !important;
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        overflow-y: hidden !important;
+        overflow-x: visible !important;
+        background-color: ${bodyOverlayColor} !important;
+        ${commonTextCss}
+      }
+      ${textInheritanceCss}
+      ${paragraphCss}
+      ${mixedMediaCss}
+      html[data-mnx-content-kind='text_like'] img[data-mnx-media-role='block'],
+      html[data-mnx-content-kind='text_like'] svg[data-mnx-media-role='block'],
+      html[data-mnx-content-kind='text_like'] video[data-mnx-media-role='block'],
+      html[data-mnx-content-kind='text_like'] canvas[data-mnx-media-role='block'] {
+        max-width: ${columnWidth}px !important;
+        max-height: ${contentH}px !important;
+        break-inside: avoid-column !important;
+      }
+      html[data-mnx-content-kind='text_like'] picture[data-mnx-media-role='block'],
+      html[data-mnx-content-kind='text_like'] figure[data-mnx-media-role='block'] {
+        max-width: 100% !important;
+        break-inside: avoid-column !important;
+      }
+      ${imageLikeDocumentCss}
+      html[data-mnx-content-kind='image_like'] {
+        overflow-x: hidden !important;
+        overflow-y: hidden !important;
+        scroll-snap-type: none !important;
+      }
+      html[data-mnx-content-kind='image_like'] body {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        column-width: auto !important;
+        column-gap: 0px !important;
+        overflow: hidden !important;
+      }
+      * {
+        -webkit-tap-highlight-color: transparent !important;
+      }
+      ::-webkit-scrollbar {
+        display: none !important;
+      }
+    `;
+  }
+
+  private buildFixedCss(vpW: number, vpH: number, textSettings: EBookReadingSettings): string {
+    const backgroundColor = textSettings.backgroundColor ?? '#FFFFFF';
+    const backgroundCss = this.buildBackgroundCss(textSettings);
+    const safeTopInset = this.getContentSafeTopInsetCssPx(vpW, vpH);
+    return `
+      ${backgroundCss}
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: ${vpW}px !important;
+        height: ${vpH}px !important;
+        overflow: hidden !important;
+        background-color: ${backgroundColor} !important;
+        box-sizing: border-box !important;
+      }
+      body {
+        position: relative !important;
+        z-index: 1 !important;
+        transform-origin: top left !important;
+        padding-top: ${safeTopInset}px !important;
+      }
+      * {
+        -webkit-tap-highlight-color: transparent !important;
+        box-sizing: border-box !important;
+      }
+    `;
+  }
+
+  private buildBridgeJs(layoutKind: EpubPageLayoutKind): string {
+    return `
+      window.__mnxLayoutKind = '${layoutKind}';
+      window.__mnxGetScrollCandidates = function() {
+        var list = [];
+        var append = function(node) {
+          if (!node) {
+            return;
+          }
+          for (var i = 0; i < list.length; i++) {
+            if (list[i] === node) {
+              return;
+            }
+          }
+          list.push(node);
+        };
+        append(document.scrollingElement);
+        append(document.documentElement);
+        append(document.body);
+        return list;
+      };
+      window.__mnxResolveScrollRoot = function() {
+        var candidates = window.__mnxGetScrollCandidates();
+        return candidates.length > 0 ? candidates[0] : null;
+      };
+      window.__mnxIsVerticalLayout = function() {
+        return window.__mnxLayoutKind === 'vertical_paged' || window.__mnxLayoutKind === 'continuous_vertical';
+      };
+      window.__mnxCanUseVirtualOffset = function(isVertical) {
+        return !isVertical &&
+          (window.__mnxLayoutKind === 'horizontal_paged' ||
+           window.__mnxLayoutKind === 'double_page' ||
+           window.__mnxLayoutKind === 'continuous_horizontal');
+      };
+      window.__mnxUseAlignedHorizontalOffsets = function(isVertical) {
+        return !isVertical &&
+          (window.__mnxLayoutKind === 'horizontal_paged' ||
+           window.__mnxLayoutKind === 'double_page' ||
+           window.__mnxLayoutKind === 'continuous_horizontal');
+      };
+      window.__mnxClearVirtualOffset = function() {
+        var body = document.body;
+        window.__mnxUsesVirtualOffset = false;
+        window.__mnxVirtualOffset = 0;
+        if (!body || body.getAttribute('data-mnx-virtual-offset') !== 'true') {
+          return;
+        }
+        var baseTransform = body.getAttribute('data-mnx-base-transform') || '';
+        body.style.transform = baseTransform;
+        body.removeAttribute('data-mnx-virtual-offset');
+        body.removeAttribute('data-mnx-base-transform');
+      };
+      window.__mnxApplyVirtualOffset = function(isVertical, targetOffset) {
+        if (!window.__mnxCanUseVirtualOffset(isVertical) || !document.body) {
+          return false;
+        }
+        var body = document.body;
+        var safeTarget = Math.max(0, Math.round(targetOffset || 0));
+        if (body.getAttribute('data-mnx-virtual-offset') !== 'true') {
+          var originalTransform = body.style.transform || '';
+          body.setAttribute('data-mnx-base-transform', originalTransform === 'none' ? '' : originalTransform);
+        }
+        var baseTransform = body.getAttribute('data-mnx-base-transform') || '';
+        var shift = isVertical
+          ? 'translate3d(0px, -' + safeTarget + 'px, 0px)'
+          : 'translate3d(-' + safeTarget + 'px, 0px, 0px)';
+        body.style.transformOrigin = 'top left';
+        body.style.transform = baseTransform.length > 0 ? (baseTransform + ' ' + shift) : shift;
+        body.setAttribute('data-mnx-virtual-offset', 'true');
+        window.__mnxUsesVirtualOffset = true;
+        window.__mnxVirtualOffset = safeTarget;
+        return true;
+      };
+      window.__mnxGetPhysicalScrollOffset = function(isVertical) {
+        var value = isVertical
+          ? (window.pageYOffset || window.scrollY || 0)
+          : (window.pageXOffset || window.scrollX || 0);
+        var candidates = window.__mnxGetScrollCandidates();
+        for (var i = 0; i < candidates.length; i++) {
+          var node = candidates[i];
+          var nodeValue = isVertical ? (node.scrollTop || 0) : (node.scrollLeft || 0);
+          if (nodeValue > value) {
+            value = nodeValue;
+          }
+        }
+        return Math.max(0, Math.round(value));
+      };
+      window.__mnxGetScrollOffset = function(isVertical) {
+        if (window.__mnxUsesVirtualOffset && window.__mnxCanUseVirtualOffset(isVertical)) {
+          return Math.max(0, Math.round(window.__mnxVirtualOffset || 0));
+        }
+        return window.__mnxGetPhysicalScrollOffset(isVertical);
+      };
+      window.__mnxGetTotalExtent = function(isVertical) {
+        var viewport = window.__mnxGetViewportExtent();
+        var total = isVertical ? viewport.height : viewport.width;
+        var candidates = window.__mnxGetScrollCandidates();
+        for (var i = 0; i < candidates.length; i++) {
+          var node = candidates[i];
+          total = Math.max(
+            total,
+            isVertical ? (node.scrollHeight || 0) : (node.scrollWidth || 0),
+            isVertical ? (node.offsetHeight || 0) : (node.offsetWidth || 0),
+            isVertical ? (node.clientHeight || 0) : (node.clientWidth || 0)
+          );
+        }
+        return Math.max(1, Math.round(total));
+      };
+      window.__mnxGetContentExtent = function(isVertical) {
+        var body = document.body;
+        var viewport = window.__mnxGetViewportExtent();
+        var fallback = isVertical ? viewport.height : viewport.width;
+        if (!body) {
+          return fallback;
+        }
+        var root = window.__mnxResolveScrollRoot();
+        var rootRect = root && root.getBoundingClientRect ? root.getBoundingClientRect() : { left: 0, top: 0 };
+        var currentLeft = window.__mnxGetScrollOffset(false);
+        var currentTop = window.__mnxGetScrollOffset(true);
+        var maxEnd = 0;
+        var collectRect = function(rect) {
+          if (!rect) {
+            return;
+          }
+          var width = Math.max(0, rect.width || (rect.right - rect.left) || 0);
+          var height = Math.max(0, rect.height || (rect.bottom - rect.top) || 0);
+          if (width <= 0 && height <= 0) {
+            return;
+          }
+          var end = isVertical
+            ? (rect.bottom - rootRect.top + currentTop)
+            : (rect.right - rootRect.left + currentLeft);
+          if (end > maxEnd) {
+            maxEnd = end;
+          }
+        };
+        try {
+          if (document.createRange) {
+            var range = document.createRange();
+            range.selectNodeContents(body);
+            var rangeRects = range.getClientRects ? range.getClientRects() : [];
+            for (var ri = 0; ri < rangeRects.length; ri++) {
+              collectRect(rangeRects[ri]);
+            }
+            if (range.detach) {
+              range.detach();
+            }
+          }
+        } catch (_rangeError) {
+        }
+        try {
+          var nodes = body.querySelectorAll
+            ? body.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,figure,img,svg,video,canvas')
+            : [];
+          for (var ni = 0; ni < nodes.length; ni++) {
+            var rects = nodes[ni].getClientRects ? nodes[ni].getClientRects() : [];
+            for (var nri = 0; nri < rects.length; nri++) {
+              collectRect(rects[nri]);
+            }
+          }
+        } catch (_nodeError) {
+        }
+        return Math.max(fallback, Math.ceil(maxEnd));
+      };
+      window.__mnxSetScrollOffset = function(isVertical, targetOffset) {
+        var safeTarget = Math.max(0, Math.round(targetOffset || 0));
+        window.__mnxClearVirtualOffset();
+        var candidates = window.__mnxGetScrollCandidates();
+        for (var i = 0; i < candidates.length; i++) {
+          var node = candidates[i];
+          try {
+            if (typeof node.scrollTo === 'function') {
+              if (isVertical) {
+                node.scrollTo({ left: 0, top: safeTarget, behavior: 'auto' });
+              } else {
+                node.scrollTo({ left: safeTarget, top: 0, behavior: 'auto' });
+              }
+            }
+          } catch (_scrollToError) {
+          }
+          try {
+            if (isVertical) {
+              node.scrollTop = safeTarget;
+            } else {
+              node.scrollLeft = safeTarget;
+            }
+          } catch (_assignError) {
+          }
+        }
+        try {
+          if (isVertical) {
+            window.scrollTo(0, safeTarget);
+          } else {
+            window.scrollTo(safeTarget, 0);
+          }
+        } catch (_windowScrollError) {
+        }
+        if (document.documentElement) {
+          void document.documentElement.offsetWidth;
+        }
+        var physicalOffset = window.__mnxGetPhysicalScrollOffset(isVertical);
+        if (Math.abs(physicalOffset - safeTarget) > 2 && window.__mnxApplyVirtualOffset(isVertical, safeTarget)) {
+          return safeTarget;
+        }
+        return physicalOffset;
+      };
+      window.__mnxGetViewportExtent = function() {
+        var width = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 0) || (document.body ? document.body.clientWidth : 0) || 0;
+        var height = window.innerHeight || (document.documentElement ? document.documentElement.clientHeight : 0) || (document.body ? document.body.clientHeight : 0) || 0;
+        return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
+      };
+      window.__mnxRefreshPagination = function() {
+        var root = window.__mnxResolveScrollRoot();
+        var viewport = window.__mnxGetViewportExtent();
+        var contentKind = document.documentElement
+          ? (document.documentElement.getAttribute('data-mnx-content-kind') || '')
+          : '';
+        var isVertical = window.__mnxIsVerticalLayout();
+        var pageExtent = isVertical ? viewport.height : viewport.width;
+        if (contentKind === 'image_like') {
+          window.__mnxClearVirtualOffset();
+          window.__mnxPageOffsets = [0];
+          window.__mnxPaginationState = {
+            pageCount: 1,
+            currentPage: 0,
+            currentOffset: 0,
+            pageExtent: pageExtent,
+            maxOffset: 0,
+            contentExtent: pageExtent,
+            rootTagName: root && root.tagName ? root.tagName : ''
+          };
+          return window.__mnxPaginationState;
+        }
+        var rawTotalExtent = window.__mnxGetTotalExtent(isVertical);
+        var contentExtent = window.__mnxGetContentExtent(isVertical);
+        var totalExtent = window.__mnxUseAlignedHorizontalOffsets(isVertical)
+          ? Math.max(pageExtent, contentExtent)
+          : rawTotalExtent;
+        var currentOffset = window.__mnxGetScrollOffset(isVertical);
+        var maxOffset = Math.max(0, totalExtent - pageExtent);
+        var offsets = [];
+        if (maxOffset <= 0 || pageExtent <= 0) {
+          offsets.push(0);
+        } else if (window.__mnxUseAlignedHorizontalOffsets(isVertical)) {
+          var alignedTolerance = Math.max(2, Math.min(8, pageExtent * 0.01));
+          var alignedPageCount = Math.max(1, Math.ceil(Math.max(1, totalExtent - alignedTolerance) / pageExtent));
+          for (var alignedIndex = 0; alignedIndex < alignedPageCount; alignedIndex++) {
+            offsets.push(Math.max(0, Math.round(alignedIndex * pageExtent)));
+          }
+          maxOffset = offsets.length > 0 ? offsets[offsets.length - 1] : 0;
+          currentOffset = Math.min(currentOffset, maxOffset);
+        } else {
+          var probe = 0;
+          while (probe < maxOffset) {
+            offsets.push(Math.max(0, Math.round(probe)));
+            probe += pageExtent;
+          }
+          if (offsets.length === 0 || offsets[offsets.length - 1] !== Math.round(maxOffset)) {
+            offsets.push(Math.round(maxOffset));
+          }
+        }
+        var currentPage = 0;
+        var bestDistance = Number.MAX_SAFE_INTEGER;
+        for (var i = 0; i < offsets.length; i++) {
+          var distance = Math.abs(offsets[i] - currentOffset);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            currentPage = i;
+          }
+        }
+        window.__mnxPageOffsets = offsets;
+        window.__mnxPaginationState = {
+          pageCount: offsets.length,
+          currentPage: currentPage,
+          currentOffset: currentOffset,
+          pageExtent: pageExtent,
+          maxOffset: Math.round(maxOffset),
+          contentExtent: Math.round(contentExtent),
+          rootTagName: root && root.tagName ? root.tagName : ''
+        };
+        return window.__mnxPaginationState;
+      };
+      window.__mnxNotifyPagination = function(source) {
+        if (!window.arkts || typeof window.arkts.onPaginationChanged !== 'function') {
+          return;
+        }
+        var state = window.__mnxRefreshPagination();
+        window.arkts.onPaginationChanged(JSON.stringify({
+          source: source || 'manual',
+          layoutKind: window.__mnxLayoutKind || '',
+          pageCount: state.pageCount,
+          currentPage: state.currentPage,
+          currentOffset: state.currentOffset,
+          pageExtent: state.pageExtent,
+          maxOffset: state.maxOffset,
+          atStart: state.currentOffset <= 2,
+          atEnd: state.currentOffset >= Math.max(0, state.maxOffset - 2)
+        }));
+      };
+      window.__mnxSchedulePaginationNotify = function(source) {
+        if (window.__mnxNotifyTimer) {
+          clearTimeout(window.__mnxNotifyTimer);
+        }
+        window.__mnxNotifyTimer = setTimeout(function() {
+          window.__mnxNotifyTimer = 0;
+          window.__mnxNotifyPagination(source || 'deferred');
+        }, 56);
+      };
+      window.__mnxInstallArkBridge = function() {
+        var root = window.__mnxResolveScrollRoot();
+        if (window.__mnxScrollRoots && window.__mnxScrollHandler) {
+          for (var sri = 0; sri < window.__mnxScrollRoots.length; sri++) {
+            var oldRoot = window.__mnxScrollRoots[sri];
+            if (oldRoot && oldRoot.removeEventListener) {
+              oldRoot.removeEventListener('scroll', window.__mnxScrollHandler);
+            }
+          }
+        }
+        if (window.__mnxWindowScrollHandler) {
+          window.removeEventListener('scroll', window.__mnxWindowScrollHandler);
+        }
+        if (window.__mnxResizeHandler) {
+          window.removeEventListener('resize', window.__mnxResizeHandler);
+        }
+        if (window.__mnxClickHandler) {
+          document.removeEventListener('click', window.__mnxClickHandler, true);
+        }
+        window.__mnxScrollRoot = root;
+        window.__mnxScrollHandler = function() {
+          window.__mnxSchedulePaginationNotify('scroll');
+        };
+        window.__mnxWindowScrollHandler = function() {
+          window.__mnxSchedulePaginationNotify('window_scroll');
+        };
+        window.__mnxResizeHandler = function() {
+          window.__mnxSchedulePaginationNotify('resize');
+        };
+        window.__mnxClickHandler = function(event) {
+          if (!window.arkts || typeof window.arkts.onReaderTap !== 'function') {
+            return;
+          }
+          var viewport = window.__mnxGetViewportExtent();
+          var safeWidth = Math.max(1, viewport.width);
+          var safeHeight = Math.max(1, viewport.height);
+          var clientX = event && typeof event.clientX === 'number' ? event.clientX : 0;
+          var clientY = event && typeof event.clientY === 'number' ? event.clientY : 0;
+          window.arkts.onReaderTap(JSON.stringify({
+            xRatio: Math.max(0, Math.min(1, clientX / safeWidth)),
+            yRatio: Math.max(0, Math.min(1, clientY / safeHeight))
+          }));
+        };
+        window.__mnxScrollRoots = window.__mnxGetScrollCandidates();
+        for (var sri2 = 0; sri2 < window.__mnxScrollRoots.length; sri2++) {
+          var nextRoot = window.__mnxScrollRoots[sri2];
+          if (nextRoot && nextRoot.addEventListener) {
+            nextRoot.addEventListener('scroll', window.__mnxScrollHandler, { passive: true });
+          }
+        }
+        window.addEventListener('scroll', window.__mnxWindowScrollHandler, { passive: true });
+        window.addEventListener('resize', window.__mnxResizeHandler, { passive: true });
+        document.addEventListener('click', window.__mnxClickHandler, true);
+      };
+      window.__mnxGetPageCount = function() {
+        return window.__mnxRefreshPagination().pageCount;
+      };
+      window.__mnxGoToPageImmediate = function(pageIndex) {
+        var state = window.__mnxRefreshPagination();
+        var normalizedIndex = Math.max(0, Math.min(state.pageCount - 1, Math.floor(pageIndex || 0)));
+        var targetOffset = state.pageCount > 0 ? (window.__mnxPageOffsets[normalizedIndex] || 0) : 0;
+        var isVertical = window.__mnxIsVerticalLayout();
+        window.__mnxSetScrollOffset(isVertical, targetOffset);
+        state = window.__mnxRefreshPagination();
+        window.__mnxPaginationState = state;
+        window.__mnxSchedulePaginationNotify('programmatic');
+        return JSON.stringify({
+          pageIndex: state.currentPage,
+          offset: state.currentOffset,
+          pageCount: state.pageCount,
+          pageExtent: state.pageExtent,
+          maxOffset: state.maxOffset,
+          requestedOffset: targetOffset,
+          physicalOffset: window.__mnxGetPhysicalScrollOffset(isVertical),
+          usedVirtualOffset: !!window.__mnxUsesVirtualOffset
+        });
+      };
+      window.__mnxGoToPage = window.__mnxGoToPageImmediate;
+      window.__mnxGetCurrentPage = function() {
+        return window.__mnxRefreshPagination().currentPage;
+      };
+      window.__mnxNormalizeFragment = function(fragment) {
+        if (fragment === null || fragment === undefined) {
+          return '';
+        }
+        var text = String(fragment).trim();
+        if (text.charAt(0) === '#') {
+          text = text.substring(1);
+        }
+        if (!text) {
+          return '';
+        }
+        try {
+          return decodeURIComponent(text);
+        } catch (_error) {
+          return text;
+        }
+      };
+      window.__mnxResolveAnchorElement = function(fragment) {
+        var normalized = window.__mnxNormalizeFragment(fragment);
+        if (!normalized) {
+          return null;
+        }
+        var target = document.getElementById(normalized);
+        if (target) {
+          return target;
+        }
+        if (document.getElementsByName) {
+          var named = document.getElementsByName(normalized);
+          if (named && named.length > 0) {
+            return named[0];
+          }
+        }
+        if (document.querySelectorAll) {
+          var all = document.querySelectorAll('[id],[name]');
+          for (var i = 0; i < all.length; i++) {
+            var candidate = all[i];
+            if ((candidate.id && candidate.id === normalized) ||
+              (candidate.getAttribute && candidate.getAttribute('name') === normalized)) {
+              return candidate;
+            }
+          }
+        }
+        return null;
+      };
+      window.__mnxFindNearestPageIndex = function(targetOffset) {
+        var state = window.__mnxRefreshPagination();
+        var offsets = window.__mnxPageOffsets || [0];
+        var normalizedOffset = Math.max(0, Math.round(targetOffset || 0));
+        var pageIndex = 0;
+        var bestDistance = Number.MAX_SAFE_INTEGER;
+        for (var i = 0; i < offsets.length; i++) {
+          var distance = Math.abs((offsets[i] || 0) - normalizedOffset);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            pageIndex = i;
+          }
+        }
+        return {
+          pageIndex: pageIndex,
+          state: state
+        };
+      };
+      window.__mnxGoToFragmentImmediate = function(fragment) {
+        var target = window.__mnxResolveAnchorElement(fragment);
+        var state = window.__mnxRefreshPagination();
+        if (!target) {
+          return JSON.stringify({
+            found: false,
+            pageIndex: state.currentPage,
+            offset: state.currentOffset,
+            pageCount: state.pageCount,
+            pageExtent: state.pageExtent,
+            maxOffset: state.maxOffset
+          });
+        }
+        var root = window.__mnxResolveScrollRoot();
+        var isVertical = window.__mnxIsVerticalLayout();
+        var rootRect = root && root.getBoundingClientRect ? root.getBoundingClientRect() : { left: 0, top: 0 };
+        var rect = target.getBoundingClientRect ? target.getBoundingClientRect() : { left: 0, top: 0 };
+        var currentLeft = window.__mnxGetScrollOffset(false);
+        var currentTop = window.__mnxGetScrollOffset(true);
+        var absoluteOffset = isVertical
+          ? (rect.top - rootRect.top + currentTop)
+          : (rect.left - rootRect.left + currentLeft);
+        absoluteOffset = Math.max(0, Math.round(absoluteOffset));
+        if (window.__mnxLayoutKind === 'continuous_vertical' || window.__mnxLayoutKind === 'continuous_horizontal') {
+          window.__mnxSetScrollOffset(isVertical, absoluteOffset);
+          state = window.__mnxRefreshPagination();
+          window.__mnxSchedulePaginationNotify('programmatic_fragment');
+          return JSON.stringify({
+            found: true,
+            pageIndex: state.currentPage,
+            offset: state.currentOffset,
+            pageCount: state.pageCount,
+            pageExtent: state.pageExtent,
+            maxOffset: state.maxOffset
+          });
+        }
+        var nearest = window.__mnxFindNearestPageIndex(absoluteOffset);
+        var response = JSON.parse(window.__mnxGoToPageImmediate(nearest.pageIndex));
+        response.found = true;
+        return JSON.stringify(response);
+      };
+      window.__mnxClearVirtualOffset();
+    `;
+  }
+
+  private parsePageCommandResult(raw: string, fallbackPage: number): PageCommandResult {
+    try {
+      const clean = this.parseWebViewJson(raw);
+      const parsed = JSON.parse(clean) as PageCommandResult;
+      const pageIndex = Number(parsed.pageIndex);
+      const offset = Number(parsed.offset);
+      const pageCount = Number(parsed.pageCount);
+      const pageExtent = Number(parsed.pageExtent);
+      const maxOffset = Number(parsed.maxOffset);
+      const requestedOffset = Number(parsed.requestedOffset);
+      const physicalOffset = Number(parsed.physicalOffset);
+      return {
+        pageIndex: !isNaN(pageIndex) ? pageIndex : fallbackPage,
+        offset: !isNaN(offset) ? offset : 0,
+        pageCount: !isNaN(pageCount) && pageCount > 0 ? Math.floor(pageCount) : Math.max(1, this.currentPageCount),
+        pageExtent: !isNaN(pageExtent) ? Math.max(0, pageExtent) : this.lastPaginationPageExtent,
+        maxOffset: !isNaN(maxOffset) ? Math.max(0, maxOffset) : this.lastPaginationMaxOffset,
+        requestedOffset: !isNaN(requestedOffset) ? Math.max(0, requestedOffset) : -1,
+        physicalOffset: !isNaN(physicalOffset) ? Math.max(0, physicalOffset) : -1,
+        usedVirtualOffset: parsed.usedVirtualOffset === true
+      };
+    } catch (_error) {
+      return {
+        pageIndex: fallbackPage,
+        offset: 0,
+        pageCount: Math.max(1, this.currentPageCount),
+        pageExtent: this.lastPaginationPageExtent,
+        maxOffset: this.lastPaginationMaxOffset,
+        requestedOffset: -1,
+        physicalOffset: -1,
+        usedVirtualOffset: false
+      };
+    }
+  }
+
+  private applyInjectedLayout(
+    vpW: number,
+    vpH: number,
+    pageOffset: number,
+    textSettings: EBookReadingSettings,
+    pageSettings: MangaReadingSettings,
+    notifyReady: boolean,
+    source: string,
+    anchorRatio: number = -1
+  ): void {
+    this.ready = false;
+    this.viewportBackgroundColor = textSettings.backgroundColor ?? DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
+    const preferImageLike = this.isCurrentSpineImageLike();
+    const css = this.params.isFixedLayout
+      ? this.buildFixedCss(vpW, vpH, textSettings)
+      : this.buildReflowCss(vpW, vpH, textSettings, pageSettings);
+    const escapedCss = this.escapeJsTemplate(css);
+    const layoutKind = this.params.isFixedLayout
+      ? 'horizontal_paged'
+      : this.getLayoutKind(pageSettings, vpW, vpH);
+    this.currentLayoutKind = layoutKind;
+    const bridge = this.buildBridgeJs(layoutKind);
+    logger.info(
+      TAG,
+      `应用排版注入: source=${source}, notifyReady=${notifyReady}, fixed=${this.params.isFixedLayout}, pageOffset=${pageOffset}, vp=${vpW}x${vpH}, scale=${this.getViewportScale(vpW, vpH)}, safeTop=${this.params.contentSafeTopInset ?? 0}vp/${this.getContentSafeTopInsetCssPx(vpW, vpH)}px, hint=${preferImageLike ? 'image_like' : 'text_like'}, layoutHint=${this.getCurrentSpineLayoutType() || 'n/a'}, mediaHint=${this.getCurrentSpineMediaType() || 'n/a'}, text(${this.describeTextSettings(textSettings)}), page(${this.describePageSettings(pageSettings)})`
+    );
+
+    const injectScript = `
+      (function() {
+        var head = document.head || document.getElementsByTagName('head')[0] || document.documentElement;
+        var viewportMeta = document.querySelector('meta[name="viewport"]');
+        if (!viewportMeta) {
+          viewportMeta = document.createElement('meta');
+          viewportMeta.setAttribute('name', 'viewport');
+          head.appendChild(viewportMeta);
+        }
+        viewportMeta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover');
+        window.__mnxHasAdjacentText = function(node) {
+          var prev = node ? node.previousSibling : null;
+          while (prev) {
+            if (prev.nodeType === 3 && String(prev.textContent || '').replace(/\\s+/g, '').length > 0) {
+              return true;
+            }
+            if (prev.nodeType === 1) {
+              var prevText = String(prev.textContent || '').replace(/\\s+/g, '').trim();
+              if (prevText.length > 0) {
+                return true;
+              }
+            }
+            prev = prev.previousSibling;
+          }
+          var next = node ? node.nextSibling : null;
+          while (next) {
+            if (next.nodeType === 3 && String(next.textContent || '').replace(/\\s+/g, '').length > 0) {
+              return true;
+            }
+            if (next.nodeType === 1) {
+              var nextText = String(next.textContent || '').replace(/\\s+/g, '').trim();
+              if (nextText.length > 0) {
+                return true;
+              }
+            }
+            next = next.nextSibling;
+          }
+          return false;
+        };
+        window.__mnxReadMediaDimension = function(element) {
+          var tag = element && element.tagName ? element.tagName.toUpperCase() : '';
+          var attrWidth = element ? parseFloat(element.getAttribute('width') || '0') : 0;
+          var attrHeight = element ? parseFloat(element.getAttribute('height') || '0') : 0;
+          var width = !isNaN(attrWidth) && attrWidth > 0 ? attrWidth : 0;
+          var height = !isNaN(attrHeight) && attrHeight > 0 ? attrHeight : 0;
+          if (tag === 'IMG') {
+            width = width || element.clientWidth || element.width || element.naturalWidth || 0;
+            height = height || element.clientHeight || element.height || element.naturalHeight || 0;
+          } else if (tag === 'SVG') {
+            var viewBox = element.getAttribute('viewBox') || '';
+            var parts = viewBox.trim().split(/\\s+/);
+            if (parts.length === 4) {
+              var vbWidth = parseFloat(parts[2]);
+              var vbHeight = parseFloat(parts[3]);
+              width = width || (!isNaN(vbWidth) ? vbWidth : 0);
+              height = height || (!isNaN(vbHeight) ? vbHeight : 0);
+            }
+            width = width || element.clientWidth || 0;
+            height = height || element.clientHeight || 0;
+          } else if (tag === 'VIDEO') {
+            width = width || element.videoWidth || element.clientWidth || 0;
+            height = height || element.videoHeight || element.clientHeight || 0;
+          } else if (tag === 'CANVAS') {
+            width = width || element.width || element.clientWidth || 0;
+            height = height || element.height || element.clientHeight || 0;
+          }
+          return {
+            width: Math.max(0, width),
+            height: Math.max(0, height)
+          };
+        };
+        window.__mnxPrepareMediaRoles = function() {
+          var body = document.body;
+          var stats = { mediaCount: 0, inlineCount: 0, blockCount: 0 };
+          if (!body || !body.querySelectorAll) {
+            return stats;
+          }
+          var mediaNodes = body.querySelectorAll('img, svg, video, canvas');
+          var inlineTags = ',A,SPAN,EM,STRONG,B,I,U,S,SUP,SUB,SMALL,RUBY,RT,RP,LABEL,';
+          for (var mi = 0; mi < mediaNodes.length; mi++) {
+            var mediaElement = mediaNodes[mi];
+            var tagName = mediaElement.tagName ? mediaElement.tagName.toUpperCase() : '';
+            var parent = mediaElement.parentElement;
+            var parentTag = parent && parent.tagName ? parent.tagName.toUpperCase() : '';
+            var parentText = parent ? String(parent.innerText || parent.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+            var childCount = parent && parent.children ? parent.children.length : 0;
+            var mediaOnlyParent = childCount <= 1 && parentText.length <= 12;
+            var adjacentText = window.__mnxHasAdjacentText(mediaElement);
+            var display = '';
+            try {
+              display = window.getComputedStyle(mediaElement).display || '';
+            } catch (_displayError) {
+              display = '';
+            }
+            var dimension = window.__mnxReadMediaDimension(mediaElement);
+            var maxDim = Math.max(dimension.width, dimension.height);
+            var smallMedia = (maxDim > 0 && maxDim <= 128) ||
+              (dimension.height > 0 && dimension.height <= 64) ||
+              (dimension.width > 0 && dimension.width <= 96 && dimension.height > 0 && dimension.height <= 96);
+            var src = '';
+            if (tagName === 'IMG') {
+              src = mediaElement.getAttribute('src') || '';
+            }
+            var decodedSrc = src;
+            try {
+              decodedSrc = decodeURIComponent(src);
+            } catch (_srcError) {
+              decodedSrc = src;
+            }
+            var filenameHint = /(note|mark|icon|symbol|inline|footnote|annotation|zhu|sup|sub|注|标记|标注|脚注|角标)/i.test(decodedSrc);
+            var inlineParent = inlineTags.indexOf(',' + parentTag + ',') >= 0;
+            var originalInline = display === 'inline' || display === 'inline-block';
+            var unknownSize = maxDim <= 0;
+            var hasTextContext = adjacentText || inlineParent || (!mediaOnlyParent && parentText.length > 0);
+            var inlineRole = (hasTextContext && (smallMedia || filenameHint || (originalInline && (unknownSize || maxDim <= 192)))) ||
+              (filenameHint && !mediaOnlyParent);
+            var role = inlineRole ? 'inline' : 'block';
+            mediaElement.setAttribute('data-mnx-media-role', role);
+            if (parentTag === 'PICTURE') {
+              parent.setAttribute('data-mnx-media-role', role);
+            }
+            var figure = parent;
+            while (figure && figure !== body) {
+              var figureTag = figure.tagName ? figure.tagName.toUpperCase() : '';
+              if (figureTag === 'FIGURE') {
+                figure.setAttribute('data-mnx-media-role', role === 'inline' ? 'inline' : 'block');
+                break;
+              }
+              figure = figure.parentElement;
+            }
+            if (tagName === 'IMG' && mediaElement.getAttribute('data-mnx-role-listener') !== 'true') {
+              mediaElement.setAttribute('data-mnx-role-listener', 'true');
+              mediaElement.addEventListener('load', function() {
+                window.__mnxPrepareMediaRoles();
+                if (window.__mnxSchedulePaginationNotify) {
+                  window.__mnxSchedulePaginationNotify('media_load');
+                }
+              });
+            }
+            stats.mediaCount++;
+            if (role === 'inline') {
+              stats.inlineCount++;
+            } else {
+              stats.blockCount++;
+            }
+          }
+          return stats;
+        };
+        window.__mnxResolveContentKind = function() {
+          var preferImageLike = ${preferImageLike ? 'true' : 'false'};
+          var body = document.body;
+          if (!body) {
+            return preferImageLike ? 'image_like' : 'text_like';
+          }
+          var mediaStats = window.__mnxPrepareMediaRoles();
+          var mediaCount = mediaStats.mediaCount || 0;
+          var blockMediaCount = mediaStats.blockCount || 0;
+          var textSource = body.innerText || body.textContent || '';
+          var normalizedText = textSource.replace(/\\s+/g, ' ').trim();
+          var textLength = normalizedText.length;
+          if (preferImageLike && (blockMediaCount > 0 || (mediaCount > 0 && textLength <= 120 && blockMediaCount === mediaCount))) {
+            return 'image_like';
+          }
+          if (mediaCount <= 0) {
+            return 'text_like';
+          }
+          if (blockMediaCount <= 0) {
+            return 'text_like';
+          }
+          if (textLength <= 80) {
+            return 'image_like';
+          }
+          var childCount = body.children ? body.children.length : 0;
+          var mediaContainerCount = 0;
+          if (body.children) {
+            for (var ci = 0; ci < body.children.length; ci++) {
+              var child = body.children[ci];
+              var childText = (child.innerText || child.textContent || '').replace(/\\s+/g, ' ').trim();
+              var childHasMedia = !!(child.querySelector && child.querySelector('[data-mnx-media-role="block"]'));
+              if (childHasMedia && childText.length <= 24) {
+                mediaContainerCount++;
+              }
+            }
+          }
+          if (childCount > 0 && mediaContainerCount === childCount && textLength <= 160) {
+            return 'image_like';
+          }
+          if (mediaCount === 1 && blockMediaCount === 1 && textLength <= 160) {
+            return 'image_like';
+          }
+          return 'text_like';
+        };
+        var resolvedContentKind = window.__mnxResolveContentKind();
+        if (document.documentElement) {
+          document.documentElement.setAttribute('data-mnx-content-kind', resolvedContentKind);
+        }
+        var styleTag = document.getElementById('__mnx_epub_style');
+        if (styleTag) {
+          styleTag.remove();
+        }
+        styleTag = document.createElement('style');
+        styleTag.id = '__mnx_epub_style';
+        styleTag.textContent = \`${escapedCss}\`;
+        head.appendChild(styleTag);
+        if (head.lastElementChild !== styleTag) {
+          head.appendChild(styleTag);
+        }
+        // Remove body inline styles that would override !important CSS rules for column layout
+        if (document.body) {
+          var blockProps = ['height','max-height','min-height','overflow','overflow-x','overflow-y',
+                           'width','max-width','column-width','column-gap','column-fill','column-count'];
+          for (var pi = 0; pi < blockProps.length; pi++) {
+            document.body.style.removeProperty(blockProps[pi]);
+          }
+          document.body.style.removeProperty('font-size');
+          document.body.style.removeProperty('-webkit-text-size-adjust');
+          document.body.style.removeProperty('text-size-adjust');
+          if (resolvedContentKind === 'image_like' && document.body.children) {
+            for (var bi = 0; bi < document.body.children.length; bi++) {
+              var bodyChild = document.body.children[bi];
+              bodyChild.style.removeProperty('width');
+              bodyChild.style.removeProperty('height');
+              bodyChild.style.removeProperty('max-width');
+              bodyChild.style.removeProperty('max-height');
+            }
+          }
+          // Force synchronous reflow so column layout is computed before we measure
+          void document.body.offsetWidth;
+        }
+        var mediaElements = document.querySelectorAll('img, svg, video, canvas');
+        for (var mi = 0; mi < mediaElements.length; mi++) {
+          var mediaElement = mediaElements[mi];
+          mediaElement.style.removeProperty('width');
+          mediaElement.style.removeProperty('height');
+          mediaElement.style.removeProperty('max-width');
+          mediaElement.style.removeProperty('max-height');
+        }
+        if (document.documentElement) {
+          document.documentElement.style.removeProperty('font-size');
+          document.documentElement.style.removeProperty('-webkit-text-size-adjust');
+          document.documentElement.style.removeProperty('text-size-adjust');
+        }
+        ${bridge}
+        window.__mnxInstallArkBridge();
+        return 'ok';
+      })();
+    `;
+
+    this.runJs(injectScript, (_ok: string) => {
+      setTimeout(() => {
+        if (this.params.isFixedLayout) {
+          this.applyFixedLayoutScale(vpW, vpH);
+          this.completeReaderReady('horizontal_paged', 0, 1, notifyReady);
+          return;
+        }
+
+        this.runJs(
+          `(function() {
+            var paginationState = window.__mnxRefreshPagination();
+            return JSON.stringify({
+              pageCount: paginationState.pageCount,
+              currentPage: paginationState.currentPage,
+              currentOffset: paginationState.currentOffset,
+              pageExtent: paginationState.pageExtent,
+              maxOffset: paginationState.maxOffset,
+              contentExtent: paginationState.contentExtent || 0,
+              inlineMediaCount: document.querySelectorAll ? document.querySelectorAll('[data-mnx-media-role="inline"]').length : 0,
+              blockMediaCount: document.querySelectorAll ? document.querySelectorAll('[data-mnx-media-role="block"]').length : 0,
+              innerWidth: window.innerWidth || 0,
+              innerHeight: window.innerHeight || 0,
+              visualViewportWidth: window.visualViewport ? (window.visualViewport.width || 0) : 0,
+              visualViewportHeight: window.visualViewport ? (window.visualViewport.height || 0) : 0,
+              visualViewportScale: window.visualViewport ? (window.visualViewport.scale || 0) : 0,
+              rootFontSize: document.documentElement ? window.getComputedStyle(document.documentElement).fontSize || '' : '',
+              bodyFontSize: document.body ? window.getComputedStyle(document.body).fontSize || '' : '',
+              bodyLineHeight: document.body ? window.getComputedStyle(document.body).lineHeight || '' : '',
+              sampleTagName: (function() {
+                var sample = document.body ? document.body.querySelector('p, div, span, li, article, section, blockquote, td, th, a') : null;
+                return sample ? sample.tagName : '';
+              })(),
+              sampleFontSize: (function() {
+                var sample = document.body ? document.body.querySelector('p, div, span, li, article, section, blockquote, td, th, a') : null;
+                return sample ? (window.getComputedStyle(sample).fontSize || '') : '';
+              })(),
+              sampleLineHeight: (function() {
+                var sample = document.body ? document.body.querySelector('p, div, span, li, article, section, blockquote, td, th, a') : null;
+                return sample ? (window.getComputedStyle(sample).lineHeight || '') : '';
+              })(),
+              sampleTextAlign: (function() {
+                var sample = document.body ? document.body.querySelector('p, div, span, li, article, section, blockquote, td, th, a') : null;
+                return sample ? (window.getComputedStyle(sample).textAlign || '') : '';
+              })(),
+              styleTagParent: (function() {
+                var styleTag = document.getElementById('__mnx_epub_style');
+                return styleTag && styleTag.parentElement ? styleTag.parentElement.tagName : '';
+              })(),
+              isStyleTagLastChild: (function() {
+                var styleTag = document.getElementById('__mnx_epub_style');
+                return !!(styleTag && styleTag.parentElement && styleTag.parentElement.lastElementChild === styleTag);
+              })(),
+              rootTagName: paginationState.rootTagName || '',
+              contentKind: document.documentElement ? (document.documentElement.getAttribute('data-mnx-content-kind') || '') : '',
+              scrollWidth: Math.max(
+                document.documentElement.scrollWidth || 0,
+                document.body ? document.body.scrollWidth : 0
+              ),
+              scrollHeight: Math.max(
+                document.documentElement.scrollHeight || 0,
+                document.body ? document.body.scrollHeight : 0
+              )
+            });
+          })();`,
+          (metricsRaw: string) => {
+            let pageCount = 1;
+            try {
+              const cleanMetrics = this.parseWebViewJson(metricsRaw);
+              const metrics = JSON.parse(cleanMetrics) as PaginationMetrics;
+              const parsedCount = Math.floor(Number(metrics.pageCount));
+              if (!isNaN(parsedCount) && parsedCount > 0) {
+                pageCount = parsedCount;
+              }
+              logger.debug(
+                TAG,
+                `Pagination metrics: source=${source}, kind=${metrics.contentKind}, media(inline=${metrics.inlineMediaCount}, block=${metrics.blockMediaCount}), inner=${metrics.innerWidth}x${metrics.innerHeight}, visual=${metrics.visualViewportWidth}x${metrics.visualViewportHeight}@${metrics.visualViewportScale}, scroll=${metrics.scrollWidth}x${metrics.scrollHeight}, root=${metrics.rootTagName}, offset=${metrics.currentOffset}/${metrics.maxOffset}, extent=${metrics.pageExtent}, contentExtent=${metrics.contentExtent}, pages=${pageCount}, current=${metrics.currentPage}, rootFont=${metrics.rootFontSize}, bodyFont=${metrics.bodyFontSize}/${metrics.bodyLineHeight}, sample=${metrics.sampleTagName}:${metrics.sampleFontSize}/${metrics.sampleLineHeight}, align=${metrics.sampleTextAlign}, styleParent=${metrics.styleTagParent}, styleLast=${metrics.isStyleTagLastChild}`
+              );
+            } catch (error) {
+              const fallbackCount = parseInt(this.parseWebViewJson(metricsRaw), 10);
+              if (!isNaN(fallbackCount) && fallbackCount > 0) {
+                pageCount = fallbackCount;
+              } else {
+                logger.warn(TAG, `Pagination metrics parse failed, fallback to single page: ${String(error)}`);
+              }
+            }
+
+            this.currentPageCount = pageCount;
+            const initialAnchorFragment = this.pendingAnchorFragment;
+            const targetPage = anchorRatio >= 0 && this.currentPageCount > 1
+              ? Math.max(
+                  0,
+                  Math.min(
+                    Math.round(anchorRatio * Math.max(0, this.currentPageCount - 1)),
+                    this.currentPageCount - 1
+                  )
+                )
+              : Math.max(0, Math.min(pageOffset, this.currentPageCount - 1));
+            let resolvedTargetPage = targetPage;
+            let finished = false;
+            const finalize = () => {
+              if (finished) {
+                return;
+              }
+              finished = true;
+              this.pendingAnchorFragment = '';
+              this.completeReaderReady(layoutKind, resolvedTargetPage, this.currentPageCount, notifyReady);
+            };
+            const fallbackTimer = setTimeout(() => {
+              finalize();
+            }, 60);
+            const pageCommand = initialAnchorFragment.length > 0
+              ? `window.__mnxGoToFragmentImmediate('${this.escapeJsSingleQuoted(initialAnchorFragment)}');`
+              : `window.__mnxGoToPageImmediate(${targetPage});`;
+            this.runJs(pageCommand, (resultRaw: string) => {
+              const result = this.parsePageCommandResult(resultRaw, targetPage);
+              this.currentPage = result.pageIndex;
+              resolvedTargetPage = result.pageIndex;
+              this.currentPageCount = result.pageCount;
+              this.lastPaginationOffset = result.offset;
+              this.lastPaginationPageExtent = result.pageExtent;
+              this.lastPaginationMaxOffset = result.maxOffset;
+              this.lastProgressRatio = this.computeProgressRatio(
+                this.currentPage,
+                this.currentPageCount,
+                this.lastPaginationOffset,
+                this.lastPaginationMaxOffset
+              );
+              if (initialAnchorFragment.length > 0) {
+                logger.info(
+                  TAG,
+                  `初始锚点定位完成: fragment=${initialAnchorFragment}, page=${this.currentPage}/${this.currentPageCount}`
+                );
+              }
+              clearTimeout(fallbackTimer);
+              finalize();
+            });
+          }
+        );
+      }, REFLOW_SETTLE_DELAY_MS);
+    });
+  }
+
+  private applyFixedLayoutScale(vpW: number, vpH: number): void {
+    const detectScript = `
+      (function() {
+        var viewportMeta = document.querySelector('meta[name="viewport"]');
+        var width = 0;
+        var height = 0;
+        if (viewportMeta) {
+          var content = viewportMeta.getAttribute('content') || '';
+          var widthMatch = content.match(/width\\s*=\\s*(\\d+)/);
+          var heightMatch = content.match(/height\\s*=\\s*(\\d+)/);
+          if (widthMatch) {
+            width = parseInt(widthMatch[1]);
+          }
+          if (heightMatch) {
+            height = parseInt(heightMatch[1]);
+          }
+        }
+        if (!width) {
+          width = document.documentElement.scrollWidth || ${vpW};
+        }
+        if (!height) {
+          height = document.documentElement.scrollHeight || ${vpH};
+        }
+        return JSON.stringify({ w: width, h: height });
+      })();
+    `;
+    this.runJs(detectScript, (result: string) => {
+      try {
+        const clean = this.parseWebViewJson(result);
+        const dimension = JSON.parse(clean) as FixedLayoutDimension;
+        const scaleX = vpW / (dimension.w || vpW);
+        const scaleY = vpH / (dimension.h || vpH);
+        const scale = Math.min(scaleX, scaleY);
+        this.runJs(`document.body.style.transform = 'scale(${scale})';`);
+      } catch (error) {
+        logger.warn(TAG, `Fixed-layout dimension parse failed: ${String(error)}`);
+      }
+    });
+  }
+
+  private commitPageChange(targetPage: number, afterCommit?: () => void): void {
+    let finished = false;
+    let resolvedPage = targetPage;
+    let resolvedPageCount = Math.max(1, this.currentPageCount);
+    this.boundarySuppressionUntil = Date.now() + 260;
+    const finalize = () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      this.currentPage = resolvedPage;
+      this.currentPageCount = resolvedPageCount;
+      this.lastProgressRatio = this.computeProgressRatio(
+        this.currentPage,
+        this.currentPageCount,
+        this.lastPaginationOffset,
+        this.lastPaginationMaxOffset
+      );
+      this.params.callbacks.onPageChange(this.currentPage, this.currentPageCount);
+      if (afterCommit) {
+        afterCommit();
+      }
+    };
+
+    const fallbackTimer = setTimeout(() => {
+      finalize();
+    }, 60);
+
+    this.runJs(`window.__mnxGoToPageImmediate(${targetPage});`, (resultRaw: string) => {
+      const result = this.parsePageCommandResult(resultRaw, targetPage);
+      resolvedPage = result.pageIndex;
+      resolvedPageCount = result.pageCount;
+      this.lastPaginationOffset = result.offset;
+      this.lastPaginationPageExtent = result.pageExtent;
+      this.lastPaginationMaxOffset = result.maxOffset;
+      logger.debug(
+        TAG,
+        `页内翻页完成: target=${targetPage}, resolved=${resolvedPage}/${resolvedPageCount}, offset=${result.offset}/${result.maxOffset}, requested=${result.requestedOffset}, physical=${result.physicalOffset}, virtual=${result.usedVirtualOffset}`
+      );
+      clearTimeout(fallbackTimer);
+      finalize();
+    });
+  }
+
+  private goToPageImmediate(targetPage: number): boolean {
+    if (!this.ready || this.isPageTurnAnimating || this.currentPageCount <= 0) {
+      return false;
+    }
+    const safeTargetPage = Math.max(0, Math.min(targetPage, this.currentPageCount - 1));
+    this.commitPageChange(safeTargetPage);
+    return true;
+  }
+
+  private goToAnchorImmediate(anchorFragment: string): boolean {
+    if (!this.ready || this.isPageTurnAnimating) {
+      return false;
+    }
+    const normalizedFragment = this.normalizeAnchorFragment(anchorFragment);
+    if (normalizedFragment.length <= 0) {
+      return false;
+    }
+    let finished = false;
+    let resolvedPage = this.currentPage;
+    let resolvedPageCount = Math.max(1, this.currentPageCount);
+    const finalize = () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      this.currentPage = resolvedPage;
+      this.currentPageCount = resolvedPageCount;
+      this.lastProgressRatio = this.computeProgressRatio(
+        this.currentPage,
+        this.currentPageCount,
+        this.lastPaginationOffset,
+        this.lastPaginationMaxOffset
+      );
+      this.params.callbacks.onPageChange(this.currentPage, this.currentPageCount);
+    };
+    const fallbackTimer = setTimeout(() => {
+      finalize();
+    }, 60);
+    this.runJs(
+      `window.__mnxGoToFragmentImmediate('${this.escapeJsSingleQuoted(normalizedFragment)}');`,
+      (resultRaw: string) => {
+        const result = this.parsePageCommandResult(resultRaw, this.currentPage);
+        resolvedPage = result.pageIndex;
+        resolvedPageCount = result.pageCount;
+        this.lastPaginationOffset = result.offset;
+        this.lastPaginationPageExtent = result.pageExtent;
+        this.lastPaginationMaxOffset = result.maxOffset;
+        logger.info(
+          TAG,
+          `锚点跳转完成: fragment=${normalizedFragment}, page=${resolvedPage}/${resolvedPageCount}`
+        );
+        clearTimeout(fallbackTimer);
+        finalize();
+      }
+    );
+    return true;
+  }
+
+  private finishPageTurnAnimation(): void {
+    this.clearDeferredWork();
+    this.isPageTurnAnimating = false;
+    this.resetViewportTransform();
+  }
+
+  private loadSpineItemImmediate(spineFilePath: string, pageOffset: number, anchorFragment: string = ''): void {
+    this.clearDeferredWork();
+    this.configureUniversalAccessRoot(spineFilePath, 'load_spine');
+    this.pendingPageOffset = pageOffset;
+    this.pendingSpinePath = spineFilePath;
+    this.pendingAnchorFragment = this.normalizeAnchorFragment(anchorFragment);
+    this.ready = false;
+    this.currentPageCount = 0;
+    this.currentPage = 0;
+    this.lastPaginationOffset = 0;
+    this.lastPaginationPageExtent = 0;
+    this.lastPaginationMaxOffset = 0;
+    this.boundarySuppressionUntil = 0;
+    try {
+      this.webviewController.loadUrl(`file://${spineFilePath}`);
+    } catch (error) {
+      const msg = String(error);
+      this.pendingAnchorFragment = '';
+      this.pendingSpineTransition = null;
+      this.finishPageTurnAnimation();
+      logger.error(TAG, `loadUrl failed: ${msg}`);
+      this.params.callbacks.onError(`加载失败: ${msg}`);
+    }
+  }
+
+  private configureUniversalAccessRoot(spineFilePath: string, source: string): void {
+    if (!this.webControllerAttached || spineFilePath.trim().length <= 0) {
+      return;
+    }
+    const rootPath = this.resolveUniversalAccessRoot(spineFilePath);
+    if (rootPath.length <= 0 || rootPath === this.universalAccessRoot) {
+      return;
+    }
+    try {
+      const pathList: string[] = [rootPath];
+      this.webviewController.setPathAllowingUniversalAccess(pathList);
+      this.universalAccessRoot = rootPath;
+      logger.info(TAG, `WebView 本地文件访问白名单已设置: source=${source}, root=${rootPath}`);
+    } catch (error) {
+      logger.warn(TAG, `WebView 本地文件访问白名单设置失败: source=${source}, root=${rootPath}, error=${String(error)}`);
+    }
+  }
+
+  private resolveUniversalAccessRoot(spineFilePath: string): string {
+    const normalizedPath = spineFilePath.trim().replace(/\\/g, '/').replace(/^file:\/\//, '');
+    const packageMarkers: string[] = ['/OEBPS/', '/OPS/', '/EPUB/'];
+    for (let i = 0; i < packageMarkers.length; i++) {
+      const marker = packageMarkers[i];
+      const markerIndex = normalizedPath.indexOf(marker);
+      if (markerIndex > 0) {
+        return normalizedPath.substring(0, markerIndex);
+      }
+    }
+    const slashIndex = normalizedPath.lastIndexOf('/');
+    if (slashIndex > 0) {
+      return normalizedPath.substring(0, slashIndex);
+    }
+    return '';
+  }
+
+  private getCurrentEpubLayoutKind(): EpubPageLayoutKind {
+    if (this.params.isFixedLayout) {
+      return 'horizontal_paged';
+    }
+    return this.getLayoutKind(
+      this.activePageSettings,
+      this.lastVpW > 0 ? this.lastVpW : this.fallbackVpW,
+      this.lastVpH > 0 ? this.lastVpH : this.fallbackVpH
+    );
+  }
+
+  private isEpubCurlAnimationSupported(layoutKind: EpubPageLayoutKind): boolean {
+    if (this.isContinuousMode()) {
+      return false;
+    }
+    if (layoutKind === 'vertical_paged' || layoutKind === 'continuous_vertical') {
+      return false;
+    }
+    if (this.activePageSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return false;
+    }
+    return layoutKind === 'horizontal_paged' || layoutKind === 'double_page';
+  }
+
+  private getEpubCurlStartPosition(forward: boolean): CurlStartPosition {
+    const isRtl = this.activePageSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+    const curlFromRight = forward ? !isRtl : isRtl;
+    return curlFromRight ? CurlStartPosition.RIGHT_EDGE : CurlStartPosition.LEFT_EDGE;
+  }
+
+  private prepareEpubCurlGeometry(forward: boolean): void {
+    const viewportW = this.getAnimationViewportWidthVp();
+    const viewportH = this.getAnimationViewportHeightVp();
+    this.epubCurlIsForward = forward;
+    this.epubCurlStartPosition = this.getEpubCurlStartPosition(forward);
+    this.epubCurlTouchX = this.epubCurlStartPosition === CurlStartPosition.RIGHT_EDGE ? viewportW : 0;
+    this.epubCurlTouchY = viewportH / 2;
+  }
+
+  private waitMs(delayMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, delayMs);
+    });
+  }
+
+  private async captureEpubCurlSnapshot(stage: string): Promise<image.PixelMap | null> {
+    const ctx = this.resolveUiContext();
+    if (!ctx) {
+      logger.warn(TAG, `[EPUB卷页] ${stage} 截图失败: UIContext为空`);
+      return null;
+    }
+    try {
+      const pixelMap = await ctx.getComponentSnapshot().get(EPUB_WEBVIEW_CAPTURE_COMPONENT_ID, {
+        waitUntilRenderFinished: true,
+        scale: 1
+      });
+      const imageInfo = await pixelMap.getImageInfo();
+      if (imageInfo.size.width <= 0 || imageInfo.size.height <= 0) {
+        logger.warn(TAG, `[EPUB卷页] ${stage} 截图尺寸无效: ${imageInfo.size.width}x${imageInfo.size.height}`);
+        pixelMap.release();
+        return null;
+      }
+      logger.info(TAG, `[EPUB卷页] ${stage} 截图成功: ${imageInfo.size.width}x${imageInfo.size.height}`);
+      return pixelMap;
+    } catch (error) {
+      logger.warn(TAG, `[EPUB卷页] ${stage} 截图失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private releaseEpubCurlPixelMap(pixelMap: image.PixelMap | null, label: string): void {
+    if (!pixelMap) {
+      return;
+    }
+    try {
+      pixelMap.release();
+    } catch (error) {
+      logger.warn(TAG, `[EPUB卷页] 释放 ${label} 快照失败: ${String(error)}`);
+    }
+  }
+
+  private clearEpubCurlAnimationTimer(): void {
+    if (this.epubCurlAnimationTimer !== -1) {
+      clearTimeout(this.epubCurlAnimationTimer);
+      this.epubCurlAnimationTimer = -1;
+    }
+  }
+
+  private clearEpubCurlReleaseTimer(): void {
+    if (this.epubCurlReleaseTimer !== -1) {
+      clearTimeout(this.epubCurlReleaseTimer);
+      this.epubCurlReleaseTimer = -1;
+    }
+  }
+
+  private scheduleEpubCurlSnapshotRelease(): void {
+    this.clearEpubCurlReleaseTimer();
+    this.epubCurlReleaseTimer = setTimeout(() => {
+      this.epubCurlReleaseTimer = -1;
+      this.releaseEpubCurlPixelMap(this.epubCurlCurrentPixelMap, 'current');
+      this.releaseEpubCurlPixelMap(this.epubCurlNextPixelMap, 'next');
+      this.epubCurlCurrentPixelMap = null;
+      this.epubCurlNextPixelMap = null;
+    }, 96);
+  }
+
+  private resetEpubCurlState(releaseImmediately: boolean = false): void {
+    this.clearEpubCurlAnimationTimer();
+    this.clearEpubCurlReleaseTimer();
+    this.epubCurlInteractiveActive = false;
+    this.epubCurlInteractiveReady = false;
+    this.epubCurlInteractiveEndPending = false;
+    this.epubCurlInteractiveEndComplete = false;
+    this.epubCurlInteractiveOriginalPage = -1;
+    this.epubCurlInteractiveTargetPage = -1;
+    this.epubCurlPendingProgress = 0;
+    this.showEpubCurlSnapshotCover = false;
+    this.showEpubCurlEffect = false;
+    this.epubCurlCanvasReady = false;
+    this.epubCurlProgress = 0;
+    this.epubCurlRenderToken++;
+    if (releaseImmediately) {
+      this.releaseEpubCurlPixelMap(this.epubCurlCurrentPixelMap, 'current');
+      this.releaseEpubCurlPixelMap(this.epubCurlNextPixelMap, 'next');
+      this.epubCurlCurrentPixelMap = null;
+      this.epubCurlNextPixelMap = null;
+    } else {
+      this.scheduleEpubCurlSnapshotRelease();
+    }
+  }
+
+  private easeInOutCubic(progress: number): number {
+    const t = this.clamp(progress, 0, 1);
+    if (t < 0.5) {
+      return 4 * t * t * t;
+    }
+    const adjusted = -2 * t + 2;
+    return 1 - (adjusted * adjusted * adjusted) / 2;
+  }
+
+  private startEpubCurlAnimation(): void {
+    this.clearEpubCurlAnimationTimer();
+    const duration = this.epubCurlEffectConfig.animationDuration;
+    const startedAt = Date.now();
+    const animateFrame = (): void => {
+      if (!this.showEpubCurlEffect) {
+        this.clearEpubCurlAnimationTimer();
+        return;
+      }
+      const elapsed = Date.now() - startedAt;
+      const rawProgress = this.clamp(elapsed / duration, 0, 1);
+      this.epubCurlProgress = this.easeInOutCubic(rawProgress);
+      if (rawProgress < 1) {
+        this.epubCurlAnimationTimer = setTimeout(animateFrame, 16);
+        return;
+      }
+      this.epubCurlAnimationTimer = -1;
+      this.showEpubCurlEffect = false;
+      this.showEpubCurlSnapshotCover = false;
+      this.epubCurlProgress = 0;
+      this.scheduleEpubCurlSnapshotRelease();
+      this.finishPageTurnAnimation();
+      logger.info(TAG, '[EPUB卷页] 卷页动画完成');
+    };
+    this.epubCurlAnimationTimer = setTimeout(animateFrame, 16);
+  }
+
+  private commitPageChangeAsync(targetPage: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.commitPageChange(targetPage, () => {
+        resolve();
+      });
+    });
+  }
+
+  private async performEpubCurlPageTurn(targetPage: number, forward: boolean): Promise<void> {
+    this.isPageTurnAnimating = true;
+    this.prepareEpubCurlGeometry(forward);
+    this.resetEpubCurlState(true);
+
+    const currentPixelMap = await this.captureEpubCurlSnapshot('current');
+    if (!currentPixelMap) {
+      logger.warn(TAG, '[EPUB卷页] 当前页截图不可用，降级为覆盖动画');
+      this.finishPageTurnAnimation();
+      this.performViewportAnimatedPageTurn(targetPage, forward, PageTurnAnimationType.COVER);
+      return;
+    }
+    if (!this.uiContext) {
+      this.releaseEpubCurlPixelMap(currentPixelMap, 'current');
+      this.isPageTurnAnimating = false;
+      return;
+    }
+
+    this.epubCurlCurrentPixelMap = currentPixelMap;
+    this.showEpubCurlSnapshotCover = true;
+    this.epubCurlProgress = 0;
+
+    await this.waitMs(EPUB_CURL_COVER_RENDER_DELAY_MS);
+    if (!this.uiContext) {
+      this.resetEpubCurlState(true);
+      this.isPageTurnAnimating = false;
+      return;
+    }
+
+    await this.commitPageChangeAsync(targetPage);
+    await this.waitMs(EPUB_CURL_TARGET_CAPTURE_DELAY_MS);
+    if (!this.uiContext) {
+      this.resetEpubCurlState(true);
+      this.isPageTurnAnimating = false;
+      return;
+    }
+
+    const nextPixelMap = await this.captureEpubCurlSnapshot('next');
+    if (!nextPixelMap) {
+      logger.warn(TAG, '[EPUB卷页] 目标页截图不可用，直接完成翻页');
+      this.showEpubCurlSnapshotCover = false;
+      this.finishPageTurnAnimation();
+      this.resetEpubCurlState(false);
+      return;
+    }
+
+    this.epubCurlNextPixelMap = nextPixelMap;
+    this.epubCurlCanvasReady = false;
+    this.showEpubCurlEffect = true;
+    this.showEpubCurlSnapshotCover = true;
+    this.epubCurlRenderToken++;
+    this.startEpubCurlAnimation();
+  }
+
+  private beginInteractiveCurl(forward: boolean, touchX: number, touchY: number): boolean {
+    if (this.epubCurlInteractiveActive) {
+      return true;
+    }
+    if (!this.ready || this.isPageTurnAnimating || this.currentPageCount <= 1) {
+      return false;
+    }
+    const animationType = this.normalizeAnimationType(
+      this.activePageSettings.pageTurnAnimation ?? PageTurnAnimationType.SLIDE
+    );
+    const layoutKind = this.getCurrentEpubLayoutKind();
+    if (animationType !== PageTurnAnimationType.CURL || !this.isEpubCurlAnimationSupported(layoutKind)) {
+      return false;
+    }
+    const targetPage = forward ? this.currentPage + 1 : this.currentPage - 1;
+    if (targetPage < 0 || targetPage >= this.currentPageCount) {
+      return false;
+    }
+
+    this.resetEpubCurlState(true);
+    this.isPageTurnAnimating = true;
+    this.epubCurlInteractiveActive = true;
+    this.epubCurlInteractiveReady = false;
+    this.epubCurlInteractiveEndPending = false;
+    this.epubCurlInteractiveEndComplete = false;
+    this.epubCurlInteractiveOriginalPage = this.currentPage;
+    this.epubCurlInteractiveTargetPage = targetPage;
+    this.epubCurlPendingProgress = 0;
+    this.prepareEpubCurlGeometry(forward);
+    this.epubCurlTouchX = touchX;
+    this.epubCurlTouchY = touchY;
+    void this.prepareInteractiveCurlSnapshots(targetPage, forward);
+    return true;
+  }
+
+  private async prepareInteractiveCurlSnapshots(targetPage: number, forward: boolean): Promise<void> {
+    const currentPixelMap = await this.captureEpubCurlSnapshot('interactive_current');
+    if (!this.epubCurlInteractiveActive) {
+      this.releaseEpubCurlPixelMap(currentPixelMap, 'interactive_current');
+      return;
+    }
+    if (!currentPixelMap) {
+      logger.warn(TAG, '[EPUB卷页] 交互卷页当前页截图不可用，取消交互卷页');
+      this.resetEpubCurlState(true);
+      this.finishPageTurnAnimation();
+      return;
+    }
+    this.epubCurlCurrentPixelMap = currentPixelMap;
+    this.showEpubCurlSnapshotCover = true;
+
+    await this.waitMs(EPUB_CURL_COVER_RENDER_DELAY_MS);
+    if (!this.epubCurlInteractiveActive) {
+      return;
+    }
+
+    await this.commitPageChangeAsync(targetPage);
+    await this.waitMs(EPUB_CURL_TARGET_CAPTURE_DELAY_MS);
+    if (!this.epubCurlInteractiveActive) {
+      return;
+    }
+
+    const nextPixelMap = await this.captureEpubCurlSnapshot('interactive_next');
+    if (!this.epubCurlInteractiveActive) {
+      this.releaseEpubCurlPixelMap(nextPixelMap, 'interactive_next');
+      return;
+    }
+    if (!nextPixelMap) {
+      logger.warn(TAG, '[EPUB卷页] 交互卷页目标页截图不可用，取消交互卷页');
+      const originalPage = this.epubCurlInteractiveOriginalPage;
+      this.resetEpubCurlState(false);
+      if (originalPage >= 0) {
+        this.commitPageChange(originalPage, () => {
+          this.finishPageTurnAnimation();
+        });
+      } else {
+        this.finishPageTurnAnimation();
+      }
+      return;
+    }
+
+    this.epubCurlNextPixelMap = nextPixelMap;
+    this.epubCurlInteractiveReady = true;
+    this.epubCurlCanvasReady = false;
+    this.showEpubCurlEffect = true;
+    this.showEpubCurlSnapshotCover = true;
+    this.epubCurlProgress = this.clamp(this.epubCurlPendingProgress, 0, 0.96);
+    this.epubCurlRenderToken++;
+    logger.info(TAG, `[EPUB卷页] 交互卷页快照就绪: target=${targetPage}, forward=${forward}`);
+
+    if (this.epubCurlInteractiveEndPending) {
+      this.finishInteractiveCurl(this.epubCurlInteractiveEndComplete);
+    }
+  }
+
+  private updateInteractiveCurl(progress: number, touchX: number, touchY: number): void {
+    if (!this.epubCurlInteractiveActive) {
+      return;
+    }
+    this.epubCurlTouchX = touchX;
+    this.epubCurlTouchY = touchY;
+    this.epubCurlPendingProgress = this.clamp(progress, 0, 0.96);
+    if (this.epubCurlInteractiveReady) {
+      this.epubCurlProgress = this.epubCurlPendingProgress;
+    }
+  }
+
+  private endInteractiveCurl(complete: boolean): boolean {
+    if (!this.epubCurlInteractiveActive) {
+      return false;
+    }
+    if (!this.epubCurlInteractiveReady) {
+      this.epubCurlInteractiveEndPending = true;
+      this.epubCurlInteractiveEndComplete = complete;
+      return true;
+    }
+    this.finishInteractiveCurl(complete);
+    return true;
+  }
+
+  private cancelInteractiveCurl(): void {
+    if (this.epubCurlInteractiveActive) {
+      this.finishInteractiveCurl(false);
+    }
+  }
+
+  private finishInteractiveCurl(complete: boolean): void {
+    this.clearEpubCurlAnimationTimer();
+    const startProgress = this.clamp(this.epubCurlProgress, 0, 1);
+    const targetProgress = complete ? 1 : 0;
+    const progressDelta = Math.abs(targetProgress - startProgress);
+    if (!this.epubCurlInteractiveReady || progressDelta < 0.01) {
+      this.finalizeInteractiveCurl(complete);
+      return;
+    }
+
+    const duration = Math.max(120, Math.round(this.epubCurlEffectConfig.animationDuration * progressDelta));
+    const startedAt = Date.now();
+    const animateFrame = (): void => {
+      const elapsed = Date.now() - startedAt;
+      const rawProgress = this.clamp(elapsed / duration, 0, 1);
+      const eased = complete ? this.easeInOutCubic(rawProgress) : 1 - this.easeInOutCubic(rawProgress);
+      this.epubCurlProgress = complete
+        ? startProgress + (1 - startProgress) * eased
+        : startProgress * eased;
+      if (rawProgress < 1) {
+        this.epubCurlAnimationTimer = setTimeout(animateFrame, 16);
+        return;
+      }
+      this.epubCurlAnimationTimer = -1;
+      this.epubCurlProgress = targetProgress;
+      this.finalizeInteractiveCurl(complete);
+    };
+    animateFrame();
+  }
+
+  private finalizeInteractiveCurl(complete: boolean): void {
+    const originalPage = this.epubCurlInteractiveOriginalPage;
+    this.epubCurlInteractiveActive = false;
+    this.epubCurlInteractiveReady = false;
+    this.epubCurlInteractiveEndPending = false;
+    if (!complete && originalPage >= 0) {
+      this.commitPageChange(originalPage, () => {
+        this.resetEpubCurlState(false);
+        this.finishPageTurnAnimation();
+      });
+      return;
+    }
+    this.resetEpubCurlState(false);
+    this.finishPageTurnAnimation();
+  }
+
+  private performAnimatedSpineTransition(
+    spineFilePath: string,
+    pageOffset: number,
+    forward: boolean,
+    anchorFragment: string = ''
+  ): void {
+    const animationType = this.normalizeViewportAnimationType(
+      this.activePageSettings.pageTurnAnimation ?? PageTurnAnimationType.SLIDE
+    );
+    const ctx = this.resolveUiContext();
+    if (animationType === PageTurnAnimationType.NONE || !ctx) {
+      this.pendingSpineTransition = null;
+      this.finishPageTurnAnimation();
+      this.loadSpineItemImmediate(spineFilePath, pageOffset, anchorFragment);
+      return;
+    }
+
+    const layoutKind = this.params.isFixedLayout
+      ? 'horizontal_paged'
+      : this.getLayoutKind(
+        this.activePageSettings,
+        this.lastVpW > 0 ? this.lastVpW : this.fallbackVpW,
+        this.lastVpH > 0 ? this.lastVpH : this.fallbackVpH
+      );
+    const profile = this.createAnimationProfile(layoutKind, forward, animationType);
+    this.pendingSpineTransition = {
+      incoming: profile.incoming,
+      inDuration: profile.inDuration,
+      inCurve: profile.inCurve
+    };
+    this.isPageTurnAnimating = true;
+
+    ctx.animateTo({
+      duration: profile.outDuration,
+      curve: curves.initCurve(profile.outCurve),
+      onFinish: () => {
+        this.loadSpineItemImmediate(spineFilePath, pageOffset, anchorFragment);
+      }
+    }, () => {
+      this.applyViewportState(profile.outgoing);
+    });
+  }
+
+  private completeReaderReady(
+    layoutKind: EpubPageLayoutKind,
+    targetPage: number,
+    totalPages: number,
+    notifyReady: boolean
+  ): void {
+    this.currentLayoutKind = layoutKind;
+    const finalizeReady = () => {
+      this.ready = true;
+      if (notifyReady) {
+        this.params.callbacks.onReady(this.buildController());
+      }
+      logger.info(
+        TAG,
+        `Reader layout applied: layout=${layoutKind}, pages=${totalPages}, current=${targetPage}`
+      );
+      if (notifyReady && !this.params.isFixedLayout) {
+        this.scheduleSettingsReapply('post_ready_reconcile', INITIAL_LAYOUT_RECONCILE_DELAY_MS);
+      }
+    };
+
+    this.currentPageCount = totalPages;
+    this.currentPage = targetPage;
+    this.lastProgressRatio = this.computeProgressRatio(
+      this.currentPage,
+      this.currentPageCount,
+      this.lastPaginationOffset,
+      this.lastPaginationMaxOffset
+    );
+    this.params.callbacks.onPageChange(this.currentPage, this.currentPageCount);
+
+    const pendingTransition = this.pendingSpineTransition;
+    if (!pendingTransition) {
+      finalizeReady();
+      return;
+    }
+
+    this.applyViewportState(pendingTransition.incoming);
+    const ctx = this.resolveUiContext();
+    if (!ctx) {
+      this.pendingSpineTransition = null;
+      this.finishPageTurnAnimation();
+      finalizeReady();
+      return;
+    }
+
+    ctx.animateTo({
+      duration: pendingTransition.inDuration,
+      curve: curves.initCurve(pendingTransition.inCurve),
+      onFinish: () => {
+        this.pendingSpineTransition = null;
+        this.finishPageTurnAnimation();
+        finalizeReady();
+      }
+    }, () => {
+      this.resetViewportTransform();
+    });
+  }
+
+  private performViewportAnimatedPageTurn(
+    targetPage: number,
+    forward: boolean,
+    animationType: PageTurnAnimationType
+  ): void {
+    const layoutKind = this.getLayoutKind(
+      this.activePageSettings,
+      this.lastVpW > 0 ? this.lastVpW : this.fallbackVpW,
+      this.lastVpH > 0 ? this.lastVpH : this.fallbackVpH
+    );
+    const normalizedAnimation = this.normalizeViewportAnimationType(animationType);
+
+    if (normalizedAnimation === PageTurnAnimationType.NONE) {
+      this.commitPageChange(targetPage);
+      return;
+    }
+
+    const ctx = this.resolveUiContext();
+    if (!ctx) {
+      this.commitPageChange(targetPage);
+      return;
+    }
+
+    this.isPageTurnAnimating = true;
+    const profile = this.createAnimationProfile(layoutKind, forward, normalizedAnimation);
+
+    ctx.animateTo({
+      duration: profile.outDuration,
+      curve: curves.initCurve(profile.outCurve),
+      onFinish: () => {
+        this.commitPageChange(targetPage, () => {
+          this.applyViewportState(profile.incoming);
+          this.pageTurnPhaseTimer = setTimeout(() => {
+            this.pageTurnPhaseTimer = -1;
+            const nextCtx = this.resolveUiContext();
+            if (!nextCtx) {
+              this.finishPageTurnAnimation();
+              return;
+            }
+            nextCtx.animateTo({
+              duration: profile.inDuration,
+              curve: curves.initCurve(profile.inCurve),
+              onFinish: () => {
+                this.finishPageTurnAnimation();
+              }
+            }, () => {
+              this.resetViewportTransform();
+            });
+          }, 16);
+        });
+      }
+    }, () => {
+      this.applyViewportState(profile.outgoing);
+    });
+  }
+
+  private performAnimatedPageTurn(targetPage: number, forward: boolean): void {
+    const layoutKind = this.getLayoutKind(
+      this.activePageSettings,
+      this.lastVpW > 0 ? this.lastVpW : this.fallbackVpW,
+      this.lastVpH > 0 ? this.lastVpH : this.fallbackVpH
+    );
+    const animationType = this.normalizeAnimationType(
+      this.activePageSettings.pageTurnAnimation ?? PageTurnAnimationType.SLIDE
+    );
+
+    if (animationType === PageTurnAnimationType.CURL && this.isEpubCurlAnimationSupported(layoutKind)) {
+      void this.performEpubCurlPageTurn(targetPage, forward);
+      return;
+    }
+
+    if (animationType === PageTurnAnimationType.CURL) {
+      logger.info(TAG, `[EPUB卷页] 当前布局不支持卷页，降级为覆盖动画: layout=${layoutKind}`);
+      this.performViewportAnimatedPageTurn(targetPage, forward, PageTurnAnimationType.COVER);
+      return;
+    }
+
+    this.performViewportAnimatedPageTurn(targetPage, forward, animationType);
+  }
+
+  private scheduleSettingsReapply(reason: string, delayMs: number = SETTINGS_APPLY_DELAY_MS): void {
+    if (!this.ready) {
+      logger.debug(TAG, `跳过排版重应用: ready=false, reason=${reason}`);
+      return;
+    }
+    if (this.applySettingsTimer !== -1) {
+      clearTimeout(this.applySettingsTimer);
+    }
+    this.applySettingsTimer = setTimeout(() => {
+      this.applySettingsTimer = -1;
+      if (!this.ready || this.isPageTurnAnimating) {
+        logger.debug(
+          TAG,
+          `取消排版重应用: ready=${this.ready}, animating=${this.isPageTurnAnimating}, reason=${reason}`
+        );
+        return;
+      }
+      const vpW = this.lastVpW > 0 ? this.lastVpW : this.fallbackVpW;
+      const vpH = this.lastVpH > 0 ? this.lastVpH : this.fallbackVpH;
+      const savedPage = this.currentPage;
+      const anchorRatio = this.lastProgressRatio;
+      logger.info(
+        TAG,
+        `执行排版重应用: reason=${reason}, page=${savedPage}, ratio=${anchorRatio.toFixed(3)}, vp=${vpW}x${vpH}, text(${this.describeTextSettings(this.activeTextSettings)}), page(${this.describePageSettings(this.activePageSettings)})`
+      );
+      this.applyInjectedLayout(
+        vpW,
+        vpH,
+        savedPage,
+        this.activeTextSettings,
+        this.activePageSettings,
+        false,
+        `scheduled:${reason}`,
+        anchorRatio
+      );
+    }, delayMs);
+  }
+
+  private scheduleContinuousBoundarySwitch(direction: 'prev' | 'next'): void {
+    const now = Date.now();
+    if ((now - this.lastBoundarySwitchTime) < 420) {
+      return;
+    }
+    this.clearBoundarySwitchTimer();
+    this.boundarySwitchTimer = setTimeout(() => {
+      this.boundarySwitchTimer = -1;
+      if (!this.ready || this.isPageTurnAnimating || !this.isContinuousMode()) {
+        return;
+      }
+      this.lastBoundarySwitchTime = Date.now();
+      this.params.callbacks.onSpineChangeRequested(direction);
+    }, 140);
+  }
+
+  private resetContinuousBoundarySwitch(): void {
+    this.clearBoundarySwitchTimer();
+  }
+
+  private handleContinuousBoundaryUpdate(
+    payload: PaginationUpdatePayload,
+    previousOffset: number
+  ): void {
+    if (!this.isContinuousMode() || !this.ready || this.isPageTurnAnimating) {
+      this.resetContinuousBoundarySwitch();
+      return;
+    }
+    if (Date.now() < this.boundarySuppressionUntil) {
+      this.resetContinuousBoundarySwitch();
+      return;
+    }
+    const delta = payload.currentOffset - previousOffset;
+    const edgeThreshold = Math.max(12, payload.pageExtent * 0.04);
+    const nearEnd = payload.currentOffset >= Math.max(0, payload.maxOffset - edgeThreshold);
+    const nearStart = payload.currentOffset <= edgeThreshold;
+    if (delta > 6 && nearEnd && payload.currentPage >= Math.max(0, payload.pageCount - 1)) {
+      this.scheduleContinuousBoundarySwitch('next');
+      return;
+    }
+    if (delta < -6 && nearStart && payload.currentPage <= 0) {
+      this.scheduleContinuousBoundarySwitch('prev');
+      return;
+    }
+    this.resetContinuousBoundarySwitch();
+  }
+
+  private handlePaginationChanged(payloadJson: string): void {
+    let payload: PaginationUpdatePayload | null = null;
+    try {
+      const clean = this.parseWebViewJson(payloadJson);
+      payload = JSON.parse(clean) as PaginationUpdatePayload;
+    } catch (error) {
+      logger.warn(TAG, `分页状态回传解析失败: ${String(error)}`);
+      return;
+    }
+    if (!payload) {
+      return;
+    }
+    const previousPage = this.currentPage;
+    const previousCount = this.currentPageCount;
+    const previousOffset = this.lastPaginationOffset;
+    const nextCount = Math.max(1, Math.floor(Number(payload.pageCount) || 1));
+    const nextPage = Math.max(0, Math.min(Math.floor(Number(payload.currentPage) || 0), nextCount - 1));
+    this.currentLayoutKind = (payload.layoutKind as EpubPageLayoutKind) || this.currentLayoutKind;
+    this.currentPageCount = nextCount;
+    this.currentPage = nextPage;
+    this.lastPaginationOffset = Math.max(0, Number(payload.currentOffset) || 0);
+    this.lastPaginationPageExtent = Math.max(0, Number(payload.pageExtent) || 0);
+    this.lastPaginationMaxOffset = Math.max(0, Number(payload.maxOffset) || 0);
+    this.lastProgressRatio = this.computeProgressRatio(
+      this.currentPage,
+      this.currentPageCount,
+      this.lastPaginationOffset,
+      this.lastPaginationMaxOffset
+    );
+    if (this.ready && (previousPage !== this.currentPage || previousCount !== this.currentPageCount)) {
+      this.params.callbacks.onPageChange(this.currentPage, this.currentPageCount);
+    }
+    if (this.ready && (payload.source === 'scroll' || payload.source === 'window_scroll')) {
+      this.handleContinuousBoundaryUpdate(payload, previousOffset);
+    }
+  }
+
+  private handleReaderTap(payloadJson: string): void {
+    if (!this.params.callbacks.onReaderTap) {
+      return;
+    }
+    try {
+      const clean = this.parseWebViewJson(payloadJson);
+      const payload = JSON.parse(clean) as ReaderTapPayload;
+      const safeXRatio = this.clamp(Number(payload.xRatio) || 0, 0, 1);
+      const safeYRatio = this.clamp(Number(payload.yRatio) || 0, 0, 1);
+      this.params.callbacks.onReaderTap(safeXRatio, safeYRatio);
+    } catch (error) {
+      logger.warn(TAG, `阅读器点击事件解析失败: ${String(error)}`);
+    }
+  }
+
+  private buildController(): EpubWebViewReaderController {
+    const self = this;
+    return new EpubWebViewReaderControllerImpl(
+      (
+        spineFilePath: string,
+        pageOffset: number,
+        transitionDirection: EpubSpineTransitionDirection,
+        anchorFragment: string
+      ): void => {
+        const normalizedDirection = transitionDirection ?? 'none';
+        if (normalizedDirection !== 'none' && self.ready && !self.isPageTurnAnimating) {
+          self.performAnimatedSpineTransition(
+            spineFilePath,
+            pageOffset,
+            normalizedDirection === 'next',
+            anchorFragment
+          );
+          return;
+        }
+        self.pendingSpineTransition = null;
+        self.finishPageTurnAnimation();
+        self.loadSpineItemImmediate(spineFilePath, pageOffset, anchorFragment);
+      },
+      (forward: boolean): boolean => {
+        if (!self.ready || self.isPageTurnAnimating || self.currentPageCount <= 1) {
+          logger.debug(
+            TAG,
+            `翻页请求未执行: ready=${self.ready}, animating=${self.isPageTurnAnimating}, current=${self.currentPage}, total=${self.currentPageCount}, forward=${forward}, layout=${self.currentLayoutKind}`
+          );
+          return false;
+        }
+        const nextPage = forward ? self.currentPage + 1 : self.currentPage - 1;
+        if (nextPage < 0 || nextPage >= self.currentPageCount) {
+          logger.debug(
+            TAG,
+            `翻页越界，等待宿主切换 spine: current=${self.currentPage}, total=${self.currentPageCount}, forward=${forward}`
+          );
+          return false;
+        }
+        self.performAnimatedPageTurn(nextPage, forward);
+        return true;
+      },
+      (forward: boolean, touchX: number, touchY: number): boolean => {
+        return self.beginInteractiveCurl(forward, touchX, touchY);
+      },
+      (progress: number, touchX: number, touchY: number): void => {
+        self.updateInteractiveCurl(progress, touchX, touchY);
+      },
+      (complete: boolean): boolean => {
+        return self.endInteractiveCurl(complete);
+      },
+      (): void => {
+        self.cancelInteractiveCurl();
+      },
+      (pageIndex: number): boolean => {
+        return self.goToPageImmediate(pageIndex);
+      },
+      (anchorFragment: string): boolean => {
+        return self.goToAnchorImmediate(anchorFragment);
+      },
+      (): number => {
+        return self.currentPageCount;
+      },
+      (): number => {
+        return self.currentPage;
+      },
+      (settings: EBookReadingSettings): void => {
+        self.activeTextSettings = self.cloneTextSettings(settings);
+        self.viewportBackgroundColor = self.activeTextSettings.backgroundColor;
+        logger.info(TAG, `控制器收到文本设置更新: ${self.describeTextSettings(self.activeTextSettings)}`);
+        self.scheduleSettingsReapply('controller_text_settings');
+      },
+      (settings: MangaReadingSettings): void => {
+        self.activePageSettings = self.clonePageSettings(settings);
+        logger.info(TAG, `控制器收到翻页设置更新: ${self.describePageSettings(self.activePageSettings)}`);
+        self.scheduleSettingsReapply('controller_page_settings');
+      },
+      (): boolean => {
+        return self.ready && !self.isPageTurnAnimating;
+      }
+    );
+  }
+
+  @Builder
+  private buildEpubCurlLayer() {
+    Stack() {
+      if (this.showEpubCurlSnapshotCover && this.epubCurlCurrentPixelMap !== null) {
+        Image(this.epubCurlCurrentPixelMap as image.PixelMap)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Fill)
+          .zIndex(this.epubCurlCanvasReady ? 1 : 4)
+      }
+
+      PageCurlEffectV2({
+        currentPixelMap: null,
+        nextPixelMap: null,
+        currentPixelMapProvider: (): image.PixelMap | null => {
+          if (!this.showEpubCurlEffect) {
+            return null;
+          }
+          return this.epubCurlCurrentPixelMap;
+        },
+        nextPixelMapProvider: (): image.PixelMap | null => {
+          if (!this.showEpubCurlEffect) {
+            return null;
+          }
+          return this.epubCurlNextPixelMap;
+        },
+        componentWidth: this.getAnimationViewportWidthVp(),
+        componentHeight: this.getAnimationViewportHeightVp(),
+        imageDisplayX: 0,
+        imageDisplayY: 0,
+        imageDisplayWidth: this.getAnimationViewportWidthVp(),
+        imageDisplayHeight: this.getAnimationViewportHeightVp(),
+        config: this.epubCurlEffectConfig,
+        isForward: this.epubCurlIsForward,
+        curlStartPosition: this.epubCurlStartPosition,
+        curlTouchX: this.epubCurlTouchX,
+        curlTouchY: this.epubCurlTouchY,
+        curlBackOpacity: this.activePageSettings.curlBackOpacity,
+        externalProgress: this.epubCurlProgress,
+        renderToken: this.epubCurlRenderToken,
+        canvasBackgroundColor: 'rgba(0,0,0,0)',
+        retainBitmapsWhenSourceUnavailable: true,
+        onFirstFrameReady: () => {
+          if (this.showEpubCurlEffect) {
+            this.epubCurlCanvasReady = true;
+          }
+        }
+      })
+        .width('100%')
+        .height('100%')
+        .opacity(this.showEpubCurlEffect && this.epubCurlCanvasReady ? 1 : 0)
+        .zIndex(3)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(Color.Transparent)
+    .hitTestBehavior(HitTestMode.None)
+    .zIndex(20)
+  }
+
+  build() {
+    Stack() {
+      Web({
+        src: 'about:blank',
+        controller: this.webviewController
+      })
+        .id(EPUB_WEBVIEW_CAPTURE_COMPONENT_ID)
+        .width('100%')
+        .height('100%')
+        .metaViewport(true)
+        .fileAccess(true)
+        .domStorageAccess(true)
+        .javaScriptAccess(true)
+        .imageAccess(true)
+        .mixedMode(MixedMode.All)
+        .cacheMode(CacheMode.Default)
+        .overScrollMode(OverScrollMode.NEVER)
+        .javaScriptProxy({
+          object: this.jsProxy,
+          name: 'arkts',
+          methodList: ['onPaginationChanged', 'onReaderTap'],
+          controller: this.webviewController
+        })
+        .onControllerAttached(() => {
+          this.webControllerAttached = true;
+          this.configureUniversalAccessRoot(this.pendingSpinePath, 'controller_attached');
+          if (this.pendingSpinePath.length > 0) {
+            this.loadSpineItemImmediate(this.pendingSpinePath, this.pendingPageOffset, this.pendingAnchorFragment);
+          }
+        })
+        .transform(this.viewportMatrix)
+        .opacity(this.viewportOpacity)
+        .onPageEnd((_event) => {
+          this.clearApplySettingsTimer();
+          this.clearPageTurnPhaseTimer();
+          if (this.pendingSpineTransition === null) {
+            this.finishPageTurnAnimation();
+          }
+          if (this.params.isFixedLayout) {
+            this.runJs(
+              '(function(){return JSON.stringify({w:window.innerWidth,h:window.innerHeight,visualW:window.visualViewport?(window.visualViewport.width||0):0,visualH:window.visualViewport?(window.visualViewport.height||0):0,visualScale:window.visualViewport?(window.visualViewport.scale||0):0});})();',
+              (raw: string) => {
+                let vpW = this.fallbackVpW;
+                let vpH = this.fallbackVpH;
+                let visualW = this.fallbackVpW;
+                let visualH = this.fallbackVpH;
+                let visualScale = 1;
+                try {
+                  const clean = this.parseWebViewJson(raw);
+                  const dims = JSON.parse(clean) as ViewportDims;
+                  if (dims.w > 0) {
+                    vpW = dims.w;
+                  }
+                  if (dims.h > 0) {
+                    vpH = dims.h;
+                  }
+                  if (dims.visualW > 0) {
+                    visualW = dims.visualW;
+                  }
+                  if (dims.visualH > 0) {
+                    visualH = dims.visualH;
+                  }
+                  if (dims.visualScale > 0) {
+                    visualScale = dims.visualScale;
+                  }
+                } catch (_error) {
+                  logger.warn(TAG, 'Fixed-layout viewport parse failed, fallback to display metrics');
+                }
+                this.lastVpW = vpW;
+                this.lastVpH = vpH;
+                this.lastVisualVpW = visualW;
+                this.lastVisualVpH = visualH;
+                this.lastVisualVpScale = visualScale;
+                this.applyInjectedLayout(
+                  vpW,
+                  vpH,
+                  this.pendingPageOffset,
+                  this.activeTextSettings,
+                  this.activePageSettings,
+                  true,
+                  'page_end_fixed'
+                );
+                this.pendingPageOffset = 0;
+              }
+            );
+            return;
+          }
+          this.queryViewportThenInject(this.pendingPageOffset, 'page_end_reflow');
+          this.pendingPageOffset = 0;
+        })
+        .onErrorReceive((event) => {
+          if (event) {
+            logger.warn(TAG, `WebView load error: ${event.error.getErrorInfo()}`);
+          }
+        })
+
+      this.buildEpubCurlLayer()
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.viewportBackgroundColor)
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      const widthVp = Number(newArea.width);
+      const heightVp = Number(newArea.height);
+      if (widthVp > 0) {
+        this.hostWidthVp = widthVp;
+      }
+      if (heightVp > 0) {
+        this.hostHeightVp = heightVp;
+      }
+    })
+  }
+}

@@ -185,7 +185,9 @@ export class DownloadDirManager {
       throw new Error('Download目录未初始化');
     }
 
-    const fullPath = `${this.downloadDirPath}/${relativePath}`;
+    const fullPath = relativePath.startsWith(this.downloadDirPath)
+      ? relativePath
+      : `${this.downloadDirPath}/${relativePath}`;
     try {
       const stat = fs.statSync(fullPath);
       if (!stat.isDirectory()) {
@@ -211,6 +213,27 @@ export class DownloadDirManager {
       path = `${path}/${sanitizedChapterTitle}`;
     }
     return this.ensureDirectory(path);
+  }
+
+  /**
+   * 获取在线漫画归档章节目录
+   * 格式: Download/包名/manga/{sourceName}/{mangaTitle}/{chapterTitle}/
+   */
+  public getMangaArchiveDirectoryPath(sourceName: string, mangaTitle: string, chapterTitle: string): string {
+    const sanitizedSourceName = this.sanitizeFolderName(sourceName.length > 0 ? sourceName : 'unknown_source');
+    const sanitizedMangaTitle = this.sanitizeFolderName(mangaTitle.length > 0 ? mangaTitle : 'unknown_manga');
+    const sanitizedChapterTitle = this.sanitizeFolderName(chapterTitle.length > 0 ? chapterTitle : 'unknown_chapter');
+    const path = `manga/${sanitizedSourceName}/${sanitizedMangaTitle}/${sanitizedChapterTitle}`;
+    return this.ensureDirectory(path);
+  }
+
+  /**
+   * 获取在线漫画归档文件路径
+   */
+  public getMangaArchiveFilePath(sourceName: string, mangaTitle: string, chapterTitle: string): string {
+    const chapterDir = this.getMangaArchiveDirectoryPath(sourceName, mangaTitle, chapterTitle);
+    const fileName = `${this.sanitizeFolderName(chapterTitle.length > 0 ? chapterTitle : 'chapter')}.cbz`;
+    return `${chapterDir}/${fileName}`;
   }
 
   /**

@@ -180,6 +180,25 @@ export class ReadAloudCacheUpdatedPayload implements IEventPayload {
   }
 }
 
+/**
+ * 漫画缓存更新事件的载荷
+ */
+export class MangaCacheUpdatedPayload implements IEventPayload {
+  public mangaId: string;
+  public chapterId: string;
+  public sourceId: number;
+  public archivePath: string;
+  public reason: string;
+
+  constructor(mangaId: string, chapterId: string, sourceId: number, archivePath: string, reason: string) {
+    this.mangaId = mangaId;
+    this.chapterId = chapterId;
+    this.sourceId = sourceId;
+    this.archivePath = archivePath;
+    this.reason = reason;
+  }
+}
+
 export class MangaImportCompletedPayload implements IEventPayload {
   public importedCount: number;
   public totalCount: number;
@@ -262,6 +281,7 @@ interface GameEventConstants {
   MANGA_IMPORT_COMPLETED: string;
   MANGA_DELETED: string;
   MANGA_READING_PROGRESS_UPDATED: string;
+  MANGA_CACHE_UPDATED: string;
   // 电子书数据
   EBOOK_UPDATED: string;
   EBOOK_COVER_CHANGED: string;
@@ -320,6 +340,7 @@ export const GameEvent: GameEventConstants = {
   MANGA_IMPORT_COMPLETED: 'mangaImportCompleted',
   MANGA_DELETED: 'mangaDeleted',
   MANGA_READING_PROGRESS_UPDATED: 'mangaReadingProgressUpdated',
+  MANGA_CACHE_UPDATED: 'mangaCacheUpdated',
 
   // --- 电子书数据事件 ---
   EBOOK_UPDATED: 'ebookUpdated',

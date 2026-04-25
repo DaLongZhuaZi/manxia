@@ -5,18 +5,35 @@ import {
   EBOOK_THEME_PRESETS,
   EBookThemePreset
 } from '../Models/EBookModels';
+import {
+  ReadingSettings as MangaReadingSettings,
+  DEFAULT_READING_SETTINGS,
+  ReadingMode,
+  ReadingDirection,
+  DoublePagePortraitLayout,
+  PageTurnAnimationType
+} from '../Models/MangaModels';
+import { getFontManager, SystemFont, CustomFont } from '../Framework/Managers/FontManager';
 import { UIContext, display } from '@kit.ArkUI';
 
 interface EpubSettingsPanelCallbacks {
   onSettingsChange: (settings: EBookReadingSettings) => void;
+  onPageSettingsChange: (settings: MangaReadingSettings) => void;
   onClose: () => void;
+}
+
+interface EpubTextAlignmentOption {
+  label: string;
+  value: string;
 }
 
 @Component
 export struct EpubReaderSettingsPanel {
   @Prop settings: EBookReadingSettings;
+  @Prop pageSettings: MangaReadingSettings;
   @Prop isVisible: boolean;
   @Prop callbacks: EpubSettingsPanelCallbacks;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
 
   @State private current: EBookReadingSettings = {
     fontSize: DEFAULT_EBOOK_READING_SETTINGS.fontSize,
@@ -30,6 +47,8 @@ export struct EpubReaderSettingsPanel {
     nightMode: DEFAULT_EBOOK_READING_SETTINGS.nightMode,
     followSystemTheme: DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme,
     pageMargin: DEFAULT_EBOOK_READING_SETTINGS.pageMargin,
+    pageTopMargin: DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin,
+    pageBottomMargin: DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin,
     pageMode: DEFAULT_EBOOK_READING_SETTINGS.pageMode,
     brightness: DEFAULT_EBOOK_READING_SETTINGS.brightness,
     autoSave: DEFAULT_EBOOK_READING_SETTINGS.autoSave,
@@ -38,7 +57,7 @@ export struct EpubReaderSettingsPanel {
     paragraphSpacing: 8,
     firstLineIndent: 2,
     textAlignment: 'JUSTIFY',
-    pageTurnAnimation: 'SLIDE',
+    pageTurnAnimation: PageTurnAnimationType.SLIDE,
     tapToTurn: true,
     volumeKeyNavigation: true,
     keepScreenOn: false,
@@ -51,70 +70,180 @@ export struct EpubReaderSettingsPanel {
     backgroundImageOpacity: 0.3
   };
 
+  @State private currentPageSettings: MangaReadingSettings = {
+    readingMode: DEFAULT_READING_SETTINGS.readingMode,
+    readingDirection: DEFAULT_READING_SETTINGS.readingDirection,
+    brightness: DEFAULT_READING_SETTINGS.brightness,
+    keepScreenOn: DEFAULT_READING_SETTINGS.keepScreenOn,
+    pageSpacing: DEFAULT_READING_SETTINGS.pageSpacing,
+    showPageInfo: DEFAULT_READING_SETTINGS.showPageInfo,
+    showPageIndicator: DEFAULT_READING_SETTINGS.showPageIndicator,
+    fitMode: DEFAULT_READING_SETTINGS.fitMode,
+    autoPageTurnInterval: DEFAULT_READING_SETTINGS.autoPageTurnInterval,
+    skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
+    pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
+    doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
+    filterSettings: {
+      enabled: DEFAULT_READING_SETTINGS.filterSettings.enabled,
+      brightness: DEFAULT_READING_SETTINGS.filterSettings.brightness,
+      contrast: DEFAULT_READING_SETTINGS.filterSettings.contrast,
+      saturation: DEFAULT_READING_SETTINGS.filterSettings.saturation,
+      hue: DEFAULT_READING_SETTINGS.filterSettings.hue,
+      gamma: DEFAULT_READING_SETTINGS.filterSettings.gamma,
+      sepia: DEFAULT_READING_SETTINGS.filterSettings.sepia,
+      invert: DEFAULT_READING_SETTINGS.filterSettings.invert,
+      grayscale: DEFAULT_READING_SETTINGS.filterSettings.grayscale,
+      blur: DEFAULT_READING_SETTINGS.filterSettings.blur
+    },
+    volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation,
+    curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity,
+    webtoonLeftMargin: DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+    webtoonRightMargin: DEFAULT_READING_SETTINGS.webtoonRightMargin,
+    webtoonMarginSync: DEFAULT_READING_SETTINGS.webtoonMarginSync
+  };
+
   @State private panelOpacity: number = 0;
   @State private panelTranslateY: number = 300;
   @State private panelTranslateX: number = 320;
   @State private backdropOpacity: number = 0;
   @State private isLandscape: boolean = false;
+  @State private systemFonts: SystemFont[] = [];
+  @State private customFonts: CustomFont[] = [];
+  @State private showFontPicker: boolean = false;
 
   private uiCtx: UIContext | undefined = undefined;
+  private textAlignmentOptions: EpubTextAlignmentOption[] = [
+    { label: '左对齐', value: 'LEFT' },
+    { label: '居中', value: 'CENTER' },
+    { label: '右对齐', value: 'RIGHT' },
+    { label: '两端', value: 'JUSTIFY' }
+  ];
 
   aboutToAppear(): void {
     this.uiCtx = this.getUIContext();
     this.syncSettings();
+    this.syncPageSettings();
+    this.loadFontLists();
     this.detectOrientation();
     if (this.isVisible) {
-      setTimeout(() => { this.showPanel(); }, 50);
+      setTimeout(() => {
+        this.showPanel();
+      }, 50);
     }
   }
 
+  private createTextSettingsSnapshot(settings: EBookReadingSettings): EBookReadingSettings {
+    return {
+      fontSize: settings.fontSize,
+      fontFamily: settings.fontFamily,
+      fontPath: settings.fontPath,
+      fontWeight: settings.fontWeight,
+      lineHeight: settings.lineHeight,
+      backgroundColor: settings.backgroundColor,
+      textColor: settings.textColor,
+      themeBgImage: settings.themeBgImage,
+      nightMode: settings.nightMode,
+      followSystemTheme: settings.followSystemTheme,
+      pageMargin: settings.pageMargin,
+      pageTopMargin: settings.pageTopMargin ?? settings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin,
+      pageBottomMargin: settings.pageBottomMargin ?? settings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin,
+      pageMode: settings.pageMode,
+      brightness: settings.brightness,
+      autoSave: settings.autoSave,
+      saveInterval: settings.saveInterval,
+      letterSpacing: settings.letterSpacing ?? 0,
+      paragraphSpacing: settings.paragraphSpacing ?? 8,
+      firstLineIndent: settings.firstLineIndent ?? 2,
+      textAlignment: settings.textAlignment ?? 'JUSTIFY',
+      pageTurnAnimation: settings.pageTurnAnimation ?? PageTurnAnimationType.SLIDE,
+      tapToTurn: settings.tapToTurn ?? true,
+      volumeKeyNavigation: settings.volumeKeyNavigation ?? true,
+      keepScreenOn: settings.keepScreenOn ?? false,
+      showPageNumber: settings.showPageNumber ?? true,
+      showProgress: settings.showProgress ?? false,
+      showTime: settings.showTime ?? true,
+      showBattery: settings.showBattery ?? false,
+      backgroundType: settings.backgroundType ?? 'COLOR',
+      backgroundImagePath: settings.backgroundImagePath ?? '',
+      backgroundImageOpacity: settings.backgroundImageOpacity ?? 0.3
+    };
+  }
+
+  private createPageSettingsSnapshot(settings: MangaReadingSettings): MangaReadingSettings {
+    const readingMode = settings.readingMode === ReadingMode.CONTINUOUS_SCROLL
+      ? ReadingMode.SINGLE_PAGE
+      : settings.readingMode;
+    const readingDirection = settings.readingMode === ReadingMode.CONTINUOUS_SCROLL
+      ? (settings.readingDirection === ReadingDirection.RIGHT_TO_LEFT
+        ? ReadingDirection.RIGHT_TO_LEFT
+        : ReadingDirection.LEFT_TO_RIGHT)
+      : settings.readingDirection;
+    return {
+      readingMode: readingMode,
+      readingDirection: readingDirection,
+      brightness: settings.brightness,
+      keepScreenOn: settings.keepScreenOn,
+      pageSpacing: settings.pageSpacing,
+      showPageInfo: settings.showPageInfo,
+      showPageIndicator: settings.showPageIndicator,
+      fitMode: settings.fitMode,
+      autoPageTurnInterval: settings.autoPageTurnInterval,
+      skipIntroPages: settings.skipIntroPages,
+      pageTurnAnimation: settings.pageTurnAnimation,
+      doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      filterSettings: {
+        enabled: settings.filterSettings.enabled,
+        brightness: settings.filterSettings.brightness,
+        contrast: settings.filterSettings.contrast,
+        saturation: settings.filterSettings.saturation,
+        hue: settings.filterSettings.hue,
+        gamma: settings.filterSettings.gamma,
+        sepia: settings.filterSettings.sepia,
+        invert: settings.filterSettings.invert,
+        grayscale: settings.filterSettings.grayscale,
+        blur: settings.filterSettings.blur
+      },
+      volumeKeyNavigation: settings.volumeKeyNavigation,
+      curlBackOpacity: settings.curlBackOpacity ?? DEFAULT_READING_SETTINGS.curlBackOpacity,
+      webtoonLeftMargin: settings.webtoonLeftMargin ?? DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+      webtoonRightMargin: settings.webtoonRightMargin ?? DEFAULT_READING_SETTINGS.webtoonRightMargin,
+      webtoonMarginSync: settings.webtoonMarginSync ?? DEFAULT_READING_SETTINGS.webtoonMarginSync
+    };
+  }
+
   private syncSettings(): void {
-    this.current.fontSize = this.settings.fontSize;
-    this.current.fontFamily = this.settings.fontFamily;
-    this.current.fontPath = this.settings.fontPath;
-    this.current.fontWeight = this.settings.fontWeight;
-    this.current.lineHeight = this.settings.lineHeight;
-    this.current.backgroundColor = this.settings.backgroundColor;
-    this.current.textColor = this.settings.textColor;
-    this.current.themeBgImage = this.settings.themeBgImage;
-    this.current.nightMode = this.settings.nightMode;
-    this.current.followSystemTheme = this.settings.followSystemTheme;
-    this.current.pageMargin = this.settings.pageMargin;
-    this.current.pageMode = this.settings.pageMode;
-    this.current.brightness = this.settings.brightness;
-    this.current.autoSave = this.settings.autoSave;
-    this.current.saveInterval = this.settings.saveInterval;
-    this.current.letterSpacing = this.settings.letterSpacing ?? 0;
-    this.current.paragraphSpacing = this.settings.paragraphSpacing ?? 8;
-    this.current.firstLineIndent = this.settings.firstLineIndent ?? 2;
-    this.current.textAlignment = this.settings.textAlignment ?? 'JUSTIFY';
-    this.current.pageTurnAnimation = this.settings.pageTurnAnimation ?? 'SLIDE';
-    this.current.tapToTurn = this.settings.tapToTurn ?? true;
-    this.current.volumeKeyNavigation = this.settings.volumeKeyNavigation ?? true;
-    this.current.keepScreenOn = this.settings.keepScreenOn ?? false;
-    this.current.showPageNumber = this.settings.showPageNumber ?? true;
-    this.current.showProgress = this.settings.showProgress ?? false;
-    this.current.showTime = this.settings.showTime ?? true;
-    this.current.showBattery = this.settings.showBattery ?? false;
-    this.current.backgroundType = this.settings.backgroundType ?? 'COLOR';
-    this.current.backgroundImagePath = this.settings.backgroundImagePath ?? '';
-    this.current.backgroundImageOpacity = this.settings.backgroundImageOpacity ?? 0.3;
+    this.current = this.createTextSettingsSnapshot(this.settings);
+  }
+
+  private syncPageSettings(): void {
+    this.currentPageSettings = this.createPageSettingsSnapshot(this.pageSettings);
+    this.current.pageTurnAnimation = this.currentPageSettings.pageTurnAnimation;
+    this.current.volumeKeyNavigation = this.currentPageSettings.volumeKeyNavigation;
+    this.current.keepScreenOn = this.currentPageSettings.keepScreenOn;
+  }
+
+  private loadFontLists(): void {
+    const fontManager = getFontManager();
+    this.systemFonts = fontManager.getSystemFonts();
+    this.customFonts = fontManager.getCustomFonts();
   }
 
   private detectOrientation(): void {
     try {
-      const d = display.getDefaultDisplaySync();
-      const w = d.width / (d.densityPixels || 1);
-      const h = d.height / (d.densityPixels || 1);
-      this.isLandscape = w > h;
-    } catch (e) {
+      const defaultDisplay = display.getDefaultDisplaySync();
+      const widthVp = defaultDisplay.width / (defaultDisplay.densityPixels || 1);
+      const heightVp = defaultDisplay.height / (defaultDisplay.densityPixels || 1);
+      this.isLandscape = widthVp > heightVp;
+    } catch (_ignored) {
       this.isLandscape = false;
     }
   }
 
   private showPanel(): void {
     const ctx = this.uiCtx;
-    if (!ctx) { return; }
+    if (!ctx) {
+      return;
+    }
     ctx.animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.backdropOpacity = 0.5;
     });
@@ -124,13 +253,13 @@ export struct EpubReaderSettingsPanel {
         this.panelOpacity = 1;
         this.panelTranslateX = 0;
       });
-    } else {
-      this.panelTranslateY = 300;
-      ctx.animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-        this.panelOpacity = 1;
-        this.panelTranslateY = 0;
-      });
+      return;
     }
+    this.panelTranslateY = 300;
+    ctx.animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+      this.panelOpacity = 1;
+      this.panelTranslateY = 0;
+    });
   }
 
   private hidePanel(): void {
@@ -155,8 +284,17 @@ export struct EpubReaderSettingsPanel {
     });
   }
 
-  private notify(): void {
-    this.callbacks.onSettingsChange(this.current);
+  private notifyTextSettings(): void {
+    this.callbacks.onSettingsChange(this.createTextSettingsSnapshot(this.current));
+  }
+
+  private notifyPageSettings(): void {
+    this.callbacks.onPageSettingsChange(this.createPageSettingsSnapshot(this.currentPageSettings));
+  }
+
+  private notifySharedSettings(): void {
+    this.notifyTextSettings();
+    this.notifyPageSettings();
   }
 
   private applyThemePreset(preset: EBookThemePreset): void {
@@ -164,12 +302,191 @@ export struct EpubReaderSettingsPanel {
     this.current.textColor = preset.textColor;
     this.current.nightMode = preset.nightMode;
     this.current.followSystemTheme = false;
-    this.notify();
+    this.notifyTextSettings();
   }
 
   private isPresetActive(preset: EBookThemePreset): boolean {
     return this.current.backgroundColor === preset.backgroundColor &&
       this.current.textColor === preset.textColor;
+  }
+
+  private getCurrentFontDisplayName(): string {
+    const currentFamily = this.current.fontFamily;
+    const systemFont = this.systemFonts.find((font: SystemFont) => font.name === currentFamily);
+    if (systemFont) {
+      return systemFont.displayName;
+    }
+    const customFont = this.customFonts.find((font: CustomFont) => font.familyName === currentFamily);
+    if (customFont) {
+      return customFont.displayName;
+    }
+    return '系统默认';
+  }
+
+  private selectSystemFont(font: SystemFont): void {
+    this.current.fontFamily = font.name;
+    this.current.fontPath = '';
+    this.notifyTextSettings();
+  }
+
+  private selectCustomFont(font: CustomFont): void {
+    this.current.fontFamily = font.familyName;
+    this.current.fontPath = font.filePath;
+    this.notifyTextSettings();
+  }
+
+  private isTextAlignmentSelected(value: string): boolean {
+    return (this.current.textAlignment ?? 'JUSTIFY') === value;
+  }
+
+  private getDisplayedReadingMode(): ReadingMode {
+    if (this.currentPageSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
+      this.currentPageSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
+      this.currentPageSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL) {
+      return ReadingMode.SINGLE_PAGE;
+    }
+    if (this.currentPageSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+      this.currentPageSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL) {
+      return ReadingMode.WEBTOON;
+    }
+    if (this.currentPageSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL) {
+      return ReadingMode.SINGLE_PAGE;
+    }
+    return this.currentPageSettings.readingMode;
+  }
+
+  private normalizeReadingDirection(direction: ReadingDirection): ReadingDirection {
+    return direction === ReadingDirection.VERTICAL ? ReadingDirection.TOP_TO_BOTTOM : direction;
+  }
+
+  private normalizeReadingDirectionForMode(mode: ReadingMode, direction: ReadingDirection): ReadingDirection {
+    const normalizedDirection = this.normalizeReadingDirection(direction);
+    if (mode === ReadingMode.DOUBLE_PAGE && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    if ((mode === ReadingMode.WEBTOON ||
+      mode === ReadingMode.WEBTOON_WITH_GAP ||
+      mode === ReadingMode.CONTINUOUS_VERTICAL) &&
+      normalizedDirection !== ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.TOP_TO_BOTTOM;
+    }
+    return normalizedDirection;
+  }
+
+  private getSelectedReadingDirection(): ReadingDirection {
+    if (this.currentPageSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
+      return ReadingDirection.TOP_TO_BOTTOM;
+    }
+    return this.normalizeReadingDirectionForMode(
+      this.getDisplayedReadingMode(),
+      this.currentPageSettings.readingDirection
+    );
+  }
+
+  private isWebtoonReadingMode(): boolean {
+    return this.getDisplayedReadingMode() === ReadingMode.WEBTOON;
+  }
+
+  private isTTBDisabled(): boolean {
+    return this.getDisplayedReadingMode() === ReadingMode.DOUBLE_PAGE;
+  }
+
+  private isHorizontalDirectionDisabled(): boolean {
+    return this.isWebtoonReadingMode();
+  }
+
+  private getReadingDirectionHint(): string {
+    if (this.isHorizontalDirectionDisabled()) {
+      return '条漫模式仅支持从上到下';
+    }
+    if (this.isTTBDisabled()) {
+      return '双页模式不支持从上到下';
+    }
+    return '';
+  }
+
+  private isPortraitDoublePageVerticalUnsupported(): boolean {
+    return this.getDisplayedReadingMode() === ReadingMode.DOUBLE_PAGE && !this.isLandscape;
+  }
+
+  private updateReadingMode(mode: ReadingMode): void {
+    this.currentPageSettings.readingMode = mode;
+    this.currentPageSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      mode,
+      this.getSelectedReadingDirection()
+    );
+    if (mode !== ReadingMode.DOUBLE_PAGE &&
+      this.currentPageSettings.doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL &&
+      !this.isLandscape) {
+      this.currentPageSettings.doublePagePortraitLayout = DoublePagePortraitLayout.HORIZONTAL;
+    }
+    this.notifyPageSettings();
+  }
+
+  private updateReadingDirection(direction: ReadingDirection): void {
+    if (direction === ReadingDirection.TOP_TO_BOTTOM && this.isTTBDisabled()) {
+      return;
+    }
+    if ((direction === ReadingDirection.LEFT_TO_RIGHT || direction === ReadingDirection.RIGHT_TO_LEFT) &&
+      this.isHorizontalDirectionDisabled()) {
+      return;
+    }
+
+    const displayedMode = this.getDisplayedReadingMode();
+    if (displayedMode === ReadingMode.SINGLE_PAGE && direction === ReadingDirection.TOP_TO_BOTTOM) {
+      this.currentPageSettings.readingMode = ReadingMode.SINGLE_PAGE_TTB;
+      this.currentPageSettings.readingDirection = ReadingDirection.TOP_TO_BOTTOM;
+    } else if (displayedMode === ReadingMode.SINGLE_PAGE) {
+      this.currentPageSettings.readingMode = ReadingMode.SINGLE_PAGE;
+      this.currentPageSettings.readingDirection = direction;
+    } else {
+      this.currentPageSettings.readingDirection = this.normalizeReadingDirectionForMode(displayedMode, direction);
+    }
+    this.notifyPageSettings();
+  }
+
+  private updateDoublePagePortraitLayout(layout: DoublePagePortraitLayout): void {
+    if (layout === DoublePagePortraitLayout.VERTICAL && this.isPortraitDoublePageVerticalUnsupported()) {
+      return;
+    }
+    this.currentPageSettings.doublePagePortraitLayout = layout;
+    this.notifyPageSettings();
+  }
+
+  private updatePageTurnAnimation(animationType: PageTurnAnimationType): void {
+    this.currentPageSettings.pageTurnAnimation = animationType;
+    this.current.pageTurnAnimation = animationType;
+    this.notifySharedSettings();
+  }
+
+  private getDisplayedPanelPageTurnAnimationType(): PageTurnAnimationType {
+    return this.currentPageSettings.pageTurnAnimation;
+  }
+
+  private updateTapToTurn(enabled: boolean): void {
+    this.current.tapToTurn = enabled;
+    this.notifyTextSettings();
+  }
+
+  private updateVolumeKeyNavigation(enabled: boolean): void {
+    this.current.volumeKeyNavigation = enabled;
+    this.currentPageSettings.volumeKeyNavigation = enabled;
+    this.notifySharedSettings();
+  }
+
+  private updateKeepScreenOn(enabled: boolean): void {
+    this.current.keepScreenOn = enabled;
+    this.currentPageSettings.keepScreenOn = enabled;
+    this.notifySharedSettings();
+  }
+
+  private resetAllSettings(): void {
+    this.current = this.createTextSettingsSnapshot(DEFAULT_EBOOK_READING_SETTINGS);
+    this.currentPageSettings = this.createPageSettingsSnapshot(DEFAULT_READING_SETTINGS);
+    this.current.pageTurnAnimation = this.currentPageSettings.pageTurnAnimation;
+    this.current.volumeKeyNavigation = this.currentPageSettings.volumeKeyNavigation;
+    this.current.keepScreenOn = this.currentPageSettings.keepScreenOn;
+    this.notifySharedSettings();
   }
 
   @Builder
@@ -179,6 +496,7 @@ export struct EpubReaderSettingsPanel {
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
         .width('100%')
         .margin({ bottom: 12 })
 
@@ -197,12 +515,299 @@ export struct EpubReaderSettingsPanel {
             Text(preset.name)
               .fontSize(11)
               .fontColor(this.isPresetActive(preset) ? $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+              .fontFamily(this.appFontFamily)
               .margin({ top: 4 })
           }
           .alignItems(HorizontalAlign.Center)
           .layoutWeight(1)
-          .onClick(() => { this.applyThemePreset(preset); })
+          .onClick(() => {
+            this.applyThemePreset(preset);
+          })
         })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildModeButton(label: string, mode: ReadingMode) {
+    Column() {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getDisplayedReadingMode() === mode ? $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+    }
+    .layoutWeight(1)
+    .padding({ left: 8, right: 8, top: 12, bottom: 12 })
+    .backgroundColor(this.getDisplayedReadingMode() === mode ? $r('app.color.accent_background') : $r('app.color.background_secondary'))
+    .borderRadius(8)
+    .onClick(() => {
+      this.updateReadingMode(mode);
+    })
+  }
+
+  @Builder
+  private buildPageModeSection() {
+    Column() {
+      Text('阅读模式')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+        .margin({ bottom: 12 })
+
+      Row({ space: 8 }) {
+        this.buildModeButton('单页', ReadingMode.SINGLE_PAGE)
+        this.buildModeButton('双页', ReadingMode.DOUBLE_PAGE)
+        Column().layoutWeight(1)
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Row({ space: 8 }) {
+        this.buildModeButton('条漫', ReadingMode.WEBTOON)
+        Column().layoutWeight(1)
+        Column().layoutWeight(1)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildDirectionButton(label: string, direction: ReadingDirection, disabled: boolean) {
+    Column() {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getSelectedReadingDirection() === direction && !disabled ?
+          $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+    }
+    .layoutWeight(1)
+    .padding({ left: 8, right: 8, top: 12, bottom: 12 })
+    .backgroundColor(this.getSelectedReadingDirection() === direction && !disabled ?
+      $r('app.color.accent_background') : $r('app.color.background_secondary'))
+    .borderRadius(8)
+    .opacity(disabled ? 0.45 : 1)
+    .onClick(() => {
+      if (!disabled) {
+        this.updateReadingDirection(direction);
+      }
+    })
+  }
+
+  @Builder
+  private buildReadingDirectionSection() {
+    Column() {
+      Text('阅读方向')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+        .margin({ bottom: 8 })
+
+      if (this.getReadingDirectionHint().length > 0) {
+        Text(this.getReadingDirectionHint())
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
+          .width('100%')
+          .margin({ bottom: 12 })
+      }
+
+      Row({ space: 8 }) {
+        this.buildDirectionButton('上→下', ReadingDirection.TOP_TO_BOTTOM, this.isTTBDisabled())
+        this.buildDirectionButton('左→右', ReadingDirection.LEFT_TO_RIGHT, this.isHorizontalDirectionDisabled())
+        this.buildDirectionButton('右→左', ReadingDirection.RIGHT_TO_LEFT, this.isHorizontalDirectionDisabled())
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildDoublePageLayoutButton(label: string, layout: DoublePagePortraitLayout, disabled: boolean) {
+    Column() {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.currentPageSettings.doublePagePortraitLayout === layout && !disabled ?
+          $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+    }
+    .layoutWeight(1)
+    .padding({ left: 8, right: 8, top: 12, bottom: 12 })
+    .backgroundColor(this.currentPageSettings.doublePagePortraitLayout === layout && !disabled ?
+      $r('app.color.accent_background') : $r('app.color.background_secondary'))
+    .borderRadius(8)
+    .opacity(disabled ? 0.45 : 1)
+    .onClick(() => {
+      if (!disabled) {
+        this.updateDoublePagePortraitLayout(layout);
+      }
+    })
+  }
+
+  @Builder
+  private buildDoublePageLayoutSection() {
+    if (this.getDisplayedReadingMode() === ReadingMode.DOUBLE_PAGE) {
+      Column() {
+        Text('双页竖屏组合')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .width('100%')
+          .margin({ bottom: 8 })
+
+        if (this.isPortraitDoublePageVerticalUnsupported()) {
+          Text('当前 WebView EPUB 竖屏双页仅支持左右组合')
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
+            .width('100%')
+            .margin({ bottom: 12 })
+        }
+
+        Row({ space: 8 }) {
+          this.buildDoublePageLayoutButton(
+            '上下组合',
+            DoublePagePortraitLayout.VERTICAL,
+            this.isPortraitDoublePageVerticalUnsupported()
+          )
+          this.buildDoublePageLayoutButton('左右组合', DoublePagePortraitLayout.HORIZONTAL, false)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .margin({ bottom: 20 })
+    }
+  }
+
+  @Builder
+  private buildAnimationButton(label: string, type: PageTurnAnimationType) {
+    Column() {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getDisplayedPanelPageTurnAnimationType() === type ?
+          $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+    }
+    .width('31%')
+    .padding({ left: 8, right: 8, top: 12, bottom: 12 })
+    .backgroundColor(this.getDisplayedPanelPageTurnAnimationType() === type ?
+      $r('app.color.accent_background') : $r('app.color.background_secondary'))
+    .borderRadius(8)
+    .onClick(() => {
+      this.updatePageTurnAnimation(type);
+    })
+  }
+
+  @Builder
+  private buildPageTurnAnimationSection() {
+    Column() {
+      Text('翻页动画')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+        .margin({ bottom: 8 })
+
+      Text('卷页仅在横向分页/双页等可截图页面中启用，上下翻页会自动降级为覆盖动画')
+        .fontSize(12)
+        .fontColor($r('app.color.text_secondary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+        .margin({ bottom: 12 })
+
+      Row({ space: 8 }) {
+        this.buildAnimationButton('无', PageTurnAnimationType.NONE)
+        this.buildAnimationButton('滑动', PageTurnAnimationType.SLIDE)
+        this.buildAnimationButton('淡入淡出', PageTurnAnimationType.FADE)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+      .margin({ bottom: 8 })
+
+      Row({ space: 8 }) {
+        this.buildAnimationButton('立方体', PageTurnAnimationType.CUBE)
+        this.buildAnimationButton('覆盖', PageTurnAnimationType.COVER)
+        this.buildAnimationButton('景深', PageTurnAnimationType.DEPTH)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+      .margin({ bottom: 8 })
+
+      Row({ space: 8 }) {
+        this.buildAnimationButton('卷页', PageTurnAnimationType.CURL)
+        Column().width('31%')
+        Column().width('31%')
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .width('100%')
+    .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildInteractionSection() {
+    Column() {
+      Text('交互设置')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+        .margin({ bottom: 12 })
+
+      Row() {
+        Text('点击翻页')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.current.tapToTurn ?? true })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.updateTapToTurn(isOn);
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      Row() {
+        Text('音量键翻页')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.currentPageSettings.volumeKeyNavigation })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.updateVolumeKeyNavigation(isOn);
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      Row() {
+        Text('保持屏幕常亮')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.currentPageSettings.keepScreenOn })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.updateKeepScreenOn(isOn);
+          })
       }
       .width('100%')
     }
@@ -218,10 +823,12 @@ export struct EpubReaderSettingsPanel {
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
         Blank()
         Text(`${Math.round(this.current.fontSize)}`)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
       }
       .width('100%')
       .margin({ bottom: 8 })
@@ -232,10 +839,13 @@ export struct EpubReaderSettingsPanel {
             .fontSize(18)
             .fontColor([$r('app.color.text_primary')])
         }
-        .width(40).height(40).backgroundColor($r('app.color.background_secondary')).borderRadius(8)
+        .width(40)
+        .height(40)
+        .backgroundColor($r('app.color.background_secondary'))
+        .borderRadius(8)
         .onClick(() => {
           this.current.fontSize = Math.max(12, this.current.fontSize - 1);
-          this.notify();
+          this.notifyTextSettings();
         })
 
         Slider({ value: this.current.fontSize, min: 12, max: 36, step: 1 })
@@ -244,7 +854,7 @@ export struct EpubReaderSettingsPanel {
           .selectedColor($r('app.color.accent_primary'))
           .onChange((value: number) => {
             this.current.fontSize = Math.round(value);
-            this.notify();
+            this.notifyTextSettings();
           })
 
         Button() {
@@ -252,10 +862,13 @@ export struct EpubReaderSettingsPanel {
             .fontSize(18)
             .fontColor([$r('app.color.text_primary')])
         }
-        .width(40).height(40).backgroundColor($r('app.color.background_secondary')).borderRadius(8)
+        .width(40)
+        .height(40)
+        .backgroundColor($r('app.color.background_secondary'))
+        .borderRadius(8)
         .onClick(() => {
           this.current.fontSize = Math.min(36, this.current.fontSize + 1);
-          this.notify();
+          this.notifyTextSettings();
         })
       }
       .width('100%')
@@ -272,10 +885,12 @@ export struct EpubReaderSettingsPanel {
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
         Blank()
         Text(`${this.current.lineHeight.toFixed(1)}`)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
       }
       .width('100%')
       .margin({ bottom: 8 })
@@ -286,8 +901,92 @@ export struct EpubReaderSettingsPanel {
         .selectedColor($r('app.color.accent_primary'))
         .onChange((value: number) => {
           this.current.lineHeight = Math.round(value * 10) / 10;
-          this.notify();
+          this.notifyTextSettings();
         })
+    }
+    .width('100%')
+    .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildFontPickerSection() {
+    Column() {
+      Row() {
+        Text('字体')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+        Blank()
+        Text(this.getCurrentFontDisplayName())
+          .fontSize(14)
+          .fontColor($r('app.color.accent_primary'))
+          .fontFamily(this.appFontFamily)
+      }
+      .width('100%')
+      .margin({ bottom: this.showFontPicker ? 12 : 0 })
+      .onClick(() => {
+        this.showFontPicker = !this.showFontPicker;
+      })
+
+      if (this.showFontPicker) {
+        Column({ space: 8 }) {
+          Text('系统字体')
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
+            .width('100%')
+
+          Flex({ wrap: FlexWrap.Wrap }) {
+            ForEach(this.systemFonts, (font: SystemFont) => {
+              Button(font.displayName)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .height(32)
+                .margin({ right: 8, bottom: 8 })
+                .backgroundColor(this.current.fontFamily === font.name ?
+                  $r('app.color.accent_primary') : $r('app.color.background_secondary'))
+                .fontColor(this.current.fontFamily === font.name ?
+                  $r('app.color.text_on_accent') : $r('app.color.text_primary'))
+                .onClick(() => {
+                  this.selectSystemFont(font);
+                })
+            }, (font: SystemFont) => font.id)
+          }
+          .width('100%')
+
+          if (this.customFonts.length > 0) {
+            Text('自定义字体')
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .fontFamily(this.appFontFamily)
+              .width('100%')
+              .margin({ top: 8 })
+
+            Flex({ wrap: FlexWrap.Wrap }) {
+              ForEach(this.customFonts, (font: CustomFont) => {
+                Button(font.displayName)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .height(32)
+                  .margin({ right: 8, bottom: 8 })
+                  .backgroundColor(this.current.fontFamily === font.familyName ?
+                    $r('app.color.accent_primary') : $r('app.color.background_secondary'))
+                  .fontColor(this.current.fontFamily === font.familyName ?
+                    $r('app.color.text_on_accent') : $r('app.color.text_primary'))
+                  .onClick(() => {
+                    this.selectCustomFont(font);
+                  })
+              }, (font: CustomFont) => font.id)
+            }
+            .width('100%')
+          }
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor($r('app.color.background_secondary'))
+        .borderRadius(8)
+      }
     }
     .width('100%')
     .margin({ bottom: 20 })
@@ -297,14 +996,16 @@ export struct EpubReaderSettingsPanel {
   private buildMarginControl() {
     Column() {
       Row() {
-        Text('页面边距')
+        Text('左右边距')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
         Blank()
         Text(`${Math.round(this.current.pageMargin)}`)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
       }
       .width('100%')
       .margin({ bottom: 8 })
@@ -315,8 +1016,181 @@ export struct EpubReaderSettingsPanel {
         .selectedColor($r('app.color.accent_primary'))
         .onChange((value: number) => {
           this.current.pageMargin = Math.round(value / 2) * 2;
-          this.notify();
+          this.notifyTextSettings();
         })
+    }
+    .width('100%')
+    .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildVerticalMarginControl() {
+    Column() {
+      Row() {
+        Text('顶部边距')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+        Blank()
+        Text(`${Math.round(this.current.pageTopMargin ?? this.current.pageMargin)}`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Slider({
+        value: this.current.pageTopMargin ?? this.current.pageMargin,
+        min: 0,
+        max: 96,
+        step: 2
+      })
+        .width('100%')
+        .trackColor($r('app.color.divider_primary'))
+        .selectedColor($r('app.color.accent_primary'))
+        .onChange((value: number) => {
+          this.current.pageTopMargin = Math.round(value / 2) * 2;
+          this.notifyTextSettings();
+        })
+
+      Row() {
+        Text('底部边距')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+        Blank()
+        Text(`${Math.round(this.current.pageBottomMargin ?? this.current.pageMargin)}`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
+      }
+      .width('100%')
+      .margin({ top: 16, bottom: 8 })
+
+      Slider({
+        value: this.current.pageBottomMargin ?? this.current.pageMargin,
+        min: 0,
+        max: 96,
+        step: 2
+      })
+        .width('100%')
+        .trackColor($r('app.color.divider_primary'))
+        .selectedColor($r('app.color.accent_primary'))
+        .onChange((value: number) => {
+          this.current.pageBottomMargin = Math.round(value / 2) * 2;
+          this.notifyTextSettings();
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildAdvancedTypographyControls() {
+    Column() {
+      Row() {
+        Text('字间距')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+        Blank()
+        Text(`${(this.current.letterSpacing ?? 0).toFixed(1)}`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Slider({ value: this.current.letterSpacing ?? 0, min: 0, max: 5, step: 0.1 })
+        .width('100%')
+        .trackColor($r('app.color.divider_primary'))
+        .selectedColor($r('app.color.accent_primary'))
+        .onChange((value: number) => {
+          this.current.letterSpacing = Math.round(value * 10) / 10;
+          this.notifyTextSettings();
+        })
+
+      Row() {
+        Text('段落间距')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+        Blank()
+        Text(`${Math.round(this.current.paragraphSpacing ?? 8)}`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
+      }
+      .width('100%')
+      .margin({ top: 16, bottom: 8 })
+
+      Slider({ value: this.current.paragraphSpacing ?? 8, min: 0, max: 32, step: 1 })
+        .width('100%')
+        .trackColor($r('app.color.divider_primary'))
+        .selectedColor($r('app.color.accent_primary'))
+        .onChange((value: number) => {
+          this.current.paragraphSpacing = Math.round(value);
+          this.notifyTextSettings();
+        })
+
+      Row() {
+        Text('首行缩进')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+        Blank()
+        Text(`${(this.current.firstLineIndent ?? 2).toFixed(1)}`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
+      }
+      .width('100%')
+      .margin({ top: 16, bottom: 8 })
+
+      Slider({ value: this.current.firstLineIndent ?? 2, min: 0, max: 4, step: 0.5 })
+        .width('100%')
+        .trackColor($r('app.color.divider_primary'))
+        .selectedColor($r('app.color.accent_primary'))
+        .onChange((value: number) => {
+          this.current.firstLineIndent = Math.round(value * 2) / 2;
+          this.notifyTextSettings();
+        })
+
+      Text('文字对齐')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+        .margin({ top: 16, bottom: 8 })
+
+      Row({ space: 8 }) {
+        ForEach(this.textAlignmentOptions, (option: EpubTextAlignmentOption) => {
+          Text(option.label)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.isTextAlignmentSelected(option.value) ?
+              $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+            .backgroundColor(this.isTextAlignmentSelected(option.value) ?
+              $r('app.color.accent_background') : $r('app.color.background_secondary'))
+            .borderRadius(6)
+            .layoutWeight(1)
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              this.current.textAlignment = option.value;
+              this.notifyTextSettings();
+            })
+        }, (option: EpubTextAlignmentOption) => option.value)
+      }
+      .width('100%')
     }
     .width('100%')
     .margin({ bottom: 20 })
@@ -329,33 +1203,163 @@ export struct EpubReaderSettingsPanel {
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
       Blank()
       Row({ space: 8 }) {
         Text('常规')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(this.current.fontWeight <= 400 ? $r('app.color.accent_primary') : $r('app.color.text_secondary'))
           .padding({ left: 12, right: 12, top: 6, bottom: 6 })
           .backgroundColor(this.current.fontWeight <= 400 ? $r('app.color.accent_background') : $r('app.color.background_secondary'))
           .borderRadius(6)
           .onClick(() => {
             this.current.fontWeight = 400;
-            this.notify();
+            this.notifyTextSettings();
           })
         Text('加粗')
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(this.current.fontWeight > 400 ? $r('app.color.accent_primary') : $r('app.color.text_secondary'))
           .padding({ left: 12, right: 12, top: 6, bottom: 6 })
           .backgroundColor(this.current.fontWeight > 400 ? $r('app.color.accent_background') : $r('app.color.background_secondary'))
           .borderRadius(6)
           .onClick(() => {
             this.current.fontWeight = 700;
-            this.notify();
+            this.notifyTextSettings();
           })
       }
     }
     .width('100%')
     .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildDisplaySettings() {
+    Column() {
+      Text('底部信息')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+        .margin({ bottom: 12 })
+
+      Row() {
+        Text('显示页码')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.current.showPageNumber ?? true })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.current.showPageNumber = isOn;
+            this.notifyTextSettings();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      Row() {
+        Text('显示进度')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.current.showProgress ?? false })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.current.showProgress = isOn;
+            this.notifyTextSettings();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      Row() {
+        Text('显示时间')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.current.showTime ?? true })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.current.showTime = isOn;
+            this.notifyTextSettings();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      Row() {
+        Text('显示电量')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.current.showBattery ?? false })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.current.showBattery = isOn;
+            this.notifyTextSettings();
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ bottom: 20 })
+  }
+
+  @Builder
+  private buildSettingsContent() {
+    Column() {
+      this.buildInteractionSection()
+      Divider()
+        .color($r('app.color.divider_primary'))
+        .margin({ bottom: 20 })
+      this.buildThemePresets()
+      this.buildFontPickerSection()
+      this.buildFontSizeControl()
+      this.buildLineHeightControl()
+      this.buildFontWeightControl()
+      this.buildAdvancedTypographyControls()
+      this.buildMarginControl()
+      this.buildVerticalMarginControl()
+      this.buildDisplaySettings()
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildFooterButtons(compact: boolean) {
+    Row({ space: compact ? 8 : 12 }) {
+      Button('恢复默认')
+        .fontSize(compact ? 13 : 14)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .backgroundColor($r('app.color.background_secondary'))
+        .layoutWeight(1)
+        .height(compact ? 40 : 44)
+        .onClick(() => {
+          this.resetAllSettings();
+        })
+
+      Button('关闭')
+        .fontSize(compact ? 13 : 14)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_on_accent'))
+        .backgroundColor($r('app.color.accent_primary'))
+        .layoutWeight(1)
+        .height(compact ? 40 : 44)
+        .onClick(() => {
+          this.hidePanel();
+        })
+    }
+    .width('100%')
+    .margin({ top: compact ? 12 : 16 })
   }
 
   @Builder
@@ -368,59 +1372,31 @@ export struct EpubReaderSettingsPanel {
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
           Blank()
           Button() {
             SymbolGlyph($r('sys.symbol.xmark'))
               .fontSize(18)
               .fontColor([$r('app.color.text_secondary')])
           }
-          .width(36).height(36).backgroundColor(Color.Transparent)
-          .onClick(() => { this.hidePanel(); })
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.hidePanel();
+          })
         }
         .width('100%')
         .margin({ bottom: 20 })
 
         Scroll() {
-          Column() {
-            this.buildThemePresets()
-            Divider().color($r('app.color.divider_primary')).margin({ bottom: 20 })
-            this.buildFontSizeControl()
-            this.buildLineHeightControl()
-            this.buildMarginControl()
-            this.buildFontWeightControl()
-          }
-          .width('100%')
+          this.buildSettingsContent()
         }
         .layoutWeight(1)
         .scrollable(ScrollDirection.Vertical)
         .scrollBar(BarState.Off)
 
-        Row({ space: 12 }) {
-          Button('恢复默认')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-            .backgroundColor($r('app.color.background_secondary'))
-            .layoutWeight(1).height(44)
-            .onClick(() => {
-              this.current.fontSize = DEFAULT_EBOOK_READING_SETTINGS.fontSize;
-              this.current.lineHeight = DEFAULT_EBOOK_READING_SETTINGS.lineHeight;
-              this.current.pageMargin = DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
-              this.current.fontWeight = DEFAULT_EBOOK_READING_SETTINGS.fontWeight;
-              this.current.backgroundColor = DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
-              this.current.textColor = DEFAULT_EBOOK_READING_SETTINGS.textColor;
-              this.current.nightMode = DEFAULT_EBOOK_READING_SETTINGS.nightMode;
-              this.current.followSystemTheme = DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme;
-              this.notify();
-            })
-          Button('关闭')
-            .fontSize(14)
-            .fontColor($r('app.color.text_on_accent'))
-            .backgroundColor($r('app.color.accent_primary'))
-            .layoutWeight(1).height(44)
-            .onClick(() => { this.hidePanel(); })
-        }
-        .width('100%')
-        .margin({ top: 16 })
+        this.buildFooterButtons(false)
       }
       .width('100%')
       .height('80%')
@@ -443,7 +1419,9 @@ export struct EpubReaderSettingsPanel {
       Column()
         .layoutWeight(1)
         .height('100%')
-        .onClick(() => { this.hidePanel(); })
+        .onClick(() => {
+          this.hidePanel();
+        })
 
       Column() {
         Row() {
@@ -451,59 +1429,31 @@ export struct EpubReaderSettingsPanel {
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
             .layoutWeight(1)
           Button() {
             SymbolGlyph($r('sys.symbol.xmark'))
               .fontSize(18)
               .fontColor([$r('app.color.text_secondary')])
           }
-          .width(36).height(36).backgroundColor(Color.Transparent)
-          .onClick(() => { this.hidePanel(); })
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.hidePanel();
+          })
         }
         .width('100%')
         .margin({ bottom: 16 })
 
         Scroll() {
-          Column() {
-            this.buildThemePresets()
-            Divider().color($r('app.color.divider_primary')).margin({ bottom: 16 })
-            this.buildFontSizeControl()
-            this.buildLineHeightControl()
-            this.buildMarginControl()
-            this.buildFontWeightControl()
-          }
-          .width('100%')
+          this.buildSettingsContent()
         }
         .layoutWeight(1)
         .scrollable(ScrollDirection.Vertical)
         .scrollBar(BarState.Off)
 
-        Row({ space: 8 }) {
-          Button('恢复默认')
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-            .backgroundColor($r('app.color.background_secondary'))
-            .layoutWeight(1).height(40)
-            .onClick(() => {
-              this.current.fontSize = DEFAULT_EBOOK_READING_SETTINGS.fontSize;
-              this.current.lineHeight = DEFAULT_EBOOK_READING_SETTINGS.lineHeight;
-              this.current.pageMargin = DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
-              this.current.fontWeight = DEFAULT_EBOOK_READING_SETTINGS.fontWeight;
-              this.current.backgroundColor = DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
-              this.current.textColor = DEFAULT_EBOOK_READING_SETTINGS.textColor;
-              this.current.nightMode = DEFAULT_EBOOK_READING_SETTINGS.nightMode;
-              this.current.followSystemTheme = DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme;
-              this.notify();
-            })
-          Button('关闭')
-            .fontSize(13)
-            .fontColor($r('app.color.text_on_accent'))
-            .backgroundColor($r('app.color.accent_primary'))
-            .layoutWeight(1).height(40)
-            .onClick(() => { this.hidePanel(); })
-        }
-        .width('100%')
-        .margin({ top: 12 })
+        this.buildFooterButtons(true)
       }
       .width(320)
       .height('100%')
@@ -523,11 +1473,14 @@ export struct EpubReaderSettingsPanel {
     if (this.isVisible) {
       Stack() {
         Column()
-          .width('100%').height('100%')
+          .width('100%')
+          .height('100%')
           .backgroundColor($r('app.color.background_overlay'))
           .opacity(this.backdropOpacity)
           .hitTestBehavior(HitTestMode.Block)
-          .onClick(() => { this.hidePanel(); })
+          .onClick(() => {
+            this.hidePanel();
+          })
 
         if (this.isLandscape) {
           this.buildLandscapePanel()
@@ -535,13 +1488,14 @@ export struct EpubReaderSettingsPanel {
           this.buildPortraitPanel()
         }
       }
-      .width('100%').height('100%')
+      .width('100%')
+      .height('100%')
       .position({ x: 0, y: 0 })
-      .onAreaChange((_old: Area, newVal: Area) => {
-        const w = Number(newVal.width);
-        const h = Number(newVal.height);
-        if (w > 0 && h > 0) {
-          this.isLandscape = w > h;
+      .onAreaChange((_old: Area, newValue: Area) => {
+        const width = Number(newValue.width);
+        const height = Number(newValue.height);
+        if (width > 0 && height > 0) {
+          this.isLandscape = width > height;
         }
       })
     }

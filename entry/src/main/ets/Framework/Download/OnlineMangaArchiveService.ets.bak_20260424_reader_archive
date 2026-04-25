@@ -1,0 +1,1736 @@
+/**
+ * 在线漫画归档服务
+ * 负责将在线下载/缓存的散图打包为 CBZ，并在阅读前解压到运行缓存目录。
+ */
+
+import { zlib } from '@kit.BasicServicesKit';
+import { common } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
+import fs from '@ohos.file.fs';
+import { logger } from '../../Utils/Logger';
+import { MetadataXmlGenerator, MangaMetadata } from '../../Utils/MetadataXmlGenerator';
+import { DataManager, OnlineChapterInfo, OnlineComicInfo, OnlinePageInfo } from '../Data/DataManager';
+import { DatabaseManager } from '../Database/DatabaseManager';
+import { GenericQueryRecord } from '../Database/DatabaseTypes';
+import { DownloadDirManager } from '../Storage/DownloadDirManager';
+import { PermanentImageCacheManager } from '../Cache/PermanentImageCacheManager';
+import { generateDbId } from '../Utils/UUIDGenerator';
+
+const TAG = 'OnlineMangaArchiveService';
+
+export enum OnlineArchiveMigrationStatus {
+  MIGRATED = 'migrated',
+  SKIPPED = 'skipped',
+  FAILED = 'failed'
+}
+
+export interface OnlineArchivePageFile {
+  pageIndex: number;
+  imageUrl: string;
+  sourcePath: string;
+  width: number;
+  height: number;
+  fileSize: number;
+}
+
+export interface OnlineArchiveMetadata {
+  sourceId: string;
+  sourceName: string;
+  sourcePkg: string;
+  mangaId: string;
+  mangaTitle: string;
+  chapterId: string;
+  chapterTitle: string;
+  chapterUrl: string;
+  author: string;
+  description: string;
+  coverUrl: string;
+  tags: string[];
+  lastUpdateTime: number;
+  isPrivate: boolean;
+  isNSFW: boolean;
+}
+
+export interface OnlineArchiveCreateRequest {
+  sourceName: string;
+  sourcePkg: string;
+  mangaTitle: string;
+  chapterTitle: string;
+  mangaId: string;
+  chapterId: string;
+  pageFiles: OnlineArchivePageFile[];
+  metadata: OnlineArchiveMetadata;
+  preferPublicDownloadDir: boolean;
+}
+
+export interface OnlineArchiveCreateResult {
+  archivePath: string;
+  archiveSize: number;
+  pageCount: number;
+}
+
+export interface OnlineArchiveExtractRequest {
+  archivePath: string;
+  chapterId: string;
+  pages: OnlinePageInfo[];
+}
+
+export interface OnlineArchiveExtractedPage {
+  pageId: string;
+  pageIndex: number;
+  imageUrl: string;
+  localPath: string;
+  width: number;
+  height: number;
+  fileSize: number;
+}
+
+export interface OnlineArchiveExtractResult {
+  extractDir: string;
+  pages: OnlineArchiveExtractedPage[];
+}
+
+export interface OnlineArchiveMigrationItem {
+  chapterId: string;
+  mangaTitle: string;
+  chapterTitle: string;
+  sourceName: string;
+  status: OnlineArchiveMigrationStatus;
+  message: string;
+  archivePath: string;
+  pageCount: number;
+  archiveSize: number;
+  migratedTime: number;
+}
+
+export interface OnlineArchiveMigrationSummary {
+  totalCandidates: number;
+  migratedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  totalArchiveSize: number;
+  startedAt: number;
+  completedAt: number;
+  items: OnlineArchiveMigrationItem[];
+}
+
+interface LegacyPageFileBuildResult {
+  pageFiles: OnlineArchivePageFile[];
+  expectedPageCount: number;
+  localPathRecordCount: number;
+  missingLocalFileCount: number;
+  recoveredCachePathCount: number;
+  downloadPathImageCount: number;
+}
+
+interface OnlineArchiveSourceRecord {
+  id: string;
+  name: string;
+  pkg: string;
+  isNSFW: number;
+}
+
+interface FilesystemImageDirectory {
+  directoryPath: string;
+  imageFiles: string[];
+}
+
+interface FilesystemOrphanCandidate {
+  scanKey: string;
+  rootType: string;
+  directoryPath: string;
+  sourceId: string;
+  sourceName: string;
+  sourcePkg: string;
+  mangaExternalId: string;
+  chapterExternalId: string;
+  preferredMangaId: string;
+  preferredChapterId: string;
+  mangaTitle: string;
+  chapterTitle: string;
+  chapterUrl: string;
+  chapterNumber: number;
+  pageFiles: OnlineArchivePageFile[];
+  preferPublicDownloadDir: boolean;
+  isPrivate: boolean;
+  isNSFW: boolean;
+}
+
+interface ExistingOrphanChapterRecord {
+  comicId: string;
+  chapterId: string;
+  pageCount: number;
+  pageRecordCount: number;
+  downloadPath: string;
+}
+
+export class OnlineMangaArchiveService {
+  private static instance: OnlineMangaArchiveService | null = null;
+  private context: common.UIAbilityContext | null = null;
+  private dataManager: DataManager = DataManager.getInstance();
+  private databaseManager: DatabaseManager = DatabaseManager.getInstance();
+  private downloadDirManager: DownloadDirManager = DownloadDirManager.getInstance();
+  private permanentCacheManager: PermanentImageCacheManager = PermanentImageCacheManager.getInstance();
+  private readonly supportedImageExtensions: string[] = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif'];
+
+  private constructor() {}
+
+  public static getInstance(): OnlineMangaArchiveService {
+    if (!OnlineMangaArchiveService.instance) {
+      OnlineMangaArchiveService.instance = new OnlineMangaArchiveService();
+    }
+    return OnlineMangaArchiveService.instance;
+  }
+
+  public setContext(context: common.UIAbilityContext): void {
+    this.context = context;
+    this.downloadDirManager.setContext(context);
+  }
+
+  public hasContext(): boolean {
+    return this.context !== null;
+  }
+
+  public fileExists(path: string): boolean {
+    return this.pathExists(path);
+  }
+
+  public async createArchiveFromPageFiles(request: OnlineArchiveCreateRequest): Promise<OnlineArchiveCreateResult> {
+    if (request.pageFiles.length === 0) {
+      throw new Error('归档页面不能为空');
+    }
+
+    const workDir = this.createWorkDir(request.chapterId);
+    try {
+      const sortedPages = request.pageFiles.slice().sort((left: OnlineArchivePageFile, right: OnlineArchivePageFile) => {
+        return left.pageIndex - right.pageIndex;
+      });
+
+      for (let i = 0; i < sortedPages.length; i++) {
+        const page = sortedPages[i];
+        if (!this.pathExists(page.sourcePath)) {
+          throw new Error(`页面文件不存在: ${page.sourcePath}`);
+        }
+        const extension = this.resolveImageExtension(page.sourcePath, page.imageUrl);
+        const targetPath = `${workDir}/${String(i + 1).padStart(4, '0')}.${extension}`;
+        fs.copyFileSync(page.sourcePath, targetPath);
+      }
+
+      const comicInfoXml = this.buildComicInfoXml(request.metadata, sortedPages.length);
+      this.writeTextFile(`${workDir}/ComicInfo.xml`, comicInfoXml);
+
+      const archivePath = this.resolveArchivePath(request);
+      const tempArchivePath = `${archivePath}.tmp.zip`;
+      const legacyTempArchivePath = `${archivePath}.tmp`;
+      this.deleteArchiveOutputFiles(archivePath);
+
+      await zlib.compressFile(workDir, tempArchivePath, {
+        level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
+        memLevel: zlib.MemLevel.MEM_LEVEL_DEFAULT,
+        strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY
+      });
+      const compressedOutputPath = this.resolveCompressedOutputPath(tempArchivePath, legacyTempArchivePath);
+      fs.renameSync(compressedOutputPath, archivePath);
+      this.deleteArchiveTempFiles(archivePath);
+
+      const archiveSize = this.getFileSize(archivePath);
+      logger.info(TAG, `在线漫画CBZ归档完成: ${archivePath}, pages=${sortedPages.length}, size=${archiveSize}`);
+      return {
+        archivePath: archivePath,
+        archiveSize: archiveSize,
+        pageCount: sortedPages.length
+      };
+    } finally {
+      this.deleteDirectoryRecursive(workDir);
+    }
+  }
+
+  public async extractArchiveForReader(request: OnlineArchiveExtractRequest): Promise<OnlineArchiveExtractResult> {
+    if (!request.archivePath || !this.isCbzPath(request.archivePath)) {
+      throw new Error(`无效的CBZ路径: ${request.archivePath}`);
+    }
+    if (!this.pathExists(request.archivePath)) {
+      throw new Error(`CBZ文件不存在: ${request.archivePath}`);
+    }
+
+    const extractDir = this.resolveReaderExtractDir(request.chapterId, request.archivePath);
+    if (!this.hasReadableExtractedImages(extractDir)) {
+      this.deleteDirectoryRecursive(extractDir);
+      this.ensureDirectory(extractDir);
+      await zlib.decompressFile(request.archivePath, extractDir);
+      logger.info(TAG, `在线漫画CBZ已解压: ${request.archivePath} -> ${extractDir}`);
+    }
+
+    const imageFiles = this.scanImageFilesRecursive(extractDir);
+    const pages: OnlineArchiveExtractedPage[] = [];
+    const pageInfos = request.pages.slice().sort((left: OnlinePageInfo, right: OnlinePageInfo) => {
+      return left.pageNumber - right.pageNumber;
+    });
+
+    for (let i = 0; i < imageFiles.length; i++) {
+      const pageInfo = i < pageInfos.length ? pageInfos[i] : null;
+      const localPath = imageFiles[i];
+      const fileSize = this.getFileSize(localPath);
+      const page: OnlineArchiveExtractedPage = {
+        pageId: pageInfo ? pageInfo.id : `${request.chapterId}_archive_${i}`,
+        pageIndex: i,
+        imageUrl: pageInfo ? pageInfo.imageUrl : localPath,
+        localPath: localPath,
+        width: pageInfo ? pageInfo.width : 0,
+        height: pageInfo ? pageInfo.height : 0,
+        fileSize: fileSize
+      };
+      pages.push(page);
+    }
+
+    if (pages.length === 0) {
+      throw new Error(`CBZ解压后未找到图片: ${request.archivePath}`);
+    }
+
+    return {
+      extractDir: extractDir,
+      pages: pages
+    };
+  }
+
+  public async runLegacyCacheMigration(): Promise<OnlineArchiveMigrationSummary> {
+    const startedAt = Date.now();
+    const summary: OnlineArchiveMigrationSummary = {
+      totalCandidates: 0,
+      migratedCount: 0,
+      skippedCount: 0,
+      failedCount: 0,
+      totalArchiveSize: 0,
+      startedAt: startedAt,
+      completedAt: 0,
+      items: []
+    };
+
+    try {
+      const chapterIds = await this.queryLegacyLooseCacheChapterIds();
+      summary.totalCandidates += chapterIds.length;
+
+      for (let i = 0; i < chapterIds.length; i++) {
+        const item = await this.migrateSingleLegacyChapter(chapterIds[i]);
+        this.appendMigrationItem(summary, item);
+      }
+
+      const orphanItems = await this.runFilesystemOrphanMigration();
+      summary.totalCandidates += orphanItems.length;
+      for (let i = 0; i < orphanItems.length; i++) {
+        this.appendMigrationItem(summary, orphanItems[i]);
+      }
+    } catch (error) {
+      logger.error(TAG, `旧缓存迁移失败: ${String(error)}`);
+    } finally {
+      summary.completedAt = Date.now();
+    }
+
+    logger.info(TAG, `旧缓存迁移完成: total=${summary.totalCandidates}, migrated=${summary.migratedCount}, skipped=${summary.skippedCount}, failed=${summary.failedCount}`);
+    return summary;
+  }
+
+  private appendMigrationItem(summary: OnlineArchiveMigrationSummary, item: OnlineArchiveMigrationItem): void {
+    summary.items.push(item);
+    if (item.status === OnlineArchiveMigrationStatus.MIGRATED) {
+      summary.migratedCount++;
+      summary.totalArchiveSize += item.archiveSize;
+    } else if (item.status === OnlineArchiveMigrationStatus.SKIPPED) {
+      summary.skippedCount++;
+    } else {
+      summary.failedCount++;
+    }
+  }
+
+  private async migrateSingleLegacyChapter(chapterId: string): Promise<OnlineArchiveMigrationItem> {
+    const fallbackItem: OnlineArchiveMigrationItem = {
+      chapterId: chapterId,
+      mangaTitle: '',
+      chapterTitle: '',
+      sourceName: '',
+      status: OnlineArchiveMigrationStatus.FAILED,
+      message: '',
+      archivePath: '',
+      pageCount: 0,
+      archiveSize: 0,
+      migratedTime: Date.now()
+    };
+
+    try {
+      const chapter = await this.dataManager.getOnlineChapterById(chapterId);
+      if (!chapter) {
+        fallbackItem.message = '章节记录不存在';
+        return fallbackItem;
+      }
+      fallbackItem.chapterTitle = chapter.title;
+
+      const comic = await this.dataManager.getOnlineComicInfoById(chapter.comicId);
+      if (!comic) {
+        fallbackItem.message = '漫画记录不存在';
+        return fallbackItem;
+      }
+      fallbackItem.mangaTitle = comic.title;
+      fallbackItem.sourceName = comic.sourceName || comic.sourcePkg || `source_${comic.sourceId}`;
+
+      if (chapter.downloadPath && this.isCbzPath(chapter.downloadPath) && this.pathExists(chapter.downloadPath)) {
+        fallbackItem.status = OnlineArchiveMigrationStatus.SKIPPED;
+        fallbackItem.message = '章节已存在有效CBZ归档';
+        fallbackItem.archivePath = chapter.downloadPath;
+        fallbackItem.archiveSize = this.getFileSize(chapter.downloadPath);
+        fallbackItem.pageCount = chapter.pageCount;
+        return fallbackItem;
+      }
+
+      const pageInfos = await this.dataManager.getOnlineChapterPages(chapter.id);
+      const recoveredArchivePath = this.resolveExistingArchiveForChapter(comic, chapter);
+      if (recoveredArchivePath.length > 0) {
+        const recoveredPageCount = Math.max(pageInfos.length, chapter.pageCount || 0);
+        await this.databaseManager.executeSql(
+          'UPDATE online_chapter SET isDownloaded = 1, downloadPath = ?, pageCount = ?, updateTime = ? WHERE id = ?',
+          [recoveredArchivePath, recoveredPageCount, Date.now(), chapter.id]
+        );
+        await this.databaseManager.executeSql(
+          'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
+          [chapter.id]
+        );
+
+        fallbackItem.status = OnlineArchiveMigrationStatus.MIGRATED;
+        fallbackItem.message = '已恢复未完成的CBZ临时归档';
+        fallbackItem.archivePath = recoveredArchivePath;
+        fallbackItem.archiveSize = this.getFileSize(recoveredArchivePath);
+        fallbackItem.pageCount = recoveredPageCount;
+        fallbackItem.migratedTime = Date.now();
+        return fallbackItem;
+      }
+
+      const buildResult = await this.buildLegacyPageFiles(pageInfos, comic, chapter);
+      const pageFiles = buildResult.pageFiles;
+      if (pageFiles.length === 0) {
+        fallbackItem.status = OnlineArchiveMigrationStatus.SKIPPED;
+        fallbackItem.message = `未找到可迁移的本地散图，数据库本地路径=${buildResult.localPathRecordCount}，不可访问=${buildResult.missingLocalFileCount}，兜底恢复=${buildResult.recoveredCachePathCount}，章节目录图片=${buildResult.downloadPathImageCount}`;
+        return fallbackItem;
+      }
+      if (buildResult.expectedPageCount > 0 && pageFiles.length < buildResult.expectedPageCount) {
+        fallbackItem.status = OnlineArchiveMigrationStatus.SKIPPED;
+        fallbackItem.message = `散图不完整，已找到 ${pageFiles.length}/${buildResult.expectedPageCount} 页，兜底恢复=${buildResult.recoveredCachePathCount}，章节目录图片=${buildResult.downloadPathImageCount}，需补齐后再迁移`;
+        fallbackItem.pageCount = pageFiles.length;
+        return fallbackItem;
+      }
+
+      const metadata = this.buildMetadataFromComic(comic, chapter);
+      const createRequest: OnlineArchiveCreateRequest = {
+        sourceName: comic.sourceName,
+        sourcePkg: comic.sourcePkg,
+        mangaTitle: comic.title,
+        chapterTitle: chapter.title,
+        mangaId: comic.id,
+        chapterId: chapter.id,
+        pageFiles: pageFiles,
+        metadata: metadata,
+        preferPublicDownloadDir: true
+      };
+      const result = await this.createArchiveFromPageFiles(createRequest);
+
+      await this.databaseManager.executeSql(
+        'UPDATE online_chapter SET isDownloaded = 1, downloadPath = ?, pageCount = ?, updateTime = ? WHERE id = ?',
+        [result.archivePath, result.pageCount, Date.now(), chapter.id]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
+        [chapter.id]
+      );
+
+      fallbackItem.status = OnlineArchiveMigrationStatus.MIGRATED;
+      fallbackItem.message = '迁移完成';
+      fallbackItem.archivePath = result.archivePath;
+      fallbackItem.pageCount = result.pageCount;
+      fallbackItem.archiveSize = result.archiveSize;
+      fallbackItem.migratedTime = Date.now();
+      return fallbackItem;
+    } catch (error) {
+      fallbackItem.status = OnlineArchiveMigrationStatus.FAILED;
+      fallbackItem.message = String(error);
+      fallbackItem.migratedTime = Date.now();
+      logger.warn(TAG, `迁移章节失败: chapterId=${chapterId}, error=${String(error)}`);
+      return fallbackItem;
+    }
+  }
+
+  private async queryLegacyLooseCacheChapterIds(): Promise<string[]> {
+    const sql = `
+      SELECT DISTINCT oc.id
+      FROM online_chapter oc
+      LEFT JOIN online_page op ON op.chapterId = oc.id
+      WHERE (op.localPath IS NOT NULL AND op.localPath != '')
+        OR (oc.isDownloaded = 0 AND op.isDownloaded = 1)
+        OR (
+          oc.downloadPath IS NOT NULL
+          AND oc.downloadPath != ''
+          AND lower(oc.downloadPath) NOT LIKE '%.cbz'
+        )
+    `;
+    const records = await this.databaseManager.querySql(sql, []);
+    const chapterIds: string[] = [];
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i] as GenericQueryRecord;
+      const chapterId = record.chapterId ? String(record.chapterId) : (record.id ? String(record.id) : '');
+      if (chapterId.length > 0) {
+        chapterIds.push(chapterId);
+      }
+    }
+    return chapterIds;
+  }
+
+  private async buildLegacyPageFiles(
+    pageInfos: OnlinePageInfo[],
+    comic: OnlineComicInfo,
+    chapter: OnlineChapterInfo
+  ): Promise<LegacyPageFileBuildResult> {
+    const sortedPages = pageInfos.slice().sort((left: OnlinePageInfo, right: OnlinePageInfo) => {
+      return left.pageNumber - right.pageNumber;
+    });
+    let pageFiles: OnlineArchivePageFile[] = [];
+    let localPathRecordCount = 0;
+    let missingLocalFileCount = 0;
+    let recoveredCachePathCount = 0;
+    let downloadPathImageCount = 0;
+
+    for (let i = 0; i < sortedPages.length; i++) {
+      const page = sortedPages[i];
+      const rawLocalPath = page.localPath || '';
+      if (rawLocalPath.length > 0) {
+        localPathRecordCount++;
+      }
+      const resolvedPath = await this.resolveLegacyPageFilePath(page, comic, chapter);
+      if (resolvedPath.length === 0) {
+        if (rawLocalPath.length > 0) {
+          missingLocalFileCount++;
+        }
+        continue;
+      }
+      if (rawLocalPath.length > 0 && this.normalizeFileSystemPath(rawLocalPath) !== resolvedPath) {
+        recoveredCachePathCount++;
+      }
+      const pageFile: OnlineArchivePageFile = {
+        pageIndex: i,
+        imageUrl: page.imageUrl,
+        sourcePath: resolvedPath,
+        width: page.width,
+        height: page.height,
+        fileSize: page.fileSize || this.getFileSize(resolvedPath)
+      };
+      pageFiles.push(pageFile);
+    }
+
+    const downloadPathPageFiles = this.buildLegacyPageFilesFromDownloadPath(chapter, sortedPages);
+    downloadPathImageCount = downloadPathPageFiles.length;
+    if (downloadPathPageFiles.length > pageFiles.length) {
+      pageFiles = downloadPathPageFiles;
+    }
+
+    return {
+      pageFiles: pageFiles,
+      expectedPageCount: Math.max(sortedPages.length, chapter.pageCount || 0),
+      localPathRecordCount: localPathRecordCount,
+      missingLocalFileCount: missingLocalFileCount,
+      recoveredCachePathCount: recoveredCachePathCount,
+      downloadPathImageCount: downloadPathImageCount
+    };
+  }
+
+  private buildLegacyPageFilesFromDownloadPath(
+    chapter: OnlineChapterInfo,
+    sortedPages: OnlinePageInfo[]
+  ): OnlineArchivePageFile[] {
+    const downloadPath = this.normalizeFileSystemPath(chapter.downloadPath || '');
+    if (downloadPath.length === 0 || this.isCbzPath(downloadPath) || !this.pathExists(downloadPath)) {
+      return [];
+    }
+
+    try {
+      const stat = fs.statSync(downloadPath);
+      if (!stat.isDirectory()) {
+        return [];
+      }
+      const imageFiles = this.scanImageFilesRecursive(downloadPath);
+      const pageFiles: OnlineArchivePageFile[] = [];
+      for (let i = 0; i < imageFiles.length; i++) {
+        const pageInfo = i < sortedPages.length ? sortedPages[i] : null;
+        const imagePath = imageFiles[i];
+        const pageFile: OnlineArchivePageFile = {
+          pageIndex: i,
+          imageUrl: pageInfo ? pageInfo.imageUrl : imagePath,
+          sourcePath: imagePath,
+          width: pageInfo ? pageInfo.width : 0,
+          height: pageInfo ? pageInfo.height : 0,
+          fileSize: pageInfo && pageInfo.fileSize > 0 ? pageInfo.fileSize : this.getFileSize(imagePath)
+        };
+        pageFiles.push(pageFile);
+      }
+      return pageFiles;
+    } catch (error) {
+      logger.warn(TAG, `扫描章节散图目录失败: ${downloadPath}, ${String(error)}`);
+      return [];
+    }
+  }
+
+  private async resolveLegacyPageFilePath(
+    page: OnlinePageInfo,
+    comic: OnlineComicInfo,
+    chapter: OnlineChapterInfo
+  ): Promise<string> {
+    const localPath = this.normalizeFileSystemPath(page.localPath || '');
+    if (localPath.length > 0 && this.pathExists(localPath)) {
+      return localPath;
+    }
+
+    const sourceNumericId = Number(comic.sourceId);
+    if (!Number.isFinite(sourceNumericId)) {
+      return '';
+    }
+
+    const cachedPath = await this.permanentCacheManager.getCachedImagePath(
+      sourceNumericId,
+      comic.id,
+      chapter.id,
+      page.pageNumber,
+      page.imageUrl
+    );
+    if (cachedPath && cachedPath.length > 0 && this.pathExists(cachedPath)) {
+      return cachedPath;
+    }
+    return '';
+  }
+
+  private async runFilesystemOrphanMigration(): Promise<OnlineArchiveMigrationItem[]> {
+    const candidates = await this.collectFilesystemOrphanCandidates();
+    const items: OnlineArchiveMigrationItem[] = [];
+
+    for (let i = 0; i < candidates.length; i++) {
+      const item = await this.migrateFilesystemOrphanCandidate(candidates[i]);
+      items.push(item);
+    }
+
+    logger.info(TAG, `孤儿本地缓存扫描完成: candidates=${candidates.length}, items=${items.length}`);
+    return items;
+  }
+
+  private async collectFilesystemOrphanCandidates(): Promise<FilesystemOrphanCandidate[]> {
+    const context = this.requireContext();
+    const candidates: FilesystemOrphanCandidate[] = [];
+    const seenDirectories: string[] = [];
+
+    if (this.downloadDirManager.isReady()) {
+      const publicMangaRoot = `${this.normalizeDirectoryPath(this.downloadDirManager.getPath())}/manga`;
+      await this.collectArchiveStyleCandidates(
+        publicMangaRoot,
+        'public_archive',
+        true,
+        candidates,
+        seenDirectories
+      );
+      await this.collectRawIdStyleCandidates(
+        publicMangaRoot,
+        'public_legacy',
+        true,
+        candidates,
+        seenDirectories
+      );
+    }
+
+    const privateArchiveRoot = `${this.normalizeDirectoryPath(context.filesDir)}/downloads/online_archive`;
+    await this.collectArchiveStyleCandidates(
+      privateArchiveRoot,
+      'private_archive',
+      false,
+      candidates,
+      seenDirectories
+    );
+
+    const privateDownloadRoot = `${this.normalizeDirectoryPath(context.filesDir)}/downloads`;
+    await this.collectRawIdStyleCandidates(
+      privateDownloadRoot,
+      'private_legacy',
+      false,
+      candidates,
+      seenDirectories
+    );
+
+    const permanentCacheRoot = `${this.normalizeDirectoryPath(context.filesDir)}/permanent_cache`;
+    await this.collectPermanentCacheCandidates(
+      permanentCacheRoot,
+      candidates,
+      seenDirectories
+    );
+
+    return candidates;
+  }
+
+  private async collectArchiveStyleCandidates(
+    rootPath: string,
+    rootType: string,
+    preferPublicDownloadDir: boolean,
+    candidates: FilesystemOrphanCandidate[],
+    seenDirectories: string[]
+  ): Promise<void> {
+    if (!this.isDirectoryPath(rootPath)) {
+      return;
+    }
+
+    const imageDirectories = this.scanDirectoriesWithDirectImages(rootPath);
+    for (let i = 0; i < imageDirectories.length; i++) {
+      const imageDirectory = imageDirectories[i];
+      if (this.hasSeenDirectory(imageDirectory.directoryPath, seenDirectories)) {
+        continue;
+      }
+
+      const relativePath = this.getRelativePath(rootPath, imageDirectory.directoryPath);
+      const parts = this.splitPathParts(relativePath);
+      if (parts.length < 3) {
+        continue;
+      }
+
+      const sourceSegment = parts[0];
+      const mangaTitle = parts[1];
+      const chapterTitle = parts[2];
+      const sourceRecord = await this.querySourceRecordByNameOrPkg(sourceSegment);
+      const sourceId = sourceRecord ? sourceRecord.id : '0';
+      const sourceName = sourceRecord ? sourceRecord.name : sourceSegment;
+      const sourcePkg = sourceRecord ? sourceRecord.pkg : '';
+      const mangaExternalId = `filesystem:${rootType}:${sourceId}:${mangaTitle}`;
+      const chapterExternalId = `${mangaExternalId}:${chapterTitle}`;
+      const candidate: FilesystemOrphanCandidate = {
+        scanKey: `${rootType}:${imageDirectory.directoryPath}`,
+        rootType: rootType,
+        directoryPath: imageDirectory.directoryPath,
+        sourceId: sourceId,
+        sourceName: sourceName,
+        sourcePkg: sourcePkg,
+        mangaExternalId: mangaExternalId,
+        chapterExternalId: chapterExternalId,
+        preferredMangaId: this.buildStableRecoveredId('recovered_manga', mangaExternalId),
+        preferredChapterId: this.buildStableRecoveredId('recovered_chapter', chapterExternalId),
+        mangaTitle: mangaTitle,
+        chapterTitle: chapterTitle,
+        chapterUrl: imageDirectory.directoryPath,
+        chapterNumber: this.extractStableSortNumber(chapterTitle),
+        pageFiles: this.buildOrphanPageFiles(imageDirectory.imageFiles),
+        preferPublicDownloadDir: preferPublicDownloadDir,
+        isPrivate: false,
+        isNSFW: sourceRecord ? sourceRecord.isNSFW === 1 : false
+      };
+      candidates.push(candidate);
+      seenDirectories.push(this.normalizeDirectoryPath(imageDirectory.directoryPath));
+    }
+  }
+
+  private async collectRawIdStyleCandidates(
+    rootPath: string,
+    rootType: string,
+    preferPublicDownloadDir: boolean,
+    candidates: FilesystemOrphanCandidate[],
+    seenDirectories: string[]
+  ): Promise<void> {
+    if (!this.isDirectoryPath(rootPath)) {
+      return;
+    }
+
+    const imageDirectories = this.scanDirectoriesWithDirectImages(rootPath);
+    for (let i = 0; i < imageDirectories.length; i++) {
+      const imageDirectory = imageDirectories[i];
+      if (this.hasSeenDirectory(imageDirectory.directoryPath, seenDirectories)) {
+        continue;
+      }
+
+      const relativePath = this.getRelativePath(rootPath, imageDirectory.directoryPath);
+      const parts = this.splitPathParts(relativePath);
+      if (parts.length < 2 || parts[0] === 'online_archive') {
+        continue;
+      }
+
+      const mangaId = parts[0];
+      const chapterId = parts[1];
+      const candidate: FilesystemOrphanCandidate = {
+        scanKey: `${rootType}:${imageDirectory.directoryPath}`,
+        rootType: rootType,
+        directoryPath: imageDirectory.directoryPath,
+        sourceId: '0',
+        sourceName: 'unknown_source',
+        sourcePkg: '',
+        mangaExternalId: mangaId,
+        chapterExternalId: chapterId,
+        preferredMangaId: this.sanitizeRecoveredId(mangaId, 'recovered_manga'),
+        preferredChapterId: this.buildStableRecoveredId('recovered_chapter', `${rootType}:${mangaId}:${chapterId}`),
+        mangaTitle: mangaId,
+        chapterTitle: chapterId,
+        chapterUrl: imageDirectory.directoryPath,
+        chapterNumber: this.extractStableSortNumber(chapterId),
+        pageFiles: this.buildOrphanPageFiles(imageDirectory.imageFiles),
+        preferPublicDownloadDir: preferPublicDownloadDir,
+        isPrivate: false,
+        isNSFW: false
+      };
+      candidates.push(candidate);
+      seenDirectories.push(this.normalizeDirectoryPath(imageDirectory.directoryPath));
+    }
+  }
+
+  private async collectPermanentCacheCandidates(
+    rootPath: string,
+    candidates: FilesystemOrphanCandidate[],
+    seenDirectories: string[]
+  ): Promise<void> {
+    if (!this.isDirectoryPath(rootPath)) {
+      return;
+    }
+
+    const imageDirectories = this.scanDirectoriesWithDirectImages(rootPath);
+    for (let i = 0; i < imageDirectories.length; i++) {
+      const imageDirectory = imageDirectories[i];
+      if (this.hasSeenDirectory(imageDirectory.directoryPath, seenDirectories)) {
+        continue;
+      }
+
+      const relativePath = this.getRelativePath(rootPath, imageDirectory.directoryPath);
+      const parts = this.splitPathParts(relativePath);
+      if (parts.length < 3) {
+        continue;
+      }
+      if (!parts[0].startsWith('source_') || !parts[1].startsWith('manga_') || !parts[2].startsWith('chapter_')) {
+        continue;
+      }
+
+      const sourceId = parts[0].substring(7);
+      const mangaId = parts[1].substring(6);
+      const chapterId = parts[2].substring(8);
+      if (sourceId.length === 0 || mangaId.length === 0 || chapterId.length === 0) {
+        continue;
+      }
+
+      const sourceRecord = await this.querySourceRecordById(sourceId);
+      const sourceName = sourceRecord ? sourceRecord.name : `source_${sourceId}`;
+      const sourcePkg = sourceRecord ? sourceRecord.pkg : '';
+      const candidate: FilesystemOrphanCandidate = {
+        scanKey: `permanent_cache:${imageDirectory.directoryPath}`,
+        rootType: 'permanent_cache',
+        directoryPath: imageDirectory.directoryPath,
+        sourceId: sourceId,
+        sourceName: sourceName,
+        sourcePkg: sourcePkg,
+        mangaExternalId: mangaId,
+        chapterExternalId: chapterId,
+        preferredMangaId: this.sanitizeRecoveredId(mangaId, 'recovered_manga'),
+        preferredChapterId: this.sanitizeRecoveredId(chapterId, 'recovered_chapter'),
+        mangaTitle: mangaId,
+        chapterTitle: chapterId,
+        chapterUrl: imageDirectory.directoryPath,
+        chapterNumber: this.extractStableSortNumber(chapterId),
+        pageFiles: this.buildOrphanPageFiles(imageDirectory.imageFiles),
+        preferPublicDownloadDir: false,
+        isPrivate: false,
+        isNSFW: sourceRecord ? sourceRecord.isNSFW === 1 : false
+      };
+      candidates.push(candidate);
+      seenDirectories.push(this.normalizeDirectoryPath(imageDirectory.directoryPath));
+    }
+  }
+
+  private async migrateFilesystemOrphanCandidate(candidate: FilesystemOrphanCandidate): Promise<OnlineArchiveMigrationItem> {
+    const item: OnlineArchiveMigrationItem = {
+      chapterId: candidate.preferredChapterId,
+      mangaTitle: candidate.mangaTitle,
+      chapterTitle: candidate.chapterTitle,
+      sourceName: candidate.sourceName,
+      status: OnlineArchiveMigrationStatus.FAILED,
+      message: '',
+      archivePath: '',
+      pageCount: candidate.pageFiles.length,
+      archiveSize: 0,
+      migratedTime: Date.now()
+    };
+
+    try {
+      if (candidate.pageFiles.length === 0) {
+        item.status = OnlineArchiveMigrationStatus.SKIPPED;
+        item.message = '本地目录未找到图片';
+        return item;
+      }
+
+      const existingChapter = await this.findExistingOrphanChapter(candidate);
+      if (existingChapter && this.isCbzPath(existingChapter.downloadPath) && this.pathExists(existingChapter.downloadPath)) {
+        item.chapterId = existingChapter.chapterId;
+        item.status = OnlineArchiveMigrationStatus.SKIPPED;
+        item.message = '章节已存在有效CBZ归档';
+        item.archivePath = existingChapter.downloadPath;
+        item.archiveSize = this.getFileSize(existingChapter.downloadPath);
+        item.pageCount = existingChapter.pageCount > 0 ? existingChapter.pageCount : candidate.pageFiles.length;
+        item.migratedTime = Date.now();
+        return item;
+      }
+
+      const comicId = existingChapter
+        ? existingChapter.comicId
+        : await this.resolveExistingOrphanComicId(candidate);
+      const chapterId = existingChapter ? existingChapter.chapterId : candidate.preferredChapterId;
+      item.chapterId = chapterId;
+
+      await this.upsertRecoveredOnlineRecords(
+        candidate,
+        comicId,
+        chapterId,
+        candidate.directoryPath,
+        candidate.pageFiles.length
+      );
+
+      const metadata = this.buildMetadataFromFilesystemCandidate(candidate, comicId, chapterId);
+      const createRequest: OnlineArchiveCreateRequest = {
+        sourceName: candidate.sourceName,
+        sourcePkg: candidate.sourcePkg,
+        mangaTitle: candidate.mangaTitle,
+        chapterTitle: candidate.chapterTitle,
+        mangaId: comicId,
+        chapterId: chapterId,
+        pageFiles: candidate.pageFiles,
+        metadata: metadata,
+        preferPublicDownloadDir: candidate.preferPublicDownloadDir
+      };
+      const result = await this.createArchiveFromPageFiles(createRequest);
+
+      await this.databaseManager.executeSql(
+        'UPDATE online_chapter SET isDownloaded = 1, downloadPath = ?, pageCount = ?, updateTime = ? WHERE id = ?',
+        [result.archivePath, result.pageCount, Date.now(), chapterId]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
+        [chapterId]
+      );
+
+      item.status = OnlineArchiveMigrationStatus.MIGRATED;
+      item.message = `已从本地目录恢复数据库记录并迁移CBZ: ${candidate.rootType}`;
+      item.archivePath = result.archivePath;
+      item.pageCount = result.pageCount;
+      item.archiveSize = result.archiveSize;
+      item.migratedTime = Date.now();
+      return item;
+    } catch (error) {
+      item.status = OnlineArchiveMigrationStatus.FAILED;
+      item.message = String(error);
+      item.migratedTime = Date.now();
+      logger.warn(TAG, `孤儿缓存迁移失败: dir=${candidate.directoryPath}, error=${String(error)}`);
+      return item;
+    }
+  }
+
+  private async upsertRecoveredOnlineRecords(
+    candidate: FilesystemOrphanCandidate,
+    comicId: string,
+    chapterId: string,
+    downloadPath: string,
+    pageCount: number
+  ): Promise<void> {
+    const now = Date.now();
+    await this.databaseManager.beginTransaction();
+    try {
+      await this.databaseManager.executeSql(
+        `INSERT OR IGNORE INTO online_comic_info
+         (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg, isPrivate, isNSFW)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          comicId,
+          candidate.sourceId,
+          candidate.mangaExternalId,
+          candidate.mangaTitle,
+          '',
+          '从本地缓存目录恢复',
+          '',
+          '',
+          0,
+          now,
+          now,
+          now,
+          now,
+          candidate.sourceName,
+          candidate.sourcePkg,
+          candidate.isPrivate ? 1 : 0,
+          candidate.isNSFW ? 1 : 0
+        ]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_comic_info SET title = ?, sourceName = ?, sourcePkg = ?, isPrivate = ?, isNSFW = ?, lastUpdateTime = ?, updateTime = ? WHERE id = ?',
+        [
+          candidate.mangaTitle,
+          candidate.sourceName,
+          candidate.sourcePkg,
+          candidate.isPrivate ? 1 : 0,
+          candidate.isNSFW ? 1 : 0,
+          now,
+          now,
+          comicId
+        ]
+      );
+
+      await this.databaseManager.executeSql(
+        `INSERT OR IGNORE INTO online_chapter
+         (id, comicId, externalId, title, chapterNumber, url, pageCount, publishTime, addTime, createTime, updateTime, isDownloaded, downloadPath, \`index\`)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          chapterId,
+          comicId,
+          candidate.chapterExternalId,
+          candidate.chapterTitle,
+          candidate.chapterNumber,
+          candidate.chapterUrl,
+          pageCount,
+          0,
+          now,
+          now,
+          now,
+          1,
+          downloadPath,
+          candidate.chapterNumber
+        ]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_chapter SET title = ?, pageCount = ?, url = ?, isDownloaded = 1, downloadPath = ?, updateTime = ?, `index` = ? WHERE id = ?',
+        [
+          candidate.chapterTitle,
+          pageCount,
+          candidate.chapterUrl,
+          downloadPath,
+          now,
+          candidate.chapterNumber,
+          chapterId
+        ]
+      );
+
+      await this.databaseManager.executeSql('DELETE FROM online_page WHERE chapterId = ?', [chapterId]);
+      for (let i = 0; i < candidate.pageFiles.length; i++) {
+        const page = candidate.pageFiles[i];
+        await this.databaseManager.executeSql(
+          `INSERT INTO online_page
+           (id, chapterId, pageNumber, imageUrl, localPath, width, height, fileSize, isDownloaded, createTime)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            generateDbId('online_page'),
+            chapterId,
+            page.pageIndex,
+            page.imageUrl,
+            page.sourcePath,
+            page.width,
+            page.height,
+            page.fileSize,
+            1,
+            now
+          ]
+        );
+      }
+
+      await this.databaseManager.commit();
+      logger.info(TAG, `已恢复本地缓存数据库记录: comicId=${comicId}, chapterId=${chapterId}, pages=${pageCount}`);
+    } catch (error) {
+      await this.databaseManager.rollBack();
+      throw error as Error;
+    }
+  }
+
+  private async findExistingOrphanChapter(candidate: FilesystemOrphanCandidate): Promise<ExistingOrphanChapterRecord | null> {
+    const sql = `
+      SELECT oci.id as comicId,
+             oc.id as chapterId,
+             oc.pageCount,
+             oc.downloadPath,
+             (SELECT COUNT(*) FROM online_page op WHERE op.chapterId = oc.id) as chapterCount
+      FROM online_comic_info oci
+      INNER JOIN online_chapter oc ON oc.comicId = oci.id
+      WHERE (
+        (oci.sourceId = ? AND oci.externalId = ?)
+        OR oci.id = ?
+        OR (oci.sourceId = ? AND oci.title = ?)
+        OR (? != '' AND oci.sourceName = ? AND oci.title = ?)
+        OR (? != '' AND oci.sourcePkg = ? AND oci.title = ?)
+      )
+      AND (
+        oc.externalId = ?
+        OR oc.id = ?
+        OR oc.title = ?
+      )
+      ORDER BY oc.updateTime DESC
+      LIMIT 1
+    `;
+    const records = await this.databaseManager.querySql(sql, [
+      candidate.sourceId,
+      candidate.mangaExternalId,
+      candidate.preferredMangaId,
+      candidate.sourceId,
+      candidate.mangaTitle,
+      candidate.sourceName,
+      candidate.sourceName,
+      candidate.mangaTitle,
+      candidate.sourcePkg,
+      candidate.sourcePkg,
+      candidate.mangaTitle,
+      candidate.chapterExternalId,
+      candidate.preferredChapterId,
+      candidate.chapterTitle
+    ]);
+    if (records.length === 0) {
+      return null;
+    }
+    const record = records[0] as GenericQueryRecord;
+    const existing: ExistingOrphanChapterRecord = {
+      comicId: String(record.comicId || ''),
+      chapterId: String(record.chapterId || ''),
+      pageCount: Number(record.pageCount || 0),
+      pageRecordCount: Number(record.chapterCount || 0),
+      downloadPath: String(record.downloadPath || '')
+    };
+    if (existing.comicId.length === 0 || existing.chapterId.length === 0) {
+      return null;
+    }
+    return existing;
+  }
+
+  private async resolveExistingOrphanComicId(candidate: FilesystemOrphanCandidate): Promise<string> {
+    const sql = `
+      SELECT id
+      FROM online_comic_info
+      WHERE id = ?
+        OR (sourceId = ? AND externalId = ?)
+        OR (sourceId = ? AND title = ?)
+        OR (? != '' AND sourceName = ? AND title = ?)
+        OR (? != '' AND sourcePkg = ? AND title = ?)
+      ORDER BY updateTime DESC
+      LIMIT 1
+    `;
+    const records = await this.databaseManager.querySql(sql, [
+      candidate.preferredMangaId,
+      candidate.sourceId,
+      candidate.mangaExternalId,
+      candidate.sourceId,
+      candidate.mangaTitle,
+      candidate.sourceName,
+      candidate.sourceName,
+      candidate.mangaTitle,
+      candidate.sourcePkg,
+      candidate.sourcePkg,
+      candidate.mangaTitle
+    ]);
+    if (records.length > 0) {
+      const record = records[0] as GenericQueryRecord;
+      const existingId = String(record.id || '');
+      if (existingId.length > 0) {
+        return existingId;
+      }
+    }
+    return candidate.preferredMangaId;
+  }
+
+  private async querySourceRecordByNameOrPkg(sourceSegment: string): Promise<OnlineArchiveSourceRecord | null> {
+    const records = await this.databaseManager.querySql(
+      'SELECT id, name, pkg, isNSFW FROM comic_source WHERE name = ? OR pkg = ? LIMIT 1',
+      [sourceSegment, sourceSegment]
+    );
+    const exactRecord = this.convertSourceRecord(records as GenericQueryRecord[]);
+    if (exactRecord) {
+      return exactRecord;
+    }
+
+    const allRecords = await this.databaseManager.querySql(
+      'SELECT id, name, pkg, isNSFW FROM comic_source',
+      []
+    );
+    for (let i = 0; i < allRecords.length; i++) {
+      const source = this.convertSingleSourceRecord(allRecords[i] as GenericQueryRecord);
+      if (!source) {
+        continue;
+      }
+      const safeName = this.sanitizePathSegment(source.name);
+      const safePkg = this.sanitizePathSegment(source.pkg);
+      if (safeName === sourceSegment || safePkg === sourceSegment) {
+        return source;
+      }
+    }
+    return null;
+  }
+
+  private async querySourceRecordById(sourceId: string): Promise<OnlineArchiveSourceRecord | null> {
+    const records = await this.databaseManager.querySql(
+      'SELECT id, name, pkg, isNSFW FROM comic_source WHERE id = ? LIMIT 1',
+      [sourceId]
+    );
+    return this.convertSourceRecord(records as GenericQueryRecord[]);
+  }
+
+  private convertSourceRecord(records: GenericQueryRecord[]): OnlineArchiveSourceRecord | null {
+    if (records.length === 0) {
+      return null;
+    }
+    const record = records[0] as GenericQueryRecord;
+    return this.convertSingleSourceRecord(record);
+  }
+
+  private convertSingleSourceRecord(record: GenericQueryRecord): OnlineArchiveSourceRecord | null {
+    const id = String(record.id || '');
+    if (id.length === 0) {
+      return null;
+    }
+    const source: OnlineArchiveSourceRecord = {
+      id: id,
+      name: String(record.name || `source_${id}`),
+      pkg: String(record.pkg || ''),
+      isNSFW: Number(record.isNSFW || 0)
+    };
+    return source;
+  }
+
+  private buildMetadataFromFilesystemCandidate(
+    candidate: FilesystemOrphanCandidate,
+    mangaId: string,
+    chapterId: string
+  ): OnlineArchiveMetadata {
+    return {
+      sourceId: candidate.sourceId,
+      sourceName: candidate.sourceName,
+      sourcePkg: candidate.sourcePkg,
+      mangaId: mangaId,
+      mangaTitle: candidate.mangaTitle,
+      chapterId: chapterId,
+      chapterTitle: candidate.chapterTitle,
+      chapterUrl: candidate.chapterUrl,
+      author: '',
+      description: '从本地缓存目录恢复',
+      coverUrl: '',
+      tags: [],
+      lastUpdateTime: Date.now(),
+      isPrivate: candidate.isPrivate,
+      isNSFW: candidate.isNSFW
+    };
+  }
+
+  private buildOrphanPageFiles(imageFiles: string[]): OnlineArchivePageFile[] {
+    const pageFiles: OnlineArchivePageFile[] = [];
+    for (let i = 0; i < imageFiles.length; i++) {
+      const imagePath = imageFiles[i];
+      const pageFile: OnlineArchivePageFile = {
+        pageIndex: i,
+        imageUrl: imagePath,
+        sourcePath: imagePath,
+        width: 0,
+        height: 0,
+        fileSize: this.getFileSize(imagePath)
+      };
+      pageFiles.push(pageFile);
+    }
+    return pageFiles;
+  }
+
+  private scanDirectoriesWithDirectImages(rootPath: string): FilesystemImageDirectory[] {
+    const directories: FilesystemImageDirectory[] = [];
+    this.scanDirectoriesWithDirectImagesRecursive(
+      this.normalizeDirectoryPath(rootPath),
+      directories
+    );
+    return directories;
+  }
+
+  private scanDirectoriesWithDirectImagesRecursive(
+    dirPath: string,
+    directories: FilesystemImageDirectory[]
+  ): void {
+    if (!this.isDirectoryPath(dirPath)) {
+      return;
+    }
+
+    try {
+      const entries = fs.listFileSync(dirPath);
+      const directImageFiles: string[] = [];
+      const childDirectories: string[] = [];
+      for (let i = 0; i < entries.length; i++) {
+        const fullPath = `${dirPath}/${entries[i]}`;
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          childDirectories.push(fullPath);
+        } else if (this.isImagePath(fullPath)) {
+          directImageFiles.push(fullPath);
+        }
+      }
+
+      if (directImageFiles.length > 0) {
+        directImageFiles.sort((left: string, right: string) => {
+          return this.extractSortNumber(left) - this.extractSortNumber(right);
+        });
+        const imageDirectory: FilesystemImageDirectory = {
+          directoryPath: dirPath,
+          imageFiles: directImageFiles
+        };
+        directories.push(imageDirectory);
+      }
+
+      for (let i = 0; i < childDirectories.length; i++) {
+        this.scanDirectoriesWithDirectImagesRecursive(childDirectories[i], directories);
+      }
+    } catch (error) {
+      logger.warn(TAG, `扫描本地缓存目录失败: ${dirPath}, ${String(error)}`);
+    }
+  }
+
+  private hasSeenDirectory(directoryPath: string, seenDirectories: string[]): boolean {
+    return seenDirectories.includes(this.normalizeDirectoryPath(directoryPath));
+  }
+
+  private getRelativePath(rootPath: string, childPath: string): string {
+    const normalizedRoot = this.normalizeDirectoryPath(rootPath);
+    const normalizedChild = this.normalizeDirectoryPath(childPath);
+    const prefix = `${normalizedRoot}/`;
+    if (normalizedChild.startsWith(prefix)) {
+      return normalizedChild.substring(prefix.length);
+    }
+    if (normalizedChild === normalizedRoot) {
+      return '';
+    }
+    return normalizedChild;
+  }
+
+  private splitPathParts(path: string): string[] {
+    const rawParts = this.normalizeDirectoryPath(path).split('/');
+    const parts: string[] = [];
+    for (let i = 0; i < rawParts.length; i++) {
+      const part = rawParts[i].trim();
+      if (part.length > 0) {
+        parts.push(part);
+      }
+    }
+    return parts;
+  }
+
+  private normalizeDirectoryPath(path: string): string {
+    let normalized = this.normalizeFileSystemPath(path).replace(/\\/g, '/');
+    while (normalized.length > 1 && normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
+  }
+
+  private isDirectoryPath(path: string): boolean {
+    try {
+      if (!this.pathExists(path)) {
+        return false;
+      }
+      const stat = fs.statSync(path);
+      return stat.isDirectory();
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private sanitizeRecoveredId(value: string, fallbackPrefix: string): string {
+    const sanitized = value.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (sanitized.length > 0) {
+      return sanitized.substring(0, 160);
+    }
+    return generateDbId(fallbackPrefix);
+  }
+
+  private buildStableRecoveredId(prefix: string, key: string): string {
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+      hash = (hash * 31 + key.charCodeAt(i)) % 2147483647;
+    }
+    const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 80);
+    return `${prefix}_${hash}_${safeKey}`;
+  }
+
+  private extractStableSortNumber(value: string): number {
+    const sortNumber = this.extractSortNumber(value);
+    if (sortNumber === Number.MAX_SAFE_INTEGER) {
+      return 0;
+    }
+    return sortNumber;
+  }
+
+  private normalizeFileSystemPath(path: string): string {
+    const trimmed = path.trim();
+    if (trimmed.length === 0) {
+      return '';
+    }
+    if (trimmed.startsWith('file://')) {
+      return trimmed.substring(7);
+    }
+    if (trimmed.startsWith('/')) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('storage/') || trimmed.startsWith('data/')) {
+      return `/${trimmed}`;
+    }
+    return trimmed;
+  }
+
+  private buildMetadataFromComic(comic: OnlineComicInfo, chapter: OnlineChapterInfo): OnlineArchiveMetadata {
+    return {
+      sourceId: comic.sourceId,
+      sourceName: comic.sourceName,
+      sourcePkg: comic.sourcePkg,
+      mangaId: comic.id,
+      mangaTitle: comic.title,
+      chapterId: chapter.id,
+      chapterTitle: chapter.title,
+      chapterUrl: chapter.url,
+      author: comic.author,
+      description: comic.description,
+      coverUrl: comic.coverUrl,
+      tags: comic.tags,
+      lastUpdateTime: comic.lastUpdateTime,
+      isPrivate: comic.isPrivate === 1,
+      isNSFW: comic.isNSFW === 1
+    };
+  }
+
+  private buildComicInfoXml(metadata: OnlineArchiveMetadata, pageCount: number): string {
+    const mangaMetadata: MangaMetadata = {
+      title: metadata.chapterTitle,
+      series: metadata.mangaTitle,
+      author: metadata.author,
+      description: metadata.description,
+      tags: metadata.tags,
+      coverUrl: metadata.coverUrl,
+      sourceId: metadata.sourcePkg.length > 0 ? metadata.sourcePkg : metadata.sourceId,
+      sourceName: metadata.sourceName,
+      url: metadata.chapterUrl,
+      lastUpdateTime: metadata.lastUpdateTime,
+      isPrivate: metadata.isPrivate,
+      isNSFW: metadata.isNSFW
+    };
+    const baseXml = MetadataXmlGenerator.generateComicInfoXml(mangaMetadata);
+    const extraLines: string[] = [];
+    extraLines.push(`  <Number>${this.escapeXml(metadata.chapterTitle)}</Number>`);
+    extraLines.push(`  <PageCount>${pageCount}</PageCount>`);
+    extraLines.push(`  <MangaId>${this.escapeXml(metadata.mangaId)}</MangaId>`);
+    extraLines.push(`  <ChapterId>${this.escapeXml(metadata.chapterId)}</ChapterId>`);
+    extraLines.push(`  <SourcePkg>${this.escapeXml(metadata.sourcePkg)}</SourcePkg>`);
+    return baseXml.replace('</ComicInfo>', `${extraLines.join('\n')}\n</ComicInfo>`);
+  }
+
+  private resolveArchivePath(request: OnlineArchiveCreateRequest): string {
+    const sourceSegment = request.sourceName.length > 0 ? request.sourceName : request.sourcePkg;
+    const archiveDir = request.preferPublicDownloadDir && this.downloadDirManager.isReady()
+      ? this.downloadDirManager.getMangaArchiveDirectoryPath(sourceSegment, request.mangaTitle, request.chapterTitle)
+      : this.getPrivateArchiveDirectory(sourceSegment, request.mangaTitle, request.chapterTitle);
+    const fileName = `${this.sanitizePathSegment(request.chapterTitle.length > 0 ? request.chapterTitle : request.chapterId)}.cbz`;
+    return `${archiveDir}/${fileName}`;
+  }
+
+  private resolveArchivePathCandidates(comic: OnlineComicInfo, chapter: OnlineChapterInfo): string[] {
+    const sourceSegment = comic.sourceName.length > 0
+      ? comic.sourceName
+      : (comic.sourcePkg.length > 0 ? comic.sourcePkg : `source_${comic.sourceId}`);
+    const fileName = `${this.sanitizePathSegment(chapter.title.length > 0 ? chapter.title : chapter.id)}.cbz`;
+    const paths: string[] = [];
+
+    if (this.downloadDirManager.isReady()) {
+      const publicArchiveDir = this.downloadDirManager.getMangaArchiveDirectoryPath(
+        sourceSegment,
+        comic.title,
+        chapter.title
+      );
+      paths.push(`${publicArchiveDir}/${fileName}`);
+    }
+
+    const privateArchiveDir = this.getPrivateArchiveDirectory(sourceSegment, comic.title, chapter.title);
+    paths.push(`${privateArchiveDir}/${fileName}`);
+    return this.deduplicatePaths(paths);
+  }
+
+  private deduplicatePaths(paths: string[]): string[] {
+    const result: string[] = [];
+    for (let i = 0; i < paths.length; i++) {
+      const currentPath = paths[i];
+      let exists = false;
+      for (let j = 0; j < result.length; j++) {
+        if (result[j] === currentPath) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) {
+        result.push(currentPath);
+      }
+    }
+    return result;
+  }
+
+  private resolveExistingArchiveForChapter(comic: OnlineComicInfo, chapter: OnlineChapterInfo): string {
+    const archivePaths = this.resolveArchivePathCandidates(comic, chapter);
+    for (let i = 0; i < archivePaths.length; i++) {
+      const archivePath = archivePaths[i];
+      if (this.pathExists(archivePath)) {
+        return archivePath;
+      }
+
+      const recoveredPath = this.recoverArchiveTempFile(archivePath);
+      if (recoveredPath.length > 0) {
+        return recoveredPath;
+      }
+    }
+    return '';
+  }
+
+  private recoverArchiveTempFile(archivePath: string): string {
+    const tempPaths = this.buildArchiveTempPathCandidates(archivePath);
+    for (let i = 0; i < tempPaths.length; i++) {
+      const tempPath = tempPaths[i];
+      if (!this.pathExists(tempPath)) {
+        continue;
+      }
+
+      try {
+        this.deleteFileIfExists(archivePath);
+        fs.renameSync(tempPath, archivePath);
+        this.deleteArchiveTempFiles(archivePath);
+        logger.info(TAG, `已恢复未完成CBZ归档: ${tempPath} -> ${archivePath}`);
+        return archivePath;
+      } catch (error) {
+        logger.warn(TAG, `恢复未完成CBZ归档失败: ${tempPath}, ${String(error)}`);
+      }
+    }
+    return '';
+  }
+
+  private getPrivateArchiveDirectory(sourceName: string, mangaTitle: string, chapterTitle: string): string {
+    const context = this.requireContext();
+    const sourceSegment = this.sanitizePathSegment(sourceName.length > 0 ? sourceName : 'unknown_source');
+    const mangaSegment = this.sanitizePathSegment(mangaTitle.length > 0 ? mangaTitle : 'unknown_manga');
+    const chapterSegment = this.sanitizePathSegment(chapterTitle.length > 0 ? chapterTitle : 'unknown_chapter');
+    const dir = `${context.filesDir}/downloads/online_archive/${sourceSegment}/${mangaSegment}/${chapterSegment}`;
+    this.ensureDirectory(dir);
+    return dir;
+  }
+
+  private createWorkDir(chapterId: string): string {
+    const context = this.requireContext();
+    const dir = `${context.cacheDir}/online_archive_work/${this.sanitizePathSegment(chapterId)}_${Date.now()}`;
+    this.ensureDirectory(dir);
+    return dir;
+  }
+
+  private resolveReaderExtractDir(chapterId: string, archivePath: string): string {
+    const context = this.requireContext();
+    const stat = fs.statSync(archivePath);
+    const stamp = `${stat.size}_${stat.mtime}`;
+    const dir = `${context.cacheDir}/online_cbz_reader/${this.sanitizePathSegment(chapterId)}_${this.sanitizePathSegment(stamp)}`;
+    return dir;
+  }
+
+  private requireContext(): common.UIAbilityContext {
+    if (!this.context) {
+      throw new Error('在线漫画归档服务未设置应用上下文');
+    }
+    return this.context;
+  }
+
+  private ensureDirectory(dirPath: string): void {
+    try {
+      const stat = fs.statSync(dirPath);
+      if (!stat.isDirectory()) {
+        throw new Error('路径不是目录');
+      }
+    } catch (_error) {
+      fs.mkdirSync(dirPath, true);
+    }
+  }
+
+  private pathExists(path: string): boolean {
+    try {
+      return fs.accessSync(path);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private deleteFileIfExists(path: string): void {
+    try {
+      if (this.pathExists(path)) {
+        fs.unlinkSync(path);
+      }
+    } catch (error) {
+      logger.warn(TAG, `删除文件失败: ${path}, ${String(error)}`);
+    }
+  }
+
+  private deleteArchiveOutputFiles(archivePath: string): void {
+    this.deleteArchiveTempFiles(archivePath);
+    this.deleteFileIfExists(archivePath);
+  }
+
+  private deleteArchiveTempFiles(archivePath: string): void {
+    const tempPaths = this.buildArchiveTempPathCandidates(archivePath);
+    for (let i = 0; i < tempPaths.length; i++) {
+      this.deleteFileIfExists(tempPaths[i]);
+    }
+  }
+
+  private buildArchiveTempPathCandidates(archivePath: string): string[] {
+    const legacyTempArchivePath = `${archivePath}.tmp`;
+    const zipTempArchivePath = `${archivePath}.tmp.zip`;
+    const paths: string[] = [];
+    paths.push(zipTempArchivePath);
+    paths.push(`${zipTempArchivePath}.zip`);
+    paths.push(legacyTempArchivePath);
+    paths.push(`${legacyTempArchivePath}.zip`);
+    return this.deduplicatePaths(paths);
+  }
+
+  private resolveCompressedOutputPath(tempArchivePath: string, legacyTempArchivePath: string): string {
+    const candidates: string[] = [];
+    candidates.push(tempArchivePath);
+    candidates.push(`${tempArchivePath}.zip`);
+    candidates.push(legacyTempArchivePath);
+    candidates.push(`${legacyTempArchivePath}.zip`);
+
+    for (let i = 0; i < candidates.length; i++) {
+      if (this.pathExists(candidates[i])) {
+        return candidates[i];
+      }
+    }
+    throw new Error(`压缩输出文件不存在: ${candidates.join(', ')}`);
+  }
+
+  private deleteDirectoryRecursive(dirPath: string): void {
+    try {
+      if (!this.pathExists(dirPath)) {
+        return;
+      }
+      const entries = fs.listFileSync(dirPath);
+      for (let i = 0; i < entries.length; i++) {
+        const fullPath = `${dirPath}/${entries[i]}`;
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          this.deleteDirectoryRecursive(fullPath);
+        } else {
+          fs.unlinkSync(fullPath);
+        }
+      }
+      fs.rmdirSync(dirPath);
+    } catch (error) {
+      logger.warn(TAG, `删除目录失败: ${dirPath}, ${String(error)}`);
+    }
+  }
+
+  private writeTextFile(path: string, content: string): void {
+    const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+    try {
+      const encoder = new util.TextEncoder();
+      const buffer = encoder.encodeInto(content);
+      fs.writeSync(file.fd, buffer.buffer);
+    } finally {
+      fs.closeSync(file.fd);
+    }
+  }
+
+  private getFileSize(path: string): number {
+    try {
+      const stat = fs.statSync(path);
+      return stat.size;
+    } catch (_error) {
+      return 0;
+    }
+  }
+
+  private hasReadableExtractedImages(dirPath: string): boolean {
+    if (!this.pathExists(dirPath)) {
+      return false;
+    }
+    const imageFiles = this.scanImageFilesRecursive(dirPath);
+    return imageFiles.length > 0;
+  }
+
+  private scanImageFilesRecursive(dirPath: string): string[] {
+    const files: string[] = [];
+    if (!this.pathExists(dirPath)) {
+      return files;
+    }
+
+    const entries = fs.listFileSync(dirPath);
+    for (let i = 0; i < entries.length; i++) {
+      const fullPath = `${dirPath}/${entries[i]}`;
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        const childFiles = this.scanImageFilesRecursive(fullPath);
+        for (let j = 0; j < childFiles.length; j++) {
+          files.push(childFiles[j]);
+        }
+      } else if (this.isImagePath(fullPath)) {
+        files.push(fullPath);
+      }
+    }
+
+    files.sort((left: string, right: string) => {
+      return this.extractSortNumber(left) - this.extractSortNumber(right);
+    });
+    return files;
+  }
+
+  private isImagePath(path: string): boolean {
+    const extension = this.getPathExtension(path);
+    return this.supportedImageExtensions.includes(extension);
+  }
+
+  private isCbzPath(path: string): boolean {
+    return path.toLowerCase().endsWith('.cbz');
+  }
+
+  private resolveImageExtension(path: string, imageUrl: string): string {
+    const pathExtension = this.getPathExtension(path);
+    if (this.supportedImageExtensions.includes(pathExtension)) {
+      return pathExtension;
+    }
+    const urlExtension = this.getPathExtension(imageUrl.split('?')[0]);
+    if (this.supportedImageExtensions.includes(urlExtension)) {
+      return urlExtension;
+    }
+    return 'jpg';
+  }
+
+  private getPathExtension(path: string): string {
+    const normalizedPath = path.split('?')[0];
+    const slashIndex = Math.max(normalizedPath.lastIndexOf('/'), normalizedPath.lastIndexOf('\\'));
+    const fileName = slashIndex >= 0 ? normalizedPath.substring(slashIndex + 1) : normalizedPath;
+    const dotIndex = fileName.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex === fileName.length - 1) {
+      return '';
+    }
+    return fileName.substring(dotIndex + 1).toLowerCase();
+  }
+
+  private extractSortNumber(path: string): number {
+    const slashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+    const fileName = slashIndex >= 0 ? path.substring(slashIndex + 1) : path;
+    const digits = fileName.replace(/[^0-9]/g, '');
+    if (digits.length === 0) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+    return Number(digits);
+  }
+
+  private sanitizePathSegment(name: string): string {
+    const trimmed = name.trim();
+    const safeName = trimmed.length > 0 ? trimmed : 'unnamed';
+    return safeName
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 100);
+  }
+
+  private escapeXml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+}
+
+export function getOnlineMangaArchiveService(): OnlineMangaArchiveService {
+  return OnlineMangaArchiveService.getInstance();
+}

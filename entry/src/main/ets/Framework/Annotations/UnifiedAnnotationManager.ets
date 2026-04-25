@@ -128,14 +128,15 @@ export class UnifiedAnnotationManager {
   }
 
   /**
-   * Create a novel highlight annotation.
+   * Create a highlight annotation.
    */
   async createHighlight(input: CreateHighlightInput): Promise<UnifiedAnnotationRecord> {
     await this.ensureSchema();
     const anchor = input.anchor || {};
     const styleJson = JSON.stringify(input.style);
+    const contentType = input.contentType ?? UnifiedContentType.NOVEL;
     const existing = await this.findLatestByAnchor(
-      UnifiedContentType.NOVEL,
+      contentType,
       input.contentId,
       UnifiedAnnotationType.HIGHLIGHT,
       anchor
@@ -154,7 +155,7 @@ export class UnifiedAnnotationManager {
     const id = generateUUID();
     const record: UnifiedAnnotationRecord = {
       id,
-      contentType: UnifiedContentType.NOVEL,
+      contentType,
       contentId: input.contentId,
       annotationType: UnifiedAnnotationType.HIGHLIGHT,
       title: '',
@@ -179,17 +180,18 @@ export class UnifiedAnnotationManager {
   }
 
   /**
-   * Create a novel thought annotation.
+   * Create a thought annotation.
    */
   async createThought(input: CreateThoughtInput): Promise<UnifiedAnnotationRecord> {
     await this.ensureSchema();
     const anchor = input.anchor || {};
     const safeText = input.textContent ?? '';
     const linkedId = input.linkedAnnotationId ? input.linkedAnnotationId.trim() : '';
+    const contentType = input.contentType ?? UnifiedContentType.NOVEL;
 
     if (linkedId.length > 0) {
       const linkedThought = await this.getLinkedThoughtByHighlightId(
-        UnifiedContentType.NOVEL,
+        contentType,
         input.contentId,
         linkedId
       );
@@ -204,7 +206,7 @@ export class UnifiedAnnotationManager {
       }
     } else {
       const existing = await this.findLatestByAnchor(
-        UnifiedContentType.NOVEL,
+        contentType,
         input.contentId,
         UnifiedAnnotationType.THOUGHT,
         anchor
@@ -224,7 +226,7 @@ export class UnifiedAnnotationManager {
     const id = generateUUID();
     const record: UnifiedAnnotationRecord = {
       id,
-      contentType: UnifiedContentType.NOVEL,
+      contentType,
       contentId: input.contentId,
       annotationType: UnifiedAnnotationType.THOUGHT,
       title: '',
@@ -376,6 +378,7 @@ export class UnifiedAnnotationManager {
       const highlight = await this.createHighlight(highlightInput);
       if (thoughtInput) {
         const thoughtPayload: CreateThoughtInput = {
+          contentType: thoughtInput.contentType ?? highlightInput.contentType,
           contentId: thoughtInput.contentId,
           anchor: thoughtInput.anchor,
           textContent: thoughtInput.textContent ?? '',

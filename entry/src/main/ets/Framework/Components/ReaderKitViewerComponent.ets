@@ -12,6 +12,7 @@ import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { display, font } from '@kit.ArkUI';
+import { getReaderKitRuntimeDisabledReason, isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
 
 const TAG = 'ReaderKitViewerComponent';
 
@@ -94,7 +95,8 @@ export struct ReaderKitViewerComponent {
   
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
-  private readerController: readerCore.ReaderComponentController = new readerCore.ReaderComponentController();
+  @State private shouldRenderReaderKit: boolean = false;
+  private readerController: readerCore.ReaderComponentController | null = null;
   @State private controllerReady: boolean = false;
   private sandboxPath: string = '';
   
@@ -124,6 +126,39 @@ export struct ReaderKitViewerComponent {
 
   aboutToAppear(): void {
     logger.info(TAG, `Reader Kit 阅读器组件初始化: ${this.ebook.metadata.title}`);
+    this.startReaderKitIfAllowed('aboutToAppear');
+  }
+
+  private getReaderKitDisabledMessage(): string {
+    const reason = getReaderKitRuntimeDisabledReason();
+    return reason === 'emulator_device'
+      ? 'ReaderKit 已在模拟器环境自动关闭'
+      : 'ReaderKit 当前已关闭';
+  }
+
+  private blockReaderKitIfDisabled(trigger: string): boolean {
+    if (!isReaderKitEnabled()) {
+      this.shouldRenderReaderKit = false;
+      this.readerController = null;
+      this.controllerReady = false;
+      this.errorMessage = this.getReaderKitDisabledMessage();
+      this.isLoading = false;
+      logger.warn(TAG, `Reader Kit 组件启动被全局开关拦截: trigger=${trigger}, reason=${this.errorMessage}`);
+      return true;
+    }
+    return false;
+  }
+
+  private startReaderKitIfAllowed(trigger: string): void {
+    if (this.blockReaderKitIfDisabled(trigger)) {
+      return;
+    }
+    this.controllerReady = false;
+    this.currentPageData = null;
+    this.errorMessage = '';
+    this.isLoading = true;
+    this.readerController = new readerCore.ReaderComponentController();
+    this.shouldRenderReaderKit = true;
     this.initializeReaderSession();
   }
 
@@ -132,6 +167,9 @@ export struct ReaderKitViewerComponent {
     this.resetPendingPageOffsetRecovery('component_disappear');
     this.resetStartupDirectRecovery('component_disappear');
     try {
+      if (!this.readerController) {
+        return;
+      }
       // 移除事件监听器
       this.readerController.off('pageShow');
       // 释放资源
@@ -229,7 +267,8 @@ export struct ReaderKitViewerComponent {
    * 注意：setPageConfig 会导致页面重新渲染，因此需要防止频繁调用
    */
   public applyReadingSettings(settings: EBookReadingSettings, force: boolean = false): void {
-    if (!this.controllerReady || !this.readerSetting) {
+    const readerController = this.readerController;
+    if (!this.controllerReady || !this.readerSetting || !readerController) {
       logger.warn(TAG, '阅读器未就绪，无法应用设置');
       return;
     }
@@ -273,7 +312,7 @@ export struct ReaderKitViewerComponent {
       logger.info(TAG, `应用阅读设置: fontName=${this.readerSetting.fontName}, fontPath=${this.readerSetting.fontPath}, fontSize=${this.readerSetting.fontSize}`);
 
       // 应用设置 - 注意：这会触发页面重新渲染
-      this.readerController.setPageConfig(this.readerSetting);
+      readerController.setPageConfig(this.readerSetting);
       logger.info(TAG, '阅读设置已应用');
     } catch (error) {
       logger.error(TAG, `应用阅读设置失败: ${String(error)}`);
@@ -287,6 +326,15 @@ export struct ReaderKitViewerComponent {
    */
   private async initializeReaderSession(): Promise<void> {
     try {
+      if (this.blockReaderKitIfDisabled('initializeReaderSession')) {
+        return;
+      }
+      if (!this.readerController) {
+        this.errorMessage = 'ReaderKit 控制器未创建';
+        this.isLoading = false;
+        logger.warn(TAG, 'Reader Kit 会话初始化中止: controller_missing');
+        return;
+      }
       this.isLoading = true;
       this.errorMessage = '';
 
@@ -682,11 +730,16 @@ export struct ReaderKitViewerComponent {
         this.startupRecoveryRetryInFlight = false;
         return;
       }
+      const readerController = this.readerController;
+      if (!readerController) {
+        this.startupRecoveryRetryInFlight = false;
+        return;
+      }
       if (nextIndex !== this.startupRecoveryCurrentCandidateIndex) {
         this.startupRecoveryRetryInFlight = false;
         return;
       }
-      this.readerController.startPlay(this.startupRecoveryExpectedResourceIndex, nextDomPos)
+      readerController.startPlay(this.startupRecoveryExpectedResourceIndex, nextDomPos)
         .then((): void => {
           this.startupRecoveryRetryInFlight = false;
         })
@@ -798,7 +851,12 @@ export struct ReaderKitViewerComponent {
     );
     setTimeout((): void => {
       try {
-        this.readerController.flipPage(flipNext);
+        const readerController = this.readerController;
+        if (!readerController) {
+          this.resetPendingPageOffsetRecovery('controller_missing');
+          return;
+        }
+        readerController.flipPage(flipNext);
       } catch (error) {
         logger.warn(TAG, `pageOffset恢复翻页失败: ${String(error)}`);
         this.resetPendingPageOffsetRecovery('flip_failed');
@@ -819,11 +877,12 @@ export struct ReaderKitViewerComponent {
    */
   private async jumpToChapter(chapterIndex: number): Promise<void> {
     try {
-      if (!this.controllerReady) {
+      const readerController = this.readerController;
+      if (!this.controllerReady || !readerController) {
         logger.warn(TAG, 'Reader Kit 控制器未就绪');
         return;
       }
-      await this.readerController.startPlay(chapterIndex, '');
+      await readerController.startPlay(chapterIndex, '');
 
       if (this.onChapterChange) {
         this.onChapterChange(chapterIndex);
@@ -836,12 +895,13 @@ export struct ReaderKitViewerComponent {
   }
 
   private flipPage(forward: boolean): boolean {
-    if (!this.controllerReady) {
+    const readerController = this.readerController;
+    if (!this.controllerReady || !readerController) {
       logger.warn(TAG, `Reader Kit 鎺у埗鍣ㄦ湭灏辩华锛屾棤娉曠炕椤? direction=${forward ? 'next' : 'prev'}`);
       return false;
     }
     try {
-      this.readerController.flipPage(forward);
+      readerController.flipPage(forward);
       return true;
     } catch (error) {
       logger.warn(TAG, `Reader Kit 缈婚〉澶辫触: ${String(error)}`);
@@ -853,23 +913,27 @@ export struct ReaderKitViewerComponent {
    * 尝试启动 Reader Kit 阅读器
    */
   private async tryStartReading(): Promise<void> {
-    if (!this.controllerReady || this.sandboxPath.length === 0) {
+    if (this.blockReaderKitIfDisabled('tryStartReading')) {
+      return;
+    }
+    const readerController = this.readerController;
+    if (!this.controllerReady || !readerController || this.sandboxPath.length === 0) {
       return;
     }
     try {
       const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
-      await this.readerController.init(context);
+      await readerController.init(context);
       const parserHandler: bookParser.BookParserHandler = await bookParser.getDefaultHandler(this.sandboxPath);
-      this.readerController.registerBookParser(parserHandler);
+      readerController.registerBookParser(parserHandler);
       
       // 初始化并应用阅读设置
       this.readerSetting = this.initReaderSetting();
-      this.readerController.setPageConfig(this.readerSetting);
+      readerController.setPageConfig(this.readerSetting);
       logger.info(TAG, `阅读设置已初始化: fontSize=${this.readerSetting.fontSize}, themeColor=${this.readerSetting.themeColor}`);
       this.lastPageAnchorSnapshot = null;
 
       // 注册 pageShow 事件监听器，用于获取当前阅读位置
-      this.readerController.on('pageShow', (data: readerCore.PageDataInfo): void => {
+      readerController.on('pageShow', (data: readerCore.PageDataInfo): void => {
         // PageDataInfo 包含 resourceIndex 和其他位置信息
         // 使用 JSON.stringify 获取完整数据用于调试
         const dataStr = JSON.stringify(data);
@@ -1011,7 +1075,7 @@ export struct ReaderKitViewerComponent {
       );
       logger.info(TAG, `启动阅读器: resourceIndex=${startIndex}, domPos=${startDomPos}, pageOffset=${startPageOffset}`);
       try {
-        await this.readerController.startPlay(startIndex, startDomPos);
+        await readerController.startPlay(startIndex, startDomPos);
       } catch (startError) {
         if (startDomPos.length > 0) {
           logger.debug(
@@ -1022,7 +1086,7 @@ export struct ReaderKitViewerComponent {
           const retried = this.triggerNextStartupDomPosCandidate('initial_start_error');
           if (!retried) {
             startDomPos = '';
-            await this.readerController.startPlay(startIndex, startDomPos);
+            await readerController.startPlay(startIndex, startDomPos);
           }
         } else {
           throw startError as Error;
@@ -1064,7 +1128,8 @@ export struct ReaderKitViewerComponent {
    */
   public async goToChapter(chapterIndex: number, domPos: string = ''): Promise<void> {
     try {
-      if (!this.controllerReady) {
+      const readerController = this.readerController;
+      if (!this.controllerReady || !readerController) {
         logger.warn(TAG, 'Reader Kit 控制器未就绪，无法跳转章节');
         return;
       }
@@ -1072,7 +1137,7 @@ export struct ReaderKitViewerComponent {
       logger.info(TAG, `跳转到章节: ${chapterIndex}, domPos=${domPos}`);
       this.resetPendingPageOffsetRecovery('manual_chapter_jump');
       this.resetStartupDirectRecovery('manual_chapter_jump');
-      await this.readerController.startPlay(chapterIndex, domPos);
+      await readerController.startPlay(chapterIndex, domPos);
       
       if (this.onChapterChange) {
         this.onChapterChange(chapterIndex);
@@ -1085,7 +1150,7 @@ export struct ReaderKitViewerComponent {
   /**
    * 获取 Reader Kit 控制器（供外部直接操作）
    */
-  public getReaderController(): readerCore.ReaderComponentController {
+  public getReaderController(): readerCore.ReaderComponentController | null {
     return this.readerController;
   }
   
@@ -1096,16 +1161,19 @@ export struct ReaderKitViewerComponent {
     return this.controllerReady;
   }
 
-  build() {
-    Stack() {
-      // 1. 阅读器组件 - 始终渲染，使用 zIndex 控制层级
-      ReadPageComponent({
-        controller: this.readerController,
+  @Builder
+  private buildReadPageComponent(controller: readerCore.ReaderComponentController) {
+    ReadPageComponent({
+        controller: controller,
         readerCallback: (err: BusinessError, data: readerCore.ReaderComponentController) => {
           if (err) {
             logger.error(TAG, `ReadPageComponent init failed: ${err.code} ${err.message}`);
             this.errorMessage = `组件初始化失败: ${err.message}`;
             this.isLoading = false;
+            this.controllerReady = false;
+            return;
+          }
+          if (this.blockReaderKitIfDisabled('readerCallback')) {
             return;
           }
           logger.info(TAG, 'ReadPageComponent 初始化成功');
@@ -1115,6 +1183,14 @@ export struct ReaderKitViewerComponent {
         }
       })
       .zIndex(1)
+  }
+
+  build() {
+    Stack() {
+      // 1. 阅读器组件 - 仅在全局开关通过且控制器存在时渲染
+      if (this.shouldRenderReaderKit && this.readerController) {
+        this.buildReadPageComponent(this.readerController as readerCore.ReaderComponentController)
+      }
 
       // 2. 加载状态 - 使用 Visibility 控制显示/隐藏，而不是条件渲染
       Row() {
@@ -1160,9 +1236,7 @@ export struct ReaderKitViewerComponent {
         Button('重试')
           .fontSize(14)
           .onClick(() => {
-            this.errorMessage = '';
-            this.isLoading = true;
-            this.initializeReaderSession();
+            this.startReaderKitIfAllowed('retry');
           })
       }
       .width('100%')

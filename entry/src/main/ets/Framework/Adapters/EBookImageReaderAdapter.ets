@@ -254,8 +254,11 @@ function shouldUseMobiWebViewReaderRoute(ebook: EBook | null): boolean {
     ebook.format !== EBookFormat.AZW3) {
     return false;
   }
-  return ebook.preferredReaderEngine === EBookReaderEngine.WEBVIEW &&
-    (ebook.extractedRootPath || '').length > 0;
+  logger.info(
+    TAG,
+    `Kindle 电子书默认使用 WebView 阅读器: format=${ebook.format}, engine=${ebook.preferredReaderEngine}, extractedRootPath=${ebook.extractedRootPath || ''}`
+  );
+  return true;
 }
 
 export function parseImageReaderDomPos(domPos: string): number {

@@ -1,5 +1,7 @@
 import { avSession } from '@kit.AVSessionKit';
 import { common } from '@kit.AbilityKit';
+import { image } from '@kit.ImageKit';
+import { fileIo } from '@kit.CoreFileKit';
 import wantAgent, { WantAgent } from '@ohos.app.ability.wantAgent';
 import { logger } from '../../Utils/Logger';
 import { getContext, isInitialized } from '../../GlobalContext';
@@ -30,6 +32,7 @@ export class ReadAloudMediaSession {
   private lastMetadataTitle: string = '';
   private lastMetadataSubtitle: string = '';
   private lastMetadataCoverUrl: string = '';
+  private lastMetadataPixelMap: image.PixelMap | null = null;
   private lastMetadataDurationMs: number = -1;
   private lastPlaybackState: avSession.PlaybackState = avSession.PlaybackState.PLAYBACK_STATE_IDLE;
   private lastPlaybackPositionMs: number = -1;
@@ -160,17 +163,18 @@ export class ReadAloudMediaSession {
     const assetId = this.buildAssetId(context);
     const title = this.buildTitle(context);
     const subtitle = this.buildSubtitle(context);
-    const mediaImage = this.buildMediaImage(context);
+    const mediaImageKey = this.buildMediaImageKey(context);
     const durationMs = this.estimateDurationMs(snapshot, context, settings);
     if (
       assetId === this.lastMetadataAssetId &&
       title === this.lastMetadataTitle &&
       subtitle === this.lastMetadataSubtitle &&
-      mediaImage === this.lastMetadataCoverUrl &&
+      mediaImageKey === this.lastMetadataCoverUrl &&
       durationMs === this.lastMetadataDurationMs
     ) {
       return;
     }
+    const mediaImage = await this.buildMediaImage(context);
     const metadata: avSession.AVMetadata = {
       assetId,
       title,
@@ -178,18 +182,25 @@ export class ReadAloudMediaSession {
       description: `听书 · 第${context.chapterIndex + 1}章`,
       duration: durationMs
     };
-    if (mediaImage.length > 0) {
+    if (typeof mediaImage === 'string') {
+      this.releaseLastMetadataPixelMap();
+      if (mediaImage.length > 0) {
+        metadata.mediaImage = mediaImage;
+      }
+    } else {
+      this.releaseLastMetadataPixelMap();
+      this.lastMetadataPixelMap = mediaImage;
       metadata.mediaImage = mediaImage;
     }
     await this.session.setAVMetadata(metadata);
     this.lastMetadataAssetId = assetId;
     this.lastMetadataTitle = title;
     this.lastMetadataSubtitle = subtitle;
-    this.lastMetadataCoverUrl = mediaImage;
+    this.lastMetadataCoverUrl = mediaImageKey;
     this.lastMetadataDurationMs = durationMs;
     logger.info(
       TAG,
-      `媒体元数据已更新: title=${title}, subtitle=${metadata.subtitle}, hasCover=${mediaImage.length > 0}`
+      `媒体元数据已更新: title=${title}, subtitle=${metadata.subtitle}, hasCover=${mediaImageKey.length > 0}`
     );
   }
 
@@ -339,6 +350,7 @@ export class ReadAloudMediaSession {
     this.lastMetadataTitle = '';
     this.lastMetadataSubtitle = '';
     this.lastMetadataCoverUrl = '';
+    this.releaseLastMetadataPixelMap();
     this.lastMetadataDurationMs = -1;
     this.lastPlaybackState = avSession.PlaybackState.PLAYBACK_STATE_IDLE;
     this.lastPlaybackPositionMs = -1;
@@ -366,12 +378,102 @@ export class ReadAloudMediaSession {
     return `第${context.chapterIndex + 1}章`;
   }
 
-  private buildMediaImage(context: ReadAloudSessionContext): string {
+  private buildMediaImageKey(context: ReadAloudSessionContext): string {
     const coverUrl = context.coverUrl ?? '';
-    if (coverUrl.length <= 0) {
+    if (coverUrl.length <= 0 || coverUrl.startsWith('app.media.')) {
       return '';
     }
     return coverUrl;
+  }
+
+  private async buildMediaImage(context: ReadAloudSessionContext): Promise<image.PixelMap | string> {
+    const coverUrl = this.buildMediaImageKey(context);
+    if (coverUrl.length <= 0) {
+      return '';
+    }
+    if (this.isNetworkOrDataImagePath(coverUrl)) {
+      return coverUrl;
+    }
+    const localPath = this.resolveLocalMediaImagePath(coverUrl);
+    if (localPath.length > 0) {
+      const pixelMap = await this.createLocalCoverPixelMap(localPath);
+      if (pixelMap) {
+        return pixelMap;
+      }
+    }
+    return coverUrl;
+  }
+
+  private isNetworkOrDataImagePath(path: string): boolean {
+    const lower = path.trim().toLowerCase();
+    return lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:image/');
+  }
+
+  private resolveLocalMediaImagePath(path: string): string {
+    let normalized = path.trim().replace(/\\/g, '/');
+    if (normalized.startsWith('file://')) {
+      normalized = normalized.substring('file://'.length);
+    }
+    try {
+      normalized = decodeURIComponent(normalized);
+    } catch (_error) {
+    }
+    if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+      return normalized;
+    }
+    return '';
+  }
+
+  private localPathExists(path: string): boolean {
+    if (path.length <= 0) {
+      return false;
+    }
+    try {
+      return fileIo.accessSync(path);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private async createLocalCoverPixelMap(localPath: string): Promise<image.PixelMap | null> {
+    if (!this.localPathExists(localPath)) {
+      return null;
+    }
+    let source: image.ImageSource | null = null;
+    try {
+      source = image.createImageSource(localPath);
+      const decodingOptions: image.DecodingOptions = {
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
+        desiredSize: {
+          width: 512,
+          height: 512
+        }
+      };
+      return await source.createPixelMap(decodingOptions);
+    } catch (error) {
+      logger.warn(TAG, `媒体封面 PixelMap 解码失败，回退字符串路径: ${this.formatError(error)}`);
+      return null;
+    } finally {
+      if (source) {
+        try {
+          source.release();
+        } catch (releaseError) {
+          logger.warn(TAG, `媒体封面 ImageSource 释放失败: ${this.formatError(releaseError)}`);
+        }
+      }
+    }
+  }
+
+  private releaseLastMetadataPixelMap(): void {
+    if (!this.lastMetadataPixelMap) {
+      return;
+    }
+    try {
+      this.lastMetadataPixelMap.release();
+    } catch (error) {
+      logger.warn(TAG, `释放媒体封面 PixelMap 失败: ${this.formatError(error)}`);
+    }
+    this.lastMetadataPixelMap = null;
   }
 
   private estimateDurationMs(

@@ -63,6 +63,10 @@ export struct PageCurlEffectV2 {
   currentPixelMap: image.PixelMap | null = null;
   // 下一页PixelMap（底下露出的页面）
   nextPixelMap: image.PixelMap | null = null;
+  // 常驻 Canvas 场景下，普通 PixelMap 字段只在组件创建时初始化。
+  // 通过 provider 可在 renderToken 触发时读取父组件的最新快照，不影响漫画/小说默认传参方式。
+  currentPixelMapProvider: (() => image.PixelMap | null) | null = null;
+  nextPixelMapProvider: (() => image.PixelMap | null) | null = null;
   // 组件尺寸
   @Prop componentWidth: number = 360;
   @Prop componentHeight: number = 640;
@@ -82,9 +86,19 @@ export struct PageCurlEffectV2 {
   @Prop curlTouchY: number = 0;  // 触摸点Y坐标
   // 卷页背面透明度（0-100，100为完全不透明）
   @Prop curlBackOpacity: number = 90;
+  // Canvas 背景色。默认保持漫画阅读器既有深色背景，EPUB 快照卷页可传透明避免闪烁。
+  @Prop canvasBackgroundColor: string = '#1a1a1a';
+  // 常驻透明 Canvas 隐藏时不要用 null 输入清空 ImageBitmap，避免原生层清屏闪烁。
+  @Prop retainBitmapsWhenSourceUnavailable: boolean = false;
+  // 是否绘制被掀起纸张背面的当前页镜像；底层下一页仍由 nextPixelMap 单独绘制。
+  @Prop renderBackFaceContent: boolean = true;
+  // EPUB 脱手后由外部进度直接驱动画面，避免释放阶段弹簧滞后造成突兀摆动。
+  @Prop stabilizeReleaseMotion: boolean = false;
   
   // ========== 外部控制的进度（用于外部动画驱动） ==========
   @Prop @Watch('onExternalProgressChange') externalProgress: number = -1; // -1表示不使用外部进度
+  // 外部主动触发一次重绘。用于常驻 Canvas 场景下 PixelMap 引用变化但组件不重新挂载的情况。
+  @Prop @Watch('onRenderTokenChange') renderToken: number = 0;
   
   // ========== 内部动画控制（高性能模式） ==========
   // 当设置为 true 时，组件内部控制动画循环，避免每帧更新 @Prop 的开销
@@ -97,6 +111,8 @@ export struct PageCurlEffectV2 {
   onPageFlip: OnPageFlipCallback = (_completed: boolean) => {};
   // 动画完成回调（内部动画模式）
   onAnimationComplete: () => void = () => {};
+  // 首帧绘制完成回调。EPUB 快照卷页用它避免 Canvas 原生层首帧闪烁。
+  onFirstFrameReady: () => void = () => {};
   
   // ========== 内部状态 ==========
   @State private isReady: boolean = false;
@@ -164,18 +180,49 @@ export struct PageCurlEffectV2 {
    */
   private lastCurrentPixelMap: image.PixelMap | null = null;
   private lastNextPixelMap: image.PixelMap | null = null;
+
+  private resolveCurrentPixelMap(): image.PixelMap | null {
+    const provider = this.currentPixelMapProvider;
+    if (provider !== null) {
+      return provider();
+    }
+    return this.currentPixelMap;
+  }
+
+  private resolveNextPixelMap(): image.PixelMap | null {
+    const provider = this.nextPixelMapProvider;
+    if (provider !== null) {
+      return provider();
+    }
+    return this.nextPixelMap;
+  }
+
+  private shouldRetainExistingBitmaps(
+    currentPixelMap: image.PixelMap | null,
+    nextPixelMap: image.PixelMap | null
+  ): boolean {
+    return this.retainBitmapsWhenSourceUnavailable &&
+      currentPixelMap === null &&
+      nextPixelMap === null;
+  }
   
-  private checkAndUpdateBitmaps(): void {
+  private checkAndUpdateBitmaps(): boolean {
     // 检查PixelMap是否变化（通过引用比较）
-    const currentChanged = this.currentPixelMap !== this.lastCurrentPixelMap;
-    const nextChanged = this.nextPixelMap !== this.lastNextPixelMap;
+    const currentPixelMap = this.resolveCurrentPixelMap();
+    const nextPixelMap = this.resolveNextPixelMap();
+    if (this.shouldRetainExistingBitmaps(currentPixelMap, nextPixelMap)) {
+      return false;
+    }
+    const currentChanged = currentPixelMap !== this.lastCurrentPixelMap;
+    const nextChanged = nextPixelMap !== this.lastNextPixelMap;
     
     if (currentChanged || nextChanged) {
       logger.info(TAG, `[checkAndUpdateBitmaps] PixelMap变化: currentChanged=${currentChanged}, nextChanged=${nextChanged}`);
-      this.lastCurrentPixelMap = this.currentPixelMap;
-      this.lastNextPixelMap = this.nextPixelMap;
+      this.lastCurrentPixelMap = currentPixelMap;
+      this.lastNextPixelMap = nextPixelMap;
       this.updateImageBitmaps();
     }
+    return true;
   }
   
   /**
@@ -183,6 +230,9 @@ export struct PageCurlEffectV2 {
    * 根据官方文档，Canvas的drawImage使用ImageBitmap效果更好
    */
   private updateImageBitmaps(): void {
+    const currentPixelMap = this.resolveCurrentPixelMap();
+    const nextPixelMap = this.resolveNextPixelMap();
+
     // 释放旧的ImageBitmap
     if (this.currentImageBitmap) {
       try {
@@ -202,16 +252,16 @@ export struct PageCurlEffectV2 {
     }
     
     // 从PixelMap创建新的ImageBitmap
-    if (this.currentPixelMap) {
+    if (currentPixelMap) {
       try {
         // 【修复】先验证 PixelMap 是否仍然有效（可能已被外部释放）
-        const pmInfo = this.currentPixelMap.getImageInfoSync();
+        const pmInfo = currentPixelMap.getImageInfoSync();
         if (!pmInfo || !pmInfo.size || pmInfo.size.width <= 0) {
           logger.error(TAG, `[updateImageBitmaps] 当前页PixelMap已失效（getImageInfoSync返回无效信息）`);
           this.currentImageBitmap = null;
         } else {
           logger.info(TAG, `[updateImageBitmaps] 当前页PixelMap信息: ${pmInfo.size.width}x${pmInfo.size.height}, format=${pmInfo.pixelFormat}`);
-          const bitmap = new ImageBitmap(this.currentPixelMap);
+          const bitmap = new ImageBitmap(currentPixelMap);
           if (bitmap) {
             this.currentImageBitmap = bitmap;
             logger.info(TAG, `[updateImageBitmaps] 当前页ImageBitmap创建完成: w=${bitmap.width}, h=${bitmap.height}`);
@@ -228,16 +278,16 @@ export struct PageCurlEffectV2 {
       logger.warn(TAG, `[updateImageBitmaps] 当前页PixelMap为空，跳过创建`);
     }
     
-    if (this.nextPixelMap) {
+    if (nextPixelMap) {
       try {
         // 【修复】先验证 PixelMap 是否仍然有效
-        const pmInfo = this.nextPixelMap.getImageInfoSync();
+        const pmInfo = nextPixelMap.getImageInfoSync();
         if (!pmInfo || !pmInfo.size || pmInfo.size.width <= 0) {
           logger.error(TAG, `[updateImageBitmaps] 下一页PixelMap已失效（getImageInfoSync返回无效信息）`);
           this.nextImageBitmap = null;
         } else {
           logger.info(TAG, `[updateImageBitmaps] 下一页PixelMap信息: ${pmInfo.size.width}x${pmInfo.size.height}, format=${pmInfo.pixelFormat}`);
-          const bitmap = new ImageBitmap(this.nextPixelMap);
+          const bitmap = new ImageBitmap(nextPixelMap);
           if (bitmap) {
             this.nextImageBitmap = bitmap;
             logger.info(TAG, `[updateImageBitmaps] 下一页ImageBitmap创建完成: w=${bitmap.width}, h=${bitmap.height}`);
@@ -265,9 +315,27 @@ export struct PageCurlEffectV2 {
     // 热路径：移除日志输出以提高性能
     if (this.externalProgress >= 0 && this.isReady) {
       // 只在首次或 PixelMap 真正变化时更新 Bitmap（移到外部控制）
+      if (!this.checkAndUpdateBitmaps()) {
+        return;
+      }
       this.curlProgress = this.externalProgress;
       this.renderCurlEffect();
+      this.onFirstFrameReady();
     }
+  }
+
+  onRenderTokenChange(): void {
+    if (!this.isReady) {
+      return;
+    }
+    if (!this.checkAndUpdateBitmaps()) {
+      return;
+    }
+    if (this.externalProgress >= 0) {
+      this.curlProgress = this.externalProgress;
+    }
+    this.renderCurlEffect();
+    this.onFirstFrameReady();
   }
   
   /**
@@ -347,7 +415,7 @@ export struct PageCurlEffectV2 {
       if (easingType === 0) {
         eased = this.easeGravityDrop(t);
       } else if (easingType === 1) {
-        eased = this.easeOutCubicWithOvershoot(t);
+        eased = this.stabilizeReleaseMotion ? this.easeOutCubic(t) : this.easeOutCubicWithOvershoot(t);
       } else {
         eased = this.easeInOutCubic(t);
       }
@@ -473,7 +541,12 @@ export struct PageCurlEffectV2 {
     let py: number = ay + yDisp;
 
     // 弹性平滑：带阻尼弹簧的惯性跟随，产生Q弹拖拽手感
-    if (this.smoothPeelX < 0) {
+    if (this.stabilizeReleaseMotion && this.isReleaseAnimating) {
+      this.smoothPeelX = px;
+      this.smoothPeelY = py;
+      this.springVelocityX = 0;
+      this.springVelocityY = 0;
+    } else if (this.smoothPeelX < 0) {
       this.smoothPeelX = px;
       this.smoothPeelY = py;
       this.springVelocityX = 0;
@@ -562,23 +635,25 @@ export struct PageCurlEffectV2 {
       });
 
       // 7a. 在反射位置绘制镜像图片（书页背面）
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(reflCurl[0][0], reflCurl[0][1]);
-      for (let i = 1; i < reflCurl.length; i++) {
-        ctx.lineTo(reflCurl[i][0], reflCurl[i][1]);
+      if (this.renderBackFaceContent) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(reflCurl[0][0], reflCurl[0][1]);
+        for (let i = 1; i < reflCurl.length; i++) {
+          ctx.lineTo(reflCurl[i][0], reflCurl[i][1]);
+        }
+        ctx.closePath();
+        ctx.clip();
+        // 反射变换：平移到折叠中点 → 旋转对齐 → 翻转 → 旋转回 → 平移回
+        ctx.translate(fmx, fmy);
+        ctx.rotate(foldAngle);
+        ctx.scale(1, -1);
+        ctx.rotate(-foldAngle);
+        ctx.translate(-fmx, -fmy);
+        ctx.globalAlpha = this.curlBackOpacity / 100;
+        try { ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih); } catch (e) {}
+        ctx.restore();
       }
-      ctx.closePath();
-      ctx.clip();
-      // 反射变换：平移到折叠中点 → 旋转对齐 → 翻转 → 旋转回 → 平移回
-      ctx.translate(fmx, fmy);
-      ctx.rotate(foldAngle);
-      ctx.scale(1, -1);
-      ctx.rotate(-foldAngle);
-      ctx.translate(-fmx, -fmy);
-      ctx.globalAlpha = this.curlBackOpacity / 100;
-      try { ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih); } catch (e) {}
-      ctx.restore();
 
       // 7b. 纸张背面覆盖色
       ctx.save();
@@ -589,7 +664,9 @@ export struct PageCurlEffectV2 {
       }
       ctx.closePath();
       ctx.clip();
-      ctx.globalAlpha = 0.08 * (this.curlBackOpacity / 100);
+      ctx.globalAlpha = this.renderBackFaceContent
+        ? 0.08 * (this.curlBackOpacity / 100)
+        : Math.min(1, Math.max(0.72, this.curlBackOpacity / 100));
       ctx.fillStyle = '#f5f0e8';
       ctx.fill();
       ctx.restore();
@@ -1458,16 +1535,24 @@ export struct PageCurlEffectV2 {
       Canvas(this.canvasContext)
         .width(this.componentWidth)
         .height(this.componentHeight)
-        .backgroundColor('#1a1a1a')
+        .backgroundColor(this.canvasBackgroundColor)
         .onReady(() => {
-          logger.info(TAG, `[Canvas.onReady] Canvas就绪, currentPm=${this.currentPixelMap ? 'yes' : 'no'}, nextPm=${this.nextPixelMap ? 'yes' : 'no'}, externalProgress=${this.externalProgress.toFixed(3)}, curlProgress=${this.curlProgress.toFixed(3)}`);
+          const currentPixelMap = this.resolveCurrentPixelMap();
+          const nextPixelMap = this.resolveNextPixelMap();
+          logger.info(TAG, `[Canvas.onReady] Canvas就绪, currentPm=${currentPixelMap ? 'yes' : 'no'}, nextPm=${nextPixelMap ? 'yes' : 'no'}, externalProgress=${this.externalProgress.toFixed(3)}, curlProgress=${this.curlProgress.toFixed(3)}`);
           this.isReady = true;
+          if (this.externalProgress >= 0) {
+            this.curlProgress = this.externalProgress;
+          }
           // 初始化时记录当前PixelMap引用并转换为ImageBitmap
-          this.lastCurrentPixelMap = this.currentPixelMap;
-          this.lastNextPixelMap = this.nextPixelMap;
-          this.updateImageBitmaps();
+          this.lastCurrentPixelMap = currentPixelMap;
+          this.lastNextPixelMap = nextPixelMap;
+          if (!this.shouldRetainExistingBitmaps(currentPixelMap, nextPixelMap)) {
+            this.updateImageBitmaps();
+          }
           logger.info(TAG, `[Canvas.onReady] 调用renderCurlEffect`);
           this.renderCurlEffect();
+          this.onFirstFrameReady();
           if (this.pendingAnimateAfterReady || this.animateToTarget >= 0) {
             this.onAnimateToTargetChange();
           }

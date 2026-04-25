@@ -14,8 +14,9 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { EBook, EBookChapter, EBookFormat, EBookStatus } from '../Models/EBookModels';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
-import { EBookReaderParams } from './EBookReaderPage';
+import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
+import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
@@ -293,7 +294,12 @@ export struct EBookDetailPage {
         if (txtNovelReaderParams) {
           this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
         } else {
-          this.pathStack.pushPath({ name: resolveEBookReaderRouteName(this.ebook), param: readerParams });
+          const routeName = resolveEBookReaderRouteName(this.ebook);
+          if (routeName === 'EBookReaderPage') {
+            openEBookReaderRouterPage(this.getUIContext(), readerParams, TAG);
+          } else {
+            this.pathStack.pushPath({ name: routeName, param: readerParams });
+          }
         }
       },
       ebookBackground,

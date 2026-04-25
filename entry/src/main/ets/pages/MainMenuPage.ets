@@ -89,10 +89,11 @@ import { SourceGuidePage } from './SourceGuidePage';
 import { SourceDetailPage } from './SourceDetailPage';
 import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
 import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
-import { EBookReaderPage, EBookReaderParams } from './EBookReaderPage';
+import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { EBookImageReaderPage } from './EBookImageReaderPage';
 import { EpubWebViewReaderPage } from './EpubWebViewReaderPage';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
+import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
@@ -20404,7 +20405,12 @@ struct MainMenuPage {
         if (txtNovelReaderParams) {
           this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
         } else {
-          this.pathStack.pushPath({ name: resolveEBookReaderRouteName(ebook), param: readerParams });
+          const routeName = resolveEBookReaderRouteName(ebook);
+          if (routeName === 'EBookReaderPage') {
+            openEBookReaderRouterPage(this.getUIContext(), readerParams, TAG);
+          } else {
+            this.pathStack.pushPath({ name: routeName, param: readerParams });
+          }
         }
       },
       ebookBackground,
@@ -28683,8 +28689,6 @@ struct MainMenuPage {
         UserAgreementPage()
       } else if (name === 'PrivacyPolicyPage') {
         PrivacyPolicyPage()
-      } else if (name === 'EBookReaderPage') {
-        EBookReaderPage()
       } else if (name === 'EBookImageReaderPage') {
         EBookImageReaderPage()
       } else if (name === 'EpubWebViewReaderPage') {

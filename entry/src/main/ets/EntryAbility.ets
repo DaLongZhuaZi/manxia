@@ -32,6 +32,7 @@ import { getCrashRecorderService } from './Framework/Debug/CrashRecorderService'
 import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
 import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
 import { getHoldingAwarenessManager } from './Framework/Managers/HoldingAwarenessManager';
+import { initializeReaderKitRuntimeGate } from './Framework/Initialization/ReaderKitFeatureGate';
 import {
   ngfContentSourceIntegrationFacade,
   ngfContentWorkflowIntegrationFacade,
@@ -48,6 +49,7 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     logger.startup('EntryAbility', 'onCreate START', 'EntryAbility开始创建');
+    initializeReaderKitRuntimeGate('EntryAbility.onCreate');
     
     // 详细记录Want信息用于调试
     logger.info('EntryAbility', `📋 Want详情: uri=${want.uri || 'null'}, type=${want.type || 'null'}, action=${want.action || 'null'}`);
@@ -683,7 +685,10 @@ export default class EntryAbility extends UIAbility {
     }
     
     // 电子书
-    if (lowerUri.endsWith('.epub') || lowerUri.endsWith('.mobi') || lowerUri.endsWith('.azw3')) {
+    if (lowerUri.endsWith('.epub') || lowerUri.endsWith('.mobi') ||
+      lowerUri.endsWith('.azw') || lowerUri.endsWith('.azw3') ||
+      lowerUri.includes('.epub?') || lowerUri.includes('.mobi?') ||
+      lowerUri.includes('.azw?') || lowerUri.includes('.azw3?')) {
       return EntryAbility.FILE_TYPE_EBOOK;
     }
     

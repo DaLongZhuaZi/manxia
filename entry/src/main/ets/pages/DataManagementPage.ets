@@ -3601,14 +3601,14 @@ struct DataManagementPage {
       
       // 保存 PixelMap 为图片文件
       const outputPath = `${coverDir}/${ebook.id}_generated_cover.webp`;
-      const saveSuccess = await this.savePixelMapToFile(pixelMap, outputPath);
+      const savedCoverPath = await this.savePixelMapToFile(pixelMap, outputPath);
       
       // 释放 PixelMap
       pixelMap.release();
       
-      if (saveSuccess) {
-        ebook.metadata.coverImagePath = outputPath;
-        logger.info(TAG, `封面生成成功: ${outputPath}`);
+      if (savedCoverPath.length > 0) {
+        ebook.metadata.coverImagePath = savedCoverPath;
+        logger.info(TAG, `封面生成成功: ${savedCoverPath}`);
       } else {
         logger.warn(TAG, '封面生成失败: 保存图片失败');
       }
@@ -3620,40 +3620,108 @@ struct DataManagementPage {
   /**
    * 将 PixelMap 保存为图片文件
    */
-  private async savePixelMapToFile(pixelMap: image.PixelMap, filePath: string): Promise<boolean> {
+  private async savePixelMapToFile(pixelMap: image.PixelMap, filePath: string): Promise<string> {
     try {
       // 确保目录存在
       const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
       try {
-        await fileIo.mkdir(dirPath);
+        fileIo.mkdirSync(dirPath, true);
       } catch (e) {
         // 目录可能已存在，忽略错误
       }
-      
-      // 创建图片打包器
-      const imagePacker = image.createImagePacker();
-      
-      // 打包为 WebP 格式
-      const packOptions: image.PackingOption = {
-        format: 'image/webp',
-        quality: 90
-      };
-      
-      const arrayBuffer = await imagePacker.packing(pixelMap, packOptions);
-      
-      // 写入文件
-      const file = await fileIo.open(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      await fileIo.write(file.fd, arrayBuffer);
-      await fileIo.close(file.fd);
-      
-      // 释放打包器
-      imagePacker.release();
-      
-      logger.info(TAG, `封面图片已保存: ${filePath}`);
-      return true;
+
+      const webpPath = this.replaceImageExtension(filePath, '.webp');
+      const webpBuffer = await this.packPixelMapForCover(pixelMap, 'image/webp', 90, webpPath);
+      if (webpBuffer.byteLength > 0 && await this.isPackedImageDecodable(webpBuffer, webpPath)) {
+        this.writeImageBufferToFile(webpPath, webpBuffer);
+        logger.info(TAG, `封面图片已保存: ${webpPath}`);
+        return webpPath;
+      }
+
+      const jpegPath = this.replaceImageExtension(filePath, '.jpg');
+      const jpegBuffer = await this.packPixelMapForCover(pixelMap, 'image/jpeg', 92, jpegPath);
+      if (jpegBuffer.byteLength > 0 && await this.isPackedImageDecodable(jpegBuffer, jpegPath)) {
+        this.writeImageBufferToFile(jpegPath, jpegBuffer);
+        logger.warn(TAG, `WebP 封面不可解码，已改用 JPEG 保存: ${jpegPath}`);
+        return jpegPath;
+      }
+
+      logger.warn(TAG, `封面保存失败: WebP/JPEG 打包结果均不可解码, target=${filePath}`);
+      return '';
     } catch (error) {
       logger.error(TAG, `保存图片失败: ${error instanceof Error ? error.message : String(error)}`);
+      return '';
+    }
+  }
+
+  private replaceImageExtension(filePath: string, ext: string): string {
+    const dotIndex = filePath.lastIndexOf('.');
+    const slashIndex = filePath.lastIndexOf('/');
+    if (dotIndex > slashIndex) {
+      return filePath.substring(0, dotIndex) + ext;
+    }
+    return filePath + ext;
+  }
+
+  private async packPixelMapForCover(
+    pixelMap: image.PixelMap,
+    format: string,
+    quality: number,
+    label: string
+  ): Promise<ArrayBuffer> {
+    const imagePacker = image.createImagePacker();
+    try {
+      const packOptions: image.PackingOption = {
+        format: format,
+        quality: quality
+      };
+      const packed = await imagePacker.packToData(pixelMap, packOptions);
+      logger.info(TAG, `封面打包完成: target=${label}, format=${format}, size=${packed.byteLength}`);
+      return packed;
+    } catch (error) {
+      logger.warn(TAG, `封面打包失败: target=${label}, format=${format}, error=${String(error)}`);
+      return new ArrayBuffer(0);
+    } finally {
+      imagePacker.release();
+    }
+  }
+
+  private async isPackedImageDecodable(imageData: ArrayBuffer, label: string): Promise<boolean> {
+    if (imageData.byteLength <= 0) {
       return false;
+    }
+
+    let imageSource: image.ImageSource | null = null;
+    let pixelMap: image.PixelMap | null = null;
+    try {
+      imageSource = image.createImageSource(imageData);
+      pixelMap = await imageSource.createPixelMap();
+      return pixelMap !== null;
+    } catch (error) {
+      logger.warn(TAG, `封面打包结果解码校验失败: target=${label}, error=${String(error)}`);
+      return false;
+    } finally {
+      try {
+        if (pixelMap !== null) {
+          pixelMap.release();
+        }
+      } catch (_pixelMapReleaseError) {
+      }
+      try {
+        if (imageSource !== null) {
+          imageSource.release();
+        }
+      } catch (_imageSourceReleaseError) {
+      }
+    }
+  }
+
+  private writeImageBufferToFile(filePath: string, imageData: ArrayBuffer): void {
+    const file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    try {
+      fileIo.writeSync(file.fd, imageData);
+    } finally {
+      fileIo.closeSync(file);
     }
   }
 

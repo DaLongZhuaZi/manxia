@@ -1,19 +1,25 @@
 import { logger } from '../Utils/Logger';
 import { common } from '@kit.AbilityKit';
-import { display, promptAction, UIContext } from '@kit.ArkUI';
+import { display, promptAction, UIContext, window } from '@kit.ArkUI';
+import { preferences } from '@kit.ArkData';
+import { util } from '@kit.ArkTS';
+import { fileIo } from '@kit.CoreFileKit';
+import batteryInfo from '@ohos.batteryInfo';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { convertMobiToExtractedDir } from '../Framework/Parsers/MobiParser';
-import { KeyCode } from '@kit.InputKit';
+import { KeyCode, inputConsumer } from '@kit.InputKit';
 import {
   EBook,
   EBookChapter,
   EBookContentMode,
   EBookFormat,
+  EpubNavigationItem,
   EBookReaderEngine,
   EBookReadingProgress,
   EBookReadingSettings,
@@ -31,8 +37,42 @@ import {
   EpubWebViewReaderComponent,
   EpubWebViewReaderController,
   EpubSpineTransitionDirection,
-  EpubWebViewReaderParams
+  EpubWebViewReaderParams,
+  EpubRuntimeBlankSpineInfo,
+  EpubWebPageChangeSource,
+  EpubWebHighlightRange,
+  EpubWebSelectionSnapshot,
+  EpubWebTextSnapshot,
+  EpubWebPurifyRulePayload
 } from '../Framework/Components/EpubWebViewReaderComponent';
+import { UnifiedContentType } from '../Models/UnifiedContentModels';
+import {
+  AnnotationAnchor,
+  CreateThoughtInput,
+  HighlightLineType,
+  HighlightStyle,
+  UnifiedAnnotationRecord,
+  UnifiedAnnotationType
+} from '../Models/AnnotationModels';
+import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { SettingsManager } from '../Framework/Managers/SettingsManager';
+import { AddRuleParams, NovelReplaceRuleManager, ReplaceRule, ReplaceScope } from '../Framework/Novel/NovelReplaceRuleManager';
+import {
+  DEFAULT_READ_ALOUD_SETTINGS,
+  ReadAloudEngineType,
+  ReadAloudSettings,
+  mergeRemoteReadAloudSettings,
+  normalizeReadAloudSettings
+} from '../Models/TextReaderModels';
+import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
+import { ReadAloudPlaybackState, ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
+import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
+import {
+  loadGlobalReadAloudSettings as loadStoredGlobalReadAloudSettings,
+  persistGlobalReadAloudSettings as persistStoredGlobalReadAloudSettings
+} from '../Framework/ReadAloud/ReadAloudSettingsStore';
+import { ReadAloudSettingsInfoPanel } from '../components/ReadAloudSettingsInfoPanel';
+import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { EpubReaderSettingsPanel } from '../components/EpubReaderSettingsPanel';
 import { EpubReaderChapterList } from '../components/EpubReaderChapterList';
 import { MangaQuickSettings } from '../components/MangaQuickSettings';
@@ -42,18 +82,47 @@ import {
   startBookCloseTransitionWithComponentId,
   cancelTransition
 } from '../components/BookTransitionOverlay';
-import { EBookReaderParams } from './EBookReaderPage';
+import { EBookReaderParams } from './EBookReaderRouteTypes';
+import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
+import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
+import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
 
 const TAG = 'EpubWebViewReaderPage';
+const IMAGE_RESOURCE_PATH_PATTERN: RegExp = /\.(apng|avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i;
+const EPUB_READER_CAMERA_SAFE_TOP_FALLBACK: number = 24;
+const WINDOW_MANAGER_LAST_VISIBLE_STATUS_BAR_HEIGHT_KEY: string = 'window_manager_last_visible_status_bar_height';
+const READABLE_SPINE_TEXT_THRESHOLD: number = 0;
+const RUNTIME_BLANK_SPINE_SKIP_LIMIT: number = 8;
+const NOVEL_SETTINGS_STORE: string = 'novel_settings';
+const NOVEL_BOOK_RULE_SETTINGS_STORE: string = 'novel_book_rule_settings';
+const NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX: string = 'book_replace_rule_ids_';
+const NOVEL_SETTING_ENABLE_REPLACE_RULES: string = 'enableNovelReplaceRules';
+const EPUB_CONTAINER_FULL_PATH_PATTERN: RegExp = /full-path\s*=\s*["']([^"']+)["']/i;
+const EPUB_OPF_META_COVER_PATTERN: RegExp = /<meta\b[^>]*name\s*=\s*["']cover["'][^>]*content\s*=\s*["']([^"']+)["'][^>]*\/?>/i;
 
 interface EpubSettingsPanelCallbacks {
   onSettingsChange: (settings: EBookReadingSettings) => void;
+  onPageSettingsChange: (settings: MangaReadingSettings) => void;
   onClose: () => void;
 }
 
 interface EpubChapterListCallbacks {
   onChapterSelect: (spineIndex: number) => void;
   onClose: () => void;
+}
+
+interface EpubBookmarkContext {
+  chapterId: string;
+  chapterTitle: string;
+  chapterIndex: number;
+  pageIndex: number;
+  progress: number;
+  startOffset: number;
+  endOffset: number;
+  quoteText: string;
+  contextBefore: string;
+  contextAfter: string;
+  isTextMode: boolean;
 }
 
 @Component
@@ -63,22 +132,31 @@ export struct EpubWebViewReaderPage {
   private uiContext: UIContext | null = null;
   private context: common.UIAbilityContext | null = null;
   private coverComponentId: string = '';
+  private routerBackOnClose: boolean = false;
 
   // ──── 安全区 ────
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @State private cameraCutoutTopInset: number = 0;
 
   // ──── 书籍数据 ────
   @State ebook: EBook | null = null;
   @State spineItems: EBookChapter[] = [];
+  @State navigationChapters: EBookChapter[] = [];
   @State extractedRoot: string = '';
   @State currentSpineIndex: number = 0;
   @State currentPageWithinSpine: number = 0;
   @State totalPagesInSpine: number = 0;
   @State isFixedLayout: boolean = false;
+  @State currentAnchorFragment: string = '';
   @State private canFallbackToReaderKit: boolean = false;
   private epubReaderController: EpubWebViewReaderController | null = null;
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  private annotationManager = getUnifiedAnnotationManager();
+  private navigationTargets: EpubNavigationItem[] = [];
+  private spineReadableCache: Map<number, boolean> = new Map<number, boolean>();
+  private runtimeBlankSpineIndices: number[] = [];
+  private runtimeBlankSpineSkipCount: number = 0;
 
   // ──── 阅读设置 ────
   @State readingSettings: EBookReadingSettings = DEFAULT_EBOOK_READING_SETTINGS;
@@ -96,11 +174,36 @@ export struct EpubWebViewReaderPage {
   @State showPageTurnAnimationSettings: boolean = false;
   @State showAutoPageTurnSettings: boolean = false;
   @State showInteractionOverlay: boolean = false;
+  @State private quickSettingsOpacity: number = 0;
+  @State private quickSettingsScale: number = 0.96;
+  @State private quickSettingsTranslateY: number = 24;
+  @State private pageTurnSettingsBackdropOpacity: number = 0;
+  @State private pageTurnSettingsPanelOpacity: number = 0;
+  @State private pageTurnSettingsPanelScale: number = 0.96;
+  @State private pageTurnSettingsPanelTranslateX: number = 48;
+  @State private pageTurnSettingsPanelTranslateY: number = 24;
+  @State private autoPageTurnSettingsBackdropOpacity: number = 0;
+  @State private autoPageTurnSettingsPanelOpacity: number = 0;
+  @State private autoPageTurnSettingsPanelScale: number = 0.96;
+  @State private autoPageTurnSettingsPanelTranslateX: number = 48;
+  @State private autoPageTurnSettingsPanelTranslateY: number = 24;
   @State componentWidth: number = 0;
   @State componentHeight: number = 0;
   @State isLandscapeMode: boolean = false;
   @State autoPageTurnEnabled: boolean = false;
   @State autoPageTurnIntervalSeconds: number = 5;
+  @State currentTime: string = '';
+  @State batteryLevel: number = 0;
+  @State private currentSpineHighlightRanges: EpubWebHighlightRange[] = [];
+  @State isCurrentPageBookmarked: boolean = false;
+  @State currentPageBookmarkId: string = '';
+  @State readAloudPlaying: boolean = false;
+  @State readAloudCurrentCharIndex: number = -1;
+  @State showReadAloudPanel: boolean = false;
+  @State readAloudPanelSettings: ReadAloudSettings = DEFAULT_READ_ALOUD_SETTINGS;
+  @State readAloudAvailability: ReadAloudEngineAvailabilityMap = ReadAloudAvailability.getCachedOrDefault();
+  @State readAloudVoiceOptions: ReadAloudVoiceOption[] = [];
+  @State readAloudStatusMessage: string = '';
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
 
   // ──── 工具栏自动隐藏 ────
@@ -109,35 +212,124 @@ export struct EpubWebViewReaderPage {
   private toolbarHideTimer: number = -1;
   private fullscreenRestoreTimer: number = -1;
   private autoPageTurnTimer: number = -1;
+  private timeUpdateTimer: number = -1;
   private lastProgressSaveTime: number = 0;
   private sessionStartTimestamp: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private hasNotifiedTransitionReaderReady: boolean = false;
+  private epubCurlGestureActive: boolean = false;
+  private epubCurlGestureStarted: boolean = false;
+  private epubCurlGestureStartX: number = 0;
+  private epubCurlGestureStartY: number = 0;
+  private epubCurlGestureProgress: number = 0;
+  private pendingSpineIndex: number = -1;
+  @State private readerMountEpoch: number = 0;
+  private volumeUpCallback: ((event: InputKeyEvent) => void) | null = null;
+  private volumeDownCallback: ((event: InputKeyEvent) => void) | null = null;
+  private isVolumeKeyListenerRegistered: boolean = false;
+  private isPageVisible: boolean = false;
+  private replaceSettingsLoaded: boolean = false;
+  private replaceRulesEnabled: boolean = true;
+  private scopedReplaceRuleIds: string[] | null = null;
+  private currentVisibleTextSnapshot: EpubWebTextSnapshot | null = null;
+  private currentSpineTextCache: string = '';
+  private currentSpineTextCacheIndex: number = -1;
+  private readAloudUiSyncTimer: number = -1;
+  private readAloudProgressSaveInterval: number = 3000;
+  private lastReadAloudProgressSaveTime: number = 0;
+  private lastReadAloudPanelCloseTime: number = 0;
+  private shouldAutoStartReadAloudFromRoute: boolean = false;
+  private shouldAutoOpenReadAloudPlayerFromRoute: boolean = false;
+  private routeReadAloudAutoStartAttempts: number = 0;
+  private static readonly READ_ALOUD_PANEL_REOPEN_GUARD_MS: number = 320;
+
+  private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
+    const ebook = this.ebook;
+    if (!ebook) {
+      return;
+    }
+    const statePayload = payload as ReadAloudStatePayload;
+    const payloadBookId = statePayload.bookId ?? '';
+    if (!payloadBookId || payloadBookId !== ebook.id) {
+      const controllerContext = this.readAloudController.getContextSnapshot();
+      if (!controllerContext || controllerContext.bookId !== ebook.id) {
+        return;
+      }
+    }
+    if (!this.shouldHandleReadAloudUiEvents()) {
+      return;
+    }
+
+    this.readAloudPlaying = statePayload.playbackState === ReadAloudPlaybackState.PLAYING;
+    this.applyReadAloudProgress(statePayload);
+    if (
+      statePayload.playbackState !== ReadAloudPlaybackState.PLAYING &&
+      statePayload.reason !== 'progress_updated'
+    ) {
+      void this.saveReadingProgress('read_aloud_state_change');
+    }
+  };
 
   // ──── 生命周期 ────
 
   aboutToAppear(): void {
+    this.isPageVisible = true;
     this.themeManager = ThemeManager.getInstance();
+    this.settingsManager = SettingsManager.getInstance();
+    eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EpubWebViewReaderPage');
+    this.syncReadAloudStateFromController();
+    this.startReadAloudUiSyncTimer();
+    this.readAloudController.refreshMediaSession();
     const info = display.getDefaultDisplaySync();
     this.isLandscapeMode = info.width > info.height;
+    void this.refreshCameraCutoutTopInset('appear');
+    this.startTimeUpdate();
+    this.updateBatteryLevel();
   }
 
   aboutToDisappear(): void {
+    this.isPageVisible = false;
+    this.stopReadAloudUiSyncTimer();
+    eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.clearToolbarTimer();
     this.clearFullscreenRestoreTimer();
+    this.epubReaderController?.cancelInteractiveCurl();
+    this.epubReaderController?.clearReadAloudHighlight();
+    this.unregisterVolumeKeyListener();
     this.stopAutoPageTurn();
+    this.stopTimeUpdate();
     void this.persistTextReadingSettings('about_to_disappear');
     void this.persistPageReadingSettings('about_to_disappear');
     void this.saveReadingProgress('about_to_disappear');
   }
 
   onPageShow(): void {
+    this.isPageVisible = true;
+    AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EpubWebViewReaderPage');
     WindowManager.reapplyCurrentDisplayMode(24);
+    void this.refreshCameraCutoutTopInset('show');
+    this.updateVolumeKeyListener();
+    this.startTimeUpdate();
     this.syncAutoPageTurnState();
+    this.updateBatteryLevel();
+    this.syncReadAloudStateFromController();
+    this.startReadAloudUiSyncTimer();
+    void this.updateEpubReadAloudContextByPosition();
+    this.refreshCurrentEpubBookmarkState('on_page_show');
+    this.readAloudController.refreshMediaSession();
   }
 
   onPageHide(): void {
+    this.isPageVisible = false;
+    this.stopReadAloudUiSyncTimer();
+    this.unregisterVolumeKeyListener();
     this.stopAutoPageTurn();
+    this.stopTimeUpdate();
+    this.readAloudController.handlePageHide();
+    this.readAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
     void this.persistTextReadingSettings('page_hide');
     void this.saveReadingProgress('page_hide');
   }
@@ -148,8 +340,12 @@ export struct EpubWebViewReaderPage {
     try {
       this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     } catch (_ignored) {}
-    await this.loadEBook(params.bookId);
     this.coverComponentId = params.coverComponentId ?? '';
+    this.routerBackOnClose = params.routerBackOnClose === true;
+    this.shouldAutoStartReadAloudFromRoute = params.autoStartReadAloud === true;
+    this.shouldAutoOpenReadAloudPlayerFromRoute = params.autoOpenReadAloudPlayer === true;
+    this.routeReadAloudAutoStartAttempts = 0;
+    await this.loadEBook(params.bookId);
     this.sessionStartTimestamp = Date.now();
   }
 
@@ -158,6 +354,22 @@ export struct EpubWebViewReaderPage {
     this.errorMessage = '';
     this.hasNotifiedTransitionReaderReady = false;
     this.epubReaderController = null;
+    this.navigationTargets = [];
+    this.navigationChapters = [];
+    this.currentAnchorFragment = '';
+    this.pendingSpineIndex = -1;
+    this.readerMountEpoch = Date.now();
+    this.spineReadableCache.clear();
+    this.runtimeBlankSpineIndices = [];
+    this.runtimeBlankSpineSkipCount = 0;
+    this.currentSpineHighlightRanges = [];
+    this.isCurrentPageBookmarked = false;
+    this.currentPageBookmarkId = '';
+    this.currentVisibleTextSnapshot = null;
+    this.currentSpineTextCache = '';
+    this.currentSpineTextCacheIndex = -1;
+    this.readAloudCurrentCharIndex = -1;
+    this.replaceSettingsLoaded = false;
 
     try {
       const ebook = await this.ebookDataManager.getEBookById(bookId);
@@ -172,6 +384,7 @@ export struct EpubWebViewReaderPage {
       }
 
       let extractedRoot = ebook.extractedRootPath ?? '';
+      let mobiConversionError = '';
 
       if (extractedRoot.length === 0 && ebook.format === EBookFormat.EPUB) {
         logger.info(TAG, `extractedRootPath 为空，尝试懒解压: ${ebook.filePath}`);
@@ -191,8 +404,11 @@ export struct EpubWebViewReaderPage {
         }
       }
 
-      if (extractedRoot.length === 0 && isMobiFormat) {
-        logger.info(TAG, `MOBI extractedRootPath 为空，触发懒转换: ${ebook.filePath}`);
+      if (isMobiFormat) {
+        logger.info(
+          TAG,
+          `${extractedRoot.length === 0 ? 'MOBI extractedRootPath 为空，触发懒转换' : '检查 MOBI 本地转换缓存版本'}: ${ebook.filePath}`
+        );
         const convResult = await convertMobiToExtractedDir(ebook.filePath ?? '');
         if (convResult.success) {
           extractedRoot = convResult.extractedRootPath;
@@ -206,12 +422,22 @@ export struct EpubWebViewReaderPage {
             ebook.chapters = newSpine;
           }
           void this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
-          logger.info(TAG, `MOBI 懒转换成功: ${extractedRoot}`);
+          logger.info(TAG, `MOBI 本地转换缓存就绪: ${extractedRoot}`);
+        } else {
+          mobiConversionError = convResult.errorMessage;
+          logger.warn(TAG, `MOBI 懒转换失败: ${mobiConversionError}`);
+          if (extractedRoot.length > 0) {
+            logger.warn(TAG, `MOBI 转换刷新失败，继续使用已有 extractedRootPath: ${extractedRoot}`);
+          }
         }
       }
 
       if (extractedRoot.length === 0) {
         this.canFallbackToReaderKit = ebook.contentMode !== EBookContentMode.FIXED_LAYOUT_HTML;
+        if (isMobiFormat) {
+          const reason = mobiConversionError.length > 0 ? `：${mobiConversionError}` : '';
+          throw new Error(`Kindle 格式本地转换失败${reason}，可尝试使用 ReaderKit 打开`);
+        }
         throw new Error('EPUB 尚未解压，请重新导入文件，或使用 ReaderKit 打开');
       }
 
@@ -243,6 +469,7 @@ export struct EpubWebViewReaderPage {
       this.ebook = ebook;
       this.extractedRoot = extractedRoot;
       this.spineItems = spineItems;
+      this.configureNavigationTargets(ebook.id, extractedRoot, spineItems);
       this.isFixedLayout = ebook.contentMode === EBookContentMode.FIXED_LAYOUT_HTML;
 
       this.readingSettings = this.cloneTextReadingSettings(
@@ -258,28 +485,56 @@ export struct EpubWebViewReaderPage {
       this.autoPageTurnEnabled = this.pageReadingSettings.autoPageTurnInterval > 0;
       this.autoPageTurnIntervalSeconds = this.autoPageTurnEnabled ?
         this.pageReadingSettings.autoPageTurnInterval : 5;
+      this.updateVolumeKeyListener();
       logger.info(
         TAG,
-        `恢复阅读设置: text(fontSize=${this.readingSettings.fontSize}, lineHeight=${this.readingSettings.lineHeight}, pageMargin=${this.readingSettings.pageMargin}, tapToTurn=${this.readingSettings.tapToTurn ?? true}), page(mode=${this.pageReadingSettings.readingMode}, direction=${this.pageReadingSettings.readingDirection}, animation=${this.pageReadingSettings.pageTurnAnimation}, volumeKey=${this.pageReadingSettings.volumeKeyNavigation}, autoPageTurn=${this.pageReadingSettings.autoPageTurnInterval})`
+        `恢复阅读设置: text(fontSize=${this.readingSettings.fontSize}, fontFamily=${this.readingSettings.fontFamily}, fontPath=${this.readingSettings.fontPath || 'none'}, fontWeight=${this.readingSettings.fontWeight}, lineHeight=${this.readingSettings.lineHeight}, pageMargin=${this.readingSettings.pageMargin}, letterSpacing=${this.readingSettings.letterSpacing ?? 0}, paragraphSpacing=${this.readingSettings.paragraphSpacing ?? 8}, firstLineIndent=${this.readingSettings.firstLineIndent ?? 2}, textAlignment=${this.readingSettings.textAlignment ?? 'JUSTIFY'}, tapToTurn=${this.readingSettings.tapToTurn ?? true}), page(mode=${this.pageReadingSettings.readingMode}, direction=${this.pageReadingSettings.readingDirection}, animation=${this.pageReadingSettings.pageTurnAnimation}, volumeKey=${this.pageReadingSettings.volumeKeyNavigation}, autoPageTurn=${this.pageReadingSettings.autoPageTurnInterval})`
       );
 
       const progress = ebook.readingProgress;
+      let restoredSpineIndex = 0;
+      let restoredPageOffset = 0;
       if (progress && progress.currentChapterIndex >= 0 && progress.currentChapterIndex < spineItems.length) {
-        this.currentSpineIndex = progress.currentChapterIndex;
-        this.currentPageWithinSpine = progress.currentPosition ?? 0;
+        restoredSpineIndex = progress.currentChapterIndex;
+        restoredPageOffset = progress.currentPosition ?? 0;
       } else {
-        this.currentSpineIndex = 0;
-        this.currentPageWithinSpine = 0;
+        restoredSpineIndex = 0;
+        restoredPageOffset = 0;
       }
+      let normalizedSpineIndex = restoredSpineIndex;
+      if (!this.isReadableSpineIndex(restoredSpineIndex)) {
+        const nextReadable = this.findReadableSpineIndex(restoredSpineIndex + 1, 1);
+        const previousReadable = this.findReadableSpineIndex(restoredSpineIndex - 1, -1);
+        normalizedSpineIndex = nextReadable >= 0 ? nextReadable : previousReadable;
+        if (normalizedSpineIndex >= 0) {
+          logger.info(
+            TAG,
+            `恢复进度命中空 spine，已跳转到可读 spine: restored=${restoredSpineIndex}, normalized=${normalizedSpineIndex}`
+          );
+          restoredPageOffset = 0;
+        } else {
+          normalizedSpineIndex = restoredSpineIndex;
+        }
+      }
+      this.currentSpineIndex = normalizedSpineIndex;
+      this.currentPageWithinSpine = restoredPageOffset;
+      this.currentAnchorFragment = '';
 
       this.isLoading = false;
+      void this.refreshCurrentSpineHighlightRanges('ebook_loaded');
+      this.refreshCurrentEpubBookmarkState('ebook_loaded');
+      void this.applyPurifyRulesToCurrentSpine('ebook_loaded');
+      this.updateVolumeKeyListener();
       this.syncAutoPageTurnState();
+      void this.updateEpubReadAloudContextByPosition();
+      this.scheduleRouteReadAloudAutoStart('ebook_loaded', 360);
       logger.info(TAG, `EPUB 加载完成: bookId=${bookId}, spineItems=${spineItems.length}, spineIndex=${this.currentSpineIndex}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `EPUB 加载失败: ${msg}`);
       this.errorMessage = msg;
       this.isLoading = false;
+      this.updateVolumeKeyListener();
       cancelTransition();
     }
   }
@@ -292,6 +547,27 @@ export struct EpubWebViewReaderPage {
     this.hasNotifiedTransitionReaderReady = true;
     setReaderReady();
     logger.info(TAG, `📖 已通知过渡动画阅读器就绪: ${reason}`);
+  }
+
+  private refreshAppFontFamilyForDialog(source: string): void {
+    let resolvedFontFamily = (this.appFontFamily ?? '').trim();
+    try {
+      const managerFontFamily = getFontManager().getFontFamily(FontScene.APP_UI).trim();
+      if (managerFontFamily.length > 0 && managerFontFamily !== 'HarmonyOS Sans') {
+        resolvedFontFamily = managerFontFamily;
+      } else if (resolvedFontFamily.length <= 0 && managerFontFamily.length > 0) {
+        resolvedFontFamily = managerFontFamily;
+      }
+    } catch (error) {
+      logger.warn(TAG, `刷新阅读器弹窗全局字体失败: source=${source}, error=${String(error)}`);
+    }
+    if (resolvedFontFamily.length <= 0) {
+      resolvedFontFamily = 'HarmonyOS Sans';
+    }
+    if (resolvedFontFamily !== this.appFontFamily) {
+      this.appFontFamily = resolvedFontFamily;
+      logger.info(TAG, `阅读器弹窗全局字体已刷新: source=${source}, font=${resolvedFontFamily}`);
+    }
   }
 
   // ──── Spine 路径解析 ────
@@ -310,6 +586,2230 @@ export struct EpubWebViewReaderPage {
     return `${this.extractedRoot}/${resourcePath}`;
   }
 
+  private readUtf8TextFileSync(path: string): string {
+    const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    try {
+      const stat = fileIo.statSync(file.fd);
+      if (stat.size <= 0) {
+        return '';
+      }
+      const buffer = new ArrayBuffer(stat.size);
+      const readLength = fileIo.readSync(file.fd, buffer);
+      const bytes = readLength > 0 ? new Uint8Array(buffer, 0, readLength) : new Uint8Array(buffer);
+      return new util.TextDecoder('utf-8', { ignoreBOM: true }).decodeToString(bytes);
+    } finally {
+      fileIo.closeSync(file);
+    }
+  }
+
+  private localPathExists(path: string): boolean {
+    const normalizedPath = path.trim();
+    if (normalizedPath.length <= 0) {
+      return false;
+    }
+    try {
+      return fileIo.accessSync(normalizedPath);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private stripFileUriPrefix(path: string): string {
+    const trimmed = path.trim();
+    if (trimmed.startsWith('file://')) {
+      return trimmed.substring('file://'.length);
+    }
+    return trimmed;
+  }
+
+  private isNetworkOrDataImagePath(path: string): boolean {
+    const lower = path.trim().toLowerCase();
+    return lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:image/');
+  }
+
+  private isAbsoluteLocalPath(path: string): boolean {
+    const normalized = this.stripFileUriPrefix(path).replace(/\\/g, '/');
+    return normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized);
+  }
+
+  private normalizePathSegments(path: string): string {
+    const normalized = path.trim().replace(/\\/g, '/');
+    const isRooted = normalized.startsWith('/');
+    const segments = normalized.split('/');
+    const stack: string[] = [];
+    for (const segment of segments) {
+      if (segment.length <= 0 || segment === '.') {
+        continue;
+      }
+      if (segment === '..') {
+        if (stack.length > 0) {
+          stack.pop();
+        }
+        continue;
+      }
+      stack.push(segment);
+    }
+    return `${isRooted ? '/' : ''}${stack.join('/')}`;
+  }
+
+  private getParentPath(path: string): string {
+    const normalized = path.trim().replace(/\\/g, '/');
+    const slashIndex = normalized.lastIndexOf('/');
+    if (slashIndex <= 0) {
+      return '';
+    }
+    return normalized.substring(0, slashIndex);
+  }
+
+  private normalizeEpubResourceRef(resourceRef: string): string {
+    let normalized = resourceRef.trim().replace(/\\/g, '/');
+    const hashIndex = normalized.indexOf('#');
+    if (hashIndex >= 0) {
+      normalized = normalized.substring(0, hashIndex);
+    }
+    const queryIndex = normalized.indexOf('?');
+    if (queryIndex >= 0) {
+      normalized = normalized.substring(0, queryIndex);
+    }
+    try {
+      normalized = decodeURIComponent(normalized);
+    } catch (_error) {
+    }
+    while (normalized.startsWith('./')) {
+      normalized = normalized.substring(2);
+    }
+    while (normalized.startsWith('/')) {
+      normalized = normalized.substring(1);
+    }
+    return normalized;
+  }
+
+  private joinLocalResourcePath(basePath: string, resourceRef: string): string {
+    const normalizedBase = this.stripFileUriPrefix(basePath).trim().replace(/\\/g, '/').replace(/\/+$/g, '');
+    const normalizedRef = this.normalizeEpubResourceRef(resourceRef);
+    if (normalizedBase.length <= 0 || normalizedRef.length <= 0) {
+      return '';
+    }
+    return this.normalizePathSegments(`${normalizedBase}/${normalizedRef}`);
+  }
+
+  private appendUniqueCoverCandidate(candidates: string[], candidate: string): void {
+    const normalized = candidate.trim();
+    if (normalized.length <= 0) {
+      return;
+    }
+    if (!candidates.includes(normalized)) {
+      candidates.push(normalized);
+    }
+  }
+
+  private toMediaImageUri(localPath: string): string {
+    const normalized = this.stripFileUriPrefix(localPath).trim().replace(/\\/g, '/');
+    if (normalized.length <= 0) {
+      return '';
+    }
+    if (/^[A-Za-z]:\//.test(normalized)) {
+      return `file:///${normalized}`;
+    }
+    if (normalized.startsWith('/')) {
+      return `file://${normalized}`;
+    }
+    return normalized;
+  }
+
+  private resolveEpubPackageDocumentPath(): string {
+    const root = (this.extractedRoot || this.ebook?.extractedRootPath || '').trim();
+    if (root.length <= 0) {
+      return '';
+    }
+    const containerPath = `${root}/META-INF/container.xml`;
+    if (!this.localPathExists(containerPath)) {
+      return '';
+    }
+    try {
+      const containerText = this.readUtf8TextFileSync(containerPath);
+      const match = containerText.match(EPUB_CONTAINER_FULL_PATH_PATTERN);
+      if (!match || !match[1]) {
+        return '';
+      }
+      return this.joinLocalResourcePath(root, match[1]);
+    } catch (error) {
+      logger.warn(TAG, `解析 EPUB package document 失败: ${String(error)}`);
+      return '';
+    }
+  }
+
+  private extractXmlAttribute(attrs: string, name: string): string {
+    const pattern = new RegExp(`${name}\\s*=\\s*["']([^"']+)["']`, 'i');
+    const match = attrs.match(pattern);
+    return match && match[1] ? String(match[1]).trim() : '';
+  }
+
+  private collectEpubOpfCoverCandidates(): string[] {
+    const candidates: string[] = [];
+    const opfPath = this.resolveEpubPackageDocumentPath();
+    if (opfPath.length <= 0 || !this.localPathExists(opfPath)) {
+      return candidates;
+    }
+    try {
+      const opfText = this.readUtf8TextFileSync(opfPath);
+      const packageRoot = this.getParentPath(opfPath);
+      const metaMatch = opfText.match(EPUB_OPF_META_COVER_PATTERN);
+      const coverId = metaMatch && metaMatch[1] ? String(metaMatch[1]).trim() : '';
+      const itemPattern = /<item\b([^>]*?)\/?>/gi;
+      let itemMatch = itemPattern.exec(opfText);
+      while (itemMatch !== null) {
+        const attrs = itemMatch[1] ? String(itemMatch[1]) : '';
+        const id = this.extractXmlAttribute(attrs, 'id');
+        const href = this.extractXmlAttribute(attrs, 'href');
+        const mediaType = this.extractXmlAttribute(attrs, 'media-type').toLowerCase();
+        const properties = this.extractXmlAttribute(attrs, 'properties').toLowerCase();
+        if (href.length > 0 && mediaType.startsWith('image/')) {
+          const resolved = this.joinLocalResourcePath(packageRoot, href);
+          const lowerHref = href.toLowerCase();
+          if (coverId.length > 0 && id === coverId) {
+            this.appendUniqueCoverCandidate(candidates, resolved);
+          } else if (properties.includes('cover-image')) {
+            this.appendUniqueCoverCandidate(candidates, resolved);
+          } else if (lowerHref.includes('cover') || lowerHref.includes('folder') || lowerHref.includes('front')) {
+            this.appendUniqueCoverCandidate(candidates, resolved);
+          } else if (candidates.length <= 0) {
+            this.appendUniqueCoverCandidate(candidates, resolved);
+          }
+        }
+        itemMatch = itemPattern.exec(opfText);
+      }
+    } catch (error) {
+      logger.warn(TAG, `解析 EPUB OPF 封面失败: ${String(error)}`);
+    }
+    return candidates;
+  }
+
+  private resolveExistingLocalCoverPath(candidates: string[]): string {
+    for (const candidate of candidates) {
+      const localPath = this.stripFileUriPrefix(candidate).replace(/\\/g, '/');
+      if (this.isAbsoluteLocalPath(localPath) && this.localPathExists(localPath)) {
+        return localPath;
+      }
+    }
+    return '';
+  }
+
+  private resolveEpubReadAloudCoverUrl(ebook: EBook): string {
+    const rawCover = (ebook.metadata.coverImagePath || '').trim();
+    if (rawCover.length > 0 && this.isNetworkOrDataImagePath(rawCover)) {
+      return rawCover;
+    }
+    if (rawCover.startsWith('app.media.')) {
+      return '';
+    }
+
+    const candidates: string[] = [];
+    const root = (this.extractedRoot || ebook.extractedRootPath || '').trim();
+    const opfPath = this.resolveEpubPackageDocumentPath();
+    const packageRoot = opfPath.length > 0 ? this.getParentPath(opfPath) : root;
+
+    if (rawCover.length > 0) {
+      const rawLocal = this.stripFileUriPrefix(rawCover).replace(/\\/g, '/');
+      if (this.isAbsoluteLocalPath(rawLocal)) {
+        this.appendUniqueCoverCandidate(candidates, rawLocal);
+      } else {
+        this.appendUniqueCoverCandidate(candidates, this.joinLocalResourcePath(root, rawCover));
+        this.appendUniqueCoverCandidate(candidates, this.joinLocalResourcePath(packageRoot, rawCover));
+      }
+    }
+
+    const opfCandidates = this.collectEpubOpfCoverCandidates();
+    for (const candidate of opfCandidates) {
+      this.appendUniqueCoverCandidate(candidates, candidate);
+    }
+
+    const localCoverPath = this.resolveExistingLocalCoverPath(candidates);
+    if (localCoverPath.length > 0) {
+      return this.toMediaImageUri(localCoverPath);
+    }
+    return rawCover;
+  }
+
+  private extractBodyHtml(htmlText: string): string {
+    const bodyMatch = htmlText.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch && bodyMatch[1]) {
+      return bodyMatch[1];
+    }
+    return htmlText
+      .replace(/<head[\s\S]*?<\/head>/ig, ' ')
+      .replace(/<\?xml[\s\S]*?\?>/ig, ' ')
+      .replace(/<!DOCTYPE[\s\S]*?>/ig, ' ');
+  }
+
+  private decodeCommonHtmlEntities(text: string): string {
+    return text
+      .replace(/&nbsp;|&#160;/ig, ' ')
+      .replace(/&lt;/ig, '<')
+      .replace(/&gt;/ig, '>')
+      .replace(/&amp;/ig, '&')
+      .replace(/&quot;/ig, '"')
+      .replace(/&#39;|&apos;/ig, "'")
+      .replace(/&#x([0-9a-f]+);/ig, (_match: string, value: string) => {
+        const parsed = parseInt(value, 16);
+        return Number.isFinite(parsed) && parsed > 0 ? String.fromCharCode(parsed) : ' ';
+      })
+      .replace(/&#([0-9]+);/g, (_match: string, value: string) => {
+        const parsed = parseInt(value, 10);
+        return Number.isFinite(parsed) && parsed > 0 ? String.fromCharCode(parsed) : ' ';
+      });
+  }
+
+  private measureVisibleHtmlTextLength(htmlText: string): number {
+    const bodyHtml = this.extractBodyHtml(htmlText);
+    const visibleText = this.decodeCommonHtmlEntities(bodyHtml
+      .replace(/<script[\s\S]*?<\/script>/ig, ' ')
+      .replace(/<style[\s\S]*?<\/style>/ig, ' ')
+      .replace(/<svg[\s\S]*?<\/svg>/ig, ' ')
+      .replace(/<[^>]+>/g, ' '))
+      .replace(/\s+/g, '')
+      .trim();
+    return visibleText.length;
+  }
+
+  private hasRenderableHtmlMedia(htmlText: string): boolean {
+    const bodyHtml = this.extractBodyHtml(htmlText);
+    return /<(img|image|svg|video|audio|canvas|picture|object|embed)\b/i.test(bodyHtml) ||
+      /background-image\s*:/i.test(bodyHtml);
+  }
+
+  private isImageResourceSpine(chapter: EBookChapter, spinePath: string): boolean {
+    const mediaType = (chapter.resourceMediaType ?? '').trim().toLowerCase();
+    const layoutType = (chapter.resourceLayoutType ?? '').trim().toUpperCase();
+    const imagePath = (chapter.resourceImagePath ?? chapter.resourceImageRelativePath ?? '').trim();
+    return mediaType.startsWith('image/') ||
+      layoutType === 'IMAGE_PAGE' ||
+      IMAGE_RESOURCE_PATH_PATTERN.test(spinePath) ||
+      IMAGE_RESOURCE_PATH_PATTERN.test(imagePath);
+  }
+
+  private isReadableSpineIndex(spineIndex: number): boolean {
+    if (spineIndex < 0 || spineIndex >= this.spineItems.length) {
+      return false;
+    }
+    const cached = this.spineReadableCache.get(spineIndex);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (this.isFixedLayout) {
+      this.spineReadableCache.set(spineIndex, true);
+      return true;
+    }
+    const chapter = this.spineItems[spineIndex];
+    const spinePath = this.resolveSpinePath(spineIndex);
+    if (spinePath.length <= 0) {
+      this.spineReadableCache.set(spineIndex, false);
+      return false;
+    }
+    if (this.isImageResourceSpine(chapter, spinePath)) {
+      this.spineReadableCache.set(spineIndex, true);
+      return true;
+    }
+    try {
+      const htmlText = this.readUtf8TextFileSync(spinePath);
+      const visibleTextLength = this.measureVisibleHtmlTextLength(htmlText);
+      const hasMedia = this.hasRenderableHtmlMedia(htmlText);
+      const readable = visibleTextLength > READABLE_SPINE_TEXT_THRESHOLD || hasMedia;
+      this.spineReadableCache.set(spineIndex, readable);
+      if (!readable) {
+        logger.info(
+          TAG,
+          `跳过空 spine 候选: index=${spineIndex}, title=${chapter.title}, textLength=${visibleTextLength}, hasMedia=${hasMedia}, path=${spinePath}`
+        );
+      }
+      return readable;
+    } catch (error) {
+      logger.warn(TAG, `检测 spine 可读性失败，保留原目标: index=${spineIndex}, path=${spinePath}, error=${String(error)}`);
+      this.spineReadableCache.set(spineIndex, true);
+      return true;
+    }
+  }
+
+  private findReadableSpineIndex(startIndex: number, step: number): number {
+    if (step === 0 || this.spineItems.length <= 0) {
+      return -1;
+    }
+    let index = startIndex;
+    while (index >= 0 && index < this.spineItems.length) {
+      if (this.isReadableSpineIndex(index)) {
+        return index;
+      }
+      index += step;
+    }
+    return -1;
+  }
+
+  private resolveReadableSpineIndex(
+    requestedIndex: number,
+    transitionDirection: EpubSpineTransitionDirection
+  ): number {
+    if (requestedIndex < 0 || requestedIndex >= this.spineItems.length) {
+      return -1;
+    }
+    if (this.isReadableSpineIndex(requestedIndex)) {
+      return requestedIndex;
+    }
+    const preferredStep: number = transitionDirection === 'prev' ? -1 : 1;
+    const preferred = this.findReadableSpineIndex(requestedIndex + preferredStep, preferredStep);
+    if (preferred >= 0) {
+      return preferred;
+    }
+    const fallbackStep: number = transitionDirection === 'prev' ? 1 : -1;
+    return this.findReadableSpineIndex(requestedIndex + fallbackStep, fallbackStep);
+  }
+
+  private normalizePathForCompare(path: string): string {
+    return path.trim().replace(/\\/g, '/');
+  }
+
+  private resolveSpineIndexByPath(spineFilePath: string): number {
+    const normalizedTarget = this.normalizePathForCompare(spineFilePath);
+    if (normalizedTarget.length <= 0) {
+      return this.pendingSpineIndex >= 0 ? this.pendingSpineIndex : this.currentSpineIndex;
+    }
+    for (let index = 0; index < this.spineItems.length; index++) {
+      if (this.normalizePathForCompare(this.resolveSpinePath(index)) === normalizedTarget) {
+        return index;
+      }
+    }
+    return this.pendingSpineIndex >= 0 ? this.pendingSpineIndex : this.currentSpineIndex;
+  }
+
+  private hasSkippedRuntimeBlankSpine(spineIndex: number): boolean {
+    return this.runtimeBlankSpineIndices.includes(spineIndex);
+  }
+
+  private findRuntimeBlankFallbackSpineIndex(blankSpineIndex: number): number {
+    const nextSpineIndex = this.findReadableSpineIndex(blankSpineIndex + 1, 1);
+    if (nextSpineIndex >= 0 && !this.hasSkippedRuntimeBlankSpine(nextSpineIndex)) {
+      return nextSpineIndex;
+    }
+    const previousSpineIndex = this.findReadableSpineIndex(blankSpineIndex - 1, -1);
+    if (previousSpineIndex >= 0 && !this.hasSkippedRuntimeBlankSpine(previousSpineIndex)) {
+      return previousSpineIndex;
+    }
+    return -1;
+  }
+
+  private handleRuntimeBlankSpine(info: EpubRuntimeBlankSpineInfo): boolean {
+    if (this.spineItems.length <= 0) {
+      return false;
+    }
+    if (this.runtimeBlankSpineSkipCount >= RUNTIME_BLANK_SPINE_SKIP_LIMIT) {
+      logger.warn(
+        TAG,
+        `运行时空 WebView spine 跳过次数达到上限，停止自动跳转: count=${this.runtimeBlankSpineSkipCount}, path=${info.spineFilePath}`
+      );
+      return false;
+    }
+    const blankSpineIndex = this.resolveSpineIndexByPath(info.spineFilePath);
+    if (blankSpineIndex < 0 || blankSpineIndex >= this.spineItems.length) {
+      logger.warn(
+        TAG,
+        `运行时空 WebView spine 无法定位索引: path=${info.spineFilePath}, doc=${info.documentUrl || 'none'}`
+      );
+      return false;
+    }
+    if (this.hasSkippedRuntimeBlankSpine(blankSpineIndex)) {
+      logger.warn(
+        TAG,
+        `运行时空 WebView spine 已跳过，停止重复跳转: index=${blankSpineIndex}, path=${info.spineFilePath}`
+      );
+      return false;
+    }
+
+    this.runtimeBlankSpineIndices.push(blankSpineIndex);
+    this.runtimeBlankSpineSkipCount++;
+    this.spineReadableCache.set(blankSpineIndex, false);
+
+    const fallbackSpineIndex = this.findRuntimeBlankFallbackSpineIndex(blankSpineIndex);
+    if (fallbackSpineIndex < 0) {
+      logger.warn(
+        TAG,
+        `运行时空 WebView spine 未找到可跳转目标: index=${blankSpineIndex}, text=${info.bodyTextLength}, media=${info.inlineMediaCount}/${info.blockMediaCount}, bodyChildren=${info.bodyChildCount}, bodyHtml=${info.bodyHtmlLength}`
+      );
+      return false;
+    }
+
+    const fallbackPath = this.resolveSpinePath(fallbackSpineIndex);
+    if (fallbackPath.length <= 0) {
+      logger.warn(TAG, `运行时空 WebView spine 跳转目标路径为空: target=${fallbackSpineIndex}`);
+      return false;
+    }
+
+    this.pendingSpineIndex = -1;
+    this.currentSpineIndex = fallbackSpineIndex;
+    this.currentPageWithinSpine = 0;
+    this.totalPagesInSpine = 0;
+    this.currentAnchorFragment = '';
+    this.syncAutoPageTurnState();
+
+    logger.warn(
+      TAG,
+      `运行时检测到空 WebView spine，跳转到下一可读 spine: blank=${blankSpineIndex}, target=${fallbackSpineIndex}, source=${info.source}, text=${info.bodyTextLength}, media=${info.inlineMediaCount}/${info.blockMediaCount}, bodyChildren=${info.bodyChildCount}, bodyHtml=${info.bodyHtmlLength}, doc=${info.documentUrl || 'none'}, loaded=${info.loadedFileUrl || 'none'}`
+    );
+
+    setTimeout(() => {
+      if (this.epubReaderController) {
+        this.pendingSpineIndex = fallbackSpineIndex;
+        this.epubReaderController.loadSpineItem(
+          fallbackPath,
+          0,
+          'none',
+          '',
+          this.getSpineLayoutType(fallbackSpineIndex),
+          this.getSpineMediaType(fallbackSpineIndex)
+        );
+        return;
+      }
+      this.readerMountEpoch = Date.now();
+    }, 0);
+    return true;
+  }
+
+  private buildFallbackNavigationTargets(spineItems: EBookChapter[]): EpubNavigationItem[] {
+    const items: EpubNavigationItem[] = [];
+    for (let index = 0; index < spineItems.length; index++) {
+      const chapter = spineItems[index];
+      const resourcePath = (chapter.resourceFile ?? chapter.resourceHref ?? '').trim();
+      items.push({
+        id: chapter.id,
+        title: (chapter.title ?? '').trim().length > 0 ? chapter.title : `第 ${index + 1} 章`,
+        href: chapter.resourceHref ?? resourcePath,
+        resourcePath: resourcePath,
+        fragment: '',
+        spineIndex: index,
+        level: 0,
+        playOrder: index + 1
+      });
+    }
+    return items;
+  }
+
+  private buildNavigationChapters(
+    navigationItems: EpubNavigationItem[],
+    spineItems: EBookChapter[],
+    bookId: string
+  ): EBookChapter[] {
+    const chapters: EBookChapter[] = [];
+    const now = Date.now();
+    for (let index = 0; index < navigationItems.length; index++) {
+      const item = navigationItems[index];
+      const spine = item.spineIndex >= 0 && item.spineIndex < spineItems.length
+        ? spineItems[item.spineIndex]
+        : null;
+      const title = item.title.trim().length > 0 ? item.title.trim() : `第 ${index + 1} 章`;
+      const chapter: EBookChapter = {
+        id: item.id.length > 0 ? item.id : `epub_nav_${index}`,
+        bookId: bookId,
+        chapterNumber: index + 1,
+        title: title,
+        content: '',
+        startPosition: 0,
+        endPosition: 0,
+        wordCount: 0,
+        resourceHref: item.href,
+        resourceFile: spine ? (spine.resourceFile ?? '') : item.resourcePath,
+        resourceMediaType: spine ? (spine.resourceMediaType ?? '') : '',
+        resourceLayoutType: spine ? (spine.resourceLayoutType ?? '') : '',
+        resourceImagePath: spine ? (spine.resourceImagePath ?? '') : '',
+        resourceImageRelativePath: spine ? (spine.resourceImageRelativePath ?? '') : '',
+        createTime: now
+      };
+      chapters.push(chapter);
+    }
+    return chapters;
+  }
+
+  private isGenericNavigationTitle(title: string): boolean {
+    const normalized = title.trim();
+    if (normalized.length <= 0) {
+      return true;
+    }
+    return /^Chapter\s+\d+$/i.test(normalized) ||
+      /^第\s*\d+\s*章$/.test(normalized) ||
+      /^第\s*\d+$/.test(normalized) ||
+      /^正文\s*\d*$/.test(normalized) ||
+      normalized === '开始阅读';
+  }
+
+  private shouldPreferGeneratedNavigation(
+    currentItems: EpubNavigationItem[],
+    generatedItems: EpubNavigationItem[]
+  ): boolean {
+    if (generatedItems.length <= 0) {
+      return false;
+    }
+    if (currentItems.length <= 0) {
+      return true;
+    }
+    let genericCount = 0;
+    for (let i = 0; i < currentItems.length; i++) {
+      if (this.isGenericNavigationTitle(currentItems[i].title)) {
+        genericCount++;
+      }
+    }
+    const genericRatio = currentItems.length > 0 ? genericCount / currentItems.length : 0;
+    return genericRatio >= 0.7 && generatedItems.length >= Math.max(2, Math.floor(currentItems.length * 0.35));
+  }
+
+  private configureNavigationTargets(
+    bookId: string,
+    extractedRoot: string,
+    spineItems: EBookChapter[]
+  ): void {
+    let navigationItems = EBookParserFactory.parseEpubNavigationItems(extractedRoot, spineItems);
+    const generatedNavigationItems = EBookParserFactory.parseEpubGeneratedNavigationItems(extractedRoot, spineItems);
+    if (this.shouldPreferGeneratedNavigation(navigationItems, generatedNavigationItems)) {
+      navigationItems = generatedNavigationItems;
+      logger.info(TAG, `使用正文标题生成目录: count=${navigationItems.length}`);
+    } else if (navigationItems.length <= 0) {
+      navigationItems = this.buildFallbackNavigationTargets(spineItems);
+      logger.info(TAG, `未解析到 EPUB 目录，回退为 spine 列表: count=${navigationItems.length}`);
+    } else {
+      logger.info(
+        TAG,
+        `EPUB 目录解析成功: navItems=${navigationItems.length}, generated=${generatedNavigationItems.length}, spineItems=${spineItems.length}`
+      );
+    }
+    this.navigationTargets = navigationItems;
+    this.navigationChapters = this.buildNavigationChapters(navigationItems, spineItems, bookId);
+  }
+
+  private getCurrentNavigationIndex(): number {
+    if (this.navigationTargets.length <= 0) {
+      return Math.max(0, Math.min(this.currentSpineIndex, Math.max(0, this.spineItems.length - 1)));
+    }
+    let targetIndex = 0;
+    for (let index = 0; index < this.navigationTargets.length; index++) {
+      const item = this.navigationTargets[index];
+      if (item.spineIndex <= this.currentSpineIndex) {
+        targetIndex = index;
+        continue;
+      }
+      break;
+    }
+    return targetIndex;
+  }
+
+  private navigateToNavigationIndex(index: number): void {
+    if (index < 0 || index >= this.navigationTargets.length) {
+      return;
+    }
+    const item = this.navigationTargets[index];
+    const fragment = item.fragment.trim();
+    if (index === this.getCurrentNavigationIndex() &&
+      item.spineIndex === this.currentSpineIndex &&
+      fragment.length <= 0) {
+      return;
+    }
+    if (this.currentSpineIndex === item.spineIndex && fragment.length > 0) {
+      this.handleEpubManualReadAloudNavigation('toc_anchor_jump');
+      const moved = this.epubReaderController?.goToAnchor(fragment) ?? false;
+      if (moved) {
+        this.currentAnchorFragment = fragment;
+        logger.info(TAG, `目录跳转到当前 spine 锚点: index=${index}, spine=${item.spineIndex}, fragment=${fragment}`);
+        void this.saveReadingProgress('toc_anchor_jump_same_spine');
+        return;
+      }
+    }
+    this.loadSpineItem(item.spineIndex, 0, 'none', fragment, 'manual');
+    logger.info(TAG, `目录跳转: index=${index}, spine=${item.spineIndex}, fragment=${fragment || 'none'}`);
+  }
+
+  private getSpineLayoutType(spineIndex: number): string {
+    if (spineIndex < 0 || spineIndex >= this.spineItems.length) {
+      return '';
+    }
+    return this.spineItems[spineIndex].resourceLayoutType ?? '';
+  }
+
+  private getSpineMediaType(spineIndex: number): string {
+    if (spineIndex < 0 || spineIndex >= this.spineItems.length) {
+      return '';
+    }
+    return this.spineItems[spineIndex].resourceMediaType ?? '';
+  }
+
+  private getCurrentSpineChapter(): EBookChapter | null {
+    if (this.currentSpineIndex < 0 || this.currentSpineIndex >= this.spineItems.length) {
+      return null;
+    }
+    return this.spineItems[this.currentSpineIndex];
+  }
+
+  private buildCurrentEpubAnchor(snapshot: EpubWebSelectionSnapshot): AnnotationAnchor {
+    const chapter = this.getCurrentSpineChapter();
+    const anchor: AnnotationAnchor = {
+      chapterId: chapter ? chapter.id : '',
+      chapterTitle: chapter ? chapter.title : '',
+      chapterIndex: this.currentSpineIndex,
+      pageIndex: Math.max(0, Math.floor(snapshot.pageIndex)),
+      progress: Math.max(0, Math.min(1, snapshot.pageProgress)),
+      startOffset: Math.max(0, Math.floor(snapshot.startOffset)),
+      endOffset: Math.max(Math.floor(snapshot.startOffset) + 1, Math.floor(snapshot.endOffset)),
+      quoteText: snapshot.selectedText,
+      contextBefore: snapshot.contextBefore,
+      contextAfter: snapshot.contextAfter
+    };
+    return anchor;
+  }
+
+  private parseEpubHighlightColor(styleJson: string): string {
+    const defaultColor = '#E8A317';
+    if (!styleJson || styleJson.trim().length <= 0) {
+      return defaultColor;
+    }
+    try {
+      const style = JSON.parse(styleJson) as HighlightStyle;
+      if (style && style.color && style.color.trim().length > 0) {
+        return style.color;
+      }
+      return defaultColor;
+    } catch (_error) {
+      return defaultColor;
+    }
+  }
+
+  private parseEpubHighlightLineType(styleJson: string): HighlightLineType {
+    if (!styleJson || styleJson.trim().length <= 0) {
+      return HighlightLineType.UNDERLINE;
+    }
+    try {
+      const style = JSON.parse(styleJson) as HighlightStyle;
+      if (style && style.lineType === HighlightLineType.WAVY) {
+        return HighlightLineType.WAVY;
+      }
+      return HighlightLineType.UNDERLINE;
+    } catch (_error) {
+      return HighlightLineType.UNDERLINE;
+    }
+  }
+
+  private async refreshCurrentSpineHighlightRanges(trigger: string): Promise<void> {
+    const ebook = this.ebook;
+    if (!ebook) {
+      this.currentSpineHighlightRanges = [];
+      return;
+    }
+    const chapter = this.getCurrentSpineChapter();
+    const chapterId = chapter ? chapter.id : '';
+    try {
+      const records = await this.annotationManager.getContentAnnotations(
+        UnifiedContentType.EBOOK,
+        ebook.id,
+        UnifiedAnnotationType.HIGHLIGHT,
+        chapterId,
+        this.currentSpineIndex
+      );
+      const thoughtRecords = await this.annotationManager.getContentAnnotations(
+        UnifiedContentType.EBOOK,
+        ebook.id,
+        UnifiedAnnotationType.THOUGHT,
+        chapterId,
+        this.currentSpineIndex
+      );
+      const thoughtByHighlightId: Map<string, string> = new Map<string, string>();
+      const thoughtByAnchorKey: Map<string, string> = new Map<string, string>();
+      for (let i = 0; i < thoughtRecords.length; i++) {
+        const thoughtRecord = thoughtRecords[i];
+        const thoughtText = (thoughtRecord.textContent || '').trim();
+        if (thoughtRecord.linkedAnnotationId && thoughtRecord.linkedAnnotationId.length > 0) {
+          if (!thoughtByHighlightId.has(thoughtRecord.linkedAnnotationId)) {
+            thoughtByHighlightId.set(thoughtRecord.linkedAnnotationId, thoughtText);
+          }
+        }
+        const anchorKey = `${Math.floor(thoughtRecord.startOffset)}_${Math.floor(thoughtRecord.endOffset)}_${thoughtRecord.quoteText || ''}`;
+        if (!thoughtByAnchorKey.has(anchorKey)) {
+          thoughtByAnchorKey.set(anchorKey, thoughtText);
+        }
+      }
+
+      const ranges: EpubWebHighlightRange[] = [];
+      let linkedThoughtCount = 0;
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        const start = Math.max(0, Math.floor(record.startOffset));
+        const end = Math.max(start + 1, Math.floor(record.endOffset));
+        if (end <= start) {
+          continue;
+        }
+        let thoughtText = thoughtByHighlightId.get(record.id) || '';
+        if (thoughtText.length <= 0) {
+          const anchorKey = `${start}_${end}_${record.quoteText || ''}`;
+          thoughtText = thoughtByAnchorKey.get(anchorKey) || '';
+        }
+        if (thoughtText.trim().length > 0) {
+          linkedThoughtCount += 1;
+        }
+        const range: EpubWebHighlightRange = {
+          id: record.id,
+          startOffset: start,
+          endOffset: end,
+          color: this.parseEpubHighlightColor(record.styleJson),
+          lineType: this.parseEpubHighlightLineType(record.styleJson),
+          quoteText: record.quoteText || '',
+          pageIndex: record.pageIndex,
+          thoughtText
+        };
+        ranges.push(range);
+      }
+      ranges.sort((a: EpubWebHighlightRange, b: EpubWebHighlightRange) => a.startOffset - b.startOffset);
+      this.currentSpineHighlightRanges = ranges;
+      logger.info(
+        TAG,
+        `刷新 EPUB Web 划线渲染数据成功: trigger=${trigger}, spine=${this.currentSpineIndex}, count=${ranges.length}, thoughtLinked=${linkedThoughtCount}`
+      );
+    } catch (error) {
+      this.currentSpineHighlightRanges = [];
+      logger.error(TAG, `刷新 EPUB Web 划线渲染数据失败: trigger=${trigger}, error=${String(error)}`);
+    }
+  }
+
+  private onAddEpubHighlight(snapshot: EpubWebSelectionSnapshot): void {
+    logger.info(
+      TAG,
+      `触发 EPUB Web 划线指令: spine=${this.currentSpineIndex}, start=${snapshot.startOffset}, end=${snapshot.endOffset}, textLength=${snapshot.selectedText.length}`
+    );
+    void this.createEpubHighlightByStyle(snapshot, false);
+  }
+
+  private onAddEpubHighlightWithThought(snapshot: EpubWebSelectionSnapshot): void {
+    logger.info(
+      TAG,
+      `触发 EPUB Web 划线+想法指令: spine=${this.currentSpineIndex}, start=${snapshot.startOffset}, end=${snapshot.endOffset}, textLength=${snapshot.selectedText.length}`
+    );
+    void this.createEpubHighlightByStyle(snapshot, true);
+  }
+
+  private onUpdateEpubHighlightStyle(highlightId: string, lineType: HighlightLineType, color: string): void {
+    this.applyLocalEpubHighlightStyle(highlightId, lineType, color);
+    void this.updateEpubHighlightStyle(highlightId, lineType, color);
+  }
+
+  private onUpdateEpubHighlightThought(highlightId: string, thoughtText: string): void {
+    this.applyLocalEpubHighlightThought(highlightId, thoughtText);
+    void this.updateEpubHighlightThought(highlightId, thoughtText);
+  }
+
+  private applyLocalEpubHighlightStyle(highlightId: string, lineType: HighlightLineType, color: string): void {
+    if (!highlightId || highlightId.length <= 0 || this.currentSpineHighlightRanges.length <= 0) {
+      return;
+    }
+    const safeColor = color && color.trim().length > 0 ? color : '#E8A317';
+    let changed = false;
+    const updatedRanges: EpubWebHighlightRange[] = [];
+    for (let i = 0; i < this.currentSpineHighlightRanges.length; i++) {
+      const item = this.currentSpineHighlightRanges[i];
+      if (item.id === highlightId) {
+        const updated: EpubWebHighlightRange = {
+          id: item.id,
+          startOffset: item.startOffset,
+          endOffset: item.endOffset,
+          color: safeColor,
+          lineType,
+          quoteText: item.quoteText,
+          pageIndex: item.pageIndex,
+          thoughtText: item.thoughtText
+        };
+        updatedRanges.push(updated);
+        changed = true;
+      } else {
+        updatedRanges.push(item);
+      }
+    }
+    if (changed) {
+      this.currentSpineHighlightRanges = updatedRanges;
+      logger.info(TAG, `EPUB Web 划线样式本地刷新成功: highlightId=${highlightId}, lineType=${lineType}, color=${safeColor}`);
+    }
+  }
+
+  private applyLocalEpubHighlightThought(highlightId: string, thoughtText: string): void {
+    if (!highlightId || highlightId.length <= 0 || this.currentSpineHighlightRanges.length <= 0) {
+      return;
+    }
+    const safeThoughtText = thoughtText.trim();
+    let changed = false;
+    const updatedRanges: EpubWebHighlightRange[] = [];
+    for (let i = 0; i < this.currentSpineHighlightRanges.length; i++) {
+      const item = this.currentSpineHighlightRanges[i];
+      if (item.id === highlightId) {
+        const updated: EpubWebHighlightRange = {
+          id: item.id,
+          startOffset: item.startOffset,
+          endOffset: item.endOffset,
+          color: item.color,
+          lineType: item.lineType,
+          quoteText: item.quoteText,
+          pageIndex: item.pageIndex,
+          thoughtText: safeThoughtText
+        };
+        updatedRanges.push(updated);
+        changed = true;
+      } else {
+        updatedRanges.push(item);
+      }
+    }
+    if (changed) {
+      this.currentSpineHighlightRanges = updatedRanges;
+      logger.info(TAG, `EPUB Web 划线想法本地刷新成功: highlightId=${highlightId}, textLength=${safeThoughtText.length}`);
+    }
+  }
+
+  private async updateEpubHighlightStyle(highlightId: string, lineType: HighlightLineType, color: string): Promise<void> {
+    const ebook = this.ebook;
+    if (!ebook || !highlightId || highlightId.length <= 0) {
+      return;
+    }
+    const safeColor = color && color.trim().length > 0 ? color : '#E8A317';
+    try {
+      await this.annotationManager.updateHighlightStyle(highlightId, {
+        lineType,
+        color: safeColor
+      });
+      await this.refreshCurrentSpineHighlightRanges('update_highlight_style');
+      logger.info(TAG, `EPUB Web 划线样式更新成功: highlightId=${highlightId}, lineType=${lineType}, color=${safeColor}`);
+    } catch (error) {
+      logger.error(TAG, `更新 EPUB Web 划线样式失败: highlightId=${highlightId}, error=${String(error)}`);
+    }
+  }
+
+  private async updateEpubHighlightThought(highlightId: string, thoughtText: string): Promise<void> {
+    const ebook = this.ebook;
+    if (!ebook || !highlightId || highlightId.length <= 0) {
+      return;
+    }
+    const safeThoughtText = thoughtText.trim();
+    try {
+      const linkedThought = await this.annotationManager.getLinkedThoughtByHighlightId(
+        UnifiedContentType.EBOOK,
+        ebook.id,
+        highlightId
+      );
+
+      if (linkedThought) {
+        await this.annotationManager.updateAnnotationText(linkedThought.id, linkedThought.title || '', safeThoughtText);
+      } else if (safeThoughtText.length > 0) {
+        const targetHighlight = await this.annotationManager.getAnnotationById(highlightId);
+        if (!targetHighlight) {
+          logger.warn(TAG, `更新 EPUB Web 划线想法失败: 未找到对应划线, highlightId=${highlightId}`);
+          return;
+        }
+        const anchor: AnnotationAnchor = {
+          chapterId: targetHighlight.chapterId,
+          chapterTitle: targetHighlight.chapterTitle,
+          chapterIndex: targetHighlight.chapterIndex,
+          pageIndex: targetHighlight.pageIndex,
+          progress: targetHighlight.pageProgress,
+          startOffset: targetHighlight.startOffset,
+          endOffset: targetHighlight.endOffset,
+          quoteText: targetHighlight.quoteText,
+          contextBefore: targetHighlight.anchor.contextBefore ?? '',
+          contextAfter: targetHighlight.anchor.contextAfter ?? ''
+        };
+        await this.annotationManager.createThought({
+          contentType: UnifiedContentType.EBOOK,
+          contentId: ebook.id,
+          anchor,
+          textContent: safeThoughtText,
+          linkedAnnotationId: highlightId
+        });
+      }
+
+      await this.refreshCurrentSpineHighlightRanges('update_highlight_thought');
+      logger.info(TAG, `EPUB Web 划线想法更新成功: highlightId=${highlightId}, textLength=${safeThoughtText.length}`);
+    } catch (error) {
+      logger.error(TAG, `更新 EPUB Web 划线想法失败: highlightId=${highlightId}, error=${String(error)}`);
+    }
+  }
+
+  private async createEpubHighlightByStyle(
+    snapshot: EpubWebSelectionSnapshot,
+    withThought: boolean
+  ): Promise<void> {
+    const ebook = this.ebook;
+    if (!ebook) {
+      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      return;
+    }
+
+    const lineType = HighlightLineType.UNDERLINE;
+    const color = '#E8A317';
+    try {
+      const anchor = this.buildCurrentEpubAnchor(snapshot);
+      const thoughtPayload: CreateThoughtInput | undefined = withThought
+        ? {
+            contentType: UnifiedContentType.EBOOK,
+            contentId: ebook.id,
+            anchor: anchor,
+            textContent: ''
+          }
+        : undefined;
+      const highlight = await this.annotationManager.createHighlightWithThoughtTransaction({
+        contentType: UnifiedContentType.EBOOK,
+        contentId: ebook.id,
+        anchor,
+        style: {
+          lineType,
+          color
+        }
+      }, thoughtPayload);
+      await this.refreshCurrentSpineHighlightRanges('create_highlight');
+      logger.info(
+        TAG,
+        `EPUB Web 划线创建成功: annotationId=${highlight.id}, spine=${this.currentSpineIndex}, start=${snapshot.startOffset}, end=${snapshot.endOffset}, withThought=${withThought}`
+      );
+      promptAction.showToast({
+        message: withThought ? '划线和想法已保存' : '划线已保存',
+        duration: 1500
+      });
+    } catch (error) {
+      logger.error(TAG, `创建 EPUB Web 划线失败: ${String(error)}`);
+      promptAction.showToast({ message: '划线保存失败', duration: 1500 });
+    }
+  }
+
+  private resolveAbilityContext(): common.UIAbilityContext | null {
+    if (this.context) {
+      return this.context;
+    }
+    try {
+      const hostContext = this.getUIContext().getHostContext();
+      if (!hostContext) {
+        return null;
+      }
+      this.context = hostContext as common.UIAbilityContext;
+      return this.context;
+    } catch (error) {
+      logger.warn(TAG, `获取 UIAbilityContext 失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private queryCurrentEpubTextSnapshot(): Promise<EpubWebTextSnapshot | null> {
+    return new Promise<EpubWebTextSnapshot | null>((resolve) => {
+      if (!this.epubReaderController) {
+        resolve(null);
+        return;
+      }
+      this.epubReaderController.queryCurrentTextSnapshot((snapshot: EpubWebTextSnapshot | null) => {
+        if (snapshot) {
+          this.currentVisibleTextSnapshot = snapshot;
+          this.currentSpineTextCache = snapshot.text;
+          this.currentSpineTextCacheIndex = this.currentSpineIndex;
+        }
+        resolve(snapshot);
+      });
+    });
+  }
+
+  private buildFallbackEpubBookmarkContext(): EpubBookmarkContext | null {
+    const ebook = this.ebook;
+    if (!ebook) {
+      return null;
+    }
+    const chapter = this.getCurrentSpineChapter();
+    const hasPages = this.totalPagesInSpine > 0;
+    const safePage = Math.max(0, this.currentPageWithinSpine);
+    const context: EpubBookmarkContext = {
+      chapterId: chapter ? chapter.id : '',
+      chapterTitle: chapter ? (chapter.title || `第 ${this.currentSpineIndex + 1} 章`) : `第 ${this.currentSpineIndex + 1} 章`,
+      chapterIndex: this.currentSpineIndex,
+      pageIndex: safePage,
+      progress: hasPages ? Math.max(0, Math.min(1, (safePage + 1) / this.totalPagesInSpine)) : this.getCurrentSpineReadRatio(),
+      startOffset: -1,
+      endOffset: -1,
+      quoteText: '',
+      contextBefore: '',
+      contextAfter: '',
+      isTextMode: false
+    };
+    return context;
+  }
+
+  private buildEpubBookmarkContextFromSnapshot(snapshot: EpubWebTextSnapshot): EpubBookmarkContext | null {
+    const fallback = this.buildFallbackEpubBookmarkContext();
+    if (!fallback) {
+      return null;
+    }
+    const startOffset = Math.max(0, Math.floor(snapshot.startOffset));
+    const endOffset = Math.max(startOffset + 1, Math.floor(snapshot.endOffset));
+    const quoteText = snapshot.quoteText && snapshot.quoteText.trim().length > 0
+      ? snapshot.quoteText.trim()
+      : snapshot.text.substring(startOffset, Math.min(snapshot.text.length, endOffset)).replace(/\s+/g, ' ').trim();
+    const context: EpubBookmarkContext = {
+      chapterId: fallback.chapterId,
+      chapterTitle: fallback.chapterTitle,
+      chapterIndex: fallback.chapterIndex,
+      pageIndex: Math.max(0, Math.floor(snapshot.pageIndex)),
+      progress: Math.max(0, Math.min(1, snapshot.pageProgress)),
+      startOffset,
+      endOffset,
+      quoteText: quoteText.length > 120 ? quoteText.substring(0, 120) : quoteText,
+      contextBefore: snapshot.contextBefore,
+      contextAfter: snapshot.contextAfter,
+      isTextMode: true
+    };
+    return context;
+  }
+
+  private async getCurrentEpubBookmarkContext(): Promise<EpubBookmarkContext | null> {
+    const snapshot = await this.queryCurrentEpubTextSnapshot();
+    if (snapshot && snapshot.text.trim().length > 0) {
+      const context = this.buildEpubBookmarkContextFromSnapshot(snapshot);
+      if (context) {
+        return context;
+      }
+    }
+    return this.buildFallbackEpubBookmarkContext();
+  }
+
+  private buildEpubBookmarkTitle(context: EpubBookmarkContext): string {
+    return `${context.chapterTitle} · P${context.pageIndex + 1}`;
+  }
+
+  private buildCurrentEpubBookmarkAnchor(context: EpubBookmarkContext): AnnotationAnchor {
+    const anchor: AnnotationAnchor = {
+      chapterId: context.chapterId,
+      chapterTitle: context.chapterTitle,
+      chapterIndex: context.chapterIndex,
+      pageIndex: context.pageIndex,
+      progress: context.progress,
+      startOffset: context.startOffset,
+      endOffset: context.endOffset,
+      quoteText: context.quoteText,
+      contextBefore: context.contextBefore,
+      contextAfter: context.contextAfter
+    };
+    return anchor;
+  }
+
+  private isEpubBookmarkInCurrentContext(record: UnifiedAnnotationRecord, context: EpubBookmarkContext): boolean {
+    if (record.pageIndex >= 0 && record.pageIndex === context.pageIndex) {
+      return true;
+    }
+    if (!context.isTextMode || context.endOffset <= context.startOffset) {
+      return false;
+    }
+    if (record.startOffset < 0 || record.endOffset < 0) {
+      return false;
+    }
+    const itemStart = Math.max(0, Math.floor(record.startOffset));
+    const itemEnd = Math.max(itemStart + 1, Math.floor(record.endOffset));
+    return itemStart < context.endOffset && itemEnd > context.startOffset;
+  }
+
+  private refreshCurrentEpubBookmarkState(trigger: string): void {
+    void this.refreshCurrentEpubBookmarkStateInternal(trigger);
+  }
+
+  private async refreshCurrentEpubBookmarkStateInternal(trigger: string): Promise<void> {
+    const ebook = this.ebook;
+    if (!ebook) {
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      return;
+    }
+    const context = await this.getCurrentEpubBookmarkContext();
+    if (!context) {
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      return;
+    }
+    try {
+      const bookmarks = await this.annotationManager.getContentAnnotations(
+        UnifiedContentType.EBOOK,
+        ebook.id,
+        UnifiedAnnotationType.BOOKMARK,
+        context.chapterId,
+        context.chapterIndex
+      );
+      let matchedId = '';
+      for (let i = 0; i < bookmarks.length; i++) {
+        const item = bookmarks[i];
+        if (this.isEpubBookmarkInCurrentContext(item, context)) {
+          matchedId = item.id;
+          break;
+        }
+      }
+      this.currentPageBookmarkId = matchedId;
+      this.isCurrentPageBookmarked = matchedId.length > 0;
+      logger.debug(
+        TAG,
+        `刷新 EPUB Web 书签状态: trigger=${trigger}, spine=${context.chapterIndex}, page=${context.pageIndex}, bookmarked=${this.isCurrentPageBookmarked}, bookmarkId=${matchedId || 'none'}`
+      );
+    } catch (error) {
+      logger.error(TAG, `刷新 EPUB Web 书签状态失败: trigger=${trigger}, error=${String(error)}`);
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+    }
+  }
+
+  private async createCurrentEpubBookmark(): Promise<void> {
+    const ebook = this.ebook;
+    if (!ebook) {
+      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      return;
+    }
+    const context = await this.getCurrentEpubBookmarkContext();
+    if (!context) {
+      promptAction.showToast({ message: '当前页无法添加书签', duration: 1500 });
+      return;
+    }
+    try {
+      const bookmark = await this.annotationManager.createBookmark({
+        contentType: UnifiedContentType.EBOOK,
+        contentId: ebook.id,
+        title: this.buildEpubBookmarkTitle(context),
+        textContent: context.quoteText,
+        anchor: this.buildCurrentEpubBookmarkAnchor(context)
+      });
+      this.currentPageBookmarkId = bookmark.id;
+      this.isCurrentPageBookmarked = true;
+      promptAction.showToast({ message: '书签已添加', duration: 1200 });
+      logger.info(
+        TAG,
+        `EPUB Web 书签添加成功: spine=${context.chapterIndex}, page=${context.pageIndex}, start=${context.startOffset}, bookmarkId=${bookmark.id}`
+      );
+    } catch (error) {
+      logger.error(TAG, `添加 EPUB Web 书签失败: ${String(error)}`);
+      promptAction.showToast({ message: '添加书签失败', duration: 1500 });
+    }
+  }
+
+  private async removeCurrentEpubBookmark(): Promise<void> {
+    let bookmarkId = this.currentPageBookmarkId;
+    if (!bookmarkId || bookmarkId.trim().length <= 0) {
+      await this.refreshCurrentEpubBookmarkStateInternal('remove_before_refresh');
+      bookmarkId = this.currentPageBookmarkId;
+    }
+    if (!bookmarkId || bookmarkId.trim().length <= 0) {
+      promptAction.showToast({ message: '当前页暂无书签', duration: 1200 });
+      return;
+    }
+    try {
+      await this.annotationManager.deleteAnnotation(bookmarkId);
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      promptAction.showToast({ message: '书签已移除', duration: 1200 });
+      logger.info(TAG, `EPUB Web 书签移除成功: bookmarkId=${bookmarkId}`);
+    } catch (error) {
+      logger.error(TAG, `移除 EPUB Web 书签失败: ${String(error)}`);
+      promptAction.showToast({ message: '移除书签失败', duration: 1500 });
+    }
+  }
+
+  private toggleCurrentEpubBookmark(): void {
+    if (this.isCurrentPageBookmarked) {
+      void this.removeCurrentEpubBookmark();
+      return;
+    }
+    void this.createCurrentEpubBookmark();
+  }
+
+  private addCurrentEpubBookmark(): void {
+    this.toggleCurrentEpubBookmark();
+  }
+
+  private buildScopedReplaceRuleKey(): string {
+    const bookId = this.ebook?.id ?? '';
+    return `${NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX}${bookId}`;
+  }
+
+  private parseRuleIdArray(rawValue: string): string[] {
+    if (!rawValue || rawValue.length <= 0) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(rawValue) as Array<string>;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      const result: string[] = [];
+      for (let i = 0; i < parsed.length; i++) {
+        const item = parsed[i];
+        if (typeof item === 'string' && item.length > 0) {
+          result.push(item);
+        }
+      }
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `解析 EPUB Web 书籍净化规则作用域失败: ${String(error)}`);
+      return [];
+    }
+  }
+
+  private async loadScopedReplaceRuleIds(): Promise<string[] | null> {
+    const ebook = this.ebook;
+    if (!ebook || ebook.id.length <= 0) {
+      return null;
+    }
+    const abilityContext = this.resolveAbilityContext();
+    if (!abilityContext) {
+      return null;
+    }
+    try {
+      const store = await preferences.getPreferences(abilityContext, NOVEL_BOOK_RULE_SETTINGS_STORE);
+      const raw = await store.get(this.buildScopedReplaceRuleKey(), '') as string;
+      if (!raw || raw.length <= 0) {
+        return null;
+      }
+      return this.parseRuleIdArray(raw);
+    } catch (error) {
+      logger.warn(TAG, `加载 EPUB Web 书籍净化规则作用域失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async ensureReplaceSettingsLoaded(): Promise<void> {
+    if (this.replaceSettingsLoaded) {
+      return;
+    }
+    const abilityContext = this.resolveAbilityContext();
+    if (!abilityContext) {
+      this.replaceRulesEnabled = true;
+      this.scopedReplaceRuleIds = null;
+      this.replaceSettingsLoaded = true;
+      return;
+    }
+    try {
+      const store = await preferences.getPreferences(abilityContext, NOVEL_SETTINGS_STORE);
+      this.replaceRulesEnabled = await store.get(NOVEL_SETTING_ENABLE_REPLACE_RULES, true) as boolean;
+      this.scopedReplaceRuleIds = await this.loadScopedReplaceRuleIds();
+      this.replaceSettingsLoaded = true;
+      logger.info(
+        TAG,
+        `EPUB Web 净化设置加载完成: enabled=${this.replaceRulesEnabled}, scoped=${this.scopedReplaceRuleIds ? this.scopedReplaceRuleIds.length : -1}`
+      );
+    } catch (error) {
+      this.replaceRulesEnabled = true;
+      this.scopedReplaceRuleIds = null;
+      this.replaceSettingsLoaded = true;
+      logger.warn(TAG, `加载 EPUB Web 净化设置失败，使用默认值: ${String(error)}`);
+    }
+  }
+
+  private async persistReplaceRulesEnabled(enabled: boolean, trigger: string): Promise<void> {
+    this.replaceRulesEnabled = enabled;
+    const abilityContext = this.resolveAbilityContext();
+    if (!abilityContext) {
+      return;
+    }
+    try {
+      const store = await preferences.getPreferences(abilityContext, NOVEL_SETTINGS_STORE);
+      await store.put(NOVEL_SETTING_ENABLE_REPLACE_RULES, enabled);
+      await store.flush();
+      logger.info(TAG, `EPUB Web 净化规则总开关已更新: enabled=${enabled}, trigger=${trigger}`);
+    } catch (error) {
+      logger.warn(TAG, `保存 EPUB Web 净化规则总开关失败: trigger=${trigger}, error=${String(error)}`);
+    }
+  }
+
+  private async appendScopedReplaceRuleIdIfNeeded(ruleId: string): Promise<void> {
+    if (!ruleId || ruleId.length <= 0) {
+      return;
+    }
+    if (this.scopedReplaceRuleIds === null) {
+      return;
+    }
+    if (this.scopedReplaceRuleIds.indexOf(ruleId) >= 0) {
+      return;
+    }
+    const nextRuleIds = this.scopedReplaceRuleIds.slice();
+    nextRuleIds.push(ruleId);
+    this.scopedReplaceRuleIds = nextRuleIds;
+    const abilityContext = this.resolveAbilityContext();
+    const ebook = this.ebook;
+    if (!abilityContext || !ebook) {
+      return;
+    }
+    try {
+      const store = await preferences.getPreferences(abilityContext, NOVEL_BOOK_RULE_SETTINGS_STORE);
+      await store.put(this.buildScopedReplaceRuleKey(), JSON.stringify(nextRuleIds));
+      await store.flush();
+      logger.info(TAG, `EPUB Web 新增净化规则已纳入当前书籍作用域: ruleId=${ruleId}, total=${nextRuleIds.length}`);
+    } catch (error) {
+      logger.warn(TAG, `保存 EPUB Web 书籍净化规则作用域失败: ruleId=${ruleId}, error=${String(error)}`);
+    }
+  }
+
+  private shouldUseReplaceRule(rule: ReplaceRule): boolean {
+    if (this.scopedReplaceRuleIds === null) {
+      return true;
+    }
+    return this.scopedReplaceRuleIds.indexOf(rule.id) >= 0;
+  }
+
+  private buildEpubPurifyRulePayload(rule: ReplaceRule): EpubWebPurifyRulePayload {
+    const payload: EpubWebPurifyRulePayload = {
+      id: rule.id,
+      pattern: rule.pattern,
+      replacement: rule.replacement,
+      isRegex: rule.isRegex
+    };
+    return payload;
+  }
+
+  private async collectEpubPurifyRulePayloads(): Promise<EpubWebPurifyRulePayload[]> {
+    await this.ensureReplaceSettingsLoaded();
+    if (!this.replaceRulesEnabled) {
+      return [];
+    }
+    const ebook = this.ebook;
+    const bookId = ebook ? ebook.id : '';
+    const ruleManager = NovelReplaceRuleManager.getInstance();
+    await ruleManager.initialize();
+    await ruleManager.refreshRules();
+    const enabledRules = ruleManager.getEnabledRules(ReplaceScope.CONTENT, bookId);
+    const payloads: EpubWebPurifyRulePayload[] = [];
+    for (let i = 0; i < enabledRules.length; i++) {
+      const rule = enabledRules[i];
+      if (!this.shouldUseReplaceRule(rule)) {
+        continue;
+      }
+      payloads.push(this.buildEpubPurifyRulePayload(rule));
+    }
+    return payloads;
+  }
+
+  private async applyPurifyRulesToCurrentSpine(trigger: string): Promise<void> {
+    if (!this.epubReaderController) {
+      return;
+    }
+    try {
+      const payloads = await this.collectEpubPurifyRulePayloads();
+      this.epubReaderController.applyPurifyRules(payloads);
+      this.currentVisibleTextSnapshot = null;
+      this.currentSpineTextCache = '';
+      this.currentSpineTextCacheIndex = -1;
+      setTimeout(() => {
+        this.refreshCurrentEpubBookmarkState(`purify_${trigger}`);
+        void this.updateEpubReadAloudContextByPosition();
+        void this.refreshCurrentSpineHighlightRanges(`purify_${trigger}`);
+      }, 120);
+      logger.info(TAG, `EPUB Web 净化规则已应用: trigger=${trigger}, rules=${payloads.length}, spine=${this.currentSpineIndex}`);
+    } catch (error) {
+      logger.error(TAG, `应用 EPUB Web 净化规则失败: trigger=${trigger}, error=${String(error)}`);
+    }
+  }
+
+  async addPurifyRule(pattern: string): Promise<void> {
+    if (!pattern || pattern.trim().length <= 0) {
+      return;
+    }
+    const normalizedPattern = pattern.trim();
+    try {
+      await this.ensureReplaceSettingsLoaded();
+      const ruleManager = NovelReplaceRuleManager.getInstance();
+      await ruleManager.initialize();
+      if (!this.replaceRulesEnabled) {
+        await this.persistReplaceRulesEnabled(true, 'epub_selection_add_rule');
+      }
+      const ruleParams: AddRuleParams = {
+        name: `净化：${normalizedPattern.substring(0, 20)}${normalizedPattern.length > 20 ? '...' : ''}`,
+        pattern: normalizedPattern,
+        replacement: '',
+        isRegex: false,
+        scope: ReplaceScope.CONTENT,
+        enabled: true,
+        order: 100
+      };
+      const createdRule = await ruleManager.addRule(ruleParams);
+      await this.appendScopedReplaceRuleIdIfNeeded(createdRule.id);
+      await ruleManager.refreshRules();
+      await this.applyPurifyRulesToCurrentSpine('add_from_selection');
+      logger.info(TAG, `EPUB Web 已添加净化规则: ruleId=${createdRule.id}, pattern=${normalizedPattern.substring(0, 50)}`);
+    } catch (error) {
+      logger.error(TAG, `添加 EPUB Web 净化规则失败: ${String(error)}`);
+      promptAction.showToast({ message: '添加净化规则失败', duration: 1500 });
+    }
+  }
+
+  private getSafeReadAloudSettings(settings?: ReadAloudSettings): ReadAloudSettings {
+    const globalDefaults = this.loadGlobalReadAloudSettings();
+    if (!settings) {
+      return normalizeReadAloudSettings(globalDefaults);
+    }
+    return this.mergeReadAloudSettings(globalDefaults, settings);
+  }
+
+  private mergeReadAloudSettings(current: ReadAloudSettings, partial: Partial<ReadAloudSettings>): ReadAloudSettings {
+    const currentRemote = current.remote;
+    const partialRemote = partial.remote;
+    let mergedRemote = currentRemote;
+    if (partialRemote && currentRemote) {
+      mergedRemote = mergeRemoteReadAloudSettings(currentRemote, partialRemote);
+    }
+    return normalizeReadAloudSettings({
+      enabled: partial.enabled ?? current.enabled,
+      engineType: partial.engineType ?? current.engineType,
+      speed: partial.speed ?? current.speed,
+      pitch: partial.pitch ?? current.pitch,
+      volume: partial.volume ?? current.volume,
+      continueInBackground: partial.continueInBackground ?? current.continueInBackground,
+      autoPlayNextChapter: partial.autoPlayNextChapter ?? current.autoPlayNextChapter,
+      pauseOnManualPageTurn: partial.pauseOnManualPageTurn ?? current.pauseOnManualPageTurn,
+      voiceLanguage: partial.voiceLanguage ?? current.voiceLanguage,
+      voicePerson: partial.voicePerson ?? current.voicePerson,
+      voiceOnline: partial.voiceOnline ?? current.voiceOnline,
+      remote: mergedRemote
+    });
+  }
+
+  private loadGlobalReadAloudSettings(): ReadAloudSettings {
+    return loadStoredGlobalReadAloudSettings(this.settingsManager);
+  }
+
+  private async persistGlobalReadAloudSettings(settings: ReadAloudSettings): Promise<void> {
+    try {
+      await persistStoredGlobalReadAloudSettings(this.settingsManager, normalizeReadAloudSettings(settings));
+    } catch (error) {
+      logger.warn(TAG, `保存 EPUB Web 全局听书设置失败: ${String(error)}`);
+    }
+  }
+
+  private isReadAloudSentenceBoundary(char: string): boolean {
+    return char === '\n' ||
+      char === '\r' ||
+      char === '\u3002' ||
+      char === '\uff01' ||
+      char === '\uff1f' ||
+      char === '\u2026' ||
+      char === '\u2014' ||
+      char === '\u2025' ||
+      char === '\u3001' ||
+      char === '\u300d' ||
+      char === '\u300f' ||
+      char === '\u3011' ||
+      char === '.' ||
+      char === '!' ||
+      char === '?' ||
+      char === ';' ||
+      char === '\uff1b';
+  }
+
+  private isReadAloudSentenceTailChar(char: string): boolean {
+    return char === '"' ||
+      char === '\'' ||
+      char === ')' ||
+      char === '\uff09' ||
+      char === '\u300d' ||
+      char === '\u300f' ||
+      char === '\u3011' ||
+      char === '\u300b' ||
+      char === '\u201d' ||
+      char === '\u2019';
+  }
+
+  private resolveReadAloudSentenceStartCharIndex(text: string, charIndex: number): number {
+    if (!text || text.length <= 0) {
+      return 0;
+    }
+    let sentenceStart = Math.max(0, Math.min(Math.floor(charIndex), text.length - 1));
+    while (sentenceStart > 0) {
+      const prevChar = text.charAt(sentenceStart - 1);
+      if (this.isReadAloudSentenceBoundary(prevChar)) {
+        break;
+      }
+      sentenceStart -= 1;
+    }
+    return sentenceStart;
+  }
+
+  private resolveReadAloudSentenceEndCharIndex(text: string, charIndex: number): number {
+    if (!text || text.length <= 0) {
+      return 0;
+    }
+    let sentenceEnd = Math.max(0, Math.min(Math.floor(charIndex), text.length - 1));
+    while (sentenceEnd < text.length) {
+      const currentChar = text.charAt(sentenceEnd);
+      sentenceEnd += 1;
+      if (this.isReadAloudSentenceBoundary(currentChar)) {
+        while (sentenceEnd < text.length) {
+          const tailChar = text.charAt(sentenceEnd);
+          if (!this.isReadAloudSentenceTailChar(tailChar)) {
+            break;
+          }
+          sentenceEnd += 1;
+        }
+        break;
+      }
+    }
+    return Math.max(1, Math.min(text.length, sentenceEnd));
+  }
+
+  private getCurrentEpubReadAloudResumeCharIndex(snapshot: EpubWebTextSnapshot): number {
+    if (
+      this.readAloudCurrentCharIndex >= 0 &&
+      this.currentSpineTextCacheIndex === this.currentSpineIndex &&
+      this.readAloudCurrentCharIndex < snapshot.text.length
+    ) {
+      return this.readAloudCurrentCharIndex;
+    }
+    return Math.max(0, Math.min(snapshot.startOffset, Math.max(0, snapshot.text.length - 1)));
+  }
+
+  private async updateEpubReadAloudContextByPosition(resumeCharIndex?: number): Promise<boolean> {
+    const ebook = this.ebook;
+    if (!ebook) {
+      return false;
+    }
+    const snapshot = await this.queryCurrentEpubTextSnapshot();
+    if (!snapshot || snapshot.text.trim().length <= 0) {
+      return false;
+    }
+    const readAloudSettings = this.getSafeReadAloudSettings(this.readAloudPanelSettings);
+    this.readAloudPanelSettings = readAloudSettings;
+    this.readAloudController.updateSettings(readAloudSettings);
+    const maxCharIndex = Math.max(0, snapshot.text.length - 1);
+    const fallbackResume = this.getCurrentEpubReadAloudResumeCharIndex(snapshot);
+    const safeResumeCharIndex = Math.max(
+      0,
+      Math.min(Math.floor(resumeCharIndex ?? fallbackResume), maxCharIndex)
+    );
+    const chapter = this.getCurrentSpineChapter();
+    const readAloudCoverUrl = this.resolveEpubReadAloudCoverUrl(ebook);
+    this.readAloudController.updateContext({
+      bookId: ebook.id,
+      bookTitle: ebook.metadata.title || '电子书',
+      chapterIndex: this.currentSpineIndex,
+      chapterTitle: chapter ? (chapter.title || '') : '',
+      coverUrl: readAloudCoverUrl,
+      content: snapshot.text,
+      pageIndex: this.currentPageWithinSpine,
+      resumeCharIndex: safeResumeCharIndex
+    });
+    return true;
+  }
+
+  private syncReadAloudStateFromController(): void {
+    const ebook = this.ebook;
+    if (!ebook) {
+      this.readAloudPlaying = false;
+      return;
+    }
+    const context = this.readAloudController.getContextSnapshot();
+    if (!context || context.bookId !== ebook.id) {
+      this.readAloudPlaying = false;
+      return;
+    }
+    const snapshot = this.readAloudController.getSnapshot();
+    this.readAloudPlaying = snapshot.playbackState === ReadAloudPlaybackState.PLAYING;
+    const textLength = Math.max(0, context.content.length);
+    if (textLength <= 0) {
+      return;
+    }
+    const rawCharIndex = snapshot.currentCharIndex >= 0 ? snapshot.currentCharIndex : (context.resumeCharIndex ?? -1);
+    if (rawCharIndex < 0) {
+      return;
+    }
+    this.readAloudCurrentCharIndex = Math.max(0, Math.min(Math.floor(rawCharIndex), Math.max(0, textLength - 1)));
+  }
+
+  private applyReadAloudProgress(payload: ReadAloudStatePayload): void {
+    const ebook = this.ebook;
+    if (!ebook) {
+      return;
+    }
+    const context = this.readAloudController.getContextSnapshot();
+    if (!context || context.bookId !== ebook.id) {
+      return;
+    }
+    const content = context.content;
+    if (!content || content.length <= 0) {
+      return;
+    }
+    const payloadCharIndex = payload.currentCharIndex >= 0 ? payload.currentCharIndex : payload.chunkStartCharIndex;
+    if (payloadCharIndex < 0) {
+      return;
+    }
+    const maxCharIndex = Math.max(0, content.length - 1);
+    const safeCharIndex = Math.max(0, Math.min(Math.floor(payloadCharIndex), maxCharIndex));
+    this.readAloudCurrentCharIndex = safeCharIndex;
+    this.currentSpineTextCache = content;
+    this.currentSpineTextCacheIndex = context.chapterIndex;
+
+    if (context.chapterIndex === this.currentSpineIndex) {
+      const highlightStart = this.resolveReadAloudSentenceStartCharIndex(content, safeCharIndex);
+      const highlightEnd = this.resolveReadAloudSentenceEndCharIndex(content, safeCharIndex);
+      const progressOffset = Math.max(highlightStart, Math.min(safeCharIndex, highlightEnd));
+      this.epubReaderController?.applyReadAloudHighlight(highlightStart, highlightEnd, true, progressOffset);
+    }
+
+    if (payload.reason === 'progress_updated') {
+      const now = Date.now();
+      if ((now - this.lastReadAloudProgressSaveTime) >= this.readAloudProgressSaveInterval) {
+        this.lastReadAloudProgressSaveTime = now;
+        void this.saveReadingProgress('read_aloud_progress');
+      }
+    }
+  }
+
+  private startReadAloudUiSyncTimer(): void {
+    if (this.readAloudUiSyncTimer >= 0) {
+      return;
+    }
+    this.readAloudUiSyncTimer = setInterval(() => {
+      if (!this.isPageVisible || !this.ebook) {
+        return;
+      }
+      this.syncReadAloudStateFromController();
+    }, 240);
+  }
+
+  private stopReadAloudUiSyncTimer(): void {
+    if (this.readAloudUiSyncTimer < 0) {
+      return;
+    }
+    clearInterval(this.readAloudUiSyncTimer);
+    this.readAloudUiSyncTimer = -1;
+  }
+
+  private shouldHandleReadAloudUiEvents(): boolean {
+    if (!this.isPageVisible) {
+      return false;
+    }
+    const currentHostPage = (AppStorage.get<string>('ReadAloudCurrentHostPage') ?? '').trim();
+    return currentHostPage === 'EpubWebViewReaderPage';
+  }
+
+  private handleEpubManualReadAloudNavigation(reason: string): void {
+    const readAloudSettings = this.getSafeReadAloudSettings(this.readAloudPanelSettings);
+    if (!readAloudSettings.pauseOnManualPageTurn) {
+      return;
+    }
+    const snapshot = this.readAloudController.getSnapshot();
+    if (snapshot.playbackState !== ReadAloudPlaybackState.PLAYING) {
+      return;
+    }
+    this.readAloudController.pause(reason);
+    this.readAloudPlaying = false;
+    this.epubReaderController?.clearReadAloudHighlight();
+    void this.updateEpubReadAloudContextByPosition();
+    void this.saveReadingProgress(reason);
+    logger.info(TAG, `EPUB Web 手动导航触发听书暂停: reason=${reason}`);
+  }
+
+  private scheduleRouteReadAloudAutoStart(reason: string, delayMs: number): void {
+    if (!this.shouldHandleRouteReadAloudAutoEntry()) {
+      return;
+    }
+    setTimeout(() => {
+      void this.tryRouteReadAloudAutoStart(reason);
+    }, delayMs);
+  }
+
+  private shouldHandleRouteReadAloudAutoEntry(): boolean {
+    return this.shouldAutoStartReadAloudFromRoute || this.shouldAutoOpenReadAloudPlayerFromRoute;
+  }
+
+  private clearRouteReadAloudAutoEntry(): void {
+    this.shouldAutoStartReadAloudFromRoute = false;
+    this.shouldAutoOpenReadAloudPlayerFromRoute = false;
+  }
+
+  private async tryRouteReadAloudAutoStart(reason: string): Promise<void> {
+    if (!this.shouldHandleRouteReadAloudAutoEntry() || !this.ebook) {
+      return;
+    }
+    this.routeReadAloudAutoStartAttempts += 1;
+    let readAloudSettings = this.getSafeReadAloudSettings(this.readAloudPanelSettings);
+    if (!readAloudSettings.enabled) {
+      readAloudSettings.enabled = true;
+      this.readAloudPanelSettings = readAloudSettings;
+      await this.persistGlobalReadAloudSettings(readAloudSettings);
+    }
+    this.readAloudController.updateSettings(readAloudSettings);
+    const hasContext = await this.updateEpubReadAloudContextByPosition();
+    if (!hasContext) {
+      if (this.routeReadAloudAutoStartAttempts < 4) {
+        this.scheduleRouteReadAloudAutoStart(`${reason}_retry_${this.routeReadAloudAutoStartAttempts}`, 420);
+      } else {
+        this.clearRouteReadAloudAutoEntry();
+        promptAction.showToast({ message: '当前页不是可朗读文本', duration: 1500 });
+      }
+      return;
+    }
+    const shouldOpenPlayer = this.shouldAutoOpenReadAloudPlayerFromRoute;
+    const snapshot = this.readAloudController.getSnapshot();
+    if (snapshot.playbackState !== ReadAloudPlaybackState.PLAYING) {
+      this.readAloudController.start(`route_auto_start_${reason}`);
+    }
+    this.readAloudController.refreshMediaSession();
+    this.syncReadAloudStateFromController();
+    this.clearRouteReadAloudAutoEntry();
+    if (shouldOpenPlayer) {
+      setTimeout(() => {
+        this.openReadAloudPlayerPageFromEpubReader();
+      }, 60);
+    }
+    logger.info(TAG, `EPUB 路由参数已自动启动听书: reason=${reason}, attempts=${this.routeReadAloudAutoStartAttempts}`);
+  }
+
+  private openReadAloudPlayerPageFromEpubReader(): void {
+    const ebook = this.ebook;
+    if (!ebook) {
+      return;
+    }
+    const context = this.readAloudController.getContextSnapshot();
+    if (!context || context.bookId !== ebook.id) {
+      logger.warn(TAG, 'EPUB 听书独立页打开失败：朗读上下文未就绪');
+      return;
+    }
+    const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
+    if (!globalStack) {
+      logger.warn(TAG, 'GlobalNavStack not found, cannot open ReadAloudPlayerPage');
+      return;
+    }
+    AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', 'EpubWebViewReaderPage');
+    AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
+    AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
+    globalStack.pushPathByName('ReadAloudPlayerPage', undefined);
+  }
+
+  private toggleReadAloudFromToolbar(): void {
+    void this.toggleReadAloudFromToolbarAsync();
+  }
+
+  private async toggleReadAloudFromToolbarAsync(): Promise<void> {
+    const ebook = this.ebook;
+    if (!ebook) {
+      return;
+    }
+    let readAloudSettings = this.getSafeReadAloudSettings(this.readAloudPanelSettings);
+    if (!readAloudSettings.enabled) {
+      readAloudSettings.enabled = true;
+      this.readAloudPanelSettings = readAloudSettings;
+      await this.persistGlobalReadAloudSettings(readAloudSettings);
+    }
+    this.readAloudController.updateSettings(readAloudSettings);
+    const hasContext = await this.updateEpubReadAloudContextByPosition();
+    if (!hasContext) {
+      promptAction.showToast({ message: '当前页不是可朗读文本', duration: 1500 });
+      return;
+    }
+    if (this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING) {
+      this.readAloudController.pause('epub_toolbar_toggle');
+    } else {
+      this.readAloudController.start('epub_toolbar_toggle');
+    }
+    this.readAloudController.refreshMediaSession();
+    this.syncReadAloudStateFromController();
+  }
+
+  private onStartReadAloudFromCharIndex(charIndex: number): void {
+    void this.startReadAloudFromCharIndexAsync(charIndex);
+  }
+
+  private async startReadAloudFromCharIndexAsync(charIndex: number): Promise<void> {
+    const snapshot = await this.queryCurrentEpubTextSnapshot();
+    if (!snapshot || snapshot.text.trim().length <= 0) {
+      promptAction.showToast({ message: '当前页不是可朗读文本', duration: 1500 });
+      return;
+    }
+    const safeStart = this.resolveReadAloudSentenceStartCharIndex(snapshot.text, charIndex);
+    this.readAloudCurrentCharIndex = safeStart;
+    const hasContext = await this.updateEpubReadAloudContextByPosition(safeStart);
+    if (!hasContext) {
+      promptAction.showToast({ message: '听书内容未就绪', duration: 1500 });
+      return;
+    }
+    const currentSettings = this.getSafeReadAloudSettings(this.readAloudPanelSettings);
+    if (!currentSettings.enabled) {
+      currentSettings.enabled = true;
+      this.readAloudPanelSettings = currentSettings;
+      await this.persistGlobalReadAloudSettings(currentSettings);
+      this.readAloudController.updateSettings(currentSettings);
+    }
+    const controllerSnapshot = this.readAloudController.getSnapshot();
+    if (controllerSnapshot.playbackState === ReadAloudPlaybackState.PLAYING) {
+      const baseCharIndex = controllerSnapshot.currentCharIndex >= 0 ? controllerSnapshot.currentCharIndex : safeStart;
+      this.readAloudController.seekByChars(safeStart - baseCharIndex, 'epub_selection_start');
+    } else {
+      this.readAloudController.start('epub_selection_start');
+      this.syncReadAloudStateFromController();
+    }
+    this.readAloudController.refreshMediaSession();
+  }
+
+  private openReadAloudSettingsPanelFromToolbar(): void {
+    const now = Date.now();
+    if ((now - this.lastReadAloudPanelCloseTime) < EpubWebViewReaderPage.READ_ALOUD_PANEL_REOPEN_GUARD_MS) {
+      return;
+    }
+    this.showReadAloudPanel = true;
+    this.readAloudPanelSettings = this.getSafeReadAloudSettings(this.readAloudPanelSettings);
+    this.hideToolbars();
+    this.handleMenusVisibilityChange();
+    this.refreshReadAloudAvailability();
+  }
+
+  private updateReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
+    logger.debug(TAG, `EPUB Web 应用听书设置变更: ${JSON.stringify(partial)}`);
+    const current = this.getSafeReadAloudSettings(this.readAloudPanelSettings);
+    const nextReadAloud = this.mergeReadAloudSettings(current, partial);
+    this.readAloudPanelSettings = nextReadAloud;
+    void this.persistGlobalReadAloudSettings(nextReadAloud);
+    this.readAloudController.updateSettings(nextReadAloud);
+    void this.updateEpubReadAloudContextByPosition();
+
+    const shouldRefreshAvailability = partial.engineType !== undefined || partial.remote !== undefined;
+    if (shouldRefreshAvailability) {
+      this.refreshReadAloudAvailability();
+      return;
+    }
+    if (
+      partial.voiceLanguage !== undefined ||
+      partial.voicePerson !== undefined ||
+      partial.voiceOnline !== undefined
+    ) {
+      this.refreshReadAloudVoices();
+    }
+  }
+
+  private refreshReadAloudAvailability(): void {
+    ReadAloudAvailability.refresh(false, this.getSafeReadAloudSettings(this.readAloudPanelSettings)).then((map: ReadAloudEngineAvailabilityMap) => {
+      this.readAloudAvailability = map;
+      if (!map.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `System TTS probe failed: ${probeError}`;
+        }
+      }
+      if (!map.REMOTE && this.getSafeReadAloudSettings(this.readAloudPanelSettings).engineType === ReadAloudEngineType.REMOTE) {
+        const probeError = ReadAloudAvailability.getLastRemoteProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `Remote TTS unavailable: ${probeError}`;
+        }
+      }
+      this.refreshReadAloudVoices();
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新 EPUB Web 听书引擎可用性失败: ${errorText}`);
+      this.readAloudStatusMessage = `Read-aloud initialization failed: ${errorText}`;
+    });
+  }
+
+  private isReadAloudEngineAvailable(engineType: ReadAloudEngineType): boolean {
+    if (engineType === ReadAloudEngineType.SYSTEM) {
+      return this.readAloudAvailability.SYSTEM === true;
+    }
+    if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      return this.readAloudAvailability.LEGADO_COMPAT === true;
+    }
+    if (engineType === ReadAloudEngineType.REMOTE) {
+      return this.readAloudAvailability.REMOTE === true;
+    }
+    return false;
+  }
+
+  private refreshReadAloudVoices(): void {
+    const engineType = this.getSafeReadAloudSettings(this.readAloudPanelSettings).engineType;
+    if (!this.isReadAloudEngineAvailable(engineType)) {
+      this.readAloudVoiceOptions = [];
+      if (engineType === ReadAloudEngineType.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        this.readAloudStatusMessage = probeError.length > 0 ? `System TTS probe failed: ${probeError}` : 'System TTS is unavailable, please check device settings';
+      } else if (engineType === ReadAloudEngineType.REMOTE) {
+        const probeError = ReadAloudAvailability.getLastRemoteProbeErrorMessage();
+        this.readAloudStatusMessage = probeError.length > 0 ? `Remote TTS unavailable: ${probeError}` : 'Remote TTS unavailable, please check endpoint/model/voice/apiKey settings';
+      } else {
+        this.readAloudStatusMessage = 'Current read-aloud engine is unavailable';
+      }
+      return;
+    }
+    this.readAloudController.listVoices(engineType).then((voices: ReadAloudVoiceOption[]) => {
+      this.readAloudVoiceOptions = voices;
+      this.readAloudStatusMessage = voices.length > 0 ? '' : 'System TTS engine initialization failed';
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新 EPUB Web 听书音色列表失败: ${errorText}`);
+      this.readAloudVoiceOptions = [];
+      this.readAloudStatusMessage = `Read-aloud startup failed: ${errorText}`;
+    });
+  }
+
+  private formatReadAloudError(error: Object | string): string {
+    if (typeof error === 'string') {
+      return error;
+    }
+    const errorObj = error as Error;
+    if (errorObj.message && errorObj.message.length > 0) {
+      return errorObj.message;
+    }
+    return String(error);
+  }
+
+  private isSpineImageLike(spineIndex: number): boolean {
+    if (spineIndex < 0 || spineIndex >= this.spineItems.length) {
+      return false;
+    }
+    const chapter = this.spineItems[spineIndex];
+    const layoutType = (chapter.resourceLayoutType ?? '').trim().toUpperCase();
+    if (layoutType === 'IMAGE_PAGE') {
+      return true;
+    }
+    const mediaType = (chapter.resourceMediaType ?? '').trim().toLowerCase();
+    if (mediaType.startsWith('image/')) {
+      return true;
+    }
+    const resourceFile = (chapter.resourceFile ?? '').trim().replace(/[#?].*$/, '');
+    const resourceHref = (chapter.resourceHref ?? '').trim().replace(/[#?].*$/, '');
+    return IMAGE_RESOURCE_PATH_PATTERN.test(resourceFile) || IMAGE_RESOURCE_PATH_PATTERN.test(resourceHref);
+  }
+
+  private isCurrentSpineImageLike(): boolean {
+    return this.isSpineImageLike(this.currentSpineIndex);
+  }
+
+  private getEffectiveTextHorizontalMargin(): number {
+    return Math.max(0, Math.round(this.readingSettings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin));
+  }
+
+  private getEffectiveTextTopMargin(): number {
+    return Math.max(
+      0,
+      Math.round(
+        this.readingSettings.pageTopMargin ??
+          this.readingSettings.pageMargin ??
+          DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ??
+          DEFAULT_EBOOK_READING_SETTINGS.pageMargin
+      )
+    );
+  }
+
+  private getEffectiveTextBottomMargin(): number {
+    return Math.max(
+      0,
+      Math.round(
+        this.readingSettings.pageBottomMargin ??
+          this.readingSettings.pageMargin ??
+          DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ??
+          DEFAULT_EBOOK_READING_SETTINGS.pageMargin
+      )
+    );
+  }
+
+  private async refreshCameraCutoutTopInset(source: string): Promise<void> {
+    try {
+      const windowCutoutTopInset = this.getWindowCutoutTopInset();
+      let displayCutoutTopInset = 0;
+      try {
+        const displayInfo = display.getDefaultDisplaySync();
+        const cutoutInfo = await displayInfo.getCutoutInfo();
+        let topInsetPx = 0;
+        for (let i = 0; i < cutoutInfo.boundingRects.length; i++) {
+          const rect = cutoutInfo.boundingRects[i];
+          if (rect.top <= 1 && rect.height > 0) {
+            topInsetPx = Math.max(topInsetPx, rect.top + rect.height);
+          }
+        }
+        displayCutoutTopInset = topInsetPx > 0 ? Math.ceil(px2vp(topInsetPx)) : 0;
+      } catch (displayError) {
+        logger.debug(TAG, `读取 display cutout 信息失败: ${String(displayError)}`);
+      }
+      const topInsetVp = Math.max(windowCutoutTopInset, displayCutoutTopInset);
+      if (Math.abs(this.cameraCutoutTopInset - topInsetVp) <= 1) {
+        return;
+      }
+      this.cameraCutoutTopInset = topInsetVp;
+      logger.info(
+        TAG,
+        `更新 EPUB 摄像头避让: source=${source}, cutoutTop=${topInsetVp}vp, window=${windowCutoutTopInset}vp, display=${displayCutoutTopInset}vp`
+      );
+      setTimeout(() => {
+        this.epubReaderController?.applyReadingSettings(this.readingSettings);
+      }, 0);
+    } catch (error) {
+      logger.debug(TAG, `读取摄像头避让区域失败: ${String(error)}`);
+    }
+  }
+
+  private getWindowCutoutTopInset(): number {
+    try {
+      const hostContext = this.context ?? (this.getUIContext().getHostContext() as common.UIAbilityContext);
+      if (!hostContext || !hostContext.windowStage) {
+        return 0;
+      }
+      const mainWindow = hostContext.windowStage.getMainWindowSync();
+      const cutoutArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_CUTOUT);
+      const displayInfo = display.getDefaultDisplaySync();
+      const density = displayInfo.densityDPI / 160;
+      if (density <= 0) {
+        return 0;
+      }
+      return Math.max(0, Math.ceil(cutoutArea.topRect.height / density));
+    } catch (error) {
+      logger.debug(TAG, `读取窗口 cutout 避让失败: ${String(error)}`);
+      return 0;
+    }
+  }
+
+  private getReaderContentTopInset(): number {
+    const measuredInset = Math.max(0, Math.ceil(this.statusBarHeight));
+    const cutoutInset = Math.max(0, Math.ceil(this.cameraCutoutTopInset));
+    const maxReasonableInset = Math.max(
+      EPUB_READER_CAMERA_SAFE_TOP_FALLBACK,
+      measuredInset > 0 ? measuredInset + 8 : 32
+    );
+    if (this.isLandscapeMode) {
+      return Math.min(Math.max(measuredInset, cutoutInset), maxReasonableInset);
+    }
+    return Math.min(
+      Math.max(measuredInset, cutoutInset, EPUB_READER_CAMERA_SAFE_TOP_FALLBACK),
+      maxReasonableInset
+    );
+  }
+
+  private getLastVisibleStatusBarInset(): number {
+    const storedInset = AppStorage.get<number>(WINDOW_MANAGER_LAST_VISIBLE_STATUS_BAR_HEIGHT_KEY) ?? 0;
+    return Math.max(0, Math.ceil(storedInset));
+  }
+
+  private getToolbarCutoutTopInset(): number {
+    const cutoutInset = Math.max(0, Math.ceil(this.cameraCutoutTopInset));
+    if (cutoutInset <= 0) {
+      return 0;
+    }
+    const measuredInset = Math.max(0, Math.ceil(this.statusBarHeight));
+    const lastVisibleInset = this.getLastVisibleStatusBarInset();
+    const referenceInset = Math.max(measuredInset, lastVisibleInset);
+    const maxReasonableInset = referenceInset > 0 ? referenceInset + 12 : 64;
+    return Math.min(cutoutInset, maxReasonableInset);
+  }
+
+  private getReaderToolbarTopInset(): number {
+    const effectiveStatusInset = Math.max(
+      Math.max(0, Math.ceil(this.statusBarHeight)),
+      this.getLastVisibleStatusBarInset(),
+      this.getToolbarCutoutTopInset()
+    );
+    return ReaderSafeAreaUtils.getStatusBarInset(effectiveStatusInset);
+  }
+
+  private getReaderTopToolbarHeight(): number {
+    return this.getReaderToolbarTopInset() + ReaderSafeAreaUtils.TOP_TOOLBAR_ROW_HEIGHT;
+  }
+
+  private shouldShowBottomInfoBar(): boolean {
+    return !this.isCurrentSpineImageLike() && (
+      this.readingSettings.showPageNumber !== false ||
+      (this.readingSettings.showProgress ?? false) ||
+      this.readingSettings.showTime !== false ||
+      (this.readingSettings.showBattery ?? false)
+    );
+  }
+
+  private shouldHideBottomInfoBar(): boolean {
+    return this.showBottomToolbar ||
+      this.showTopToolbar ||
+      this.showSettingsPanel ||
+      this.showQuickSettings ||
+      this.showChapterList ||
+      this.showPageTurnAnimationSettings ||
+      this.showAutoPageTurnSettings ||
+      this.showInteractionOverlay;
+  }
+
+  private getBottomInfoBarHeight(): number {
+    return this.shouldShowBottomInfoBar() ? 28 : 0;
+  }
+
+  private getBottomInfoBarTextColor(): string {
+    return this.readingSettings.textColor ?? '#333333';
+  }
+
+  private getBottomInfoBarSidePadding(): number {
+    return this.getEffectiveTextHorizontalMargin();
+  }
+
+  private getBottomInfoBarBottomPadding(): number {
+    return Math.max(
+      8,
+      Math.floor(this.getEffectiveTextBottomMargin() * 0.5) + this.navigationBarHeight
+    );
+  }
+
+  private getCurrentSpineReadRatio(): number {
+    if (this.totalPagesInSpine <= 0) {
+      return 0;
+    }
+    const safePage = Math.max(0, Math.min(this.currentPageWithinSpine, this.totalPagesInSpine - 1));
+    return Math.max(0, Math.min(1, (safePage + 1) / this.totalPagesInSpine));
+  }
+
+  private getReadingProgressValue(): number {
+    const totalSpines = this.spineItems.length;
+    if (totalSpines <= 0) {
+      return 0;
+    }
+    const safeSpine = Math.max(0, Math.min(this.currentSpineIndex, totalSpines - 1));
+    return Math.max(0, Math.min(100, ((safeSpine + this.getCurrentSpineReadRatio()) / totalSpines) * 100));
+  }
+
+  private getReadingProgressPercent(): number {
+    return Math.round(this.getReadingProgressValue());
+  }
+
+  private updateCurrentTime(): void {
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    this.currentTime = `${hours}:${minutes}`;
+  }
+
+  private startTimeUpdate(): void {
+    this.updateCurrentTime();
+    this.updateBatteryLevel();
+    if (this.timeUpdateTimer !== -1) {
+      clearInterval(this.timeUpdateTimer);
+    }
+    this.timeUpdateTimer = setInterval(() => {
+      this.updateCurrentTime();
+      this.updateBatteryLevel();
+    }, 60000);
+  }
+
+  private stopTimeUpdate(): void {
+    if (this.timeUpdateTimer !== -1) {
+      clearInterval(this.timeUpdateTimer);
+      this.timeUpdateTimer = -1;
+    }
+  }
+
+  private updateBatteryLevel(): void {
+    try {
+      this.batteryLevel = batteryInfo.batterySOC;
+    } catch (_error) {
+      this.batteryLevel = 0;
+    }
+  }
+
+  private getBatteryColor(level: number): string {
+    if (level <= 20) {
+      return '#FF6B6B';
+    }
+    if (level <= 50) {
+      return '#F5A623';
+    }
+    return '#4CAF50';
+  }
+
+  private getBatteryColorEnd(level: number): string {
+    if (level <= 20) {
+      return '#FF8A80';
+    }
+    if (level <= 50) {
+      return '#FFCA6A';
+    }
+    return '#81C784';
+  }
+
   // ──── 翻页 ────
 
   private cloneTextReadingSettings(settings: EBookReadingSettings): EBookReadingSettings {
@@ -325,6 +2825,8 @@ export struct EpubWebViewReaderPage {
       nightMode: settings.nightMode,
       followSystemTheme: settings.followSystemTheme,
       pageMargin: settings.pageMargin,
+      pageTopMargin: settings.pageTopMargin ?? settings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin,
+      pageBottomMargin: settings.pageBottomMargin ?? settings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin,
       pageMode: settings.pageMode,
       brightness: settings.brightness,
       autoSave: settings.autoSave,
@@ -360,6 +2862,8 @@ export struct EpubWebViewReaderPage {
       nightMode: settings.nightMode,
       followSystemTheme: settings.followSystemTheme,
       pageMargin: settings.pageMargin,
+      pageTopMargin: settings.pageTopMargin ?? this.readingSettings.pageTopMargin ?? settings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin,
+      pageBottomMargin: settings.pageBottomMargin ?? this.readingSettings.pageBottomMargin ?? settings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin,
       pageMode: settings.pageMode,
       brightness: settings.brightness,
       autoSave: settings.autoSave,
@@ -437,14 +2941,18 @@ export struct EpubWebViewReaderPage {
       normalized.readingMode = ReadingMode.SINGLE_PAGE;
       normalized.readingDirection = ReadingDirection.RIGHT_TO_LEFT;
     }
+    if (normalized.readingMode === ReadingMode.CONTINUOUS_SCROLL) {
+      normalized.readingMode = ReadingMode.SINGLE_PAGE;
+      normalized.readingDirection = normalized.readingDirection === ReadingDirection.RIGHT_TO_LEFT
+        ? ReadingDirection.RIGHT_TO_LEFT
+        : ReadingDirection.LEFT_TO_RIGHT;
+      toastMessage = 'EPUB WebView 已移除连续滚动，已切换为单页模式';
+      logger.info(TAG, 'EPUB WebView 连续滚动设置已归一化为单页模式');
+    }
     if (normalized.readingMode === ReadingMode.WEBTOON ||
       normalized.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
       normalized.readingMode === ReadingMode.CONTINUOUS_VERTICAL) {
       normalized.readingDirection = ReadingDirection.TOP_TO_BOTTOM;
-    }
-    if (normalized.readingMode === ReadingMode.CONTINUOUS_SCROLL &&
-      normalized.readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
-      normalized.readingDirection = ReadingDirection.LEFT_TO_RIGHT;
     }
     if (normalized.readingMode === ReadingMode.SINGLE_PAGE &&
       normalized.readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
@@ -492,7 +3000,7 @@ export struct EpubWebViewReaderPage {
     try {
       logger.info(
         TAG,
-        `保存 WebView EPUB 文本阅读设置: 触发源=${trigger}, fontSize=${snapshot.fontSize}, lineHeight=${snapshot.lineHeight}, pageMargin=${snapshot.pageMargin}`
+        `保存 WebView EPUB 文本阅读设置: 触发源=${trigger}, fontSize=${snapshot.fontSize}, fontFamily=${snapshot.fontFamily}, fontPath=${snapshot.fontPath || 'none'}, fontWeight=${snapshot.fontWeight}, lineHeight=${snapshot.lineHeight}, pageMargin=${snapshot.pageMargin}, letterSpacing=${snapshot.letterSpacing ?? 0}, paragraphSpacing=${snapshot.paragraphSpacing ?? 8}, firstLineIndent=${snapshot.firstLineIndent ?? 2}, textAlignment=${snapshot.textAlignment ?? 'JUSTIFY'}`
       );
       await this.ebookDataManager.saveReadingSettings(this.ebook.id, snapshot);
     } catch (error) {
@@ -513,6 +3021,7 @@ export struct EpubWebViewReaderPage {
     if (this.autoPageTurnEnabled) {
       this.autoPageTurnIntervalSeconds = normalized.autoPageTurnInterval;
     }
+    this.updateVolumeKeyListener();
     this.epubReaderController?.applyPageSettings(normalized);
     void this.persistPageReadingSettings(trigger);
     if (readingModeChanged && !this.showQuickSettings) {
@@ -547,8 +3056,7 @@ export struct EpubWebViewReaderPage {
   }
 
   private isContinuousReadingMode(): boolean {
-    return this.pageReadingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL ||
-      this.pageReadingSettings.readingMode === ReadingMode.WEBTOON ||
+    return this.pageReadingSettings.readingMode === ReadingMode.WEBTOON ||
       this.pageReadingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
       this.pageReadingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
   }
@@ -569,15 +3077,11 @@ export struct EpubWebViewReaderPage {
   }
 
   private shouldUseGestureOverlay(): boolean {
-    return !this.isContinuousReadingMode();
+    return this.isCurrentSpineImageLike();
   }
 
   private handlePageTap(event: ClickEvent): void {
     if (this.areMenusVisible()) {
-      return;
-    }
-    if (this.isContinuousReadingMode()) {
-      this.toggleToolbars();
       return;
     }
     if (!(this.readingSettings.tapToTurn ?? true)) {
@@ -591,6 +3095,10 @@ export struct EpubWebViewReaderPage {
     if (this.areMenusVisible()) {
       return;
     }
+    if (!(this.readingSettings.tapToTurn ?? true)) {
+      this.toggleToolbars();
+      return;
+    }
     const displayWidth = this.getEffectiveComponentWidth();
     const displayHeight = this.getEffectiveComponentHeight();
     const safeX = Math.max(0, Math.min(displayWidth, displayWidth * xRatio));
@@ -599,10 +3107,6 @@ export struct EpubWebViewReaderPage {
   }
 
   private processReaderTap(clickX: number, clickY: number): void {
-    if (this.isContinuousReadingMode()) {
-      this.toggleToolbars();
-      return;
-    }
     const displayWidth = this.getEffectiveComponentWidth();
     const displayHeight = this.getEffectiveComponentHeight();
     if (this.isDoublePageMode()) {
@@ -691,55 +3195,145 @@ export struct EpubWebViewReaderPage {
     }
   }
 
-  private handleSwipe(event: GestureEvent): void {
+  private shouldUseInteractiveCurlGesture(): boolean {
+    return this.pageReadingSettings.pageTurnAnimation === PageTurnAnimationType.CURL &&
+      !this.isContinuousReadingMode() &&
+      !this.isVerticalPagingMode();
+  }
+
+  private resetEpubCurlGestureState(): void {
+    this.epubCurlGestureActive = false;
+    this.epubCurlGestureStarted = false;
+    this.epubCurlGestureStartX = 0;
+    this.epubCurlGestureStartY = 0;
+    this.epubCurlGestureProgress = 0;
+  }
+
+  private handleReaderPanStart(event: GestureEvent): void {
+    this.resetEpubCurlGestureState();
+    if (!event.fingerList || event.fingerList.length <= 0 || !event.fingerList[0]) {
+      return;
+    }
+    this.epubCurlGestureStartX = event.fingerList[0].globalX;
+    this.epubCurlGestureStartY = event.fingerList[0].globalY;
+  }
+
+  private handleReaderPanUpdate(event: GestureEvent): void {
+    if (this.areMenusVisible() || !this.shouldUseInteractiveCurlGesture()) {
+      return;
+    }
+    if (!event.fingerList || event.fingerList.length <= 0 || !event.fingerList[0]) {
+      return;
+    }
+    const deltaX = event.offsetX;
+    const deltaY = event.offsetY;
+    if (Math.abs(deltaX) < Math.max(8, Math.abs(deltaY))) {
+      return;
+    }
+
+    const swipingLeft = deltaX < 0;
+    const forward = this.isRtlPagingMode() ? !swipingLeft : swipingLeft;
+    const displayWidth = Math.max(1, this.getEffectiveComponentWidth());
+    const progress = Math.max(0.01, Math.min(0.96, Math.abs(deltaX) / displayWidth));
+    const touchX = this.epubCurlGestureStartX + deltaX;
+    const touchY = this.epubCurlGestureStartY + deltaY;
+
+    if (!this.epubCurlGestureStarted) {
+      if (!this.epubReaderController?.beginInteractiveCurl(forward, this.epubCurlGestureStartX, this.epubCurlGestureStartY)) {
+        return;
+      }
+      this.epubCurlGestureStarted = true;
+      this.epubCurlGestureActive = true;
+      this.currentAnchorFragment = '';
+      this.stopAutoPageTurn();
+    }
+
+    this.epubCurlGestureProgress = progress;
+    this.epubReaderController?.updateInteractiveCurl(progress, touchX, touchY);
+  }
+
+  private handleReaderPanEnd(event: GestureEvent): void {
+    if (this.epubCurlGestureActive) {
+      const displayWidth = Math.max(1, this.getEffectiveComponentWidth());
+      const progress = Math.max(this.epubCurlGestureProgress, Math.abs(event.offsetX) / displayWidth);
+      const complete = progress >= 0.34 || Math.abs(event.offsetX) >= displayWidth * 0.32;
+      const handled = this.epubReaderController?.endInteractiveCurl(complete) ?? false;
+      this.resetEpubCurlGestureState();
+      if (handled) {
+        if (complete) {
+          this.syncAutoPageTurnState();
+        }
+        return;
+      }
+    }
+    this.resetEpubCurlGestureState();
+    this.handleSwipe(event);
+  }
+
+  private handleReaderSwipeDelta(deltaX: number, deltaY: number): void {
     if (this.areMenusVisible()) {
       return;
     }
-    if (this.isContinuousReadingMode()) {
+    if (this.isContinuousReadingMode() && !this.isCurrentSpineImageLike()) {
       return;
     }
     if (this.isVerticalPagingMode()) {
-      if (Math.abs(event.offsetY) < Math.max(40, Math.abs(event.offsetX))) {
+      if (Math.abs(deltaY) < Math.max(40, Math.abs(deltaX))) {
         return;
       }
-      this.flipPage(event.offsetY < 0);
+      this.flipPage(deltaY < 0);
       return;
     }
-    if (Math.abs(event.offsetX) < Math.max(40, Math.abs(event.offsetY))) {
+    if (Math.abs(deltaX) < Math.max(40, Math.abs(deltaY))) {
       return;
     }
-    const swipingLeft = event.offsetX < 0;
+    const swipingLeft = deltaX < 0;
     const forward = this.isRtlPagingMode() ? !swipingLeft : swipingLeft;
     this.flipPage(forward);
   }
 
-  private flipPage(forward: boolean): boolean {
+  private handleSwipe(event: GestureEvent): void {
+    this.handleReaderSwipeDelta(event.offsetX, event.offsetY);
+  }
+
+  private flipPage(forward: boolean, source: string = 'manual'): boolean {
     if (!this.epubReaderController) {
+      logger.debug(TAG, `翻页请求被忽略: 控制器未就绪, forward=${forward}`);
       return false;
+    }
+    if (source === 'manual') {
+      this.handleEpubManualReadAloudNavigation('manual_page_turn');
     }
     const handled = this.epubReaderController.flipPage(forward);
     if (handled) {
+      this.currentAnchorFragment = '';
       this.syncAutoPageTurnState();
       return true;
     }
-    const chapterChanged = this.onSpineChangeRequested(forward ? 'next' : 'prev');
+    logger.debug(
+      TAG,
+      `当前 spine 内翻页未处理，尝试跨 spine: forward=${forward}, spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}/${this.totalPagesInSpine}, mode=${this.pageReadingSettings.readingMode}, direction=${this.pageReadingSettings.readingDirection}`
+    );
+    const chapterChanged = this.onSpineChangeRequested(forward ? 'next' : 'prev', source);
     if (!chapterChanged) {
       this.stopAutoPageTurn();
     }
     return chapterChanged;
   }
 
-  private onSpineChangeRequested(direction: 'prev' | 'next'): boolean {
+  private onSpineChangeRequested(direction: 'prev' | 'next', source: string = 'manual'): boolean {
     if (direction === 'next') {
-      if (this.currentSpineIndex < this.spineItems.length - 1) {
-        this.loadSpineItem(this.currentSpineIndex + 1, 0, 'next');
+      const nextSpineIndex = this.findReadableSpineIndex(this.currentSpineIndex + 1, 1);
+      if (nextSpineIndex >= 0) {
+        this.loadSpineItem(nextSpineIndex, 0, 'next', '', source);
         return true;
       }
       promptAction.showToast({ message: '已是最后一章', duration: 1200 });
       return false;
     }
-    if (this.currentSpineIndex > 0) {
-      this.loadSpineItem(this.currentSpineIndex - 1, 99999, 'prev');
+    const previousSpineIndex = this.findReadableSpineIndex(this.currentSpineIndex - 1, -1);
+    if (previousSpineIndex >= 0) {
+      this.loadSpineItem(previousSpineIndex, 99999, 'prev', '', source);
       return true;
     }
     promptAction.showToast({ message: '已是第一章', duration: 1200 });
@@ -749,17 +3343,56 @@ export struct EpubWebViewReaderPage {
   private loadSpineItem(
     spineIndex: number,
     pageOffset: number,
-    transitionDirection: EpubSpineTransitionDirection = 'none'
+    transitionDirection: EpubSpineTransitionDirection = 'none',
+    anchorFragment: string = '',
+    source: string = 'manual'
   ): void {
-    const path = this.resolveSpinePath(spineIndex);
+    const resolvedSpineIndex = this.resolveReadableSpineIndex(spineIndex, transitionDirection);
+    if (resolvedSpineIndex < 0) {
+      logger.warn(TAG, `请求切换 spine 失败: 未找到可读 spine, requested=${spineIndex}, direction=${transitionDirection}`);
+      return;
+    }
+    const path = this.resolveSpinePath(resolvedSpineIndex);
     if (path.length === 0) {
       return;
     }
-    this.currentSpineIndex = spineIndex;
-    this.currentPageWithinSpine = 0;
-    this.totalPagesInSpine = 0;
-    this.epubReaderController?.loadSpineItem(path, pageOffset, transitionDirection);
-    logger.info(TAG, `切换 spine: index=${spineIndex}, pageOffset=${pageOffset}, direction=${transitionDirection}, path=${path}`);
+    if (source === 'manual') {
+      this.handleEpubManualReadAloudNavigation('manual_spine_navigation');
+    }
+    const movedToDifferentSpine = resolvedSpineIndex !== spineIndex;
+    const normalizedAnchor = movedToDifferentSpine ? '' : anchorFragment.trim();
+    const normalizedPageOffset = movedToDifferentSpine ? (transitionDirection === 'prev' ? 99999 : 0) : pageOffset;
+    this.currentAnchorFragment = normalizedAnchor;
+    if (resolvedSpineIndex !== this.currentSpineIndex) {
+      this.currentSpineHighlightRanges = [];
+      this.currentVisibleTextSnapshot = null;
+      this.currentSpineTextCache = '';
+      this.currentSpineTextCacheIndex = -1;
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      this.epubReaderController?.clearReadAloudHighlight();
+    }
+    if (!this.epubReaderController) {
+      this.pendingSpineIndex = -1;
+      this.currentSpineIndex = resolvedSpineIndex;
+      this.currentPageWithinSpine = 0;
+      this.totalPagesInSpine = 0;
+      void this.refreshCurrentSpineHighlightRanges('spine_change_without_controller');
+      return;
+    }
+    this.pendingSpineIndex = resolvedSpineIndex;
+    this.epubReaderController.loadSpineItem(
+      path,
+      normalizedPageOffset,
+      transitionDirection,
+      normalizedAnchor,
+      this.getSpineLayoutType(resolvedSpineIndex),
+      this.getSpineMediaType(resolvedSpineIndex)
+    );
+    logger.info(
+      TAG,
+      `请求切换 spine: requested=${spineIndex}, resolved=${resolvedSpineIndex}, pageOffset=${normalizedPageOffset}, direction=${transitionDirection}, anchor=${normalizedAnchor || 'none'}, path=${path}`
+    );
   }
 
   private jumpToCurrentSpinePage(pageIndex: number): void {
@@ -767,6 +3400,7 @@ export struct EpubWebViewReaderPage {
       return;
     }
     const safePageIndex = Math.max(0, Math.min(pageIndex, this.totalPagesInSpine - 1));
+    this.handleEpubManualReadAloudNavigation('manual_page_jump');
     const moved = this.epubReaderController.goToPage(safePageIndex);
     if (moved) {
       this.syncAutoPageTurnState();
@@ -774,15 +3408,104 @@ export struct EpubWebViewReaderPage {
     }
   }
 
+  private registerVolumeKeyListener(): void {
+    if (this.isVolumeKeyListenerRegistered) {
+      return;
+    }
+    if (!this.pageReadingSettings.volumeKeyNavigation || this.isLoading || this.errorMessage.trim().length > 0) {
+      return;
+    }
+
+    const volumeUpConfig: inputConsumer.KeyPressedConfig = {
+      key: KeyCode.KEYCODE_VOLUME_UP,
+      action: 1,
+      isRepeat: false
+    };
+    const volumeDownConfig: inputConsumer.KeyPressedConfig = {
+      key: KeyCode.KEYCODE_VOLUME_DOWN,
+      action: 1,
+      isRepeat: false
+    };
+
+    this.volumeUpCallback = (_event: InputKeyEvent) => {
+      logger.info(TAG, '音量键翻页: 上一页 (inputConsumer)');
+      if (!this.areMenusVisible()) {
+        this.flipPage(false);
+      }
+    };
+    this.volumeDownCallback = (_event: InputKeyEvent) => {
+      logger.info(TAG, '音量键翻页: 下一页 (inputConsumer)');
+      if (!this.areMenusVisible()) {
+        this.flipPage(true);
+      }
+    };
+
+    try {
+      inputConsumer.on('keyPressed', volumeUpConfig, this.volumeUpCallback);
+      inputConsumer.on('keyPressed', volumeDownConfig, this.volumeDownCallback);
+      this.isVolumeKeyListenerRegistered = true;
+      logger.info(TAG, 'EPUB 音量键翻页监听已注册');
+    } catch (error) {
+      try {
+        if (this.volumeUpCallback !== null) {
+          inputConsumer.off('keyPressed', this.volumeUpCallback);
+        }
+        if (this.volumeDownCallback !== null) {
+          inputConsumer.off('keyPressed', this.volumeDownCallback);
+        }
+      } catch (_cleanupError) {}
+      this.volumeUpCallback = null;
+      this.volumeDownCallback = null;
+      logger.warn(TAG, `注册 EPUB 音量键翻页监听失败: ${String(error)}`);
+    }
+  }
+
+  private unregisterVolumeKeyListener(): void {
+    if (!this.isVolumeKeyListenerRegistered) {
+      this.volumeUpCallback = null;
+      this.volumeDownCallback = null;
+      return;
+    }
+
+    try {
+      if (this.volumeUpCallback !== null) {
+        inputConsumer.off('keyPressed', this.volumeUpCallback);
+      }
+      if (this.volumeDownCallback !== null) {
+        inputConsumer.off('keyPressed', this.volumeDownCallback);
+      }
+      logger.info(TAG, 'EPUB 音量键翻页监听已注销');
+    } catch (error) {
+      logger.warn(TAG, `注销 EPUB 音量键翻页监听失败: ${String(error)}`);
+    }
+    this.volumeUpCallback = null;
+    this.volumeDownCallback = null;
+    this.isVolumeKeyListenerRegistered = false;
+  }
+
+  private updateVolumeKeyListener(): void {
+    if (this.pageReadingSettings.volumeKeyNavigation && !this.isLoading && this.errorMessage.trim().length <= 0) {
+      this.registerVolumeKeyListener();
+      return;
+    }
+    this.unregisterVolumeKeyListener();
+  }
+
   private handleVolumeKey(keyCode: number): boolean {
     if (!this.pageReadingSettings.volumeKeyNavigation) {
       return false;
     }
-    if (keyCode === KeyCode.KEYCODE_VOLUME_UP) {
-      return this.flipPage(false);
+    if (keyCode === KeyCode.KEYCODE_VOLUME_UP || keyCode === 16) {
+      if (!this.areMenusVisible()) {
+        this.flipPage(false);
+      }
+      return true;
     }
-    if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN) {
-      return this.flipPage(true);
+    if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN || keyCode === 17) {
+      if (!this.areMenusVisible()) {
+        this.flipPage(true);
+      }
+      return true;
     }
     return false;
   }
@@ -808,15 +3531,31 @@ export struct EpubWebViewReaderPage {
       this.showChapterList ||
       this.showPageTurnAnimationSettings ||
       this.showAutoPageTurnSettings ||
+      this.showReadAloudPanel ||
       this.showInteractionOverlay;
   }
 
   private closeTransientPanels(): void {
+    if (this.showReadAloudPanel) {
+      this.lastReadAloudPanelCloseTime = Date.now();
+      this.showReadAloudPanel = false;
+      this.handleMenusVisibilityChange();
+      return;
+    }
+    if (this.showQuickSettings) {
+      this.hideQuickSettingsWithAnimation(null);
+      return;
+    }
+    if (this.showPageTurnAnimationSettings) {
+      this.hidePageTurnAnimationSettingsWithAnimation(null);
+      return;
+    }
+    if (this.showAutoPageTurnSettings) {
+      this.hideAutoPageTurnSettingsWithAnimation(null);
+      return;
+    }
     this.showSettingsPanel = false;
-    this.showQuickSettings = false;
     this.showChapterList = false;
-    this.showPageTurnAnimationSettings = false;
-    this.showAutoPageTurnSettings = false;
     this.showInteractionOverlay = false;
     this.handleMenusVisibilityChange();
   }
@@ -912,7 +3651,7 @@ export struct EpubWebViewReaderPage {
     }
     this.stopAutoPageTurn();
     this.autoPageTurnTimer = setInterval(() => {
-      const moved = this.flipPage(true);
+      const moved = this.flipPage(true, 'auto_page_turn');
       if (!moved) {
         this.stopAutoPageTurn();
       }
@@ -1009,14 +3748,8 @@ export struct EpubWebViewReaderPage {
       return;
     }
     const baseTotalReadingTime = ebook.readingProgress?.totalReadingTime ?? 0;
-    const sessionSecs = this.sessionStartTimestamp > 0 ? (now - this.sessionStartTimestamp) / 1000 : 0;
-    const totalSpines = this.spineItems.length;
-    const chapterProgress = this.totalPagesInSpine > 1
-      ? this.currentPageWithinSpine / Math.max(1, this.totalPagesInSpine - 1)
-      : 0;
-    const progressPercent = totalSpines > 0
-      ? Math.min(100, ((this.currentSpineIndex + chapterProgress) / totalSpines) * 100)
-      : 0;
+    const sessionMinutes = this.sessionStartTimestamp > 0 ? Math.max(0, (now - this.sessionStartTimestamp) / 60000) : 0;
+    const progressPercent = this.getReadingProgressValue();
     const progress: EBookReadingProgress = {
       bookId: ebook.id,
       currentChapterId: this.spineItems[this.currentSpineIndex]?.id ?? '',
@@ -1025,14 +3758,17 @@ export struct EpubWebViewReaderPage {
       domPos: `webview-epub:${this.currentSpineIndex}:${this.currentPageWithinSpine}`,
       progress: progressPercent,
       lastReadTime: now,
-      totalReadingTime: baseTotalReadingTime + sessionSecs
+      totalReadingTime: baseTotalReadingTime + sessionMinutes
     };
     try {
       await this.ebookDataManager.saveReadingProgress(progress);
       ebook.readingProgress = progress;
       this.lastProgressSaveTime = now;
       this.sessionStartTimestamp = now;
-      logger.debug(TAG, `[${trigger}] 进度已保存: spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}`);
+      logger.debug(
+        TAG,
+        `[${trigger}] 进度已保存: spine=${this.currentSpineIndex}, page=${this.currentPageWithinSpine}/${this.totalPagesInSpine}, progress=${progressPercent.toFixed(2)}%, totalReadingTime=${progress.totalReadingTime.toFixed(2)}min`
+      );
     } catch (e) {
       logger.warn(TAG, `保存进度失败: ${String(e)}`);
     }
@@ -1041,16 +3777,36 @@ export struct EpubWebViewReaderPage {
   // ──── 返回 ────
 
   private openWithReaderKit(): void {
-    const bookId = this.ebook?.id ?? '';
-    if (!bookId) {
-      this.pathStack.pop();
+    if (!isReaderKitEnabled()) {
+      this.canFallbackToReaderKit = false;
+      logger.warn(TAG, 'ReaderKit fallback blocked by global feature gate');
+      promptAction.showToast({ message: 'ReaderKit 已在当前环境关闭', duration: 1400 });
       return;
     }
+    const bookId = this.ebook?.id ?? '';
+    if (!bookId) {
+      this.closeReaderRoute();
+      return;
+    }
+    this.closeReaderRoute();
+    const params: EBookReaderParams = {
+      bookId: bookId,
+      coverComponentId: this.coverComponentId,
+      forceReaderKit: true
+    };
+    openEBookReaderRouterPage(this.getUIContext(), params, TAG);
+  }
+
+  private closeReaderRoute(): void {
+    if (this.routerBackOnClose) {
+      const router = this.getUIContext()?.getRouter();
+      if (router) {
+        router.back();
+        return;
+      }
+      logger.warn(TAG, 'Router 返回不可用，回退到 NavPathStack.pop');
+    }
     this.pathStack.pop();
-    this.pathStack.pushPath({
-      name: 'EBookReaderPage',
-      param: { bookId } as EBookReaderParams
-    });
   }
 
   private async goBack(): Promise<void> {
@@ -1070,10 +3826,28 @@ export struct EpubWebViewReaderPage {
         cancelTransition();
       }
     }
-    this.pathStack.pop();
+    this.closeReaderRoute();
   }
 
   private openChapterList(): void {
+    if (this.showQuickSettings) {
+      this.hideQuickSettingsWithAnimation(() => {
+        this.openChapterList();
+      });
+      return;
+    }
+    if (this.showPageTurnAnimationSettings) {
+      this.hidePageTurnAnimationSettingsWithAnimation(() => {
+        this.openChapterList();
+      });
+      return;
+    }
+    if (this.showAutoPageTurnSettings) {
+      this.hideAutoPageTurnSettingsWithAnimation(() => {
+        this.openChapterList();
+      });
+      return;
+    }
     this.showQuickSettings = false;
     this.showSettingsPanel = false;
     this.showPageTurnAnimationSettings = false;
@@ -1083,17 +3857,271 @@ export struct EpubWebViewReaderPage {
     this.handleMenusVisibilityChange();
   }
 
-  private openQuickSettings(): void {
+  private resetQuickSettingsAnimationState(): void {
+    this.quickSettingsOpacity = 0;
+    this.quickSettingsScale = 0.96;
+    this.quickSettingsTranslateY = 24;
+  }
+
+  private openQuickSettingsWithAnimation(): void {
     this.showSettingsPanel = false;
     this.showChapterList = false;
     this.showPageTurnAnimationSettings = false;
     this.showAutoPageTurnSettings = false;
     this.showInteractionOverlay = false;
+    this.resetQuickSettingsAnimationState();
     this.showQuickSettings = true;
     this.handleMenusVisibilityChange();
+
+    const ctx = this.uiContext;
+    if (!ctx) {
+      this.quickSettingsOpacity = 1;
+      this.quickSettingsScale = 1;
+      this.quickSettingsTranslateY = 0;
+      return;
+    }
+    setTimeout(() => {
+      const nextCtx = this.uiContext;
+      if (!this.showQuickSettings || !nextCtx) {
+        return;
+      }
+      nextCtx.animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+        this.quickSettingsOpacity = 1;
+        this.quickSettingsScale = 1;
+        this.quickSettingsTranslateY = 0;
+      });
+    }, 0);
+  }
+
+  private hideQuickSettingsWithAnimation(afterClose: (() => void) | null): void {
+    if (!this.showQuickSettings) {
+      if (afterClose !== null) {
+        afterClose();
+      }
+      return;
+    }
+
+    const finish = (): void => {
+      this.showQuickSettings = false;
+      this.handleMenusVisibilityChange();
+      if (afterClose === null) {
+        this.scheduleFullscreenRestore('quick_settings_closed', 80);
+      } else {
+        afterClose();
+      }
+    };
+
+    const ctx = this.uiContext;
+    if (!ctx) {
+      this.resetQuickSettingsAnimationState();
+      finish();
+      return;
+    }
+    ctx.animateTo({
+      duration: 160,
+      curve: Curve.EaseIn,
+      onFinish: () => {
+        finish();
+      }
+    }, () => {
+      this.resetQuickSettingsAnimationState();
+    });
+  }
+
+  private resetPageTurnSettingsAnimationState(): void {
+    this.pageTurnSettingsBackdropOpacity = 0;
+    this.pageTurnSettingsPanelOpacity = 0;
+    this.pageTurnSettingsPanelScale = 0.96;
+    this.pageTurnSettingsPanelTranslateX = this.isLandscapeMode ? 48 : 0;
+    this.pageTurnSettingsPanelTranslateY = this.isLandscapeMode ? 0 : 24;
+  }
+
+  private openPageTurnAnimationSettingsWithAnimation(): void {
+    this.refreshAppFontFamilyForDialog('page_turn_settings_open');
+    this.showQuickSettings = false;
+    this.showChapterList = false;
+    this.showSettingsPanel = false;
+    this.showAutoPageTurnSettings = false;
+    this.showInteractionOverlay = false;
+    this.resetPageTurnSettingsAnimationState();
+    this.showPageTurnAnimationSettings = true;
+    this.handleMenusVisibilityChange();
+
+    const ctx = this.uiContext;
+    if (!ctx) {
+      this.pageTurnSettingsBackdropOpacity = 0.5;
+      this.pageTurnSettingsPanelOpacity = 1;
+      this.pageTurnSettingsPanelScale = 1;
+      this.pageTurnSettingsPanelTranslateX = 0;
+      this.pageTurnSettingsPanelTranslateY = 0;
+      return;
+    }
+    setTimeout(() => {
+      const nextCtx = this.uiContext;
+      if (!this.showPageTurnAnimationSettings || !nextCtx) {
+        return;
+      }
+      nextCtx.animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.pageTurnSettingsBackdropOpacity = 0.5;
+        this.pageTurnSettingsPanelOpacity = 1;
+        this.pageTurnSettingsPanelScale = 1;
+        this.pageTurnSettingsPanelTranslateX = 0;
+        this.pageTurnSettingsPanelTranslateY = 0;
+      });
+    }, 0);
+  }
+
+  private hidePageTurnAnimationSettingsWithAnimation(afterClose: (() => void) | null): void {
+    if (!this.showPageTurnAnimationSettings) {
+      if (afterClose !== null) {
+        afterClose();
+      }
+      return;
+    }
+
+    const finish = (): void => {
+      this.showPageTurnAnimationSettings = false;
+      this.handleMenusVisibilityChange();
+      if (afterClose === null) {
+        this.scheduleFullscreenRestore('page_turn_settings_closed', 80);
+      } else {
+        afterClose();
+      }
+    };
+
+    const ctx = this.uiContext;
+    if (!ctx) {
+      this.resetPageTurnSettingsAnimationState();
+      finish();
+      return;
+    }
+    ctx.animateTo({
+      duration: 170,
+      curve: Curve.EaseIn,
+      onFinish: () => {
+        finish();
+      }
+    }, () => {
+      this.resetPageTurnSettingsAnimationState();
+    });
+  }
+
+  private resetAutoPageTurnSettingsAnimationState(): void {
+    this.autoPageTurnSettingsBackdropOpacity = 0;
+    this.autoPageTurnSettingsPanelOpacity = 0;
+    this.autoPageTurnSettingsPanelScale = 0.96;
+    this.autoPageTurnSettingsPanelTranslateX = this.isLandscapeMode ? 48 : 0;
+    this.autoPageTurnSettingsPanelTranslateY = this.isLandscapeMode ? 0 : 24;
+  }
+
+  private openAutoPageTurnSettingsWithAnimation(): void {
+    this.refreshAppFontFamilyForDialog('auto_page_turn_settings_open');
+    this.showQuickSettings = false;
+    this.showChapterList = false;
+    this.showSettingsPanel = false;
+    this.showPageTurnAnimationSettings = false;
+    this.showInteractionOverlay = false;
+    this.resetAutoPageTurnSettingsAnimationState();
+    this.showAutoPageTurnSettings = true;
+    this.handleMenusVisibilityChange();
+
+    const ctx = this.uiContext;
+    if (!ctx) {
+      this.autoPageTurnSettingsBackdropOpacity = 0.5;
+      this.autoPageTurnSettingsPanelOpacity = 1;
+      this.autoPageTurnSettingsPanelScale = 1;
+      this.autoPageTurnSettingsPanelTranslateX = 0;
+      this.autoPageTurnSettingsPanelTranslateY = 0;
+      return;
+    }
+    setTimeout(() => {
+      const nextCtx = this.uiContext;
+      if (!this.showAutoPageTurnSettings || !nextCtx) {
+        return;
+      }
+      nextCtx.animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.autoPageTurnSettingsBackdropOpacity = 0.5;
+        this.autoPageTurnSettingsPanelOpacity = 1;
+        this.autoPageTurnSettingsPanelScale = 1;
+        this.autoPageTurnSettingsPanelTranslateX = 0;
+        this.autoPageTurnSettingsPanelTranslateY = 0;
+      });
+    }, 0);
+  }
+
+  private hideAutoPageTurnSettingsWithAnimation(afterClose: (() => void) | null): void {
+    if (!this.showAutoPageTurnSettings) {
+      if (afterClose !== null) {
+        afterClose();
+      }
+      return;
+    }
+
+    const finish = (): void => {
+      this.showAutoPageTurnSettings = false;
+      this.handleMenusVisibilityChange();
+      if (afterClose === null) {
+        this.scheduleFullscreenRestore('auto_page_turn_settings_closed', 80);
+      } else {
+        afterClose();
+      }
+    };
+
+    const ctx = this.uiContext;
+    if (!ctx) {
+      this.resetAutoPageTurnSettingsAnimationState();
+      finish();
+      return;
+    }
+    ctx.animateTo({
+      duration: 170,
+      curve: Curve.EaseIn,
+      onFinish: () => {
+        finish();
+      }
+    }, () => {
+      this.resetAutoPageTurnSettingsAnimationState();
+    });
+  }
+
+  private openQuickSettings(): void {
+    if (this.showQuickSettings) {
+      return;
+    }
+    if (this.showPageTurnAnimationSettings) {
+      this.hidePageTurnAnimationSettingsWithAnimation(() => {
+        this.openQuickSettings();
+      });
+      return;
+    }
+    if (this.showAutoPageTurnSettings) {
+      this.hideAutoPageTurnSettingsWithAnimation(() => {
+        this.openQuickSettings();
+      });
+      return;
+    }
+    this.openQuickSettingsWithAnimation();
   }
 
   private openTextSettings(): void {
+    if (this.showQuickSettings) {
+      this.hideQuickSettingsWithAnimation(() => {
+        this.openTextSettings();
+      });
+      return;
+    }
+    if (this.showPageTurnAnimationSettings) {
+      this.hidePageTurnAnimationSettingsWithAnimation(() => {
+        this.openTextSettings();
+      });
+      return;
+    }
+    if (this.showAutoPageTurnSettings) {
+      this.hideAutoPageTurnSettingsWithAnimation(() => {
+        this.openTextSettings();
+      });
+      return;
+    }
     this.showQuickSettings = false;
     this.showChapterList = false;
     this.showPageTurnAnimationSettings = false;
@@ -1104,23 +4132,41 @@ export struct EpubWebViewReaderPage {
   }
 
   private openPageTurnAnimationSettings(): void {
-    this.showQuickSettings = false;
-    this.showChapterList = false;
-    this.showSettingsPanel = false;
-    this.showAutoPageTurnSettings = false;
-    this.showInteractionOverlay = false;
-    this.showPageTurnAnimationSettings = true;
-    this.handleMenusVisibilityChange();
+    if (this.showPageTurnAnimationSettings) {
+      return;
+    }
+    if (this.showQuickSettings) {
+      this.hideQuickSettingsWithAnimation(() => {
+        this.openPageTurnAnimationSettings();
+      });
+      return;
+    }
+    if (this.showAutoPageTurnSettings) {
+      this.hideAutoPageTurnSettingsWithAnimation(() => {
+        this.openPageTurnAnimationSettings();
+      });
+      return;
+    }
+    this.openPageTurnAnimationSettingsWithAnimation();
   }
 
   private openAutoPageTurnSettings(): void {
-    this.showQuickSettings = false;
-    this.showChapterList = false;
-    this.showSettingsPanel = false;
-    this.showPageTurnAnimationSettings = false;
-    this.showInteractionOverlay = false;
-    this.showAutoPageTurnSettings = true;
-    this.handleMenusVisibilityChange();
+    if (this.showAutoPageTurnSettings) {
+      return;
+    }
+    if (this.showQuickSettings) {
+      this.hideQuickSettingsWithAnimation(() => {
+        this.openAutoPageTurnSettings();
+      });
+      return;
+    }
+    if (this.showPageTurnAnimationSettings) {
+      this.hidePageTurnAnimationSettingsWithAnimation(() => {
+        this.openAutoPageTurnSettings();
+      });
+      return;
+    }
+    this.openAutoPageTurnSettingsWithAnimation();
   }
 
   // ──── 标题辅助 ────
@@ -1169,15 +4215,17 @@ export struct EpubWebViewReaderPage {
         .fontFamily(this.appFontFamily)
         .padding({ left: 24, right: 24 })
         .textAlign(TextAlign.Center)
-      if (this.canFallbackToReaderKit) {
+      if (this.canFallbackToReaderKit && isReaderKitEnabled()) {
         Button('使用 ReaderKit 打开')
+          .fontFamily(this.appFontFamily)
           .margin({ top: 24 })
           .onClick(() => { this.openWithReaderKit(); })
       }
       Button('返回')
+        .fontFamily(this.appFontFamily)
         .margin({ top: 12 })
         .buttonStyle(ButtonStyleMode.NORMAL)
-        .onClick(() => { this.pathStack.pop(); })
+        .onClick(() => { this.closeReaderRoute(); })
     }
     .width('100%').height('100%')
     .justifyContent(FlexAlign.Center)
@@ -1218,10 +4266,22 @@ export struct EpubWebViewReaderPage {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 8, right: 8 })
+
+      Button() {
+        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
+          .fontSize(20)
+          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : this.getToolbarIconColor()])
+      }
+      .width(48)
+      .height(48)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.addCurrentEpubBookmark();
+      })
     }
     .width('100%')
-    .height(ReaderSafeAreaUtils.getTopToolbarHeight(this.statusBarHeight))
-    .padding({ left: 4, right: 8, top: ReaderSafeAreaUtils.getStatusBarInset(this.statusBarHeight) })
+    .height(this.getReaderTopToolbarHeight())
+    .padding({ left: 4, right: 8, top: this.getReaderToolbarTopInset() })
     .alignItems(VerticalAlign.Center)
     .backgroundColor(this.themeManager.getGlassBackgroundResource())
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
@@ -1254,7 +4314,6 @@ export struct EpubWebViewReaderPage {
             const idx = Math.round(value);
             if (idx !== this.currentSpineIndex) {
               this.loadSpineItem(idx, 0);
-              void this.saveReadingProgress('slider');
             }
           })
 
@@ -1365,6 +4424,43 @@ export struct EpubWebViewReaderPage {
 
         Blank()
 
+        Row() {
+          Row() {
+            SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+              .fontSize(18)
+              .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
+          }
+          .width(48)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            this.toggleReadAloudFromToolbar();
+          })
+
+          Column()
+            .width(1)
+            .height(16)
+            .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
+
+          Row() {
+            SymbolGlyph($r('sys.symbol.Celia'))
+              .fontSize(16)
+              .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
+          }
+          .width(44)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            this.openReadAloudSettingsPanelFromToolbar();
+          })
+        }
+        .height(36)
+        .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
+        .borderRadius(18)
+        .clip(true)
+
+        Blank()
+
         Button() {
           SymbolGlyph(this.getAutoPageTurnIconResource())
             .fontSize(22)
@@ -1386,17 +4482,109 @@ export struct EpubWebViewReaderPage {
   }
 
   @Builder
+  private buildBottomInfoBar() {
+    Row() {
+      Row() {
+        if (this.readingSettings.showBattery ?? false) {
+          Row({ space: 6 }) {
+            Stack({ alignContent: Alignment.Start }) {
+              Row()
+                .width(22)
+                .height(11)
+                .borderRadius(3)
+                .border({ width: 1.5, color: this.getBottomInfoBarTextColor() })
+                .opacity(0.52)
+              Row()
+                .width(Math.max(2, 17 * this.batteryLevel / 100))
+                .height(7)
+                .borderRadius(1.5)
+                .position({ x: 2, y: 2 })
+                .linearGradient({
+                  angle: 90,
+                  colors: this.batteryLevel > 20
+                    ? [[this.getBatteryColor(this.batteryLevel), 0], [this.getBatteryColorEnd(this.batteryLevel), 1]]
+                    : [['#FF4444', 0], ['#FF6666', 1]]
+                })
+              Row()
+                .width(2.5)
+                .height(5)
+                .backgroundColor(this.getBottomInfoBarTextColor())
+                .opacity(0.52)
+                .borderRadius({ topRight: 1, bottomRight: 1 })
+                .position({ x: 22, y: 3 })
+            }
+            .width(26)
+            .height(11)
+
+            Text(`${this.batteryLevel}%`)
+              .fontSize(11)
+              .fontColor(this.getBottomInfoBarTextColor())
+              .opacity(0.6)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+          }
+        }
+      }
+      .width(84)
+      .justifyContent(FlexAlign.Start)
+
+      Row() {
+        if (this.readingSettings.showTime !== false) {
+          Text(this.currentTime)
+            .fontSize(12)
+            .fontColor(this.getBottomInfoBarTextColor())
+            .opacity(0.6)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+        }
+      }
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+
+      Row({ space: 8 }) {
+        if (this.readingSettings.showPageNumber !== false) {
+          Text(`${Math.max(1, this.currentPageWithinSpine + 1)} / ${Math.max(1, this.totalPagesInSpine)}`)
+            .fontSize(12)
+            .fontColor(this.getBottomInfoBarTextColor())
+            .opacity(0.6)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+        }
+        if (this.readingSettings.showProgress ?? false) {
+          Text(`${this.getReadingProgressPercent()}%`)
+            .fontSize(12)
+            .fontColor(this.getBottomInfoBarTextColor())
+            .opacity(0.6)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+        }
+      }
+      .width(148)
+      .justifyContent(FlexAlign.End)
+    }
+    .width('100%')
+    .padding({
+      left: this.getBottomInfoBarSidePadding(),
+      right: this.getBottomInfoBarSidePadding(),
+      bottom: this.getBottomInfoBarBottomPadding()
+    })
+    .position({ x: 0, y: '100%' })
+    .translate({ y: '-100%' })
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
   private buildAnimButton(label: string, type: PageTurnAnimationType) {
     Column() {
       Text(label)
         .fontSize(12)
         .fontFamily(this.appFontFamily)
-        .fontColor(this.pageReadingSettings.pageTurnAnimation === type ?
+        .fontColor(this.getDisplayedPageTurnAnimationType() === type ?
           $r('app.color.accent_primary') : $r('app.color.text_secondary'))
     }
     .width('31%')
     .padding(10)
-    .backgroundColor(this.pageReadingSettings.pageTurnAnimation === type ?
+    .backgroundColor(this.getDisplayedPageTurnAnimationType() === type ?
       $r('app.color.accent_background') : Color.Transparent)
     .borderRadius(8)
     .onClick(() => {
@@ -1406,6 +4594,56 @@ export struct EpubWebViewReaderPage {
     })
   }
 
+  private getDisplayedPageTurnAnimationType(): PageTurnAnimationType {
+    return this.pageReadingSettings.pageTurnAnimation;
+  }
+
+  @Builder
+  private buildPageTurnAnimationOptions() {
+    Column() {
+      Text('选择翻页动画')
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+        .margin({ bottom: 8 })
+        .fontFamily(this.appFontFamily)
+
+      Text('卷页仅在横向分页/双页等可截图页面中启用，上下翻页会自动降级为覆盖动画')
+        .fontSize(12)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+        .margin({ bottom: 12 })
+        .fontFamily(this.appFontFamily)
+
+      Row() {
+        this.buildAnimButton('无', PageTurnAnimationType.NONE)
+        this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
+        this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+      .margin({ bottom: 8 })
+
+      Row() {
+        this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
+        this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
+        this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+      .margin({ bottom: 8 })
+
+      Row() {
+        this.buildAnimButton('卷页', PageTurnAnimationType.CURL)
+        Column().width('31%')
+        Column().width('31%')
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .width('100%')
+  }
+
   @Builder
   private buildPageTurnAnimationSettings() {
     Stack() {
@@ -1413,10 +4651,9 @@ export struct EpubWebViewReaderPage {
         .width('100%')
         .height('100%')
         .backgroundColor($r('app.color.background_overlay'))
-        .opacity(0.5)
+        .opacity(this.pageTurnSettingsBackdropOpacity)
         .onClick(() => {
-          this.showPageTurnAnimationSettings = false;
-          this.handleMenusVisibilityChange();
+          this.hidePageTurnAnimationSettingsWithAnimation(null);
         })
 
       if (this.isLandscapeMode) {
@@ -1425,8 +4662,7 @@ export struct EpubWebViewReaderPage {
             .layoutWeight(1)
             .height('100%')
             .onClick(() => {
-              this.showPageTurnAnimationSettings = false;
-              this.handleMenusVisibilityChange();
+              this.hidePageTurnAnimationSettingsWithAnimation(null);
             })
 
           Column() {
@@ -1447,32 +4683,17 @@ export struct EpubWebViewReaderPage {
               .height(36)
               .backgroundColor(Color.Transparent)
               .onClick(() => {
-                this.showPageTurnAnimationSettings = false;
-                this.handleMenusVisibilityChange();
+                this.hidePageTurnAnimationSettingsWithAnimation(null);
               })
             }
             .width('100%')
             .margin({ bottom: 16 })
 
-            Column() {
-              Row() {
-                this.buildAnimButton('无', PageTurnAnimationType.NONE)
-                this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
-                this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.SpaceBetween)
-              .margin({ bottom: 8 })
-
-              Row() {
-                this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
-                this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
-                this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.SpaceBetween)
+            Scroll() {
+              this.buildPageTurnAnimationOptions()
             }
-            .width('100%')
+            .layoutWeight(1)
+            .scrollBar(BarState.Off)
           }
           .width(320)
           .height('100%')
@@ -1480,6 +4701,8 @@ export struct EpubWebViewReaderPage {
           .backgroundColor(this.themeManager.getGlassBackgroundResource())
           .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
           .borderRadius({ topLeft: 16, bottomLeft: 16 })
+          .opacity(this.pageTurnSettingsPanelOpacity)
+          .translate({ x: this.pageTurnSettingsPanelTranslateX })
         }
         .width('100%')
         .height('100%')
@@ -1502,29 +4725,13 @@ export struct EpubWebViewReaderPage {
             .height(36)
             .backgroundColor(Color.Transparent)
             .onClick(() => {
-              this.showPageTurnAnimationSettings = false;
-              this.handleMenusVisibilityChange();
+              this.hidePageTurnAnimationSettingsWithAnimation(null);
             })
           }
           .width('100%')
           .margin({ bottom: 16 })
 
-          Row() {
-            this.buildAnimButton('无', PageTurnAnimationType.NONE)
-            this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
-            this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.SpaceBetween)
-          .margin({ bottom: 8 })
-
-          Row() {
-            this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
-            this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
-            this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.SpaceBetween)
+          this.buildPageTurnAnimationOptions()
         }
         .width('90%')
         .constraintSize({ maxWidth: 400 })
@@ -1532,6 +4739,9 @@ export struct EpubWebViewReaderPage {
         .backgroundColor(this.themeManager.getGlassBackgroundResource())
         .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
         .borderRadius(16)
+        .opacity(this.pageTurnSettingsPanelOpacity)
+        .scale({ x: this.pageTurnSettingsPanelScale, y: this.pageTurnSettingsPanelScale })
+        .translate({ y: this.pageTurnSettingsPanelTranslateY })
       }
     }
     .width('100%')
@@ -1546,10 +4756,9 @@ export struct EpubWebViewReaderPage {
         .width('100%')
         .height('100%')
         .backgroundColor($r('app.color.background_overlay'))
-        .opacity(0.5)
+        .opacity(this.autoPageTurnSettingsBackdropOpacity)
         .onClick(() => {
-          this.showAutoPageTurnSettings = false;
-          this.handleMenusVisibilityChange();
+          this.hideAutoPageTurnSettingsWithAnimation(null);
         })
 
       if (this.isLandscapeMode) {
@@ -1558,8 +4767,7 @@ export struct EpubWebViewReaderPage {
             .layoutWeight(1)
             .height('100%')
             .onClick(() => {
-              this.showAutoPageTurnSettings = false;
-              this.handleMenusVisibilityChange();
+              this.hideAutoPageTurnSettingsWithAnimation(null);
             })
 
           Column() {
@@ -1580,8 +4788,7 @@ export struct EpubWebViewReaderPage {
               .height(36)
               .backgroundColor(Color.Transparent)
               .onClick(() => {
-                this.showAutoPageTurnSettings = false;
-                this.handleMenusVisibilityChange();
+                this.hideAutoPageTurnSettingsWithAnimation(null);
               })
             }
             .width('100%')
@@ -1639,6 +4846,8 @@ export struct EpubWebViewReaderPage {
           .backgroundColor(this.themeManager.getGlassBackgroundResource())
           .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
           .borderRadius({ topLeft: 16, bottomLeft: 16 })
+          .opacity(this.autoPageTurnSettingsPanelOpacity)
+          .translate({ x: this.autoPageTurnSettingsPanelTranslateX })
         }
         .width('100%')
         .height('100%')
@@ -1661,8 +4870,7 @@ export struct EpubWebViewReaderPage {
             .height(36)
             .backgroundColor(Color.Transparent)
             .onClick(() => {
-              this.showAutoPageTurnSettings = false;
-              this.handleMenusVisibilityChange();
+              this.hideAutoPageTurnSettingsWithAnimation(null);
             })
           }
           .width('100%')
@@ -1720,6 +4928,9 @@ export struct EpubWebViewReaderPage {
         .backgroundColor(this.themeManager.getGlassBackgroundResource())
         .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
         .borderRadius(16)
+        .opacity(this.autoPageTurnSettingsPanelOpacity)
+        .scale({ x: this.autoPageTurnSettingsPanelScale, y: this.autoPageTurnSettingsPanelScale })
+        .translate({ y: this.autoPageTurnSettingsPanelTranslateY })
       }
     }
     .width('100%')
@@ -1741,14 +4952,44 @@ export struct EpubWebViewReaderPage {
               params: {
                 initialSpineFilePath: this.resolveSpinePath(this.currentSpineIndex),
                 initialPageOffset: this.currentPageWithinSpine,
+                initialAnchorFragment: this.currentAnchorFragment,
+                contentSafeTopInset: this.getReaderContentTopInset(),
                 textSettings: this.readingSettings,
                 pageSettings: this.pageReadingSettings,
                 isFixedLayout: this.isFixedLayout,
+                spineLayoutType: this.getSpineLayoutType(this.currentSpineIndex),
+                spineMediaType: this.getSpineMediaType(this.currentSpineIndex),
                 callbacks: {
-                  onPageChange: (page: number, totalPages: number) => {
+                  onPageChange: (page: number, totalPages: number, source?: EpubWebPageChangeSource) => {
+                    let spineChanged = false;
+                    if (this.pendingSpineIndex >= 0) {
+                      spineChanged = this.currentSpineIndex !== this.pendingSpineIndex;
+                      this.currentSpineIndex = this.pendingSpineIndex;
+                      this.pendingSpineIndex = -1;
+                    }
+                    const isReadAloudFollow = source === EpubWebPageChangeSource.READ_ALOUD_FOLLOW && !spineChanged;
                     this.currentPageWithinSpine = page;
                     this.totalPagesInSpine = totalPages;
+                    if (this.currentAnchorFragment.length > 0) {
+                      this.currentAnchorFragment = '';
+                    }
                     this.syncAutoPageTurnState();
+                    if (!isReadAloudFollow) {
+                      this.readAloudController.updatePageIndex(page);
+                    }
+                    if (spineChanged) {
+                      this.currentVisibleTextSnapshot = null;
+                      this.currentSpineTextCache = '';
+                      this.currentSpineTextCacheIndex = -1;
+                      void this.refreshCurrentSpineHighlightRanges('spine_page_change');
+                      void this.applyPurifyRulesToCurrentSpine('spine_page_change');
+                    }
+                    this.refreshCurrentEpubBookmarkState(isReadAloudFollow ? 'read_aloud_follow' : 'page_change');
+                    if (isReadAloudFollow) {
+                      logger.debug(TAG, `EPUB Web 听书跟随翻页: page=${page}/${totalPages}`);
+                      return;
+                    }
+                    void this.updateEpubReadAloudContextByPosition();
                     void this.saveReadingProgress('page_change');
                   },
                   onSpineChangeRequested: (direction: 'prev' | 'next') => {
@@ -1757,10 +4998,15 @@ export struct EpubWebViewReaderPage {
                   onReady: (controller: EpubWebViewReaderController) => {
                     this.epubReaderController = controller;
                     this.syncAutoPageTurnState();
+                    this.refreshCurrentEpubBookmarkState('webview_ready');
+                    void this.applyPurifyRulesToCurrentSpine('webview_ready');
+                    void this.updateEpubReadAloudContextByPosition();
+                    this.syncReadAloudStateFromController();
                     this.notifyTransitionReaderReadyOnce('webview_layout_ready');
                     logger.info(TAG, 'EpubWebView 控制器就绪');
                   },
                   onError: (msg: string) => {
+                    this.pendingSpineIndex = -1;
                     logger.warn(TAG, `WebView 错误: ${msg}`);
                     if (!this.hasNotifiedTransitionReaderReady) {
                       logger.warn(TAG, 'WebView 初始加载失败，取消翻开过渡遮罩');
@@ -1769,10 +5015,37 @@ export struct EpubWebViewReaderPage {
                   },
                   onReaderTap: (xRatio: number, yRatio: number) => {
                     this.handleWebViewTap(xRatio, yRatio);
+                  },
+                  onReaderSwipe: (deltaX: number, deltaY: number) => {
+                    this.handleReaderSwipeDelta(deltaX, deltaY);
+                  },
+                  onRuntimeBlankSpine: (info: EpubRuntimeBlankSpineInfo): boolean => {
+                    return this.handleRuntimeBlankSpine(info);
+                  },
+                  onAddPurifyRule: (pattern: string) => {
+                    void this.addPurifyRule(pattern);
+                  },
+                  onStartReadAloudFromCharIndex: (charIndex: number) => {
+                    this.onStartReadAloudFromCharIndex(charIndex);
+                  },
+                  onAddHighlight: (snapshot: EpubWebSelectionSnapshot) => {
+                    this.onAddEpubHighlight(snapshot);
+                  },
+                  onAddHighlightWithThought: (snapshot: EpubWebSelectionSnapshot) => {
+                    this.onAddEpubHighlightWithThought(snapshot);
+                  },
+                  onUpdateHighlightStyle: (highlightId: string, lineType: HighlightLineType, color: string) => {
+                    this.onUpdateEpubHighlightStyle(highlightId, lineType, color);
+                  },
+                  onUpdateHighlightThought: (highlightId: string, thoughtText: string) => {
+                    this.onUpdateEpubHighlightThought(highlightId, thoughtText);
                   }
                 }
-              } as EpubWebViewReaderParams
+              } as EpubWebViewReaderParams,
+              enableEpubAnnotations: true,
+              epubHighlightRanges: this.currentSpineHighlightRanges
             })
+              .id(`epub_webview_reader_component_${this.readerMountEpoch}`)
               .width('100%')
               .height('100%')
           }
@@ -1812,11 +5085,30 @@ export struct EpubWebViewReaderPage {
             .hitTestBehavior(HitTestMode.Block)
             .onClick((event: ClickEvent) => { this.handlePageTap(event); })
             .gesture(
-              PanGesture({ direction: PanDirection.All, distance: 40 })
+              PanGesture({ direction: PanDirection.All, distance: 5 })
+                .onActionStart((event: GestureEvent) => {
+                  this.handleReaderPanStart(event);
+                })
+                .onActionUpdate((event: GestureEvent) => {
+                  this.handleReaderPanUpdate(event);
+                })
                 .onActionEnd((event: GestureEvent) => {
-                  this.handleSwipe(event);
+                  this.handleReaderPanEnd(event);
                 })
             )
+        }
+
+        if (!this.isLoading &&
+          this.errorMessage.trim().length === 0 &&
+          this.shouldShowBottomInfoBar() &&
+          !this.shouldHideBottomInfoBar()) {
+          Column() {
+            this.buildBottomInfoBar()
+          }
+          .width('100%')
+          .height('100%')
+          .zIndex(36)
+          .hitTestBehavior(HitTestMode.None)
         }
 
         // ── 顶部工具栏 ──
@@ -1846,20 +5138,24 @@ export struct EpubWebViewReaderPage {
           MangaQuickSettings({
             readingSettings: this.pageReadingSettings,
             isVisible: this.showQuickSettings,
+            hideContinuousScrollMode: true,
             callbacks: {
               onSettingsChange: (settings: MangaReadingSettings) => {
                 this.applyPageReadingSettings(settings, 'quick_settings_change', true);
               },
               onClose: () => {
-                this.showQuickSettings = false;
-                this.handleMenusVisibilityChange();
+                this.hideQuickSettingsWithAnimation(null);
               },
               onOpenFullSettings: () => {
-                this.showQuickSettings = false;
-                this.openTextSettings();
+                this.hideQuickSettingsWithAnimation(() => {
+                  this.openTextSettings();
+                });
               }
             }
           })
+          .opacity(this.quickSettingsOpacity)
+          .scale({ x: this.quickSettingsScale, y: this.quickSettingsScale })
+          .translate({ y: this.quickSettingsTranslateY })
           .zIndex(210)
         }
 
@@ -1867,6 +5163,7 @@ export struct EpubWebViewReaderPage {
         if (this.showSettingsPanel) {
           EpubReaderSettingsPanel({
             settings: this.readingSettings,
+            pageSettings: this.pageReadingSettings,
             isVisible: this.showSettingsPanel,
             callbacks: {
               onSettingsChange: (newSettings: EBookReadingSettings) => {
@@ -1881,6 +5178,9 @@ export struct EpubWebViewReaderPage {
                   void this.ebookDataManager.saveReadingSettings(bookId, mergedSettings);
                 }
               },
+              onPageSettingsChange: (newSettings: MangaReadingSettings) => {
+                this.applyPageReadingSettings(newSettings, 'full_settings_change', true);
+              },
               onClose: () => {
                 this.showSettingsPanel = false;
                 this.handleMenusVisibilityChange();
@@ -1894,15 +5194,14 @@ export struct EpubWebViewReaderPage {
         // ── 章节列表（自带遮罩与动画）──
         if (this.showChapterList) {
           EpubReaderChapterList({
-            chapters: this.spineItems,
-            currentIndex: this.currentSpineIndex,
+            chapters: this.navigationChapters,
+            currentIndex: this.getCurrentNavigationIndex(),
             isVisible: this.showChapterList,
             callbacks: {
-              onChapterSelect: (spineIndex: number) => {
-                this.loadSpineItem(spineIndex, 0);
+              onChapterSelect: (navigationIndex: number) => {
+                this.navigateToNavigationIndex(navigationIndex);
                 this.showChapterList = false;
                 this.handleMenusVisibilityChange();
-                void this.saveReadingProgress('chapter_list_jump');
               },
               onClose: () => {
                 this.showChapterList = false;
@@ -1920,6 +5219,32 @@ export struct EpubWebViewReaderPage {
 
         if (this.showAutoPageTurnSettings) {
           this.buildAutoPageTurnSettings()
+        }
+
+        if (this.showReadAloudPanel) {
+          ReadAloudSettingsInfoPanel({
+            isLandscape: this.isLandscapeMode,
+            settings: this.readAloudPanelSettings,
+            availability: this.readAloudAvailability,
+            voiceOptions: this.readAloudVoiceOptions,
+            statusMessage: this.readAloudStatusMessage,
+            appFontFamily: this.appFontFamily,
+            callbacks: {
+              onClose: () => {
+                this.lastReadAloudPanelCloseTime = Date.now();
+                this.showReadAloudPanel = false;
+                this.handleMenusVisibilityChange();
+                this.scheduleFullscreenRestore('read_aloud_panel_closed', 80);
+              },
+              onRefresh: () => {
+                this.refreshReadAloudAvailability();
+              },
+              onChange: (partial: Partial<ReadAloudSettings>) => {
+                this.updateReadAloudSettings(partial);
+              }
+            }
+          })
+            .zIndex(220)
         }
 
         if (this.showInteractionOverlay) {
@@ -1946,6 +5271,8 @@ export struct EpubWebViewReaderPage {
       .id('epub_webview_reader_root')
       .backgroundColor(Color.Black)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .focusable(true)
+      .defaultFocus(true)
       .onKeyEvent((event: KeyEvent) => {
         if (event.type === KeyType.Up) {
           if (this.handleVolumeKey(event.keyCode)) {

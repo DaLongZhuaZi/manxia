@@ -113,6 +113,8 @@ function buildComparableEBookReadingSettings(settings: EBookReadingSettings): EB
     nightMode: settings.nightMode,
     followSystemTheme: settings.followSystemTheme,
     pageMargin: settings.pageMargin,
+    pageTopMargin: resolveOptionalNumber(settings.pageTopMargin, DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ?? settings.pageMargin),
+    pageBottomMargin: resolveOptionalNumber(settings.pageBottomMargin, DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ?? settings.pageMargin),
     pageMode: settings.pageMode,
     brightness: settings.brightness,
     autoSave: settings.autoSave,
@@ -168,6 +170,8 @@ export function hasCustomLocalTextNovelReadingSettings(
     || comparable.nightMode !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.nightMode
     || comparable.followSystemTheme !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.followSystemTheme
     || comparable.pageMargin !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.pageMargin
+    || comparable.pageTopMargin !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.pageTopMargin
+    || comparable.pageBottomMargin !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.pageBottomMargin
     || comparable.pageMode !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.pageMode
     || comparable.brightness !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.brightness
     || comparable.autoSave !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.autoSave
@@ -249,8 +253,12 @@ export function buildTextReaderSettingsFromEBookSettings(
   base.background.imageOpacity = ebookSettings.backgroundImageOpacity ?? base.background.imageOpacity;
 
   const safeMargin = Math.max(0, Math.round(ebookSettings.pageMargin ?? base.pageMargins.left));
+  const safeTopMargin = Math.max(0, Math.round(ebookSettings.pageTopMargin ?? safeMargin));
+  const safeBottomMargin = Math.max(0, Math.round(ebookSettings.pageBottomMargin ?? safeMargin));
   base.pageMargins.left = safeMargin;
   base.pageMargins.right = safeMargin;
+  base.pageMargins.top = safeTopMargin;
+  base.pageMargins.bottom = safeBottomMargin;
 
   base.pageTurnAnimation = toPageTurnAnimation(
     ebookSettings.pageTurnAnimation,
@@ -288,6 +296,8 @@ export function syncTextReaderSettingsToEBookSettings(
     nightMode: source.nightMode,
     followSystemTheme: source.followSystemTheme,
     pageMargin: source.pageMargin,
+    pageTopMargin: source.pageTopMargin,
+    pageBottomMargin: source.pageBottomMargin,
     pageMode: source.pageMode,
     brightness: source.brightness,
     autoSave: source.autoSave,
@@ -317,6 +327,8 @@ export function syncTextReaderSettingsToEBookSettings(
   next.backgroundColor = settings.background.color || '#F5F0E1';
   next.textColor = settings.textStyle.textColor;
   next.pageMargin = Math.max(0, Math.round(settings.pageMargins.left));
+  next.pageTopMargin = Math.max(0, Math.round(settings.pageMargins.top));
+  next.pageBottomMargin = Math.max(0, Math.round(settings.pageMargins.bottom));
   next.letterSpacing = settings.textStyle.letterSpacing;
   next.paragraphSpacing = settings.textStyle.paragraphSpacing;
   next.firstLineIndent = settings.textStyle.firstLineIndent;

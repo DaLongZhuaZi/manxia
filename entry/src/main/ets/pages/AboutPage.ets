@@ -26,7 +26,7 @@ import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelpe
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?taskId=b3f280fc064384cf55eff16adf0abb98&invitationCode=9fYuJIubYMw';
+const INVITE_TEST_URL = 'https://appgallery.huawei.com/link/invite-test-wap?taskId=e0b3ff951eda040bd83ef6abdd414606&invitationCode=9fYuJIubYMw';
 
 // 使用NavDestinationContext官方类型
 // @kit.ArkUI提供的NavDestinationContext已包含必要的类型定义

@@ -482,7 +482,7 @@ export struct AdvancedSettingsSubPage {
               .fontSize(14)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            Text('启用后 EPUB/MOBI/AZW 将优先使用系统 ReaderKit')
+            Text('启用后 EPUB 可使用系统 ReaderKit，Kindle 格式仅作为手动兜底')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))

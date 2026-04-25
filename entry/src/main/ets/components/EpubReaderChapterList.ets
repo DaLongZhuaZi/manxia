@@ -16,6 +16,7 @@ export struct EpubReaderChapterList {
   @Prop currentIndex: number;
   @Prop isVisible: boolean;
   @Prop callbacks: EpubChapterListCallbacks;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
 
   @State private panelOpacity: number = 0;
   @State private panelScale: number = 0.95;
@@ -120,6 +121,7 @@ export struct EpubReaderChapterList {
       Text(`${index + 1}`)
         .fontSize(13)
         .fontColor($r('app.color.text_muted'))
+        .fontFamily(this.appFontFamily)
         .width(32)
         .textAlign(TextAlign.Center)
 
@@ -128,6 +130,7 @@ export struct EpubReaderChapterList {
           .fontSize(15)
           .fontWeight(index === this.currentIndex ? FontWeight.Bold : FontWeight.Normal)
           .fontColor(index === this.currentIndex ? $r('app.color.accent_primary') : $r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
@@ -145,9 +148,7 @@ export struct EpubReaderChapterList {
     .backgroundColor(index === this.currentIndex ? $r('app.color.accent_background') : Color.Transparent)
     .borderRadius(8)
     .onClick(() => {
-      if (index !== this.currentIndex) {
-        this.selectChapter(index);
-      }
+      this.selectChapter(index);
     })
   }
 
@@ -159,10 +160,12 @@ export struct EpubReaderChapterList {
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
           .layoutWeight(1)
         Text(`共${this.chapters.length}章`)
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
           .margin({ right: 12 })
         Button() {
           SymbolGlyph($r('sys.symbol.xmark'))
@@ -207,10 +210,12 @@ export struct EpubReaderChapterList {
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
             .layoutWeight(1)
           Text(`共${this.chapters.length}章`)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
             .margin({ right: 8 })
           Button() {
             SymbolGlyph($r('sys.symbol.xmark'))
