@@ -59,6 +59,7 @@ import { MangaSourceEngine, EngineResult } from '../Framework/WebView/MangaSourc
 import { PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
 import { MangaSourceAPIEngine } from '../Framework/WebView/MangaSourceAPIEngine';
 import { ChapterPreloadManager } from '../Framework/Preload/ChapterPreloadManager';
+import { OnlineArchiveExtractedPage, OnlineArchiveExtractResult, OnlineMangaArchiveService } from '../Framework/Download/OnlineMangaArchiveService';
 import { webview } from '@kit.ArkWeb';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileUri } from '@kit.CoreFileKit';
@@ -486,6 +487,7 @@ export struct MangaReaderPage {
 
   // 图片加载状态 - 用于控制titlebar显示
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private onlineArchiveService: OnlineMangaArchiveService = OnlineMangaArchiveService.getInstance();
   private deviceChangeListener: DeviceChangeListener | null = null;
   @State shouldUseDoublePage: boolean = false;// 是否应该使用双页模式
   
@@ -799,6 +801,10 @@ export struct MangaReaderPage {
     
     // 初始化屏幕尺寸
     this.uiContext = this.getUIContext();
+    const hostContext = this.uiContext.getHostContext();
+    if (hostContext) {
+      this.onlineArchiveService.setContext(hostContext as common.UIAbilityContext);
+    }
     
     // 初始化响应式布局
     this.initScreenSize();
@@ -2578,6 +2584,76 @@ export struct MangaReaderPage {
     
     await this.initPromise;
   }
+
+  private async tryLoadOnlineDownloadedArchivePagesForChapter(
+    chapter: MangaChapter,
+    kickstartViewer: boolean
+  ): Promise<boolean> {
+    try {
+      let archivePath = chapter.localPath || '';
+      if (!this.isCbzArchivePath(archivePath)) {
+        const dbChapter = await DataManager.getInstance().getOnlineChapterById(chapter.id);
+        if (dbChapter && dbChapter.downloadPath && this.isCbzArchivePath(dbChapter.downloadPath)) {
+          archivePath = dbChapter.downloadPath;
+          chapter.localPath = archivePath;
+        }
+      }
+
+      if (!archivePath || !this.isCbzArchivePath(archivePath)) {
+        return false;
+      }
+      if (!this.onlineArchiveService.fileExists(archivePath)) {
+        logger.warn(TAG, `在线已下载章节CBZ不存在，回退旧链路: ${archivePath}`);
+        return false;
+      }
+
+      const pageInfos = await DataManager.getInstance().getOnlineChapterPages(chapter.id);
+      const extractResult: OnlineArchiveExtractResult = await this.onlineArchiveService.extractArchiveForReader({
+        archivePath: archivePath,
+        chapterId: chapter.id,
+        pages: pageInfos
+      });
+      chapter.pages = this.convertArchivePagesToMangaPages(extractResult.pages);
+      chapter.totalPages = chapter.pages.length;
+      chapter.isDownloaded = true;
+      chapter.downloadStatus = DownloadStatus.COMPLETED;
+      chapter.downloadProgress = 100;
+
+      logger.info(TAG, `在线已下载章节已从CBZ解压加载: ${chapter.title}, pages=${chapter.pages.length}, archive=${archivePath}`);
+      if (kickstartViewer && this.mangaViewerComponent) {
+        this.mangaViewerComponent.kickstartLoading();
+      }
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `在线已下载章节CBZ解压加载失败，回退旧链路: chapter=${chapter.title}, ${String(error)}`);
+      return false;
+    }
+  }
+
+  private convertArchivePagesToMangaPages(pages: OnlineArchiveExtractedPage[]): MangaPage[] {
+    const mangaPages: MangaPage[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const mangaPage: MangaPage = {
+        id: page.pageId,
+        index: page.pageIndex,
+        sourceType: ImageSourceType.LOCAL,
+        imagePath: page.localPath,
+        imageUrl: page.imageUrl,
+        localPath: page.localPath,
+        width: page.width,
+        height: page.height,
+        fileSize: page.fileSize,
+        isLoaded: false
+      };
+      mangaPages.push(mangaPage);
+    }
+    return mangaPages;
+  }
+
+  private isCbzArchivePath(path: string): boolean {
+    return path.toLowerCase().endsWith('.cbz');
+  }
   
   /**
   * 实际的初始化逻辑
@@ -3228,8 +3304,15 @@ export struct MangaReaderPage {
 
       this.reportTransitionLoadingProgress(0.46, 'chapter_bound');
 
+      const shouldTryOnlineArchivePages =
+        params.contentType === MangaReaderContentType.OnlineDownloaded ||
+        params.contentType === MangaReaderContentType.OnlineUndownloaded;
+      const didLoadOnlineArchivePages = shouldTryOnlineArchivePages
+        ? await this.tryLoadOnlineDownloadedArchivePagesForChapter(this.readerState.currentChapter, true)
+        : false;
+
       // [修复] 扩展条件：当页面为空，或页面存在但第一页的sourceType仍为NETWORK时，重新加载
-      const needsLocalPathReload = params.contentType === MangaReaderContentType.OnlineDownloaded && (
+      const needsLocalPathReload = !didLoadOnlineArchivePages && params.contentType === MangaReaderContentType.OnlineDownloaded && (
         this.readerState.currentChapter.pages.length === 0 ||
         (this.readerState.currentChapter.pages.length > 0 && 
          this.readerState.currentChapter.pages[0].sourceType === ImageSourceType.NETWORK)
@@ -5773,6 +5856,16 @@ export struct MangaReaderPage {
       }
     }
 
+    const shouldTryOnlineArchive =
+      this.pageParams?.contentType === MangaReaderContentType.OnlineDownloaded ||
+      this.pageParams?.contentType === MangaReaderContentType.OnlineUndownloaded;
+    if (shouldTryOnlineArchive) {
+      const archiveLoaded = await this.tryLoadOnlineDownloadedArchivePagesForChapter(chapter, false);
+      if (archiveLoaded) {
+        return;
+      }
+    }
+
     // 如果MangaEngine未初始化，尝试从数据库加载页面信息
     if (!this.mangaEngine) {
       logger.warn(TAG, 'MangaEngine未初始化，尝试从数据库加载页面信息');
@@ -5824,8 +5917,12 @@ export struct MangaReaderPage {
           
           // 转换为MangaPage格式
           chapter.pages = dbPages.map((dbPage, index): MangaPage => {
+            const localPath = dbPage.localPath || '';
+            const imagePath = localPath.length > 0 ? localPath : dbPage.imageUrl;
             let sourceType: ImageSourceType;
-            if (dbPage.imageUrl.startsWith('http://') || dbPage.imageUrl.startsWith('https://')) {
+            if (localPath.length > 0) {
+              sourceType = ImageSourceType.LOCAL;
+            } else if (dbPage.imageUrl.startsWith('http://') || dbPage.imageUrl.startsWith('https://')) {
               sourceType = ImageSourceType.NETWORK;
             } else if (dbPage.imageUrl.startsWith('/')) {
               sourceType = ImageSourceType.LOCAL;
@@ -5837,8 +5934,9 @@ export struct MangaReaderPage {
               id: dbPage.id,
               index: index,
               sourceType: sourceType,
-              imagePath: dbPage.imageUrl,
+              imagePath: imagePath,
               imageUrl: dbPage.imageUrl,
+              localPath: localPath,
               width: dbPage.width,
               height: dbPage.height,
               fileSize: dbPage.fileSize,

@@ -2,6 +2,7 @@
   "src": [
     "pages/SplashPage",
     "pages/WelcomeGuidePage",
-    "pages/MainMenuPage"
+    "pages/MainMenuPage",
+    "pages/EBookReaderRoutePage"
   ]
 }

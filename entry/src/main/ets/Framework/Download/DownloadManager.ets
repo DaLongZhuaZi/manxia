@@ -11,14 +11,21 @@ import { DownloadDirManager } from '../Storage/DownloadDirManager';
 import http from '@ohos.net.http';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AppNotificationManager, NotificationType } from '../Managers/NotificationManager';
-import { DataManager, DownloadTask, DownloadTaskInput, DownloadTaskUpdate } from '../Data/DataManager';
+import { DataManager, DownloadTask, DownloadTaskInput, DownloadTaskUpdate, OnlineComicInfo, OnlineChapterInfo } from '../Data/DataManager';
 import { DatabaseManager } from '../Database/DatabaseManager';
-import { UpdateRecordData } from '../Database/DatabaseTypes';
+import { ComicSourceDatabaseRecord, GenericQueryRecord, UpdateRecordData } from '../Database/DatabaseTypes';
 import { DownloadStatus } from '../Types/StatusEnums';
 import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
+import { OnlineArchiveCreateResult, OnlineArchiveMetadata, OnlineArchivePageFile, OnlineMangaArchiveService } from './OnlineMangaArchiveService';
+import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
 
 const TAG = 'DownloadManager';
 const DOWNLOAD_BACKGROUND_TASK_OWNER = 'download_manager_queue';
+
+interface OnlineDownloadSourceIdentity {
+  sourceName: string;
+  sourcePkg: string;
+}
 
 /**
  * 下载任务状态
@@ -66,6 +73,9 @@ export interface DownloadTaskInfo {
   taskType?: DownloadTaskType;   // 任务类型
   fileFormat?: string;           // 电子书格式（epub/mobi/pdf等）
   sourceId?: number;             // 图源ID
+  sourceName?: string;           // 图源名称
+  sourcePkg?: string;            // 图源包名
+  archivePath?: string;          // 在线漫画CBZ归档路径
   needFetchPages?: boolean;      // 是否需要先获取图片列表
   pageListFetcher?: PageListFetcher; // 图片列表获取函数
 }
@@ -97,6 +107,7 @@ export class MangaDownloadManager {
   private dataManager: DataManager;
   private databaseManager: DatabaseManager;
   private downloadDirManager: DownloadDirManager;
+  private onlineArchiveService: OnlineMangaArchiveService;
   private usePublicDownloadDir: boolean = true;  // 是否使用公共Download目录
   private progressCallbacks: Map<string, DownloadProgressCallback> = new Map();  // 进度回调
   
@@ -111,6 +122,7 @@ export class MangaDownloadManager {
     this.dataManager = DataManager.getInstance();
     this.databaseManager = DatabaseManager.getInstance();
     this.downloadDirManager = DownloadDirManager.getInstance();
+    this.onlineArchiveService = OnlineMangaArchiveService.getInstance();
     logger.info(TAG, '下载管理器初始化');
   }
 
@@ -127,6 +139,7 @@ export class MangaDownloadManager {
   public setContext(context: common.UIAbilityContext): void {
     this.context = context;
     this.downloadDirManager.setContext(context);
+    this.onlineArchiveService.setContext(context);
     logger.info(TAG, '应用上下文已设置');
   }
 
@@ -278,19 +291,11 @@ export class MangaDownloadManager {
 
       // 生成任务ID
       const taskId = `online_${mangaId}_${chapterId}_${Date.now()}`;
-      
-      // 确定保存路径
-      let savePath: string;
-      if (this.usePublicDownloadDir && this.downloadDirManager.isReady()) {
-        // 使用公共Download目录
-        savePath = this.downloadDirManager.getMangaDownloadPath(mangaTitle, chapterTitle);
-        logger.info(TAG, `使用公共Download目录: ${savePath}`);
-      } else {
-        // 回退到应用私有目录
-        savePath = `${this.context.filesDir}/downloads/online/${mangaId}/${chapterId}`;
-        await this.ensureDirectory(savePath);
-        logger.info(TAG, `使用应用私有目录: ${savePath}`);
-      }
+
+      const sourceIdentity = await this.resolveOnlineSourceIdentity(sourceId);
+      const savePath = `${this.context.cacheDir}/online_download_work/${taskId}`;
+      await this.ensureDirectory(savePath);
+      logger.info(TAG, `在线漫画下载临时目录: ${savePath}`);
 
       // 创建任务信息
       const taskInfo: DownloadTaskInfo = {
@@ -307,7 +312,9 @@ export class MangaDownloadManager {
         totalCount: imageUrls.length,
         createdTime: Date.now(),
         isOnlineManga: true,
-        sourceId: sourceId
+        sourceId: sourceId,
+        sourceName: sourceIdentity.sourceName,
+        sourcePkg: sourceIdentity.sourcePkg
       };
 
       // 保存到内存
@@ -359,16 +366,11 @@ export class MangaDownloadManager {
 
       // 生成任务ID
       const taskId = `online_${mangaId}_${chapterId}_${Date.now()}`;
-      
-      // 确定保存路径
-      let savePath: string;
-      if (this.usePublicDownloadDir && this.downloadDirManager.isReady()) {
-        savePath = this.downloadDirManager.getMangaDownloadPath(mangaTitle, chapterTitle);
-        logger.info(TAG, `使用公共Download目录: ${savePath}`);
-      } else {
-        savePath = `${this.context.filesDir}/downloads/online/${mangaId}/${chapterId}`;
-        logger.info(TAG, `使用应用私有目录: ${savePath}`);
-      }
+
+      const sourceIdentity = await this.resolveOnlineSourceIdentity(sourceId);
+      const savePath = `${this.context.cacheDir}/online_download_work/${taskId}`;
+      await this.ensureDirectory(savePath);
+      logger.info(TAG, `在线漫画下载临时目录: ${savePath}`);
 
       // 创建任务信息（图片列表为空，需要在下载时获取）
       const taskInfo: DownloadTaskInfo = {
@@ -386,6 +388,8 @@ export class MangaDownloadManager {
         createdTime: Date.now(),
         isOnlineManga: true,
         sourceId: sourceId,
+        sourceName: sourceIdentity.sourceName,
+        sourcePkg: sourceIdentity.sourcePkg,
         needFetchPages: true,
         pageListFetcher: pageListFetcher
       };
@@ -486,19 +490,18 @@ export class MangaDownloadManager {
         }
       }
 
-      // 确保保存目录存在
-      if (task.isOnlineManga && this.usePublicDownloadDir && this.downloadDirManager.isReady()) {
-        await this.downloadDirManager.ensureDirectory(task.savePath);
-      } else {
-        await this.ensureDirectory(task.savePath);
-      }
+      // 确保下载工作目录存在。在线漫画先写入私有临时目录，完成后统一归档为CBZ。
+      await this.ensureDirectory(task.savePath);
 
       // 下载所有图片
+      const downloadedPageFiles: OnlineArchivePageFile[] = [];
       for (let i = 0; i < task.urls.length; i++) {
         const url = task.urls[i];
         // 根据URL确定文件扩展名
         const ext = this.getFileExtension(url) || 'jpg';
-        const fileName = `page_${String(i + 1).padStart(4, '0')}.${ext}`;
+        const fileName = task.isOnlineManga
+          ? `${String(i + 1).padStart(4, '0')}.${ext}`
+          : `page_${String(i + 1).padStart(4, '0')}.${ext}`;
         const filePath = `${task.savePath}/${fileName}`;
 
         try {
@@ -515,12 +518,22 @@ export class MangaDownloadManager {
           try {
             if (task.isOnlineManga) {
               // 在线漫画：更新online_page表
-              // 使用imageUrl来匹配，支持完整URL和短URL两种格式
+              // 使用imageUrl来匹配，支持完整URL和短URL两种格式；不再保存散图localPath。
               // PicaComic等图源的URL可能包含图片处理参数，需要提取基础URL
               const baseUrl = this.extractBaseImageUrl(url);
-              const sql = 'UPDATE online_page SET localPath = ?, isDownloaded = 1 WHERE imageUrl = ? OR imageUrl LIKE ?';
-              await this.databaseManager.executeSql(sql, [filePath, url, `%${baseUrl}%`]);
-              logger.debug(TAG, `✅ 更新online_page本地路径: ${fileName} -> ${filePath}, baseUrl=${baseUrl.substring(0, 50)}...`);
+              const fileSize = this.getFileSizeSafe(filePath);
+              const sql = 'UPDATE online_page SET isDownloaded = 1, fileSize = ? WHERE chapterId = ? AND (pageNumber = ? OR imageUrl = ? OR imageUrl LIKE ?)';
+              await this.databaseManager.executeSql(sql, [fileSize, task.chapterId, i, url, `%${baseUrl}%`]);
+              const pageFile: OnlineArchivePageFile = {
+                pageIndex: i,
+                imageUrl: url,
+                sourcePath: filePath,
+                width: 0,
+                height: 0,
+                fileSize: fileSize
+              };
+              downloadedPageFiles.push(pageFile);
+              logger.debug(TAG, `✅ 在线页面已下载并等待归档: ${fileName}, baseUrl=${baseUrl.substring(0, 50)}...`);
             } else {
               // 本地漫画：更新page表
               const updateData: UpdateRecordData = {
@@ -559,6 +572,12 @@ export class MangaDownloadManager {
         }
       }
 
+      if (task.isOnlineManga) {
+        const archiveResult = await this.createOnlineMangaArchive(task, downloadedPageFiles);
+        task.archivePath = archiveResult.archivePath;
+        await this.cleanupOnlineDownloadWorkDir(task.savePath);
+      }
+
       // 下载完成
       task.status = TaskStatus.COMPLETED;
       task.progress = 100;
@@ -566,7 +585,19 @@ export class MangaDownloadManager {
       await this.updateTaskInDatabase(task);
       
       // 更新章节下载状态
-      await this.updateChapterDownloadStatus(task.chapterId, true, task.isOnlineManga || false);
+      const chapterStatusUpdated = await this.updateChapterDownloadStatus(
+        task.chapterId,
+        true,
+        task.isOnlineManga || false,
+        task.archivePath
+      );
+      if (!chapterStatusUpdated) {
+        throw new Error('章节下载状态更新失败');
+      }
+      if (task.isOnlineManga) {
+        this.publishMangaCacheUpdated(task, task.archivePath || '', 'download_complete');
+      }
+      this.notifyProgressCallbacks(task);
       
       // 发送完成通知
       await this.notificationManager.sendDownloadCompleteNotification(
@@ -580,6 +611,7 @@ export class MangaDownloadManager {
       task.status = TaskStatus.FAILED;
       task.error = err.message;
       await this.updateTaskInDatabase(task);
+      this.notifyProgressCallbacks(task);
       
       // 发送失败通知
       await this.notificationManager.sendDownloadFailedNotification(
@@ -723,7 +755,7 @@ export class MangaDownloadManager {
           const data = response.result as ArrayBuffer;
           try {
             // 写入文件
-            const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+            const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
             fs.writeSync(file.fd, data);
             fs.closeSync(file.fd);
             logger.debug(TAG, `HTTP下载完成: ${filePath}, 大小: ${data.byteLength}`);
@@ -839,17 +871,155 @@ export class MangaDownloadManager {
     return Array.from(this.tasks.values()).filter((task: DownloadTaskInfo) => task.mangaId === mangaId);
   }
 
+  private async resolveOnlineSourceIdentity(sourceId: number): Promise<OnlineDownloadSourceIdentity> {
+    try {
+      const source: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(sourceId);
+      if (source) {
+        return {
+          sourceName: source.name || `source_${sourceId}`,
+          sourcePkg: source.pkg || ''
+        };
+      }
+    } catch (error) {
+      logger.warn(TAG, `解析在线漫画图源信息失败: sourceId=${sourceId}, ${String(error)}`);
+    }
+
+    return {
+      sourceName: `source_${sourceId}`,
+      sourcePkg: ''
+    };
+  }
+
+  private async createOnlineMangaArchive(
+    task: DownloadTaskInfo,
+    pageFiles: OnlineArchivePageFile[]
+  ): Promise<OnlineArchiveCreateResult> {
+    if (pageFiles.length === 0) {
+      throw new Error('在线漫画下载完成但没有可归档页面');
+    }
+
+    const metadata = await this.buildOnlineArchiveMetadata(task);
+    const archiveResult = await this.onlineArchiveService.createArchiveFromPageFiles({
+      sourceName: task.sourceName || metadata.sourceName,
+      sourcePkg: task.sourcePkg || metadata.sourcePkg,
+      mangaTitle: task.mangaTitle,
+      chapterTitle: task.chapterTitle,
+      mangaId: task.mangaId,
+      chapterId: task.chapterId,
+      pageFiles: pageFiles,
+      metadata: metadata,
+      preferPublicDownloadDir: this.usePublicDownloadDir
+    });
+
+    await this.databaseManager.executeSql(
+      'UPDATE online_page SET isDownloaded = 1 WHERE chapterId = ?',
+      [task.chapterId]
+    );
+
+    logger.info(TAG, `在线漫画下载已归档为CBZ: chapter=${task.chapterTitle}, path=${archiveResult.archivePath}`);
+    return archiveResult;
+  }
+
+  private async buildOnlineArchiveMetadata(task: DownloadTaskInfo): Promise<OnlineArchiveMetadata> {
+    let comicInfo: OnlineComicInfo | null = null;
+    let chapterInfo: OnlineChapterInfo | null = null;
+
+    try {
+      comicInfo = await this.dataManager.getOnlineComicInfoById(task.mangaId);
+    } catch (error) {
+      logger.warn(TAG, `读取在线漫画元数据失败: mangaId=${task.mangaId}, ${String(error)}`);
+    }
+
+    try {
+      chapterInfo = await this.dataManager.getOnlineChapterById(task.chapterId);
+    } catch (error) {
+      logger.warn(TAG, `读取在线章节元数据失败: chapterId=${task.chapterId}, ${String(error)}`);
+    }
+
+    const sourceId = comicInfo ? comicInfo.sourceId : String(task.sourceId || 0);
+    const sourceName = comicInfo && comicInfo.sourceName.length > 0
+      ? comicInfo.sourceName
+      : (task.sourceName || `source_${task.sourceId || 0}`);
+    const sourcePkg = comicInfo ? comicInfo.sourcePkg : (task.sourcePkg || '');
+
+    return {
+      sourceId: sourceId,
+      sourceName: sourceName,
+      sourcePkg: sourcePkg,
+      mangaId: task.mangaId,
+      mangaTitle: task.mangaTitle,
+      chapterId: task.chapterId,
+      chapterTitle: task.chapterTitle,
+      chapterUrl: chapterInfo ? chapterInfo.url : '',
+      author: comicInfo ? comicInfo.author : '',
+      description: comicInfo ? comicInfo.description : '',
+      coverUrl: comicInfo ? comicInfo.coverUrl : '',
+      tags: comicInfo ? comicInfo.tags : [],
+      lastUpdateTime: comicInfo ? comicInfo.lastUpdateTime : Date.now(),
+      isPrivate: comicInfo ? comicInfo.isPrivate === 1 : false,
+      isNSFW: comicInfo ? comicInfo.isNSFW === 1 : false
+    };
+  }
+
+  private async cleanupOnlineDownloadWorkDir(workDir: string): Promise<void> {
+    if (!workDir.includes('/online_download_work/')) {
+      logger.warn(TAG, `跳过非在线下载工作目录清理: ${workDir}`);
+      return;
+    }
+    this.deleteDirectoryRecursive(workDir);
+  }
+
+  private deleteDirectoryRecursive(dirPath: string): void {
+    try {
+      if (!fs.accessSync(dirPath)) {
+        return;
+      }
+      const entries = fs.listFileSync(dirPath);
+      for (let i = 0; i < entries.length; i++) {
+        const fullPath = `${dirPath}/${entries[i]}`;
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          this.deleteDirectoryRecursive(fullPath);
+        } else {
+          fs.unlinkSync(fullPath);
+        }
+      }
+      fs.rmdirSync(dirPath);
+    } catch (error) {
+      logger.warn(TAG, `清理目录失败: ${dirPath}, ${String(error)}`);
+    }
+  }
+
+  private getFileSizeSafe(filePath: string): number {
+    try {
+      const stat = fs.statSync(filePath);
+      return stat.size;
+    } catch (_error) {
+      return 0;
+    }
+  }
+
   /**
    * 更新章节下载状态
    * 在线漫画更新online_chapter表，本地漫画更新chapter_info表
    */
-  private async updateChapterDownloadStatus(chapterId: string, isDownloaded: boolean, isOnlineManga: boolean = false): Promise<void> {
+  private async updateChapterDownloadStatus(
+    chapterId: string,
+    isDownloaded: boolean,
+    isOnlineManga: boolean = false,
+    downloadPath?: string
+  ): Promise<boolean> {
     try {
       if (isOnlineManga) {
         // 在线漫画：更新online_chapter表
-        const sql = 'UPDATE online_chapter SET isDownloaded = ? WHERE id = ?';
-        await this.databaseManager.executeSql(sql, [isDownloaded ? 1 : 0, chapterId]);
-        logger.info(TAG, `✅ 在线章节下载状态已更新: ${chapterId}, isDownloaded=${isDownloaded}`);
+        const sql = 'UPDATE online_chapter SET isDownloaded = ?, downloadPath = ?, updateTime = ? WHERE id = ?';
+        await this.databaseManager.executeSql(sql, [isDownloaded ? 1 : 0, downloadPath || null, Date.now(), chapterId]);
+        const verified = await this.verifyOnlineChapterDownloadStatus(chapterId, isDownloaded, downloadPath || '');
+        if (!verified) {
+          logger.error(TAG, `在线章节下载状态回读校验失败: ${chapterId}, isDownloaded=${isDownloaded}, archive=${downloadPath || ''}`);
+          return false;
+        }
+        logger.info(TAG, `✅ 在线章节下载状态已更新: ${chapterId}, isDownloaded=${isDownloaded}, archive=${downloadPath || ''}`);
       } else {
         // 本地漫画：更新chapter_info表
         const updateData: UpdateRecordData = {
@@ -864,9 +1034,50 @@ export class MangaDownloadManager {
         );
         logger.info(TAG, `✅ 章节下载状态已更新: ${chapterId}, isDownloaded=${isDownloaded}`);
       }
+      return true;
     } catch (error) {
       logger.error(TAG, `更新章节下载状态失败: ${String(error)}`);
+      return false;
     }
+  }
+
+  private async verifyOnlineChapterDownloadStatus(
+    chapterId: string,
+    expectedDownloaded: boolean,
+    expectedDownloadPath: string
+  ): Promise<boolean> {
+    const records = await this.databaseManager.querySql(
+      'SELECT isDownloaded, downloadPath FROM online_chapter WHERE id = ?',
+      [chapterId]
+    );
+    if (records.length === 0) {
+      return false;
+    }
+
+    const record = records[0] as GenericQueryRecord;
+    const storedDownloaded = Number(record.isDownloaded || 0) === (expectedDownloaded ? 1 : 0);
+    const storedPath = record.downloadPath ? String(record.downloadPath) : '';
+    if (!storedDownloaded) {
+      return false;
+    }
+    if (expectedDownloaded && expectedDownloadPath.length > 0 && storedPath !== expectedDownloadPath) {
+      return false;
+    }
+    return true;
+  }
+
+  private publishMangaCacheUpdated(task: DownloadTaskInfo, archivePath: string, reason: string): void {
+    eventBus.publish(
+      GameEvent.MANGA_CACHE_UPDATED,
+      new MangaCacheUpdatedPayload(
+        task.mangaId,
+        task.chapterId,
+        task.sourceId || 0,
+        archivePath,
+        reason
+      )
+    );
+    logger.info(TAG, `已发布漫画缓存更新事件: mangaId=${task.mangaId}, chapterId=${task.chapterId}, reason=${reason}`);
   }
 
   /**
@@ -998,7 +1209,7 @@ export class MangaDownloadManager {
   private async updateTaskInDatabase(task: DownloadTaskInfo): Promise<void> {
     // 在线漫画下载任务跳过download_task表操作
     if (task.isOnlineManga) {
-      logger.debug(TAG, `在线漫画下载任务跳过数据库更新: ${task.id}, 状态: ${task.status}`);
+      logger.debug(TAG, `在线漫画下载任务跳过download_task表更新: ${task.id}, 状态: ${task.status}，章节缓存状态由online_chapter维护`);
       return;
     }
     

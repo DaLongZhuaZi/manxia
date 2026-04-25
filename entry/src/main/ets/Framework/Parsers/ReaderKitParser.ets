@@ -10,10 +10,18 @@
 import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
+import { isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
 import { bookParser } from '@kit.ReaderKit';
  
 
 const TAG = 'ReaderKitParser';
+
+async function createReaderKitBookParserHandler(filePath: string): Promise<bookParser.BookParserHandler> {
+  if (!isReaderKitEnabled()) {
+    throw new Error('Reader Kit is unavailable in current environment');
+  }
+  return await bookParser.getDefaultHandler(filePath);
+}
 
 /**
  * Reader Kit 电子书解析器
@@ -49,6 +57,10 @@ export class ReaderKitEBookParser {
    */
   public async parse(): Promise<EBook> {
     try {
+      if (!isReaderKitEnabled()) {
+        logger.warn(TAG, `Reader Kit disabled, fallback parser will be used: ${this.filePath}`);
+        return this.parseFallback();
+      }
       logger.info(TAG, `开始使用 Reader Kit 解析电子书: ${this.filePath}, 格式: ${this.format}`);
 
       // 读取文件数据
@@ -127,6 +139,9 @@ export class ReaderKitEBookParser {
    */
   private async parseWithReaderKit(fileBuffer: ArrayBuffer): Promise<ReaderKitBookInfo> {
     try {
+      if (!isReaderKitEnabled()) {
+        throw new Error('Reader Kit is unavailable in current environment');
+      }
       const fileName = this.getFileNameFromPath(this.filePath);
       let candidatePath: string = this.filePath;
       
@@ -140,17 +155,19 @@ export class ReaderKitEBookParser {
       }
 
       // 获取 Handler
-      const parserHandler = await bookParser.getDefaultHandler(candidatePath);
+      const parserHandler: bookParser.BookParserHandler = await createReaderKitBookParserHandler(candidatePath);
       if (!parserHandler) {
         throw new Error('无法获取 BookParserHandler');
       }
 
       // 获取书籍信息
-      // 使用 Record<string, Object> 替代 any，并进行类型断言
-      const infoObj = await parserHandler.getBookInfo() as Record<string, Object>;
+      // 使用 Record<string, Object> 保持动态字段读取的类型边界
+      const rawInfo = parserHandler.getBookInfo();
+      const infoObj = rawInfo as Object as Record<string, Object>;
       
       // 获取目录
-      const catalogObj = await parserHandler.getCatalogList() as Array<Record<string, Object>>;
+      const rawCatalog = parserHandler.getCatalogList();
+      const catalogObj = rawCatalog as Object as Array<Record<string, Object>>;
 
       // 构建章节列表
       const chapters: ReaderKitChapter[] = this.buildChaptersFromCatalog(catalogObj);

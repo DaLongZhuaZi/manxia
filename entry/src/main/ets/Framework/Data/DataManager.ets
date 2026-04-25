@@ -4900,10 +4900,11 @@ export class DataManager {
     fileSize: number
   ): Promise<void> {
     try {
+      const normalizedImageUrl = this.stripCachePartitionSuffix(imageUrl);
       const sql = `UPDATE online_page 
-                   SET localPath = ?, fileSize = ? 
-                   WHERE imageUrl = ?`;
-      await this.databaseManager.executeSql(sql, [localPath, fileSize, imageUrl]);
+                   SET localPath = ?, fileSize = ?, isDownloaded = 1
+                   WHERE imageUrl = ? OR imageUrl = ?`;
+      await this.databaseManager.executeSql(sql, [localPath, fileSize, imageUrl, normalizedImageUrl]);
       logger.debug(TAG, `更新页面缓存状态: ${imageUrl.substring(0, 80)}`);
     } catch (error) {
       logger.error(TAG, `更新页面缓存状态失败: ${String(error)}`);
@@ -4916,31 +4917,77 @@ export class DataManager {
    */
   public async batchUpdateOnlinePageCacheStatus(
     updates: Array<PageCacheUpdate>
-  ): Promise<void> {
+  ): Promise<string[]> {
     if (updates.length === 0) {
-      return;
+      return [];
     }
 
     try {
       const sql = `UPDATE online_page 
-                   SET localPath = ?, fileSize = ? 
-                   WHERE imageUrl = ?`;
+                   SET localPath = ?, fileSize = ?, isDownloaded = 1
+                   WHERE imageUrl = ? OR imageUrl = ?`;
 
       await this.databaseManager.beginTransaction();
       try {
         for (const update of updates) {
-          await this.databaseManager.executeSql(sql, [update.localPath, update.fileSize, update.imageUrl]);
+          const normalizedImageUrl = this.stripCachePartitionSuffix(update.imageUrl);
+          await this.databaseManager.executeSql(sql, [
+            update.localPath,
+            update.fileSize,
+            update.imageUrl,
+            normalizedImageUrl
+          ]);
         }
         await this.databaseManager.commit();
       } catch (txError) {
         await this.databaseManager.rollBack();
         throw txError as Error;
       }
+      const chapterIds = await this.getOnlineChapterIdsByImageUrls(updates);
       logger.info(TAG, `批量更新页面缓存状态: ${updates.length}条`);
+      if (chapterIds.length > 0) {
+        logger.debug(TAG, `页面缓存状态影响在线章节: ${chapterIds.join(',')}`);
+      }
+      return chapterIds;
     } catch (error) {
       logger.error(TAG, `批量更新页面缓存状态失败: ${String(error)}`);
       throw error as Error;
     }
+  }
+
+  public async getOnlineChapterIdsByImageUrls(
+    updates: Array<PageCacheUpdate>
+  ): Promise<string[]> {
+    const chapterIds: string[] = [];
+    const seenChapterIds: Set<string> = new Set<string>();
+    if (updates.length === 0) {
+      return chapterIds;
+    }
+
+    const sql = 'SELECT DISTINCT chapterId FROM online_page WHERE imageUrl = ? OR imageUrl = ?';
+    for (let i = 0; i < updates.length; i++) {
+      const imageUrl = updates[i].imageUrl;
+      const normalizedImageUrl = this.stripCachePartitionSuffix(imageUrl);
+      const records = await this.databaseManager.querySql(sql, [imageUrl, normalizedImageUrl]);
+      for (let j = 0; j < records.length; j++) {
+        const record = records[j] as GenericQueryRecord;
+        const chapterId = record.chapterId ? String(record.chapterId) : '';
+        if (chapterId.length > 0 && !seenChapterIds.has(chapterId)) {
+          seenChapterIds.add(chapterId);
+          chapterIds.push(chapterId);
+        }
+      }
+    }
+    return chapterIds;
+  }
+
+  private stripCachePartitionSuffix(imageUrl: string): string {
+    const marker = '#cache_partition=';
+    const markerIndex = imageUrl.indexOf(marker);
+    if (markerIndex < 0) {
+      return imageUrl;
+    }
+    return imageUrl.substring(0, markerIndex);
   }
 
   /**
@@ -5444,10 +5491,12 @@ export class DataManager {
           oci.sourceId as sourceId
         FROM online_comic_info oci
         INNER JOIN online_chapter oc ON oc.comicId = oci.id
-        INNER JOIN online_page op ON op.chapterId = oc.id
+        LEFT JOIN online_page op ON op.chapterId = oc.id
         WHERE oci.sourceId = ? 
-          AND op.localPath IS NOT NULL 
-          AND op.localPath != ''
+          AND (
+            (op.localPath IS NOT NULL AND op.localPath != '')
+            OR (oc.downloadPath IS NOT NULL AND oc.downloadPath != '')
+          )
         GROUP BY oci.id
       `;
       
@@ -5474,15 +5523,15 @@ export class DataManager {
   
   /**
    * [新增] 清理指定漫画的缓存记录
-   * 将online_page表中该漫画所有页面的localPath和fileSize清空
+   * 将online_page表中该漫画所有页面的localPath、fileSize和isDownloaded清空
    * @param mangaId 漫画ID
    */
   async clearMangaCacheRecords(mangaId: string): Promise<void> {
     try {
-      // 更新该漫画所有章节的所有页面，清空localPath和fileSize
+      // 更新该漫画所有章节的所有页面，清空散图路径、文件大小和下载标记。
       const sql = `
         UPDATE online_page 
-        SET localPath = NULL, fileSize = 0 
+        SET localPath = NULL, fileSize = 0, isDownloaded = 0
         WHERE chapterId IN (
           SELECT id FROM online_chapter WHERE comicId = ?
         )
@@ -5511,9 +5560,9 @@ export class DataManager {
           oci.sourceId
         FROM online_comic_info oci
         INNER JOIN online_chapter oc ON oc.comicId = oci.id
-        INNER JOIN online_page op ON op.chapterId = oc.id
-        WHERE op.localPath IS NOT NULL 
-          AND op.localPath != ''
+        LEFT JOIN online_page op ON op.chapterId = oc.id
+        WHERE (op.localPath IS NOT NULL AND op.localPath != '')
+          OR (oc.downloadPath IS NOT NULL AND oc.downloadPath != '')
         GROUP BY oci.id
       `;
       

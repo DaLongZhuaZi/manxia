@@ -60,6 +60,23 @@ export interface EBookChapter {
 }
 
 /**
+ * EPUB 目录项信息
+ * 说明：
+ * - spineIndex 指向实际渲染的 spine 项
+ * - href/resourcePath 用于目录跳转和锚点恢复
+ */
+export interface EpubNavigationItem {
+  id: string;                  // 目录项ID
+  title: string;               // 目录标题
+  href: string;                // 原始 href（可能包含 #fragment）
+  resourcePath: string;        // 归一化后的资源路径（不含 fragment）
+  fragment: string;            // 锚点片段（不含 #）
+  spineIndex: number;          // 对应 spine 索引
+  level: number;               // 目录层级
+  playOrder: number;           // 目录顺序
+}
+
+/**
  * 电子书阅读进度
  */
 export interface EBookReadingProgress {
@@ -70,7 +87,7 @@ export interface EBookReadingProgress {
   domPos: string;              // Reader Kit DOM 位置（用于精确恢复阅读位置）
   progress: number;            // 阅读进度百分比 (0-100)
   lastReadTime: number;        // 最后阅读时间
-  totalReadingTime: number;    // 总阅读时长（秒）
+  totalReadingTime: number;    // 总阅读时长（分钟，阅读报告会转换为秒展示）
 }
 
 /**
@@ -96,6 +113,8 @@ export interface EBookReadingSettings {
   
   // 翻页设置
   pageMargin: number;          // 页边距 (10-50)
+  pageTopMargin?: number;      // 页面顶部边距
+  pageBottomMargin?: number;   // 页面底部边距
   pageMode: EBookPageMode;     // 翻页模式（仿真翻页/横向滑动）
   
   // 系统设置
@@ -179,11 +198,20 @@ export const DEFAULT_EBOOK_READING_SETTINGS: EBookReadingSettings = {
   followSystemTheme: true,     // 默认跟随系统主题
   // 翻页设置
   pageMargin: 16,              // 默认页边距（16px 更紧凑）
+  pageTopMargin: 24,           // 默认顶部边距
+  pageBottomMargin: 24,        // 默认底部边距
   pageMode: EBookPageMode.SIMULATION,
   // 系统设置
   brightness: 100,
   autoSave: true,
-  saveInterval: 30
+  saveInterval: 30,
+  showPageNumber: true,
+  showProgress: false,
+  showTime: true,
+  showBattery: false,
+  backgroundType: 'COLOR',
+  backgroundImagePath: '',
+  backgroundImageOpacity: 0.3
 };
 
 /**
@@ -255,7 +283,15 @@ export class EBook {
     this.isFavorite = isFavorite;
     this.totalWordCount = totalWordCount;
     this.contentMode = EBookContentMode.UNKNOWN;
-    this.preferredReaderEngine = format === EBookFormat.TXT ? EBookReaderEngine.TEXT : EBookReaderEngine.READER_KIT;
+    if (format === EBookFormat.TXT) {
+      this.preferredReaderEngine = EBookReaderEngine.TEXT;
+    } else if (format === EBookFormat.PDF) {
+      this.preferredReaderEngine = EBookReaderEngine.PDF_KIT;
+    } else if (format === EBookFormat.MOBI || format === EBookFormat.AZW || format === EBookFormat.AZW3) {
+      this.preferredReaderEngine = EBookReaderEngine.WEBVIEW;
+    } else {
+      this.preferredReaderEngine = EBookReaderEngine.READER_KIT;
+    }
     this.extractedRootPath = '';
     this.isPrivate = isPrivate;
     this.isNSFW = isNSFW;
@@ -292,10 +328,19 @@ export class EBook {
         nightMode: DEFAULT_EBOOK_READING_SETTINGS.nightMode,
         followSystemTheme: DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme,
         pageMargin: DEFAULT_EBOOK_READING_SETTINGS.pageMargin,
+        pageTopMargin: DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin,
+        pageBottomMargin: DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin,
         pageMode: DEFAULT_EBOOK_READING_SETTINGS.pageMode,
         brightness: DEFAULT_EBOOK_READING_SETTINGS.brightness,
         autoSave: DEFAULT_EBOOK_READING_SETTINGS.autoSave,
-        saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval
+        saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval,
+        showPageNumber: DEFAULT_EBOOK_READING_SETTINGS.showPageNumber,
+        showProgress: DEFAULT_EBOOK_READING_SETTINGS.showProgress,
+        showTime: DEFAULT_EBOOK_READING_SETTINGS.showTime,
+        showBattery: DEFAULT_EBOOK_READING_SETTINGS.showBattery,
+        backgroundType: DEFAULT_EBOOK_READING_SETTINGS.backgroundType,
+        backgroundImagePath: DEFAULT_EBOOK_READING_SETTINGS.backgroundImagePath,
+        backgroundImageOpacity: DEFAULT_EBOOK_READING_SETTINGS.backgroundImageOpacity
       };
     }
   }

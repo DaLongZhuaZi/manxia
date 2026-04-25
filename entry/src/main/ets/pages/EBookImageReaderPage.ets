@@ -11,6 +11,7 @@ import { KeyCode } from '@kit.InputKit';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
@@ -61,7 +62,7 @@ import {
   resolveRuntimePageIndexByChapterId,
   shouldUseEBookImageReaderRoute
 } from '../Framework/Adapters/EBookImageReaderAdapter';
-import { EBookReaderParams } from './EBookReaderPage';
+import { EBookReaderParams } from './EBookReaderRouteTypes';
 
 const TAG = 'EBookImageReaderPage';
 
@@ -90,6 +91,7 @@ struct EBookImageReaderPage {
   @State runtimeChapter: MangaChapter | null = null;
   @State chapterListChapters: MangaChapter[] = [];
   private imageEntries: EBookImagePageEntry[] = [];
+  private routerBackOnClose: boolean = false;
 
   @State readingSettings: MangaReadingSettings = DEFAULT_READING_SETTINGS;
   @State currentPageIndex: number = 0;
@@ -349,6 +351,7 @@ struct EBookImageReaderPage {
 
   private async initializeWithParams(params: EBookReaderParams): Promise<void> {
     this.sourceCoverComponentId = params.coverComponentId || '';
+    this.routerBackOnClose = params.routerBackOnClose === true;
     await this.loadEBook(params.bookId);
   }
 
@@ -1227,7 +1230,29 @@ struct EBookImageReaderPage {
     }
   }
 
+  private refreshAppFontFamilyForDialog(source: string): void {
+    let resolvedFontFamily = (this.appFontFamily ?? '').trim();
+    try {
+      const managerFontFamily = getFontManager().getFontFamily(FontScene.APP_UI).trim();
+      if (managerFontFamily.length > 0 && managerFontFamily !== 'HarmonyOS Sans') {
+        resolvedFontFamily = managerFontFamily;
+      } else if (resolvedFontFamily.length <= 0 && managerFontFamily.length > 0) {
+        resolvedFontFamily = managerFontFamily;
+      }
+    } catch (error) {
+      logger.warn(TAG, `刷新阅读器弹窗全局字体失败: source=${source}, error=${String(error)}`);
+    }
+    if (resolvedFontFamily.length <= 0) {
+      resolvedFontFamily = 'HarmonyOS Sans';
+    }
+    if (resolvedFontFamily !== this.appFontFamily) {
+      this.appFontFamily = resolvedFontFamily;
+      logger.info(TAG, `阅读器弹窗全局字体已刷新: source=${source}, font=${resolvedFontFamily}`);
+    }
+  }
+
   private showAutoPageTurnSettingsWithAnimation(): void {
+    this.refreshAppFontFamilyForDialog('auto_page_turn_settings_open');
     this.showQuickSettings = false;
     this.showSettingsPanel = false;
     this.showMoreMenu = false;
@@ -1347,6 +1372,7 @@ struct EBookImageReaderPage {
   }
 
   private showPageTurnAnimationSettingsWithAnimation(): void {
+    this.refreshAppFontFamilyForDialog('page_turn_settings_open');
     this.showQuickSettings = false;
     this.showSettingsPanel = false;
     this.showMoreMenu = false;
@@ -1888,13 +1914,25 @@ struct EBookImageReaderPage {
       const ebookId = this.ebook?.id || '';
       const coverComponentId = this.sourceCoverComponentId || (ebookId ? `cover_ebook_lib_${ebookId}` : '');
       await startBookCloseTransitionWithComponentId('ebook_image_reader_root', coverComponentId);
-      this.pathStack.pop();
+      this.closeReaderRoute();
     } catch (error) {
       logger.error(TAG, `关闭图片阅读器失败: ${String(error)}`);
       this.isCloseTransitionNavigating = false;
       cancelTransition();
-      this.pathStack.pop();
+      this.closeReaderRoute();
     }
+  }
+
+  private closeReaderRoute(): void {
+    if (this.routerBackOnClose) {
+      const router = this.getUIContext()?.getRouter();
+      if (router) {
+        router.back();
+        return;
+      }
+      logger.warn(TAG, 'Router 返回不可用，回退到 NavPathStack.pop');
+    }
+    this.pathStack.pop();
   }
 
   private getDeviceOrientation(): 'portrait' | 'landscape' | 'square' {

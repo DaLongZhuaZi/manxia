@@ -378,6 +378,14 @@ export class EBookDataManager {
       }
       
       const requiredColumns: ColumnDef[] = [
+        { name: 'fontFamily', definition: "TEXT DEFAULT 'HarmonyOS Sans'" },
+        { name: 'fontPath', definition: "TEXT DEFAULT ''" },
+        { name: 'fontWeight', definition: 'INTEGER DEFAULT 400' },
+        { name: 'themeBgImage', definition: "TEXT DEFAULT ''" },
+        { name: 'nightMode', definition: 'INTEGER DEFAULT 0' },
+        { name: 'followSystemTheme', definition: 'INTEGER DEFAULT 1' },
+        { name: 'pageTopMargin', definition: 'INTEGER DEFAULT 24' },
+        { name: 'pageBottomMargin', definition: 'INTEGER DEFAULT 24' },
         { name: 'letterSpacing', definition: 'REAL DEFAULT 0' },
         { name: 'paragraphSpacing', definition: 'INTEGER DEFAULT 8' },
         { name: 'firstLineIndent', definition: 'INTEGER DEFAULT 2' },
@@ -601,19 +609,19 @@ export class EBookDataManager {
         INSERT INTO ebook_reading_settings (
           bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
           backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
-          pageMargin, pageMode, brightness, autoSave, saveInterval,
+          pageMargin, pageTopMargin, pageBottomMargin, pageMode, brightness, autoSave, saveInterval,
           letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
           pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
           showPageNumber, showProgress, showTime, showBattery,
           backgroundType, backgroundImagePath, backgroundImageOpacity, imageReaderSettingsJson,
           createTime, updateTime
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
       const updateSql = `
         UPDATE ebook_reading_settings SET
           fontSize = ?, fontFamily = ?, fontPath = ?, fontWeight = ?, lineHeight = ?,
           backgroundColor = ?, textColor = ?, themeBgImage = ?, nightMode = ?, followSystemTheme = ?,
-          pageMargin = ?, pageMode = ?, brightness = ?, autoSave = ?, saveInterval = ?,
+          pageMargin = ?, pageTopMargin = ?, pageBottomMargin = ?, pageMode = ?, brightness = ?, autoSave = ?, saveInterval = ?,
           letterSpacing = ?, paragraphSpacing = ?, firstLineIndent = ?, textAlignment = ?,
           pageTurnAnimation = ?, tapToTurn = ?, volumeKeyNavigation = ?, keepScreenOn = ?,
           showPageNumber = ?, showProgress = ?, showTime = ?, showBattery = ?,
@@ -634,6 +642,8 @@ export class EBookDataManager {
         finalSettings.nightMode ? 1 : 0,
         finalSettings.followSystemTheme !== false ? 1 : 0,
         finalSettings.pageMargin,
+        finalSettings.pageTopMargin ?? finalSettings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ?? 24,
+        finalSettings.pageBottomMargin ?? finalSettings.pageMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ?? 24,
         finalSettings.pageMode,
         finalSettings.brightness,
         finalSettings.autoSave ? 1 : 0,
@@ -659,7 +669,7 @@ export class EBookDataManager {
 
       logger.info(
         TAG,
-        `写入阅读设置：参数数量=${insertParams.length}，fontSize=${finalSettings.fontSize}，lineHeight=${finalSettings.lineHeight}，pageMargin=${finalSettings.pageMargin}，背景类型=${bgType}，背景图片路径=${bgImagePath}`
+        `写入阅读设置：参数数量=${insertParams.length}，fontSize=${finalSettings.fontSize}，lineHeight=${finalSettings.lineHeight}，pageMargin=${finalSettings.pageMargin}，pageTopMargin=${finalSettings.pageTopMargin ?? finalSettings.pageMargin}，pageBottomMargin=${finalSettings.pageBottomMargin ?? finalSettings.pageMargin}，背景类型=${bgType}，背景图片路径=${bgImagePath}`
       );
       if (existingRowId > 0) {
         await this.dbManager.executeSql(updateSql, [...commonParams, now, existingRowId]);
@@ -676,7 +686,8 @@ export class EBookDataManager {
       logger.info(TAG, `阅读设置写入成功：书籍ID=${bookId}`);
 
       const verifySql = `
-        SELECT backgroundType, backgroundImagePath, backgroundImageOpacity, volumeKeyNavigation
+        SELECT fontFamily, fontPath, fontWeight, letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
+               backgroundType, backgroundImagePath, backgroundImageOpacity, volumeKeyNavigation
         FROM ebook_reading_settings
         WHERE bookId = ? AND userId = ?
         ORDER BY updateTime DESC, createTime DESC, id DESC
@@ -687,20 +698,42 @@ export class EBookDataManager {
       if (verifyResult && verifyResult.length > 0) {
         const record = verifyResult[0];
         const recordKeys = Object.keys(record);
+        const savedFontFamily = String(getRecordValue(record, 'fontFamily', DEFAULT_EBOOK_READING_SETTINGS.fontFamily));
+        const savedFontPath = String(getRecordValue(record, 'fontPath', ''));
+        const savedFontWeight = Number(getRecordValue(record, 'fontWeight', 400));
+        const savedLetterSpacing = Number(getRecordValue(record, 'letterSpacing', 0));
+        const savedParagraphSpacing = Number(getRecordValue(record, 'paragraphSpacing', 8));
+        const savedFirstLineIndent = Number(getRecordValue(record, 'firstLineIndent', 2));
+        const savedTextAlignment = String(getRecordValue(record, 'textAlignment', 'JUSTIFY'));
         const savedBgType = String(getRecordValue(record, 'backgroundType', 'COLOR'));
         const savedBgImagePath = String(getRecordValue(record, 'backgroundImagePath', ''));
         const savedVolumeKey = Number(getRecordValue(record, 'volumeKeyNavigation', 1)) === 1;
+        const expectedFontFamily = finalSettings.fontFamily || DEFAULT_EBOOK_READING_SETTINGS.fontFamily;
+        const expectedFontPath = finalSettings.fontPath || '';
+        const expectedFontWeight = finalSettings.fontWeight || 400;
+        const expectedLetterSpacing = finalSettings.letterSpacing ?? 0;
+        const expectedParagraphSpacing = finalSettings.paragraphSpacing ?? 8;
+        const expectedFirstLineIndent = finalSettings.firstLineIndent ?? 2;
+        const expectedTextAlignment = finalSettings.textAlignment ?? 'JUSTIFY';
 
         logger.info(TAG, `校验记录字段列表：${recordKeys.join('，')}`);
         logger.info(
           TAG,
-          `阅读设置校验结果：保存的背景类型=${savedBgType}，保存的背景图片路径=${savedBgImagePath}，保存的音量键翻页=${savedVolumeKey ? '已开启' : '已关闭'}`
+          `阅读设置校验结果：fontFamily=${savedFontFamily}, fontPath=${savedFontPath}, fontWeight=${savedFontWeight}, letterSpacing=${savedLetterSpacing}, paragraphSpacing=${savedParagraphSpacing}, firstLineIndent=${savedFirstLineIndent}, textAlignment=${savedTextAlignment}, 背景类型=${savedBgType}，背景图片路径=${savedBgImagePath}，音量键翻页=${savedVolumeKey ? '已开启' : '已关闭'}`
         );
 
-        if (savedBgType !== bgType || savedBgImagePath !== bgImagePath) {
+        const fontSettingsValid = savedFontFamily === expectedFontFamily &&
+          savedFontPath === expectedFontPath &&
+          savedFontWeight === expectedFontWeight &&
+          Math.abs(savedLetterSpacing - expectedLetterSpacing) < 0.001 &&
+          savedParagraphSpacing === expectedParagraphSpacing &&
+          Math.abs(savedFirstLineIndent - expectedFirstLineIndent) < 0.001 &&
+          savedTextAlignment === expectedTextAlignment;
+
+        if (!fontSettingsValid || savedBgType !== bgType || savedBgImagePath !== bgImagePath) {
           logger.error(
             TAG,
-            `阅读设置校验失败：期望背景类型=${bgType}，期望背景图片路径=${bgImagePath}；实际背景类型=${savedBgType}，实际背景图片路径=${savedBgImagePath}`
+            `阅读设置校验失败：期望fontFamily=${expectedFontFamily}, fontPath=${expectedFontPath}, fontWeight=${expectedFontWeight}, letterSpacing=${expectedLetterSpacing}, paragraphSpacing=${expectedParagraphSpacing}, firstLineIndent=${expectedFirstLineIndent}, textAlignment=${expectedTextAlignment}, 背景类型=${bgType}, 背景图片路径=${bgImagePath}；实际fontFamily=${savedFontFamily}, fontPath=${savedFontPath}, fontWeight=${savedFontWeight}, letterSpacing=${savedLetterSpacing}, paragraphSpacing=${savedParagraphSpacing}, firstLineIndent=${savedFirstLineIndent}, textAlignment=${savedTextAlignment}, 背景类型=${savedBgType}, 背景图片路径=${savedBgImagePath}`
           );
         } else {
           logger.info(TAG, `阅读设置保存成功：书籍ID=${bookId}`);
@@ -748,6 +781,8 @@ export class EBookDataManager {
       nightMode: settings.nightMode,
       followSystemTheme: settings.followSystemTheme,
       pageMargin: settings.pageMargin,
+      pageTopMargin: settings.pageTopMargin,
+      pageBottomMargin: settings.pageBottomMargin,
       pageMode: settings.pageMode,
       brightness: settings.brightness,
       autoSave: settings.autoSave,
@@ -1303,6 +1338,8 @@ export class EBookDataManager {
           nightMode: settings.nightMode,
           followSystemTheme: settings.followSystemTheme,
           pageMargin: globalPageMargin,
+          pageTopMargin: settings.pageTopMargin ?? globalPageMargin,
+          pageBottomMargin: settings.pageBottomMargin ?? globalPageMargin,
           pageMode: settings.pageMode,
           brightness: settings.brightness,
           autoSave: settings.autoSave,
@@ -1357,6 +1394,8 @@ export class EBookDataManager {
           nightMode: settings.nightMode,
           followSystemTheme: settings.followSystemTheme,
           pageMargin: globalPageMargin,
+          pageTopMargin: settings.pageTopMargin ?? globalPageMargin,
+          pageBottomMargin: settings.pageBottomMargin ?? globalPageMargin,
           pageMode: settings.pageMode,
           brightness: settings.brightness,
           autoSave: settings.autoSave,
@@ -1426,10 +1465,16 @@ export class EBookDataManager {
     const currentShowBattery = settings.showBattery ?? false;
     const currentBackgroundType = settings.backgroundType ?? 'COLOR';
     const currentBackgroundImageOpacity = settings.backgroundImageOpacity ?? 0.3;
+    const currentPageTopMargin = settings.pageTopMargin ?? settings.pageMargin;
+    const currentPageBottomMargin = settings.pageBottomMargin ?? settings.pageMargin;
+    const defaultPageTopMargin = DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
+    const defaultPageBottomMargin = DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
 
     return settings.fontSize === DEFAULT_EBOOK_READING_SETTINGS.fontSize &&
       Math.abs(settings.lineHeight - DEFAULT_EBOOK_READING_SETTINGS.lineHeight) < 0.001 &&
       settings.pageMargin === DEFAULT_EBOOK_READING_SETTINGS.pageMargin &&
+      currentPageTopMargin === defaultPageTopMargin &&
+      currentPageBottomMargin === defaultPageBottomMargin &&
       currentFontFamily === defaultFontFamily &&
       currentFontPath === defaultFontPath &&
       currentFontWeight === defaultFontWeight &&
@@ -1820,7 +1865,7 @@ export class EBookDataManager {
       const sql = `SELECT 
         bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
         backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
-        pageMargin, pageMode, brightness, autoSave, saveInterval,
+        pageMargin, pageTopMargin, pageBottomMargin, pageMode, brightness, autoSave, saveInterval,
         letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
         pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
         showPageNumber, showProgress, showTime, showBattery,
@@ -1851,6 +1896,8 @@ export class EBookDataManager {
           followSystemTheme: Number(getRecordValue(record, 'followSystemTheme', 1)) === 1,
           // 翻页设置
           pageMargin: Number(getRecordValue(record, 'pageMargin', 16)),
+          pageTopMargin: Number(getRecordValue(record, 'pageTopMargin', 24)),
+          pageBottomMargin: Number(getRecordValue(record, 'pageBottomMargin', 24)),
           pageMode: pageModeValue as EBookPageMode,
           // 系统设置
           brightness: Number(getRecordValue(record, 'brightness', 100)),
@@ -1880,7 +1927,7 @@ export class EBookDataManager {
         
         logger.info(
           TAG,
-          `读取阅读设置: fontSize=${settings.fontSize}, lineHeight=${settings.lineHeight}, pageMargin=${settings.pageMargin}, volumeKeyNavigation=${settings.volumeKeyNavigation}, tapToTurn=${settings.tapToTurn}, bgType=${settings.backgroundType}, bgColor=${settings.backgroundColor}, textColor=${settings.textColor}, bgImagePath=${settings.backgroundImagePath}, followSystemTheme=${settings.followSystemTheme}`
+          `读取阅读设置: fontSize=${settings.fontSize}, fontFamily=${settings.fontFamily}, fontPath=${settings.fontPath}, fontWeight=${settings.fontWeight}, lineHeight=${settings.lineHeight}, pageMargin=${settings.pageMargin}, pageTopMargin=${settings.pageTopMargin}, pageBottomMargin=${settings.pageBottomMargin}, letterSpacing=${settings.letterSpacing}, paragraphSpacing=${settings.paragraphSpacing}, firstLineIndent=${settings.firstLineIndent}, textAlignment=${settings.textAlignment}, volumeKeyNavigation=${settings.volumeKeyNavigation}, tapToTurn=${settings.tapToTurn}, bgType=${settings.backgroundType}, bgColor=${settings.backgroundColor}, textColor=${settings.textColor}, bgImagePath=${settings.backgroundImagePath}, followSystemTheme=${settings.followSystemTheme}`
         );
         return settings;
       }
@@ -2239,4 +2286,3 @@ export class EBookDataManager {
     }
   }
 }
-

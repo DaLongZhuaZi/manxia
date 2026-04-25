@@ -22,6 +22,7 @@ import { UserAgentManager } from '../Managers/UserAgentManager';
 import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
 import { GlobalWebViewContainer, WebViewEventCallbacks } from '../WebView/WebViewContainerPage';
 import { WebViewSourceConfig } from '../WebView/WebViewImageLoader';
+import { OnlineMangaArchiveService } from '../Download/OnlineMangaArchiveService';
 
 
 const TAG = 'OnlineImageLoader';
@@ -204,12 +205,14 @@ export class OnlineImageLoader {
       const diskCache = DiskCacheManager.getInstance();
       // 检查是否已初始化，避免警告日志泛滥
       if (diskCache.isInitialized()) {
-          const diskCached = await diskCache.get(this.buildDiskCacheUrl(url, options));
+        const diskCacheUrl = this.buildDiskCacheUrl(url, options);
+        const diskCached = await diskCache.get(diskCacheUrl);
 
         if (diskCached) {
           logger.info(TAG, `✅ 磁盘缓存命中: ${url.substring(0, 80)}`);
           // 存入内存缓存
           this.putToCache(cacheKey, diskCached);
+          this.syncCacheStatusToDatabaseAsync(url, diskCacheUrl, diskCache);
           return diskCached;
         }
       }
@@ -315,7 +318,7 @@ export class OnlineImageLoader {
             logger.debug(TAG, `已保存到磁盘缓存: ${request.url.substring(0, 80)}`);
 
             // [P1] 缓存状态写库异步批量化，避免阻塞主加载链路
-            this.syncCacheStatusToDatabaseAsync(diskCacheUrl, diskCache);
+            this.syncCacheStatusToDatabaseAsync(request.url, diskCacheUrl, diskCache);
           }
         } catch (error) {
           logger.warn(TAG, `保存到磁盘缓存失败: ${String(error)}`);
@@ -388,15 +391,15 @@ export class OnlineImageLoader {
     return 'default';
   }
 
-  private syncCacheStatusToDatabaseAsync(url: string, diskCache: DiskCacheManager): void {
+  private syncCacheStatusToDatabaseAsync(imageUrl: string, cacheUrl: string, diskCache: DiskCacheManager): void {
 
     (async () => {
       try {
-        const filePath = await diskCache.getCacheFilePath(url);
-        const fileSize = await diskCache.getCacheFileSize(url);
+        const filePath = await diskCache.getCacheFilePath(cacheUrl);
+        const fileSize = await diskCache.getCacheFileSize(cacheUrl);
 
         if (filePath && fileSize > 0) {
-          this.enqueueCacheStatusUpdate(url, filePath, fileSize);
+          this.enqueueCacheStatusUpdate(imageUrl, filePath, fileSize);
         }
       } catch (error) {
         logger.warn(TAG, `准备缓存状态同步失败: ${String(error)}`);
@@ -442,9 +445,10 @@ export class OnlineImageLoader {
 
     try {
       const dataManager = DataManager.getInstance();
-      await dataManager.batchUpdateOnlinePageCacheStatus(updates);
+      const chapterIds = await dataManager.batchUpdateOnlinePageCacheStatus(updates);
       logger.debug(TAG, `Flushed cache status updates: count=${updates.length}`);
       logger.debug(TAG, `已批量同步缓存状态到数据库: ${updates.length}条`);
+      await this.archiveCompletedOnlineChapterCaches(chapterIds);
     } catch (error) {
       logger.warn(TAG, `批量同步缓存状态到数据库失败: ${String(error)}`);
     } finally {
@@ -452,6 +456,17 @@ export class OnlineImageLoader {
       if (this.pendingCacheStatusUpdates.size > 0) {
         this.scheduleCacheStatusFlush();
       }
+    }
+  }
+
+  private async archiveCompletedOnlineChapterCaches(chapterIds: string[]): Promise<void> {
+    if (chapterIds.length === 0) {
+      return;
+    }
+
+    const archiveService = OnlineMangaArchiveService.getInstance();
+    for (let i = 0; i < chapterIds.length; i++) {
+      await archiveService.tryArchiveCachedOnlineChapter(chapterIds[i], 'reader_cache_complete');
     }
   }
 

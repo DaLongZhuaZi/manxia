@@ -768,6 +768,8 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       nightMode INTEGER DEFAULT 0,
       followSystemTheme INTEGER DEFAULT 1,
       pageMargin INTEGER DEFAULT 16,
+      pageTopMargin INTEGER DEFAULT 24,
+      pageBottomMargin INTEGER DEFAULT 24,
       pageMode TEXT DEFAULT '0',
       brightness INTEGER DEFAULT 100,
       autoSave INTEGER DEFAULT 1,

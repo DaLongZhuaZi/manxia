@@ -276,15 +276,31 @@ export class UnifiedDownloadManager {
       (id: string, chapterId: string, progress: number, downloaded: number, total: number) => {
         const task = this.unifiedTasks.get(id);
         if (task) {
+          const sourceTask = this.mangaDownloadManager.getTask(id);
           task.progress = progress;
           task.downloadedCount = downloaded;
           task.totalCount = total;
-          
-          // 更新状态
-          if (progress >= 100) {
-            task.status = UnifiedTaskStatus.COMPLETED;
-            task.completedTime = Date.now();
-          } else if (progress > 0) {
+
+          if (sourceTask && sourceTask.status === TaskStatus.COMPLETED) {
+            if (task.status !== UnifiedTaskStatus.COMPLETED) {
+              task.status = UnifiedTaskStatus.COMPLETED;
+              task.progress = 100;
+              task.completedTime = sourceTask.completedTime || Date.now();
+              this.notifyComplete(task);
+            }
+            return;
+          }
+
+          if (sourceTask && sourceTask.status === TaskStatus.FAILED) {
+            task.status = UnifiedTaskStatus.FAILED;
+            task.error = sourceTask.error || '下载失败';
+            this.notifyError(task, task.error);
+            return;
+          }
+
+          if (sourceTask && sourceTask.status === TaskStatus.PAUSED) {
+            task.status = UnifiedTaskStatus.PAUSED;
+          } else if (progress > 0 || downloaded > 0) {
             task.status = UnifiedTaskStatus.DOWNLOADING;
           }
           

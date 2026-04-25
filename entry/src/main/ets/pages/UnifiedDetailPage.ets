@@ -21,6 +21,8 @@ import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
+import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
+import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
@@ -115,7 +117,8 @@ import {
   IEventPayload,
   CoverChangedPayload,
   BasePayload,
-  ReadAloudCacheUpdatedPayload
+  ReadAloudCacheUpdatedPayload,
+  MangaCacheUpdatedPayload
 } from '../Framework/EventBus';
 import { getTypeShelfManager, TypeShelfManager, TypeShelf, ShelfType, ShelfContentType } from '../Framework/Data/TypeShelfManager';
 import { BookshelfCategoryManager, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
@@ -164,8 +167,9 @@ import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelMo
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
 import { MangaSettingsPageParams } from './MangaSettingsPage';
 import { EBookSettingsPageParams } from './EBookDetailPage';
-import { EBookReaderParams } from './EBookReaderPage';
+import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
+import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
@@ -260,6 +264,16 @@ interface UnifiedDetailTrackingTargetInfo {
   sourceId: string;
   sourceName: string;
   providerType: SubscriptionProviderType;
+}
+
+interface OnlineEBookDetailRecord {
+  title?: string;
+  author?: string;
+  description?: string;
+  cover?: string;
+  categories?: string;
+  tags?: string;
+  readerUrl?: string;
 }
 
 interface DialogResult {
@@ -382,6 +396,15 @@ export struct UnifiedDetailPage {
     }
     this.scheduleReadAloudCacheRefresh(cachePayload.reason || 'event');
   };
+
+  private onMangaCacheUpdated: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
+    const cachePayload = payload as MangaCacheUpdatedPayload;
+    if (!this.content || !this.isOnlineManga() || cachePayload.mangaId !== this.content.id) {
+      return;
+    }
+    void this.loadCacheStatus();
+    logger.info(TAG, `收到漫画缓存更新事件，刷新详情页缓存状态: chapterId=${cachePayload.chapterId}, reason=${cachePayload.reason}`);
+  };
   
   // 下载对话框状态
   @State showDownloadDialog: boolean = false;           // 显示下载对话框
@@ -416,12 +439,25 @@ export struct UnifiedDetailPage {
   @State novelReplaceRulesDirty: boolean = false;
   @State isApplyingNovelDirectoryParsing: boolean = false;
   @State isApplyingNovelReplaceRules: boolean = false;
+  @State ebookInfoTitle: string = '';
+  @State ebookInfoAuthor: string = '';
+  @State ebookInfoPublisher: string = '';
+  @State ebookInfoPublishDate: string = '';
+  @State ebookInfoIsbn: string = '';
+  @State ebookInfoLanguage: string = '';
+  @State ebookInfoDescription: string = '';
+  @State ebookInfoTagsText: string = '';
+  @State ebookInfoCoverPath: string = '';
+  @State ebookInfoDirty: boolean = false;
+  @State isSavingEBookInfo: boolean = false;
+  private ebookInfoScraperDialogController: CustomDialogController | null = null;
   
   // 下载进度实时显示状态
   @State downloadProgressCurrent: number = 0;           // 当前下载进度
   @State downloadProgressTotal: number = 0;             // 总下载数量
   @State downloadCurrentChapterTitle: string = '';      // 当前正在下载的章节标题
   private downloadCallbackRegistered: boolean = false;  // 是否已注册下载回调
+  private downloadCallback: UnifiedDownloadCallback | null = null;
   
   // 换源对话框状态
   @State showChangeSourceDialog: boolean = false;       // 显示换源对话框
@@ -590,6 +626,38 @@ export struct UnifiedDetailPage {
       return contentId;
     }
     return this.normalizeTrackingText(this.pageParams ? this.pageParams.contentId : '');
+  }
+
+  private isCurrentLocalImportedContent(): boolean {
+    if (!this.content) {
+      return false;
+    }
+    return this.content.isLocal === true;
+  }
+
+  private isLocalImportedEBookContent(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.EBOOK) {
+      return false;
+    }
+    return this.content.isLocal === true;
+  }
+
+  private isNovelSettingsDialogForLocalEBook(): boolean {
+    return this.showNovelSettingsDialog && this.isLocalImportedEBookContent();
+  }
+
+  private canUseNovelStyleSettingsDialog(): boolean {
+    if (!this.content) {
+      return false;
+    }
+    if (this.content.contentType === UnifiedContentType.NOVEL) {
+      return true;
+    }
+    return this.isLocalImportedEBookContent();
+  }
+
+  private shouldShowTrackingStatusSection(): boolean {
+    return !!this.content && !this.isCurrentLocalImportedContent();
   }
 
   private normalizeNovelSourceLookupId(sourceId: string): string {
@@ -879,6 +947,7 @@ export struct UnifiedDetailPage {
     this.initializeResponsiveLayout();
     this.webViewControllerAttached = false;
     eventBus.subscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
+    eventBus.subscribe(GameEvent.MANGA_CACHE_UPDATED, this.onMangaCacheUpdated);
     logger.info(TAG, 'Waiting hidden WebView controller attach');
     void this.refreshPageGuide('aboutToAppear');
   }
@@ -977,6 +1046,7 @@ export struct UnifiedDetailPage {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
     eventBus.unsubscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
+    eventBus.unsubscribe(GameEvent.MANGA_CACHE_UPDATED, this.onMangaCacheUpdated);
     this.clearReadAloudCacheRefreshTimer();
 
     if (this.deviceChangeListener) {
@@ -1169,6 +1239,18 @@ export struct UnifiedDetailPage {
     };
     if (!this.content) {
       unsupportedTarget.unsupportedReason = '内容还在加载中';
+      return unsupportedTarget;
+    }
+    if (this.isCurrentLocalImportedContent()) {
+      unsupportedTarget.unsupportedReason = '本地导入内容不显示更新提醒';
+      if (this.content.contentType === UnifiedContentType.NOVEL) {
+        unsupportedTarget.contentType = SubscriptionContentType.NOVEL;
+        unsupportedTarget.providerType = SubscriptionProviderType.LEGADO;
+      } else if (this.content.contentType === UnifiedContentType.MANGA) {
+        unsupportedTarget.contentType = SubscriptionContentType.MANGA;
+      } else if (this.content.contentType === UnifiedContentType.EBOOK) {
+        unsupportedTarget.contentType = SubscriptionContentType.EBOOK;
+      }
       return unsupportedTarget;
     }
 
@@ -1772,6 +1854,15 @@ export struct UnifiedDetailPage {
       this.trackingExecution = null;
       this.trackingSupported = false;
       this.trackingUnsupportedReason = '当前内容尚未加载完成';
+      return;
+    }
+    if (this.isCurrentLocalImportedContent()) {
+      this.trackingTargetInfo = null;
+      this.trackingRule = null;
+      this.trackingExecution = null;
+      this.trackingSupported = false;
+      this.trackingUnsupportedReason = '本地导入内容不显示更新提醒';
+      this.isTrackingLoading = false;
       return;
     }
 
@@ -2677,25 +2768,25 @@ export struct UnifiedDetailPage {
         const result = await this.ebookSourceEngine.getBookDetail(fullUrl);
         
         if (result.success && result.data) {
-          const detail = result.data as Record<string, ESObject>;
+          const detail = result.data as OnlineEBookDetailRecord;
           logger.info(TAG, `电子书详情获取成功: ${JSON.stringify(detail).substring(0, 200)}`);
           
           // 更新内容
           if (this.content) {
-            this.content.title = String(detail['title'] || cachedTitle);
-            this.content.author = String(detail['author'] || '');
-            this.content.description = String(detail['description'] || '');
-            this.content.coverUrl = String(detail['cover'] || cachedCover);
-            if (detail['categories']) {
-              this.content.genres = [String(detail['categories'])];
+            this.content.title = String(detail.title || cachedTitle);
+            this.content.author = String(detail.author || '');
+            this.content.description = String(detail.description || '');
+            this.content.coverUrl = String(detail.cover || cachedCover);
+            if (detail.categories) {
+              this.content.genres = [String(detail.categories)];
             }
-            if (detail['tags']) {
-              this.content.tags = [String(detail['tags'])];
+            if (detail.tags) {
+              this.content.tags = [String(detail.tags)];
             }
           }
           
           // 保存在线阅读器URL
-          const readerUrlValue: string = String(detail['readerUrl'] || '');
+          const readerUrlValue: string = String(detail.readerUrl || '');
           logger.info(TAG, `readerUrl字段值: ${readerUrlValue.substring(0, 80)}`);
           if (readerUrlValue && readerUrlValue.length > 0) {
             this.onlineReaderUrl = readerUrlValue;
@@ -2742,8 +2833,8 @@ export struct UnifiedDetailPage {
         const result = await this.ebookSourceEngine.getBookDetail(bookId);
         
         if (result.success && result.data) {
-          const detail = result.data as Record<string, ESObject>;
-          const readerUrlValue: string = String(detail['readerUrl'] || '');
+          const detail = result.data as OnlineEBookDetailRecord;
+          const readerUrlValue: string = String(detail.readerUrl || '');
           if (readerUrlValue && readerUrlValue.length > 0) {
             this.onlineReaderUrl = readerUrlValue;
             logger.info(TAG, `获取到在线阅读器URL: ${this.onlineReaderUrl.substring(0, 80)}...`);
@@ -3069,7 +3160,7 @@ export struct UnifiedDetailPage {
     if (this.isCurrentNovelAudioSource()) {
       return false;
     }
-    return this.content.contentType === UnifiedContentType.NOVEL || this.isLocalTxtNovelEBookContent();
+    return this.content.contentType === UnifiedContentType.NOVEL || this.isLocalReadAloudCapableEBookContent();
   }
 
   /**
@@ -3117,6 +3208,10 @@ export struct UnifiedDetailPage {
     }
     if (this.isLocalTxtNovelEBookContent()) {
       this.openLocalTxtEBookReadAloudPage(targetChapterIndex);
+      return;
+    }
+    if (this.isLocalWebTextEBookContent()) {
+      this.openEBookReader(targetChapterIndex, true);
     }
   }
 
@@ -3222,7 +3317,7 @@ export struct UnifiedDetailPage {
   /**
    * 打开电子书阅读器
    */
-  private openEBookReader(chapterIndex: number): void {
+  private openEBookReader(chapterIndex: number, autoStartReadAloud: boolean = false): void {
     if (!this.content) return;
     const originalEBook = EBookAdapter.getOriginalEBook(this.content);
 
@@ -3230,6 +3325,10 @@ export struct UnifiedDetailPage {
     const params: EBookReaderParams = {
       bookId: this.content.id
     };
+    if (autoStartReadAloud) {
+      params.autoStartReadAloud = true;
+      params.autoOpenReadAloudPlayer = true;
+    }
 
     // 触发翻开过渡动画
     // 优先使用本地缓存的封面路径（可直接加载PixelMap），回退到网络URL
@@ -3267,9 +3366,17 @@ export struct UnifiedDetailPage {
             `firstChapterImageRelativePath=${(firstChapter?.resourceImageRelativePath || '').substring(0, 96)}`
         );
         if (txtNovelReaderParams && originalEBook?.format === EBookFormat.TXT) {
+          if (autoStartReadAloud) {
+            txtNovelReaderParams.autoStartReadAloud = true;
+            txtNovelReaderParams.autoOpenReadAloudPlayer = true;
+          }
           this.navigateWithManagedWindowTransition('NovelReaderPage', txtNovelReaderParams);
         } else {
-          this.navigateWithManagedWindowTransition(ebookRouteName, params);
+          if (ebookRouteName === 'EBookReaderPage') {
+            openEBookReaderRouterPage(this.getUIContext(), params, TAG);
+          } else {
+            this.navigateWithManagedWindowTransition(ebookRouteName, params);
+          }
         }
       },
       ebookBackground,
@@ -3947,6 +4054,29 @@ export struct UnifiedDetailPage {
     }
     const ebook = EBookAdapter.getOriginalEBook(this.content);
     return !!ebook && ebook.format === EBookFormat.TXT;
+  }
+
+  private isLocalWebTextEBookContent(): boolean {
+    if (!this.content || !this.isLocalImportedEBookContent()) {
+      return false;
+    }
+    const ebook = EBookAdapter.getOriginalEBook(this.content);
+    if (!ebook) {
+      return false;
+    }
+    if (ebook.format === EBookFormat.MOBI ||
+      ebook.format === EBookFormat.AZW ||
+      ebook.format === EBookFormat.AZW3) {
+      return true;
+    }
+    if (ebook.format !== EBookFormat.EPUB) {
+      return false;
+    }
+    return resolveEBookReaderRouteName(ebook) === 'EpubWebViewReaderPage';
+  }
+
+  private isLocalReadAloudCapableEBookContent(): boolean {
+    return this.isLocalTxtNovelEBookContent() || this.isLocalWebTextEBookContent();
   }
 
   private getCurrentReadAloudCacheBookId(): string {
@@ -6540,7 +6670,13 @@ export struct UnifiedDetailPage {
           .padding({ left: 16, right: 16 })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
           .borderRadius(18)
-          .onClick(() => this.openEBookSettings())
+          .onClick(() => {
+            if (this.isLocalImportedEBookContent()) {
+              void this.openNovelSettings();
+            } else {
+              this.openEBookSettings();
+            }
+          })
 
           Button() {
             Row({ space: 6 }) {
@@ -6699,26 +6835,28 @@ export struct UnifiedDetailPage {
 
   @Builder
   buildTrackingStatusSection() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      this.buildGlassSectionChrome()
-      ContentTrackingStatusCard({
-        state: this.buildTrackingCardState(),
-        themeState: this.themeState,
-        appFontFamily: this.appFontFamily,
-        callbacks: this.buildTrackingCardCallbacks()
-      })
+    if (this.shouldShowTrackingStatusSection()) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        this.buildGlassSectionChrome()
+        ContentTrackingStatusCard({
+          state: this.buildTrackingCardState(),
+          themeState: this.themeState,
+          appFontFamily: this.appFontFamily,
+          callbacks: this.buildTrackingCardCallbacks()
+        })
+        .width('100%')
+        .padding(18)
+      }
       .width('100%')
-      .padding(18)
+      .backgroundColor(this.getSectionBackgroundColor())
+      .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
+      .backgroundEffect(this.getSectionBackgroundEffect())
+      .borderRadius(this.getSectionRadius())
+      .clip(true)
+      .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
+      .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
+      .id('guide_unified_detail_tracking')
     }
-    .width('100%')
-    .backgroundColor(this.getSectionBackgroundColor())
-    .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
-    .backgroundEffect(this.getSectionBackgroundEffect())
-    .borderRadius(this.getSectionRadius())
-    .clip(true)
-    .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
-    .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-    .id('guide_unified_detail_tracking')
   }
 
   @Builder
@@ -7356,7 +7494,7 @@ export struct UnifiedDetailPage {
 
   @Builder
   private buildTrackingSettingsDialog() {
-    if (this.showTrackingSettingsDialog && this.content) {
+    if (this.showTrackingSettingsDialog && this.content && this.shouldShowTrackingStatusSection()) {
       SourceDialogScaffold({
         themeState: this.themeState,
         onMaskTap: () => {
@@ -8886,14 +9024,17 @@ export struct UnifiedDetailPage {
   }
 
   private async openNovelSettings(): Promise<void> {
-    if (!this.content || !this.pageParams || this.content.contentType !== UnifiedContentType.NOVEL) {
+    if (!this.content || !this.pageParams || !this.canUseNovelStyleSettingsDialog()) {
       return;
     }
     await this.loadNovelSettingsDialogConfig();
     await this.loadNovelRuleConfigurations();
+    if (this.isLocalImportedEBookContent()) {
+      this.initializeEBookInfoEditState();
+    }
     logger.info(
       TAG,
-      `打开小说设置: online=${this.isOnlineNovelContent()}, prefetchEnabled=${this.novelEnableReadWhileDownload}, prefetchCount=${this.novelDefaultLoadChapters}`
+      `打开小说设置: contentType=${this.content.contentType}, online=${this.isOnlineNovelContent()}, prefetchEnabled=${this.novelEnableReadWhileDownload}, prefetchCount=${this.novelDefaultLoadChapters}`
     );
     this.novelSettingsActiveTab = 0;
     this.showNovelSettingsDialog = true;
@@ -8947,7 +9088,9 @@ export struct UnifiedDetailPage {
   }
 
   private hasPendingNovelSettingChanges(): boolean {
-    return this.novelDirectoryRulesDirty || this.novelReplaceRulesDirty;
+    return this.novelDirectoryRulesDirty ||
+      this.novelReplaceRulesDirty ||
+      (this.isLocalImportedEBookContent() && this.ebookInfoDirty);
   }
 
   private async applyPendingNovelSettingsChanges(): Promise<void> {
@@ -8956,6 +9099,9 @@ export struct UnifiedDetailPage {
     }
     if (this.novelReplaceRulesDirty) {
       await this.applyNovelReplaceRulesSelection();
+    }
+    if (this.isLocalImportedEBookContent() && this.ebookInfoDirty) {
+      await this.saveEBookInfoEdit();
     }
   }
 
@@ -8966,7 +9112,7 @@ export struct UnifiedDetailPage {
       }
       return;
     }
-    if (this.isApplyingNovelDirectoryParsing || this.isApplyingNovelReplaceRules) {
+    if (this.isApplyingNovelDirectoryParsing || this.isApplyingNovelReplaceRules || this.isSavingEBookInfo) {
       return;
     }
     if (!this.hasPendingNovelSettingChanges()) {
@@ -8992,12 +9138,42 @@ export struct UnifiedDetailPage {
     return !this.content.isLocal && !!this.content.sourceId;
   }
 
+  private pushUniqueRuleScopeId(target: string[], scopeId: string): void {
+    if (scopeId.length <= 0 || target.indexOf(scopeId) >= 0) {
+      return;
+    }
+    target.push(scopeId);
+  }
+
+  private getCurrentNovelRuleScopeIds(): string[] {
+    const scopeIds: string[] = [];
+    if (!this.content) {
+      return scopeIds;
+    }
+    if (this.content.contentType === UnifiedContentType.NOVEL) {
+      const sourceId = this.content.sourceId || this.pageParams?.sourceId || 'local';
+      this.pushUniqueRuleScopeId(scopeIds, this.getNovelCacheBookId(sourceId, this.content.id));
+      return scopeIds;
+    }
+    if (this.isLocalImportedEBookContent()) {
+      const ebook = EBookAdapter.getOriginalEBook(this.content);
+      if (!ebook) {
+        return scopeIds;
+      }
+      if (ebook.format === EBookFormat.TXT) {
+        this.pushUniqueRuleScopeId(scopeIds, buildLocalTextNovelBookId(ebook.id));
+      }
+      this.pushUniqueRuleScopeId(scopeIds, ebook.id);
+    }
+    return scopeIds;
+  }
+
   private getCurrentNovelRuleScopeId(): string {
-    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+    const scopeIds = this.getCurrentNovelRuleScopeIds();
+    if (scopeIds.length <= 0) {
       return '';
     }
-    const sourceId = this.content.sourceId || this.pageParams?.sourceId || 'local';
-    return this.getNovelCacheBookId(sourceId, this.content.id);
+    return scopeIds[0];
   }
 
   private buildBookTocRuleKey(scopeId: string): string {
@@ -9075,20 +9251,34 @@ export struct UnifiedDetailPage {
       await replaceRuleManager.refreshRules();
       this.novelReplaceRules = replaceRuleManager.getAllRules();
 
-      const scopeId = this.getCurrentNovelRuleScopeId();
+      const scopeIds = this.getCurrentNovelRuleScopeIds();
+      const primaryScopeId = scopeIds.length > 0 ? scopeIds[0] : '';
       let scopedTocRuleIds: string[] = [];
       let scopedReplaceRuleIds: string[] = [];
       let hasScopedTocRuleIds = false;
       let hasScopedReplaceRuleIds = false;
-      if (scopeId.length > 0) {
+      if (scopeIds.length > 0) {
         const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
         const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
-        const rawTocRuleIds = await store.get(this.buildBookTocRuleKey(scopeId), '') as string;
-        const rawReplaceRuleIds = await store.get(this.buildBookReplaceRuleKey(scopeId), '') as string;
-        hasScopedTocRuleIds = rawTocRuleIds.length > 0;
-        hasScopedReplaceRuleIds = rawReplaceRuleIds.length > 0;
-        scopedTocRuleIds = this.parseRuleIdArray(rawTocRuleIds);
-        scopedReplaceRuleIds = this.parseRuleIdArray(rawReplaceRuleIds);
+        for (const scopeId of scopeIds) {
+          if (!hasScopedTocRuleIds) {
+            const rawTocRuleIds = await store.get(this.buildBookTocRuleKey(scopeId), '') as string;
+            if (rawTocRuleIds.length > 0) {
+              hasScopedTocRuleIds = true;
+              scopedTocRuleIds = this.parseRuleIdArray(rawTocRuleIds);
+            }
+          }
+          if (!hasScopedReplaceRuleIds) {
+            const rawReplaceRuleIds = await store.get(this.buildBookReplaceRuleKey(scopeId), '') as string;
+            if (rawReplaceRuleIds.length > 0) {
+              hasScopedReplaceRuleIds = true;
+              scopedReplaceRuleIds = this.parseRuleIdArray(rawReplaceRuleIds);
+            }
+          }
+          if (hasScopedTocRuleIds && hasScopedReplaceRuleIds) {
+            break;
+          }
+        }
       }
       if (!hasScopedTocRuleIds) {
         scopedTocRuleIds = this.novelTocRules.filter((rule: TxtTocRule) => rule.enabled).map((rule: TxtTocRule) => rule.id);
@@ -9104,7 +9294,7 @@ export struct UnifiedDetailPage {
       this.novelReplaceRulesDirty = false;
       logger.info(
         TAG,
-        `小说规则配置已加载: scopeId=${scopeId}, tocRules=${this.novelSelectedTocRuleIds.length}, replaceRules=${this.novelSelectedReplaceRuleIds.length}`
+        `小说规则配置已加载: scopeId=${primaryScopeId}, scopeCount=${scopeIds.length}, tocRules=${this.novelSelectedTocRuleIds.length}, replaceRules=${this.novelSelectedReplaceRuleIds.length}`
       );
     } catch (error) {
       logger.warn(TAG, `加载小说规则配置失败: ${String(error)}`);
@@ -9180,19 +9370,21 @@ export struct UnifiedDetailPage {
   }
 
   private async saveBookScopedRuleIds(tocRuleIds: string[], replaceRuleIds: string[]): Promise<boolean> {
-    const scopeId = this.getCurrentNovelRuleScopeId();
-    if (scopeId.length === 0) {
+    const scopeIds = this.getCurrentNovelRuleScopeIds();
+    if (scopeIds.length === 0) {
       return false;
     }
     try {
       const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
-      await store.put(this.buildBookTocRuleKey(scopeId), JSON.stringify(tocRuleIds));
-      await store.put(this.buildBookReplaceRuleKey(scopeId), JSON.stringify(replaceRuleIds));
+      for (const scopeId of scopeIds) {
+        await store.put(this.buildBookTocRuleKey(scopeId), JSON.stringify(tocRuleIds));
+        await store.put(this.buildBookReplaceRuleKey(scopeId), JSON.stringify(replaceRuleIds));
+      }
       await store.flush();
       logger.info(
         TAG,
-        `小说书籍专属规则已保存: scopeId=${scopeId}, tocRules=${tocRuleIds.length}, replaceRules=${replaceRuleIds.length}`
+        `小说书籍专属规则已保存: scopeIds=${scopeIds.join('|')}, tocRules=${tocRuleIds.length}, replaceRules=${replaceRuleIds.length}`
       );
       return true;
     } catch (error) {
@@ -9251,7 +9443,8 @@ export struct UnifiedDetailPage {
   }
 
   private async applyNovelReplaceRulesSelection(): Promise<void> {
-    if (this.isApplyingNovelReplaceRules || !this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+    if (this.isApplyingNovelReplaceRules || !this.content ||
+      (this.content.contentType !== UnifiedContentType.NOVEL && !this.isLocalImportedEBookContent())) {
       return;
     }
     this.isApplyingNovelReplaceRules = true;
@@ -9425,7 +9618,14 @@ export struct UnifiedDetailPage {
     enableReplaceRules: boolean,
     selectedRuleIds: string[] | null = null
   ): Promise<void> {
-    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+    if (!this.content) {
+      return;
+    }
+    if (this.isLocalImportedEBookContent()) {
+      await this.applyReplaceRulesToCurrentEBookContent(enableReplaceRules, selectedRuleIds);
+      return;
+    }
+    if (this.content.contentType !== UnifiedContentType.NOVEL) {
       return;
     }
     const sourceId = this.content.sourceId || this.pageParams?.sourceId;
@@ -9509,6 +9709,281 @@ export struct UnifiedDetailPage {
       originalType: currentContent.originalType
     };
     this.content = updatedContent;
+  }
+
+  private async applyReplaceRulesToCurrentEBookContent(
+    enableReplaceRules: boolean,
+    selectedRuleIds: string[] | null = null
+  ): Promise<void> {
+    if (!this.content || !this.isLocalImportedEBookContent()) {
+      return;
+    }
+    const ebook = EBookAdapter.getOriginalEBook(this.content);
+    if (!ebook) {
+      return;
+    }
+    if (enableReplaceRules) {
+      const replaceRuleManager = NovelReplaceRuleManager.getInstance();
+      await replaceRuleManager.initialize();
+      await replaceRuleManager.refreshRules();
+    }
+    const contentProcessor = getNovelContentProcessor();
+    const scopedRuleIds = selectedRuleIds === null ? undefined : selectedRuleIds;
+    const baseDescription = ebook.metadata?.description || this.content.description;
+    const nextDescription = enableReplaceRules
+      ? contentProcessor.quickReplace(baseDescription, ReplaceScope.CONTENT, undefined, scopedRuleIds)
+      : baseDescription;
+
+    const nextChapters: UnifiedChapter[] = [];
+    for (const chapter of this.content.chapters) {
+      const originalChapter = EBookAdapter.getOriginalChapter(chapter);
+      const baseTitle = originalChapter ? (originalChapter.title || chapter.title) : chapter.title;
+      const nextTitle = enableReplaceRules
+        ? contentProcessor.processTitle(baseTitle, undefined, scopedRuleIds)
+        : baseTitle;
+      const updatedChapter: UnifiedChapter = {
+        id: chapter.id,
+        title: nextTitle,
+        index: chapter.index,
+        isRead: chapter.isRead,
+        isDownloaded: chapter.isDownloaded,
+        isBookmarked: chapter.isBookmarked,
+        pageCount: chapter.pageCount,
+        wordCount: chapter.wordCount,
+        publishDate: chapter.publishDate,
+        originalData: chapter.originalData,
+        originalType: chapter.originalType
+      };
+      nextChapters.push(updatedChapter);
+    }
+    let nextLastReadChapterTitle = this.content.lastReadChapterTitle;
+    if (this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < nextChapters.length) {
+      nextLastReadChapterTitle = nextChapters[this.content.lastReadChapterIndex].title;
+    }
+    const currentContent = this.content;
+    const updatedContent: UnifiedContent = {
+      id: currentContent.id,
+      title: currentContent.title,
+      coverUrl: currentContent.coverUrl,
+      author: currentContent.author,
+      description: nextDescription,
+      contentType: currentContent.contentType,
+      genres: currentContent.genres,
+      tags: currentContent.tags,
+      readStatus: currentContent.readStatus,
+      isFavorite: currentContent.isFavorite,
+      isNSFW: currentContent.isNSFW,
+      totalChapters: currentContent.totalChapters,
+      readChapters: currentContent.readChapters,
+      lastReadChapterIndex: currentContent.lastReadChapterIndex,
+      lastReadChapterTitle: nextLastReadChapterTitle,
+      lastReadTime: currentContent.lastReadTime,
+      readProgress: currentContent.readProgress,
+      sourceId: currentContent.sourceId,
+      sourceName: currentContent.sourceName,
+      sourceUrl: currentContent.sourceUrl,
+      isLocal: currentContent.isLocal,
+      publisher: currentContent.publisher,
+      publishDate: currentContent.publishDate,
+      isbn: currentContent.isbn,
+      fileSize: currentContent.fileSize,
+      filePath: currentContent.filePath,
+      format: currentContent.format,
+      chapters: nextChapters,
+      originalData: currentContent.originalData,
+      originalType: currentContent.originalType
+    };
+    this.content = updatedContent;
+  }
+
+  private initializeEBookInfoEditState(): void {
+    const ebook = this.content ? EBookAdapter.getOriginalEBook(this.content) : null;
+    const metadata = ebook?.metadata;
+    this.ebookInfoTitle = metadata?.title || this.content?.title || '';
+    this.ebookInfoAuthor = metadata?.author || this.content?.author || '';
+    this.ebookInfoPublisher = metadata?.publisher || this.content?.publisher || '';
+    this.ebookInfoPublishDate = metadata?.publishDate || this.content?.publishDate || '';
+    this.ebookInfoIsbn = metadata?.isbn || this.content?.isbn || '';
+    this.ebookInfoLanguage = metadata?.language || '';
+    this.ebookInfoDescription = metadata?.description || this.content?.description || '';
+    this.ebookInfoCoverPath = metadata?.coverImagePath || this.content?.coverUrl || '';
+    const tags: string[] = metadata?.tags || this.content?.tags || [];
+    this.ebookInfoTagsText = tags.join(', ');
+    this.ebookInfoDirty = false;
+  }
+
+  private markEBookInfoDirty(): void {
+    this.ebookInfoDirty = true;
+  }
+
+  private parseEBookInfoTags(tagsText: string): string[] {
+    if (!tagsText || tagsText.trim().length === 0) {
+      return [];
+    }
+    return tagsText
+      .split(/[,，、]/)
+      .map((tag: string) => tag.trim())
+      .filter((tag: string) => tag.length > 0);
+  }
+
+  private buildEBookMetadataFromInfoDraft(ebook: EBook): EBookMetadata {
+    const metadata: EBookMetadata = {
+      title: this.ebookInfoTitle.trim(),
+      author: this.ebookInfoAuthor.trim(),
+      publisher: this.ebookInfoPublisher.trim(),
+      publishDate: this.ebookInfoPublishDate.trim(),
+      isbn: this.ebookInfoIsbn.trim(),
+      language: this.ebookInfoLanguage.trim(),
+      description: this.ebookInfoDescription.trim(),
+      coverImagePath: this.ebookInfoCoverPath.trim(),
+      tags: this.parseEBookInfoTags(this.ebookInfoTagsText),
+      rating: ebook.metadata?.rating ?? 0
+    };
+    return metadata;
+  }
+
+  private isNetworkPath(path: string): boolean {
+    return path.startsWith('http://') || path.startsWith('https://');
+  }
+
+  private syncCurrentContentFromEBookInfo(ebook: EBook, previousCoverPath: string): void {
+    if (!this.content) {
+      return;
+    }
+    const metadata = ebook.metadata;
+    this.content.title = metadata.title;
+    this.content.author = metadata.author;
+    this.content.description = metadata.description;
+    this.content.coverUrl = metadata.coverImagePath;
+    this.content.publisher = metadata.publisher;
+    this.content.publishDate = metadata.publishDate;
+    this.content.isbn = metadata.isbn;
+    this.content.tags = metadata.tags;
+    this.coverRefreshKey = Date.now();
+    this.localCoverPath = this.isNetworkPath(metadata.coverImagePath) ? '' : metadata.coverImagePath;
+    if (previousCoverPath !== metadata.coverImagePath) {
+      const ebookPayload: CoverChangedPayload = {
+        bookId: ebook.id,
+        coverPath: metadata.coverImagePath
+      };
+      eventBus.publish(GameEvent.EBOOK_COVER_CHANGED, ebookPayload);
+    }
+  }
+
+  private async saveEBookInfoEdit(): Promise<void> {
+    if (this.isSavingEBookInfo || !this.content || !this.isLocalImportedEBookContent()) {
+      return;
+    }
+    const ebook = EBookAdapter.getOriginalEBook(this.content);
+    if (!ebook) {
+      promptAction.showToast({ message: '未找到电子书数据', duration: 1400 });
+      return;
+    }
+    if (this.ebookInfoTitle.trim().length <= 0) {
+      promptAction.showToast({ message: '请输入书名', duration: 1400 });
+      return;
+    }
+    if (this.ebookInfoAuthor.trim().length <= 0) {
+      promptAction.showToast({ message: '请输入作者', duration: 1400 });
+      return;
+    }
+    this.isSavingEBookInfo = true;
+    try {
+      const previousCoverPath = ebook.metadata?.coverImagePath || '';
+      ebook.metadata = this.buildEBookMetadataFromInfoDraft(ebook);
+      ebook.lastUpdateTime = Date.now();
+      await this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+      this.syncCurrentContentFromEBookInfo(ebook, previousCoverPath);
+      eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
+      this.ebookInfoDirty = false;
+      logger.info(TAG, `本地电子书信息已保存: ${ebook.id}, title=${ebook.metadata.title}`);
+      promptAction.showToast({ message: '电子书信息已保存', duration: 1400 });
+    } catch (error) {
+      logger.error(TAG, `保存电子书信息失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存电子书信息失败', duration: 1600 });
+    } finally {
+      this.isSavingEBookInfo = false;
+    }
+  }
+
+  private openEBookInfoScraperDialog(): void {
+    const config: ScraperDialogConfig = {
+      initialKeyword: this.ebookInfoTitle || this.content?.title || '',
+      contentType: ScraperContentType.BOOK,
+      title: '搜索电子书信息'
+    };
+    this.ebookInfoScraperDialogController = new CustomDialogController({
+      builder: ScraperDialog({
+        themeState: this.themeState,
+        config: config,
+        onConfirm: (result: ScraperDialogResult) => {
+          this.applyEBookInfoScraperResult(result);
+        },
+        onCancel: () => {
+          logger.info(TAG, '用户取消电子书信息刮削');
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      customStyle: true
+    });
+    this.ebookInfoScraperDialogController.open();
+  }
+
+  private appendUniqueEBookInfoTags(target: string[], values: string[] | undefined): void {
+    if (!values || values.length <= 0) {
+      return;
+    }
+    for (const value of values) {
+      const normalized = value.trim();
+      if (normalized.length > 0 && target.indexOf(normalized) < 0) {
+        target.push(normalized);
+      }
+    }
+  }
+
+  private applyEBookInfoScraperResult(result: ScraperDialogResult): void {
+    const metadata = result.metadata;
+    logger.info(TAG, `应用电子书刮削结果到编辑字段: ${metadata.title}`);
+    if (metadata.title && metadata.title.trim().length > 0) {
+      this.ebookInfoTitle = metadata.title.trim();
+    }
+    if (result.applyAuthor) {
+      if (metadata.author && metadata.author.trim().length > 0) {
+        this.ebookInfoAuthor = metadata.author.trim();
+      } else if (metadata.authors && metadata.authors.length > 0) {
+        this.ebookInfoAuthor = metadata.authors.join(', ');
+      }
+    }
+    if (result.applyDescription) {
+      const description = metadata.description || metadata.summary || '';
+      if (description.trim().length > 0) {
+        this.ebookInfoDescription = description.trim();
+      }
+    }
+    if (result.applyPublisher && metadata.publisher && metadata.publisher.trim().length > 0) {
+      this.ebookInfoPublisher = metadata.publisher.trim();
+    }
+    if (metadata.releaseDate && metadata.releaseDate.trim().length > 0) {
+      this.ebookInfoPublishDate = metadata.releaseDate.trim();
+    }
+    if (result.applyTags) {
+      const tags: string[] = [];
+      this.appendUniqueEBookInfoTags(tags, metadata.genres);
+      this.appendUniqueEBookInfoTags(tags, metadata.tags);
+      this.appendUniqueEBookInfoTags(tags, metadata.themes);
+      if (tags.length > 0) {
+        this.ebookInfoTagsText = tags.join(', ');
+      }
+    }
+    if (result.applyCover) {
+      const coverPath = metadata.coverUrlLarge || metadata.coverUrl || metadata.coverUrlMedium || metadata.coverUrlSmall || '';
+      if (coverPath.trim().length > 0) {
+        this.ebookInfoCoverPath = coverPath.trim();
+      }
+    }
+    this.ebookInfoDirty = true;
+    promptAction.showToast({ message: '刮削信息已填入，请确认保存', duration: 1400 });
   }
 
   private showDownloadOptions(): void {
@@ -9785,11 +10260,16 @@ export struct UnifiedDetailPage {
     };
 
     this.unifiedDownloadManager.registerGlobalCallback(callback);
+    this.downloadCallback = callback;
     this.downloadCallbackRegistered = true;
     logger.info(TAG, '已注册缓存进度回调');
   }
 
   private unregisterDownloadCallback(): void {
+    if (this.downloadCallback) {
+      this.unifiedDownloadManager.unregisterGlobalCallback(this.downloadCallback);
+      this.downloadCallback = null;
+    }
     this.downloadCallbackRegistered = false;
     logger.info(TAG, '已标记缓存回调为未注册');
   }
@@ -10014,7 +10494,9 @@ export struct UnifiedDetailPage {
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-            Text('目录规则或净化规则还有未应用的修改。你可以先应用再退出，也可以直接退出。')
+            Text(this.isLocalImportedEBookContent()
+              ? '净化规则或信息修改还有未保存内容。你可以先应用再退出，也可以直接退出。'
+              : '目录规则或净化规则还有未应用的修改。你可以先应用再退出，也可以直接退出。')
               .fontSize(13)
               .lineHeight(22)
               .fontFamily(this.appFontFamily)
@@ -10053,7 +10535,7 @@ export struct UnifiedDetailPage {
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .fontColor(Color.White)
                 .borderRadius(20)
-                .enabled(!this.isApplyingNovelDirectoryParsing && !this.isApplyingNovelReplaceRules)
+                .enabled(!this.isApplyingNovelDirectoryParsing && !this.isApplyingNovelReplaceRules && !this.isSavingEBookInfo)
                 .onClick(() => {
                   void (async () => {
                     await this.applyPendingNovelSettingsChanges();
@@ -11105,7 +11587,9 @@ export struct UnifiedDetailPage {
         this.buildActionBar()
 
         // 内容跟踪
-        this.buildTrackingStatusSection()
+        if (this.shouldShowTrackingStatusSection()) {
+          this.buildTrackingStatusSection()
+        }
 
         // 听书缓存
         this.buildReadAloudCacheSection()
@@ -11316,7 +11800,9 @@ export struct UnifiedDetailPage {
                   this.buildHeader()
                   this.buildDescription()
                   this.buildActionBar()
-                  this.buildTrackingStatusSection()
+                  if (this.shouldShowTrackingStatusSection()) {
+                    this.buildTrackingStatusSection()
+                  }
                   this.buildReadAloudCacheSection()
                   this.buildCacheStatusCard()
                   this.buildShelfContentSection()
@@ -13896,7 +14382,7 @@ export struct UnifiedDetailPage {
    */
   @Builder
   buildNovelSettingsDialog() {
-    if (this.showNovelSettingsDialog && this.content && this.content.contentType === UnifiedContentType.NOVEL) {
+    if (this.showNovelSettingsDialog && this.content && this.canUseNovelStyleSettingsDialog()) {
       SourceDialogScaffold({
         themeState: this.themeState,
         onMaskTap: () => {
@@ -13916,7 +14402,7 @@ export struct UnifiedDetailPage {
           Column({ space: 16 }) {
 
             Row() {
-              Text('小说设置')
+              Text(this.isNovelSettingsDialogForLocalEBook() ? '电子书设置' : '小说设置')
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
@@ -13940,9 +14426,14 @@ export struct UnifiedDetailPage {
             .width('100%')
 
             Row({ space: 8 }) {
-              this.buildNovelSettingsTabButton('预下载', 0)
-              this.buildNovelSettingsTabButton('目录解析', 1)
-              this.buildNovelSettingsTabButton('净化规则', 2)
+              if (this.isNovelSettingsDialogForLocalEBook()) {
+                this.buildNovelSettingsTabButton('净化规则', 0)
+                this.buildNovelSettingsTabButton('信息修改', 1)
+              } else {
+                this.buildNovelSettingsTabButton('预下载', 0)
+                this.buildNovelSettingsTabButton('目录解析', 1)
+                this.buildNovelSettingsTabButton('净化规则', 2)
+              }
             }
             .width('100%')
             .padding(4)
@@ -13952,12 +14443,20 @@ export struct UnifiedDetailPage {
 
             Scroll() {
               Column({ space: 12 }) {
-                if (this.novelSettingsActiveTab === 0) {
-                  this.buildNovelPrefetchSettingsTab()
-                } else if (this.novelSettingsActiveTab === 1) {
-                  this.buildNovelDirectorySettingsTab()
+                if (this.isNovelSettingsDialogForLocalEBook()) {
+                  if (this.novelSettingsActiveTab === 0) {
+                    this.buildNovelReplaceRuleSettingsTab()
+                  } else {
+                    this.buildEBookInfoEditTab()
+                  }
                 } else {
-                  this.buildNovelReplaceRuleSettingsTab()
+                  if (this.novelSettingsActiveTab === 0) {
+                    this.buildNovelPrefetchSettingsTab()
+                  } else if (this.novelSettingsActiveTab === 1) {
+                    this.buildNovelDirectorySettingsTab()
+                  } else {
+                    this.buildNovelReplaceRuleSettingsTab()
+                  }
                 }
               }
               .width('100%')
@@ -14184,7 +14683,9 @@ export struct UnifiedDetailPage {
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-      Text('为当前小说单独选择净化规则，点击“应用”后会立即作用于当前内容并持久化')
+      Text(this.isNovelSettingsDialogForLocalEBook()
+        ? '为当前电子书单独选择净化规则，点击“应用”后会保存到阅读器并立即作用于详情页内容'
+        : '为当前小说单独选择净化规则，点击“应用”后会立即作用于当前内容并持久化')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -14265,6 +14766,211 @@ export struct UnifiedDetailPage {
           .borderRadius(10)
         }, (rule: ReplaceRule) => `replace_rule_${rule.id}`)
       }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  private normalizeEBookInfoCoverPath(path: string): string {
+    const trimmed = path.trim();
+    if (trimmed.length <= 0) {
+      return '';
+    }
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('file://')) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('/')) {
+      return `file://${trimmed}`;
+    }
+    return trimmed;
+  }
+
+  private getEBookInfoCoverPreviewSource(): string {
+    const normalizedPath = this.normalizeEBookInfoCoverPath(this.ebookInfoCoverPath);
+    if (normalizedPath.startsWith('http://') || normalizedPath.startsWith('https://')) {
+      const connector = normalizedPath.indexOf('?') >= 0 ? '&' : '?';
+      return `${normalizedPath}${connector}refresh=${this.coverRefreshKey}`;
+    }
+    return normalizedPath;
+  }
+
+  @Builder
+  private buildEBookInfoTextInput(
+    label: string,
+    value: string,
+    placeholder: string,
+    onChange: (value: string) => void
+  ) {
+    Column({ space: 6 }) {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+      TextInput({ text: value, placeholder: placeholder })
+        .height(38)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+        .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .borderRadius(12)
+        .onChange((nextValue: string) => {
+          onChange(nextValue);
+          this.markEBookInfoDirty();
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildEBookInfoTextArea(
+    label: string,
+    value: string,
+    placeholder: string,
+    onChange: (value: string) => void
+  ) {
+    Column({ space: 6 }) {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+      TextArea({ text: value, placeholder: placeholder })
+        .height(92)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+        .padding(10)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .borderRadius(12)
+        .onChange((nextValue: string) => {
+          onChange(nextValue);
+          this.markEBookInfoDirty();
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildEBookInfoEditTab() {
+    Column({ space: 12 }) {
+      Row() {
+        Column({ space: 4 }) {
+          Text('信息修改')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text(this.ebookInfoDirty ? '有未保存修改' : '修改后会同步到书库与详情页')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.ebookInfoDirty
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Button() {
+          Row({ space: 5 }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(13)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('刮削')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .height(30)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '18')
+        .borderRadius(15)
+        .onClick(() => {
+          this.openEBookInfoScraperDialog();
+        })
+      }
+      .width('100%')
+
+      Row({ space: 12 }) {
+        if (this.ebookInfoCoverPath.trim().length > 0) {
+          Image(this.getEBookInfoCoverPreviewSource())
+            .width(68)
+            .height(96)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(6)
+        } else {
+          Image($r('app.media.ebook'))
+            .width(68)
+            .height(96)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(6)
+        }
+        Column({ space: 8 }) {
+          this.buildEBookInfoTextInput('封面路径 / URL', this.ebookInfoCoverPath, '可填本地路径或网络封面 URL', (value: string) => {
+            this.ebookInfoCoverPath = value;
+          })
+          Button('清空封面')
+            .height(30)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .borderRadius(15)
+            .onClick(() => {
+              this.ebookInfoCoverPath = '';
+              this.markEBookInfoDirty();
+            })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      this.buildEBookInfoTextInput('书名 *', this.ebookInfoTitle, '请输入书名', (value: string) => {
+        this.ebookInfoTitle = value;
+      })
+      this.buildEBookInfoTextInput('作者 *', this.ebookInfoAuthor, '请输入作者', (value: string) => {
+        this.ebookInfoAuthor = value;
+      })
+      this.buildEBookInfoTextInput('出版社', this.ebookInfoPublisher, '请输入出版社', (value: string) => {
+        this.ebookInfoPublisher = value;
+      })
+      this.buildEBookInfoTextInput('出版日期', this.ebookInfoPublishDate, '例如 2024-03 或 2024年3月', (value: string) => {
+        this.ebookInfoPublishDate = value;
+      })
+      this.buildEBookInfoTextInput('ISBN', this.ebookInfoIsbn, '请输入 ISBN', (value: string) => {
+        this.ebookInfoIsbn = value;
+      })
+      this.buildEBookInfoTextInput('语言', this.ebookInfoLanguage, '例如 zh-CN、en、ja', (value: string) => {
+        this.ebookInfoLanguage = value;
+      })
+      this.buildEBookInfoTextArea('简介', this.ebookInfoDescription, '请输入简介', (value: string) => {
+        this.ebookInfoDescription = value;
+      })
+      this.buildEBookInfoTextInput('标签（逗号分隔）', this.ebookInfoTagsText, '例如 科幻, 推理, 历史', (value: string) => {
+        this.ebookInfoTagsText = value;
+      })
+
+      Button(this.isSavingEBookInfo ? '保存中...' : '保存信息')
+        .width('100%')
+        .height(36)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(Color.White)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .enabled(!this.isSavingEBookInfo)
+        .onClick(() => {
+          void this.saveEBookInfoEdit();
+        })
     }
     .width('100%')
     .padding(12)

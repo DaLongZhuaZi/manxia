@@ -1050,6 +1050,8 @@ export interface GenericQueryRecord {
   nightMode?: DatabaseValue;  // 夜间模式
   followSystemTheme?: DatabaseValue;  // 跟随系统主题
   pageMargin?: DatabaseValue;
+  pageTopMargin?: DatabaseValue;
+  pageBottomMargin?: DatabaseValue;
   pageMode?: DatabaseValue;
   brightness?: DatabaseValue;
   autoSave?: DatabaseValue;

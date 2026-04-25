@@ -477,7 +477,9 @@ export struct ReadAloudFloatingBall {
     }
 
     const currentHostPage = (AppStorage.get<string>('ReadAloudCurrentHostPage') ?? '').trim();
-    const isReaderHost = currentHostPage === 'NovelReaderPage' || currentHostPage === 'EBookReaderPage';
+    const isReaderHost = currentHostPage === 'NovelReaderPage' ||
+      currentHostPage === 'EBookReaderPage' ||
+      currentHostPage === 'EpubWebViewReaderPage';
 
     if (isReaderHost) {
       AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', currentHostPage);

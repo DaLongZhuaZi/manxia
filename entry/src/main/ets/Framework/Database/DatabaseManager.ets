@@ -1075,6 +1075,10 @@ export class DatabaseManager {
         record.textColor = value;
       } else if (columnName === 'pageMargin') {
         record.pageMargin = value;
+      } else if (columnName === 'pageTopMargin') {
+        record.pageTopMargin = value;
+      } else if (columnName === 'pageBottomMargin') {
+        record.pageBottomMargin = value;
       } else if (columnName === 'pageMode') {
         record.pageMode = value;
       } else if (columnName === 'brightness') {
@@ -1319,6 +1323,8 @@ export class DatabaseManager {
     m.set('nightMode', (r: GenericQueryRecord, v: DatabaseValue): void => { r.nightMode = v; });
     m.set('followSystemTheme', (r: GenericQueryRecord, v: DatabaseValue): void => { r.followSystemTheme = v; });
     m.set('pageMargin', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageMargin = v; });
+    m.set('pageTopMargin', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageTopMargin = v; });
+    m.set('pageBottomMargin', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageBottomMargin = v; });
     m.set('pageMode', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageMode = v; });
     m.set('brightness', (r: GenericQueryRecord, v: DatabaseValue): void => { r.brightness = v; });
     m.set('autoSave', (r: GenericQueryRecord, v: DatabaseValue): void => { r.autoSave = v; });

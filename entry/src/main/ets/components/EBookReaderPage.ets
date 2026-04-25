@@ -926,7 +926,7 @@ struct EBookReaderPage {
           ? (this.currentChapterIndex / this.ebook.chapters.length) * 100 
           : 0;
       } else {
-        // EPUB/MOBI 格式：使用 Reader Kit 的 domPos
+        // EPUB 使用 Reader Kit 的 domPos；Kindle 格式默认由 WebView 阅读器处理。
         chapterId = this.currentChapter?.id || `chapter_${this.currentChapterIndex}`;
         // 从 domPos 中提取 resourceIndex 计算进度
         if (domPos && domPos.length > 0) {
@@ -1506,7 +1506,7 @@ struct EBookReaderPage {
         // PDF格式：使用 Web 组件预览
         this.buildPdfReaderView();
       } else if (this.isReaderKitSupported(this.ebook.format)) {
-        // EPUB/MOBI/AZW 格式：使用 Reader Kit 阅读器
+        // EPUB 格式：使用 Reader Kit 阅读器
         this.buildReaderKitView();
       } else {
         // TXT 等其他格式：使用文本阅读器
@@ -1520,10 +1520,7 @@ struct EBookReaderPage {
    */
   private isReaderKitSupported(format: EBookFormat): boolean {
     const supportedFormats = [
-      EBookFormat.EPUB,
-      EBookFormat.MOBI,
-      EBookFormat.AZW,
-      EBookFormat.AZW3
+      EBookFormat.EPUB
     ];
     return isReaderKitEnabled() && supportedFormats.includes(format);
   }
@@ -1536,7 +1533,7 @@ struct EBookReaderPage {
       return false;
     }
     // TXT 格式使用自定义文本阅读器
-    // PDF 使用 PDF Kit，EPUB/MOBI/AZW 使用 Reader Kit
+    // PDF 使用 PDF Kit，EPUB 使用 Reader Kit；Kindle 格式默认由 WebView 阅读器处理。
     return this.ebook.format === EBookFormat.TXT;
   }
 

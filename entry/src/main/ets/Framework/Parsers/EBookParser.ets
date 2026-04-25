@@ -9,6 +9,7 @@ import {
   EBookFormat,
   EBookMetadata,
   EBookChapter,
+  EpubNavigationItem,
   EBookStatus,
   EBookPageMode,
   EBookContentMode,
@@ -30,15 +31,21 @@ const EPUB_IMAGE_RESOURCE_PATTERN = /<(?:img|image)\b[^>]+(?:src|href|xlink:href
 const EPUB_CONTAINER_FULL_PATH_PATTERN = /full-path\s*=\s*["']([^"']+)["']/i;
 const EPUB_FIXED_LAYOUT_PATTERN = /(pre-paginated|rendition:layout[^"'<>]*["'>\s:=]+pre-paginated)/i;
 
-interface ReaderKitBookParserHandler {
-  getBookInfo(): Promise<Object>;
-  getCatalogList(): Promise<Object>;
-  getResourceContent(spineIndex: number, resourcePath: string): ArrayBuffer;
-}
-
 interface EpubManifestItem {
   href: string;
   mediaType: string;
+  properties?: string;
+}
+
+interface EpubHrefLocation {
+  resourcePath: string;
+  fragment: string;
+}
+
+interface GeneratedNavigationScanResult {
+  items: EpubNavigationItem[];
+  htmlText: string;
+  changed: boolean;
 }
 
 function isReaderKitUnavailableError(message: string): boolean {
@@ -224,14 +231,15 @@ class ReaderKitEBookParser extends EBookParser {
       if (!isReaderKitEnabled()) {
         throw new Error('Reader Kit is unavailable in current environment');
       }
-      const parserHandler: bookParser.BookParserHandler = await bookParser.getDefaultHandler(candidatePath);
+      const parserHandler: bookParser.BookParserHandler =
+        await createReaderKitBookParserHandler(candidatePath, 'parseWithReaderKit');
       if (!parserHandler) {
         throw new Error('无法获取 BookParserHandler');
       }
       logger.info(TAG, `[ReaderKit] Handler 获取成功`);
 
       // 获取书籍信息 - 使用 Object 类型转换以访问动态属性
-      const rawInfo = await parserHandler.getBookInfo();
+      const rawInfo = parserHandler.getBookInfo();
       logger.info(TAG, `[ReaderKit] BookInfo 原始数据: ${this.safeStringify(rawInfo)}`);
       const infoObj = this.normalizeToRecord(rawInfo);
       
@@ -240,7 +248,7 @@ class ReaderKitEBookParser extends EBookParser {
       logger.info(TAG, `[ReaderKit] BookInfo 所有属性键: ${allKeys.length > 0 ? allKeys.join(', ') : '(empty)'}`);
       
       // 获取目录
-      const rawCatalog = await parserHandler.getCatalogList();
+      const rawCatalog = parserHandler.getCatalogList();
       const catalogArray = this.extractCatalogEntries(rawCatalog);
       logger.info(TAG, `[ReaderKit] 目录数量: ${catalogArray?.length || 0}`);
       if (catalogArray && catalogArray.length > 0) {
@@ -680,6 +688,291 @@ class ReaderKitEBookParser extends EBookParser {
     }
   }
 
+  private extractXmlAttribute(attrsText: string, attrName: string): string {
+    const pattern = new RegExp(`\\b${attrName}\\s*=\\s*["']([^"']+)["']`, 'i');
+    const match = attrsText.match(pattern);
+    return match && match[1] ? String(match[1]).trim() : '';
+  }
+
+  private parseOpfManifestItems(opfText: string): Map<string, EpubManifestItem> {
+    const manifestItems = new Map<string, EpubManifestItem>();
+    const manifestSectionMatch = opfText.match(/<manifest\b[\s\S]*?<\/manifest>/i);
+    const manifestText = manifestSectionMatch ? manifestSectionMatch[0] : opfText;
+    const manifestPattern = /<item\b([^>]*?)\/?>/gi;
+    let manifestMatch = manifestPattern.exec(manifestText);
+    while (manifestMatch !== null) {
+      const attrs = manifestMatch[1] ?? '';
+      const id = this.extractXmlAttribute(attrs, 'id');
+      const href = this.extractXmlAttribute(attrs, 'href');
+      const mediaType = this.extractXmlAttribute(attrs, 'media-type');
+      const properties = this.extractXmlAttribute(attrs, 'properties');
+      if (id.length > 0 && href.length > 0) {
+        const manifestItem: EpubManifestItem = {
+          href: href,
+          mediaType: mediaType,
+          properties: properties
+        };
+        manifestItems.set(id, manifestItem);
+      }
+      manifestMatch = manifestPattern.exec(manifestText);
+    }
+    return manifestItems;
+  }
+
+  private parseOpfSpineIds(opfText: string): string[] {
+    const spineIds: string[] = [];
+    const spineSectionMatch = opfText.match(/<spine\b[\s\S]*?<\/spine>/i);
+    const spineText = spineSectionMatch ? spineSectionMatch[0] : opfText;
+    const spinePattern = /<itemref\b[^>]+idref\s*=\s*["']([^"']+)["'][^>]*\/?>/gi;
+    let spineMatch = spinePattern.exec(spineText);
+    while (spineMatch !== null) {
+      spineIds.push(String(spineMatch[1] ?? '').trim());
+      spineMatch = spinePattern.exec(spineText);
+    }
+    return spineIds;
+  }
+
+  private decodeXmlText(text: string): string {
+    return text
+      .replace(/&nbsp;/ig, ' ')
+      .replace(/&amp;/ig, '&')
+      .replace(/&lt;/ig, '<')
+      .replace(/&gt;/ig, '>')
+      .replace(/&quot;/ig, '"')
+      .replace(/&#39;/ig, '\'')
+      .replace(/&apos;/ig, '\'')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private stripXmlTags(text: string): string {
+    return this.decodeXmlText(
+      text
+        .replace(/<script[\s\S]*?<\/script>/ig, ' ')
+        .replace(/<style[\s\S]*?<\/style>/ig, ' ')
+        .replace(/<[^>]+>/g, ' ')
+    );
+  }
+
+  private splitHrefLocation(rawHref: string): EpubHrefLocation {
+    const trimmed = rawHref.trim();
+    const hashIndex = trimmed.indexOf('#');
+    if (hashIndex < 0) {
+      return {
+        resourcePath: this.normalizeRelativeResourcePath(trimmed),
+        fragment: ''
+      };
+    }
+    const resourcePath = this.normalizeRelativeResourcePath(trimmed.substring(0, hashIndex));
+    const rawFragment = trimmed.substring(hashIndex + 1).trim();
+    let decodedFragment = rawFragment;
+    if (decodedFragment.length > 0) {
+      try {
+        decodedFragment = decodeURIComponent(decodedFragment);
+      } catch (_error) {
+        decodedFragment = rawFragment;
+      }
+    }
+    return {
+      resourcePath: resourcePath,
+      fragment: decodedFragment
+    };
+  }
+
+  private buildSpineHrefIndex(spineItems: EBookChapter[]): Map<string, number> {
+    const indexMap = new Map<string, number>();
+    for (let index = 0; index < spineItems.length; index++) {
+      const chapter = spineItems[index];
+      const resourceFile = this.normalizeRelativeResourcePath(chapter.resourceFile ?? '');
+      const resourceHref = this.normalizeRelativeResourcePath(chapter.resourceHref ?? '');
+      if (resourceFile.length > 0 && !indexMap.has(resourceFile)) {
+        indexMap.set(resourceFile, index);
+      }
+      if (resourceHref.length > 0 && !indexMap.has(resourceHref)) {
+        indexMap.set(resourceHref, index);
+      }
+    }
+    return indexMap;
+  }
+
+  private findNavManifestItem(manifestItems: Map<string, EpubManifestItem>): EpubManifestItem | null {
+    const values = Array.from(manifestItems.values());
+    for (let index = 0; index < values.length; index++) {
+      const item = values[index];
+      const properties = (item.properties ?? '').toLowerCase();
+      if (properties.includes('nav')) {
+        return item;
+      }
+    }
+    for (let index = 0; index < values.length; index++) {
+      const item = values[index];
+      const href = item.href.toLowerCase();
+      if (href.includes('nav') && (href.endsWith('.xhtml') || href.endsWith('.html') || href.endsWith('.htm'))) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  private findNcxManifestItem(manifestItems: Map<string, EpubManifestItem>): EpubManifestItem | null {
+    const values = Array.from(manifestItems.values());
+    for (let index = 0; index < values.length; index++) {
+      const item = values[index];
+      const mediaType = item.mediaType.toLowerCase();
+      const href = item.href.toLowerCase();
+      if (mediaType === 'application/x-dtbncx+xml' || href.endsWith('.ncx')) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  private parseNavigationFromNavDocument(
+    navDocPath: string,
+    extractedRoot: string,
+    spineIndexByHref: Map<string, number>
+  ): EpubNavigationItem[] {
+    const items: EpubNavigationItem[] = [];
+    if (!this.pathExists(navDocPath)) {
+      return items;
+    }
+    const navText = this.readTextFileSync(navDocPath);
+    const baseDir = this.getParentDir(navDocPath);
+    const tocNavMatch = navText.match(/<nav\b[^>]*(?:epub:type|type)\s*=\s*["'][^"']*\btoc\b[^"']*["'][^>]*>([\s\S]*?)<\/nav>/i);
+    const fallbackNavMatch = navText.match(/<nav\b[^>]*>([\s\S]*?)<\/nav>/i);
+    const navBlock = tocNavMatch && tocNavMatch[1]
+      ? tocNavMatch[1]
+      : (fallbackNavMatch && fallbackNavMatch[1] ? fallbackNavMatch[1] : '');
+    if (navBlock.length <= 0) {
+      return items;
+    }
+    const anchorPattern = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let anchorMatch = anchorPattern.exec(navBlock);
+    let playOrder = 1;
+    while (anchorMatch !== null) {
+      const rawHref = String(anchorMatch[1] ?? '').trim();
+      const title = this.stripXmlTags(String(anchorMatch[2] ?? ''));
+      const hrefLocation = this.splitHrefLocation(rawHref);
+      const absolutePath = hrefLocation.resourcePath.length > 0
+        ? this.joinNormalizedPath(baseDir, hrefLocation.resourcePath)
+        : '';
+      const normalizedHref = absolutePath.length > 0
+        ? this.normalizeRelativeResourcePath(this.buildRelativePath(extractedRoot, absolutePath))
+        : '';
+      const spineIndex = spineIndexByHref.has(normalizedHref)
+        ? Number(spineIndexByHref.get(normalizedHref))
+        : -1;
+      if (title.length > 0 && normalizedHref.length > 0 && spineIndex >= 0) {
+        items.push({
+          id: `nav_${playOrder}_${normalizedHref}_${hrefLocation.fragment}`,
+          title: title,
+          href: rawHref,
+          resourcePath: normalizedHref,
+          fragment: hrefLocation.fragment,
+          spineIndex: spineIndex,
+          level: 0,
+          playOrder: playOrder
+        });
+        playOrder++;
+      }
+      anchorMatch = anchorPattern.exec(navBlock);
+    }
+    return items;
+  }
+
+  private parseNavigationFromNcxDocument(
+    ncxPath: string,
+    extractedRoot: string,
+    spineIndexByHref: Map<string, number>
+  ): EpubNavigationItem[] {
+    const items: EpubNavigationItem[] = [];
+    if (!this.pathExists(ncxPath)) {
+      return items;
+    }
+    const ncxText = this.readTextFileSync(ncxPath);
+    const baseDir = this.getParentDir(ncxPath);
+    const navPointPattern = /<navPoint\b[\s\S]*?<text\b[^>]*>([\s\S]*?)<\/text>[\s\S]*?<content\b[^>]*src\s*=\s*["']([^"']+)["'][^>]*\/?>/gi;
+    let navPointMatch = navPointPattern.exec(ncxText);
+    let playOrder = 1;
+    while (navPointMatch !== null) {
+      const title = this.stripXmlTags(String(navPointMatch[1] ?? ''));
+      const rawHref = String(navPointMatch[2] ?? '').trim();
+      const hrefLocation = this.splitHrefLocation(rawHref);
+      const absolutePath = hrefLocation.resourcePath.length > 0
+        ? this.joinNormalizedPath(baseDir, hrefLocation.resourcePath)
+        : '';
+      const normalizedHref = absolutePath.length > 0
+        ? this.normalizeRelativeResourcePath(this.buildRelativePath(extractedRoot, absolutePath))
+        : '';
+      const spineIndex = spineIndexByHref.has(normalizedHref)
+        ? Number(spineIndexByHref.get(normalizedHref))
+        : -1;
+      if (title.length > 0 && normalizedHref.length > 0 && spineIndex >= 0) {
+        items.push({
+          id: `ncx_${playOrder}_${normalizedHref}_${hrefLocation.fragment}`,
+          title: title,
+          href: rawHref,
+          resourcePath: normalizedHref,
+          fragment: hrefLocation.fragment,
+          spineIndex: spineIndex,
+          level: 0,
+          playOrder: playOrder
+        });
+        playOrder++;
+      }
+      navPointMatch = navPointPattern.exec(ncxText);
+    }
+    return items;
+  }
+
+  private dedupeNavigationItems(items: EpubNavigationItem[]): EpubNavigationItem[] {
+    const deduped: EpubNavigationItem[] = [];
+    const seen: Set<string> = new Set();
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      const key = `${item.resourcePath}#${item.fragment}::${item.title}::${item.spineIndex}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      deduped.push(item);
+    }
+    return deduped;
+  }
+
+  private parseNavigationFromManifest(
+    extractedRoot: string,
+    packageRoot: string,
+    manifestItems: Map<string, EpubManifestItem>,
+    spineItems: EBookChapter[]
+  ): EpubNavigationItem[] {
+    const spineIndexByHref = this.buildSpineHrefIndex(spineItems);
+    if (spineIndexByHref.size <= 0) {
+      return [];
+    }
+
+    let items: EpubNavigationItem[] = [];
+    const navManifestItem = this.findNavManifestItem(manifestItems);
+    if (navManifestItem) {
+      const navPath = this.joinNormalizedPath(packageRoot, this.normalizeRelativeResourcePath(navManifestItem.href));
+      items = this.parseNavigationFromNavDocument(navPath, extractedRoot, spineIndexByHref);
+    }
+
+    if (items.length <= 0) {
+      const ncxManifestItem = this.findNcxManifestItem(manifestItems);
+      if (ncxManifestItem) {
+        const ncxPath = this.joinNormalizedPath(packageRoot, this.normalizeRelativeResourcePath(ncxManifestItem.href));
+        items = this.parseNavigationFromNcxDocument(ncxPath, extractedRoot, spineIndexByHref);
+      }
+    }
+
+    const dedupedItems = this.dedupeNavigationItems(items);
+    if (dedupedItems.length > 0) {
+      logger.info(TAG, `[NavParse] 解析到 ${dedupedItems.length} 个目录项`);
+    }
+    return dedupedItems;
+  }
+
   public parseSpineFromOpf(extractedRoot: string): EBookChapter[] {
     try {
       const opfPath = this.resolveEpubPackageDocumentPath(extractedRoot);
@@ -689,34 +982,8 @@ class ReaderKitEBookParser extends EBookParser {
       }
       const opfText = this.readTextFileSync(opfPath);
       const packageRoot = this.getParentDir(opfPath);
-
-      // 解析 manifest: id -> href + media-type
-      const manifestItems = new Map<string, EpubManifestItem>();
-      const manifestPattern = /<item\b([^>]+)\/>/gi;
-      let manifestMatch = manifestPattern.exec(opfText);
-      while (manifestMatch !== null) {
-        const attrs = manifestMatch[1];
-        const idMatch = attrs.match(/\bid\s*=\s*["']([^"']+)["']/i);
-        const hrefMatch = attrs.match(/\bhref\s*=\s*["']([^"']+)["']/i);
-        const mtMatch = attrs.match(/\bmedia-type\s*=\s*["']([^"']+)["']/i);
-        if (idMatch && hrefMatch) {
-          const manifestItem: EpubManifestItem = {
-            href: hrefMatch[1],
-            mediaType: mtMatch ? mtMatch[1] : ''
-          };
-          manifestItems.set(idMatch[1], manifestItem);
-        }
-        manifestMatch = manifestPattern.exec(opfText);
-      }
-
-      // 解析 spine: itemref idref 顺序
-      const spinePattern = /<itemref\b[^>]+idref\s*=\s*["']([^"']+)["'][^>]*\/?>/gi;
-      const spineIds: string[] = [];
-      let spineMatch = spinePattern.exec(opfText);
-      while (spineMatch !== null) {
-        spineIds.push(spineMatch[1]);
-        spineMatch = spinePattern.exec(opfText);
-      }
+      const manifestItems = this.parseOpfManifestItems(opfText);
+      const spineIds = this.parseOpfSpineIds(opfText);
 
       if (spineIds.length === 0) {
         logger.warn(TAG, '[SpineParse] OPF spine 中无 itemref');
@@ -756,10 +1023,191 @@ class ReaderKitEBookParser extends EBookParser {
         result.push(chapter);
       }
 
+      const navigationItems = this.parseNavigationFromManifest(extractedRoot, packageRoot, manifestItems, result);
+      const titleByResourcePath = new Map<string, string>();
+      for (let index = 0; index < navigationItems.length; index++) {
+        const item = navigationItems[index];
+        if (!titleByResourcePath.has(item.resourcePath) && item.title.trim().length > 0) {
+          titleByResourcePath.set(item.resourcePath, item.title.trim());
+        }
+      }
+      for (let index = 0; index < result.length; index++) {
+        const chapter = result[index];
+        const resourcePath = this.normalizeRelativeResourcePath(chapter.resourceFile ?? chapter.resourceHref ?? '');
+        if (resourcePath.length > 0 && titleByResourcePath.has(resourcePath)) {
+          const title = titleByResourcePath.get(resourcePath);
+          chapter.title = title ? title : chapter.title;
+        }
+      }
+
       logger.info(TAG, `[SpineParse] 直接解析 OPF 得到 ${result.length} 个 spine 项`);
       return result;
     } catch (e) {
       logger.warn(TAG, `[SpineParse] OPF 解析失败: ${String(e)}`);
+      return [];
+    }
+  }
+
+  private isGeneratedNavigationTitleCandidate(title: string, tagName: string, attrsText: string): boolean {
+    const normalizedTitle = title.replace(/\s+/g, ' ').trim();
+    if (normalizedTitle.length <= 1 || normalizedTitle.length > 90) {
+      return false;
+    }
+    if (/^(注|注释|标记|标注|脚注|尾注|备注|参考|引用|notes?|footnotes?|endnotes?)\s*[:：]?\s*$/i.test(normalizedTitle)) {
+      return false;
+    }
+    if (/^(目录|上一页|下一页|返回|back|next|previous|contents?)$/i.test(normalizedTitle)) {
+      return false;
+    }
+    if (/^[0-9０-９]+$/.test(normalizedTitle)) {
+      return false;
+    }
+    const lowerTag = tagName.toLowerCase();
+    const attrs = attrsText.toLowerCase();
+    if (/(footnote|endnote|annotation|note-body|noteref|fnref)/i.test(attrs)) {
+      return false;
+    }
+    const strongTitlePattern: RegExp =
+      /^(第\s*[0-9０-９零〇一二两三四五六七八九十百千万亿]+\s*[章回卷节集部篇].{0,80}|卷\s*[0-9０-９零〇一二两三四五六七八九十百千万亿]+.{0,80}|Chapter\s+[0-9IVXLCDM]+.{0,80}|Part\s+[0-9IVXLCDM]+.{0,80}|Book\s+[0-9IVXLCDM]+.{0,80}|序章|序言|前言|楔子|引子|尾声|后记|附录.{0,40})$/i;
+    const numberedTitlePattern: RegExp = /^[0-9０-９零〇一二两三四五六七八九十百千万亿]+\s*[、.．]\s*\S.{0,60}$/i;
+    if (lowerTag.startsWith('h')) {
+      return true;
+    }
+    if (attrs.includes('chapter') || attrs.includes('title') || attrs.includes('heading') || attrs.includes('headline')) {
+      return true;
+    }
+    if (strongTitlePattern.test(normalizedTitle)) {
+      return true;
+    }
+    return numberedTitlePattern.test(normalizedTitle) && attrs.includes('chap');
+  }
+
+  private buildGeneratedNavigationFragment(spineIndex: number, localIndex: number): string {
+    return `mnx_nav_${spineIndex + 1}_${localIndex + 1}`;
+  }
+
+  private scanGeneratedNavigationFromHtml(
+    htmlText: string,
+    resourcePath: string,
+    spineIndex: number,
+    playOrderStart: number
+  ): GeneratedNavigationScanResult {
+    const items: EpubNavigationItem[] = [];
+    let rebuiltHtml = '';
+    let cursor = 0;
+    let changed = false;
+    let localIndex = 0;
+    let playOrder = playOrderStart;
+    const seenTitles: Set<string> = new Set();
+    const blockPattern = /<(h[1-6]|p|div)\b([^>]*)>((?:(?!<(?:h[1-6]|p|div)\b)[\s\S])*?)<\/\1>/gi;
+    let match = blockPattern.exec(htmlText);
+    while (match !== null) {
+      const tagName = String(match[1] ?? '');
+      const attrsText = String(match[2] ?? '');
+      const innerHtml = String(match[3] ?? '');
+      const title = this.stripXmlTags(innerHtml);
+      if (this.isGeneratedNavigationTitleCandidate(title, tagName, attrsText)) {
+        const titleKey = `${spineIndex}:${title}`;
+        if (!seenTitles.has(titleKey)) {
+          seenTitles.add(titleKey);
+          let fragment = this.extractXmlAttribute(attrsText, 'id');
+          let replacement = String(match[0] ?? '');
+          if (fragment.length <= 0) {
+            fragment = this.buildGeneratedNavigationFragment(spineIndex, localIndex);
+            replacement = `<${tagName}${attrsText} id="${fragment}">${innerHtml}</${tagName}>`;
+            changed = true;
+          }
+          rebuiltHtml += htmlText.substring(cursor, match.index);
+          rebuiltHtml += replacement;
+          cursor = match.index + String(match[0] ?? '').length;
+          items.push({
+            id: `generated_${spineIndex}_${localIndex}`,
+            title: title,
+            href: `${resourcePath}#${fragment}`,
+            resourcePath: resourcePath,
+            fragment: fragment,
+            spineIndex: spineIndex,
+            level: tagName.toLowerCase().startsWith('h') ? Math.max(0, Number(tagName.substring(1)) - 1) : 0,
+            playOrder: playOrder
+          });
+          playOrder++;
+          localIndex++;
+        }
+      }
+      match = blockPattern.exec(htmlText);
+    }
+
+    if (changed) {
+      rebuiltHtml += htmlText.substring(cursor);
+    }
+    return {
+      items: items,
+      htmlText: changed ? rebuiltHtml : htmlText,
+      changed: changed
+    };
+  }
+
+  public parseGeneratedNavigationFromSpine(
+    extractedRoot: string,
+    spineItems: EBookChapter[]
+  ): EpubNavigationItem[] {
+    const result: EpubNavigationItem[] = [];
+    if (!extractedRoot || extractedRoot.trim().length <= 0 || spineItems.length <= 0) {
+      return result;
+    }
+    let playOrder = 1;
+    for (let spineIndex = 0; spineIndex < spineItems.length; spineIndex++) {
+      const chapter = spineItems[spineIndex];
+      const resourcePath = this.normalizeRelativeResourcePath(chapter.resourceFile ?? chapter.resourceHref ?? '');
+      if (resourcePath.length <= 0) {
+        continue;
+      }
+      const chapterPath = this.joinNormalizedPath(extractedRoot, resourcePath);
+      if (!this.pathExists(chapterPath)) {
+        continue;
+      }
+      try {
+        const htmlText = this.readTextFileSync(chapterPath);
+        const scanResult = this.scanGeneratedNavigationFromHtml(htmlText, resourcePath, spineIndex, playOrder);
+        if (scanResult.items.length <= 0) {
+          continue;
+        }
+        if (scanResult.changed) {
+          this.writeTextFileSync(chapterPath, scanResult.htmlText);
+        }
+        for (let itemIndex = 0; itemIndex < scanResult.items.length; itemIndex++) {
+          result.push(scanResult.items[itemIndex]);
+        }
+        playOrder += scanResult.items.length;
+      } catch (error) {
+        logger.warn(TAG, `[NavParse] 扫描正文目录失败: spine=${spineIndex}, path=${chapterPath}, error=${String(error)}`);
+      }
+    }
+    const dedupedItems = this.dedupeNavigationItems(result);
+    if (dedupedItems.length > 0) {
+      logger.info(TAG, `[NavParse] 从正文标题生成 ${dedupedItems.length} 个目录项`);
+    }
+    return dedupedItems;
+  }
+
+  public parseNavigationFromOpf(
+    extractedRoot: string,
+    spineItems: EBookChapter[]
+  ): EpubNavigationItem[] {
+    try {
+      if (!extractedRoot || extractedRoot.trim().length <= 0 || spineItems.length <= 0) {
+        return [];
+      }
+      const opfPath = this.resolveEpubPackageDocumentPath(extractedRoot);
+      if (!opfPath || !this.pathExists(opfPath)) {
+        return [];
+      }
+      const opfText = this.readTextFileSync(opfPath);
+      const packageRoot = this.getParentDir(opfPath);
+      const manifestItems = this.parseOpfManifestItems(opfText);
+      return this.parseNavigationFromManifest(extractedRoot, packageRoot, manifestItems, spineItems);
+    } catch (error) {
+      logger.warn(TAG, `[NavParse] OPF 目录解析失败: ${String(error)}`);
       return [];
     }
   }
@@ -945,6 +1393,18 @@ class ReaderKitEBookParser extends EBookParser {
     fileIo.readSync(file.fd, buffer);
     fileIo.closeSync(file);
     return new util.TextDecoder('utf-8', { ignoreBOM: true }).decodeToString(new Uint8Array(buffer));
+  }
+
+  private writeTextFileSync(path: string, content: string): void {
+    const encoder = new util.TextEncoder();
+    const encoded = encoder.encodeInto(content);
+    const file = fileIo.openSync(path,
+      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    try {
+      fileIo.writeSync(file.fd, encoded.buffer as ArrayBuffer);
+    } finally {
+      fileIo.closeSync(file);
+    }
   }
 
   private extractFirstLocalImageRef(htmlText: string): string {
@@ -1203,90 +1663,30 @@ export class EBookCoverExtractor {
         return await EBookCoverExtractor.extractPdfCover(filePath, savePath);
       }
 
-      if (!isReaderKitEnabled()) {
-        logger.warn(EBookCoverExtractor.TAG, `Reader Kit temporarily disabled, skip cover extraction: ${filePath}`);
-        return {
-          success: false,
-          coverPath: '',
-          candidateImages: [],
-          errorMessage: 'Reader Kit is temporarily disabled'
-        };
-      }
-
-      // 获取 Reader Kit Handler（用于非 PDF 格式）
-      if (!isReaderKitEnabled()) {
-        logger.warn(EBookCoverExtractor.TAG, `Reader Kit parser unavailable, skip cover extraction: ${filePath}`);
-        return {
-          success: false,
-          coverPath: '',
-          candidateImages: [],
-          errorMessage: 'Reader Kit parser unavailable'
-        };
-      }
-      const parserHandler: bookParser.BookParserHandler = await bookParser.getDefaultHandler(filePath);
-      if (!parserHandler) {
-        logger.warn(EBookCoverExtractor.TAG, `Reader Kit handler unavailable, skip cover extraction: ${filePath}`);
-        return {
-          success: false,
-          coverPath: '',
-          candidateImages: [],
-          errorMessage: 'Reader Kit handler unavailable'
-        };
-      }
-
-      // 获取书籍信息
-      const rawInfo = await parserHandler.getBookInfo();
-      const infoObj = rawInfo as Object as Record<string, Object>;
-      const coverImageRef = String(infoObj['bookCoverImage'] || '');
-
-      logger.info(EBookCoverExtractor.TAG, `封面图片引用: ${coverImageRef}`);
-
-      if (!coverImageRef || coverImageRef.length === 0) {
-        logger.warn(EBookCoverExtractor.TAG, '电子书没有封面图片引用');
-        return {
-          success: false,
-          coverPath: '',
-          candidateImages: [],
-          errorMessage: '电子书没有封面图片'
-        };
-      }
-
-      // 使用官方 API: getResourceContent(spineIndex, resourcePath)
-      // 根据官方示例代码，获取封面时 spineIndex 传 -1
-      try {
-        logger.info(EBookCoverExtractor.TAG, `尝试使用 getResourceContent(-1, "${coverImageRef}") 提取封面...`);
-        
-        // 直接调用 parserHandler 的 getResourceContent 方法
-        // 注意：这是同步方法，不需要 await
-        const resourceData = parserHandler.getResourceContent(-1, coverImageRef);
-        
-        if (resourceData && resourceData.byteLength > 0) {
-          logger.info(EBookCoverExtractor.TAG, `成功获取封面数据，大小: ${resourceData.byteLength} 字节`);
-          // 保存封面图片
-          const savedPath = await EBookCoverExtractor.saveImageToFile(resourceData, savePath, coverImageRef);
-          if (savedPath) {
-            logger.info(EBookCoverExtractor.TAG, `封面图片保存成功: ${savedPath}`);
-            return {
-              success: true,
-              coverPath: savedPath,
-              candidateImages: [savedPath]
-            };
-          }
-        } else {
-          logger.warn(EBookCoverExtractor.TAG, `getResourceContent 返回空数据`);
+      let readerKitResult: EBookCoverExtractionResult | null = null;
+      if (isReaderKitEnabled()) {
+        readerKitResult = await EBookCoverExtractor.extractReaderKitCover(filePath, savePath);
+        if (readerKitResult.success) {
+          return readerKitResult;
         }
-      } catch (extractError) {
-        logger.warn(EBookCoverExtractor.TAG, `使用 getResourceContent 提取封面失败: ${String(extractError)}`);
+        logger.warn(EBookCoverExtractor.TAG, `ReaderKit 封面提取未成功，准备按格式降级: ${readerKitResult.errorMessage || '未知原因'}`);
+      } else {
+        logger.warn(EBookCoverExtractor.TAG, `Reader Kit temporarily disabled, skip ReaderKit cover extraction: ${filePath}`);
       }
-      
-      logger.warn(EBookCoverExtractor.TAG, `无法提取封面图片`);
 
-      // 如果直接提取失败，返回封面引用信息（供后续处理）
+      if (EBookCoverExtractor.isKindleFormat(filePath)) {
+        return await EBookCoverExtractor.extractKindleCover(filePath, savePath);
+      }
+
+      if (readerKitResult) {
+        return readerKitResult;
+      }
+
       return {
         success: false,
         coverPath: '',
         candidateImages: [],
-        errorMessage: `封面引用: ${coverImageRef}，但无法提取`
+        errorMessage: 'Reader Kit is temporarily disabled'
       };
 
     } catch (error) {
@@ -1302,6 +1702,296 @@ export class EBookCoverExtractor {
         candidateImages: [],
         errorMessage: errorMsg
       };
+    }
+  }
+
+  private static async extractReaderKitCover(filePath: string, savePath: string): Promise<EBookCoverExtractionResult> {
+    try {
+      logger.info(EBookCoverExtractor.TAG, `使用 ReaderKit 提取电子书封面: ${filePath}`);
+      const parserHandler: bookParser.BookParserHandler =
+        await createReaderKitBookParserHandler(filePath, 'extractCover');
+      if (!parserHandler) {
+        logger.warn(EBookCoverExtractor.TAG, `Reader Kit handler unavailable, skip cover extraction: ${filePath}`);
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: 'Reader Kit handler unavailable'
+        };
+      }
+
+      // 获取书籍信息
+      const bookInfo: bookParser.BookInfo = parserHandler.getBookInfo();
+      const coverImageRef = bookInfo.bookCoverImage ? bookInfo.bookCoverImage.trim() : '';
+
+      logger.info(EBookCoverExtractor.TAG, `封面图片引用: ${coverImageRef}`);
+
+      if (!coverImageRef || coverImageRef.length === 0) {
+        logger.warn(EBookCoverExtractor.TAG, '电子书没有封面图片引用');
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: '电子书没有封面图片'
+        };
+      }
+
+      if (EBookCoverExtractor.isDirectFilePath(coverImageRef)) {
+        const directCoverData = EBookCoverExtractor.readFileAsArrayBuffer(coverImageRef);
+        if (directCoverData && directCoverData.byteLength > 0) {
+          logger.info(EBookCoverExtractor.TAG, `ReaderKit 返回封面文件路径，已读取数据: ${directCoverData.byteLength} 字节`);
+          const directSavedPath = await EBookCoverExtractor.saveImageToFile(directCoverData, savePath, coverImageRef);
+          if (directSavedPath) {
+            logger.info(EBookCoverExtractor.TAG, `ReaderKit 封面文件保存成功: ${directSavedPath}`);
+            return {
+              success: true,
+              coverPath: directSavedPath,
+              candidateImages: [directSavedPath]
+            };
+          }
+        }
+      }
+
+      const resourceResult = await EBookCoverExtractor.extractReaderKitCoverResource(parserHandler, coverImageRef, savePath);
+      if (resourceResult.success) {
+        return resourceResult;
+      }
+
+      logger.warn(EBookCoverExtractor.TAG, `无法通过 ReaderKit 提取封面图片: ${resourceResult.errorMessage || coverImageRef}`);
+
+      // 如果直接提取失败，返回封面引用信息（供后续处理）
+      return {
+        success: false,
+        coverPath: '',
+        candidateImages: [],
+        errorMessage: resourceResult.errorMessage || `封面引用: ${coverImageRef}，但无法提取`
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (isReaderKitUnavailableError(errorMsg)) {
+        logger.warn(EBookCoverExtractor.TAG, `Reader Kit unavailable, skip cover extraction: ${errorMsg}`);
+      } else {
+        logger.error(EBookCoverExtractor.TAG, `提取封面失败: ${errorMsg}`);
+      }
+      return {
+        success: false,
+        coverPath: '',
+        candidateImages: [],
+        errorMessage: errorMsg
+      };
+    }
+  }
+
+  private static async extractReaderKitCoverResource(
+    parserHandler: bookParser.BookParserHandler,
+    coverImageRef: string,
+    savePath: string
+  ): Promise<EBookCoverExtractionResult> {
+    const resourcePaths = EBookCoverExtractor.buildReaderKitCoverResourceCandidates(coverImageRef);
+    if (resourcePaths.length <= 0) {
+      return {
+        success: false,
+        coverPath: '',
+        candidateImages: [],
+        errorMessage: 'ReaderKit 封面资源路径为空'
+      };
+    }
+
+    const spineIndices = EBookCoverExtractor.getReaderKitResourceSpineIndices(parserHandler);
+    let lastError = '';
+    for (let spinePos = 0; spinePos < spineIndices.length; spinePos++) {
+      const spineIndex = spineIndices[spinePos];
+      for (let pathPos = 0; pathPos < resourcePaths.length; pathPos++) {
+        const resourcePath = resourcePaths[pathPos];
+        try {
+          logger.info(EBookCoverExtractor.TAG, `尝试 ReaderKit getResourceContent(${spineIndex}, "${resourcePath}") 提取封面...`);
+          const resourceData = parserHandler.getResourceContent(spineIndex, resourcePath);
+          if (!resourceData || resourceData.byteLength <= 0) {
+            lastError = `ReaderKit getResourceContent 返回空数据: spine=${spineIndex}, path=${resourcePath}`;
+            logger.warn(EBookCoverExtractor.TAG, lastError);
+            continue;
+          }
+
+          logger.info(
+            EBookCoverExtractor.TAG,
+            `ReaderKit 获取封面数据成功: spine=${spineIndex}, path=${resourcePath}, size=${resourceData.byteLength}, header=${EBookCoverExtractor.getImageHeaderHex(resourceData, 12)}`
+          );
+          const savedPath = await EBookCoverExtractor.saveImageToFile(resourceData, savePath, resourcePath);
+          if (savedPath) {
+            logger.info(EBookCoverExtractor.TAG, `ReaderKit 封面图片保存成功: ${savedPath}`);
+            return {
+              success: true,
+              coverPath: savedPath,
+              candidateImages: [savedPath]
+            };
+          }
+          lastError = `ReaderKit 封面数据无法保存: spine=${spineIndex}, path=${resourcePath}`;
+        } catch (error) {
+          lastError = `ReaderKit getResourceContent 失败: spine=${spineIndex}, path=${resourcePath}, error=${String(error)}`;
+          logger.warn(EBookCoverExtractor.TAG, lastError);
+        }
+      }
+    }
+
+    return {
+      success: false,
+      coverPath: '',
+      candidateImages: [],
+      errorMessage: lastError || `ReaderKit 无法读取封面资源: ${coverImageRef}`
+    };
+  }
+
+  private static isDirectFilePath(path: string): boolean {
+    const trimmed = path.trim().toLowerCase();
+    return trimmed.startsWith('file://') || trimmed.startsWith('/data/') || trimmed.startsWith('/storage/');
+  }
+
+  private static buildReaderKitCoverResourceCandidates(coverImageRef: string): string[] {
+    const candidates: string[] = [];
+    EBookCoverExtractor.appendUniqueString(candidates, coverImageRef.trim());
+
+    const slashNormalized = coverImageRef.trim().replace(/\\/g, '/');
+    EBookCoverExtractor.appendUniqueString(candidates, slashNormalized);
+
+    let decoded = slashNormalized;
+    try {
+      decoded = decodeURIComponent(slashNormalized);
+    } catch (_error) {
+      decoded = slashNormalized;
+    }
+    EBookCoverExtractor.appendUniqueString(candidates, decoded);
+
+    let noLeadingSlash = decoded;
+    while (noLeadingSlash.startsWith('/')) {
+      noLeadingSlash = noLeadingSlash.substring(1);
+    }
+    EBookCoverExtractor.appendUniqueString(candidates, noLeadingSlash);
+
+    let noCurrentDir = noLeadingSlash;
+    while (noCurrentDir.startsWith('./')) {
+      noCurrentDir = noCurrentDir.substring(2);
+    }
+    EBookCoverExtractor.appendUniqueString(candidates, noCurrentDir);
+
+    const lastSlash = noCurrentDir.lastIndexOf('/');
+    if (lastSlash >= 0 && lastSlash + 1 < noCurrentDir.length) {
+      EBookCoverExtractor.appendUniqueString(candidates, noCurrentDir.substring(lastSlash + 1));
+    }
+
+    return candidates;
+  }
+
+  private static appendUniqueString(values: string[], value: string): void {
+    const trimmed = value.trim();
+    if (trimmed.length > 0 && !values.includes(trimmed)) {
+      values.push(trimmed);
+    }
+  }
+
+  private static getReaderKitResourceSpineIndices(parserHandler: bookParser.BookParserHandler): number[] {
+    const indices: number[] = [-1];
+    try {
+      const spineList: bookParser.SpineItem[] = parserHandler.getSpineList();
+      for (let i = 0; i < spineList.length; i++) {
+        const spineIndex = spineList[i].index;
+        if (!indices.includes(spineIndex)) {
+          indices.push(spineIndex);
+        }
+      }
+    } catch (error) {
+      logger.warn(EBookCoverExtractor.TAG, `读取 ReaderKit spine 列表失败，仅使用 -1 提取封面: ${String(error)}`);
+    }
+    return indices;
+  }
+
+  private static isKindleFormat(filePath: string): boolean {
+    const normalizedPath = filePath.toLowerCase();
+    return normalizedPath.endsWith('.mobi') ||
+      normalizedPath.endsWith('.azw') ||
+      normalizedPath.endsWith('.azw3') ||
+      normalizedPath.includes('.mobi?') ||
+      normalizedPath.includes('.azw?') ||
+      normalizedPath.includes('.azw3?');
+  }
+
+  private static async extractKindleCover(filePath: string, savePath: string): Promise<EBookCoverExtractionResult> {
+    try {
+      logger.info(EBookCoverExtractor.TAG, `使用本地 Kindle 转换结果提取封面: ${filePath}`);
+      const result = await convertMobiToExtractedDir(filePath);
+      if (!result.success) {
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: result.errorMessage || 'Kindle 本地转换未提取到封面'
+        };
+      }
+
+      const sourceCoverPath = result.coverImagePath.trim();
+      if (sourceCoverPath.length <= 0) {
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: 'Kindle 文件没有本地封面图片'
+        };
+      }
+
+      const imageData = EBookCoverExtractor.readFileAsArrayBuffer(sourceCoverPath);
+      if (!imageData || imageData.byteLength <= 0) {
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: `Kindle 本地封面读取失败: ${sourceCoverPath}`
+        };
+      }
+
+      const savedPath = await EBookCoverExtractor.saveImageToFile(imageData, savePath, sourceCoverPath);
+      if (!savedPath) {
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: 'Kindle 本地封面保存失败'
+        };
+      }
+
+      return {
+        success: true,
+        coverPath: savedPath,
+        candidateImages: [savedPath]
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(EBookCoverExtractor.TAG, `Kindle 本地封面提取失败: ${errorMsg}`);
+      return {
+        success: false,
+        coverPath: '',
+        candidateImages: [],
+        errorMessage: errorMsg
+      };
+    }
+  }
+
+  private static readFileAsArrayBuffer(filePath: string): ArrayBuffer | null {
+    try {
+      const normalizedPath = filePath.startsWith('file://') ? filePath.substring(7) : filePath;
+      const file = fileIo.openSync(normalizedPath, fileIo.OpenMode.READ_ONLY);
+      try {
+        const stat = fileIo.statSync(file.fd);
+        const buffer = new ArrayBuffer(stat.size);
+        const readLength = fileIo.readSync(file.fd, buffer);
+        if (readLength !== stat.size) {
+          logger.warn(EBookCoverExtractor.TAG, `读取封面长度不一致: expected=${stat.size}, actual=${readLength}`);
+        }
+        return buffer;
+      } finally {
+        fileIo.closeSync(file);
+      }
+    } catch (error) {
+      logger.warn(EBookCoverExtractor.TAG, `读取封面文件失败: ${String(error)}`);
+      return null;
     }
   }
 
@@ -1322,29 +2012,86 @@ export class EBookCoverExtractor {
         // 目录可能已存在
       }
 
-      // 写入文件
+      // 优先标准化为 WebP；部分 MOBI 内嵌封面可能无法被 PixelMap 解码，失败时保留原图。
       const imageSource = image.createImageSource(imageData);
-      const pixelMap = await imageSource.createPixelMap({
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
-      });
-      const imagePacker = image.createImagePacker();
-      const packedBuffer = await imagePacker.packing(pixelMap, {
-        format: 'image/webp',
-        quality: 90
-      });
-      imagePacker.release();
-      imageSource.release();
-      pixelMap.release();
+      let packedBuffer: ArrayBuffer = new ArrayBuffer(0);
+      try {
+        const pixelMap = await EBookCoverExtractor.createPixelMapForCover(imageSource, originalName);
+        try {
+          const imagePacker = image.createImagePacker();
+          try {
+            packedBuffer = await imagePacker.packToData(pixelMap, {
+              format: 'image/webp',
+              quality: 90
+            });
+          } finally {
+            imagePacker.release();
+          }
+        } finally {
+          pixelMap.release();
+        }
+      } finally {
+        imageSource.release();
+      }
 
       const file = fileIo.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-      fileIo.writeSync(file.fd, packedBuffer);
-      fileIo.closeSync(file);
+      try {
+        fileIo.writeSync(file.fd, packedBuffer);
+      } finally {
+        fileIo.closeSync(file);
+      }
       logger.info(EBookCoverExtractor.TAG, `封面图片已标准化保存为 WebP: ${fullPath}, packed=${packedBuffer.byteLength}, original=${originalName}, sourceExt=${ext}`);
 
       logger.info(EBookCoverExtractor.TAG, `图片保存成功: ${fullPath}, 大小: ${imageData.byteLength} 字节`);
       return fullPath;
     } catch (error) {
-      logger.error(EBookCoverExtractor.TAG, `保存图片失败: ${String(error)}`);
+      const fallbackPath = EBookCoverExtractor.saveRawImageToFile(imageData, basePath, originalName);
+      if (fallbackPath) {
+        logger.warn(EBookCoverExtractor.TAG, `封面标准化失败，已原样保存: ${fallbackPath}, error=${String(error)}`);
+        return fallbackPath;
+      }
+      logger.error(EBookCoverExtractor.TAG, `保存图片失败: ${String(error)}, original=${originalName}, header=${EBookCoverExtractor.getImageHeaderHex(imageData, 16)}`);
+      return null;
+    }
+  }
+
+  private static async createPixelMapForCover(imageSource: image.ImageSource, originalName: string): Promise<image.PixelMap> {
+    try {
+      return await imageSource.createPixelMap({
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+      });
+    } catch (error) {
+      logger.warn(EBookCoverExtractor.TAG, `封面按 RGBA_8888 解码失败，改用默认解码: original=${originalName}, error=${String(error)}`);
+      return await imageSource.createPixelMap();
+    }
+  }
+
+  private static saveRawImageToFile(imageData: ArrayBuffer, basePath: string, originalName: string): string | null {
+    const ext = EBookCoverExtractor.detectImageExtensionFromData(imageData);
+    if (ext.length <= 0) {
+      logger.warn(EBookCoverExtractor.TAG, `封面原图格式无法识别，不能原样保存: original=${originalName}, header=${EBookCoverExtractor.getImageHeaderHex(imageData, 16)}`);
+      return null;
+    }
+
+    try {
+      try {
+        fileIo.mkdirSync(basePath, true);
+      } catch (e) {
+        // 目录可能已存在
+      }
+
+      const fileName = `cover_${Date.now()}_raw${ext}`;
+      const fullPath = `${basePath}/${fileName}`;
+      const file = fileIo.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      try {
+        fileIo.writeSync(file.fd, imageData);
+      } finally {
+        fileIo.closeSync(file);
+      }
+      logger.info(EBookCoverExtractor.TAG, `封面原图保存成功: ${fullPath}, size=${imageData.byteLength}, original=${originalName}`);
+      return fullPath;
+    } catch (error) {
+      logger.error(EBookCoverExtractor.TAG, `封面原图保存失败: ${String(error)}, original=${originalName}`);
       return null;
     }
   }
@@ -1353,25 +2100,48 @@ export class EBookCoverExtractor {
    * 获取图片扩展名
    */
   private static getImageExtension(originalName: string, imageData: ArrayBuffer): string {
+    const detectedExt = EBookCoverExtractor.detectImageExtensionFromData(imageData);
+    if (detectedExt.length > 0) {
+      return detectedExt;
+    }
+
     // 从原始文件名获取扩展名
     const match = originalName.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/i);
     if (match) {
       return `.${match[1].toLowerCase()}`;
     }
 
+    return '.jpg'; // 默认使用 jpg
+  }
+
+  private static detectImageExtensionFromData(imageData: ArrayBuffer): string {
     // 通过文件头检测图片格式
-    const bytes = new Uint8Array(imageData.slice(0, 8));
+    const bytes = new Uint8Array(imageData);
     if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
       return '.jpg';
     } else if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
       return '.png';
     } else if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
       return '.gif';
-    } else if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
+    } else if (bytes.length >= 12 &&
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
       return '.webp';
+    } else if (bytes[0] === 0x42 && bytes[1] === 0x4D) {
+      return '.bmp';
     }
 
-    return '.jpg'; // 默认使用 jpg
+    return '';
+  }
+
+  private static getImageHeaderHex(imageData: ArrayBuffer, maxBytes: number): string {
+    const bytes = new Uint8Array(imageData);
+    const length = Math.min(Math.max(maxBytes, 0), bytes.length);
+    const parts: string[] = [];
+    for (let i = 0; i < length; i++) {
+      parts.push(bytes[i].toString(16).padStart(2, '0'));
+    }
+    return parts.join(' ');
   }
 
   /**
@@ -1498,7 +2268,7 @@ export class EBookCoverExtractor {
 
 /**
  * MOBI/AZW/AZW3 解析器
- * 将 MOBI 文件转换为伪 EPUB 目录结构，然后用 WebView 引擎渲染
+ * 将 Kindle 系文件转换为伪 EPUB 目录结构，然后用 WebView 引擎渲染
  */
 class MobiEBookParser extends EBookParser {
   constructor(filePath: string, format: EBookFormat) {
@@ -1506,27 +2276,25 @@ class MobiEBookParser extends EBookParser {
   }
 
   public static isSupportedFormat(format: EBookFormat): boolean {
-    return format === EBookFormat.MOBI || format === EBookFormat.AZW;
+    return format === EBookFormat.MOBI || format === EBookFormat.AZW || format === EBookFormat.AZW3;
   }
 
   public async parse(): Promise<EBook> {
     try {
-      logger.info(TAG, `开始 MOBI 解析: ${this.filePath}`);
+      logger.info(TAG, `开始 ${this.format} 解析: ${this.filePath}`);
       const result = await convertMobiToExtractedDir(this.filePath);
 
-      // KF8/AZW3 or other unsupported — fall back silently to ReaderKit
-      if (!result.success && result.errorMessage === 'KF8_FALLBACK') {
-        logger.info(TAG, 'MOBI 为 KF8 格式，回退到 ReaderKit');
-        return new ReaderKitEBookParser(this.filePath, this.format).parse();
-      }
-
       if (!result.success) {
-        logger.warn(TAG, `MOBI 转换失败，回退 ReaderKit: ${result.errorMessage}`);
-        return new ReaderKitEBookParser(this.filePath, this.format).parse();
+        logger.warn(TAG, `${this.format} 转换失败，保留为 WebView 懒转换记录: ${result.errorMessage}`);
+        return this.buildWebViewFallbackEBook(result.errorMessage || 'Kindle 本地转换失败');
       }
 
       // Build spine from the extracted OPF
       const spineChapters = EBookParserFactory.parseEpubSpineItems(result.extractedRootPath);
+      if (spineChapters.length <= 0) {
+        logger.warn(TAG, `${this.format} 转换后未解析到 spine，保留为 WebView 懒转换记录`);
+        return this.buildWebViewFallbackEBook('Kindle 转换后未解析到 spine');
+      }
 
       const metadata: EBookMetadata = {
         title: result.title || this.extractTitleFromFileName(this.getFileNameFromPath(this.filePath)),
@@ -1541,24 +2309,73 @@ class MobiEBookParser extends EBookParser {
         rating: 0
       };
 
-      const fileHandle = fileIo.openSync(this.filePath.startsWith('file://') ? this.filePath.substring(7) : this.filePath, fileIo.OpenMode.READ_ONLY);
-      const fileSize = fileIo.statSync(fileHandle.fd).size;
-      fileIo.closeSync(fileHandle);
-
       const ebook = this.generateDefaultEBook(this.filePath, this.format, metadata);
-      ebook.fileSize = fileSize;
+      ebook.fileSize = this.getFileSizeSafely();
       ebook.chapters = spineChapters;
       ebook.extractedRootPath = result.extractedRootPath;
       ebook.contentMode = EBookContentMode.REFLOWABLE_TEXT;
       ebook.preferredReaderEngine = EBookReaderEngine.WEBVIEW;
 
-      logger.info(TAG, `MOBI 解析完成: "${result.title}", ${spineChapters.length} 章`);
+      logger.info(TAG, `${this.format} 解析完成: "${result.title}", ${spineChapters.length} 章`);
       return ebook;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error(TAG, `MobiEBookParser 失败，回退 ReaderKit: ${msg}`);
-      return new ReaderKitEBookParser(this.filePath, this.format).parse();
+      logger.error(TAG, `${this.format} MobiEBookParser 失败，保留为 WebView 懒转换记录: ${msg}`);
+      return this.buildWebViewFallbackEBook(msg);
     }
+  }
+
+  private getFileSizeSafely(): number {
+    try {
+      const openTarget = this.filePath.startsWith('file://') ? this.filePath.substring(7) : this.filePath;
+      const fileHandle = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      const fileSize = fileIo.statSync(fileHandle.fd).size;
+      fileIo.closeSync(fileHandle);
+      return fileSize;
+    } catch (error) {
+      logger.warn(TAG, `${this.format} 获取文件大小失败: ${String(error)}`);
+      return 0;
+    }
+  }
+
+  private buildWebViewFallbackEBook(reason: string): EBook {
+    const fileName = this.getFileNameFromPath(this.filePath);
+    const now = Date.now();
+    const metadata: EBookMetadata = {
+      title: this.extractTitleFromFileName(fileName),
+      author: '未知作者',
+      publisher: '',
+      publishDate: '',
+      isbn: '',
+      language: 'zh-CN',
+      description: `${this.format} 电子书`,
+      coverImagePath: '',
+      tags: [this.format],
+      rating: 0
+    };
+    const ebook = this.generateDefaultEBook(this.filePath, this.format, metadata);
+    ebook.fileSize = this.getFileSizeSafely();
+    ebook.contentMode = EBookContentMode.REFLOWABLE_TEXT;
+    ebook.preferredReaderEngine = EBookReaderEngine.WEBVIEW;
+    ebook.extractedRootPath = '';
+    ebook.chapters = [{
+      id: `kindle_lazy_${now}`,
+      bookId: ebook.id,
+      chapterNumber: 1,
+      title: '开始阅读',
+      content: reason.length > 0 ? `Kindle 本地转换将在阅读器中重试：${reason}` : 'Kindle 本地转换将在阅读器中重试',
+      startPosition: 0,
+      endPosition: 0,
+      wordCount: 0,
+      resourceHref: '',
+      resourceFile: '',
+      resourceMediaType: '',
+      resourceLayoutType: '',
+      resourceImagePath: '',
+      resourceImageRelativePath: '',
+      createTime: now
+    }];
+    return ebook;
   }
 }
 
@@ -1570,8 +2387,8 @@ export class EBookParserFactory {
    * 根据文件路径创建对应的解析器
    *
    * 解析策略：
-   * - MOBI/AZW: 使用 MobiEBookParser 转换为伪 EPUB 目录，WebView 引擎渲染
-   * - AZW3: 使用 Reader Kit（KF8 格式）
+   * - MOBI/AZW/AZW3: 优先使用 MobiEBookParser 转换为伪 EPUB 目录，WebView 引擎渲染
+   * - Kindle 系本地转换失败时保留 WebView 懒转换记录，Reader Kit 只作为用户显式兜底入口
    * - EPUB: 使用 Reader Kit（官方 API）
    * - PDF: 使用 Web 组件预览方案
    * - TXT: 使用文件读取 + 自定义解析
@@ -1584,16 +2401,10 @@ export class EBookParserFactory {
       return null;
     }
 
-    // MOBI/AZW: use MobiEBookParser for WebView-based rendering
+    // MOBI/AZW/AZW3: use MobiEBookParser for WebView-based rendering first
     if (MobiEBookParser.isSupportedFormat(format)) {
       logger.info(TAG, `使用 MobiEBookParser: ${format}`);
       return new MobiEBookParser(filePath, format);
-    }
-
-    // AZW3 uses ReaderKit (KF8 format — MobiParser will fall back automatically if needed)
-    if (format === EBookFormat.AZW3) {
-      logger.info(TAG, `使用 ReaderKit 解析 AZW3: ${format}`);
-      return new ReaderKitEBookParser(filePath, format);
     }
 
     // 优先使用 Reader Kit 解析支持的格式（除了 TXT，TXT 我们有自定义实现）
@@ -1665,6 +2476,44 @@ export class EBookParserFactory {
     const parser = new ReaderKitEBookParser('', EBookFormat.EPUB);
     return parser.parseSpineFromOpf(extractedRoot);
   }
+
+  /**
+   * 直接解析已解压 EPUB 的目录结构（nav.xhtml / toc.ncx）
+   * 返回已经映射到 spine 索引的目录项
+   */
+  public static parseEpubNavigationItems(
+    extractedRoot: string,
+    spineItems: EBookChapter[]
+  ): EpubNavigationItem[] {
+    if (!extractedRoot || extractedRoot.trim().length === 0 || spineItems.length <= 0) {
+      return [];
+    }
+    const parser = new ReaderKitEBookParser('', EBookFormat.EPUB);
+    return parser.parseNavigationFromOpf(extractedRoot, spineItems);
+  }
+
+  /**
+   * 当 EPUB/MOBI 没有可靠 nav/ncx 时，从正文标题生成可跳转目录。
+   */
+  public static parseEpubGeneratedNavigationItems(
+    extractedRoot: string,
+    spineItems: EBookChapter[]
+  ): EpubNavigationItem[] {
+    if (!extractedRoot || extractedRoot.trim().length === 0 || spineItems.length <= 0) {
+      return [];
+    }
+    const parser = new ReaderKitEBookParser('', EBookFormat.EPUB);
+    return parser.parseGeneratedNavigationFromSpine(extractedRoot, spineItems);
+  }
+}
+
+async function createReaderKitBookParserHandler(filePath: string, trigger: string): Promise<bookParser.BookParserHandler> {
+  if (!isReaderKitEnabled()) {
+    throw new Error('Reader Kit is unavailable in current environment');
+  }
+
+  logger.info(TAG, `[ReaderKit] 静态导入调用 getDefaultHandler: trigger=${trigger}`);
+  return await bookParser.getDefaultHandler(filePath);
 }
 
 /**
@@ -2131,13 +2980,13 @@ class TxtParser extends EBookParser {
 }
 
 /**
- * 注意：EPUB、MOBI、AZW/AZW3 格式现在由 ReaderKitEBookParser 处理
- * 这些类已被 Reader Kit 官方 API 替代
+ * 注意：EPUB 仍优先由 ReaderKitEBookParser 处理；
+ * MOBI、AZW、AZW3 优先走本地伪 EPUB 转换；失败后保留 WebView 懒转换记录，
+ * ReaderKit 只通过阅读器里的显式兜底按钮进入。
  * 
  * Reader Kit 支持的格式：
  * - EPUB: 使用 Reader Kit 解析
- * - MOBI: 使用 Reader Kit 解析
- * - AZW/AZW3: 使用 Reader Kit 解析
+ * - MOBI/AZW/AZW3: 优先本地转换为 WebView 可读目录
  * 
  * 参考 ReaderKitParser.ets 文件
  */
