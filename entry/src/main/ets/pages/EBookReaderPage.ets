@@ -21,9 +21,7 @@ import {
   EBookPageMode,
   EBookFormat,
   EBookContentMode,
-  DEFAULT_EBOOK_READING_SETTINGS,
-  EBOOK_THEME_PRESETS,
-  EBookThemePreset
+  DEFAULT_EBOOK_READING_SETTINGS
 } from '../Models/EBookModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
@@ -297,20 +295,14 @@ struct EBookReaderPage {
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EBookReaderPage');
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${theme}`);
-      // 检查当前电子书是否设置了 followSystemTheme
-      // 检查当前电子书是否设置了 followSystemTheme
-      if (this.ebook?.readingSettings?.followSystemTheme === true) {
-        if (theme === 'dark') {
-          this.bgColor = '#1E1E1E';
-          this.textColor = '#D4D4D4';
-        } else {
-          this.bgColor = '#FFFFFF';
-          this.textColor = '#333333';
-        }
-        logger.info(TAG, `用户已自定义背景设置，不跟随系统主题`);
-      } else {
-        logger.info(TAG, `用户已自定义背景设置，不跟随系统主题`);
+      if (this.ebook && this.ebook.readingSettings && this.ebook.readingSettings.followSystemTheme === true) {
+        this.applySystemThemeToSettings(this.ebook);
+        this.bgColor = this.ebook.readingSettings.backgroundColor;
+        this.textColor = this.ebook.readingSettings.textColor;
+        logger.info(TAG, '已根据系统主题更新阅读背景');
+        return;
       }
+      logger.info(TAG, '当前阅读背景为固定主题，不跟随系统主题');
     });
     // 初始化横屏检测
     // 初始化阅读时间记录
@@ -1230,78 +1222,24 @@ struct EBookReaderPage {
       this.ebook = ebook;
       this.reportTransitionLoadingProgress(0.24, 'ebook_loaded');
       
-      // [修复] 优先使用全局设置，除非用户明确修改过该电子书的设置
-      // [修复] 优先使用全局设置，除非用户明确修改过该电子书的设置
-      const settingsManager = SettingsManager.getInstance();
-      const globalThemeIndex = settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_THEME, 0);
-      const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_FONT_SIZE, DEFAULT_EBOOK_READING_SETTINGS.fontSize);
-      const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_LINE_HEIGHT, DEFAULT_EBOOK_READING_SETTINGS.lineHeight);
-      const globalPageMargin = settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_PAGE_MARGIN, DEFAULT_EBOOK_READING_SETTINGS.pageMargin);
-      const globalPageMode = settingsManager.getString(SettingKeys.GLOBAL_EBOOK_PAGE_MODE, DEFAULT_EBOOK_READING_SETTINGS.pageMode) as EBookPageMode;
-      const themePreset: EBookThemePreset = EBOOK_THEME_PRESETS[globalThemeIndex] || EBOOK_THEME_PRESETS[0];
-      
-      if (ebook.readingSettings) {
-        // followSystemTheme=false 表示用户已自定义设置，应使用保存的设置
-          // 使用全局设置覆盖默认设置
-          // 使用全局设置覆盖默认设置
-        const isDefaultSettings = ebook.readingSettings.followSystemTheme === true;
-        
-        if (isDefaultSettings) {
-          // 使用全局设置覆盖默认设置
-          logger.info(TAG, `检测到默认设置，应用全局设置: 主题索引=${globalThemeIndex}, 背景色=${themePreset.backgroundColor}, 字体大小=${globalFontSize}`);
-          
-          this.fontSize = globalFontSize;
-          this.lineHeight = globalLineHeight;
-          this.bgColor = themePreset.backgroundColor;
-          this.textColor = themePreset.textColor;
-          this.pageMargin = globalPageMargin;
-          
-          // 更新 ebook.readingSettings 以便后续保存
-          ebook.readingSettings.fontSize = globalFontSize;
-          ebook.readingSettings.lineHeight = globalLineHeight;
-          ebook.readingSettings.backgroundColor = themePreset.backgroundColor;
-          ebook.readingSettings.textColor = themePreset.textColor;
-          ebook.readingSettings.pageMargin = globalPageMargin;
-          ebook.readingSettings.pageMode = globalPageMode;
-          ebook.readingSettings.nightMode = themePreset.nightMode;
-          ebook.readingSettings.followSystemTheme = false;// 应用全局设置后关闭跟随系统主题
-        } else {
-          // 用户已修改过设置，直接使用保存的设置
-          logger.info(TAG, `使用用户自定义设置: 背景色=${ebook.readingSettings.backgroundColor}, 字体大小=${ebook.readingSettings.fontSize}`);
-          
-          this.fontSize = ebook.readingSettings.fontSize;
-          this.lineHeight = ebook.readingSettings.lineHeight;
-          this.bgColor = ebook.readingSettings.backgroundColor;
-          this.textColor = ebook.readingSettings.textColor;
-          this.pageMargin = ebook.readingSettings.pageMargin;
+      if (ebook.format !== EBookFormat.TXT) {
+        const effectiveSettings = await this.ebookDataManager.resolveEffectiveEBookReadingSettings(
+          ebook.id,
+          ebook.readingSettings
+        );
+        ebook.readingSettings = effectiveSettings;
+        if (ebook.readingSettings.followSystemTheme !== false) {
+          this.applySystemThemeToSettings(ebook);
         }
-      } else {
-        // 没有保存的设置，使用全局设置创建新的设置对象
-        logger.info(TAG, `无保存设置，应用全局设置: 主题索引=${globalThemeIndex}, 背景色=${themePreset.backgroundColor}, 字体大小=${globalFontSize}`);
-        
-        ebook.readingSettings = {
-          fontSize: globalFontSize,
-          fontFamily: DEFAULT_EBOOK_READING_SETTINGS.fontFamily,
-          fontPath: DEFAULT_EBOOK_READING_SETTINGS.fontPath,
-          fontWeight: DEFAULT_EBOOK_READING_SETTINGS.fontWeight,
-          lineHeight: globalLineHeight,
-          backgroundColor: themePreset.backgroundColor,
-          textColor: themePreset.textColor,
-          themeBgImage: themePreset.themeBgImage || '',
-          nightMode: themePreset.nightMode,
-          followSystemTheme: true,// [修复] 新电子书设为true，让loadTextReaderSettingsWithGlobalDefaults应用全局设置
-          pageMargin: globalPageMargin,
-          pageMode: globalPageMode,
-          brightness: DEFAULT_EBOOK_READING_SETTINGS.brightness,
-          autoSave: DEFAULT_EBOOK_READING_SETTINGS.autoSave,
-          saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval
-        };
-        
-        this.fontSize = globalFontSize;
-        this.lineHeight = globalLineHeight;
-        this.bgColor = themePreset.backgroundColor;
-        this.textColor = themePreset.textColor;
-        this.pageMargin = globalPageMargin;
+        this.fontSize = ebook.readingSettings.fontSize;
+        this.lineHeight = ebook.readingSettings.lineHeight;
+        this.bgColor = ebook.readingSettings.backgroundColor;
+        this.textColor = ebook.readingSettings.textColor;
+        this.pageMargin = ebook.readingSettings.pageMargin;
+        logger.info(
+          TAG,
+          `恢复电子书阅读设置: fontSize=${this.fontSize}, lineHeight=${this.lineHeight}, pageMargin=${this.pageMargin}, followSystemTheme=${ebook.readingSettings.followSystemTheme}`
+        );
       }
 
         // 优先使用保存的章节索引

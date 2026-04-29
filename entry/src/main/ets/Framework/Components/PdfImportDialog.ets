@@ -435,8 +435,8 @@ export struct PdfImportDialog {
 
         Button('开始导入')
           .fontSize(16)
-          .fontColor(AppColors.onPrimary)
-          .backgroundColor(AppColors.primary)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
@@ -465,20 +465,23 @@ export struct PdfImportDialog {
     }
     .width('90%')
     .padding(20)
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
     .backgroundBlurStyle(
       DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
       DialogSurfaceStyleHelper.getPopupCardBlurOptions()
     )
-    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
-    .borderRadius(12)
+    .backgroundEffect(DialogSurfaceStyleHelper.getPopupCardBackgroundEffect())
+    .borderRadius(26)
+    .clip(true)
     .border({
       width: 1,
       color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState)
     })
     .shadow({
-      radius: 18,
+      radius: 26,
       color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
-      offsetY: 8
+      offsetX: 0,
+      offsetY: 10
     })
   }
 

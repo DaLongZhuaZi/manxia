@@ -276,3 +276,171 @@ export function ftpRmdir(remotePath: string): FTPResult;
  * 销毁FTP客户端
  */
 export function ftpDestroy(): void;
+
+// ==================== SMB 接口 ====================
+
+/**
+ * SMB配置
+ */
+export interface SMBConfig {
+  host: string;
+  shareName: string;
+  port: number;
+  username: string;
+  password: string;
+  domain: string;
+  workstation: string;
+  timeoutMs: number;
+  enableEncryption: boolean;
+}
+
+/**
+ * SMB操作结果
+ */
+export interface SMBResult {
+  success: boolean;
+  statusCode: number;
+  message: string;
+  data: string;
+}
+
+/**
+ * SMB文件信息
+ */
+export interface SMBFileInfo {
+  path: string;
+  name: string;
+  size: number;
+  lastModified: number;
+  isDirectory: boolean;
+}
+
+/**
+ * SMB目录列表结果
+ */
+export interface SMBListResult {
+  success: boolean;
+  statusCode: number;
+  message: string;
+  files: SMBFileInfo[];
+}
+
+/**
+ * 初始化SMB客户端
+ * @param config SMB配置
+ * @returns 是否初始化成功
+ */
+export function smbInit(config: SMBConfig): boolean;
+
+/**
+ * 测试SMB连接
+ * @param remotePath 远程路径
+ * @returns 连接测试结果
+ */
+export function smbTestConnection(remotePath: string): SMBResult;
+
+/**
+ * 获取SMB目录列表
+ * @param remotePath 远程路径
+ * @returns 目录列表结果
+ */
+export function smbList(remotePath: string): SMBListResult;
+
+/**
+ * SMB下载文件
+ * @param remotePath 远程路径
+ * @param localPath 本地文件路径
+ * @returns 操作结果
+ */
+export function smbDownload(remotePath: string, localPath: string): SMBResult;
+
+/**
+ * 销毁SMB客户端
+ */
+export function smbDestroy(): void;
+
+// ==================== Network Scanner 接口 ====================
+
+/**
+ * 扫描配置
+ */
+export interface ScanConfig {
+  subnetBase: string;
+  hostTimeoutMs?: number;
+}
+
+/**
+ * 协议端口映射
+ */
+export interface ProtocolPort {
+  protocol: number;
+  port: number;
+}
+
+/**
+ * 发现的主机
+ */
+export interface DiscoveredHost {
+  ip: string;
+  hostname: string;
+  protocols: number[];
+  protocolPorts: ProtocolPort[];
+}
+
+/**
+ * SMB共享信息
+ */
+export interface SMBShareInfo {
+  name: string;
+  remark: string;
+  type: number;
+  isHidden: boolean;
+  isDiskShare: boolean;
+}
+
+/**
+ * SMB共享枚举结果
+ */
+export interface SMBEnumResult {
+  success: boolean;
+  message: string;
+  shares: SMBShareInfo[];
+}
+
+/**
+ * 开始网络扫描
+ * @param config 扫描配置
+ * @param onProgress 进度回调 (scanned, total, currentIP)
+ * @param onHostFound 发现主机回调
+ * @param onComplete 扫描完成回调 (cancelled)
+ */
+export function scanStart(
+  config: ScanConfig,
+  onProgress: (scanned: number, total: number, currentIP: string) => void,
+  onHostFound: (host: DiscoveredHost) => void,
+  onComplete: (cancelled: boolean) => void
+): void;
+
+/**
+ * 停止网络扫描
+ */
+export function scanStop(): void;
+
+/**
+ * 查询扫描是否正在运行
+ */
+export function scanIsRunning(): boolean;
+
+/**
+ * 枚举SMB共享
+ * @param config SMB连接配置
+ * @returns 共享枚举结果
+ */
+export function smbEnumShares(config: {
+  host: string;
+  port?: number;
+  username?: string;
+  password?: string;
+  domain?: string;
+  timeoutMs?: number;
+}): SMBEnumResult;

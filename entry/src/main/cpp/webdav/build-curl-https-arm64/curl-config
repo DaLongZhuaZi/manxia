@@ -92,7 +92,7 @@ while test $# -gt 0; do
         ;;
 
     --protocols)
-        for protocol in FILE FTP FTPS HTTP HTTPS MQTT; do
+        for protocol in FILE FTP FTPS HTTP HTTPS MQTT SCP SFTP; do
             echo "$protocol"
         done
         ;;
@@ -163,7 +163,7 @@ while test $# -gt 0; do
            CURLLIBDIR=""
         fi
         if test "Xyes" = "Xno"; then
-          echo ${CURLLIBDIR}-lcurl  -lunwind -l:libunwind.a -lc -l:libunwind.a -lpthread F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedtls.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedx509.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedcrypto.so
+          echo ${CURLLIBDIR}-lcurl  -lunwind -l:libunwind.a -lc -l:libunwind.a -lpthread F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedtls.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedx509.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedcrypto.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-libssh2-arm64/lib/libssh2.a
         else
           echo ${CURLLIBDIR}-lcurl
         fi
@@ -174,7 +174,7 @@ while test $# -gt 0; do
 
     --static-libs)
         if test "Xno" != "Xno" ; then
-          echo "F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-curl-https-arm64/lib/libcurl.a" --rtlib=compiler-rt -fuse-ld=lld -Wl,--build-id=sha1 -Wl,--warn-shared-textrel -Wl,--fatal-warnings -lunwind -Wl,--no-undefined -Qunused-arguments -Wl,-z,noexecstack   -lunwind -l:libunwind.a -lc -l:libunwind.a -lpthread F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedtls.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedx509.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedcrypto.so
+          echo "F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-curl-https-arm64/lib/libcurl.a" --rtlib=compiler-rt -fuse-ld=lld -Wl,--build-id=sha1 -Wl,--warn-shared-textrel -Wl,--fatal-warnings -lunwind -Wl,--no-undefined -Qunused-arguments -Wl,-z,noexecstack   -lunwind -l:libunwind.a -lc -l:libunwind.a -lpthread F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedtls.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedx509.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-mbedtls-arm64/lib/libmbedcrypto.so F:/DevEcoStudioProject/manxia/entry/src/main/cpp/webdav/install-libssh2-arm64/lib/libssh2.a
         else
           echo "curl was built with static libraries disabled" >&2
           exit 1

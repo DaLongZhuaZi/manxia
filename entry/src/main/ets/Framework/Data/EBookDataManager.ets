@@ -16,7 +16,9 @@ import {
   EBookPageMode,
   EBookContentMode,
   EBookReaderEngine,
-  DEFAULT_EBOOK_READING_SETTINGS
+  DEFAULT_EBOOK_READING_SETTINGS,
+  EBOOK_THEME_PRESETS,
+  EBookThemePreset
 } from '../../Models/EBookModels';
 import {
   ReadingSettings as ImageReaderSettings,
@@ -24,7 +26,6 @@ import {
 } from '../../Models/MangaModels';
 import { logger } from '../../Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
-import { PRESET_BACKGROUNDS } from '../../Models/TextReaderModels';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
@@ -805,6 +806,212 @@ export class EBookDataManager {
     };
   }
 
+  private clampNumber(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  private getEBookThemePreset(themeIndex: number): EBookThemePreset {
+    if (themeIndex >= 0 && themeIndex < EBOOK_THEME_PRESETS.length) {
+      return EBOOK_THEME_PRESETS[themeIndex];
+    }
+    return EBOOK_THEME_PRESETS[0];
+  }
+
+  private normalizeEBookPageMode(pageModeValue: string): EBookPageMode {
+    if (pageModeValue === EBookPageMode.HORIZONTAL) {
+      return EBookPageMode.HORIZONTAL;
+    }
+    return EBookPageMode.SIMULATION;
+  }
+
+  private async hasReadingSettingsRecord(bookId: string): Promise<boolean> {
+    await this.ensureSettingsColumns();
+    const records = await this.dbManager.querySql(
+      'SELECT id FROM ebook_reading_settings WHERE bookId = ? AND userId = ? LIMIT 1',
+      [bookId, 'default_user']
+    );
+    return records !== null && records !== undefined && records.length > 0;
+  }
+
+  private async getStoredEBookFormat(bookId: string): Promise<EBookFormat | null> {
+    try {
+      const records = await this.dbManager.querySql(
+        'SELECT format FROM ebook_info WHERE id = ? LIMIT 1',
+        [bookId]
+      );
+      if (records && records.length > 0) {
+        return String(getRecordValue(records[0], 'format', '')) as EBookFormat;
+      }
+    } catch (error) {
+      logger.warn(TAG, `读取电子书格式失败：书籍ID=${bookId}，错误=${String(error)}`);
+    }
+    return null;
+  }
+
+  public buildGlobalEBookReadingSettings(baseSettings: EBookReadingSettings = DEFAULT_EBOOK_READING_SETTINGS): EBookReadingSettings {
+    const settingsManager = SettingsManager.getInstance();
+    const themeIndex = Math.round(this.clampNumber(
+      settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_THEME, 0),
+      0,
+      Math.max(0, EBOOK_THEME_PRESETS.length - 1)
+    ));
+    const themePreset = this.getEBookThemePreset(themeIndex);
+    const followSystemTheme = settingsManager.getBoolean(
+      SettingKeys.GLOBAL_EBOOK_FOLLOW_SYSTEM_THEME,
+      DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme
+    );
+    const pageMode = this.normalizeEBookPageMode(settingsManager.getString(
+      SettingKeys.GLOBAL_EBOOK_PAGE_MODE,
+      DEFAULT_EBOOK_READING_SETTINGS.pageMode
+    ));
+    const pageMargin = Math.round(this.clampNumber(
+      settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_PAGE_MARGIN, DEFAULT_EBOOK_READING_SETTINGS.pageMargin),
+      0,
+      64
+    ));
+    const defaultTopMargin = DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
+    const defaultBottomMargin = DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
+    const pageTopMargin = Math.round(this.clampNumber(
+      settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_PAGE_TOP_MARGIN, defaultTopMargin),
+      0,
+      96
+    ));
+    const pageBottomMargin = Math.round(this.clampNumber(
+      settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_PAGE_BOTTOM_MARGIN, defaultBottomMargin),
+      0,
+      96
+    ));
+    const pageTurnAnimation = settingsManager.getString(
+      SettingKeys.GLOBAL_EBOOK_PAGE_TURN_ANIMATION,
+      baseSettings.pageTurnAnimation ?? 'SLIDE'
+    );
+
+    let backgroundColor = themePreset.backgroundColor;
+    let textColor = themePreset.textColor;
+    let themeBgImage = themePreset.themeBgImage;
+    let nightMode = themePreset.nightMode;
+    if (followSystemTheme) {
+      backgroundColor = DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
+      textColor = DEFAULT_EBOOK_READING_SETTINGS.textColor;
+      themeBgImage = DEFAULT_EBOOK_READING_SETTINGS.themeBgImage;
+      nightMode = DEFAULT_EBOOK_READING_SETTINGS.nightMode;
+    }
+
+    return {
+      fontSize: Math.round(this.clampNumber(
+        settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_FONT_SIZE, DEFAULT_EBOOK_READING_SETTINGS.fontSize),
+        12,
+        48
+      )),
+      fontFamily: settingsManager.getString(
+        SettingKeys.GLOBAL_EBOOK_FONT_FAMILY,
+        DEFAULT_EBOOK_READING_SETTINGS.fontFamily
+      ),
+      fontPath: settingsManager.getString(
+        SettingKeys.GLOBAL_EBOOK_FONT_PATH,
+        DEFAULT_EBOOK_READING_SETTINGS.fontPath
+      ),
+      fontWeight: Math.round(this.clampNumber(
+        settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_FONT_WEIGHT, DEFAULT_EBOOK_READING_SETTINGS.fontWeight),
+        100,
+        900
+      )),
+      lineHeight: this.clampNumber(
+        settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_LINE_HEIGHT, DEFAULT_EBOOK_READING_SETTINGS.lineHeight),
+        1.0,
+        3.0
+      ),
+      backgroundColor: backgroundColor,
+      textColor: textColor,
+      themeBgImage: themeBgImage,
+      nightMode: nightMode,
+      followSystemTheme: followSystemTheme,
+      pageMargin: pageMargin,
+      pageTopMargin: pageTopMargin,
+      pageBottomMargin: pageBottomMargin,
+      pageMode: pageMode,
+      brightness: baseSettings.brightness,
+      autoSave: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_AUTO_SAVE,
+        DEFAULT_EBOOK_READING_SETTINGS.autoSave
+      ),
+      saveInterval: Math.round(this.clampNumber(
+        settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_SAVE_INTERVAL, DEFAULT_EBOOK_READING_SETTINGS.saveInterval),
+        5,
+        300
+      )),
+      letterSpacing: this.clampNumber(
+        settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_LETTER_SPACING, baseSettings.letterSpacing ?? 0),
+        0,
+        5
+      ),
+      paragraphSpacing: Math.round(this.clampNumber(
+        settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_PARAGRAPH_SPACING, baseSettings.paragraphSpacing ?? 8),
+        0,
+        32
+      )),
+      firstLineIndent: this.clampNumber(
+        settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_FIRST_LINE_INDENT, baseSettings.firstLineIndent ?? 2),
+        0,
+        4
+      ),
+      textAlignment: settingsManager.getString(
+        SettingKeys.GLOBAL_EBOOK_TEXT_ALIGNMENT,
+        baseSettings.textAlignment ?? 'JUSTIFY'
+      ),
+      pageTurnAnimation: pageTurnAnimation,
+      tapToTurn: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_TAP_TO_TURN,
+        baseSettings.tapToTurn ?? true
+      ),
+      volumeKeyNavigation: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_VOLUME_KEY_NAV,
+        baseSettings.volumeKeyNavigation ?? true
+      ),
+      keepScreenOn: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_KEEP_SCREEN_ON,
+        baseSettings.keepScreenOn ?? false
+      ),
+      showPageNumber: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_SHOW_PAGE_NUMBER,
+        DEFAULT_EBOOK_READING_SETTINGS.showPageNumber ?? true
+      ),
+      showProgress: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_SHOW_PROGRESS,
+        DEFAULT_EBOOK_READING_SETTINGS.showProgress ?? false
+      ),
+      showTime: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_SHOW_TIME,
+        DEFAULT_EBOOK_READING_SETTINGS.showTime ?? true
+      ),
+      showBattery: settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_SHOW_BATTERY,
+        DEFAULT_EBOOK_READING_SETTINGS.showBattery ?? false
+      ),
+      backgroundType: baseSettings.backgroundType ?? DEFAULT_EBOOK_READING_SETTINGS.backgroundType,
+      backgroundImagePath: baseSettings.backgroundImagePath ?? DEFAULT_EBOOK_READING_SETTINGS.backgroundImagePath,
+      backgroundImageOpacity: baseSettings.backgroundImageOpacity ?? DEFAULT_EBOOK_READING_SETTINGS.backgroundImageOpacity
+    };
+  }
+
+  public async resolveEffectiveEBookReadingSettings(bookId: string, settings: EBookReadingSettings): Promise<EBookReadingSettings> {
+    try {
+      const hasStoredSettings = await this.hasReadingSettingsRecord(bookId);
+      const shouldApplyGlobalDefaults = !hasStoredSettings || this.shouldApplyGlobalDefaultsForNewBook(settings);
+      if (shouldApplyGlobalDefaults) {
+        const globalSettings = this.buildGlobalEBookReadingSettings(settings);
+        logger.info(
+          TAG,
+          `套用电子书全局默认设置：书籍ID=${bookId}，hasStoredSettings=${hasStoredSettings}，fontSize=${globalSettings.fontSize}，lineHeight=${globalSettings.lineHeight}，pageMargin=${globalSettings.pageMargin}`
+        );
+        return globalSettings;
+      }
+    } catch (error) {
+      logger.warn(TAG, `解析电子书全局默认设置失败，使用当前设置：书籍ID=${bookId}，错误=${String(error)}`);
+    }
+    return this.cloneReadingSettings(settings);
+  }
+
   private cloneImageReaderSettings(settings: ImageReaderSettings): ImageReaderSettings {
     return {
       readingMode: settings.readingMode,
@@ -1275,8 +1482,8 @@ export class EBookDataManager {
   }
 
   /**
-   * 对于新电子书，应用全局设置中的纯文本阅读器默认值
-   * 检测方式：如果设置是默认值（没有自定义背景图片路径），则应用全局设置
+   * 对于新电子书，应用电子书全局默认阅读设置。
+   * TXT/小说阅读器默认值由小说阅读设置链路单独处理。
    */
   private async applyGlobalSettingsIfNew(bookId: string, settings: EBookReadingSettings): Promise<EBookReadingSettings> {
     try {
@@ -1299,127 +1506,18 @@ export class EBookDataManager {
         return settings;
       }
 
-      const settingsManager = SettingsManager.getInstance();
-      
-      // 检查是否使用全局背景图片设置
-      const useGlobalBgImage = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, false);
-      const globalBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
-      const globalBgImageOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, 0.3);
-      
-      // 如果全局设置启用了背景图片，并且当前设置没有自定义背景图片，则应用全局设置
-      if (useGlobalBgImage && globalBgImagePath && globalBgImagePath.length > 0 && !settings.backgroundImagePath) {
-        logger.info(TAG, `应用全局背景图片设置: ${globalBgImagePath}`);
-        
-        // 获取其他全局设置
-        const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, settings.fontSize);
-        const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, settings.lineHeight);
-        const globalParagraphSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, settings.paragraphSpacing ?? 8);
-        const globalFirstLineIndent = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, settings.firstLineIndent ?? 2);
-        const globalLetterSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LETTER_SPACING, settings.letterSpacing ?? 0);
-        const globalPageMargin = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PAGE_MARGIN, settings.pageMargin);
-        const globalBgColorIndex = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, 0);
-        const globalPageTurnAnimation = settingsManager.getString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, settings.pageTurnAnimation ?? 'SLIDE');
-        const globalKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, settings.keepScreenOn ?? true);
-        const globalVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, settings.volumeKeyNavigation ?? true);
-        const globalTapToTurn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_TAP_TO_TURN, settings.tapToTurn ?? true);
-        
-        // 获取预设背景的颜色
-        const preset = PRESET_BACKGROUNDS[globalBgColorIndex] || PRESET_BACKGROUNDS[0];
-        
-        const result: EBookReadingSettings = {
-          fontSize: globalFontSize,
-          fontFamily: settings.fontFamily,
-          fontPath: settings.fontPath,
-          fontWeight: settings.fontWeight,
-          lineHeight: globalLineHeight,
-          backgroundColor: preset.backgroundColor,
-          textColor: preset.textColor,
-          themeBgImage: settings.themeBgImage,
-          nightMode: settings.nightMode,
-          followSystemTheme: settings.followSystemTheme,
-          pageMargin: globalPageMargin,
-          pageTopMargin: settings.pageTopMargin ?? globalPageMargin,
-          pageBottomMargin: settings.pageBottomMargin ?? globalPageMargin,
-          pageMode: settings.pageMode,
-          brightness: settings.brightness,
-          autoSave: settings.autoSave,
-          saveInterval: settings.saveInterval,
-          paragraphSpacing: globalParagraphSpacing,
-          firstLineIndent: globalFirstLineIndent,
-          letterSpacing: globalLetterSpacing,
-          textAlignment: settings.textAlignment,
-          pageTurnAnimation: globalPageTurnAnimation,
-          tapToTurn: globalTapToTurn,
-          volumeKeyNavigation: globalVolumeKeyNav,
-          keepScreenOn: globalKeepScreenOn,
-          showPageNumber: settings.showPageNumber,
-          showProgress: settings.showProgress,
-          showTime: settings.showTime,
-          showBattery: settings.showBattery,
-          backgroundType: 'IMAGE',
-          backgroundImagePath: globalBgImagePath,
-          backgroundImageOpacity: globalBgImageOpacity
-        };
-        return result;
+      const storedFormat = await this.getStoredEBookFormat(bookId);
+      if (storedFormat === EBookFormat.TXT) {
+        logger.info(TAG, `TXT 电子书跳过电子书全局默认值，交由小说阅读默认设置处理：书籍ID=${bookId}`);
+        return settings;
       }
-      
-      // 即使没有启用背景图片，也应用其他全局设置（如果当前是默认设置）
-      if (!settings.backgroundImagePath) {
-        const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, settings.fontSize);
-        const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, settings.lineHeight);
-        const globalParagraphSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, settings.paragraphSpacing ?? 8);
-        const globalFirstLineIndent = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, settings.firstLineIndent ?? 2);
-        const globalLetterSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LETTER_SPACING, settings.letterSpacing ?? 0);
-        const globalPageMargin = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PAGE_MARGIN, settings.pageMargin);
-        const globalBgColorIndex = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, 0);
-        const globalPageTurnAnimation = settingsManager.getString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, settings.pageTurnAnimation ?? 'SLIDE');
-        const globalKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, settings.keepScreenOn ?? true);
-        const globalVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, settings.volumeKeyNavigation ?? true);
-        const globalTapToTurn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_TAP_TO_TURN, settings.tapToTurn ?? true);
-        
-        // 获取预设背景的颜色
-        const preset = PRESET_BACKGROUNDS[globalBgColorIndex] || PRESET_BACKGROUNDS[0];
-        
-        logger.info(TAG, `应用全局纯色背景设置: bgColor=${preset.backgroundColor}, textColor=${preset.textColor}`);
-        
-        const result: EBookReadingSettings = {
-          fontSize: globalFontSize,
-          fontFamily: settings.fontFamily,
-          fontPath: settings.fontPath,
-          fontWeight: settings.fontWeight,
-          lineHeight: globalLineHeight,
-          backgroundColor: preset.backgroundColor,
-          textColor: preset.textColor,
-          themeBgImage: settings.themeBgImage,
-          nightMode: settings.nightMode,
-          followSystemTheme: settings.followSystemTheme,
-          pageMargin: globalPageMargin,
-          pageTopMargin: settings.pageTopMargin ?? globalPageMargin,
-          pageBottomMargin: settings.pageBottomMargin ?? globalPageMargin,
-          pageMode: settings.pageMode,
-          brightness: settings.brightness,
-          autoSave: settings.autoSave,
-          saveInterval: settings.saveInterval,
-          paragraphSpacing: globalParagraphSpacing,
-          firstLineIndent: globalFirstLineIndent,
-          letterSpacing: globalLetterSpacing,
-          textAlignment: settings.textAlignment,
-          pageTurnAnimation: globalPageTurnAnimation,
-          tapToTurn: globalTapToTurn,
-          volumeKeyNavigation: globalVolumeKeyNav,
-          keepScreenOn: globalKeepScreenOn,
-          showPageNumber: settings.showPageNumber,
-          showProgress: settings.showProgress,
-          showTime: settings.showTime,
-          showBattery: settings.showBattery,
-          backgroundType: settings.backgroundType,
-          backgroundImagePath: settings.backgroundImagePath,
-          backgroundImageOpacity: settings.backgroundImageOpacity
-        };
-        return result;
-      }
-      
-      return settings;
+
+      const result = this.buildGlobalEBookReadingSettings(settings);
+      logger.info(
+        TAG,
+        `应用电子书全局默认设置: fontSize=${result.fontSize}, lineHeight=${result.lineHeight}, pageMargin=${result.pageMargin}, followSystemTheme=${result.followSystemTheme}`
+      );
+      return result;
     } catch (error) {
       logger.error(TAG, `应用全局设置失败: ${String(error)}`);
       return settings;
@@ -1430,9 +1528,6 @@ export class EBookDataManager {
    * 更新电子书封面
    */
   private shouldApplyGlobalDefaultsForNewBook(settings: EBookReadingSettings): boolean {
-    if (settings.followSystemTheme === false) {
-      return false;
-    }
     if ((settings.backgroundImagePath ?? '').length > 0) {
       return false;
     }
@@ -1465,8 +1560,10 @@ export class EBookDataManager {
     const currentShowBattery = settings.showBattery ?? false;
     const currentBackgroundType = settings.backgroundType ?? 'COLOR';
     const currentBackgroundImageOpacity = settings.backgroundImageOpacity ?? 0.3;
-    const currentPageTopMargin = settings.pageTopMargin ?? settings.pageMargin;
-    const currentPageBottomMargin = settings.pageBottomMargin ?? settings.pageMargin;
+    const currentFollowSystemTheme = settings.followSystemTheme ?? DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme;
+    const defaultFollowSystemTheme = DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme;
+    const currentPageTopMargin = settings.pageTopMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ?? settings.pageMargin;
+    const currentPageBottomMargin = settings.pageBottomMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ?? settings.pageMargin;
     const defaultPageTopMargin = DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
     const defaultPageBottomMargin = DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
 
@@ -1482,6 +1579,7 @@ export class EBookDataManager {
       currentText === defaultText &&
       currentThemeBgImage === defaultThemeBgImage &&
       currentNightMode === defaultNightMode &&
+      currentFollowSystemTheme === defaultFollowSystemTheme &&
       settings.pageMode === DEFAULT_EBOOK_READING_SETTINGS.pageMode &&
       settings.brightness === DEFAULT_EBOOK_READING_SETTINGS.brightness &&
       settings.autoSave === DEFAULT_EBOOK_READING_SETTINGS.autoSave &&

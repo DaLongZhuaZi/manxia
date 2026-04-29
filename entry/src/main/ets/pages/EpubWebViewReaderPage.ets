@@ -472,9 +472,11 @@ export struct EpubWebViewReaderPage {
       this.configureNavigationTargets(ebook.id, extractedRoot, spineItems);
       this.isFixedLayout = ebook.contentMode === EBookContentMode.FIXED_LAYOUT_HTML;
 
-      this.readingSettings = this.cloneTextReadingSettings(
-        ebook.readingSettings ?? DEFAULT_EBOOK_READING_SETTINGS
+      const effectiveTextSettings = await this.ebookDataManager.resolveEffectiveEBookReadingSettings(
+        ebook.id,
+        ebook.readingSettings
       );
+      this.readingSettings = this.resolveSystemThemeTextSettings(effectiveTextSettings);
       ebook.readingSettings = this.cloneTextReadingSettings(this.readingSettings);
       const loadedPageSettings = await this.ebookDataManager.loadImageReaderSettings(ebook.id);
       const normalizedLoadedPageSettings = this.normalizePageReadingSettings(loadedPageSettings);
@@ -2811,6 +2813,22 @@ export struct EpubWebViewReaderPage {
   }
 
   // ──── 翻页 ────
+
+  private resolveSystemThemeTextSettings(settings: EBookReadingSettings): EBookReadingSettings {
+    const resolved = this.cloneTextReadingSettings(settings);
+    if (resolved.followSystemTheme === true) {
+      if (this.themeManager.isDarkThemeSync()) {
+        resolved.backgroundColor = '#1E1E1E';
+        resolved.textColor = '#D4D4D4';
+        resolved.nightMode = true;
+      } else {
+        resolved.backgroundColor = DEFAULT_EBOOK_READING_SETTINGS.backgroundColor;
+        resolved.textColor = DEFAULT_EBOOK_READING_SETTINGS.textColor;
+        resolved.nightMode = false;
+      }
+    }
+    return resolved;
+  }
 
   private cloneTextReadingSettings(settings: EBookReadingSettings): EBookReadingSettings {
     return {

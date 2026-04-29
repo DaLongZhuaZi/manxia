@@ -9,6 +9,7 @@
 #include <hilog/log.h>
 #include "ftp_client.h"
 #include <memory>
+#include <mutex>
 #include <string>
 
 #undef LOG_DOMAIN
@@ -18,6 +19,7 @@
 
 // 全局FTP客户端实例
 static std::unique_ptr<ftp::FTPClient> g_ftpClient = nullptr;
+static std::mutex g_ftpClientMutex;
 
 // 辅助函数：从napi_value获取字符串（带类型检查）
 static std::string GetStringFromNapi(napi_env env, napi_value value) {
@@ -68,6 +70,7 @@ static napi_value CreateIntNapi(napi_env env, int64_t value) {
  * ftpInit(config: FTPConfig): boolean
  */
 static napi_value FtpInit(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP Init called");
     
     size_t argc = 1;
@@ -163,6 +166,7 @@ static napi_value FtpInit(napi_env env, napi_callback_info info) {
  * ftpTestConnection(): FTPResult
  */
 static napi_value FtpTestConnection(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP TestConnection called");
     
     napi_value result;
@@ -187,6 +191,7 @@ static napi_value FtpTestConnection(napi_env env, napi_callback_info info) {
  * ftpList(remotePath: string): FTPListResult
  */
 static napi_value FtpList(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP List called");
     
     napi_value result;
@@ -244,6 +249,7 @@ static napi_value FtpList(napi_env env, napi_callback_info info) {
  * ftpUpload(localPath: string, remotePath: string): FTPResult
  */
 static napi_value FtpUpload(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP Upload called");
     
     napi_value result;
@@ -281,6 +287,7 @@ static napi_value FtpUpload(napi_env env, napi_callback_info info) {
  * ftpDownload(remotePath: string, localPath: string): FTPResult
  */
 static napi_value FtpDownload(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP Download called");
     
     napi_value result;
@@ -318,6 +325,7 @@ static napi_value FtpDownload(napi_env env, napi_callback_info info) {
  * ftpDelete(remotePath: string): FTPResult
  */
 static napi_value FtpDelete(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP Delete called");
     
     napi_value result;
@@ -353,6 +361,7 @@ static napi_value FtpDelete(napi_env env, napi_callback_info info) {
  * ftpMkdir(remotePath: string): FTPResult
  */
 static napi_value FtpMkdir(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP Mkdir called");
     
     napi_value result;
@@ -388,6 +397,7 @@ static napi_value FtpMkdir(napi_env env, napi_callback_info info) {
  * ftpRmdir(remotePath: string): FTPResult
  */
 static napi_value FtpRmdir(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP Rmdir called");
     
     napi_value result;
@@ -423,6 +433,7 @@ static napi_value FtpRmdir(napi_env env, napi_callback_info info) {
  * ftpDestroy(): void
  */
 static napi_value FtpDestroy(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_ftpClientMutex);
     OH_LOG_INFO(LOG_APP, "FTP Destroy called");
     g_ftpClient.reset();
     

@@ -110,8 +110,14 @@ export struct SubscriptionManagementPage {
   @State createDialogStageContentOpacity: number = 1;
   @State createDialogStageContentTranslateX: number = 0;
   @State showDeleteDialog: boolean = false;
+  @State deleteDialogOpacity: number = 0;
+  @State deleteDialogScale: number = 0.96;
+  @State deleteDialogTranslateY: number = 12;
   @State deletingRuleId: string = '';
   @State showPreviewDialog: boolean = false;
+  @State previewDialogOpacity: number = 0;
+  @State previewDialogScale: number = 0.96;
+  @State previewDialogTranslateY: number = 12;
   @State isPreviewLoading: boolean = false;
   @State previewRuleName: string = '';
   @State previewTarget: SubscriptionTargetPreview | null = null;
@@ -184,7 +190,7 @@ export struct SubscriptionManagementPage {
     this.createDialogAnimationToken = animationToken;
     this.createDialogOpacity = 0;
     this.createDialogScale = 0.96;
-    this.createDialogTranslateY = 28;
+    this.createDialogTranslateY = 12;
     this.createDialogStageContentOpacity = 1;
     this.createDialogStageContentTranslateX = 0;
     this.showCreateDialog = true;
@@ -194,8 +200,8 @@ export struct SubscriptionManagementPage {
       }
       if (this.uiContext) {
         this.uiContext.animateTo({
-          duration: 280,
-          curve: curves.springMotion(0.6, 0.9)
+          duration: 260,
+          curve: Curve.EaseOut
         }, () => {
           this.createDialogOpacity = 1;
           this.createDialogScale = 1;
@@ -646,19 +652,19 @@ export struct SubscriptionManagementPage {
     };
     if (this.uiContext) {
       this.uiContext.animateTo({
-        duration: 220,
-        curve: Curve.EaseOut
+        duration: 180,
+        curve: Curve.EaseIn
       }, () => {
         this.createDialogOpacity = 0;
-        this.createDialogScale = 0.94;
-        this.createDialogTranslateY = 26;
+        this.createDialogScale = 0.96;
+        this.createDialogTranslateY = 12;
       });
-      setTimeout(finishClose, 240);
+      setTimeout(finishClose, 200);
       return;
     }
     this.createDialogOpacity = 0;
-    this.createDialogScale = 0.94;
-    this.createDialogTranslateY = 26;
+    this.createDialogScale = 0.96;
+    this.createDialogTranslateY = 12;
     finishClose();
   }
 
@@ -850,10 +856,40 @@ export struct SubscriptionManagementPage {
 
   private requestDeleteRule(rule: SubscriptionRule): void {
     this.deletingRuleId = rule.id;
+    this.deleteDialogOpacity = 0;
+    this.deleteDialogScale = 0.96;
+    this.deleteDialogTranslateY = 12;
     this.showDeleteDialog = true;
+    setTimeout(() => {
+      if (this.uiContext) {
+        this.uiContext.animateTo({
+          duration: 260,
+          curve: Curve.EaseOut
+        }, () => {
+          this.deleteDialogOpacity = 1;
+          this.deleteDialogScale = 1;
+          this.deleteDialogTranslateY = 0;
+        });
+      }
+    }, 0);
   }
 
   private closeDeleteDialog(): void {
+    if (this.uiContext) {
+      this.uiContext.animateTo({
+        duration: 180,
+        curve: Curve.EaseIn
+      }, () => {
+        this.deleteDialogOpacity = 0;
+        this.deleteDialogScale = 0.96;
+        this.deleteDialogTranslateY = 12;
+      });
+      setTimeout(() => {
+        this.showDeleteDialog = false;
+        this.deletingRuleId = '';
+      }, 200);
+      return;
+    }
     this.showDeleteDialog = false;
     this.deletingRuleId = '';
   }
@@ -899,8 +935,23 @@ export struct SubscriptionManagementPage {
   private async previewRule(rule: SubscriptionRule): Promise<void> {
     this.previewRuleName = rule.name;
     this.previewTarget = null;
+    this.previewDialogOpacity = 0;
+    this.previewDialogScale = 0.96;
+    this.previewDialogTranslateY = 12;
     this.showPreviewDialog = true;
     this.isPreviewLoading = true;
+    setTimeout(() => {
+      if (this.uiContext) {
+        this.uiContext.animateTo({
+          duration: 260,
+          curve: Curve.EaseOut
+        }, () => {
+          this.previewDialogOpacity = 1;
+          this.previewDialogScale = 1;
+          this.previewDialogTranslateY = 0;
+        });
+      }
+    }, 0);
     try {
       this.previewTarget = await this.manager.previewRuleTarget(rule.id);
     } catch (error) {
@@ -911,6 +962,23 @@ export struct SubscriptionManagementPage {
   }
 
   private closePreviewDialog(): void {
+    if (this.uiContext) {
+      this.uiContext.animateTo({
+        duration: 180,
+        curve: Curve.EaseIn
+      }, () => {
+        this.previewDialogOpacity = 0;
+        this.previewDialogScale = 0.96;
+        this.previewDialogTranslateY = 12;
+      });
+      setTimeout(() => {
+        this.showPreviewDialog = false;
+        this.previewTarget = null;
+        this.previewRuleName = '';
+        this.isPreviewLoading = false;
+      }, 200);
+      return;
+    }
     this.showPreviewDialog = false;
     this.previewTarget = null;
     this.previewRuleName = '';
@@ -2799,7 +2867,7 @@ export struct SubscriptionManagementPage {
       maxHeight: '90%',
       maxWidth: 620,
       contentPadding: 0,
-      dialogRadius: 18,
+      dialogRadius: 26,
       useMaskBlur: true,
       onMaskTap: () => {
         if (!this.isCreateDialogBusy()) {
@@ -2845,7 +2913,7 @@ export struct SubscriptionManagementPage {
       .opacity(this.createDialogOpacity)
       .scale({ x: this.createDialogScale, y: this.createDialogScale })
       .translate({ y: this.createDialogTranslateY })
-      .borderRadius(18)
+      .borderRadius(26)
       .clip(true)
       .onClick(() => {
       })
@@ -2960,18 +3028,32 @@ export struct SubscriptionManagementPage {
       dialogWidth: '90%',
       maxWidth: 520,
       contentPadding: 18,
-      dialogRadius: 20,
+      dialogRadius: 26,
       onMaskTap: () => {
         this.closeDeleteDialog();
       }
     }) {
       Column({ space: 14 }) {
-        Text('删除提醒规则')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontFamily(this.appFontFamily)
-          .width('100%')
-          .textAlign(TextAlign.Start)
+        Row() {
+          Text('删除提醒规则')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.closeDeleteDialog();
+          })
+        }
+        .width('100%')
 
         Column({ space: 8 }) {
           Text(this.getDeletingRulePromptText())
@@ -3016,6 +3098,9 @@ export struct SubscriptionManagementPage {
         .width('100%')
       }
       .width('100%')
+      .opacity(this.deleteDialogOpacity)
+      .scale({ x: this.deleteDialogScale, y: this.deleteDialogScale })
+      .translate({ y: this.deleteDialogTranslateY })
     }
   }
 
@@ -3027,21 +3112,35 @@ export struct SubscriptionManagementPage {
       maxWidth: 700,
       maxHeight: '88%',
       contentPadding: 18,
-      dialogRadius: 22,
+      dialogRadius: 26,
       contentScrollable: true,
       onMaskTap: () => {
         this.closePreviewDialog();
       }
     }) {
       Column({ space: 14 }) {
-        Text(this.previewRuleName.length > 0 ? `检查范围 - ${this.previewRuleName}` : '检查范围')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontFamily(this.appFontFamily)
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-          .textAlign(TextAlign.Start)
+        Row() {
+          Text(this.previewRuleName.length > 0 ? `检查范围 - ${this.previewRuleName}` : '检查范围')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.closePreviewDialog();
+          })
+        }
+        .width('100%')
 
         if (this.isPreviewLoading) {
           Column({ space: 10 }) {
@@ -3073,7 +3172,7 @@ export struct SubscriptionManagementPage {
           .width('100%')
           .height(38)
           .fontFamily(this.appFontFamily)
-          .fontColor('#FFFFFF')
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .borderRadius(19)
           .onClick(() => {
@@ -3081,6 +3180,9 @@ export struct SubscriptionManagementPage {
           })
       }
       .width('100%')
+      .opacity(this.previewDialogOpacity)
+      .scale({ x: this.previewDialogScale, y: this.previewDialogScale })
+      .translate({ y: this.previewDialogTranslateY })
     }
   }
 

@@ -605,6 +605,12 @@ static napi_value Destroy(napi_env env, napi_callback_info info) {
 // 声明FTP函数注册（在ftp_napi.cpp中定义）
 extern void RegisterFTPFunctions(napi_env env, napi_value exports);
 
+// 声明SMB函数注册（在smb_napi.cpp中定义）
+extern void RegisterSMBFunctions(napi_env env, napi_value exports);
+
+// 声明Scanner函数注册（在scanner_napi.cpp中定义）
+extern void RegisterScannerFunctions(napi_env env, napi_value exports);
+
 // 模块初始化
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
@@ -633,8 +639,14 @@ static napi_value Init(napi_env env, napi_value exports) {
     
     // 注册FTP函数
     RegisterFTPFunctions(env, exports);
-    
-    OH_LOG_INFO(LOG_APP, "WebDAV/FTP Native module initialized");
+
+    // 注册SMB函数
+    RegisterSMBFunctions(env, exports);
+
+    // 注册Scanner函数
+    RegisterScannerFunctions(env, exports);
+
+    OH_LOG_INFO(LOG_APP, "WebDAV/FTP/SMB/Scanner Native module initialized");
     return exports;
 }
 EXTERN_C_END

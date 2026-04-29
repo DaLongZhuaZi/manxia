@@ -890,6 +890,8 @@ struct MainMenuPage {
   @State responsive_homeGridColumns: number = 2; // 首页网格列数（横屏：SM=4, MD=6, LG=10）
   @State responsive_libraryGridColumns: number = 3; // 书库网格列数（横屏：SM=5, MD=7, LG=10）
   @State responsive_discoverGridColumns: number = 3; // 发现页网格列数（横屏：SM=5, MD=7, LG=10）
+  @State private mainMenuViewportWidth: number = 0; // MainMenu 根组件实际窗口宽度，适配小窗/自由窗口
+  @State private mainMenuViewportHeight: number = 0; // MainMenu 根组件实际窗口高度，适配小窗/自由窗口
   @State barRenderKey: number = 0; // 顶栏/底栏重渲染触发器，屏幕方向或折叠状态变化时递增
   private readonly BOTTOM_BAR_HEIGHT: number = 56;
   private readonly BOTTOM_BAR_MARGIN_BOTTOM: number = 45;
@@ -1234,6 +1236,61 @@ struct MainMenuPage {
     }
   }
 
+  private getMainMenuViewportWidth(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    return this.mainMenuViewportWidth > 0 ? this.mainMenuViewportWidth : deviceInfo.screenWidth;
+  }
+
+  private getMainMenuViewportHeight(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    return this.mainMenuViewportHeight > 0 ? this.mainMenuViewportHeight : deviceInfo.screenHeight;
+  }
+
+  private getMainMenuViewportBreakpoint(): Breakpoint {
+    const width: number = this.getMainMenuViewportWidth();
+    if (width < 600) {
+      return Breakpoint.XS;
+    }
+    if (width < 840) {
+      return Breakpoint.SM;
+    }
+    if (width < 1024) {
+      return Breakpoint.MD;
+    }
+    return Breakpoint.LG;
+  }
+
+  private isMainMenuLayoutLandscape(deviceInfo: DeviceInfo): boolean {
+    if (this.mainMenuViewportWidth > 0 && this.mainMenuViewportHeight > 0) {
+      return this.mainMenuViewportWidth > this.mainMenuViewportHeight;
+    }
+    return deviceInfo.isLandscape;
+  }
+
+  private handleMainMenuRootAreaChange(_oldArea: Area, newArea: Area): void {
+    const width: number = Number(newArea.width);
+    const height: number = Number(newArea.height);
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+
+    const widthChanged: boolean = Math.abs(width - this.mainMenuViewportWidth) > 1;
+    const heightChanged: boolean = Math.abs(height - this.mainMenuViewportHeight) > 1;
+    if (!widthChanged && !heightChanged) {
+      return;
+    }
+
+    this.mainMenuViewportWidth = width;
+    this.mainMenuViewportHeight = height;
+    this.updateResponsiveParams();
+    if (!this.isOverlayBottomNavTab(this.currentTabIndex)) {
+      this.resetBottomBarScrollState();
+      this.bottomBarOffsetY = 0;
+    }
+    this.barRenderKey++;
+    logger.info(TAG, `MainMenu窗口尺寸变化: ${width.toFixed(0)}x${height.toFixed(0)}vp, barRenderKey=${this.barRenderKey}`);
+  }
+
   // 轮播内容数据 - 使用深色渐变背景，避免与主题蓝色融合
   private isFoldableCollapsed(deviceInfo: DeviceInfo): boolean {
     return deviceInfo.isFoldable && deviceInfo.foldStatus === FoldStatus.FOLDED;
@@ -1252,11 +1309,11 @@ struct MainMenuPage {
       return true;
     }
     // 平板设备仅在横屏使用顶部导航
-    return deviceInfo.isTablet && deviceInfo.isLandscape;
+    return deviceInfo.isTablet && this.isMainMenuLayoutLandscape(deviceInfo);
   }
 
   private shouldUsePhoneLandscapeSideNavigation(deviceInfo: DeviceInfo): boolean {
-    if (!deviceInfo.isLandscape) {
+    if (!this.isMainMenuLayoutLandscape(deviceInfo)) {
       return false;
     }
     if (deviceInfo.isFoldable) {
@@ -2214,10 +2271,11 @@ struct MainMenuPage {
     const deviceInfo = this.deviceManager.getDeviceInfo();
     const shouldUseTabletLandscapeTopNavigation = this.shouldUseTabletLandscapeTopNavigation(deviceInfo);
     const shouldUsePhoneLandscapeSideNavigation = this.shouldUsePhoneLandscapeSideNavigation(deviceInfo);
-    const shouldUseLandscapeStyleLayout = deviceInfo.isLandscape || shouldUseTabletLandscapeTopNavigation;
-    const layoutParams = this.forceTabletMode
-      ? ResponsiveLayoutHelper.getLayoutParamsForBreakpoint(Breakpoint.MD)
-      : ResponsiveLayoutHelper.getLayoutParams();
+    const shouldUseLandscapeStyleLayout = this.isMainMenuLayoutLandscape(deviceInfo) || shouldUseTabletLandscapeTopNavigation;
+    const breakpoint = (this.forceTabletMode && !deviceInfo.isFoldable)
+      ? Breakpoint.MD
+      : this.getMainMenuViewportBreakpoint();
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParamsForBreakpoint(breakpoint);
 
     this.responsive_gridColumns = layoutParams.gridColumns;
     this.responsive_gridGap = layoutParams.gridGap;
@@ -2227,9 +2285,6 @@ struct MainMenuPage {
 
     // 根据断点和横屏状态设置各页面的网格列数
 
-    const breakpoint = (this.forceTabletMode && !deviceInfo.isFoldable)
-      ? Breakpoint.MD
-      : deviceInfo.breakpoint;
     if (shouldUsePhoneLandscapeSideNavigation) {
       this.responsive_homeGridColumns = 3;
       this.responsive_libraryGridColumns = 4;
@@ -2355,8 +2410,7 @@ struct MainMenuPage {
 
 
   private getBottomBarY(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
-    const y: number = deviceInfo.screenHeight - this.navigationBarHeight - this.BOTTOM_BAR_HEIGHT - this.BOTTOM_BAR_MARGIN_BOTTOM;
+    const y: number = this.getMainMenuViewportHeight() - this.navigationBarHeight - this.BOTTOM_BAR_HEIGHT - this.BOTTOM_BAR_MARGIN_BOTTOM;
     return y > 0 ? y : 0;
   }
 
@@ -2365,8 +2419,7 @@ struct MainMenuPage {
   }
 
   private getBottomBarWidth(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
-    const w: number = deviceInfo.screenWidth - this.BOTTOM_BAR_MARGIN_LEFT - this.BOTTOM_BAR_MARGIN_RIGHT;
+    const w: number = this.getMainMenuViewportWidth() - this.BOTTOM_BAR_MARGIN_LEFT - this.BOTTOM_BAR_MARGIN_RIGHT;
     return w > 0 ? w : 0;
   }
 
@@ -2443,8 +2496,8 @@ struct MainMenuPage {
     if (this.bottomBarFakeDragMainAxisLength > 0) {
       return this.bottomBarFakeDragMainAxisLength;
     }
-    const deviceInfo = this.deviceManager.getDeviceInfo();
-    return deviceInfo.screenWidth > 0 ? deviceInfo.screenWidth : this.getBottomBarWidth();
+    const viewportWidth: number = this.getMainMenuViewportWidth();
+    return viewportWidth > 0 ? viewportWidth : this.getBottomBarWidth();
   }
 
   private clearBottomBarIndicatorHideTimer(): void {
@@ -2603,8 +2656,8 @@ struct MainMenuPage {
   }
 
   private getAdaptiveSideOperationBarHeight(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
-    const h: number = deviceInfo.screenHeight
+    const viewportHeight: number = this.getMainMenuViewportHeight();
+    const h: number = viewportHeight
       - this.statusBarHeight
       - this.navigationBarHeight
       - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
@@ -2616,8 +2669,7 @@ struct MainMenuPage {
   }
 
   private getAdaptiveRightOperationBarX(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
-    const x: number = deviceInfo.screenWidth - this.TABLET_SIDE_BAR_WIDTH - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
+    const x: number = this.getMainMenuViewportWidth() - this.TABLET_SIDE_BAR_WIDTH - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
     return x > 0 ? x : 0;
   }
 
@@ -2626,8 +2678,7 @@ struct MainMenuPage {
   }
 
   private getFloatingBottomTopBarY(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
-    const y: number = deviceInfo.screenHeight
+    const y: number = this.getMainMenuViewportHeight()
       - this.navigationBarHeight
       - this.TABLET_TOP_BAR_HEIGHT_WITH_MARGIN
       - this.BOTTOM_BAR_MARGIN_BOTTOM;
@@ -2639,19 +2690,18 @@ struct MainMenuPage {
   }
 
   private getFloatingRightSideBarX(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
     const sideBarTotalWidth: number = this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
-    const x: number = deviceInfo.screenWidth - sideBarTotalWidth;
+    const x: number = this.getMainMenuViewportWidth() - sideBarTotalWidth;
     return x > 0 ? x : 0;
   }
 
   private getFloatingSideBarHeight(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
-    const h: number = deviceInfo.screenHeight
+    const viewportHeight: number = this.getMainMenuViewportHeight();
+    const h: number = viewportHeight
       - this.statusBarHeight
       - this.navigationBarHeight
       - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
-    return h > 0 ? h : deviceInfo.screenHeight;
+    return h > 0 ? h : viewportHeight;
   }
 
   private onHoldingAwarenessAnchorChanged(): void {
@@ -2735,7 +2785,7 @@ struct MainMenuPage {
   }
 
   private getFloatingSearchButtonLeftX(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const viewportWidth: number = this.getMainMenuViewportWidth();
     if (!this.useTopTabsNavigation) {
       const x: number = this.getBottomBarX() + this.FLOAT_SEARCH_BUTTON_MARGIN;
       return x > this.FLOAT_SEARCH_BUTTON_MARGIN ? x : this.FLOAT_SEARCH_BUTTON_MARGIN;
@@ -2745,7 +2795,7 @@ struct MainMenuPage {
     if (effectivePosition === 'left') {
       const sideBarRightX = this.getAdaptiveLeftOperationBarX() + this.TABLET_SIDE_BAR_WIDTH;
       const x = sideBarRightX + this.FLOAT_SEARCH_BUTTON_MARGIN;
-      const maxX = deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      const maxX = viewportWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
       return x < maxX ? x : maxX;
     }
     if (effectivePosition === 'right') {
@@ -2757,15 +2807,15 @@ struct MainMenuPage {
   }
 
   private getFloatingSearchButtonRightX(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const viewportWidth: number = this.getMainMenuViewportWidth();
     if (!this.useTopTabsNavigation) {
       const x: number = this.getBottomBarX() + this.getBottomBarWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
-      return x > 0 ? x : Math.max(0, deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN);
+      return x > 0 ? x : Math.max(0, viewportWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN);
     }
 
     const effectivePosition = this.getEffectiveTabletTopBarPosition();
     if (effectivePosition === 'left') {
-      const x = deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      const x = viewportWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
       return x > this.FLOAT_SEARCH_BUTTON_MARGIN ? x : this.FLOAT_SEARCH_BUTTON_MARGIN;
     }
     if (effectivePosition === 'right') {
@@ -2775,7 +2825,7 @@ struct MainMenuPage {
     }
 
     const x: number = this.getBottomBarX() + this.getBottomBarWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
-    return x > 0 ? x : Math.max(0, deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN);
+    return x > 0 ? x : Math.max(0, viewportWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN);
   }
 
   private getFloatingSearchButtonX(): number {
@@ -2787,8 +2837,7 @@ struct MainMenuPage {
   private getFloatingSearchButtonY(): number {
     if (!this.useTopTabsNavigation) {
       if (this.isOverlayBottomNavTab(this.currentTabIndex)) {
-        const deviceInfo = this.deviceManager.getDeviceInfo();
-        const y: number = deviceInfo.screenHeight
+        const y: number = this.getMainMenuViewportHeight()
           - this.getOverlayBottomNavSpacerHeight(this.currentTabIndex)
           - this.FLOAT_SEARCH_BUTTON_SIZE
           - this.FLOAT_SEARCH_BUTTON_MARGIN;
@@ -2832,9 +2881,8 @@ struct MainMenuPage {
 
   private getFloatingPrivacyExitButtonX(): number {
     if (this.shouldAnchorFloatingSearchButtonToLeft()) {
-      const deviceInfo = this.deviceManager.getDeviceInfo();
       const x = this.getFloatingSearchButtonX() + this.FLOAT_SEARCH_BUTTON_SIZE + this.FLOAT_SEARCH_BUTTON_MARGIN;
-      const maxX = deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      const maxX = this.getMainMenuViewportWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
       return x < maxX ? x : maxX;
     }
     const x = this.getFloatingSearchButtonX() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
@@ -12758,9 +12806,9 @@ struct MainMenuPage {
   private getShelfPreviewSliderWidth(): number {
     const minWidth = 170;
     const maxWidth = 320;
-    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const viewportWidth: number = this.getMainMenuViewportWidth();
     const available = this.shouldAnchorFloatingSearchButtonToLeft()
-      ? deviceInfo.screenWidth
+      ? viewportWidth
         - this.responsive_contentPadding
         - this.getFloatingSearchButtonX()
         - this.FLOAT_SEARCH_BUTTON_SIZE
@@ -12772,9 +12820,8 @@ struct MainMenuPage {
 
   private getShelfPreviewSliderX(): number {
     if (this.shouldAnchorFloatingSearchButtonToLeft()) {
-      const deviceInfo = this.deviceManager.getDeviceInfo();
       const x = this.getFloatingSearchButtonX() + this.FLOAT_SEARCH_BUTTON_SIZE + 12;
-      const maxX = deviceInfo.screenWidth - this.responsive_contentPadding - this.getShelfPreviewSliderWidth();
+      const maxX = this.getMainMenuViewportWidth() - this.responsive_contentPadding - this.getShelfPreviewSliderWidth();
       return x < maxX ? x : maxX;
     }
     const x = this.getFloatingSearchButtonX() - this.getShelfPreviewSliderWidth() - 12;
@@ -12782,14 +12829,13 @@ struct MainMenuPage {
   }
 
   private getShelfPreviewSliderY(): number {
-    const deviceInfo = this.deviceManager.getDeviceInfo();
     const estimatedHeight = this.getShelfPreviewSliderFloatingBarEstimatedHeight();
     const bottomAnchor = Math.min(
       this.getFloatingSearchButtonY() + this.FLOAT_SEARCH_BUTTON_SIZE,
-      deviceInfo.screenHeight - this.navigationBarHeight - 12
+      this.getMainMenuViewportHeight() - this.navigationBarHeight - 12
     );
     const preferredY = bottomAnchor - estimatedHeight;
-    const maxY = deviceInfo.screenHeight - this.navigationBarHeight - estimatedHeight - 12;
+    const maxY = this.getMainMenuViewportHeight() - this.navigationBarHeight - estimatedHeight - 12;
     const safeTop = this.statusBarHeight + 8;
     return Math.max(safeTop, Math.min(preferredY, maxY));
   }
@@ -30649,6 +30695,9 @@ struct MainMenuPage {
     .height('100%')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
+    .onAreaChange((oldArea: Area, newArea: Area) => {
+      this.handleMainMenuRootAreaChange(oldArea, newArea);
+    })
   }
 
   // 页面过渡动画：从 SplashPage 进入时淡入

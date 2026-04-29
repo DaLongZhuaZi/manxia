@@ -5,18 +5,11 @@ import {
   normalizeConnectionBasePath,
   normalizeRelativeNetworkFolderPath
 } from '../../Models/NetworkFolderModels';
-import {
-  SMBJBridgeClient,
-  SMBJBridgeConfig,
-  SMBJBridgeDirectoryEntry,
-  SMBJBridgeDirectoryListResult,
-  SMBJBridgeOperationResult
-} from './SMBJBridge';
+import webdavNativeModuleImport from 'libwebdav_native.so';
 
 const TAG = 'SMBClientAdapter';
 const FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
 const DEFAULT_CLIENT_IP = '0.0.0.0';
-const DEFAULT_PACKET_CONCURRENCY = 20;
 
 interface SMBAuthParts {
   domain: string;
@@ -29,10 +22,52 @@ interface SMBAuthVariant {
   username: string;
 }
 
+interface SMBNativeConfig {
+  host: string;
+  shareName: string;
+  port: number;
+  username: string;
+  password: string;
+  domain: string;
+  workstation: string;
+  timeoutMs: number;
+  enableEncryption: boolean;
+}
+
 interface SMBResolvedConfig {
   authLabel: string;
   authKey: string;
-  config: SMBJBridgeConfig;
+  config: SMBNativeConfig;
+}
+
+interface SMBNativeResult {
+  success: boolean;
+  statusCode: number;
+  message: string;
+  data: string;
+}
+
+interface SMBNativeFileInfo {
+  path: string;
+  name: string;
+  size: number;
+  lastModified: number;
+  isDirectory: boolean;
+}
+
+interface SMBNativeListResult {
+  success: boolean;
+  statusCode: number;
+  message: string;
+  files: SMBNativeFileInfo[];
+}
+
+interface NativeModule {
+  smbInit(config: SMBNativeConfig): boolean;
+  smbTestConnection(remotePath: string): SMBNativeResult;
+  smbList(remotePath: string): SMBNativeListResult;
+  smbDownload(remotePath: string, localPath: string): SMBNativeResult;
+  smbDestroy(): void;
 }
 
 export interface SMBDirectoryEntry {
@@ -56,35 +91,73 @@ export function isSMBFeatureEnabled(): boolean {
   return true;
 }
 
+let nativeModule: NativeModule | null = null;
+let nativeModuleChecked: boolean = false;
+
+function getNativeModule(): NativeModule | null {
+  if (nativeModuleChecked) {
+    return nativeModule;
+  }
+  nativeModuleChecked = true;
+  try {
+    if (webdavNativeModuleImport) {
+      const mod = webdavNativeModuleImport as NativeModule;
+      if (typeof mod.smbInit === 'function') {
+        nativeModule = mod;
+        logger.info(TAG, 'SMB Native模块加载成功');
+      } else {
+        logger.warn(TAG, 'SMB Native方法不可用');
+      }
+    }
+  } catch (error) {
+    logger.error(TAG, `SMB Native模块加载失败：${String(error)}`);
+  }
+  return nativeModule;
+}
+
 export class SMBClientAdapter {
-  private bridge: SMBJBridgeClient = new SMBJBridgeClient();
   private preferredAuthKeyByConnection: Map<string, string> = new Map<string, string>();
 
   public async testConnection(connectionInfo: NetworkFolderConnection): Promise<SMBOperationResult> {
-    const configs = await this.buildConfigs(connectionInfo);
-    const remotePath = this.buildRemotePath(connectionInfo, '/');
+    const mod = getNativeModule();
+    if (!mod) {
+      return { success: false, message: 'SMB Native模块未加载' };
+    }
+
+    const configs = this.buildConfigs(connectionInfo);
     const displayName = this.buildConnectionDisplayName(connectionInfo, configs);
     logger.info(TAG, `Testing SMB connection: ${displayName}, auth variants=${configs.length}`);
 
-    let lastResult: SMBOperationResult = {
-      success: false,
-      message: 'SMB connection failed'
-    };
+    let lastResult: SMBOperationResult = { success: false, message: 'SMB connection failed' };
 
     for (let index = 0; index < configs.length; index++) {
       const resolved = configs[index];
       logger.info(TAG, `Trying SMB auth [${index + 1}/${configs.length}] ${displayName} via ${resolved.authLabel}`);
-      const result = await this.bridge.testConnection(resolved.config, remotePath);
-      if (result.success) {
-        this.rememberPreferredAuth(connectionInfo, resolved.authKey);
-        logger.info(TAG, `SMB connection success: ${displayName}, auth=${resolved.authLabel}`);
-        return this.toOperationResult(result);
-      }
 
-      lastResult = this.toOperationResult(result);
-      logger.warn(TAG, `SMB auth failed [${index + 1}/${configs.length}] ${displayName}, auth=${resolved.authLabel}, reason=${result.message}`);
-      if (!this.shouldRetryWithNextAuth(result.message) || index >= configs.length - 1) {
-        break;
+      try {
+        mod.smbInit(resolved.config);
+        const result = mod.smbTestConnection('');
+        mod.smbDestroy();
+
+        if (result.success) {
+          this.rememberPreferredAuth(connectionInfo, resolved.authKey);
+          logger.info(TAG, `SMB connection success: ${displayName}, auth=${resolved.authLabel}`);
+          return { success: true, message: result.message.length > 0 ? result.message : '连接成功' };
+        }
+
+        lastResult = { success: false, message: result.message.length > 0 ? result.message : 'SMB连接失败' };
+        logger.warn(TAG, `SMB auth failed [${index + 1}/${configs.length}] ${displayName}, auth=${resolved.authLabel}, reason=${lastResult.message}`);
+
+        if (!this.shouldRetryWithNextAuth(lastResult.message) || index >= configs.length - 1) {
+          break;
+        }
+      } catch (error) {
+        try { mod.smbDestroy(); } catch (_e) { /* ignore */ }
+        lastResult = { success: false, message: String(error) };
+        logger.warn(TAG, `SMB auth exception [${index + 1}/${configs.length}] ${displayName}: ${lastResult.message}`);
+        if (!this.shouldRetryWithNextAuth(lastResult.message) || index >= configs.length - 1) {
+          break;
+        }
       }
     }
 
@@ -96,40 +169,50 @@ export class SMBClientAdapter {
     connectionInfo: NetworkFolderConnection,
     relativePath: string
   ): Promise<SMBDirectoryListResult> {
-    const configs = await this.buildConfigs(connectionInfo);
+    const mod = getNativeModule();
+    if (!mod) {
+      return { success: false, message: 'SMB Native模块未加载', entries: [] };
+    }
+
+    const configs = this.buildConfigs(connectionInfo);
     const remotePath = this.buildRemotePath(connectionInfo, relativePath);
     const displayName = this.buildConnectionDisplayName(connectionInfo, configs);
     logger.info(TAG, `Listing SMB directory: ${displayName} ${relativePath}, auth variants=${configs.length}`);
 
-    let lastResult: SMBDirectoryListResult = {
-      success: false,
-      message: 'SMB directory load failed',
-      entries: []
-    };
+    let lastResult: SMBDirectoryListResult = { success: false, message: 'SMB directory load failed', entries: [] };
 
     for (let index = 0; index < configs.length; index++) {
       const resolved = configs[index];
       logger.info(TAG, `Trying SMB directory auth [${index + 1}/${configs.length}] ${displayName} ${relativePath}, auth=${resolved.authLabel}`);
-      const result = await this.bridge.listDirectory(resolved.config, remotePath);
-      if (result.success) {
-        this.rememberPreferredAuth(connectionInfo, resolved.authKey);
-        const entries = this.mapEntries(result.entries);
-        logger.info(TAG, `SMB directory success: ${displayName} ${relativePath}, auth=${resolved.authLabel}, entries=${entries.length}`);
-        return {
-          success: true,
-          message: result.message.length > 0 ? result.message : `SMB directory loaded: ${entries.length} entries`,
-          entries: entries
-        };
-      }
 
-      lastResult = {
-        success: false,
-        message: result.message.length > 0 ? result.message : 'SMB directory load failed',
-        entries: []
-      };
-      logger.warn(TAG, `SMB directory auth failed [${index + 1}/${configs.length}] ${displayName} ${relativePath}, auth=${resolved.authLabel}, reason=${lastResult.message}`);
-      if (!this.shouldRetryWithNextAuth(lastResult.message) || index >= configs.length - 1) {
-        break;
+      try {
+        mod.smbInit(resolved.config);
+        const result = mod.smbList(remotePath);
+        mod.smbDestroy();
+
+        if (result.success) {
+          this.rememberPreferredAuth(connectionInfo, resolved.authKey);
+          const entries = this.mapNativeEntries(result.files);
+          logger.info(TAG, `SMB directory success: ${displayName} ${relativePath}, auth=${resolved.authLabel}, entries=${entries.length}`);
+          return {
+            success: true,
+            message: result.message.length > 0 ? result.message : `SMB directory loaded: ${entries.length} entries`,
+            entries: entries
+          };
+        }
+
+        lastResult = { success: false, message: result.message.length > 0 ? result.message : 'SMB directory load failed', entries: [] };
+        logger.warn(TAG, `SMB directory auth failed [${index + 1}/${configs.length}] ${displayName} ${relativePath}, auth=${resolved.authLabel}, reason=${lastResult.message}`);
+        if (!this.shouldRetryWithNextAuth(lastResult.message) || index >= configs.length - 1) {
+          break;
+        }
+      } catch (error) {
+        try { mod.smbDestroy(); } catch (_e) { /* ignore */ }
+        lastResult = { success: false, message: String(error), entries: [] };
+        logger.warn(TAG, `SMB directory exception [${index + 1}/${configs.length}] ${displayName} ${relativePath}: ${lastResult.message}`);
+        if (!this.shouldRetryWithNextAuth(lastResult.message) || index >= configs.length - 1) {
+          break;
+        }
       }
     }
 
@@ -142,30 +225,45 @@ export class SMBClientAdapter {
     relativePath: string,
     localPath: string
   ): Promise<SMBOperationResult> {
-    const configs = await this.buildConfigs(connectionInfo);
+    const mod = getNativeModule();
+    if (!mod) {
+      return { success: false, message: 'SMB Native模块未加载' };
+    }
+
+    const configs = this.buildConfigs(connectionInfo);
     const remotePath = this.buildRemotePath(connectionInfo, relativePath);
     const displayName = this.buildConnectionDisplayName(connectionInfo, configs);
     logger.info(TAG, `Downloading SMB file: ${displayName} ${relativePath} -> ${localPath}, auth variants=${configs.length}`);
 
-    let lastResult: SMBOperationResult = {
-      success: false,
-      message: 'SMB download failed'
-    };
+    let lastResult: SMBOperationResult = { success: false, message: 'SMB download failed' };
 
     for (let index = 0; index < configs.length; index++) {
       const resolved = configs[index];
       logger.info(TAG, `Trying SMB download auth [${index + 1}/${configs.length}] ${displayName} ${relativePath}, auth=${resolved.authLabel}`);
-      const result = await this.bridge.downloadFile(resolved.config, remotePath, localPath);
-      if (result.success) {
-        this.rememberPreferredAuth(connectionInfo, resolved.authKey);
-        logger.info(TAG, `SMB download success: ${displayName} ${relativePath}, auth=${resolved.authLabel}`);
-        return this.toOperationResult(result);
-      }
 
-      lastResult = this.toOperationResult(result);
-      logger.warn(TAG, `SMB download auth failed [${index + 1}/${configs.length}] ${displayName} ${relativePath}, auth=${resolved.authLabel}, reason=${result.message}`);
-      if (!this.shouldRetryWithNextAuth(result.message) || index >= configs.length - 1) {
-        break;
+      try {
+        mod.smbInit(resolved.config);
+        const result = mod.smbDownload(remotePath, localPath);
+        mod.smbDestroy();
+
+        if (result.success) {
+          this.rememberPreferredAuth(connectionInfo, resolved.authKey);
+          logger.info(TAG, `SMB download success: ${displayName} ${relativePath}, auth=${resolved.authLabel}`);
+          return { success: true, message: result.message.length > 0 ? result.message : '下载完成' };
+        }
+
+        lastResult = { success: false, message: result.message.length > 0 ? result.message : 'SMB download failed' };
+        logger.warn(TAG, `SMB download auth failed [${index + 1}/${configs.length}] ${displayName} ${relativePath}, auth=${resolved.authLabel}, reason=${lastResult.message}`);
+        if (!this.shouldRetryWithNextAuth(lastResult.message) || index >= configs.length - 1) {
+          break;
+        }
+      } catch (error) {
+        try { mod.smbDestroy(); } catch (_e) { /* ignore */ }
+        lastResult = { success: false, message: String(error) };
+        logger.warn(TAG, `SMB download exception [${index + 1}/${configs.length}] ${displayName} ${relativePath}: ${lastResult.message}`);
+        if (!this.shouldRetryWithNextAuth(lastResult.message) || index >= configs.length - 1) {
+          break;
+        }
       }
     }
 
@@ -173,17 +271,16 @@ export class SMBClientAdapter {
     return lastResult;
   }
 
-  private async buildConfigs(connectionInfo: NetworkFolderConnection): Promise<SMBResolvedConfig[]> {
+  private buildConfigs(connectionInfo: NetworkFolderConnection): SMBResolvedConfig[] {
     const host = this.normalizeHost(connectionInfo.host);
     const shareName = this.normalizeShareName(host, connectionInfo.shareName);
-    const clientIP = await this.resolveClientIP(connectionInfo.clientIP);
     const authVariants = this.buildAuthVariants(connectionInfo.domain, connectionInfo.username);
     const resolvedConfigs: SMBResolvedConfig[] = [];
     const seen = new Set<string>();
 
     for (let index = 0; index < authVariants.length; index++) {
       const auth = authVariants[index];
-      const authKey = `${auth.domain}\u0000${auth.username}`;
+      const authKey = `${auth.domain} ${auth.username}`;
       if (seen.has(authKey)) {
         continue;
       }
@@ -198,9 +295,9 @@ export class SMBClientAdapter {
           username: auth.username,
           password: connectionInfo.password,
           domain: auth.domain,
-          clientIP: clientIP,
+          workstation: 'MANXIA_OHOS',
           timeoutMs: connectionInfo.timeoutMs > 0 ? connectionInfo.timeoutMs : 30000,
-          packetConcurrency: DEFAULT_PACKET_CONCURRENCY
+          enableEncryption: false
         }
       });
     }
@@ -221,11 +318,23 @@ export class SMBClientAdapter {
     return resolvedConfigs;
   }
 
-  private toOperationResult(result: SMBJBridgeOperationResult): SMBOperationResult {
-    return {
-      success: result.success,
-      message: result.message
-    };
+  private mapNativeEntries(files: SMBNativeFileInfo[]): SMBDirectoryEntry[] {
+    const entries: SMBDirectoryEntry[] = [];
+    if (!Array.isArray(files)) {
+      return entries;
+    }
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      const isDir = file.isDirectory === true;
+      entries.push({
+        name: file.name,
+        isDirectory: isDir,
+        size: isDir ? 0 : Math.max(0, Math.floor(file.size)),
+        lastModified: Math.max(0, Math.floor(file.lastModified)),
+        attributes: isDir ? FILE_ATTRIBUTE_DIRECTORY : 0
+      });
+    }
+    return entries;
   }
 
   private buildAuthVariants(domainValue: string, usernameValue: string): SMBAuthVariant[] {
@@ -235,74 +344,34 @@ export class SMBClientAdapter {
 
     if (rawDomain.length > 0) {
       const strippedUser = this.stripDomainPrefix(rawDomain, rawUsername);
-      variants.push({
-        label: 'explicit-domain',
-        domain: rawDomain,
-        username: strippedUser
-      });
-      variants.push({
-        label: 'explicit-domain-keep-username',
-        domain: rawDomain,
-        username: rawUsername
-      });
-      variants.push({
-        label: 'domain-merged-into-username',
-        domain: '',
-        username: `${rawDomain}\\${strippedUser}`
-      });
+      variants.push({ label: 'explicit-domain', domain: rawDomain, username: strippedUser });
+      variants.push({ label: 'explicit-domain-keep-username', domain: rawDomain, username: rawUsername });
+      variants.push({ label: 'domain-merged-into-username', domain: '', username: `${rawDomain}\\${strippedUser}` });
       return variants;
     }
 
     const backslashParts = this.trySplitUserAuth(rawUsername, '\\');
     if (backslashParts !== null) {
-      variants.push({
-        label: 'backslash-domain',
-        domain: backslashParts.domain,
-        username: backslashParts.username
-      });
-      variants.push({
-        label: 'backslash-original',
-        domain: '',
-        username: rawUsername
-      });
+      variants.push({ label: 'backslash-domain', domain: backslashParts.domain, username: backslashParts.username });
+      variants.push({ label: 'backslash-original', domain: '', username: rawUsername });
       return variants;
     }
 
     const semicolonParts = this.trySplitUserAuth(rawUsername, ';');
     if (semicolonParts !== null) {
-      variants.push({
-        label: 'semicolon-domain',
-        domain: semicolonParts.domain,
-        username: semicolonParts.username
-      });
-      variants.push({
-        label: 'semicolon-original',
-        domain: '',
-        username: rawUsername
-      });
+      variants.push({ label: 'semicolon-domain', domain: semicolonParts.domain, username: semicolonParts.username });
+      variants.push({ label: 'semicolon-original', domain: '', username: rawUsername });
       return variants;
     }
 
     const upnParts = this.trySplitUserPrincipalName(rawUsername);
     if (upnParts !== null) {
-      variants.push({
-        label: 'upn-original',
-        domain: '',
-        username: rawUsername
-      });
-      variants.push({
-        label: 'upn-split-domain',
-        domain: upnParts.domain,
-        username: upnParts.username
-      });
+      variants.push({ label: 'upn-original', domain: '', username: rawUsername });
+      variants.push({ label: 'upn-split-domain', domain: upnParts.domain, username: upnParts.username });
       return variants;
     }
 
-    variants.push({
-      label: 'local-account',
-      domain: '',
-      username: rawUsername
-    });
+    variants.push({ label: 'local-account', domain: '', username: rawUsername });
     return variants;
   }
 
@@ -316,10 +385,7 @@ export class SMBClientAdapter {
     if (domain.length === 0 || username.length === 0) {
       return null;
     }
-    return {
-      domain: domain,
-      username: username
-    };
+    return { domain, username };
   }
 
   private trySplitUserPrincipalName(usernameValue: string): SMBAuthParts | null {
@@ -335,10 +401,7 @@ export class SMBClientAdapter {
     if (domain.indexOf('/') >= 0 || domain.indexOf('\\') >= 0) {
       return null;
     }
-    return {
-      domain: domain,
-      username: username
-    };
+    return { domain, username };
   }
 
   private stripDomainPrefix(domainValue: string, usernameValue: string): string {
@@ -348,17 +411,14 @@ export class SMBClientAdapter {
     if (normalizedUsername.startsWith(prefix)) {
       return normalizedUsername.substring(prefix.length).trim();
     }
-
     const semicolonPrefix = `${normalizedDomain};`;
     if (normalizedUsername.startsWith(semicolonPrefix)) {
       return normalizedUsername.substring(semicolonPrefix.length).trim();
     }
-
     const upnSuffix = `@${normalizedDomain}`;
     if (normalizedUsername.endsWith(upnSuffix)) {
       return normalizedUsername.substring(0, normalizedUsername.length - upnSuffix.length).trim();
     }
-
     return normalizedUsername;
   }
 
@@ -382,7 +442,7 @@ export class SMBClientAdapter {
   private buildConnectionCacheKey(connectionInfo: NetworkFolderConnection): string {
     const host = this.normalizeHost(connectionInfo.host);
     const shareName = this.normalizeShareName(host, connectionInfo.shareName);
-    return `${host}\u0000${shareName}\u0000${connectionInfo.domain.trim()}\u0000${connectionInfo.username.trim()}`;
+    return `${host} ${shareName} ${connectionInfo.domain.trim()} ${connectionInfo.username.trim()}`;
   }
 
   private rememberPreferredAuth(connectionInfo: NetworkFolderConnection, authKey: string): void {
@@ -448,22 +508,6 @@ export class SMBClientAdapter {
     return parts[0];
   }
 
-  private mapEntries(files: SMBJBridgeDirectoryEntry[]): SMBDirectoryEntry[] {
-    const entries: SMBDirectoryEntry[] = [];
-    for (let index = 0; index < files.length; index++) {
-      const file = files[index];
-      const isDirectory = file.isDirectory;
-      entries.push({
-        name: file.name,
-        isDirectory: isDirectory,
-        size: isDirectory ? 0 : Math.max(0, Math.floor(file.size)),
-        lastModified: Math.max(0, Math.floor(file.lastModified)),
-        attributes: isDirectory ? FILE_ATTRIBUTE_DIRECTORY : Math.max(0, Math.floor(file.attributes))
-      });
-    }
-    return entries;
-  }
-
   private buildRemotePath(connectionInfo: NetworkFolderConnection, relativePath: string): string {
     const normalizedShareName = this.normalizeShareName(connectionInfo.host, connectionInfo.shareName);
     let basePath = normalizeConnectionBasePath(connectionInfo.basePath);
@@ -493,83 +537,5 @@ export class SMBClientAdapter {
     }
 
     return combinedPath.substring(1).replace(/\//g, '\\');
-  }
-
-  private async resolveClientIP(clientIPValue: string): Promise<string> {
-    const trimmedValue = clientIPValue.trim();
-    if (this.isUsableIpv4(trimmedValue)) {
-      return trimmedValue;
-    }
-
-    if (trimmedValue.length > 0) {
-      logger.warn(TAG, `SMB client IP is not a usable IPv4 address, auto-detect instead: ${trimmedValue}`);
-    }
-
-    try {
-      const netHandle = await connection.getDefaultNet();
-      const properties = await connection.getConnectionProperties(netHandle);
-      const linkAddresses = properties.linkAddresses || [];
-      for (let index = 0; index < linkAddresses.length; index++) {
-        const linkAddress = linkAddresses[index];
-        const netAddress = linkAddress.address;
-        const address = (netAddress.address || '').trim();
-        const family = netAddress.family ?? 1;
-        if (family === 1 && this.isUsableIpv4(address)) {
-          logger.info(TAG, `Auto-detected SMB client IPv4: ${address}`);
-          return address;
-        }
-      }
-    } catch (error) {
-      logger.warn(TAG, `Auto-detect SMB client IP failed: ${this.describeError(error as Object)}`);
-    }
-
-    logger.warn(TAG, `No usable SMB client IPv4 detected, fallback to ${DEFAULT_CLIENT_IP}`);
-    return DEFAULT_CLIENT_IP;
-  }
-
-  private isUsableIpv4(address: string): boolean {
-    if (!this.isIpv4(address)) {
-      return false;
-    }
-    if (address === DEFAULT_CLIENT_IP) {
-      return false;
-    }
-    if (address.startsWith('127.')) {
-      return false;
-    }
-    if (address.startsWith('169.254.')) {
-      return false;
-    }
-    return true;
-  }
-
-  private isIpv4(address: string): boolean {
-    const trimmed = address.trim();
-    const parts = trimmed.split('.');
-    if (parts.length !== 4) {
-      return false;
-    }
-    for (let index = 0; index < parts.length; index++) {
-      const part = parts[index];
-      if (!/^\d{1,3}$/.test(part)) {
-        return false;
-      }
-      const value = Number(part);
-      if (!Number.isFinite(value) || value < 0 || value > 255) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private describeError(error: Object): string {
-    try {
-      const serialized = JSON.stringify(error);
-      if (serialized && serialized !== '{}') {
-        return serialized;
-      }
-    } catch (_ignored) {
-    }
-    return String(error);
   }
 }

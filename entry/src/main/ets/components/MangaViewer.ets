@@ -19,6 +19,7 @@ import {
   ReadingSettings,
   ImageSourceType,
   PageTurnAnimationType,
+  MangaImageRequestHeader,
   DoublePagePortraitLayout
 } from '../Models/MangaModels';
 import { colorMap } from '../Data/ResourceMap';
@@ -30,7 +31,7 @@ import {
 import fs from '@ohos.file.fs';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { image } from '@kit.ImageKit';
-import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
+import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
 import { DualPageCurlEffect } from './DualPageCurlEffect';
 // 新增：预加载管理系统
@@ -5175,15 +5176,11 @@ export struct MangaViewer {
   @Builder
   buildPageImageContent(page: MangaPage) {
     Stack() {
-      // 【架构修复】显示Image组件的条件
-      // 网络图片：只有在有PixelMap或加载失败时才显示Image组件
-      // 加载中时不显示Image，让加载动画显示出来
-      // 本地图片：保持原逻辑
-      if (!(page.sourceType === ImageSourceType.NETWORK && 
-            this.shouldShowLoadingForPage(page) && 
-            !this.pagePixelMaps.has(page.id)) && 
-          (page.sourceType === ImageSourceType.NETWORK ||
-           (!this.shouldShowLoadingForPage(page) || this.pagePixelMaps.has(page.id)))) {
+      // 网络图片：仅在有PixelMap或已加载完成时显示Image，加载中/失败时完全隐藏
+      // 本地图片：始终显示
+      if (page.sourceType === ImageSourceType.LOCAL
+        || this.pagePixelMaps.has(page.id)
+        || (this.getPageLoadState(page)?.isLoaded === true)) {
         Image(this.singlePageImageInput)
           .key(this.getSinglePageContentKey(page))
           .width('100%')
@@ -5346,10 +5343,11 @@ export struct MangaViewer {
   @Builder
   buildDoublePageImageContent(page: MangaPage) {
     Stack() {
-      // 【修复】网络图片加载中时不显示Image组件，避免显示ic_image占位图
-      if (!(page.sourceType === ImageSourceType.NETWORK && 
-            this.shouldShowLoadingForPage(page) && 
-            !this.pagePixelMaps.has(page.id))) {
+      // 网络图片：仅在有PixelMap或已加载完成时显示Image，加载中/失败时完全隐藏
+      // 本地图片：始终显示
+      if (page.sourceType === ImageSourceType.LOCAL
+        || this.pagePixelMaps.has(page.id)
+        || (this.getPageLoadState(page)?.isLoaded === true)) {
         Image(this.getDisplayImageInput(page))
           .key(`${page.id}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}`)
           .width('100%')
@@ -5434,17 +5432,29 @@ export struct MangaViewer {
             .fillColor(colorMap.error)
           Text('加载失败')
             .fontSize(12)
-            .fontColor(colorMap.textSecondary)
+            .fontColor(colorMap.textPrimary)
+            .fontWeight(FontWeight.Medium)
             .margin({ top: 4 })
-          Text('点击重试')
+          Text(this.getPageLoadState(page)?.error || '图片加载失败')
             .fontSize(10)
-            .fontColor(colorMap.accent)
+            .fontColor(colorMap.textSecondary)
             .margin({ top: 2 })
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Button('重试')
+            .fontSize(12)
+            .fontColor(Color.White)
+            .backgroundColor(colorMap.accent)
+            .borderRadius(6)
+            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+            .margin({ top: 8 })
+            .onClick(() => {
+              logger.info(TAG, `用户点击重试加载(双页): pageId=${page.id}`);
+              this.retryLoadPage(page);
+            })
         }
         .justifyContent(FlexAlign.Center)
-        .onClick(() => {
-          this.retryLoadPage(page);
-        })
+        .padding(12)
       }
     }
   }
@@ -6716,15 +6726,31 @@ export struct MangaViewer {
         // 本地+条漫专用路径：保持 file:// 数据源稳定，避免 file/cache 源切换闪烁
         this.buildStableLocalImageForWebtoon(page, chapterId, pageIndex)
       } else if (page.sourceType === ImageSourceType.NETWORK) {
-        // 网络图片占位：保留预估高度占位
-        Image($r('app.media.ic_image'))
-          .objectFit(ImageFit.Contain)
-          .width('100%')
-          .height(this.getEstimatedImageHeight(page))
-          .draggable(false)
-          .onAppear(() => {
-            this.triggerWebtoonImageLoadIfNeeded(page, chapterId, pageIndex);
-          })
+        // 网络图片：仅在有PixelMap或已加载完成时显示图片，加载中/失败时完全隐藏占位图
+        if (this.pagePixelMaps.has(page.id) || (this.getPageLoadState(page)?.isLoaded === true)) {
+          Image(this.getImageResource(page))
+            .width('100%')
+            .draggable(false)
+            .onComplete(() => {
+              this.handleWebtoonImageLoad(page, chapterId, pageIndex);
+            })
+            .onError((error: ImageError) => {
+              this.handleWebtoonImageError(page, chapterId, pageIndex);
+            })
+        } else if (!this.getPageLoadState(page)?.error) {
+          // 加载中：无占位图，仅触发加载（加载动画由下方统一层处理）
+          Column()
+            .width('100%')
+            .height(this.getEstimatedImageHeight(page))
+            .onAppear(() => {
+              this.triggerWebtoonImageLoadIfNeeded(page, chapterId, pageIndex);
+            })
+        } else {
+          // 加载失败：无占位图，仅保留高度占位（错误UI由下方统一层处理）
+          Column()
+            .width('100%')
+            .height(this.getEstimatedImageHeight(page))
+        }
       } else {
         Image(this.getImageResource(page))
           .width('100%')
@@ -6766,19 +6792,31 @@ export struct MangaViewer {
             .fillColor(colorMap.error)
           Text('加载失败')
             .fontSize(14)
-            .fontColor(colorMap.textSecondary)
+            .fontColor(colorMap.textPrimary)
+            .fontWeight(FontWeight.Medium)
             .margin({ top: 8 })
-          Text('点击重试')
+          Text(this.getPageLoadState(page)?.error || '图片加载失败')
             .fontSize(12)
-            .fontColor(colorMap.accent)
+            .fontColor(colorMap.textSecondary)
             .margin({ top: 4 })
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Button('重试')
+            .fontSize(14)
+            .fontColor(Color.White)
+            .backgroundColor(colorMap.accent)
+            .borderRadius(8)
+            .padding({ left: 24, right: 24, top: 8, bottom: 8 })
+            .margin({ top: 12 })
+            .onClick(() => {
+              logger.info(TAG, `用户点击重试加载(条漫): pageId=${page.id}`);
+              this.retryLoadPage(page);
+            })
         }
         .width('100%')
         .height(this.getEstimatedImageHeight(page))
         .justifyContent(FlexAlign.Center)
-        .onClick(() => {
-          this.retryLoadPage(page);
-        })
+        .padding(16)
       }
     }
     .width('100%')
@@ -7047,6 +7085,87 @@ export struct MangaViewer {
       this.triggerWebtoonPreload();
       this.scheduleWebtoonStopCleanup();
     })
+  }
+
+  private cloneRequestHeadersForPage(headers?: RequestHeaders): RequestHeaders {
+    const cloned: RequestHeaders = {} as RequestHeaders;
+    if (!headers) {
+      return cloned;
+    }
+    if (headers.userAgent) { cloned.userAgent = String(headers.userAgent); }
+    if (headers.accept) { cloned.accept = String(headers.accept); }
+    if (headers.referer) { cloned.referer = String(headers.referer); }
+    if (headers.origin) { cloned.origin = String(headers.origin); }
+    if (headers.cookie) { cloned.cookie = String(headers.cookie); }
+    if (headers.authorization) { cloned.authorization = String(headers.authorization); }
+    if (headers.acceptLanguage) { cloned.acceptLanguage = String(headers.acceptLanguage); }
+    if (headers.cacheControl) { cloned.cacheControl = String(headers.cacheControl); }
+    if (headers.pragma) { cloned.pragma = String(headers.pragma); }
+    if (headers.secFetchDest) { cloned.secFetchDest = String(headers.secFetchDest); }
+    if (headers.secFetchMode) { cloned.secFetchMode = String(headers.secFetchMode); }
+    if (headers.secFetchSite) { cloned.secFetchSite = String(headers.secFetchSite); }
+    if (headers.cachePartition) { cloned.cachePartition = String(headers.cachePartition); }
+    if (headers.extraHeaders && headers.extraHeaders.length > 0) {
+      const extraHeaders: RequestHeaderEntry[] = [];
+      let index = 0;
+      while (index < headers.extraHeaders.length) {
+        const entry = headers.extraHeaders[index];
+        if (entry && entry.name && entry.value) {
+          extraHeaders.push({
+            name: String(entry.name),
+            value: String(entry.value)
+          } as RequestHeaderEntry);
+        }
+        index = index + 1;
+      }
+      if (extraHeaders.length > 0) {
+        cloned.extraHeaders = extraHeaders;
+      }
+    }
+    return cloned;
+  }
+
+  private upsertExtraRequestHeader(headers: RequestHeaders, headerName: string, headerValue: string): void {
+    const normalizedName = headerName.trim();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    if (!headers.extraHeaders) {
+      headers.extraHeaders = [];
+    }
+    let index = 0;
+    while (index < headers.extraHeaders.length) {
+      const entry = headers.extraHeaders[index];
+      if (entry.name.toLowerCase() === normalizedName.toLowerCase()) {
+        entry.value = normalizedValue;
+        return;
+      }
+      index = index + 1;
+    }
+    headers.extraHeaders.push({
+      name: normalizedName,
+      value: normalizedValue
+    } as RequestHeaderEntry);
+  }
+
+  private buildPageNetworkHeaders(page: MangaPage): RequestHeaders | undefined {
+    const pageHeaders: MangaImageRequestHeader[] | undefined = page.requestHeaders;
+    if (!this.networkHeaders && (!pageHeaders || pageHeaders.length === 0)) {
+      return undefined;
+    }
+    const headers: RequestHeaders = this.cloneRequestHeadersForPage(this.networkHeaders);
+    if (pageHeaders && pageHeaders.length > 0) {
+      let index = 0;
+      while (index < pageHeaders.length) {
+        const pageHeader = pageHeaders[index];
+        if (pageHeader && pageHeader.name && pageHeader.value) {
+          this.upsertExtraRequestHeader(headers, String(pageHeader.name), String(pageHeader.value));
+        }
+        index = index + 1;
+      }
+    }
+    return headers;
   }
 
   /**
@@ -7445,22 +7564,23 @@ export struct MangaViewer {
       this.networkLoadInProgress++;
       try {
         const cacheManager: ImageCacheManager = ImageCacheManager.getInstance();
+        const pageNetworkHeaders: RequestHeaders | undefined = this.buildPageNetworkHeaders(page);
         const opts: LoadOptions = {
           width: page.width,
           height: page.height,
-          headers: this.networkHeaders,
+          headers: pageNetworkHeaders,
           sourceId: this.sourceId,
           mangaId: this.mangaId,
           chapterId: this.chapter.id,
           pageIndex: page.index,
           priority: page.priority || 1,
           contentType: this.contentType,
-          partitionKey: this.networkHeaders?.cachePartition
+          partitionKey: pageNetworkHeaders?.cachePartition
         } as LoadOptions;
-        const cookieStr: string = (this.networkHeaders && this.networkHeaders.cookie) ? String(this.networkHeaders.cookie) : '';
-        const refererStr: string = (this.networkHeaders && this.networkHeaders.referer) ? String(this.networkHeaders.referer) : '';
-        const uaStr: string = (this.networkHeaders && this.networkHeaders.userAgent) ? String(this.networkHeaders.userAgent) : '';
-        const langStr: string = (this.networkHeaders && this.networkHeaders.acceptLanguage) ? String(this.networkHeaders.acceptLanguage) : '';
+        const cookieStr: string = (pageNetworkHeaders && pageNetworkHeaders.cookie) ? String(pageNetworkHeaders.cookie) : '';
+        const refererStr: string = (pageNetworkHeaders && pageNetworkHeaders.referer) ? String(pageNetworkHeaders.referer) : '';
+        const uaStr: string = (pageNetworkHeaders && pageNetworkHeaders.userAgent) ? String(pageNetworkHeaders.userAgent) : '';
+        const langStr: string = (pageNetworkHeaders && pageNetworkHeaders.acceptLanguage) ? String(pageNetworkHeaders.acceptLanguage) : '';
         const uaLog: string = uaStr.substring(0, Math.min(64, uaStr.length));
         logger.debug('MangaViewer', `开始网络加载: url=${page.imageUrl}, ua=${uaLog}, langLen=${langStr.length}, cookieLen=${cookieStr.length}, referer=${refererStr}`);
         const pm: image.PixelMap | null = await cacheManager.loadImage(page.imageUrl, opts);
@@ -7529,16 +7649,17 @@ export struct MangaViewer {
     this.networkLoadInProgress++;
     try {
       const cacheManager: ImageCacheManager = ImageCacheManager.getInstance();
+      const pageNetworkHeaders: RequestHeaders | undefined = this.buildPageNetworkHeaders(page);
       const opts: LoadOptions = {
         width: page.width,
         height: page.height,
-        headers: this.networkHeaders,
+        headers: pageNetworkHeaders,
         sourceId: this.sourceId,
         mangaId: this.mangaId,
         chapterId: this.chapter.id,
         pageIndex: page.index,
         contentType: this.contentType,  // [修复] 传递内容类型
-        partitionKey: this.networkHeaders?.cachePartition
+        partitionKey: pageNetworkHeaders?.cachePartition
       } as LoadOptions;
       const pm: image.PixelMap | null = await cacheManager.loadImage(page.imageUrl, opts);
       if (pm) {
@@ -8698,10 +8819,11 @@ export struct MangaViewer {
   buildOptimizedImage(page: MangaPage, index: number) {
     if (this.shouldShowImage(index)) {
       Stack() {
-        // 【修复】网络图片加载中时不显示Image组件，避免显示ic_image占位图
-        if (!(page.sourceType === ImageSourceType.NETWORK && 
-              this.shouldShowLoadingForPage(page) && 
-              !this.pagePixelMaps.has(page.id))) {
+        // 网络图片：仅在有PixelMap或已加载完成时显示Image，加载中/失败时完全隐藏
+        // 本地图片：始终显示
+        if (page.sourceType === ImageSourceType.LOCAL
+          || this.pagePixelMaps.has(page.id)
+          || (this.getPageLoadState(page)?.isLoaded === true)) {
           Image(this.getDisplayImageInput(page))
             .width('100%')
             .objectFit(this.getImageFitMode(page))
@@ -8748,19 +8870,31 @@ export struct MangaViewer {
               .fillColor(colorMap.error)
             Text('加载失败')
               .fontSize(14)
-              .fontColor(colorMap.textSecondary)
+              .fontColor(colorMap.textPrimary)
+              .fontWeight(FontWeight.Medium)
               .margin({ top: 8 })
-            Text('点击重试')
+            Text(this.getPageLoadState(page)?.error || '图片加载失败')
               .fontSize(12)
-              .fontColor(colorMap.accent)
+              .fontColor(colorMap.textSecondary)
               .margin({ top: 4 })
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Button('重试')
+              .fontSize(14)
+              .fontColor(Color.White)
+              .backgroundColor(colorMap.accent)
+              .borderRadius(8)
+              .padding({ left: 24, right: 24, top: 8, bottom: 8 })
+              .margin({ top: 12 })
+              .onClick(() => {
+                logger.info(TAG, `用户点击重试加载(优化图片): pageId=${page.id}`);
+                this.retryLoadPage(page);
+              })
           }
           .width('100%')
           .height(this.getEstimatedImageHeight(page))
           .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.retryLoadPage(page);
-          })
+          .padding(16)
         }
       }
       .width('100%')
@@ -9030,17 +9164,18 @@ export struct MangaViewer {
     const requestUrl = page.sourceType === ImageSourceType.LOCAL
       ? (this.getFsPathFromPage(page) || page.imageUrl || '')
       : (page.imageUrl || '');
+    const pageNetworkHeaders: RequestHeaders | undefined = this.buildPageNetworkHeaders(page);
     const loadOptions: LoadOptions = {
       width: page.width,
       height: page.height,
-      headers: this.networkHeaders,
+      headers: pageNetworkHeaders,
       sourceId: this.sourceId,
       mangaId: this.mangaId,
       chapterId: chapterIdForCache,
       pageIndex: chapterPageIndex >= 0 ? chapterPageIndex : undefined,
       priority: page.priority || 1,
       contentType: this.contentType,
-      partitionKey: this.networkHeaders?.cachePartition
+      partitionKey: pageNetworkHeaders?.cachePartition
     } as LoadOptions;
 
     // [性能修复] 本地图片在条漫模式下不应通过此路径加载

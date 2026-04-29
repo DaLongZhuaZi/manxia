@@ -73,10 +73,27 @@ export struct EBookReadingSettingsPanel {
       nightMode: this.settings.nightMode || false,
       followSystemTheme: this.settings.followSystemTheme !== false,
       pageMargin: this.settings.pageMargin,
+      pageTopMargin: this.settings.pageTopMargin,
+      pageBottomMargin: this.settings.pageBottomMargin,
       pageMode: this.settings.pageMode,
       brightness: this.settings.brightness,
       autoSave: this.settings.autoSave,
-      saveInterval: this.settings.saveInterval
+      saveInterval: this.settings.saveInterval,
+      letterSpacing: this.settings.letterSpacing,
+      paragraphSpacing: this.settings.paragraphSpacing,
+      firstLineIndent: this.settings.firstLineIndent,
+      textAlignment: this.settings.textAlignment,
+      pageTurnAnimation: this.settings.pageTurnAnimation,
+      tapToTurn: this.settings.tapToTurn,
+      volumeKeyNavigation: this.settings.volumeKeyNavigation,
+      keepScreenOn: this.settings.keepScreenOn,
+      showPageNumber: this.settings.showPageNumber,
+      showProgress: this.settings.showProgress,
+      showTime: this.settings.showTime,
+      showBattery: this.settings.showBattery,
+      backgroundType: this.settings.backgroundType,
+      backgroundImagePath: this.settings.backgroundImagePath,
+      backgroundImageOpacity: this.settings.backgroundImageOpacity
     };
   }
 
@@ -952,10 +969,27 @@ export struct EBookReadingSettingsPanel {
       nightMode: DEFAULT_EBOOK_READING_SETTINGS.nightMode,
       followSystemTheme: DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme,
       pageMargin: DEFAULT_EBOOK_READING_SETTINGS.pageMargin,
+      pageTopMargin: DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin,
+      pageBottomMargin: DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin,
       pageMode: DEFAULT_EBOOK_READING_SETTINGS.pageMode,
       brightness: DEFAULT_EBOOK_READING_SETTINGS.brightness,
       autoSave: DEFAULT_EBOOK_READING_SETTINGS.autoSave,
-      saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval
+      saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval,
+      letterSpacing: DEFAULT_EBOOK_READING_SETTINGS.letterSpacing,
+      paragraphSpacing: DEFAULT_EBOOK_READING_SETTINGS.paragraphSpacing,
+      firstLineIndent: DEFAULT_EBOOK_READING_SETTINGS.firstLineIndent,
+      textAlignment: DEFAULT_EBOOK_READING_SETTINGS.textAlignment,
+      pageTurnAnimation: DEFAULT_EBOOK_READING_SETTINGS.pageTurnAnimation,
+      tapToTurn: DEFAULT_EBOOK_READING_SETTINGS.tapToTurn,
+      volumeKeyNavigation: DEFAULT_EBOOK_READING_SETTINGS.volumeKeyNavigation,
+      keepScreenOn: DEFAULT_EBOOK_READING_SETTINGS.keepScreenOn,
+      showPageNumber: DEFAULT_EBOOK_READING_SETTINGS.showPageNumber,
+      showProgress: DEFAULT_EBOOK_READING_SETTINGS.showProgress,
+      showTime: DEFAULT_EBOOK_READING_SETTINGS.showTime,
+      showBattery: DEFAULT_EBOOK_READING_SETTINGS.showBattery,
+      backgroundType: DEFAULT_EBOOK_READING_SETTINGS.backgroundType,
+      backgroundImagePath: DEFAULT_EBOOK_READING_SETTINGS.backgroundImagePath,
+      backgroundImageOpacity: DEFAULT_EBOOK_READING_SETTINGS.backgroundImageOpacity
     };
     this.onSettingsChange(defaultSettings);
     logger.info(TAG, '已恢复默认设置');

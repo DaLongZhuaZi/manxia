@@ -213,9 +213,6 @@ export struct ShortcutSettingsSubPage {
         continue;
       }
       sanitized.push(shortcutId);
-      if (sanitized.length >= SHORTCUT_MAX_VISIBLE_COUNT) {
-        break;
-      }
     }
     return sanitized;
   }
@@ -279,8 +276,9 @@ export struct ShortcutSettingsSubPage {
   }
 
   private async persistVisibleShortcutIds(visibleIds: string[]): Promise<void> {
-    const sanitized = this.sanitizeVisibleShortcutIds(visibleIds);
-    await this.settingsManager.setJSON<string[]>(SettingKeys.SHORTCUT_VISIBLE_IDS, sanitized);
+    // 保存用户实际选择的所有可见快捷方式，不做数量截断
+    // 系统层面会自行限制显示数量（前4个），但本地配置应保留完整选择
+    await this.settingsManager.setJSON<string[]>(SettingKeys.SHORTCUT_VISIBLE_IDS, visibleIds);
     this.settingsManager.syncToAppStorage();
   }
 

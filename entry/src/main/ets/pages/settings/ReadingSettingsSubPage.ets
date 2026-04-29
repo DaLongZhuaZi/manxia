@@ -127,10 +127,30 @@ export struct ReadingSettingsSubPage {
 
   // 电子书默认设置
   @State ebookFontSize: number = DEFAULT_EBOOK_READING_SETTINGS.fontSize;
+  @State ebookFontFamily: string = DEFAULT_EBOOK_READING_SETTINGS.fontFamily;
+  @State ebookFontPath: string = DEFAULT_EBOOK_READING_SETTINGS.fontPath;
+  @State ebookFontWeight: number = DEFAULT_EBOOK_READING_SETTINGS.fontWeight;
   @State ebookLineHeight: number = DEFAULT_EBOOK_READING_SETTINGS.lineHeight;
   @State ebookPageMargin: number = DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
+  @State ebookPageTopMargin: number = DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
+  @State ebookPageBottomMargin: number = DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
   @State ebookThemeIndex: number = 0;
+  @State ebookFollowSystemTheme: boolean = DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme;
   @State ebookPageMode: EBookPageMode = DEFAULT_EBOOK_READING_SETTINGS.pageMode;
+  @State ebookAutoSave: boolean = DEFAULT_EBOOK_READING_SETTINGS.autoSave;
+  @State ebookSaveInterval: number = DEFAULT_EBOOK_READING_SETTINGS.saveInterval;
+  @State ebookLetterSpacing: number = DEFAULT_EBOOK_READING_SETTINGS.letterSpacing ?? 0;
+  @State ebookParagraphSpacing: number = DEFAULT_EBOOK_READING_SETTINGS.paragraphSpacing ?? 8;
+  @State ebookFirstLineIndent: number = DEFAULT_EBOOK_READING_SETTINGS.firstLineIndent ?? 2;
+  @State ebookTextAlignment: TextAlignment = TextAlignment.JUSTIFY;
+  @State ebookPageTurnAnimation: PageTurnAnimationType = PageTurnAnimationType.SLIDE;
+  @State ebookTapToTurn: boolean = DEFAULT_EBOOK_READING_SETTINGS.tapToTurn ?? true;
+  @State ebookVolumeKeyNavigation: boolean = DEFAULT_EBOOK_READING_SETTINGS.volumeKeyNavigation ?? true;
+  @State ebookKeepScreenOn: boolean = DEFAULT_EBOOK_READING_SETTINGS.keepScreenOn ?? false;
+  @State ebookShowPageNumber: boolean = DEFAULT_EBOOK_READING_SETTINGS.showPageNumber ?? true;
+  @State ebookShowProgress: boolean = DEFAULT_EBOOK_READING_SETTINGS.showProgress ?? false;
+  @State ebookShowTime: boolean = DEFAULT_EBOOK_READING_SETTINGS.showTime ?? true;
+  @State ebookShowBattery: boolean = DEFAULT_EBOOK_READING_SETTINGS.showBattery ?? false;
 
   // 文字阅读默认设置
   @State textFontSize: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize;
@@ -482,6 +502,19 @@ export struct ReadingSettingsSubPage {
         DEFAULT_EBOOK_READING_SETTINGS.fontSize
       );
 
+      this.ebookFontFamily = this.settingsManager.getString(
+        SettingKeys.GLOBAL_EBOOK_FONT_FAMILY,
+        DEFAULT_EBOOK_READING_SETTINGS.fontFamily
+      );
+      this.ebookFontPath = this.settingsManager.getString(
+        SettingKeys.GLOBAL_EBOOK_FONT_PATH,
+        DEFAULT_EBOOK_READING_SETTINGS.fontPath
+      );
+      this.ebookFontWeight = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_EBOOK_FONT_WEIGHT,
+        DEFAULT_EBOOK_READING_SETTINGS.fontWeight
+      );
+
       this.ebookLineHeight = this.settingsManager.getNumber(
         SettingKeys.GLOBAL_EBOOK_LINE_HEIGHT,
         DEFAULT_EBOOK_READING_SETTINGS.lineHeight
@@ -492,15 +525,85 @@ export struct ReadingSettingsSubPage {
         DEFAULT_EBOOK_READING_SETTINGS.pageMargin
       );
 
+      this.ebookPageTopMargin = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_EBOOK_PAGE_TOP_MARGIN,
+        DEFAULT_EBOOK_READING_SETTINGS.pageTopMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin
+      );
+      this.ebookPageBottomMargin = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_EBOOK_PAGE_BOTTOM_MARGIN,
+        DEFAULT_EBOOK_READING_SETTINGS.pageBottomMargin ?? DEFAULT_EBOOK_READING_SETTINGS.pageMargin
+      );
+
       this.ebookThemeIndex = this.settingsManager.getNumber(
         SettingKeys.GLOBAL_EBOOK_THEME,
         0
+      );
+
+      this.ebookFollowSystemTheme = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_FOLLOW_SYSTEM_THEME,
+        DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme
       );
 
       this.ebookPageMode = this.settingsManager.getString(
         SettingKeys.GLOBAL_EBOOK_PAGE_MODE,
         DEFAULT_EBOOK_READING_SETTINGS.pageMode
       ) as EBookPageMode;
+      this.ebookAutoSave = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_AUTO_SAVE,
+        DEFAULT_EBOOK_READING_SETTINGS.autoSave
+      );
+      this.ebookSaveInterval = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_EBOOK_SAVE_INTERVAL,
+        DEFAULT_EBOOK_READING_SETTINGS.saveInterval
+      );
+      this.ebookLetterSpacing = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_EBOOK_LETTER_SPACING,
+        DEFAULT_EBOOK_READING_SETTINGS.letterSpacing ?? 0
+      );
+      this.ebookParagraphSpacing = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_EBOOK_PARAGRAPH_SPACING,
+        DEFAULT_EBOOK_READING_SETTINGS.paragraphSpacing ?? 8
+      );
+      this.ebookFirstLineIndent = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_EBOOK_FIRST_LINE_INDENT,
+        DEFAULT_EBOOK_READING_SETTINGS.firstLineIndent ?? 2
+      );
+      this.ebookTextAlignment = this.settingsManager.getString(
+        SettingKeys.GLOBAL_EBOOK_TEXT_ALIGNMENT,
+        DEFAULT_EBOOK_READING_SETTINGS.textAlignment ?? TextAlignment.JUSTIFY
+      ) as TextAlignment;
+      this.ebookPageTurnAnimation = this.settingsManager.getString(
+        SettingKeys.GLOBAL_EBOOK_PAGE_TURN_ANIMATION,
+        DEFAULT_EBOOK_READING_SETTINGS.pageTurnAnimation ?? PageTurnAnimationType.SLIDE
+      ) as PageTurnAnimationType;
+      this.ebookTapToTurn = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_TAP_TO_TURN,
+        DEFAULT_EBOOK_READING_SETTINGS.tapToTurn ?? true
+      );
+      this.ebookVolumeKeyNavigation = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_VOLUME_KEY_NAV,
+        DEFAULT_EBOOK_READING_SETTINGS.volumeKeyNavigation ?? true
+      );
+      this.ebookKeepScreenOn = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_KEEP_SCREEN_ON,
+        DEFAULT_EBOOK_READING_SETTINGS.keepScreenOn ?? false
+      );
+      this.ebookShowPageNumber = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_SHOW_PAGE_NUMBER,
+        DEFAULT_EBOOK_READING_SETTINGS.showPageNumber ?? true
+      );
+      this.ebookShowProgress = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_SHOW_PROGRESS,
+        DEFAULT_EBOOK_READING_SETTINGS.showProgress ?? false
+      );
+      this.ebookShowTime = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_SHOW_TIME,
+        DEFAULT_EBOOK_READING_SETTINGS.showTime ?? true
+      );
+      this.ebookShowBattery = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_EBOOK_SHOW_BATTERY,
+        DEFAULT_EBOOK_READING_SETTINGS.showBattery ?? false
+      );
 
       const globalNovelSettings = this.settingsManager.getJSON<TextReaderSettings>(
         SettingKeys.NOVEL_READER_SETTINGS,
@@ -1679,6 +1782,415 @@ export struct ReadingSettingsSubPage {
   }
 
   /**
+    * 电子书字体设置
+   */
+  @Builder
+  buildEBookFontStyleSettings() {
+    Column({ space: 8 }) {
+      Text('默认字体')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      Row() {
+        Text('当前')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(this.getTextFontDisplayName(this.ebookFontFamily))
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(this.novelSystemFonts, (font: SystemFont) => {
+          Button({ stateEffect: true }) {
+            Text(font.displayName)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(
+                this.ebookFontFamily === font.name
+                  ? Color.White
+                  : ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme)
+              )
+          }
+            .height(36)
+            .margin({ right: 8, bottom: 8 })
+            .backgroundColor(
+              this.ebookFontFamily === font.name
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .onClick(async () => {
+              this.ebookFontFamily = font.name;
+              this.ebookFontPath = '';
+              await this.settingsManager.setString(SettingKeys.GLOBAL_EBOOK_FONT_FAMILY, this.ebookFontFamily);
+              await this.settingsManager.setString(SettingKeys.GLOBAL_EBOOK_FONT_PATH, this.ebookFontPath);
+              this.settingsManager.syncToAppStorage();
+            })
+        })
+      }
+      .width('100%')
+
+      if (this.novelCustomFonts.length > 0) {
+        Text('自定义字体')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          ForEach(this.novelCustomFonts, (font: CustomFont) => {
+            Button({ stateEffect: true }) {
+              Text(font.displayName)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(
+                  this.ebookFontFamily === font.familyName
+                    ? Color.White
+                    : ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme)
+                )
+            }
+              .height(36)
+              .margin({ right: 8, bottom: 8 })
+              .backgroundColor(
+                this.ebookFontFamily === font.familyName
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+              )
+              .borderRadius(8)
+              .onClick(async () => {
+                this.ebookFontFamily = font.familyName;
+                this.ebookFontPath = font.filePath;
+                await this.settingsManager.setString(SettingKeys.GLOBAL_EBOOK_FONT_FAMILY, this.ebookFontFamily);
+                await this.settingsManager.setString(SettingKeys.GLOBAL_EBOOK_FONT_PATH, this.ebookFontPath);
+                this.settingsManager.syncToAppStorage();
+              })
+          })
+        }
+        .width('100%')
+      }
+
+      Row() {
+        Text('默认字体粗细')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.ebookFontWeight}`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Slider({
+        value: this.ebookFontWeight,
+        min: 100,
+        max: 900,
+        step: 100,
+        style: SliderStyle.InSet
+      })
+        .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .onChange(async (value: number) => {
+          this.ebookFontWeight = Math.max(100, Math.min(900, Math.round(value / 100) * 100));
+          await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_FONT_WEIGHT, this.ebookFontWeight);
+          this.settingsManager.syncToAppStorage();
+        })
+    }
+  }
+
+  @Builder
+  buildEBookVerticalMarginSettings() {
+    Column({ space: 8 }) {
+      Row() {
+        Text('默认顶部边距')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.ebookPageTopMargin}`)
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Slider({
+        value: this.ebookPageTopMargin,
+        min: 0,
+        max: 96,
+        step: 2,
+        style: SliderStyle.InSet
+      })
+        .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .onChange(async (value: number) => {
+          this.ebookPageTopMargin = Math.max(0, Math.min(96, Math.round(value / 2) * 2));
+          await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_PAGE_TOP_MARGIN, this.ebookPageTopMargin);
+          this.settingsManager.syncToAppStorage();
+        })
+
+      Row() {
+        Text('默认底部边距')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.ebookPageBottomMargin}`)
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Slider({
+        value: this.ebookPageBottomMargin,
+        min: 0,
+        max: 96,
+        step: 2,
+        style: SliderStyle.InSet
+      })
+        .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .onChange(async (value: number) => {
+          this.ebookPageBottomMargin = Math.max(0, Math.min(96, Math.round(value / 2) * 2));
+          await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_PAGE_BOTTOM_MARGIN, this.ebookPageBottomMargin);
+          this.settingsManager.syncToAppStorage();
+        })
+    }
+  }
+
+  @Builder
+  buildEBookTypographySettings() {
+    Column({ space: 8 }) {
+      Row() {
+        Text('默认字间距')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.ebookLetterSpacing.toFixed(1)}`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({
+        value: this.ebookLetterSpacing,
+        min: 0,
+        max: 5,
+        step: 0.1,
+        style: SliderStyle.InSet
+      })
+        .onChange(async (value: number) => {
+          this.ebookLetterSpacing = Math.round(value * 10) / 10;
+          await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_LETTER_SPACING, this.ebookLetterSpacing);
+          this.settingsManager.syncToAppStorage();
+        })
+
+      Row() {
+        Text('默认段落间距')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.ebookParagraphSpacing}`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({
+        value: this.ebookParagraphSpacing,
+        min: 0,
+        max: 32,
+        step: 1,
+        style: SliderStyle.InSet
+      })
+        .onChange(async (value: number) => {
+          this.ebookParagraphSpacing = Math.round(value);
+          await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_PARAGRAPH_SPACING, this.ebookParagraphSpacing);
+          this.settingsManager.syncToAppStorage();
+        })
+
+      Row() {
+        Text('默认首行缩进')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.ebookFirstLineIndent.toFixed(1)}`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({
+        value: this.ebookFirstLineIndent,
+        min: 0,
+        max: 4,
+        step: 0.5,
+        style: SliderStyle.InSet
+      })
+        .onChange(async (value: number) => {
+          this.ebookFirstLineIndent = Math.round(value * 2) / 2;
+          await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_FIRST_LINE_INDENT, this.ebookFirstLineIndent);
+          this.settingsManager.syncToAppStorage();
+        })
+
+      Text('默认文字对齐')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+      Row({ space: 8 }) {
+        this.buildEBookAlignmentButton('左对齐', TextAlignment.LEFT)
+        this.buildEBookAlignmentButton('居中', TextAlignment.CENTER)
+        this.buildEBookAlignmentButton('右对齐', TextAlignment.RIGHT)
+        this.buildEBookAlignmentButton('两端', TextAlignment.JUSTIFY)
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  buildEBookAlignmentButton(label: string, alignment: TextAlignment) {
+    Button({ stateEffect: true }) {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.ebookTextAlignment === alignment ? Color.White : ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+    }
+      .layoutWeight(1)
+      .height(36)
+      .backgroundColor(this.ebookTextAlignment === alignment ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+      .borderRadius(6)
+      .onClick(async () => {
+        this.ebookTextAlignment = alignment;
+        await this.settingsManager.setString(SettingKeys.GLOBAL_EBOOK_TEXT_ALIGNMENT, this.ebookTextAlignment);
+        this.settingsManager.syncToAppStorage();
+      })
+  }
+
+  @Builder
+  buildEBookAnimationButton(label: string, animation: PageTurnAnimationType) {
+    Button({ stateEffect: true }) {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.ebookPageTurnAnimation === animation ? Color.White : ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+    }
+      .layoutWeight(1)
+      .height(36)
+      .backgroundColor(this.ebookPageTurnAnimation === animation ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+      .borderRadius(6)
+      .onClick(async () => {
+        this.ebookPageTurnAnimation = animation;
+        await this.settingsManager.setString(SettingKeys.GLOBAL_EBOOK_PAGE_TURN_ANIMATION, this.ebookPageTurnAnimation);
+        this.settingsManager.syncToAppStorage();
+      })
+  }
+
+  @Builder
+  buildEBookSwitchSettings() {
+    Column({ space: 12 }) {
+      this.buildEBookSwitchRow('点击翻页', this.ebookTapToTurn, async (isOn: boolean) => {
+        this.ebookTapToTurn = isOn;
+        await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_TAP_TO_TURN, this.ebookTapToTurn);
+        this.settingsManager.syncToAppStorage();
+      })
+      this.buildEBookSwitchRow('音量键翻页', this.ebookVolumeKeyNavigation, async (isOn: boolean) => {
+        this.ebookVolumeKeyNavigation = isOn;
+        await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_VOLUME_KEY_NAV, this.ebookVolumeKeyNavigation);
+        this.settingsManager.syncToAppStorage();
+      })
+      this.buildEBookSwitchRow('保持屏幕常亮', this.ebookKeepScreenOn, async (isOn: boolean) => {
+        this.ebookKeepScreenOn = isOn;
+        await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_KEEP_SCREEN_ON, this.ebookKeepScreenOn);
+        this.settingsManager.syncToAppStorage();
+      })
+      this.buildEBookSwitchRow('自动保存进度', this.ebookAutoSave, async (isOn: boolean) => {
+        this.ebookAutoSave = isOn;
+        await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_AUTO_SAVE, this.ebookAutoSave);
+        this.settingsManager.syncToAppStorage();
+      })
+
+      if (this.ebookAutoSave) {
+        Row() {
+          Text('默认保存间隔')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${this.ebookSaveInterval} 秒`)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        }
+        .width('100%')
+        Slider({
+          value: this.ebookSaveInterval,
+          min: 5,
+          max: 300,
+          step: 5,
+          style: SliderStyle.InSet
+        })
+          .onChange(async (value: number) => {
+            this.ebookSaveInterval = Math.max(5, Math.min(300, Math.round(value / 5) * 5));
+            await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_SAVE_INTERVAL, this.ebookSaveInterval);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+
+      this.buildEBookSwitchRow('显示页码', this.ebookShowPageNumber, async (isOn: boolean) => {
+        this.ebookShowPageNumber = isOn;
+        await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_SHOW_PAGE_NUMBER, this.ebookShowPageNumber);
+        this.settingsManager.syncToAppStorage();
+      })
+      this.buildEBookSwitchRow('显示进度', this.ebookShowProgress, async (isOn: boolean) => {
+        this.ebookShowProgress = isOn;
+        await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_SHOW_PROGRESS, this.ebookShowProgress);
+        this.settingsManager.syncToAppStorage();
+      })
+      this.buildEBookSwitchRow('显示时间', this.ebookShowTime, async (isOn: boolean) => {
+        this.ebookShowTime = isOn;
+        await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_SHOW_TIME, this.ebookShowTime);
+        this.settingsManager.syncToAppStorage();
+      })
+      this.buildEBookSwitchRow('显示电量', this.ebookShowBattery, async (isOn: boolean) => {
+        this.ebookShowBattery = isOn;
+        await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_SHOW_BATTERY, this.ebookShowBattery);
+        this.settingsManager.syncToAppStorage();
+      })
+    }
+  }
+
+  @Builder
+  buildEBookSwitchRow(label: string, isOn: boolean, onToggle: (isOn: boolean) => Promise<void>) {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Blank()
+      Toggle({ type: ToggleType.Switch, isOn: isOn })
+        .onChange(async (value: boolean) => {
+          await onToggle(value);
+        })
+    }
+    .width('100%')
+  }
+
+  /**
     * 电子书阅读设置
    */
   @Builder
@@ -1723,6 +2235,8 @@ export struct ReadingSettingsSubPage {
             this.settingsManager.syncToAppStorage();
           })
       }
+
+      this.buildEBookFontStyleSettings()
 
       // 行高
       Column({ space: 8 }) {
@@ -1790,12 +2304,33 @@ export struct ReadingSettingsSubPage {
           })
       }
 
+      this.buildEBookVerticalMarginSettings()
+
       // 阅读主题
       Column({ space: 8 }) {
             Text('默认阅读主题')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Row() {
+          Text('跟随系统主题')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.ebookFollowSystemTheme })
+            .onChange(async (isOn: boolean) => {
+              this.ebookFollowSystemTheme = isOn;
+              if (isOn) {
+                this.ebookThemeIndex = 0;
+                await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_THEME, this.ebookThemeIndex);
+              }
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_FOLLOW_SYSTEM_THEME, this.ebookFollowSystemTheme);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
 
         Row({ space: 8 }) {
           ForEach(EBOOK_THEME_PRESETS, (theme: EBookThemePreset, index: number) => {
@@ -1829,7 +2364,9 @@ export struct ReadingSettingsSubPage {
             }
             .onClick(async () => {
               this.ebookThemeIndex = index;
+              this.ebookFollowSystemTheme = false;
               await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_THEME, this.ebookThemeIndex);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_EBOOK_FOLLOW_SYSTEM_THEME, this.ebookFollowSystemTheme);
               this.settingsManager.syncToAppStorage();
             })
           })
@@ -1880,6 +2417,24 @@ export struct ReadingSettingsSubPage {
         }
         .width('100%')
       }
+
+      Column({ space: 8 }) {
+        Text('默认翻页动画')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Row({ space: 8 }) {
+          this.buildEBookAnimationButton('无', PageTurnAnimationType.NONE)
+          this.buildEBookAnimationButton('滑动', PageTurnAnimationType.SLIDE)
+          this.buildEBookAnimationButton('淡入', PageTurnAnimationType.FADE)
+          this.buildEBookAnimationButton('覆盖', PageTurnAnimationType.COVER)
+          this.buildEBookAnimationButton('卷页', PageTurnAnimationType.CURL)
+        }
+        .width('100%')
+      }
+
+      this.buildEBookTypographySettings()
+      this.buildEBookSwitchSettings()
     }
     .width('100%')
     .padding(16)

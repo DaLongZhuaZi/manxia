@@ -5,6 +5,8 @@ import { HdsNavDestination } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { getNetworkFolderManager, NetworkFolderManager } from '../Framework/Network/NetworkFolderManager';
+import { BackgroundTaskManager, TaskType, TaskNotificationScene, TaskStatus } from '../Framework/Task/BackgroundTaskManager';
+import type { BackgroundTask, TaskStatusListener } from '../Framework/Task/BackgroundTaskManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
@@ -14,18 +16,27 @@ import {
   NetworkFolderCacheDetail,
   NetworkFolderDirectoryCacheDetail,
   NetworkFolderDownloadCacheDetail,
+  NetworkFolderDownloadResult,
   createEmptyNetworkFolderDraft,
   createNetworkFolderConnection,
   draftFromNetworkFolderConnection,
+  draftFromScanResult,
   getNetworkFolderFileExtension,
   getNetworkFolderProtocolLabel,
+  getScanProtocolLabel,
+  mapScanProtocolToFolderProtocol,
   NetworkFolderCacheStats,
   NetworkFolderConnection,
   NetworkFolderConnectionDraft,
   NetworkFolderEntry,
   NetworkFolderImportCategory,
-  NetworkFolderProtocol
+  NetworkFolderProtocol,
+  NetworkSMBShare,
+  NetworkScanHost,
+  NetworkScanProgress,
+  ProtocolPort
 } from '../Models/NetworkFolderModels';
+import { NetworkScannerAdapter } from '../Framework/Network/NetworkScannerAdapter';
 
 const TAG = 'NetworkFolderPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -76,6 +87,33 @@ export struct NetworkFolderPage {
   @State isInitializing: boolean = false;
   @State isLoadingDirectory: boolean = false;
   @State isCaching: boolean = false;
+  @State activeCacheTaskId: string = '';
+  @State isCurrentPathFavorite: boolean = false;
+  @State isTogglingFavorite: boolean = false;
+  @State favDialogMounted: boolean = false;
+  @State favDialogBackdropOpacity: number = 0;
+  @State favDialogOpacity: number = 0;
+  @State favDialogScale: number = 0.96;
+  @State favDialogTranslateY: number = 24;
+  @State favoriteFolders: string[] = [];
+  private taskStatusListener: TaskStatusListener | null = null;
+  private scrollPositionMap: Map<string, number> = new Map<string, number>();
+  private scannerAdapter: NetworkScannerAdapter = new NetworkScannerAdapter();
+
+  @State scanMounted: boolean = false;
+  @State scanSubnet: string = '';
+  @State scanProgress: NetworkScanProgress = { scannedHosts: 0, totalHosts: 254, currentIP: '' };
+  @State scanResults: NetworkScanHost[] = [];
+  @State scanPhase: string = 'idle';
+  @State scanBackdropOpacity: number = 0;
+  @State scanOpacity: number = 0;
+  @State scanScale: number = 0.96;
+  @State scanTranslateY: number = 24;
+  @State scanStartTime: number = 0;
+  @State scanDurationMs: number = 0;
+  @State smbEnumLoading: boolean = false;
+  @State smbEnumHost: string = '';
+  @State smbEnumShares: NetworkSMBShare[] = [];
 
   @State viewMode: string = 'connections';
   @State pageReady: boolean = false;
@@ -124,9 +162,21 @@ export struct NetworkFolderPage {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     this.hideFloatingCapsuleImmediately();
     this.stopEntryNameMarqueeTicker();
+    if (this.taskStatusListener) {
+      BackgroundTaskManager.getInstance().removeListener(this.taskStatusListener);
+      this.taskStatusListener = null;
+    }
   }
 
   private handleTitleBarBack(): boolean {
+    if (this.favDialogMounted) {
+      this.closeFavoritesDialog();
+      return true;
+    }
+    if (this.scanMounted) {
+      this.closeScanPanel();
+      return true;
+    }
     if (this.dialogMounted) {
       this.closeConnectionDialog();
       return true;
@@ -350,6 +400,8 @@ export struct NetworkFolderPage {
     this.selectedConnectionId = connection.id;
     this.currentPath = this.manager.getLastPath(connection.id);
     this.entries = [];
+    this.scrollPositionMap.clear();
+    this.isCurrentPathFavorite = this.manager.isFavoriteFolder(connection.id, this.currentPath);
     this.refreshCacheStats(connection.id);
   }
 
@@ -367,6 +419,7 @@ export struct NetworkFolderPage {
 
   private async returnToConnections(): Promise<void> {
     logger.info(TAG, '返回网络连接列表页');
+    this.scrollPositionMap.clear();
     await this.playRouteExitAnimation(42);
     this.viewMode = 'connections';
     this.playRouteEnterAnimation(-42);
@@ -401,6 +454,7 @@ export struct NetworkFolderPage {
       }
 
       this.entries = result.entries;
+      this.restoreScrollPosition(this.currentPath);
       if (result.fromCache) {
         if (result.stale) {
           this.statusMessage = `远程目录暂时不可用，已显示缓存内容：${this.currentPath}`;
@@ -433,11 +487,13 @@ export struct NetworkFolderPage {
     if (normalizedTargetPath === this.currentPath && !forceRefresh) {
       return;
     }
+    this.saveScrollPosition(this.currentPath);
     logger.info(TAG, `切换目录：${this.currentPath} -> ${normalizedTargetPath}`);
     const exitOffset = forward ? -26 : 26;
     const enterOffset = forward ? 26 : -26;
     await this.playDirectoryExitAnimation(exitOffset);
     this.currentPath = normalizedTargetPath;
+    this.isCurrentPathFavorite = this.manager.isFavoriteFolder(this.selectedConnectionId, normalizedTargetPath);
     this.entries = [];
     this.playDirectoryEnterAnimation(enterOffset);
     void this.loadDirectory(forceRefresh);
@@ -524,28 +580,58 @@ export struct NetworkFolderPage {
       return;
     }
     logger.info(TAG, `开始缓存远程文件：${entry.relativePath}`);
+
+    const connectionId = this.selectedConnectionId;
+    const manager = this.manager;
+    const page = this;
+
+    const taskId = BackgroundTaskManager.getInstance().createTask(
+      TaskType.DOWNLOAD,
+      `缓存：${entry.name}`,
+      async (onProgress, _cancelSignal) => {
+        onProgress(0, 1, `正在缓存 ${entry.name}...`);
+        const result = await manager.downloadFileToCache(connectionId, entry);
+        if (!result.success) {
+          throw new Error(result.message);
+        }
+        onProgress(1, 1, `缓存完成：${entry.name}`);
+        return result;
+      },
+      {
+        enableBackgroundRunning: true,
+        context: getContext(this) as common.UIAbilityContext,
+        notification: {
+          scene: TaskNotificationScene.NETWORK_CACHE,
+          targetName: entry.name
+        }
+      }
+    );
+
+    this.activeCacheTaskId = taskId;
     this.isCaching = true;
+    this.registerCacheTaskListener();
+
     try {
-      const result = await this.manager.downloadFileToCache(this.selectedConnectionId, entry);
-      if (!result.success) {
-        logger.warn(TAG, `缓存远程文件失败：${entry.relativePath}，原因：${result.message}`);
-        this.showToast(result.message);
-        return;
+      await BackgroundTaskManager.getInstance().startTask(taskId);
+      const task = BackgroundTaskManager.getInstance().getTask(taskId);
+      const result = task?.result as NetworkFolderDownloadResult | undefined;
+      if (result) {
+        this.statusMessage = result.reusedCache ? `已复用缓存文件：${entry.name}` : `文件已缓存：${entry.name}`;
+        this.showToast(result.reusedCache ? '已复用缓存文件' : '文件缓存完成');
+        this.markEntryCached(entry.relativePath, result.localPath);
+        this.refreshCacheStats(connectionId);
+        if (page.viewMode === 'cache') {
+          page.refreshCacheDetail(page.cacheDetailConnectionId.length > 0 ? page.cacheDetailConnectionId : undefined);
+        }
+        await this.loadDirectory(false);
       }
-      this.statusMessage = result.reusedCache ? `已复用缓存文件：${entry.name}` : `文件已缓存：${entry.name}`;
-      this.showToast(result.reusedCache ? '已复用缓存文件' : '文件缓存完成');
-      this.refreshCacheStats(this.selectedConnectionId);
-      if (this.viewMode === 'cache') {
-        this.refreshCacheDetail(this.cacheDetailConnectionId.length > 0 ? this.cacheDetailConnectionId : undefined);
-      }
-      this.markEntryCached(entry.relativePath, result.localPath);
-      await this.loadDirectory(false);
       logger.info(TAG, `远程文件缓存完成：${entry.relativePath}`);
     } catch (error) {
       logger.error(TAG, `缓存远程文件异常：${String(error)}`);
       this.showToast(`缓存失败：${String(error)}`);
     } finally {
       this.isCaching = false;
+      this.activeCacheTaskId = '';
     }
   }
 
@@ -554,22 +640,51 @@ export struct NetworkFolderPage {
       return;
     }
     logger.info(TAG, `开始导入远程文件：${entry.relativePath}`);
-    this.isCaching = true;
-    try {
-      const result = await this.manager.downloadFileToCache(this.selectedConnectionId, entry);
-      if (!result.success) {
-        logger.warn(TAG, `导入远程文件失败：${entry.relativePath}，原因：${result.message}`);
-        this.showToast(result.message);
-        return;
+
+    const connectionId = this.selectedConnectionId;
+    const manager = this.manager;
+
+    const taskId = BackgroundTaskManager.getInstance().createTask(
+      TaskType.DOWNLOAD,
+      `导入：${entry.name}`,
+      async (onProgress, _cancelSignal) => {
+        onProgress(0, 1, `正在下载 ${entry.name}...`);
+        const result = await manager.downloadFileToCache(connectionId, entry);
+        if (!result.success) {
+          throw new Error(result.message);
+        }
+        onProgress(1, 1, `下载完成：${entry.name}`);
+        return result;
+      },
+      {
+        enableBackgroundRunning: true,
+        context: getContext(this) as common.UIAbilityContext,
+        notification: {
+          scene: TaskNotificationScene.NETWORK_CACHE,
+          targetName: entry.name
+        }
       }
-      this.dispatchImportFromNetworkFolder(result.fileUri, entry.name, result.importCategory);
-      this.markEntryCached(entry.relativePath, result.localPath);
-      logger.info(TAG, `远程文件导入任务已分发：${entry.relativePath}，分类 ${result.importCategory}`);
+    );
+
+    this.activeCacheTaskId = taskId;
+    this.isCaching = true;
+    this.registerCacheTaskListener();
+
+    try {
+      await BackgroundTaskManager.getInstance().startTask(taskId);
+      const task = BackgroundTaskManager.getInstance().getTask(taskId);
+      const result = task?.result as NetworkFolderDownloadResult | undefined;
+      if (result) {
+        this.dispatchImportFromNetworkFolder(result.fileUri, entry.name, result.importCategory);
+        this.markEntryCached(entry.relativePath, result.localPath);
+      }
+      logger.info(TAG, `远程文件导入任务已分发：${entry.relativePath}`);
     } catch (error) {
       logger.error(TAG, `导入远程文件异常：${String(error)}`);
       this.showToast(`导入失败：${String(error)}`);
     } finally {
       this.isCaching = false;
+      this.activeCacheTaskId = '';
     }
   }
 
@@ -622,6 +737,280 @@ export struct NetworkFolderPage {
       nextEntries.push(cloned);
     }
     this.entries = nextEntries;
+  }
+
+  private saveScrollPosition(path: string): void {
+    if (path.length === 0) {
+      return;
+    }
+    try {
+      const yOffset = this.browserScroller.currentOffset().yOffset;
+      this.scrollPositionMap.set(path, yOffset);
+    } catch (_error) {
+      // Scroller may not be attached yet
+    }
+  }
+
+  private restoreScrollPosition(path: string): void {
+    const savedOffset = this.scrollPositionMap.get(path);
+    if (savedOffset === undefined || savedOffset <= 0) {
+      return;
+    }
+    setTimeout(() => {
+      try {
+        this.browserScroller.scrollTo({ xOffset: 0, yOffset: savedOffset });
+      } catch (_error) {
+        // Scroller may not be ready
+      }
+    }, 80);
+  }
+
+  private async toggleCurrentPathFavorite(): Promise<void> {
+    if (this.selectedConnectionId.length === 0 || this.isTogglingFavorite) {
+      return;
+    }
+    this.isTogglingFavorite = true;
+    try {
+      const newState = await this.manager.toggleFavoriteFolder(this.selectedConnectionId, this.currentPath);
+      this.isCurrentPathFavorite = newState;
+      this.showToast(newState ? '已收藏当前文件夹' : '已取消收藏');
+    } finally {
+      this.isTogglingFavorite = false;
+    }
+  }
+
+  private openFavoritesDialog(): void {
+    if (this.selectedConnectionId.length === 0) {
+      return;
+    }
+    logger.info(TAG, '打开收藏夹对话框');
+    this.favoriteFolders = this.manager.getFavoriteFolders(this.selectedConnectionId);
+    this.showFavoritesDialog();
+  }
+
+  private showFavoritesDialog(): void {
+    this.favDialogMounted = true;
+    this.favDialogBackdropOpacity = 0;
+    this.favDialogOpacity = 0;
+    this.favDialogScale = 0.96;
+    this.favDialogTranslateY = 24;
+    setTimeout(() => {
+      animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+        this.favDialogBackdropOpacity = 1;
+        this.favDialogOpacity = 1;
+        this.favDialogScale = 1;
+        this.favDialogTranslateY = 0;
+      });
+    }, 16);
+  }
+
+  private async hideFavoritesDialog(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      animateTo({
+        duration: 180,
+        curve: Curve.EaseIn,
+        onFinish: () => {
+          this.favDialogMounted = false;
+          resolve();
+        }
+      }, () => {
+        this.favDialogBackdropOpacity = 0;
+        this.favDialogOpacity = 0;
+        this.favDialogScale = 0.96;
+        this.favDialogTranslateY = 24;
+      });
+    });
+  }
+
+  private closeFavoritesDialog(): void {
+    logger.info(TAG, '关闭收藏夹对话框');
+    void this.hideFavoritesDialog();
+  }
+
+  private async navigateToFavoriteFolder(path: string): Promise<void> {
+    await this.hideFavoritesDialog();
+    setTimeout(() => {
+      void this.browseToPath(path, true, false);
+    }, 50);
+  }
+
+  // ==================== Network Scan Methods ====================
+
+  private async openScanPanel(): Promise<void> {
+    if (!this.scannerAdapter.isAvailable()) {
+      this.statusMessage = '网络扫描模块不可用，请检查原生库是否已加载。';
+      return;
+    }
+    this.scanResults = [];
+    this.scanProgress = { scannedHosts: 0, totalHosts: 254, currentIP: '' };
+    this.scanPhase = 'idle';
+    this.scanStartTime = 0;
+    this.scanDurationMs = 0;
+    this.smbEnumLoading = false;
+    this.smbEnumHost = '';
+    this.smbEnumShares = [];
+
+    const subnet = this.scannerAdapter.getLocalSubnet();
+    this.scanSubnet = subnet.length > 0 ? subnet : '192.168.1';
+    this.showScanPanel();
+    // Auto-start scan after panel animation
+    setTimeout(() => {
+      this.startNetworkScan();
+    }, 300);
+  }
+
+  private showScanPanel(): void {
+    this.scanMounted = true;
+    this.scanBackdropOpacity = 0;
+    this.scanOpacity = 0;
+    this.scanScale = 0.96;
+    this.scanTranslateY = 24;
+    setTimeout(() => {
+      animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+        this.scanBackdropOpacity = 1;
+        this.scanOpacity = 1;
+        this.scanScale = 1;
+        this.scanTranslateY = 0;
+      });
+    }, 16);
+  }
+
+  private async hideScanPanel(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      animateTo({
+        duration: 180,
+        curve: Curve.EaseIn,
+        onFinish: () => {
+          this.scanMounted = false;
+          resolve();
+        }
+      }, () => {
+        this.scanBackdropOpacity = 0;
+        this.scanOpacity = 0;
+        this.scanScale = 0.96;
+        this.scanTranslateY = 24;
+      });
+    });
+  }
+
+  private closeScanPanel(): void {
+    if (this.scannerAdapter.isScanning()) {
+      this.scannerAdapter.stopScan();
+    }
+    void this.hideScanPanel();
+  }
+
+  private startNetworkScan(): void {
+    if (this.scanSubnet.trim().length === 0) {
+      return;
+    }
+    this.scanPhase = 'scanning';
+    this.scanResults = [];
+    this.scanProgress = { scannedHosts: 0, totalHosts: 254, currentIP: '' };
+    this.scanStartTime = Date.now();
+    this.scanDurationMs = 0;
+
+    const started = this.scannerAdapter.startScan(
+      this.scanSubnet.trim(),
+      (scanned: number, total: number, currentIP: string) => {
+        this.scanProgress = { scannedHosts: scanned, totalHosts: total, currentIP: currentIP };
+        this.scanDurationMs = Date.now() - this.scanStartTime;
+      },
+      (host: NetworkScanHost) => {
+        this.scanResults = [...this.scanResults, host];
+      },
+      (cancelled: boolean) => {
+        this.scanDurationMs = Date.now() - this.scanStartTime;
+        this.scanPhase = 'done';
+      }
+    );
+
+    if (!started) {
+      this.scanPhase = 'idle';
+    }
+  }
+
+  private cancelNetworkScan(): void {
+    this.scannerAdapter.stopScan();
+  }
+
+  private openConnectionFromScan(host: NetworkScanHost, protocolIndex: number): void {
+    const protocol = mapScanProtocolToFolderProtocol(protocolIndex);
+    const draft = draftFromScanResult(host, protocol);
+    this.dialogDraft = draft;
+    this.dialogMode = 'create';
+    this.dialogStatusMessage = '请填写凭据信息，然后保存连接。';
+    this.closeScanPanel();
+    setTimeout(() => {
+      this.showConnectionDialog();
+    }, 200);
+  }
+
+  private requestSMBShareEnum(host: NetworkScanHost): void {
+    this.smbEnumLoading = true;
+    this.smbEnumHost = host.ip;
+    this.smbEnumShares = [];
+    setTimeout(() => {
+      const result = this.scannerAdapter.enumSMBShares(host.ip, 445);
+      if (result.success) {
+        this.smbEnumShares = result.shares.filter((s: NetworkSMBShare) => s.isDiskShare && !s.isHidden);
+      } else {
+        this.smbEnumShares = [];
+      }
+      this.smbEnumLoading = false;
+    }, 50);
+  }
+
+  private openSMBConnectionFromShare(host: NetworkScanHost, share: NetworkSMBShare): void {
+    const draft = createEmptyNetworkFolderDraft();
+    draft.protocol = 'smb';
+    draft.host = host.ip;
+    draft.port = 445;
+    draft.shareName = share.name;
+    draft.name = share.remark.length > 0
+      ? `${host.ip} ${share.name} (${share.remark})`
+      : `${host.ip} ${share.name}`;
+    this.dialogDraft = draft;
+    this.dialogMode = 'create';
+    this.dialogStatusMessage = '请填写凭据信息，然后保存连接。';
+    this.closeScanPanel();
+    setTimeout(() => {
+      this.showConnectionDialog();
+    }, 200);
+  }
+
+  private getScanProtocolIcon(protocol: number): Resource {
+    switch (protocol) {
+      case 0:
+      case 1:
+      case 2:
+        return $r('sys.symbol.arrow_clockwise');
+      case 3:
+      case 4:
+        return $r('sys.symbol.externaldrive_fill');
+      case 5:
+        return $r('sys.symbol.folder_fill');
+      default:
+        return $r('sys.symbol.questionmark_circle');
+    }
+  }
+
+  private registerCacheTaskListener(): void {
+    if (this.taskStatusListener) {
+      BackgroundTaskManager.getInstance().removeListener(this.taskStatusListener);
+    }
+    const page = this;
+    this.taskStatusListener = (task: BackgroundTask): void => {
+      if (task.id !== page.activeCacheTaskId) {
+        return;
+      }
+      if (task.status === TaskStatus.COMPLETED || task.status === TaskStatus.FAILED || task.status === TaskStatus.CANCELLED) {
+        if (page.viewMode === 'browser' && page.hasSelectedConnection()) {
+          void page.loadDirectory(false);
+        }
+      }
+    };
+    BackgroundTaskManager.getInstance().addListener(this.taskStatusListener);
   }
 
   private async importCachedFile(detail: NetworkFolderDownloadCacheDetail): Promise<void> {
@@ -1203,6 +1592,7 @@ export struct NetworkFolderPage {
       basePath: source.basePath,
       passive: source.passive,
       verifySSL: source.verifySSL,
+      verifyHostKey: source.verifyHostKey,
       timeoutMs: source.timeoutMs
     };
     return draft;
@@ -1332,6 +1722,7 @@ export struct NetworkFolderPage {
       nextDraft.port = 22;
       nextDraft.passive = false;
       nextDraft.verifySSL = true;
+      nextDraft.verifyHostKey = true;
     } else {
       nextDraft.port = 445;
     }
@@ -1883,6 +2274,37 @@ export struct NetworkFolderPage {
     })
   }
 
+  @Builder private buildToolbarBookmarkButton() {
+    Button() {
+      if (this.isTogglingFavorite) {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+          .color(this.color('text_primary'))
+      } else {
+        SymbolGlyph(this.isCurrentPathFavorite ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
+          .fontSize(15)
+          .fontColor([this.color('text_primary')])
+      }
+    }
+    .width(34)
+    .height(34)
+    .borderRadius(17)
+    .backgroundColor(this.color('comp_background_tertiary'))
+    .gesture(
+      GestureGroup(GestureMode.Exclusive,
+        LongPressGesture({ repeat: false })
+          .onAction(() => {
+            this.openFavoritesDialog();
+          }),
+        TapGesture()
+          .onAction(() => {
+            void this.toggleCurrentPathFavorite();
+          })
+      )
+    )
+  }
+
   @Builder private buildFloatingStatusCapsule() {
     Row({ space: 8 }) {
       if (this.isPageRefreshing || this.isInitializing) {
@@ -2125,14 +2547,22 @@ export struct NetworkFolderPage {
   }
 
   @Builder private buildQuickActionsCard() {
-    Column({ space: 12 }) {
+    Column({ space: 10 }) {
       Row({ space: 10 }) {
         this.buildActionButton('新建连接', $r('sys.symbol.plus'), ACTION_STYLE_PRIMARY, true, () => {
           this.openCreateConnectionDialog();
         })
+        Blank()
+        this.buildActionButton('网络扫描', $r('sys.symbol.wifi'), ACTION_STYLE_INFO, true, () => {
+          void this.openScanPanel();
+        })
+      }
+      .width('100%')
+      Row({ space: 10 }) {
         this.buildActionButton('缓存详情', $r('sys.symbol.inbox_fill'), ACTION_STYLE_INFO, true, () => {
           void this.openCacheDetailView();
         })
+        Blank()
         this.buildActionButton('清理全部缓存', $r('sys.symbol.trash'), ACTION_STYLE_DANGER, true, () => {
           this.showClearAllCacheDialog();
         })
@@ -2926,7 +3356,7 @@ export struct NetworkFolderPage {
   @Builder private buildMergedBrowserToolbar(connection: NetworkFolderConnection) {
     Column({ space: 10 }) {
       Row({ space: 8 }) {
-        this.buildToolbarIconButton($r('sys.symbol.arrow_left'), true, () => {
+        this.buildToolbarIconButton($r('sys.symbol.house'), true, () => {
           void this.returnToConnections();
         })
 
@@ -2955,16 +3385,14 @@ export struct NetworkFolderPage {
         .layoutWeight(1)
         .padding({ left: 2, right: 2 })
 
-        this.buildToolbarIconButton($r('sys.symbol.arrow_clockwise'), true, () => {
-          void this.refreshCurrentDirectory();
-        })
+        this.buildToolbarBookmarkButton()
         this.buildToolbarIconButton($r('sys.symbol.inbox_fill'), true, () => {
           void this.openCacheDetailView(connection.id);
         })
         this.buildToolbarIconButton($r('sys.symbol.gearshape'), true, () => {
           this.openEditConnectionDialog(connection);
         })
-        this.buildToolbarIconButton($r('sys.symbol.chevron_up'), this.currentPath !== '/', () => {
+        this.buildToolbarIconButton($r('sys.symbol.arrow_up_circle'), this.currentPath !== '/', () => {
           void this.goParentDirectory();
         })
       }
@@ -3206,9 +3634,15 @@ export struct NetworkFolderPage {
             void this.openEntry(entry);
           })
         } else {
-          this.buildActionButton('缓存', $r('sys.symbol.arrow_down_circle'), ACTION_STYLE_NEUTRAL, true, () => {
-            void this.cacheEntry(entry);
-          })
+          this.buildActionButton(
+            entry.cacheStatus === 'cached' ? '已缓存' : '缓存',
+            entry.cacheStatus === 'cached' ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.arrow_down_circle'),
+            ACTION_STYLE_NEUTRAL,
+            entry.cacheStatus !== 'cached',
+            () => {
+              void this.cacheEntry(entry);
+            }
+          )
           this.buildActionButton('导入', $r('sys.symbol.square_and_arrow_down'), ACTION_STYLE_INFO,
             entry.importCategory !== 'unsupported', () => {
               void this.importEntry(entry);
@@ -3662,6 +4096,15 @@ export struct NetworkFolderPage {
                 })
             }
 
+            if (this.dialogDraft.protocol === 'sftp') {
+              this.buildDialogToggle($r('sys.symbol.lock_shield'), '验证主机密钥',
+                '建议保持开启，防止中间人攻击。关闭后将信任所有主机密钥。', this.dialogDraft.verifyHostKey, (value: boolean) => {
+                  const nextDraft = this.cloneDraft(this.dialogDraft);
+                  nextDraft.verifyHostKey = value;
+                  this.dialogDraft = nextDraft;
+                })
+            }
+
             Blank().height(8)
           }
           .width('100%')
@@ -3713,6 +4156,608 @@ export struct NetworkFolderPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  @Builder private buildFavoritesDialog() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(`rgba(6, 12, 18, ${0.52 * this.favDialogBackdropOpacity})`)
+        .onClick(() => {
+          this.closeFavoritesDialog();
+        })
+
+      Column({ space: 16 }) {
+        Row() {
+          Text('收藏夹')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+          Blank()
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(14)
+              .fontColor([this.color('text_secondary')])
+          }
+          .width(30)
+          .height(30)
+          .borderRadius(15)
+          .backgroundColor(this.color('comp_background_tertiary'))
+          .onClick(() => {
+            this.closeFavoritesDialog();
+          })
+        }
+        .width('100%')
+
+        Divider()
+          .color(this.color('text_muted'))
+          .opacity(0.6)
+
+        if (this.favoriteFolders.length === 0) {
+          Text('暂无收藏的文件夹')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .padding({ top: 24, bottom: 24 })
+        } else {
+          Scroll() {
+            Column({ space: 8 }) {
+              ForEach(this.favoriteFolders, (path: string) => {
+                Row({ space: 10 }) {
+                  SymbolGlyph($r('sys.symbol.bookmark_fill'))
+                    .fontSize(14)
+                    .fontColor([this.color('accent_primary')])
+                  Text(path)
+                    .fontSize(14)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_primary'))
+                    .layoutWeight(1)
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Button('前往')
+                    .height(28)
+                    .borderRadius(14)
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .backgroundColor(this.color('accent_primary'))
+                    .fontColor(this.color('text_white'))
+                    .padding({ left: 12, right: 12 })
+                    .onClick(() => {
+                      void this.navigateToFavoriteFolder(path);
+                    })
+                }
+                .width('100%')
+                .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+                .borderRadius(12)
+                .backgroundColor(this.color('comp_background_secondary'))
+              }, (path: string) => path)
+            }
+          }
+          .scrollBar(BarState.Auto)
+          .layoutWeight(1)
+        }
+      }
+      .width('92%')
+      .padding({ left: 20, right: 20, top: 20, bottom: 20 })
+      .constraintSize({ maxHeight: '70%' })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(26)
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: 26,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 10
+      })
+      .opacity(this.favDialogOpacity)
+      .scale({ x: this.favDialogScale, y: this.favDialogScale })
+      .translate({ x: 0, y: this.favDialogTranslateY })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder private buildScanPanel() {
+    Stack({ alignContent: Alignment.Center }) {
+      // Backdrop
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(`rgba(6, 12, 18, ${0.52 * this.scanBackdropOpacity})`)
+        .onClick(() => {
+          this.closeScanPanel();
+        })
+
+      // Main panel
+      Column({ space: 12 }) {
+        // Header
+        Row() {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.wifi'))
+              .fontSize(18)
+              .fontColor([this.color('accent_primary')])
+            Text('网络扫描')
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+          }
+          Blank()
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(14)
+              .fontColor([this.color('text_secondary')])
+          }
+          .width(30)
+          .height(30)
+          .borderRadius(15)
+          .backgroundColor(this.color('comp_background_tertiary'))
+          .onClick(() => {
+            this.closeScanPanel();
+          })
+        }
+        .width('100%')
+
+        Divider()
+          .color(this.color('text_muted'))
+          .opacity(0.6)
+
+        // Subnet input + action button
+        Row({ space: 10 }) {
+          TextInput({ text: this.scanSubnet, placeholder: '子网前缀 (如 192.168.1)' })
+            .layoutWeight(1)
+            .height(40)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(this.color('comp_background_secondary'))
+            .borderRadius(12)
+            .onChange((value: string) => {
+              this.scanSubnet = value;
+            })
+          if (this.scanPhase === 'scanning') {
+            Button() {
+              Row({ space: 6 }) {
+                LoadingProgress()
+                  .width(14)
+                  .height(14)
+                  .color(this.color('text_white'))
+                Text('停止')
+                  .fontSize(14)
+                  .fontFamily(this.appFontFamily)
+              }
+            }
+            .height(40)
+            .borderRadius(12)
+            .backgroundColor(this.color('accent_primary'))
+            .fontColor(this.color('text_white'))
+            .padding({ left: 14, right: 14 })
+            .onClick(() => {
+              this.cancelNetworkScan();
+            })
+          } else {
+            Button('开始扫描')
+              .height(40)
+              .borderRadius(12)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(this.color('accent_primary'))
+              .fontColor(this.color('text_white'))
+              .padding({ left: 14, right: 14 })
+              .onClick(() => {
+                this.startNetworkScan();
+              })
+          }
+        }
+        .width('100%')
+
+        // Progress section with animation
+        if (this.scanPhase === 'scanning') {
+          Column({ space: 8 }) {
+            // Progress bar
+            Column({ space: 4 }) {
+              Progress({
+                value: this.scanProgress.scannedHosts,
+                total: this.scanProgress.totalHosts,
+                type: ProgressType.Linear
+              })
+                .width('100%')
+                .height(8)
+                .borderRadius(4)
+              Row() {
+                Text(`${this.scanProgress.scannedHosts}/${this.scanProgress.totalHosts}`)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_secondary'))
+                Text(` (${Math.floor(this.scanProgress.scannedHosts * 100 / Math.max(1, this.scanProgress.totalHosts))}%)`)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_muted'))
+                Blank()
+                if (this.scanResults.length > 0) {
+                  Row({ space: 4 }) {
+                    SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+                      .fontSize(12)
+                      .fontColor([this.color('accent_primary')])
+                    Text(`已发现 ${this.scanResults.length} 台`)
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.color('accent_primary'))
+                      .fontWeight(FontWeight.Medium)
+                  }
+                }
+              }
+              .width('100%')
+            }
+            .width('100%')
+
+            // Current scan target
+            Row({ space: 6 }) {
+              LoadingProgress()
+                .width(12)
+                .height(12)
+                .color(this.color('accent_primary'))
+              Text(`正在扫描: ${this.scanProgress.currentIP}`)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.color('text_muted'))
+              Blank()
+              Text(`${this.scanDurationMs}ms`)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.color('text_muted'))
+            }
+            .width('100%')
+            .padding({ top: 4, bottom: 4 })
+            .borderRadius(8)
+            .backgroundColor(this.color('comp_background_tertiary'))
+          }
+          .width('100%')
+          .animation({ duration: 200, curve: Curve.EaseInOut })
+        }
+
+        // Scan complete summary
+        if (this.scanPhase === 'done') {
+          Row({ space: 8 }) {
+            SymbolGlyph(this.scanResults.length > 0
+              ? $r('sys.symbol.checkmark_circle_fill')
+              : $r('sys.symbol.magnifyingglass'))
+              .fontSize(16)
+              .fontColor([this.color('accent_primary')])
+            Text(this.scanResults.length > 0
+              ? `扫描完成，发现 ${this.scanResults.length} 台服务器`
+              : '扫描完成，未发现文件服务器')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+            Blank()
+            Text(`${this.scanDurationMs}ms`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_muted'))
+          }
+          .width('100%')
+          .padding({ top: 8, bottom: 8 })
+          .borderRadius(10)
+          .backgroundColor(this.color('comp_background_tertiary'))
+          .animation({ duration: 200, curve: Curve.EaseInOut })
+        }
+
+        // Results list with animation
+        if (this.scanResults.length > 0) {
+          Scroll() {
+            Column({ space: 10 }) {
+              ForEach(this.scanResults, (host: NetworkScanHost) => {
+                this.buildScanResultCard(host)
+              }, (host: NetworkScanHost) => host.ip)
+            }
+            .width('100%')
+          }
+          .scrollBar(BarState.Auto)
+          .layoutWeight(1)
+          .animation({ duration: 300, curve: Curve.EaseInOut })
+        } else if (this.scanPhase === 'idle') {
+          // Idle state - show tips
+          Column({ space: 16 }) {
+            Column({ space: 8 }) {
+              SymbolGlyph($r('sys.symbol.wifi'))
+                .fontSize(48)
+                .fontColor([this.color('accent_primary')])
+              Text('局域网扫描')
+                .fontSize(18)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.color('text_primary'))
+            }
+            Column({ space: 8 }) {
+              Text('自动发现局域网中的文件服务器')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.color('text_secondary'))
+                .textAlign(TextAlign.Center)
+              Text('支持 FTP / SFTP / FTPS / WebDAV / SMB')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.color('text_muted'))
+                .textAlign(TextAlign.Center)
+            }
+            // Protocol icons
+            Row({ space: 16 }) {
+              Column({ space: 4 }) {
+                SymbolGlyph($r('sys.symbol.externaldrive_fill'))
+                  .fontSize(20)
+                  .fontColor([this.color('accent_primary')])
+                Text('NAS')
+                  .fontSize(10)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_muted'))
+              }
+              Column({ space: 4 }) {
+                SymbolGlyph($r('sys.symbol.folder_fill'))
+                  .fontSize(20)
+                  .fontColor([this.color('accent_primary')])
+                Text('SMB')
+                  .fontSize(10)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_muted'))
+              }
+              Column({ space: 4 }) {
+                SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                  .fontSize(20)
+                  .fontColor([this.color('accent_primary')])
+                Text('FTP')
+                  .fontSize(10)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_muted'))
+              }
+              Column({ space: 4 }) {
+                SymbolGlyph($r('sys.symbol.link'))
+                  .fontSize(20)
+                  .fontColor([this.color('accent_primary')])
+                Text('WebDAV')
+                  .fontSize(10)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_muted'))
+              }
+            }
+            .padding({ top: 8 })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        }
+      }
+      .width('92%')
+      .height('84%')
+      .padding({ left: 20, right: 20, top: 20, bottom: 20 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+      .borderRadius(26)
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: 26,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+        offsetX: 0,
+        offsetY: 10
+      })
+      .opacity(this.scanOpacity)
+      .scale({ x: this.scanScale, y: this.scanScale })
+      .translate({ x: 0, y: this.scanTranslateY })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder private buildScanResultCard(host: NetworkScanHost) {
+    Column({ space: 10 }) {
+      // Host info row
+      Row({ space: 10 }) {
+        Column() {
+          SymbolGlyph($r('sys.symbol.externaldrive_fill'))
+            .fontSize(20)
+            .fontColor([this.color('accent_primary')])
+        }
+        .width(36)
+        .height(36)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(10)
+
+        Column({ space: 3 }) {
+          Text(host.ip)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+          if (host.hostname.length > 0) {
+            Text(host.hostname)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        // Protocol count badge
+        Text(`${host.protocolPorts.length} 个协议`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_muted'))
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .borderRadius(8)
+          .backgroundColor(this.color('comp_background_tertiary'))
+      }
+      .width('100%')
+
+      // Protocol badges with port info
+      Row({ space: 6 }) {
+        ForEach(host.protocolPorts, (pp: ProtocolPort) => {
+          Text(`${getScanProtocolLabel(pp.protocol)}:${pp.port}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('accent_primary'))
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .borderRadius(6)
+            .backgroundColor(this.color('comp_background_tertiary'))
+            .border({ width: 0.5, color: this.color('accent_primary') })
+        }, (pp: ProtocolPort) => `${host.ip}_badge_${pp.protocol}_${pp.port}`)
+      }
+      .width('100%')
+
+      // Action buttons
+      Column({ space: 6 }) {
+        // Protocol connection buttons
+        ForEach(host.protocolPorts, (pp: ProtocolPort) => {
+          Row({ space: 8 }) {
+            SymbolGlyph(this.getScanProtocolIcon(pp.protocol))
+              .fontSize(14)
+              .fontColor([this.color('accent_primary')])
+            Text(`连接 ${getScanProtocolLabel(pp.protocol)} :${pp.port}`)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+              .layoutWeight(1)
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(12)
+              .fontColor([this.color('text_muted')])
+          }
+          .width('100%')
+          .height(36)
+          .padding({ left: 10, right: 10 })
+          .borderRadius(10)
+          .backgroundColor(this.color('comp_background_secondary'))
+          .onClick(() => {
+            this.openConnectionFromScan(host, pp.protocol);
+          })
+        }, (pp: ProtocolPort) => `${host.ip}_btn_${pp.protocol}_${pp.port}`)
+
+        // SMB shares button
+        if (host.protocols.includes(5)) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.folder_fill'))
+              .fontSize(14)
+              .fontColor([this.color('accent_primary')])
+            Text(this.smbEnumLoading && this.smbEnumHost === host.ip ? '正在加载共享...' : '查看 SMB 共享')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+              .layoutWeight(1)
+            if (this.smbEnumLoading && this.smbEnumHost === host.ip) {
+              LoadingProgress()
+                .width(16)
+                .height(16)
+                .color(this.color('accent_primary'))
+            } else {
+              SymbolGlyph($r('sys.symbol.chevron_right'))
+                .fontSize(12)
+                .fontColor([this.color('text_muted')])
+            }
+          }
+          .width('100%')
+          .height(36)
+          .padding({ left: 10, right: 10 })
+          .borderRadius(10)
+          .backgroundColor(this.color('comp_background_secondary'))
+          .enabled(!(this.smbEnumLoading && this.smbEnumHost === host.ip))
+          .onClick(() => {
+            this.requestSMBShareEnum(host);
+          })
+        }
+      }
+      .width('100%')
+
+      // SMB shares sub-list
+      if (this.smbEnumHost === host.ip && this.smbEnumShares.length > 0) {
+        Column({ space: 4 }) {
+          Row() {
+            Text('可用共享')
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+            Blank()
+            Text(`${this.smbEnumShares.length} 项`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_muted'))
+          }
+          .width('100%')
+          .padding({ left: 8, right: 8, bottom: 4 })
+
+          ForEach(this.smbEnumShares, (share: NetworkSMBShare) => {
+            Row({ space: 8 }) {
+              SymbolGlyph($r('sys.symbol.folder_fill'))
+                .fontSize(14)
+                .fontColor([this.color('accent_primary')])
+              Column({ space: 2 }) {
+                Text(share.name)
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_primary'))
+                if (share.remark.length > 0) {
+                  Text(share.remark)
+                    .fontSize(11)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_secondary'))
+                }
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              Button('连接')
+                .height(26)
+                .borderRadius(8)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(this.color('accent_primary'))
+                .fontColor(this.color('text_white'))
+                .padding({ left: 10, right: 10 })
+                .onClick(() => {
+                  this.openSMBConnectionFromShare(host, share);
+                })
+            }
+            .width('100%')
+            .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+            .borderRadius(8)
+            .backgroundColor(this.color('comp_background_secondary'))
+          }, (share: NetworkSMBShare) => `${host.ip}_${share.name}`)
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4, top: 6, bottom: 6 })
+        .borderRadius(10)
+        .backgroundColor(this.color('comp_background_tertiary'))
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .borderRadius(16)
+    .backgroundColor(this.color('comp_background_secondary'))
+    .border({
+      width: 0.5,
+      color: this.color('text_muted')
+    })
   }
 
   build() {
@@ -3780,6 +4825,12 @@ export struct NetworkFolderPage {
 
         if (this.dialogMounted) {
           this.buildConnectionDialog()
+        }
+        if (this.favDialogMounted) {
+          this.buildFavoritesDialog()
+        }
+        if (this.scanMounted) {
+          this.buildScanPanel()
         }
       }
     }

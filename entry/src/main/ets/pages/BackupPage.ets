@@ -3269,7 +3269,8 @@ struct BackupPage {
         onTest: (settings: WebDAVSettings) => {
           return this.testWebDAVConnection(settings);
         },
-        currentTheme: this.themeState.currentTheme
+        currentTheme: this.themeState.currentTheme,
+        appFontFamily: this.appFontFamily
       })
     }
   }

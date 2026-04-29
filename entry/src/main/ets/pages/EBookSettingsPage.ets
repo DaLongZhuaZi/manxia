@@ -308,6 +308,44 @@ export struct EBookSettingsPage {
     logger.info(TAG, `设备方向初始化: ${this.isLandscape ? '横屏' : '竖屏'}`);
   }
 
+  private applyReadingSettingsToState(settings: EBookReadingSettings): void {
+    this.settings = settings;
+    this.settingFontSize = settings.fontSize;
+    this.settingFontFamily = settings.fontFamily;
+    this.settingFontPath = settings.fontPath || '';
+    this.settingFontWeight = settings.fontWeight || 400;
+    this.settingLineHeight = settings.lineHeight;
+    this.settingBgColor = settings.backgroundColor;
+    this.settingTextColor = settings.textColor;
+    this.settingThemeBgImage = settings.themeBgImage || '';
+    this.settingNightMode = settings.nightMode || false;
+    this.selectedThemeIndex = EBOOK_THEME_PRESETS.findIndex(
+      (theme: EBookThemePreset) => theme.backgroundColor === this.settingBgColor
+    );
+    if (this.selectedThemeIndex < 0) {
+      this.selectedThemeIndex = 0;
+    }
+    this.settingPageMargin = settings.pageMargin;
+    this.settingPageMode = settings.pageMode || EBookPageMode.SIMULATION;
+    this.settingAutoSave = settings.autoSave;
+    this.settingSaveInterval = settings.saveInterval;
+    this.settingLetterSpacing = settings.letterSpacing ?? 0;
+    this.settingParagraphSpacing = settings.paragraphSpacing ?? 8;
+    this.settingFirstLineIndent = settings.firstLineIndent ?? 2;
+    this.settingTextAlignment = (settings.textAlignment as TextAlignment) ?? TextAlignment.JUSTIFY;
+    this.settingPageTurnAnimation = (settings.pageTurnAnimation as TextPageTurnAnimation) ?? TextPageTurnAnimation.SLIDE;
+    this.settingTapToTurn = settings.tapToTurn ?? true;
+    this.settingVolumeKeyNavigation = settings.volumeKeyNavigation ?? true;
+    this.settingKeepScreenOn = settings.keepScreenOn ?? false;
+    this.settingShowPageNumber = settings.showPageNumber ?? true;
+    this.settingShowProgress = settings.showProgress ?? false;
+    this.settingShowTime = settings.showTime ?? true;
+    this.settingShowBattery = settings.showBattery ?? false;
+    this.settingBackgroundType = (settings.backgroundType as BackgroundType) ?? BackgroundType.COLOR;
+    this.settingBackgroundImagePath = settings.backgroundImagePath ?? '';
+    this.settingBackgroundImageOpacity = settings.backgroundImageOpacity ?? 0.3;
+  }
+
   /**
    * 加载电子书设置
    */
@@ -360,9 +398,7 @@ export struct EBookSettingsPage {
       
       // 加载阅读设置
       if (ebook.readingSettings) {
-        // [修复] 简化判断逻辑：只依赖 followSystemTheme 标志
-        // followSystemTheme=true 表示用户从未自定义过设置，应使用全局设置
-        // followSystemTheme=false 表示用户已自定义设置，应使用保存的设置
+        // TXT 仍沿用小说阅读默认设置链路；非 TXT 会在本段之后通过数据管理器统一刷新。
         const isDefaultSettings = ebook.readingSettings.followSystemTheme === true;
         
         if (isDefaultSettings) {
@@ -562,6 +598,19 @@ export struct EBookSettingsPage {
         }
       }
 
+      if (!isTextFormat) {
+        const effectiveSettings = await this.ebookDataManager.resolveEffectiveEBookReadingSettings(
+          ebook.id,
+          ebook.readingSettings
+        );
+        ebook.readingSettings = effectiveSettings;
+        this.applyReadingSettingsToState(effectiveSettings);
+        logger.info(
+          TAG,
+          `已按电子书全局默认/单书设置刷新页面状态: fontSize=${effectiveSettings.fontSize}, lineHeight=${effectiveSettings.lineHeight}, pageMargin=${effectiveSettings.pageMargin}`
+        );
+      }
+
       logger.info(TAG, `电子书设置加载完成: ${ebook.metadata.title}`);
       
       // 加载可用的背景图片列表（在 ebook 设置完成后调用）
@@ -600,6 +649,8 @@ export struct EBookSettingsPage {
         nightMode: this.settingNightMode,
         // 翻页设置
         pageMargin: this.settingPageMargin,
+        pageTopMargin: this.settings?.pageTopMargin,
+        pageBottomMargin: this.settings?.pageBottomMargin,
         pageMode: this.settingPageMode,
         // 系统设置
         brightness: this.settingBrightness,

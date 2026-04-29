@@ -482,14 +482,17 @@ export struct AdvancedSettingsSubPage {
               .fontSize(14)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .width('100%')
             Text('启用后 EPUB 可使用系统 ReaderKit，Kindle 格式仅作为手动兜底')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .width('100%')
           }
           .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
 
-          Blank()
+          Blank().width(12)
           Toggle({ type: ToggleType.Switch, isOn: this.readerKitEnabled })
             .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .onChange(async (isOn: boolean) => {
@@ -507,14 +510,17 @@ export struct AdvancedSettingsSubPage {
               .fontSize(14)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .width('100%')
             Text('开启后文字型 EPUB 使用 WebView 渲染，提供更好的排版控制（固定版式 EPUB 默认使用 WebView）')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .width('100%')
           }
           .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
 
-          Blank()
+          Blank().width(12)
           Toggle({ type: ToggleType.Switch, isOn: this.epubWebViewEnabled })
             .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .onChange(async (isOn: boolean) => {

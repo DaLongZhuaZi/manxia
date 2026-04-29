@@ -2011,8 +2011,8 @@ export struct UnifiedDetailPage {
     this.trackingSettingsActiveTab = 0;
     this.showTrackingSettingsDialog = true;
     animateTo({
-      duration: 300,
-      curve: curves.springMotion(0.6, 0.9)
+      duration: 260,
+      curve: Curve.EaseOut
     }, () => {
       this.trackingDialogOpacity = 1;
       this.trackingDialogScale = 1;
@@ -2022,16 +2022,16 @@ export struct UnifiedDetailPage {
 
   private closeTrackingSettingsDialog(): void {
     animateTo({
-      duration: 240,
-      curve: Curve.EaseOut
+      duration: 180,
+      curve: Curve.EaseIn
     }, () => {
       this.trackingDialogOpacity = 0;
-      this.trackingDialogScale = 0.8;
-      this.trackingDialogTranslateY = 36;
+      this.trackingDialogScale = 0.96;
+      this.trackingDialogTranslateY = 12;
     });
     setTimeout(() => {
       this.showTrackingSettingsDialog = false;
-    }, 260);
+    }, 200);
   }
 
   private async saveCurrentContentTracking(): Promise<void> {
@@ -4216,8 +4216,8 @@ export struct UnifiedDetailPage {
     this.readAloudCachePresetStatusMessage = '';
     this.showReadAloudCacheDialog = true;
     animateTo({
-      duration: 300,
-      curve: curves.springMotion(0.6, 0.9)
+      duration: 260,
+      curve: Curve.EaseOut
     }, () => {
       this.readAloudCacheDialogOpacity = 1;
       this.readAloudCacheDialogScale = 1;
@@ -4245,16 +4245,16 @@ export struct UnifiedDetailPage {
 
   private closeReadAloudCacheDialog(): void {
     animateTo({
-      duration: 250,
-      curve: Curve.EaseOut
+      duration: 180,
+      curve: Curve.EaseIn
     }, () => {
       this.readAloudCacheDialogOpacity = 0;
-      this.readAloudCacheDialogScale = 0.8;
-      this.readAloudCacheDialogTranslateY = 50;
+      this.readAloudCacheDialogScale = 0.96;
+      this.readAloudCacheDialogTranslateY = 12;
     });
     setTimeout(() => {
       this.showReadAloudCacheDialog = false;
-    }, 260);
+    }, 200);
   }
 
   private async loadReadAloudCacheManageDetail(showToastOnError: boolean = false): Promise<void> {
@@ -7505,14 +7505,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '90%',
         maxWidth: 620,
         contentPadding: 0,
-        dialogRadius: 18,
+        dialogRadius: 26,
         zIndexValue: 121,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(18)
+          this.buildDialogChrome(26)
           Column({ space: 16 }) {
             Row() {
               Text(this.trackingRule !== null ? '调整更新提醒' : '开启更新提醒')
@@ -7574,7 +7574,7 @@ export struct UnifiedDetailPage {
           .scale({ x: this.trackingDialogScale, y: this.trackingDialogScale })
           .translate({ y: this.trackingDialogTranslateY })
           .opacity(this.trackingDialogOpacity)
-          .borderRadius(18)
+          .borderRadius(26)
           .clip(true)
           .onClick(() => {
           })
@@ -9039,8 +9039,8 @@ export struct UnifiedDetailPage {
     this.novelSettingsActiveTab = 0;
     this.showNovelSettingsDialog = true;
     animateTo({
-      duration: 300,
-      curve: curves.springMotion(0.6, 0.9)
+      duration: 260,
+      curve: Curve.EaseOut
     }, () => {
       this.novelSettingsDialogOpacity = 1;
       this.novelSettingsDialogScale = 1;
@@ -9050,16 +9050,16 @@ export struct UnifiedDetailPage {
 
   private closeNovelSettingsDialog(): void {
     animateTo({
-      duration: 250,
-      curve: Curve.EaseOut
+      duration: 180,
+      curve: Curve.EaseIn
     }, () => {
       this.novelSettingsDialogOpacity = 0;
-      this.novelSettingsDialogScale = 0.8;
-      this.novelSettingsDialogTranslateY = 50;
+      this.novelSettingsDialogScale = 0.96;
+      this.novelSettingsDialogTranslateY = 12;
     });
     setTimeout(() => {
       this.showNovelSettingsDialog = false;
-    }, 260);
+    }, 200);
   }
 
   private cloneRuleIdList(source: string[]): string[] {
@@ -10007,8 +10007,8 @@ export struct UnifiedDetailPage {
     this.downloadSelectedChapters = new Set<number>();
     this.showDownloadDialog = true;
     animateTo({
-      duration: 300,
-      curve: curves.springMotion(0.6, 0.9)
+      duration: 260,
+      curve: Curve.EaseOut
     }, () => {
       this.downloadDialogOpacity = 1;
       this.downloadDialogScale = 1;
@@ -10018,16 +10018,16 @@ export struct UnifiedDetailPage {
 
   private closeDownloadDialog(): void {
     animateTo({
-      duration: 250,
-      curve: Curve.EaseOut
+      duration: 180,
+      curve: Curve.EaseIn
     }, () => {
       this.downloadDialogOpacity = 0;
-      this.downloadDialogScale = 0.8;
-      this.downloadDialogTranslateY = 50;
+      this.downloadDialogScale = 0.96;
+      this.downloadDialogTranslateY = 12;
     });
     setTimeout(() => {
       this.showDownloadDialog = false;
-    }, 260);
+    }, 200);
   }
 
   private toggleChapterSelection(index: number): void {
@@ -10387,15 +10387,15 @@ export struct UnifiedDetailPage {
   }
 
   private hideNovelSettingsCloseConfirmDialog(): void {
-    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+    animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
       this.novelSettingsCloseConfirmOpacity = 0;
-      this.novelSettingsCloseConfirmScale = 0.86;
-      this.novelSettingsCloseConfirmTranslateY = 28;
+      this.novelSettingsCloseConfirmScale = 0.96;
+      this.novelSettingsCloseConfirmTranslateY = 12;
     });
     setTimeout(() => {
       this.isNovelSettingsCloseConfirmDialogVisible = false;
       this.novelSettingsCloseAfterClose = undefined;
-    }, 230);
+    }, 200);
   }
 
   @Builder
@@ -10407,14 +10407,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '88%',
         maxWidth: 420,
         contentPadding: 0,
-        dialogRadius: 18,
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(18)
+          this.buildDialogChrome(26)
           Column({ space: 14 }) {
             Text(this.cacheConfirmTitle)
               .fontSize(18)
@@ -10479,14 +10479,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '92%',
         maxWidth: 520,
         contentPadding: 0,
-        dialogRadius: 18,
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(18)
+          this.buildDialogChrome(26)
           Column({ space: 14 }) {
             Text('存在未应用修改')
               .fontSize(18)
@@ -10560,7 +10560,7 @@ export struct UnifiedDetailPage {
         .scale({ x: this.novelSettingsCloseConfirmScale, y: this.novelSettingsCloseConfirmScale })
         .translate({ y: this.novelSettingsCloseConfirmTranslateY })
         .opacity(this.novelSettingsCloseConfirmOpacity)
-        .borderRadius(18)
+        .borderRadius(26)
         .clip(true)
         .onClick(() => {})
       }
@@ -12086,10 +12086,10 @@ export struct UnifiedDetailPage {
     // 显示对话框
     this.showGenerateCoverDialog = true;
     
-    // 触发入场动画（使用弹簧动画）
+    // 触发入场动画
     animateTo({
-      duration: 350,
-      curve: curves.springMotion(0.6, 0.9)
+      duration: 260,
+      curve: Curve.EaseOut
     }, () => {
       this.dialogOpacity = 1;
       this.dialogScale = 1;
@@ -12243,17 +12243,17 @@ export struct UnifiedDetailPage {
    */
   private closeGenerateCoverDialog(): void {
     animateTo({
-      duration: 250,
-      curve: Curve.EaseOut
+      duration: 180,
+      curve: Curve.EaseIn
     }, () => {
       this.dialogOpacity = 0;
-      this.dialogScale = 0.8;
-      this.dialogTranslateY = 30;
+      this.dialogScale = 0.96;
+      this.dialogTranslateY = 12;
     });
-    
+
     setTimeout(() => {
       this.showGenerateCoverDialog = false;
-    }, 250);
+    }, 200);
   }
   
   /**
@@ -12349,14 +12349,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '90%',
         maxWidth: 640,
         contentPadding: 0,
-        dialogRadius: 18,
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(18)
+          this.buildDialogChrome(26)
           Column({ space: 16 }) {
 
             Row() {
@@ -12472,7 +12472,7 @@ export struct UnifiedDetailPage {
           .scale({ x: this.readAloudCacheDialogScale, y: this.readAloudCacheDialogScale })
           .translate({ y: this.readAloudCacheDialogTranslateY })
           .opacity(this.readAloudCacheDialogOpacity)
-          .borderRadius(18)
+          .borderRadius(26)
           .clip(true)
           .onClick(() => {
           })
@@ -14391,14 +14391,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '90%',
         maxWidth: 400,
         contentPadding: 0,
-        dialogRadius: 18,
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(18)
+          this.buildDialogChrome(26)
           Column({ space: 16 }) {
 
             Row() {
@@ -14471,7 +14471,7 @@ export struct UnifiedDetailPage {
           .scale({ x: this.novelSettingsDialogScale, y: this.novelSettingsDialogScale })
           .translate({ y: this.novelSettingsDialogTranslateY })
           .opacity(this.novelSettingsDialogOpacity)
-          .borderRadius(18)
+          .borderRadius(26)
           .clip(true)
           .onClick(() => {
           })
@@ -14990,14 +14990,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '90%',
         maxWidth: 400,
         contentPadding: 0,
-        dialogRadius: 18,
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(18)
+          this.buildDialogChrome(26)
           Column({ space: 16 }) {
             // 标题栏
 
@@ -15445,7 +15445,7 @@ export struct UnifiedDetailPage {
           .scale({ x: this.downloadDialogScale, y: this.downloadDialogScale })
           .translate({ y: this.downloadDialogTranslateY })
           .opacity(this.downloadDialogOpacity)
-          .borderRadius(18)
+          .borderRadius(26)
           .clip(true)
           .onClick(() => {
           })
@@ -15467,8 +15467,8 @@ export struct UnifiedDetailPage {
     // 显示对话框（带动画）
     this.showChangeSourceDialog = true;
     animateTo({
-      duration: 350,
-      curve: curves.springMotion(0.6, 0.9)
+      duration: 260,
+      curve: Curve.EaseOut
     }, () => {
       this.changeSourceDialogOpacity = 1;
       this.changeSourceDialogScale = 1;
@@ -15569,17 +15569,17 @@ export struct UnifiedDetailPage {
     this.isSearchingSource = false;
     
     animateTo({
-      duration: 250,
-      curve: Curve.EaseOut
+      duration: 180,
+      curve: Curve.EaseIn
     }, () => {
       this.changeSourceDialogOpacity = 0;
-      this.changeSourceDialogScale = 0.8;
-      this.changeSourceDialogTranslateY = 30;
+      this.changeSourceDialogScale = 0.96;
+      this.changeSourceDialogTranslateY = 12;
     });
-    
+
     setTimeout(() => {
       this.showChangeSourceDialog = false;
-    }, 250);
+    }, 200);
   }
   
   /**
@@ -15700,8 +15700,8 @@ export struct UnifiedDetailPage {
     // 显示对话框
     this.showReplaceBookDialog = true;
     animateTo({
-      duration: 350,
-      curve: curves.springMotion(0.6, 0.9)
+      duration: 260,
+      curve: Curve.EaseOut
     }, () => {
       this.replaceDialogOpacity = 1;
       this.replaceDialogScale = 1;
@@ -15714,17 +15714,17 @@ export struct UnifiedDetailPage {
    */
   private closeReplaceBookDialog(): void {
     animateTo({
-      duration: 250,
-      curve: Curve.EaseOut
+      duration: 180,
+      curve: Curve.EaseIn
     }, () => {
       this.replaceDialogOpacity = 0;
-      this.replaceDialogScale = 0.8;
-      this.replaceDialogTranslateY = 30;
+      this.replaceDialogScale = 0.96;
+      this.replaceDialogTranslateY = 12;
     });
     
     setTimeout(() => {
       this.showReplaceBookDialog = false;
-    }, 250);
+    }, 200);
   }
   
   /**
@@ -15947,14 +15947,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '80%',
         maxWidth: 400,
         contentPadding: 0,
-        dialogRadius: this.getDialogRadius(),
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome()
+          this.buildDialogChrome(26)
           Column({ space: 20 }) {
 
             Text('生成封面')
@@ -16052,7 +16052,7 @@ export struct UnifiedDetailPage {
           .scale({ x: this.dialogScale, y: this.dialogScale })
           .translate({ y: this.dialogTranslateY })
           .opacity(this.dialogOpacity)
-          .borderRadius(this.getDialogRadius())
+          .borderRadius(26)
           .clip(true)
           .onClick(() => {
           })
@@ -16075,14 +16075,14 @@ export struct UnifiedDetailPage {
         maxWidth: 420,
         maxHeight: '80%',
         contentPadding: 0,
-        dialogRadius: 20,
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(20)
+          this.buildDialogChrome(26)
           Column({ space: 0 }) {
 
             // 标题栏
@@ -16466,7 +16466,7 @@ export struct UnifiedDetailPage {
           .scale({ x: this.changeSourceDialogScale, y: this.changeSourceDialogScale })
           .translate({ y: this.changeSourceDialogTranslateY })
           .opacity(this.changeSourceDialogOpacity)
-          .borderRadius(20)
+          .borderRadius(26)
           .clip(true)
           .onClick(() => {
           })
@@ -16488,14 +16488,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '90%',
         maxWidth: 360,
         contentPadding: 0,
-        dialogRadius: 20,
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(20)
+          this.buildDialogChrome(26)
           Column({ space: 16 }) {
 
             // 标题栏
@@ -16656,7 +16656,7 @@ export struct UnifiedDetailPage {
           .padding(20)
           .scale({ x: this.addToShelfDialogScale, y: this.addToShelfDialogScale })
           .opacity(this.addToShelfDialogOpacity)
-          .borderRadius(20)
+          .borderRadius(26)
           .clip(true)
           .onClick(() => {
           })
@@ -16678,14 +16678,14 @@ export struct UnifiedDetailPage {
         dialogWidth: '90%',
         maxWidth: 380,
         contentPadding: 0,
-        dialogRadius: 20,
+        dialogRadius: 26,
         zIndexValue: 120,
         useMaskBlur: true,
         maskBlurStyle: this.getDialogMaskBlurStyle(),
         maskColor: this.getDialogMaskColor()
       }) {
         Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(20)
+          this.buildDialogChrome(26)
           Column({ space: 16 }) {
 
             // 标题栏
@@ -16970,6 +16970,8 @@ export struct UnifiedDetailPage {
           .scale({ x: this.replaceDialogScale, y: this.replaceDialogScale })
           .translate({ y: this.replaceDialogTranslateY })
           .opacity(this.replaceDialogOpacity)
+          .borderRadius(26)
+          .clip(true)
           .borderRadius(20)
           .clip(true)
           .onClick(() => {
@@ -17003,8 +17005,8 @@ export struct UnifiedDetailPage {
       // 始终显示对话框（包含默认书架选项）
       this.showAddToShelfDialog = true;
       animateTo({
-        duration: 300,
-        curve: curves.springMotion(0.6, 0.9)
+        duration: 260,
+        curve: Curve.EaseOut
       }, () => {
         this.addToShelfDialogOpacity = 1;
         this.addToShelfDialogScale = 1;
@@ -17022,16 +17024,16 @@ export struct UnifiedDetailPage {
       return;
     }
     animateTo({
-      duration: 250,
-      curve: Curve.EaseOut
+      duration: 180,
+      curve: Curve.EaseIn
     }, () => {
       this.addToShelfDialogOpacity = 0;
-      this.addToShelfDialogScale = 0.8;
+      this.addToShelfDialogScale = 0.96;
     });
-    
+
     setTimeout(() => {
       this.showAddToShelfDialog = false;
-    }, 260);
+    }, 200);
   }
 
   /**

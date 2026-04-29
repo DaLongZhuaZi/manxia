@@ -94,6 +94,15 @@ interface FileTreeNode {
   children: FileTreeNode[];
   expanded: boolean;
   fileType: string;
+  size: number;
+}
+
+// 扁平化树节点（用于渲染）
+interface FlatTreeItem {
+  node: FileTreeNode;
+  depth: number;
+  isExpanded: boolean;
+  hasChildren: boolean;
 }
 
 @Component
@@ -186,8 +195,14 @@ struct DownloadSyncPage {
   @State private importedFilesMap: Map<string, boolean> = new Map();
   // 文件树结构
   @State private fileTree: FileTreeNode[] = [];
-  // 展开的节点路径集合
-  @State private expandedPaths: Set<string> = new Set();
+  // 展开的节点路径集合（用普通对象实现，兼容ArkTS）
+  private expandedPaths: Record<string, boolean> = {};
+  // 选中的文件路径集合
+  @State private selectedPaths: string[] = [];
+  // 扁平化的可见树节点列表
+  @State private flatTreeItems: FlatTreeItem[] = [];
+  // 树结构版本号（用于触发UI刷新）
+  @State private treeVersion: number = 0;
   // 封面字体倍率
   @State private coverFontScale: number = 1.0;
 
@@ -574,6 +589,34 @@ A: 不会，原文件保持不变。`;
     return $r('sys.symbol.folder');
   }
 
+  private getReservedFolderSymbol(name: string): Resource {
+    switch (name.toLowerCase()) {
+      case 'ebooks': return $r('sys.symbol.book');
+      case 'manga': return $r('sys.symbol.rectangle_stack');
+      case 'novel': return $r('sys.symbol.text_book_closed');
+      case 'storage': return $r('sys.symbol.externaldrive');
+      case 'covers': return $r('sys.symbol.camera');
+      case 'temp': return $r('sys.symbol.clock');
+      case 'backup': return $r('sys.symbol.arrow_clockwise');
+      case 'legadoextensions': return $r('sys.symbol.gearshape');
+      default: return $r('sys.symbol.folder_fill');
+    }
+  }
+
+  private getReservedFolderLabel(name: string): string {
+    switch (name.toLowerCase()) {
+      case 'ebooks': return '电子书库';
+      case 'manga': return '漫画缓存';
+      case 'novel': return '小说库';
+      case 'storage': return '应用存储';
+      case 'covers': return '封面图片';
+      case 'temp': return '临时文件';
+      case 'backup': return '数据备份';
+      case 'legadoextensions': return '阅读扩展';
+      default: return '保留文件夹';
+    }
+  }
+
   private sanitizeFolderName(name: string): string {
     return name.replace(/[\\/:*?"<>|]/g, '_').substring(0, 50);
   }
@@ -761,11 +804,13 @@ A: 不会，原文件保持不变。`;
     this.pendingNovelFiles = [];
     this.downloadDirFiles = [];
     this.fileTree = [];
+    this.flatTreeItems = [];
     
     try {
       this.fileTree = this.scanDirectoryRecursive(this.downloadDirPath, '');
       this.downloadDirFileCount = this.countFilesInTree(this.fileTree);
       this.collectImportableFiles(this.fileTree, '');
+      this.rebuildFlatTree();
       
       const totalPending = this.pendingMangaFiles.length + this.pendingEbookFiles.length + 
                           this.pendingPdfFiles.length + this.pendingNovelFiles.length;
@@ -814,12 +859,15 @@ A: 不会，原文件保持不变。`;
             isImported: !isDir && this.isFileImported(entry),
             children: [],
             expanded: false,
-            fileType: isDir ? 'folder' : this.getFileTypeLabel(entry)
+            fileType: isDir ? 'folder' : this.getFileTypeLabel(entry),
+            size: isDir ? 0 : stat.size
           };
-          
-          // 如果是目录且不是保留文件夹，递归扫描
-          if (isDir && !isReserved) {
+
+          // 如果是目录，递归扫描（包括保留文件夹以便展开查看内容）
+          if (isDir) {
             node.children = this.scanDirectoryRecursive(basePath, entryPath);
+            // 计算目录总大小
+            node.size = this.getTreeSize(node.children);
           }
           
           result.push(node);
@@ -848,14 +896,43 @@ A: 不会，原文件保持不变。`;
     let count = 0;
     for (const node of nodes) {
       if (node.isDirectory) {
-        if (!node.isReserved) {
-          count += this.countFilesInTree(node.children);
-        }
+        count += this.countFilesInTree(node.children);
       } else {
         count++;
       }
     }
     return count;
+  }
+
+  private getTreeSize(nodes: FileTreeNode[]): number {
+    let total = 0;
+    for (const node of nodes) {
+      total += node.size;
+    }
+    return total;
+  }
+
+  private formatSize(bytes: number): string {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    const idx = Math.min(i, units.length - 1);
+    return (bytes / Math.pow(1024, idx)).toFixed(idx > 0 ? 1 : 0) + ' ' + units[idx];
+  }
+
+  private rebuildFlatTree(): void {
+    const items: FlatTreeItem[] = [];
+    const walk = (nodes: FileTreeNode[], depth: number) => {
+      for (const node of nodes) {
+        const expanded = node.isDirectory && this.expandedPaths[node.path] === true;
+        items.push({ node, depth, isExpanded: expanded, hasChildren: node.children.length > 0 });
+        if (expanded && node.children.length > 0) {
+          walk(node.children, depth + 1);
+        }
+      }
+    };
+    walk(this.fileTree, 0);
+    this.flatTreeItems = items;
   }
 
   /**
@@ -1243,6 +1320,57 @@ A: 不会，原文件保持不变。`;
         offsetY: 8
       })
 
+      // 选中文件操作栏
+      if (this.getSelectedCount() > 0) {
+        Column({ space: 10 }) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill')).fontSize(16).fontColor(['#4CAF50'])
+            Text(`已选中 ${this.getSelectedCount()} 个文件`)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Button({ stateEffect: true, type: ButtonType.Normal }) {
+              Text('取消').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)).fontFamily(this.appFontFamily)
+            }
+            .height(28)
+            .padding({ left: 10, right: 10 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(6)
+            .onClick(() => {
+              this.selectedPaths = [];
+              this.treeVersion++;
+              this.rebuildFlatTree();
+            })
+          }
+          .width('100%')
+
+          Button({ stateEffect: true, type: ButtonType.Normal }) {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.arrow_down_circle')).fontSize(14).fontColor([Color.White])
+              Text('导入选中').fontSize(13).fontColor(Color.White).fontFamily(this.appFontFamily)
+            }
+          }
+          .width('100%')
+          .height(36)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .borderRadius(8)
+          .onClick(() => {
+            this.importSelectedFiles();
+          })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+        .borderRadius(10)
+        .border({
+          width: 1,
+          color: '#4CAF50'
+        })
+      }
+
       // 文件树状图
       if (this.fileTree.length > 0) {
         Column({ space: 8 }) {
@@ -1261,9 +1389,102 @@ A: 不会，原文件保持不变。`;
           .width('100%')
 
           // 渲染文件树
-          ForEach(this.fileTree, (node: FileTreeNode) => {
-            this.buildTreeNode(node, 0)
-          })
+          ForEach(this.flatTreeItems, (item: FlatTreeItem) => {
+            Row({ space: 6 }) {
+              // 缩进
+              if (item.depth > 0) {
+                Blank().width(item.depth * 20)
+              }
+
+              // 展开/折叠图标
+              if (item.node.isDirectory && item.hasChildren) {
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(14)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+                  .rotate({ angle: item.isExpanded ? 90 : 0 })
+                  .animation({ duration: 200, curve: Curve.EaseInOut })
+              } else {
+                Blank().width(14)
+              }
+
+              // 文件/文件夹图标
+              SymbolGlyph(item.node.isDirectory ? (item.node.isReserved ? this.getReservedFolderSymbol(item.node.name) : $r('sys.symbol.folder_fill')) : this.getFileIconResource(item.node.name))
+                .fontSize(18)
+                .fontColor([item.node.isReserved ? '#FF9800' :
+                  (item.node.isDirectory ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                  (item.node.isImported ? '#4CAF50' : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)))])
+
+              // 名称 + 大小 + 副标签
+              Column({ space: 2 }) {
+                Row({ space: 6 }) {
+                  Text(item.node.name)
+                    .fontSize(13)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(item.node.isReserved ? '#FF9800' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .layoutWeight(1)
+                  if (item.node.isDirectory && item.node.size > 0) {
+                    Text(this.formatSize(item.node.size))
+                      .fontSize(11)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  }
+                }
+                .width('100%')
+
+                if (item.node.isReserved) {
+                  Row({ space: 4 }) {
+                    Text(this.getReservedFolderLabel(item.node.name)).fontSize(10).fontFamily(this.appFontFamily).fontColor('#FF9800')
+                    if (item.node.size > 0) {
+                      Text('· ' + this.formatSize(item.node.size)).fontSize(10).fontFamily(this.appFontFamily).fontColor('#FF9800')
+                    }
+                  }
+                } else if (item.node.isDirectory) {
+                  Text(`${item.node.children.length} 项`).fontSize(10).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                } else {
+                  Text(item.node.fileType).fontSize(10).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              // 选择/状态标记（仅文件）
+              if (!item.node.isDirectory && !item.node.isReserved) {
+                if (this.selectedPaths.includes(item.node.path)) {
+                  SymbolGlyph($r('sys.symbol.checkmark_circle_fill')).fontSize(16).fontColor(['#4CAF50'])
+                    .onClick(() => {
+                      this.selectedPaths = this.selectedPaths.filter((p: string) => p !== item.node.path);
+                      this.treeVersion++;
+                      this.rebuildFlatTree();
+                    })
+                } else if (item.node.isImported) {
+                  SymbolGlyph($r('sys.symbol.checkmark_circle')).fontSize(16).fontColor(['#4CAF50'])
+                    .onClick(() => {
+                      this.selectedPaths = [...this.selectedPaths, item.node.path];
+                      this.treeVersion++;
+                      this.rebuildFlatTree();
+                    })
+                } else {
+                  SymbolGlyph($r('sys.symbol.circle')).fontSize(16).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+                    .onClick(() => {
+                      this.selectedPaths = [...this.selectedPaths, item.node.path];
+                      this.treeVersion++;
+                      this.rebuildFlatTree();
+                    })
+                }
+              }
+            }
+            .width('100%')
+            .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+            .backgroundColor(item.node.isReserved ? '#FFF3E0' : Color.Transparent)
+            .borderRadius(6)
+            .onClick(() => {
+              if (item.node.isDirectory && item.hasChildren) {
+                this.toggleNodeExpanded(item.node.path);
+              }
+            })
+          }, (item: FlatTreeItem) => `${item.node.path}_${item.isExpanded}_${this.selectedPaths.includes(item.node.path) ? 1 : 0}`)
         }
         .width('100%')
         .padding(16)
@@ -1352,6 +1573,78 @@ A: 不会，原文件保持不变。`;
     return count;
   }
 
+  private getSelectedCount(): number {
+    return this.selectedPaths.length;
+  }
+
+  private async importSelectedFiles(): Promise<void> {
+    const selected = this.selectedPaths;
+
+    if (selected.length === 0) {
+      promptAction.showToast({ message: '请先选择要导入的文件' });
+      return;
+    }
+
+    // 按类型分类选中的文件
+    const mangaFiles: string[] = [];
+    const ebookFiles: string[] = [];
+    const pdfFiles: string[] = [];
+    const novelFiles: string[] = [];
+
+    for (const relativePath of selected) {
+      const ext = this.getDownloadFileExtension(relativePath);
+      if (DownloadSyncPage.MANGA_EXTENSIONS.includes(ext)) {
+        mangaFiles.push(relativePath);
+      } else if (DownloadSyncPage.EBOOK_EXTENSIONS.includes(ext)) {
+        ebookFiles.push(relativePath);
+      } else if (DownloadSyncPage.PDF_EXTENSIONS.includes(ext)) {
+        pdfFiles.push(relativePath);
+      } else if (DownloadSyncPage.NOVEL_EXTENSIONS.includes(ext)) {
+        novelFiles.push(relativePath);
+      }
+    }
+
+    if (mangaFiles.length === 0 && ebookFiles.length === 0 && pdfFiles.length === 0 && novelFiles.length === 0) {
+      promptAction.showToast({ message: '选中的文件类型不支持导入' });
+      return;
+    }
+
+    // 临时替换pending列表，复用现有导入逻辑
+    const origManga = this.pendingMangaFiles;
+    const origEbook = this.pendingEbookFiles;
+    const origPdf = this.pendingPdfFiles;
+    const origNovel = this.pendingNovelFiles;
+
+    this.pendingMangaFiles = mangaFiles;
+    this.pendingEbookFiles = ebookFiles;
+    this.pendingPdfFiles = pdfFiles;
+    this.pendingNovelFiles = novelFiles;
+
+    try {
+      if (mangaFiles.length > 0) {
+        await this.importMangaFromDownloadDir();
+      }
+      if (ebookFiles.length > 0) {
+        await this.importEbooksFromDownloadDir();
+      }
+      if (pdfFiles.length > 0) {
+        await this.importPdfsFromDownloadDir();
+      }
+      if (novelFiles.length > 0) {
+        await this.importNovelsFromDownloadDir();
+      }
+
+      // 清除选择并刷新
+      this.selectedPaths = [];
+      await this.reloadDownloadImportState();
+    } finally {
+      this.pendingMangaFiles = origManga;
+      this.pendingEbookFiles = origEbook;
+      this.pendingPdfFiles = origPdf;
+      this.pendingNovelFiles = origNovel;
+    }
+  }
+
   private getFileTypeLabel(filename: string): string {
     const ext = this.getDownloadFileExtension(filename);
     if (DownloadSyncPage.MANGA_EXTENSIONS.includes(ext)) return '漫画';
@@ -1362,81 +1655,93 @@ A: 不会，原文件保持不变。`;
   }
 
   @Builder
-  buildTreeNode(node: FileTreeNode, depth: number) {
-    Column() {
-      Row({ space: 8 }) {
-        // 缩进
-        if (depth > 0) {
-          Blank().width(depth * 20)
-        }
-        
-        // 展开/折叠图标（仅目录）
-        if (node.isDirectory) {
-          SymbolGlyph(this.expandedPaths.has(node.path) ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
-            .fontSize(14)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-            .onClick(() => {
-              this.toggleNodeExpanded(node.path);
-            })
-        } else {
-          Blank().width(14)
-        }
-        
-        // 文件/文件夹图标
-        SymbolGlyph(node.isDirectory ? $r('sys.symbol.folder_fill') : this.getFileIconResource(node.name))
-          .fontSize(18)
-          .fontColor([node.isReserved ? '#FF9800' : 
-            (node.isDirectory ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-            (node.isImported ? '#4CAF50' : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)))])
-        
-        // 名称
-        Column({ space: 2 }) {
-          Text(node.name)
+  buildFlatTreeItem(item: FlatTreeItem) {
+    Row({ space: 6 }) {
+      // 缩进
+      if (item.depth > 0) {
+        Blank().width(item.depth * 20)
+      }
+
+      // 展开/折叠图标（仅目录）
+      if (item.node.isDirectory && item.hasChildren) {
+        SymbolGlyph(item.isExpanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+          .fontSize(14)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+      } else {
+        Blank().width(14)
+      }
+
+      // 文件/文件夹图标
+      SymbolGlyph(item.node.isDirectory ? (item.node.isReserved ? this.getReservedFolderSymbol(item.node.name) : $r('sys.symbol.folder_fill')) : this.getFileIconResource(item.node.name))
+        .fontSize(18)
+        .fontColor([item.node.isReserved ? '#FF9800' :
+          (item.node.isDirectory ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+          (item.node.isImported ? '#4CAF50' : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)))])
+
+      // 名称 + 大小 + 副标签
+      Column({ space: 2 }) {
+        Row({ space: 6 }) {
+          Text(item.node.name)
             .fontSize(13)
             .fontFamily(this.appFontFamily)
-            .fontColor(node.isReserved ? '#FF9800' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .fontColor(item.node.isReserved ? '#FF9800' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-          if (node.isReserved) {
-            Text('保留文件夹').fontSize(10).fontFamily(this.appFontFamily).fontColor('#FF9800')
-          } else if (!node.isDirectory) {
-            Text(node.fileType).fontSize(10).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .layoutWeight(1)
+          if (item.node.isDirectory && item.node.size > 0) {
+            Text(this.formatSize(item.node.size))
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
         }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        
-        // 状态标记
-        if (!node.isDirectory && !node.isReserved) {
-          if (node.isImported) {
-            SymbolGlyph($r('sys.symbol.checkmark_circle_fill')).fontSize(14).fontColor(['#4CAF50'])
-          } else {
-            SymbolGlyph($r('sys.symbol.circle')).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        .width('100%')
+
+        if (item.node.isReserved) {
+          Row({ space: 4 }) {
+            Text(this.getReservedFolderLabel(item.node.name)).fontSize(10).fontFamily(this.appFontFamily).fontColor('#FF9800')
+            if (item.node.size > 0) {
+              Text('· ' + this.formatSize(item.node.size)).fontSize(10).fontFamily(this.appFontFamily).fontColor('#FF9800')
+            }
           }
+        } else if (item.node.isDirectory) {
+          Text(`${item.node.children.length} 项`).fontSize(10).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        } else {
+          Text(item.node.fileType).fontSize(10).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
       }
-      .width('100%')
-      .padding({ top: 6, bottom: 6, left: 8, right: 8 })
-      .backgroundColor(node.isReserved ? '#FFF3E0' : Color.Transparent)
-      .borderRadius(6)
-      
-      // 递归渲染子节点
-      if (node.isDirectory && this.expandedPaths.has(node.path) && node.children.length > 0) {
-        ForEach(node.children, (child: FileTreeNode) => {
-          this.buildTreeNode(child, depth + 1)
-        }, (child: FileTreeNode) => child.path)
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      // 状态标记（仅文件）
+      if (!item.node.isDirectory && !item.node.isReserved) {
+        if (item.node.isImported) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle_fill')).fontSize(14).fontColor(['#4CAF50'])
+        } else {
+          SymbolGlyph($r('sys.symbol.circle')).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        }
       }
     }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+    .backgroundColor(item.node.isReserved ? '#FFF3E0' : Color.Transparent)
+    .borderRadius(6)
+    .onClick(() => {
+      if (item.node.isDirectory && item.hasChildren) {
+        this.toggleNodeExpanded(item.node.path);
+      }
+    })
   }
 
   private toggleNodeExpanded(path: string): void {
-    const newSet = new Set(this.expandedPaths);
-    if (newSet.has(path)) {
-      newSet.delete(path);
-    } else {
-      newSet.add(path);
-    }
-    this.expandedPaths = newSet;
+    this.expandedPaths[path] = !this.expandedPaths[path];
+    animateTo({
+      duration: 250,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.treeVersion++;
+      this.rebuildFlatTree();
+    });
   }
 
   @Builder
@@ -1986,6 +2291,7 @@ A: 不会，原文件保持不变。`;
         }
       }),
       autoCancel: false,
+      customStyle: true,
       alignment: DialogAlignment.Center
     });
 

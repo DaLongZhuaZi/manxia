@@ -17,6 +17,7 @@ import {
   WebDAVNativeFileInfo,
   WebDAVNativeListResult
 } from '../WebDAV/WebDAVNativeClient';
+import { WebDAVClient, WebDAVConfig, WebDAVFile } from '../WebDAV/WebDAVClient';
 import { SandboxManager } from '../Storage/SandboxManager';
 import DownloadDirManager from '../Storage/DownloadDirManager';
 import {
@@ -41,6 +42,7 @@ const PREF_NAME = 'network_folder_preferences';
 const CONNECTIONS_KEY = 'connections';
 const LAST_CONNECTION_KEY = 'last_connection_id';
 const LAST_PATHS_KEY = 'last_paths';
+const FAVORITE_PATHS_KEY = 'favorite_paths';
 const STATE_FILE_NAME = 'network_folder_state.json';
 const STATE_VERSION = 1;
 const DIRECTORY_CACHE_FRESH_TTL_MS = 5 * 60 * 1000;
@@ -103,6 +105,11 @@ interface PersistedLastPathEntry {
   relativePath: string;
 }
 
+interface FavoritePathEntry {
+  connectionId: string;
+  relativePath: string;
+}
+
 interface CachedDirectoryPair {
   key: string;
   value: CachedDirectoryEntry;
@@ -128,6 +135,7 @@ export class NetworkFolderManager {
   private lastPaths: Map<string, string> = new Map<string, string>();
   private directoryCache: Map<string, CachedDirectoryEntry> = new Map<string, CachedDirectoryEntry>();
   private downloadCache: Map<string, CachedDownloadEntry> = new Map<string, CachedDownloadEntry>();
+  private favoritePaths: Map<string, Set<string>> = new Map<string, Set<string>>();
 
   private rootDir: string = '';
   private downloadsDir: string = '';
@@ -226,6 +234,7 @@ export class NetworkFolderManager {
     logger.info(TAG, `删除网络连接：${connectionId}`);
     this.connections = this.connections.filter((item: NetworkFolderConnection) => item.id !== connectionId);
     this.lastPaths.delete(connectionId);
+    this.favoritePaths.delete(connectionId);
     if (this.lastConnectionId === connectionId) {
       this.lastConnectionId = '';
     }
@@ -233,6 +242,48 @@ export class NetworkFolderManager {
     await this.persistConnections();
     await this.persistLastState();
     logger.info(TAG, `网络连接已删除：${connectionId}`);
+  }
+
+  public isFavoriteFolder(connectionId: string, path: string): boolean {
+    const normalizedPath = normalizeRelativeNetworkFolderPath(path);
+    const pathSet = this.favoritePaths.get(connectionId);
+    return pathSet ? pathSet.has(normalizedPath) : false;
+  }
+
+  public async toggleFavoriteFolder(connectionId: string, path: string): Promise<boolean> {
+    this.ensureInitialized();
+    const normalizedPath = normalizeRelativeNetworkFolderPath(path);
+    let pathSet = this.favoritePaths.get(connectionId);
+    if (!pathSet) {
+      pathSet = new Set<string>();
+      this.favoritePaths.set(connectionId, pathSet);
+    }
+
+    let newState: boolean;
+    if (pathSet.has(normalizedPath)) {
+      pathSet.delete(normalizedPath);
+      newState = false;
+      logger.info(TAG, `取消收藏文件夹：connection=${connectionId}，path=${normalizedPath}`);
+    } else {
+      pathSet.add(normalizedPath);
+      newState = true;
+      logger.info(TAG, `收藏文件夹：connection=${connectionId}，path=${normalizedPath}`);
+    }
+
+    await this.persistFavoritePaths();
+    return newState;
+  }
+
+  public getFavoriteFolders(connectionId: string): string[] {
+    const pathSet = this.favoritePaths.get(connectionId);
+    if (!pathSet || pathSet.size === 0) {
+      return [];
+    }
+    const result: string[] = [];
+    pathSet.forEach((path: string) => {
+      result.push(path);
+    });
+    return result;
   }
 
   public async testConnection(connection: NetworkFolderConnection): Promise<NetworkFolderConnectionTestResult> {
@@ -679,24 +730,44 @@ export class NetworkFolderManager {
     connection: NetworkFolderConnection,
     relativePath: string
   ): Promise<NetworkFolderBrowseResult> {
-    const client = new WebDAVNativeClient(this.buildWebDAVConfig(connection));
+    // 优先使用 Native 客户端
+    const nativeClient = new WebDAVNativeClient(this.buildWebDAVConfig(connection));
     try {
-      const result: WebDAVNativeListResult = await client.getDirectoryContents(this.resolveWebDAVClientPath(relativePath));
-      if (!result.success) {
+      const result: WebDAVNativeListResult = await nativeClient.getDirectoryContents(this.resolveWebDAVClientPath(relativePath));
+      if (result.success) {
+        const entries = this.normalizeWebDAVEntries(connection, relativePath, result.files);
         return {
-          success: false,
-          message: result.message || '加载 WebDAV 目录失败',
-          entries: [],
+          success: true,
+          message: result.message || `WebDAV 目录加载完成，共 ${entries.length} 项`,
+          entries: entries,
           fromCache: false,
           stale: false,
-          loadedAt: 0
+          loadedAt: Date.now()
         };
       }
+      // Native 失败，降级到 ArkTS HTTP 客户端
+      logger.warn(TAG, `Native WebDAV 失败(${result.message})，降级到 ArkTS HTTP 客户端`);
+    } catch (error) {
+      logger.warn(TAG, `Native WebDAV 异常(${String(error)})，降级到 ArkTS HTTP 客户端`);
+    } finally {
+      nativeClient.destroy();
+    }
 
-      const entries = this.normalizeWebDAVEntries(connection, relativePath, result.files);
+    // 降级：使用纯 ArkTS HTTP 实现
+    try {
+      const fallbackConfig: WebDAVConfig = {
+        serverUrl: connection.serverUrl.trim(),
+        username: connection.username,
+        password: connection.password,
+        basePath: normalizeConnectionBasePath(connection.basePath)
+      };
+      const fallbackClient = new WebDAVClient(fallbackConfig);
+      const webdavPath = this.resolveWebDAVClientPath(relativePath);
+      const files: WebDAVFile[] = await fallbackClient.getDirectoryContents(webdavPath);
+      const entries = this.normalizeWebDAVFallbackEntries(connection, relativePath, files);
       return {
         success: true,
-        message: result.message || `WebDAV 目录加载完成，共 ${entries.length} 项`,
+        message: `WebDAV 目录加载完成(ArkTS HTTP)，共 ${entries.length} 项`,
         entries: entries,
         fromCache: false,
         stale: false,
@@ -711,8 +782,6 @@ export class NetworkFolderManager {
         stale: false,
         loadedAt: 0
       };
-    } finally {
-      client.destroy();
     }
   }
 
@@ -789,6 +858,44 @@ export class NetworkFolderManager {
     connection: NetworkFolderConnection,
     currentRelativePath: string,
     files: WebDAVNativeFileInfo[]
+  ): NetworkFolderEntry[] {
+    const entries: NetworkFolderEntry[] = [];
+    const normalizedCurrentPath = normalizeRelativeNetworkFolderPath(currentRelativePath);
+
+    for (const file of files) {
+      const trimmedName = (file.name || '').trim();
+      if (!trimmedName || trimmedName === '.' || trimmedName === '..') {
+        continue;
+      }
+
+      let relativePath = this.normalizeRemoteActualPathToRelative(connection, file.path || '');
+      if (relativePath === normalizedCurrentPath) {
+        continue;
+      }
+      if (relativePath === '/') {
+        relativePath = joinRelativeNetworkFolderPath(normalizedCurrentPath, trimmedName);
+      }
+
+      entries.push(this.createEntry({
+        name: trimmedName,
+        relativePath: relativePath,
+        actualPath: this.resolveActualPath(connection, relativePath),
+        size: file.isDirectory ? 0 : (Number(file.size) || 0),
+        isDirectory: file.isDirectory,
+        lastModified: Number(file.lastModified) || 0,
+        etag: file.etag || '',
+        contentType: file.contentType || '',
+        permissions: ''
+      }));
+    }
+
+    return this.sortEntries(entries);
+  }
+
+  private normalizeWebDAVFallbackEntries(
+    connection: NetworkFolderConnection,
+    currentRelativePath: string,
+    files: WebDAVFile[]
   ): NetworkFolderEntry[] {
     const entries: NetworkFolderEntry[] = [];
     const normalizedCurrentPath = normalizeRelativeNetworkFolderPath(currentRelativePath);
@@ -1010,6 +1117,28 @@ export class NetworkFolderManager {
     this.connections = parsed.connections;
     this.lastConnectionId = parsed.lastConnectionId;
     this.lastPaths = parsed.lastPaths;
+
+    try {
+      const rawFavorites = String(await this.pref!.get(FAVORITE_PATHS_KEY, '[]'));
+      const favoriteItems = this.safeParseJson<FavoritePathEntry[]>(rawFavorites, []);
+      this.favoritePaths.clear();
+      if (Array.isArray(favoriteItems)) {
+        favoriteItems.forEach((item: FavoritePathEntry) => {
+          if (!item || !item.connectionId) {
+            return;
+          }
+          const normalizedPath = normalizeRelativeNetworkFolderPath(item.relativePath || '/');
+          let pathSet = this.favoritePaths.get(item.connectionId);
+          if (!pathSet) {
+            pathSet = new Set<string>();
+            this.favoritePaths.set(item.connectionId, pathSet);
+          }
+          pathSet.add(normalizedPath);
+        });
+      }
+    } catch (error) {
+      logger.error(TAG, `加载收藏夹偏好失败：${String(error)}`);
+    }
   }
 
   private loadPersistedState(): void {
@@ -1161,6 +1290,7 @@ export class NetworkFolderManager {
       basePath: connection.basePath,
       passive: connection.passive,
       verifySSL: connection.verifySSL,
+      verifyHostKey: connection.verifyHostKey,
       timeoutMs: connection.timeoutMs,
       createdAt: connection.createdAt,
       lastUsedAt: connection.lastUsedAt
@@ -1245,6 +1375,21 @@ export class NetworkFolderManager {
     });
     await this.pref!.put(LAST_CONNECTION_KEY, this.lastConnectionId);
     await this.pref!.put(LAST_PATHS_KEY, JSON.stringify(lastPathItems));
+    await this.pref!.flush();
+  }
+
+  private async persistFavoritePaths(): Promise<void> {
+    this.ensurePreferenceStore();
+    const favoriteItems: FavoritePathEntry[] = [];
+    this.favoritePaths.forEach((pathSet: Set<string>, connectionId: string) => {
+      pathSet.forEach((path: string) => {
+        favoriteItems.push({
+          connectionId: connectionId,
+          relativePath: path
+        });
+      });
+    });
+    await this.pref!.put(FAVORITE_PATHS_KEY, JSON.stringify(favoriteItems));
     await this.pref!.flush();
   }
 
@@ -1492,6 +1637,7 @@ export class NetworkFolderManager {
       basePath: normalizedBasePath,
       passive: connection.passive !== false,
       verifySSL: connection.verifySSL !== false,
+      verifyHostKey: connection.verifyHostKey !== false,
       timeoutMs: Number(connection.timeoutMs) > 0 ? Math.floor(Number(connection.timeoutMs)) : 30000,
       createdAt: Number(connection.createdAt) || Date.now(),
       lastUsedAt: Number(connection.lastUsedAt) || 0

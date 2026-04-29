@@ -2,7 +2,25 @@
   "permissions": {
     "allow": [
       "Bash(xargs grep *)",
-      "Bash(grep -v \"//\")"
+      "Bash(grep -v \"//\")",
+      "WebSearch",
+      "WebFetch(domain:developer.huawei.com)",
+      "WebFetch(domain:ohpm.openharmony.cn)",
+      "WebFetch(domain:gitee.com)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "Bash(curl -L -o libssh2-1.11.0.tar.gz \"https://github.com/libssh2/libssh2/releases/download/libssh2-1.11.0/libssh2-1.11.0.tar.gz\")",
+      "Bash(tar -xzf libssh2-1.11.0.tar.gz)",
+      "Bash(\"F:/DevEco Studio/sdk/default/openharmony/native/build-tools/cmake/bin/cmake.exe\" --build . --target install)",
+      "Bash(rm -rf *)",
+      "Bash('F:/DevEco Studio/sdk/default/openharmony/native/build-tools/cmake/bin/cmake.exe' -G Ninja '-DCMAKE_TOOLCHAIN_FILE=F:/DevEco Studio/sdk/default/openharmony/native/build/cmake/ohos.toolchain.cmake' '-DCMAKE_MAKE_PROGRAM=F:/DevEco Studio/sdk/default/openharmony/native/build-tools/cmake/bin/ninja.exe' -DOHOS_ARCH=arm64-v8a -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DBUILD_CURL_EXE=OFF -DCURL_DISABLE_LDAP=ON -DCURL_DISABLE_LDAPS=ON -DCURL_DISABLE_TELNET=ON -DCURL_DISABLE_DICT=ON -DCURL_DISABLE_FILE=OFF -DCURL_DISABLE_TFTP=ON -DCURL_DISABLE_RTSP=ON -DCURL_DISABLE_POP3=ON -DCURL_DISABLE_IMAP=ON -DCURL_DISABLE_SMTP=ON -DCURL_DISABLE_GOPHER=ON -DCURL_DISABLE_SMB=ON -DCURL_DISABLE_FTP=OFF -DHTTP_ONLY=OFF -DCURL_USE_OPENSSL=OFF -DCURL_USE_MBEDTLS=ON -DMBEDTLS_INCLUDE_DIRS=__CMDSUB_OUTPUT__/../install-mbedtls-arm64/include -DMBEDTLS_LIBRARY=__CMDSUB_OUTPUT__/../install-mbedtls-arm64/lib/libmbedtls.so -DMBEDX509_LIBRARY=__CMDSUB_OUTPUT__/../install-mbedtls-arm64/lib/libmbedx509.so -DMBEDCRYPTO_LIBRARY=__CMDSUB_OUTPUT__/../install-mbedtls-arm64/lib/libmbedcrypto.so -DCURL_ZLIB=OFF -DENABLE_UNIX_SOCKETS=OFF -DCURL_USE_LIBSSH2=ON -DLIBSSH2_INCLUDE_DIR=__CMDSUB_OUTPUT__/../install-libssh2-arm64/include -DLIBSSH2_LIBRARY=__CMDSUB_OUTPUT__/../install-libssh2-arm64/lib/libssh2.a -DCMAKE_INSTALL_PREFIX=../install-curl-https-arm64 ../curl-8.5.0)",
+      "Bash(cd /d \"F:\\\\DevEcoStudioProject\\\\manxia\")",
+      "Bash(dir /b)",
+      "Read(//c/Users/13359/.claude/plans/**)",
+      "Bash(mkdir -p \"C:\\\\Users\\\\13359\\\\.claude\\\\plans\")",
+      "Bash(python3 *)",
+      "Bash(tee *)",
+      "WebFetch(domain:bytedance.larkoffice.com)",
+      "WebFetch(domain:godamh.com)"
     ]
   }
 }

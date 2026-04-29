@@ -45,6 +45,13 @@ export enum ReadingDirection {
 /**
  * 页面信息接口
  */
+export interface MangaImageRequestHeader {
+  /** 请求头名称 */
+  name: string;
+  /** 请求头值 */
+  value: string;
+}
+
 export interface MangaPage {
   /** 页面ID */
   id: string;
@@ -64,6 +71,8 @@ export interface MangaPage {
   height?: number;
   /** 文件大小（字节） */
   fileSize?: number;
+  /** 页面级网络请求头 */
+  requestHeaders?: MangaImageRequestHeader[];
   /** 是否已加载 */
   isLoaded: boolean;
   /** 错误信息 */
