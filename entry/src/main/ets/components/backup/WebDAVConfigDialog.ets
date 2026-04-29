@@ -1,6 +1,7 @@
 /**
  * WebDAV配置对话框
- * 
+ * 玻璃效果 + 网络扫描 + 与网络文件夹页面同风格布局
+ *
  * 文件路径: entry/src/main/ets/components/backup/WebDAVConfigDialog.ets
  */
 
@@ -11,8 +12,12 @@ import { logger } from '../../Utils/Logger';
 import { WebDAVTestResult } from '../../Framework/WebDAV/WebDAVClient';
 import { WebDAVErrorAnalyzer, WEBDAV_SERVER_GUIDES, WebDAVServerGuide } from '../../Framework/WebDAV/WebDAVErrorAnalyzer';
 import { getAutoBackupScheduler, formatNextBackupTime, AutoBackupStatus } from '../../Framework/WebDAV/WebDAVAutoBackupScheduler';
+import { SettingsPanelSurfaceHelper } from '../../pages/settings/SettingsPanelSurfaceHelper';
+import { NetworkScannerAdapter } from '../../Framework/Network/NetworkScannerAdapter';
+import { NetworkScanHost, ProtocolPort } from '../../Models/NetworkFolderModels';
 
 const TAG = 'WebDAVConfigDialog';
+const ACCENT_COLOR: string = '#0F8A6C';
 
 @ComponentV2
 export struct WebDAVConfigDialog {
@@ -20,6 +25,7 @@ export struct WebDAVConfigDialog {
   @Param @Require onCancel: () => void;
   @Param @Require onTest: (settings: WebDAVSettings) => Promise<WebDAVTestResult>;
   @Param @Require currentTheme: ThemeType;
+  @Param appFontFamily: string = 'HarmonyOS Sans';
   @Param settings: WebDAVSettings = {
     enabled: false,
     serverUrl: '',
@@ -61,17 +67,29 @@ export struct WebDAVConfigDialog {
   @Local showHelpTips: boolean = true;
   @Local autoBackupStatus: AutoBackupStatus | null = null;
   @Local nextBackupTimeText: string = '';
-  
-  // 独立的自动备份设置状态（为了UI响应式更新）
+
+  // 独立的自动备份设置状态
   @Local autoBackupEnabled: boolean = false;
   @Local autoBackupInterval: 'daily' | 'weekly' = 'daily';
   @Local keepBackupCount: number = 5;
-  
+
   // 动画状态
   @Local isVisible: boolean = false;
-  @Local dialogScale: number = 0.9;
+  @Local dialogScale: number = 0.96;
   @Local dialogOpacity: number = 0;
   @Local backdropOpacity: number = 0;
+  @Local dialogTranslateY: number = 24;
+
+  // 网络扫描状态
+  @Local scanPhase: string = 'idle'; // 'idle' | 'scanning' | 'done'
+  @Local scanSubnet: string = '';
+  @Local scanProgress: number = 0;
+  @Local scanTotal: number = 254;
+  @Local scanCurrentIP: string = '';
+  @Local scanResults: NetworkScanHost[] = [];
+  @Local scanDurationMs: number = 0;
+  private scanStartTime: number = 0;
+  private scannerAdapter: NetworkScannerAdapter = new NetworkScannerAdapter();
 
   aboutToAppear(): void {
     this.localSettings = {
@@ -89,88 +107,85 @@ export struct WebDAVConfigDialog {
       lastTestMessage: this.settings.lastTestMessage || '',
       needCreateDir: this.settings.needCreateDir || false
     };
-    
-    // 初始化独立的自动备份状态变量
+
     this.autoBackupEnabled = this.settings.autoBackup;
     this.autoBackupInterval = this.settings.autoBackupInterval as 'daily' | 'weekly';
     this.keepBackupCount = this.settings.keepBackupCount;
-    
-    // 如果有上次测试结果，显示它
+
     if (this.localSettings.lastTestMessage) {
-      const statusIcon = this.localSettings.connectionStatus === 'success' ? '✅' : 
+      const statusIcon = this.localSettings.connectionStatus === 'success' ? '✅' :
                          this.localSettings.connectionStatus === 'failed' ? '❌' : '❓';
       this.testResult = `${statusIcon} ${this.localSettings.lastTestMessage}`;
     }
-    
-    // 检测服务器类型
+
     if (this.localSettings.serverUrl) {
       this.detectedServerType = WebDAVErrorAnalyzer.detectServerType(this.localSettings.serverUrl);
     }
-    
-    // 加载自动备份状态
+
     this.loadAutoBackupStatus();
-    
-    // 播放出现动画
+
+    // 检测子网前缀
+    if (this.scannerAdapter.isAvailable()) {
+      const subnet = this.scannerAdapter.getLocalSubnet();
+      this.scanSubnet = subnet.length > 0 ? subnet : '192.168.1';
+    }
+
+    // 播放出现动画，动画完成后自动开始扫描
     setTimeout(() => {
       this.playEnterAnimation();
+      if (this.scanSubnet.trim().length > 0) {
+        setTimeout(() => {
+          this.startNetworkScan();
+        }, 300);
+      }
     }, 16);
   }
-  
-  /**
-   * 播放出现动画
-   */
+
   private playEnterAnimation(): void {
     animateTo({
-      duration: 250,
+      duration: 260,
       curve: Curve.EaseOut
     }, () => {
       this.isVisible = true;
       this.dialogScale = 1;
       this.dialogOpacity = 1;
       this.backdropOpacity = 1;
+      this.dialogTranslateY = 0;
     });
   }
-  
-  /**
-   * 播放消失动画并执行回调
-   */
+
   private playExitAnimation(callback: () => void): void {
     animateTo({
-      duration: 200,
+      duration: 180,
       curve: Curve.EaseIn,
       onFinish: () => {
         callback();
       }
     }, () => {
       this.isVisible = false;
-      this.dialogScale = 0.9;
+      this.dialogScale = 0.96;
       this.dialogOpacity = 0;
       this.backdropOpacity = 0;
+      this.dialogTranslateY = 24;
     });
   }
-  
-  /**
-   * 关闭对话框（取消）
-   */
+
   private closeDialog(): void {
+    if (this.scannerAdapter.isScanning()) {
+      this.scannerAdapter.stopScan();
+    }
     this.playExitAnimation(() => {
       this.onCancel();
     });
   }
-  
-  /**
-   * 保存并关闭对话框
-   */
+
   private saveAndClose(): void {
     const settings = this.getMergedSettings();
     this.playExitAnimation(() => {
       this.onConfirm(settings);
     });
   }
-  
-  /**
-   * 获取合并后的设置（将独立状态变量合并回localSettings）
-   */
+
   private getMergedSettings(): WebDAVSettings {
     return {
       enabled: this.localSettings.enabled,
@@ -188,10 +203,7 @@ export struct WebDAVConfigDialog {
       needCreateDir: this.localSettings.needCreateDir
     };
   }
-  
-  /**
-   * 加载自动备份状态
-   */
+
   private async loadAutoBackupStatus(): Promise<void> {
     try {
       const scheduler = getAutoBackupScheduler();
@@ -203,10 +215,7 @@ export struct WebDAVConfigDialog {
       logger.error(TAG, `加载自动备份状态失败: ${error}`);
     }
   }
-  
-  /**
-   * 当服务器地址变化时检测服务器类型
-   */
+
   private onServerUrlChanged(url: string): void {
     this.localSettings.serverUrl = url;
     if (url.length > 10) {
@@ -227,7 +236,6 @@ export struct WebDAVConfigDialog {
           this.showCreateDirDialog = true;
         } else {
           this.testResult = `✅ ${result.message}`;
-          // 测试成功，更新连接状态
           this.localSettings.connectionStatus = 'success';
           this.localSettings.lastTestTime = Date.now();
           this.localSettings.lastTestMessage = result.message;
@@ -235,7 +243,6 @@ export struct WebDAVConfigDialog {
         }
       } else {
         this.testResult = `❌ ${result.message}`;
-        // 测试失败，更新状态
         this.localSettings.connectionStatus = 'failed';
         this.localSettings.lastTestTime = Date.now();
         this.localSettings.lastTestMessage = result.message;
@@ -253,12 +260,11 @@ export struct WebDAVConfigDialog {
 
   async createDirectoryAndConfirm(): Promise<void> {
     if (!this.pendingSettings) return;
-    
+
     try {
       this.isTesting = true;
       this.showCreateDirDialog = false;
-      
-      // 设置enabled为true，表示需要创建目录
+
       const settingsWithCreate: WebDAVSettings = {
         enabled: true,
         serverUrl: this.pendingSettings.serverUrl,
@@ -274,8 +280,7 @@ export struct WebDAVConfigDialog {
         lastTestMessage: '连接成功，目录已创建',
         needCreateDir: true
       };
-      
-      // 调用onConfirm，让父组件创建目录并保存配置
+
       this.onConfirm(settingsWithCreate);
       this.pendingSettings = null;
     } catch (error) {
@@ -286,6 +291,415 @@ export struct WebDAVConfigDialog {
     }
   }
 
+  // ==================== 网络扫描 ====================
+
+  private startNetworkScan(): void {
+    if (this.scanSubnet.trim().length === 0) {
+      return;
+    }
+    this.scanPhase = 'scanning';
+    this.scanResults = [];
+    this.scanProgress = 0;
+    this.scanTotal = 254;
+    this.scanCurrentIP = '';
+    this.scanStartTime = Date.now();
+    this.scanDurationMs = 0;
+
+    const started = this.scannerAdapter.startScan(
+      this.scanSubnet.trim(),
+      (scanned: number, total: number, currentIP: string) => {
+        this.scanProgress = scanned;
+        this.scanTotal = total;
+        this.scanCurrentIP = currentIP;
+        this.scanDurationMs = Date.now() - this.scanStartTime;
+      },
+      (host: NetworkScanHost) => {
+        // 只保留 WebDAV / WebDAVS 协议的结果
+        const hasWebDAV = host.protocolPorts.some(
+          (pp: ProtocolPort) => pp.protocol === 3 || pp.protocol === 4
+        );
+        if (hasWebDAV) {
+          this.scanResults = [...this.scanResults, host];
+        }
+      },
+      (_cancelled: boolean) => {
+        this.scanDurationMs = Date.now() - this.scanStartTime;
+        this.scanPhase = 'done';
+      }
+    );
+
+    if (!started) {
+      this.scanPhase = 'idle';
+    }
+  }
+
+  private cancelNetworkScan(): void {
+    this.scannerAdapter.stopScan();
+    this.scanPhase = 'done';
+  }
+
+  private applyScanResult(host: NetworkScanHost): void {
+    // 优先使用 WebDAVS，其次 WebDAV
+    const webdavsEntry = host.protocolPorts.find((pp: ProtocolPort) => pp.protocol === 4);
+    const webdavEntry = host.protocolPorts.find((pp: ProtocolPort) => pp.protocol === 3);
+
+    if (webdavsEntry) {
+      this.localSettings.serverUrl = `https://${host.ip}:${webdavsEntry.port}`;
+    } else if (webdavEntry) {
+      this.localSettings.serverUrl = `http://${host.ip}:${webdavEntry.port}`;
+    }
+
+    if (this.localSettings.serverUrl.length > 10) {
+      this.detectedServerType = WebDAVErrorAnalyzer.detectServerType(this.localSettings.serverUrl);
+    }
+
+    // 重置扫描面板
+    this.scanPhase = 'idle';
+    this.scanResults = [];
+  }
+
+  // ==================== 颜色辅助 ====================
+
+  private color(type: 'background' | 'panel_background' | 'comp_background_tertiary' | 'comp_background_secondary' |
+    'text_primary' | 'text_secondary' | 'text_muted' | 'text_white' | 'text_black' | 'button_secondary' |
+    'button_text_secondary' | 'icon_primary' | 'accent_primary'): Resource {
+    return ThemeAwareHelper.getTestManagementThemedColor(type, this.currentTheme);
+  }
+
+  // ==================== UI 构建 ====================
+
+  @Builder
+  buildDialogField(icon: Resource, label: string, placeholder: string, value: string,
+    onChange: (value: string) => void, type: InputType = InputType.Normal) {
+    Column({ space: 8 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph(icon)
+          .fontSize(14)
+          .fontColor([this.color('text_secondary')])
+        Text(label)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
+      }
+      .width('100%')
+
+      TextInput({ text: value, placeholder: placeholder })
+        .type(type)
+        .height(44)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.color('text_primary'))
+        .placeholderColor(this.color('text_muted'))
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(12)
+        .padding({ left: 12, right: 12 })
+        .onChange((nextValue: string) => {
+          onChange(nextValue);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  buildActionButton(label: string, icon: Resource, styleKind: number, enabled: boolean,
+    onClick: () => void) {
+    Button() {
+      Row({ space: 6 }) {
+        SymbolGlyph(icon)
+          .fontSize(14)
+          .fontColor([enabled ? this.getActionForegroundColor(styleKind) : this.color('text_muted')])
+        Text(label)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(enabled ? this.getActionForegroundColor(styleKind) : this.color('text_muted'))
+      }
+    }
+    .height(36)
+    .borderRadius(12)
+    .enabled(enabled)
+    .backgroundColor(enabled ? this.getActionBackgroundColor(styleKind) : this.color('comp_background_secondary'))
+    .padding({ left: 12, right: 12 })
+    .onClick(() => {
+      onClick();
+    })
+  }
+
+  private getActionForegroundColor(style: number): ResourceColor {
+    if (style === 1) return this.color('text_white');
+    if (style === 3) return this.color('text_white');
+    return this.color('text_primary');
+  }
+
+  private getActionBackgroundColor(style: number): ResourceColor {
+    if (style === 1) return this.color('accent_primary');
+    if (style === 2) return this.color('comp_background_tertiary');
+    if (style === 3) return '#C74848';
+    return this.color('button_secondary');
+  }
+
+  @Builder
+  buildStatusCard() {
+    Column({ space: 8 }) {
+      Row({ space: 10 }) {
+        Column() {
+          if (this.isTesting) {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color(ACCENT_COLOR)
+          } else {
+            SymbolGlyph($r('sys.symbol.info_circle'))
+              .fontSize(16)
+              .fontColor([this.color('accent_primary')])
+          }
+        }
+        .width(28)
+        .height(28)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.color('comp_background_tertiary'))
+        .borderRadius(14)
+
+        Column({ space: 2 }) {
+          Text('状态信息')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+            .width('100%')
+          Text(this.testResult.length > 0 ? this.testResult : '尚未测试连接')
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.color('comp_background_secondary'))
+    .borderRadius(16)
+  }
+
+  @Builder
+  buildScanPanel() {
+    Column({ space: 10 }) {
+      // 扫描标题栏
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.wifi'))
+          .fontSize(16)
+          .fontColor([this.color('accent_primary')])
+        Text('网络扫描')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_primary'))
+        Blank()
+        if (this.scanPhase === 'scanning') {
+          Button() {
+            Row({ space: 4 }) {
+              LoadingProgress()
+                .width(12)
+                .height(12)
+                .color(this.color('text_white'))
+              Text('停止')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+            }
+          }
+          .height(28)
+          .borderRadius(14)
+          .backgroundColor(this.color('accent_primary'))
+          .fontColor(this.color('text_white'))
+          .padding({ left: 10, right: 10 })
+          .onClick(() => {
+            this.cancelNetworkScan();
+          })
+        } else {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(14)
+            .fontColor([this.color('text_secondary')])
+            .onClick(() => {
+              this.scanPhase = 'idle';
+              this.scanResults = [];
+            })
+        }
+      }
+      .width('100%')
+
+      // 子网输入
+      if (this.scanPhase === 'idle') {
+        Row({ space: 8 }) {
+          TextInput({ text: this.scanSubnet, placeholder: '子网前缀 (如 192.168.1)' })
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(this.color('comp_background_tertiary'))
+            .borderRadius(10)
+            .onChange((value: string) => {
+              this.scanSubnet = value;
+            })
+          Button('扫描')
+            .height(36)
+            .borderRadius(10)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(this.color('accent_primary'))
+            .fontColor(this.color('text_white'))
+            .padding({ left: 12, right: 12 })
+            .onClick(() => {
+              this.startNetworkScan();
+            })
+        }
+        .width('100%')
+      }
+
+      // 扫描进度
+      if (this.scanPhase === 'scanning') {
+        Column({ space: 6 }) {
+          Progress({
+            value: this.scanProgress,
+            total: this.scanTotal,
+            type: ProgressType.Linear
+          })
+            .width('100%')
+            .height(6)
+            .borderRadius(3)
+          Row() {
+            Text(`${this.scanProgress}/${this.scanTotal}`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+            Blank()
+            if (this.scanResults.length > 0) {
+              Row({ space: 3 }) {
+                SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+                  .fontSize(11)
+                  .fontColor([this.color('accent_primary')])
+                Text(`已发现 ${this.scanResults.length} 台`)
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('accent_primary'))
+              }
+            }
+            Text(`${this.scanDurationMs}ms`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_muted'))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+
+          Row({ space: 4 }) {
+            LoadingProgress()
+              .width(10)
+              .height(10)
+              .color(this.color('accent_primary'))
+            Text(`正在扫描: ${this.scanCurrentIP}`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_muted'))
+          }
+          .width('100%')
+        }
+        .width('100%')
+      }
+
+      // 扫描完成
+      if (this.scanPhase === 'done') {
+        Row({ space: 6 }) {
+          SymbolGlyph(this.scanResults.length > 0
+            ? $r('sys.symbol.checkmark_circle_fill')
+            : $r('sys.symbol.magnifyingglass'))
+            .fontSize(14)
+            .fontColor([this.color('accent_primary')])
+          Text(this.scanResults.length > 0
+            ? `发现 ${this.scanResults.length} 台WebDAV服务器`
+            : '未发现WebDAV服务器')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_secondary'))
+          Blank()
+          Text(`${this.scanDurationMs}ms`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_muted'))
+        }
+        .width('100%')
+        .padding({ top: 6, bottom: 6 })
+      }
+
+      // 扫描结果列表
+      if (this.scanResults.length > 0) {
+        Column({ space: 6 }) {
+          ForEach(this.scanResults, (host: NetworkScanHost) => {
+            Row({ space: 10 }) {
+              Column() {
+                SymbolGlyph($r('sys.symbol.externaldrive_fill'))
+                  .fontSize(16)
+                  .fontColor([this.color('accent_primary')])
+              }
+              .width(30)
+              .height(30)
+              .justifyContent(FlexAlign.Center)
+              .backgroundColor(this.color('comp_background_tertiary'))
+              .borderRadius(8)
+
+              Column({ space: 2 }) {
+                Text(host.ip)
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_primary'))
+                Row({ space: 4 }) {
+                  ForEach(host.protocolPorts.filter(
+                    (pp: ProtocolPort) => pp.protocol === 3 || pp.protocol === 4
+                  ), (pp: ProtocolPort) => {
+                    Text(`${pp.protocol === 4 ? 'WebDAVS' : 'WebDAV'}:${pp.port}`)
+                      .fontSize(10)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.color('accent_primary'))
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .backgroundColor(this.color('comp_background_tertiary'))
+                      .borderRadius(4)
+                  }, (pp: ProtocolPort) => `${pp.protocol}_${pp.port}`)
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              Button('使用')
+                .height(28)
+                .borderRadius(8)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(this.color('accent_primary'))
+                .fontColor(this.color('text_white'))
+                .padding({ left: 10, right: 10 })
+                .onClick(() => {
+                  this.applyScanResult(host);
+                })
+            }
+            .width('100%')
+            .padding(10)
+            .backgroundColor(this.color('comp_background_secondary'))
+            .borderRadius(12)
+          }, (host: NetworkScanHost) => host.ip)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.color('comp_background_secondary'))
+    .borderRadius(16)
+  }
+
   @Builder
   buildServerGuideDialog() {
     Column() {
@@ -294,21 +708,23 @@ export struct WebDAVConfigDialog {
           Text('服务器配置指南')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
           Blank()
           SymbolGlyph($r('sys.symbol.xmark'))
             .fontSize(20)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme)])
+            .fontColor([this.color('text_secondary')])
             .onClick(() => { this.showServerGuide = false; })
         }
         .width('100%')
         .margin({ bottom: 16 })
-        
+
         Text('选择您的WebDAV服务器类型：')
           .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
           .margin({ bottom: 12 })
-        
+
         Scroll() {
           Column({ space: 8 }) {
             ForEach(WEBDAV_SERVER_GUIDES, (guide: WebDAVServerGuide) => {
@@ -317,43 +733,48 @@ export struct WebDAVConfigDialog {
                   Text(guide.name)
                     .fontSize(15)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_primary'))
                   Blank()
                   if (this.selectedServerType === guide.name) {
                     SymbolGlyph($r('sys.symbol.checkmark'))
                       .fontSize(16)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)])
+                      .fontColor([this.color('accent_primary')])
                   }
                 }
                 .width('100%')
-                
+
                 if (this.selectedServerType === guide.name) {
                   Column({ space: 4 }) {
                     Text(`地址格式：${guide.urlFormat}`)
                       .fontSize(12)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.currentTheme))
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.color('text_secondary'))
                       .width('100%')
                     Text(`示例：${guide.example}`)
                       .fontSize(12)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.color('accent_primary'))
                       .width('100%')
                     Text('注意事项：')
                       .fontSize(12)
                       .fontWeight(FontWeight.Medium)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.color('text_secondary'))
                       .width('100%')
                       .margin({ top: 8 })
                     ForEach(guide.notes, (note: string, idx: number) => {
                       Text(`${idx + 1}. ${note}`)
                         .fontSize(12)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.currentTheme))
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(this.color('text_muted'))
                         .width('100%')
                     })
                   }
                   .width('100%')
                   .margin({ top: 8 })
                   .padding(12)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+                  .backgroundColor(this.color('comp_background_tertiary'))
                   .borderRadius(8)
                 }
               }
@@ -361,7 +782,7 @@ export struct WebDAVConfigDialog {
               .padding(12)
               .backgroundColor(
                 this.selectedServerType === guide.name
-                  ? ThemeAwareHelper.getTestManagementThemedColor('background', this.currentTheme)
+                  ? this.color('comp_background_secondary')
                   : 'transparent'
               )
               .borderRadius(8)
@@ -374,15 +795,19 @@ export struct WebDAVConfigDialog {
         }
         .height('60%')
         .scrollBar(BarState.Auto)
-        
-        Button('关闭')
-          .width('100%')
-          .margin({ top: 16 })
-          .onClick(() => { this.showServerGuide = false; })
+
+        Row({ space: 10 }) {
+          this.buildActionButton('关闭', $r('sys.symbol.xmark'), 0, true, () => {
+            this.showServerGuide = false;
+          })
+        }
+        .width('100%')
+        .margin({ top: 16 })
       }
       .width('90%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.currentTheme))
-      .borderRadius(16)
+      .height('80%')
+      .backgroundColor(this.color('panel_background'))
+      .borderRadius(26)
       .padding(24)
     }
     .width('100%')
@@ -390,7 +815,7 @@ export struct WebDAVConfigDialog {
     .backgroundColor('rgba(0, 0, 0, 0.5)')
     .justifyContent(FlexAlign.Center)
   }
-  
+
   @Builder
   buildImportantTips() {
     if (this.showHelpTips) {
@@ -402,90 +827,80 @@ export struct WebDAVConfigDialog {
           Text('重要提示')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FF9800')
             .margin({ left: 6 })
           Blank()
           SymbolGlyph($r('sys.symbol.xmark'))
             .fontSize(14)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.currentTheme)])
+            .fontColor([this.color('text_muted')])
             .onClick(() => { this.showHelpTips = false; })
         }
         .width('100%')
-        
-        Text('• 大多数WebDAV服务器不允许在根目录创建文件夹')
+
+        Text('大多数WebDAV服务器不允许在根目录创建文件夹，请先在服务器上手动创建备份目录（如 /manxia）。如使用坚果云，必须使用"应用密码"而非登录密码。')
           .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
           .width('100%')
-        Text('• 请先在服务器上手动创建备份目录（如 /manxia）')
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
-          .width('100%')
-        Text('• 如使用坚果云，必须使用"应用密码"而非登录密码')
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
-          .width('100%')
-          
+
         Button('查看配置指南')
           .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('accent_primary'))
           .backgroundColor('transparent')
           .padding({ left: 0 })
           .onClick(() => { this.showServerGuide = true; })
       }
       .width('100%')
       .padding(12)
-      .backgroundColor('rgba(255, 152, 0, 0.1)')
-      .borderRadius(8)
-      .margin({ bottom: 16 })
+      .backgroundColor('rgba(255, 152, 0, 0.08)')
+      .borderRadius(12)
     }
   }
 
   @Builder
   buildCreateDirDialog() {
     Column() {
-      Column() {
-        Text('创建备份目录')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-          .margin({ bottom: 16 })
-
-        Text(`服务器连接成功！\n\n为了使用WebDAV备份功能，需要在服务器上创建专用目录：\n\n${this.localSettings.basePath}\n\nℹ️ 注意：如果自动创建失败，请在服务器上手动创建该目录后重试。`)
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
-          .lineHeight(22)
-          .margin({ bottom: 24 })
-
+      Column({ space: 16 }) {
         Row() {
-          Button('取消')
-            .fontSize(16)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-            .borderRadius(8)
-            .layoutWeight(1)
+          Text('创建备份目录')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.color('text_primary'))
+          Blank()
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(18)
+            .fontColor([this.color('text_secondary')])
             .onClick(() => {
               this.showCreateDirDialog = false;
               this.pendingSettings = null;
             })
+        }
+        .width('100%')
 
-          Blank().width(16)
+        Text(`服务器连接成功！\n\n为了使用WebDAV备份功能，需要在服务器上创建专用目录：\n\n${this.localSettings.basePath}\n\n如果自动创建失败，请在服务器上手动创建该目录后重试。`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_secondary'))
+          .lineHeight(22)
 
-          Button('创建')
-            .fontSize(16)
-            .fontColor('#FFFFFF')
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
-            .borderRadius(8)
-            .layoutWeight(1)
-            .onClick(() => {
-              this.createDirectoryAndConfirm();
-            })
+        Row({ space: 10 }) {
+          this.buildActionButton('取消', $r('sys.symbol.xmark'), 0, true, () => {
+            this.showCreateDirDialog = false;
+            this.pendingSettings = null;
+          })
+          this.buildActionButton('创建目录', $r('sys.symbol.checkmark_circle_fill'), 1, true, () => {
+            void this.createDirectoryAndConfirm();
+          })
         }
         .width('100%')
       }
-      .width('80%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.currentTheme))
-      .borderRadius(16)
+      .width('85%')
       .padding(24)
+      .backgroundColor(this.color('panel_background'))
+      .borderRadius(26)
     }
     .width('100%')
     .height('100%')
@@ -493,203 +908,155 @@ export struct WebDAVConfigDialog {
     .justifyContent(FlexAlign.Center)
   }
 
-
-  @Builder
-  buildInputItem(label:
-    string, placeholder:
-    string, value:
-    string, onChange:
-    (value: string) => void
-  )
-  {
-    Column() {
-      Text(label)
-        .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
-        .width('100%')
-        .margin({ bottom: 8 })
-
-      TextInput({ text: value, placeholder: placeholder })
-        .width('100%')
-        .onChange(onChange)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-        .borderRadius(8)
-    }
-    .width('100%')
-    .margin({ bottom: 16 })
-    .alignItems(HorizontalAlign.Start)
-  }
-
-
-  @Builder
-  buildPasswordItem() {
-    Column() {
-      Text('密码')
-        .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
-        .width('100%')
-        .margin({ bottom: 8 })
-
-      Row() {
-        TextInput({ text: this.localSettings.password, placeholder: '输入密码' })
-          .type(this.showPassword ? InputType.Normal : InputType.Password)
-          .layoutWeight(1)
-          .onChange((value: string) => {
-            this.localSettings.password = value;
-          })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-          .borderRadius(8)
-
-        
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .margin({ bottom: 16 })
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  buildIntervalButton(label:string, value:'daily' | 'weekly')
-  {
-    Button(label)
-      .fontSize(12)
-      .padding({
-        left: 12,
-        right: 12,
-        top: 6,
-        bottom: 6
-      })
-      .margin({ left: 4, right: 4 })
-      .backgroundColor(
-        this.autoBackupInterval === value
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme)
-      )
-      .fontColor(
-        this.autoBackupInterval === value
-          ? '#FFFFFF'
-          : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme)
-      )
-      .borderRadius(6)
-      .onClick(() => {
-        this.autoBackupInterval = value;
-      })
-  }
-
   build() {
-    Stack() {
-      Column() {
-        Column() {
-          // 标题栏
-          Row() {
-            Text('WebDAV配置')
+    Stack({ alignContent: Alignment.Center }) {
+      // 背景遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(`rgba(6, 12, 18, ${0.52 * this.backdropOpacity})`)
+        .onClick(() => {
+          this.closeDialog();
+        })
+
+      // 主面板 - 玻璃效果
+      Column({ space: 14 }) {
+        // 标题区域
+        Row() {
+          Column({ space: 4 }) {
+            Text('WebDAV 配置')
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_primary'))
+            Text('配置WebDAV服务器连接，支持自动云端备份。')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.color('text_secondary'))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+
+          // 启用开关
+          Row({ space: 8 }) {
+            Text(this.localSettings.enabled ? '已启用' : '未启用')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.localSettings.enabled ? this.color('accent_primary') : this.color('text_muted'))
+            Toggle({ type: ToggleType.Switch, isOn: this.localSettings.enabled })
+              .onChange((isOn: boolean) => {
+                this.localSettings.enabled = isOn;
+              })
+          }
+        }
+        .width('100%')
+
+        Divider()
+          .color(this.color('text_muted'))
+          .opacity(0.3)
+
+        // 表单区域
+        Scroll() {
+          Column({ space: 14 }) {
+            // 状态卡片
+            this.buildStatusCard()
+
+            // 重要提示
+            this.buildImportantTips()
+
+            // 网络扫描面板
+            this.buildScanPanel()
+
+            // 服务器类型检测提示
+            if (this.detectedServerType && this.localSettings.serverUrl) {
+              Row({ space: 6 }) {
+                SymbolGlyph($r('sys.symbol.info_circle'))
+                  .fontSize(14)
+                  .fontColor([this.color('accent_primary')])
+                Text(`检测到：${this.detectedServerType}`)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('accent_primary'))
+                Blank()
+                Text('查看指南')
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.color('text_secondary'))
+                  .decoration({ type: TextDecorationType.Underline })
+                  .onClick(() => {
+                    this.selectedServerType = this.detectedServerType;
+                    this.showServerGuide = true;
+                  })
+              }
+              .width('100%')
+            }
+
+            // 服务器地址
+            this.buildDialogField(
+              $r('sys.symbol.link'), '服务器地址', 'https://cloud.example.com/remote.php/dav',
+              this.localSettings.serverUrl, (value: string) => {
+                this.onServerUrlChanged(value);
+              })
+
+            // 用户名 + 密码
+            Row({ space: 12 }) {
+              Column() {
+                this.buildDialogField(
+                  $r('sys.symbol.person_fill'), '用户名', '输入用户名',
+                  this.localSettings.username, (value: string) => {
+                    this.localSettings.username = value;
+                  })
+              }
               .layoutWeight(1)
 
-            // 启用开关
-            Row() {
-              Text('启用')
-                .fontSize(14)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
-                .margin({ right: 8 })
-
-              Toggle({ type: ToggleType.Switch, isOn: this.localSettings.enabled })
-                .onChange((isOn: boolean) => {
-                  this.localSettings.enabled = isOn;
-                })
-            }
-          }
-          .width('100%')
-          .padding({ top: 20, bottom: 16 })
-
-          // 配置表单
-          Scroll() {
-            Column() {
-              // 重要提示
-              this.buildImportantTips()
-              
-              // 服务器类型检测提示
-              if (this.detectedServerType && this.localSettings.serverUrl) {
-                Row({ space: 6 }) {
-                  SymbolGlyph($r('sys.symbol.info_circle'))
-                    .fontSize(14)
-                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)])
-                  Text(`检测到服务器类型：${this.detectedServerType}`)
-                    .fontSize(12)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
-                  Blank()
-                  Text('查看指南')
-                    .fontSize(12)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
-                    .decoration({ type: TextDecorationType.Underline })
-                    .onClick(() => {
-                      this.selectedServerType = this.detectedServerType;
-                      this.showServerGuide = true;
-                    })
-                }
-                .width('100%')
-                .padding({ top: 8, bottom: 8 })
-              }
-              
-              // 服务器地址
-              this.buildInputItem(
-                '服务器地址',
-                'https://cloud.example.com/remote.php/dav',
-                this.localSettings.serverUrl,
-                (value: string) => {
-                  this.onServerUrlChanged(value);
-                }
-              )
-
-              // 用户名
-              this.buildInputItem(
-                '用户名',
-                '输入用户名',
-                this.localSettings.username,
-                (value: string) => {
-                  this.localSettings.username = value;
-                }
-              )
-
-              // 密码
-              this.buildPasswordItem()
-
-              // 基础路径
               Column() {
-                this.buildInputItem(
-                  '基础路径（备份目录）',
-                  '/manxia',
-                  this.localSettings.basePath,
-                  (value: string) => {
-                    this.localSettings.basePath = value;
-                  }
-                )
-                Text('ℹ请确保该目录在服务器上已存在，或您有权限创建它')
-                  .fontSize(11)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.currentTheme))
-                  .width('100%')
-                  .margin({ top: -12 })
+                this.buildDialogField(
+                  $r('sys.symbol.lock_fill'), '密码', '输入密码',
+                  this.localSettings.password, (value: string) => {
+                    this.localSettings.password = value;
+                  }, InputType.Password)
               }
+              .layoutWeight(1)
+            }
+            .width('100%')
 
-              Divider()
-                .margin({ top: 16, bottom: 16 })
-                .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
+            // 基础路径
+            this.buildDialogField(
+              $r('sys.symbol.folder'), '基础路径（备份目录）', '/manxia',
+              this.localSettings.basePath, (value: string) => {
+                this.localSettings.basePath = value;
+              })
 
-              // 自动备份设置
-              Text('自动备份')
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-                .margin({ bottom: 12 })
+            // 自动备份设置
+            Column({ space: 10 }) {
+              Row({ space: 10 }) {
+                Column() {
+                  SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                    .fontSize(18)
+                    .fontColor([this.color('accent_primary')])
+                }
+                .width(34)
+                .height(34)
+                .justifyContent(FlexAlign.Center)
+                .backgroundColor(this.color('comp_background_tertiary'))
+                .borderRadius(10)
 
-              Row() {
-                Text('启用自动备份')
-                  .fontSize(14)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-                  .layoutWeight(1)
+                Column({ space: 2 }) {
+                  Text('自动备份')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_primary'))
+                    .width('100%')
+                  Text('定时自动备份数据到WebDAV服务器')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_secondary'))
+                    .width('100%')
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
 
                 Toggle({ type: ToggleType.Switch, isOn: this.autoBackupEnabled })
                   .onChange((isOn: boolean) => {
@@ -697,53 +1064,82 @@ export struct WebDAVConfigDialog {
                   })
               }
               .width('100%')
-              .padding({ top: 8, bottom: 8 })
 
               if (this.autoBackupEnabled) {
+                Divider()
+                  .color(this.color('text_muted'))
+                  .opacity(0.2)
+
                 // 备份间隔
                 Row() {
                   Text('备份间隔')
-                    .fontSize(14)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+                    .fontSize(13)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_secondary'))
                     .layoutWeight(1)
 
-                  Row({ space: 8 }) {
-                    this.buildIntervalButton('每天', 'daily')
-                    this.buildIntervalButton('每周', 'weekly')
+                  Row({ space: 6 }) {
+                    Button('每天')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                      .borderRadius(8)
+                      .backgroundColor(this.autoBackupInterval === 'daily' ?
+                        this.color('accent_primary') : this.color('comp_background_tertiary'))
+                      .fontColor(this.autoBackupInterval === 'daily' ?
+                        this.color('text_white') : this.color('text_primary'))
+                      .onClick(() => { this.autoBackupInterval = 'daily'; })
+                    Button('每周')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                      .borderRadius(8)
+                      .backgroundColor(this.autoBackupInterval === 'weekly' ?
+                        this.color('accent_primary') : this.color('comp_background_tertiary'))
+                      .fontColor(this.autoBackupInterval === 'weekly' ?
+                        this.color('text_white') : this.color('text_primary'))
+                      .onClick(() => { this.autoBackupInterval = 'weekly'; })
                   }
                 }
                 .width('100%')
-                .padding({ top: 8, bottom: 8 })
-                
-                // 显示下次备份时间
-                if (this.autoBackupStatus && this.autoBackupStatus.enabled && this.localSettings.connectionStatus === 'success') {
+
+                // 下次备份时间
+                if (this.autoBackupStatus && this.autoBackupStatus.enabled &&
+                    this.localSettings.connectionStatus === 'success') {
                   Row() {
-                    Text('下次自动备份')
-                      .fontSize(14)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+                    Text('下次备份')
+                      .fontSize(13)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.color('text_secondary'))
                     Blank()
                     Text(this.nextBackupTimeText)
-                      .fontSize(14)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
+                      .fontSize(13)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.color('accent_primary'))
                   }
                   .width('100%')
-                  .padding({ top: 4, bottom: 8 })
                 }
-                
-                // 警告提示
+
+                // 警告
                 if (this.localSettings.connectionStatus !== 'success') {
-                  Text('⚠️ 请先测试连接成功后，自动备份才能生效')
-                    .fontSize(12)
-                    .fontColor('#FF9800')
-                    .width('100%')
-                    .padding({ top: 4, bottom: 8 })
+                  Row({ space: 6 }) {
+                    SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
+                      .fontSize(12)
+                      .fontColor(['#FF9800'])
+                    Text('请先测试连接成功后，自动备份才能生效')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor('#FF9800')
+                  }
+                  .width('100%')
                 }
 
                 // 保留备份数量
                 Row() {
                   Text('保留备份数量')
-                    .fontSize(14)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+                    .fontSize(13)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.color('text_secondary'))
                     .layoutWeight(1)
 
                   Row({ space: 4 }) {
@@ -751,28 +1147,27 @@ export struct WebDAVConfigDialog {
                       .fontSize(16)
                       .width(36)
                       .height(32)
-                      .borderRadius(6)
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+                      .borderRadius(8)
+                      .backgroundColor(this.color('comp_background_tertiary'))
+                      .fontColor(this.color('text_primary'))
                       .onClick(() => {
                         if (this.keepBackupCount > 1) {
                           this.keepBackupCount--;
                         }
                       })
-
                     Text(`${this.keepBackupCount}`)
                       .fontSize(16)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.color('text_primary'))
                       .width(36)
                       .textAlign(TextAlign.Center)
-
                     Button('+')
                       .fontSize(16)
                       .width(36)
                       .height(32)
-                      .borderRadius(6)
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+                      .borderRadius(8)
+                      .backgroundColor(this.color('comp_background_tertiary'))
+                      .fontColor(this.color('text_primary'))
                       .onClick(() => {
                         if (this.keepBackupCount < 20) {
                           this.keepBackupCount++;
@@ -781,78 +1176,68 @@ export struct WebDAVConfigDialog {
                   }
                 }
                 .width('100%')
-                .padding({ top: 8, bottom: 8 })
-              }
-
-              // 测试连接按钮
-              Button(this.isTesting ? '测试中...' : '测试连接')
-                .width('100%')
-                .margin({ top: 16 })
-                .onClick(() => {
-                  this.testConnection();
-                })
-
-              // 测试结果
-              if (this.testResult) {
-                Text(this.testResult)
-                  .fontSize(14)
-                  .fontColor(this.testResult.includes('✅') ? '#00C853' : '#FF5252')
-                  .margin({ top: 8 })
-                  .width('100%')
-                  .textAlign(TextAlign.Center)
               }
             }
             .width('100%')
-            .padding(16)
-          }
-          .layoutWeight(1)
-          .scrollBar(BarState.Auto)
+            .padding(12)
+            .backgroundColor(this.color('comp_background_secondary'))
+            .borderRadius(16)
 
-          // 底部按钮
-          Row() {
-            Button('取消')
-              .fontSize(16)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
-              .borderRadius(8)
-              .layoutWeight(1)
-              .onClick(() => {
-                this.closeDialog();
-              })
-
-            Blank().width(16)
-
-            Button('保存')
-              .fontSize(16)
-              .fontColor('#FFFFFF')
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
-              .borderRadius(8)
-              .layoutWeight(1)
-              .onClick(() => {
-                this.saveAndClose();
-              })
+            Blank().height(4)
           }
           .width('100%')
-          .padding({ top: 16, bottom: 20 })
         }
-        .width('90%')
-        .height('80%')
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.currentTheme))
-        .borderRadius(16)
-        .padding({ left: 20, right: 20 })
-        .scale({ x: this.dialogScale, y: this.dialogScale })
-        .opacity(this.dialogOpacity)
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+
+        // 底部按钮
+        Row({ space: 10 }) {
+          this.buildActionButton('取消', $r('sys.symbol.xmark'), 0, true, () => {
+            this.closeDialog();
+          })
+          this.buildActionButton(
+            this.isTesting ? '测试中…' : '测试连接',
+            $r('sys.symbol.arrow_clockwise'), 2, !this.isTesting, () => {
+              void this.testConnection();
+            })
+          this.buildActionButton('保存', $r('sys.symbol.checkmark_circle_fill'), 1, true, () => {
+            this.saveAndClose();
+          })
+        }
+        .width('100%')
       }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .backgroundColor(`rgba(0, 0, 0, ${0.5 * this.backdropOpacity})`)
+      .width('92%')
+      .height('84%')
+      .padding({ left: 20, right: 20, top: 20, bottom: 20 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.currentTheme))
+      .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.currentTheme))
+      .backgroundBlurStyle(
+        SettingsPanelSurfaceHelper.getBlurStyle(this.currentTheme),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.currentTheme)
+      )
+      .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.currentTheme))
+      .borderRadius(26)
+      .clip(true)
+      .border({
+        width: SettingsPanelSurfaceHelper.getBorderWidth(this.currentTheme),
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.currentTheme)
+      })
+      .shadow({
+        radius: 26,
+        color: SettingsPanelSurfaceHelper.getShadowColor(this.currentTheme),
+        offsetX: 0,
+        offsetY: 10
+      })
+      .opacity(this.dialogOpacity)
+      .scale({ x: this.dialogScale, y: this.dialogScale })
+      .translate({ x: 0, y: this.dialogTranslateY })
 
       // 创建目录确认对话框
       if (this.showCreateDirDialog) {
         this.buildCreateDirDialog()
       }
-      
+
       // 服务器配置指南对话框
       if (this.showServerGuide) {
         this.buildServerGuideDialog()

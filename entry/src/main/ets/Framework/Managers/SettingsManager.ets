@@ -45,10 +45,30 @@ export class SettingKeys {
   
   // 电子书全局阅读设置
   static readonly GLOBAL_EBOOK_FONT_SIZE = 'global_ebook_font_size';
+  static readonly GLOBAL_EBOOK_FONT_FAMILY = 'global_ebook_font_family';
+  static readonly GLOBAL_EBOOK_FONT_PATH = 'global_ebook_font_path';
+  static readonly GLOBAL_EBOOK_FONT_WEIGHT = 'global_ebook_font_weight';
   static readonly GLOBAL_EBOOK_LINE_HEIGHT = 'global_ebook_line_height';
   static readonly GLOBAL_EBOOK_PAGE_MARGIN = 'global_ebook_page_margin';
+  static readonly GLOBAL_EBOOK_PAGE_TOP_MARGIN = 'global_ebook_page_top_margin';
+  static readonly GLOBAL_EBOOK_PAGE_BOTTOM_MARGIN = 'global_ebook_page_bottom_margin';
   static readonly GLOBAL_EBOOK_THEME = 'global_ebook_theme';
+  static readonly GLOBAL_EBOOK_FOLLOW_SYSTEM_THEME = 'global_ebook_follow_system_theme';
   static readonly GLOBAL_EBOOK_PAGE_MODE = 'global_ebook_page_mode';
+  static readonly GLOBAL_EBOOK_AUTO_SAVE = 'global_ebook_auto_save';
+  static readonly GLOBAL_EBOOK_SAVE_INTERVAL = 'global_ebook_save_interval';
+  static readonly GLOBAL_EBOOK_LETTER_SPACING = 'global_ebook_letter_spacing';
+  static readonly GLOBAL_EBOOK_PARAGRAPH_SPACING = 'global_ebook_paragraph_spacing';
+  static readonly GLOBAL_EBOOK_FIRST_LINE_INDENT = 'global_ebook_first_line_indent';
+  static readonly GLOBAL_EBOOK_TEXT_ALIGNMENT = 'global_ebook_text_alignment';
+  static readonly GLOBAL_EBOOK_PAGE_TURN_ANIMATION = 'global_ebook_page_turn_animation';
+  static readonly GLOBAL_EBOOK_TAP_TO_TURN = 'global_ebook_tap_to_turn';
+  static readonly GLOBAL_EBOOK_VOLUME_KEY_NAV = 'global_ebook_volume_key_nav';
+  static readonly GLOBAL_EBOOK_KEEP_SCREEN_ON = 'global_ebook_keep_screen_on';
+  static readonly GLOBAL_EBOOK_SHOW_PAGE_NUMBER = 'global_ebook_show_page_number';
+  static readonly GLOBAL_EBOOK_SHOW_PROGRESS = 'global_ebook_show_progress';
+  static readonly GLOBAL_EBOOK_SHOW_TIME = 'global_ebook_show_time';
+  static readonly GLOBAL_EBOOK_SHOW_BATTERY = 'global_ebook_show_battery';
   
   // 纯文本阅读器全局设置
   static readonly GLOBAL_TEXT_FONT_SIZE = 'global_text_font_size';

@@ -952,6 +952,13 @@ export interface ChapterInfo {
 /**
  * 页面信息
  */
+export interface PageRequestHeader {
+  /** 请求头名称 */
+  name: string;
+  /** 请求头值 */
+  value: string;
+}
+
 export interface PageInfo {
   /** 页码 */
   page: number;
@@ -961,6 +968,8 @@ export interface PageInfo {
   width?: number;
   /** 图片高度 */
   height?: number;
+  /** 页面级图片请求头 */
+  requestHeaders?: PageRequestHeader[];
 }
 
 // ==================== 错误类型定义 ====================

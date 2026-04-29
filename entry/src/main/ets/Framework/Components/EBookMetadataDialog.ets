@@ -288,20 +288,23 @@ export struct EBookMetadataDialog {
     }
     .width('90%')
     .padding(20)
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
     .backgroundBlurStyle(
       DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
       DialogSurfaceStyleHelper.getPopupCardBlurOptions()
     )
-    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
-    .borderRadius(12)
+    .backgroundEffect(DialogSurfaceStyleHelper.getPopupCardBackgroundEffect())
+    .borderRadius(26)
+    .clip(true)
     .border({
       width: 1,
       color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState)
     })
     .shadow({
-      radius: 18,
+      radius: 26,
       color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
-      offsetY: 8
+      offsetX: 0,
+      offsetY: 10
     })
   }
 

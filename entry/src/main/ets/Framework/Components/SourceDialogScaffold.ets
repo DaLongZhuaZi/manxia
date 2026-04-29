@@ -32,7 +32,7 @@ export struct SourceDialogScaffold {
   @Prop maskBlurOptions: BackgroundBlurStyleOptions = DialogSurfaceStyleHelper.getPopupMaskBlurOptions();
   @Prop maskColor: ResourceColor = DialogSurfaceStyleHelper.getPopupMaskColor();
   @Prop maskBackgroundEffect: BackgroundEffectOptions | undefined = DialogSurfaceStyleHelper.getPopupMaskBackgroundEffect();
-  @Prop dialogRadius: number = 14;
+  @Prop dialogRadius: number = 26;
   onMaskTap: () => void = () => {};
   @BuilderParam content: () => void = this.emptyContentBuilder;
   @State private maskTapEnabled: boolean = false;
@@ -80,13 +80,10 @@ export struct SourceDialogScaffold {
     .shadow({
       radius: this.dialogRadius + 4,
       color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
-      offsetY: 8
+      offsetX: 0,
+      offsetY: 10
     })
     .zIndex(1)
-    .transition(
-      TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
-        .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 220, curve: Curve.EaseOut }))
-    )
     .onClick(() => {
     })
   }

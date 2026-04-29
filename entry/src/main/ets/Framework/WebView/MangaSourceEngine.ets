@@ -20,6 +20,7 @@ import {
   MangaInfo,
   ChapterInfo,
   PageInfo,
+  PageRequestHeader,
   MangaSourceError,
   MangaSourceErrorCode,
   AntiCrawlerConfig,
@@ -3457,11 +3458,34 @@ export class MangaSourceEngine {
         logger.debug(TAG, `生成 PicaComic 图片URL: ${imageUrl}`);
       }
     }
-    
-    return {
+
+    const pageInfo: PageInfo = {
       page: index,
       imageUrl: imageUrl
     };
+
+    const widthValue: number = Number(item.width);
+    if (!Number.isNaN(widthValue) && widthValue > 0) {
+      pageInfo.width = widthValue;
+    }
+
+    const heightValue: number = Number(item.height);
+    if (!Number.isNaN(heightValue) && heightValue > 0) {
+      pageInfo.height = heightValue;
+    }
+
+    const imageTicket: string = item.ticket ? String(item.ticket) : '';
+    if (imageTicket.length > 0) {
+      const headers: PageRequestHeader[] = [];
+      headers.push({
+        name: 'X-Image-Ticket',
+        value: imageTicket
+      } as PageRequestHeader);
+      pageInfo.requestHeaders = headers;
+      logger.debug(TAG, `页面 ${index} 添加 X-Image-Ticket 请求头`);
+    }
+
+    return pageInfo;
   }
 
   /**

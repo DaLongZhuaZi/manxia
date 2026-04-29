@@ -5,6 +5,7 @@
  */
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { logger } from '../../Utils/Logger';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 import { getNovelTxtTocRuleManager, TxtTocRule, TxtChapter } from '../Novel/NovelTxtTocRuleManager';
@@ -1423,8 +1424,8 @@ export struct NovelImportDialog {
 
         Button('开始导入')
           .fontSize(16)
-          .fontColor(AppColors.onPrimary)
-          .backgroundColor(AppColors.primary)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
@@ -1464,11 +1465,23 @@ export struct NovelImportDialog {
     }
     .width('95%')
     .height('85%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(16)
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
+    .backgroundBlurStyle(
+      DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
+      DialogSurfaceStyleHelper.getPopupCardBlurOptions()
+    )
+    .backgroundEffect(DialogSurfaceStyleHelper.getPopupCardBackgroundEffect())
+    .borderRadius(26)
+    .clip(true)
     .border({
       width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState)
+    })
+    .shadow({
+      radius: 26,
+      color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
+      offsetX: 0,
+      offsetY: 10
     })
   }
 

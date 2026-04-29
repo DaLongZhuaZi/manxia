@@ -38,7 +38,8 @@ export enum TaskType {
  * 任务通知场景
  */
 export enum TaskNotificationScene {
-  PDF_IMPORT = 'PDF_IMPORT'
+  PDF_IMPORT = 'PDF_IMPORT',
+  NETWORK_CACHE = 'NETWORK_CACHE'
 }
 
 /**
@@ -526,6 +527,13 @@ export class BackgroundTaskManager {
           task.options.notification.targetName
         );
         break;
+      case TaskNotificationScene.NETWORK_CACHE:
+        logger.info(TAG, `发送网络缓存完成通知：id=${task.id}，目标=${task.options.notification.targetName}`);
+        await this.notificationManager.sendDownloadCompleteNotification(
+          task.id,
+          task.options.notification.targetName
+        );
+        break;
       default:
         break;
     }
@@ -547,6 +555,14 @@ export class BackgroundTaskManager {
           `发送 PDF 导入失败通知：id=${task.id}，目标=${task.options.notification.targetName}，原因=${errorMessage}`
         );
         await this.notificationManager.sendPdfImportFailedNotification(
+          task.id,
+          task.options.notification.targetName,
+          errorMessage
+        );
+        break;
+      case TaskNotificationScene.NETWORK_CACHE:
+        logger.warn(TAG, `发送网络缓存失败通知：id=${task.id}，目标=${task.options.notification.targetName}，原因=${errorMessage}`);
+        await this.notificationManager.sendDownloadFailedNotification(
           task.id,
           task.options.notification.targetName,
           errorMessage
@@ -620,6 +636,15 @@ export class BackgroundTaskManager {
               snapshot.current,
               snapshot.total,
               snapshot.message
+            );
+            break;
+          case TaskNotificationScene.NETWORK_CACHE:
+            logger.info(TAG, `发送网络缓存进度通知：id=${task.id}，目标=${snapshot.targetName}，百分比=${snapshot.percentage}%`);
+            await this.notificationManager.sendDownloadProgressNotification(
+              task.id,
+              snapshot.targetName,
+              snapshot.current,
+              snapshot.total
             );
             break;
           default:

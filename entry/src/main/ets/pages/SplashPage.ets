@@ -590,7 +590,7 @@ struct SplashPage {
     .width('100%')
     .height('100%')
     .backgroundColor(this.getSplashBaseBackgroundColor())
-    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   // 页面过渡动画

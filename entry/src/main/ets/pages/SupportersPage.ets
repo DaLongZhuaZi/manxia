@@ -79,7 +79,8 @@ export struct SupportersPage {
     { name: '方城峰' , level: '￥6.66'},
     { name: '慕小乐' , level: '￥6.66'},
     { name: '神秘支持者' , level: '￥6.66'},
-    { name: '神秘支持者' , level: '￥20'}
+    { name: '神秘支持者' , level: '￥20'},
+    { name: '别打了我是酱油' , level: '￥18'}
     // 示例：
     // { name: '张三', level: '金牌支持者' },
     // { name: '李四', level: '银牌支持者' },

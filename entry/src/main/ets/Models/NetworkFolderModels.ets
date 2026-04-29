@@ -32,6 +32,7 @@ export interface NetworkFolderConnection {
   basePath: string;
   passive: boolean;
   verifySSL: boolean;
+  verifyHostKey: boolean;
   timeoutMs: number;
   createdAt: number;
   lastUsedAt: number;
@@ -52,6 +53,7 @@ export interface NetworkFolderConnectionDraft {
   basePath: string;
   passive: boolean;
   verifySSL: boolean;
+  verifyHostKey: boolean;
   timeoutMs: number;
 }
 
@@ -175,6 +177,7 @@ export function createEmptyNetworkFolderDraft(): NetworkFolderConnectionDraft {
     basePath: '/',
     passive: true,
     verifySSL: true,
+    verifyHostKey: true,
     timeoutMs: 30000
   };
   return draft;
@@ -200,6 +203,7 @@ export function createNetworkFolderConnection(
     basePath: normalizeConnectionBasePath(draft.basePath),
     passive: draft.passive,
     verifySSL: draft.verifySSL,
+    verifyHostKey: draft.verifyHostKey !== false,
     timeoutMs: sanitizeTimeout(draft.timeoutMs),
     createdAt: now,
     lastUsedAt: 0
@@ -225,6 +229,7 @@ export function draftFromNetworkFolderConnection(
     basePath: connection.basePath,
     passive: connection.passive,
     verifySSL: connection.verifySSL,
+    verifyHostKey: connection.verifyHostKey !== false,
     timeoutMs: connection.timeoutMs
   };
   return draft;
@@ -393,4 +398,116 @@ function sanitizeTimeout(timeoutMs: number): number {
     return 30000;
   }
   return Math.max(5000, Math.min(120000, Math.floor(timeoutMs)));
+}
+
+// ==================== Network Scan Types ====================
+
+export interface ProtocolPort {
+  protocol: number;
+  port: number;
+}
+
+export interface NetworkScanHost {
+  ip: string;
+  hostname: string;
+  protocols: number[];
+  protocolPorts: ProtocolPort[];
+}
+
+export interface NetworkScanProgress {
+  scannedHosts: number;
+  totalHosts: number;
+  currentIP: string;
+}
+
+export interface NetworkSMBShare {
+  name: string;
+  remark: string;
+  type: number;
+  isHidden: boolean;
+  isDiskShare: boolean;
+}
+
+export interface NetworkSMBEnumResult {
+  success: boolean;
+  message: string;
+  shares: NetworkSMBShare[];
+}
+
+export function mapScanProtocolToFolderProtocol(protocol: number): NetworkFolderProtocol {
+  switch (protocol) {
+    case 0: return 'ftp';
+    case 1: return 'sftp';
+    case 2: return 'ftps';
+    case 3: return 'webdav';
+    case 4: return 'webdav';
+    case 5: return 'smb';
+    default: return 'webdav';
+  }
+}
+
+export function getScanProtocolLabel(protocol: number): string {
+  switch (protocol) {
+    case 0: return 'FTP';
+    case 1: return 'SFTP';
+    case 2: return 'FTPS';
+    case 3: return 'WebDAV';
+    case 4: return 'WebDAV (HTTPS)';
+    case 5: return 'SMB';
+    default: return 'Unknown';
+  }
+}
+
+export function draftFromScanResult(
+  host: NetworkScanHost,
+  protocol: NetworkFolderProtocol
+): NetworkFolderConnectionDraft {
+  const draft = createEmptyNetworkFolderDraft();
+  draft.protocol = protocol;
+  draft.host = host.ip;
+  draft.name = host.hostname.length > 0 ? `${host.hostname} (${host.ip})` : host.ip;
+
+  // Find the actual port from protocolPorts
+  const protocolNum = protocol === 'ftp' ? 0 :
+    protocol === 'sftp' ? 1 :
+    protocol === 'ftps' ? 2 :
+    protocol === 'webdav' ? 3 :
+    protocol === 'smb' ? 5 : -1;
+
+  // For WebDAV, check if there's a secure variant (WEBDAVS = 4)
+  if (protocol === 'webdav') {
+    const webdavsEntry = host.protocolPorts.find((pp: ProtocolPort) => pp.protocol === 4);
+    const webdavEntry = host.protocolPorts.find((pp: ProtocolPort) => pp.protocol === 3);
+    if (webdavsEntry) {
+      draft.port = webdavsEntry.port;
+      draft.serverUrl = `https://${host.ip}:${webdavsEntry.port}`;
+      draft.verifySSL = true;
+    } else if (webdavEntry) {
+      draft.port = webdavEntry.port;
+      draft.serverUrl = `http://${host.ip}:${webdavEntry.port}`;
+      draft.verifySSL = false;
+    } else {
+      draft.port = 80;
+      draft.serverUrl = `http://${host.ip}`;
+      draft.verifySSL = false;
+    }
+  } else {
+    // For other protocols, find the matching entry
+    const entry = host.protocolPorts.find((pp: ProtocolPort) => pp.protocol === protocolNum);
+    if (entry) {
+      draft.port = entry.port;
+    } else {
+      // Fallback to default ports
+      if (protocol === 'smb') {
+        draft.port = 445;
+      } else if (protocol === 'ftps') {
+        draft.port = 990;
+      } else if (protocol === 'sftp') {
+        draft.port = 22;
+      } else {
+        draft.port = 21;
+      }
+    }
+  }
+  return draft;
 }

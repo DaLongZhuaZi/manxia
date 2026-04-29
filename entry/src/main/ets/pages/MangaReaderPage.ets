@@ -38,6 +38,7 @@ import {
   DEFAULT_READING_SETTINGS,
   ImageSourceType,
   MangaSourceInfo,
+  MangaImageRequestHeader,
   DoublePagePortraitLayout
 } from '../Models/MangaModels';
 import { MangaViewer } from '../components/MangaViewer';
@@ -56,7 +57,7 @@ import { AutoPageTurnController, AutoPageTurnState, AutoPageTurnConfig } from '.
 import { PageTurnAnimationType } from '../Models/MangaModels';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult } from '../Framework/WebView/MangaSourceEngine';
-import { PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
+import { PageInfo as SourcePageInfo, PageRequestHeader as SourcePageRequestHeader } from '../Framework/WebView/MangaSourceTypes';
 import { MangaSourceAPIEngine } from '../Framework/WebView/MangaSourceAPIEngine';
 import { ChapterPreloadManager } from '../Framework/Preload/ChapterPreloadManager';
 import { OnlineArchiveExtractedPage, OnlineArchiveExtractResult, OnlineMangaArchiveService } from '../Framework/Download/OnlineMangaArchiveService';
@@ -1582,6 +1583,56 @@ export struct MangaReaderPage {
     return clonedHeaders;
   }
 
+  private cloneSourcePageRequestHeaders(pageInfo: SourcePageInfo): MangaImageRequestHeader[] | undefined {
+    const sourceHeaders: SourcePageRequestHeader[] | undefined = pageInfo.requestHeaders;
+    if (!sourceHeaders || sourceHeaders.length === 0) {
+      return undefined;
+    }
+    const clonedHeaders: MangaImageRequestHeader[] = [];
+    let index = 0;
+    while (index < sourceHeaders.length) {
+      const header = sourceHeaders[index];
+      if (header && header.name && header.value) {
+        clonedHeaders.push({
+          name: String(header.name),
+          value: String(header.value)
+        } as MangaImageRequestHeader);
+      }
+      index = index + 1;
+    }
+    return clonedHeaders.length > 0 ? clonedHeaders : undefined;
+  }
+
+  private isKomiicSourceForReader(): boolean {
+    let baseUrl = '';
+    const engine: MangaSourceEngine | null = this.mangaEngine;
+    if (engine) {
+      const config = engine.getConfig();
+      if (config && config.metadata && config.metadata.baseUrl) {
+        baseUrl = String(config.metadata.baseUrl).toLowerCase();
+      }
+    }
+
+    const sourceName = this.pageParams && this.pageParams.sourceName
+      ? String(this.pageParams.sourceName).toLowerCase()
+      : '';
+    const sourcePkg = this.pageParams && this.pageParams.sourcePkg
+      ? String(this.pageParams.sourcePkg).toLowerCase()
+      : String(this.currentSourcePkg || '').toLowerCase();
+    const mangaSourceName = this.readerState.currentManga && this.readerState.currentManga.sourceInfo && this.readerState.currentManga.sourceInfo.sourceName
+      ? String(this.readerState.currentManga.sourceInfo.sourceName).toLowerCase()
+      : '';
+
+    return baseUrl.indexOf('komiic.com') >= 0 ||
+      sourceName.indexOf('komiic') >= 0 ||
+      sourcePkg.indexOf('komiic') >= 0 ||
+      mangaSourceName.indexOf('komiic') >= 0;
+  }
+
+  private shouldRefreshVolatileSourcePages(): boolean {
+    return this.isKomiicSourceForReader();
+  }
+
   private appendExtraRequestHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
     const normalizedName = headerName.trim();
     const normalizedValue = headerValue.trim();
@@ -3076,12 +3127,17 @@ export struct MangaReaderPage {
             ) || onlineChapters[0];
 
             if (targetChapter) {
-              try {
-                const targetPages = await dataManager.getOnlineChapterPages(targetChapter.id);
-                allPagesMap.set(targetChapter.id, targetPages);
-                logger.info(TAG, `⚡ 在线首屏优化：仅加载目标章节页面，chapterId=${targetChapter.id}, pages=${targetPages.length}, 总章节=${onlineChapters.length}`);
-              } catch (targetPageError) {
-                logger.warn(TAG, `在线首屏优化：加载目标章节页面失败，继续骨架初始化: ${String(targetPageError)}`);
+              if (this.shouldRefreshVolatileSourcePages()) {
+                allPagesMap.set(targetChapter.id, [] as OnlinePageInfo[]);
+                logger.info(TAG, `⚡ 易失票据图源跳过 online_page 首屏缓存: chapterId=${targetChapter.id}`);
+              } else {
+                try {
+                  const targetPages = await dataManager.getOnlineChapterPages(targetChapter.id);
+                  allPagesMap.set(targetChapter.id, targetPages);
+                  logger.info(TAG, `⚡ 在线首屏优化：仅加载目标章节页面，chapterId=${targetChapter.id}, pages=${targetPages.length}, 总章节=${onlineChapters.length}`);
+                } catch (targetPageError) {
+                  logger.warn(TAG, `在线首屏优化：加载目标章节页面失败，继续骨架初始化: ${String(targetPageError)}`);
+                }
               }
             }
           } else {
@@ -3372,7 +3428,9 @@ export struct MangaReaderPage {
       let didDynamicPageList: boolean = false;
       // 如果页面数量为0，或者页面数量>0但第一页没有有效的图片链接，都视为需要动态加载
       // 如果页面数量为0，或者页面数量>0但第一页没有有效的图片链接，都视为需要动态加载
-      const hasValidPages = this.readerState.currentChapter.pages.length > 0 &&
+      const shouldRefreshVolatilePages = this.shouldRefreshVolatileSourcePages();
+      const hasValidPages = !shouldRefreshVolatilePages &&
+        this.readerState.currentChapter.pages.length > 0 &&
         (!!this.readerState.currentChapter.pages[0].imageUrl || !!this.readerState.currentChapter.pages[0].imagePath);
 
       // 调试日志：输出页面数据状态
@@ -3388,12 +3446,16 @@ export struct MangaReaderPage {
         // [P0] Cache-first: already cached online pages should bypass network page-list flow.
         // [P0] Cache-first: already cached online pages should bypass network page-list flow.
         let validCachedDbPages: OnlinePageInfo[] = [];
-        try {
-          const cachedDataManager = DataManager.getInstance();
-          const cachedDbPages = await cachedDataManager.getOnlineChapterPages(this.readerState.currentChapter.id);
-          validCachedDbPages = cachedDbPages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
-        } catch (cacheError) {
-          logger.warn(TAG, `[缓存优先] 查询失败，回退到引擎路径: ${String(cacheError)}`);
+        if (shouldRefreshVolatilePages) {
+          logger.info(TAG, '[缓存优先] 易失票据图源跳过 online_page 缓存，刷新页面票据');
+        } else {
+          try {
+            const cachedDataManager = DataManager.getInstance();
+            const cachedDbPages = await cachedDataManager.getOnlineChapterPages(this.readerState.currentChapter.id);
+            validCachedDbPages = cachedDbPages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
+          } catch (cacheError) {
+            logger.warn(TAG, `[缓存优先] 查询失败，回退到引擎路径: ${String(cacheError)}`);
+          }
         }
         if (validCachedDbPages.length > 0) {
           const currentChapterId = this.readerState.currentChapter.id;
@@ -3507,11 +3569,16 @@ export struct MangaReaderPage {
           
           // [重构] 对于在线未下载漫画，从online_page表查询（不与本地方法混用）
           const dataManager = DataManager.getInstance();
-          const dbPages = await dataManager.getOnlineChapterPages(this.readerState.currentChapter.id);
+          let dbPages: OnlinePageInfo[] = [];
+          if (!shouldRefreshVolatilePages) {
+            dbPages = await dataManager.getOnlineChapterPages(this.readerState.currentChapter.id);
+          } else {
+            logger.info(TAG, '易失票据图源跳过网络为空时的 online_page 回退');
+          }
 
           // 如果网络获取的页面列表为空，但数据库有数据，则使用数据库数据作为后备
           let sourcePages: SourcePageInfo[] = pageListResult.data;
-          if (sourcePages.length === 0 && dbPages.length > 0) {
+          if (!shouldRefreshVolatilePages && sourcePages.length === 0 && dbPages.length > 0) {
             logger.warn(TAG, '⚠️ 网络获取页面列表为空，回退使用online_page表缓存页面');
             sourcePages = dbPages.map((p: OnlinePageInfo): SourcePageInfo => {
               const sp: SourcePageInfo = {
@@ -3553,6 +3620,7 @@ export struct MangaReaderPage {
               width: pageInfo.width,
               height: pageInfo.height,
               fileSize: 0,
+              requestHeaders: this.cloneSourcePageRequestHeaders(pageInfo),
               isLoaded: false
             };
             
@@ -5233,6 +5301,11 @@ export struct MangaReaderPage {
    * 保存页面信息到数据库
     */
   private async savePageInfoToDatabase(chapterId: string, pages: SourcePageInfo[]): Promise<void> {
+    if (this.shouldRefreshVolatileSourcePages()) {
+      logger.debug(TAG, `易失票据图源跳过 page 表保存: chapterId=${chapterId}, count=${pages.length}`);
+      return;
+    }
+
     try {
       const dataManager = DataManager.getInstance();
       
@@ -5281,6 +5354,11 @@ export struct MangaReaderPage {
     
     // 只在WebView在线漫画时预加载
     if (this.currentSourceId <= 0) {
+      return;
+    }
+
+    if (this.shouldRefreshVolatileSourcePages()) {
+      logger.debug(TAG, '易失票据图源跳过下一章节提前预加载，切章时再刷新票据');
       return;
     }
     
@@ -5796,6 +5874,11 @@ export struct MangaReaderPage {
    * 保存章节页面到数据库
     */
   private async saveChapterPagesToDatabase(chapterId: string, pages: SourcePageInfo[]): Promise<void> {
+    if (this.shouldRefreshVolatileSourcePages()) {
+      logger.debug(TAG, `易失票据图源跳过 online_page 表保存: chapterId=${chapterId}, count=${pages.length}`);
+      return;
+    }
+
     try {
       const dataManager = DataManager.getInstance();
       
@@ -5965,7 +6048,7 @@ export struct MangaReaderPage {
     }
 
     // [P0] Cache-first for chapter switch/preload path.
-    if (this.pageParams?.contentType === MangaReaderContentType.OnlineUndownloaded) {
+    if (this.pageParams?.contentType === MangaReaderContentType.OnlineUndownloaded && !this.shouldRefreshVolatileSourcePages()) {
       try {
         const dataManager = DataManager.getInstance();
         const cachedOnlinePages = await dataManager.getOnlineChapterPages(chapter.id);
@@ -6006,7 +6089,7 @@ export struct MangaReaderPage {
       
       let pageListResult: EngineResult<SourcePageInfo[]>;
       
-      if (preloadTask && preloadTask.status === 'completed' && preloadTask.pageCount > 0) {
+      if (preloadTask && preloadTask.status === 'completed' && preloadTask.pageCount > 0 && !this.shouldRefreshVolatileSourcePages()) {
         logger.info(TAG, `使用章节预加载缓存: ${chapter.title}, 页面数=${preloadTask.pageCount}, 已缓存页数=${preloadTask.preloadedPages}`);
         
         // 尝试从数据库读取页面列表，避免重复调用getPageList
@@ -6068,6 +6151,7 @@ export struct MangaReaderPage {
           width: pageInfo.width,
           height: pageInfo.height,
           fileSize: 0,
+          requestHeaders: this.cloneSourcePageRequestHeaders(pageInfo),
           isLoaded: false
         } as MangaPage;
       });
@@ -6306,8 +6390,8 @@ export struct MangaReaderPage {
       // 保存当前章节进度
       this.saveReadingProgressInternal('switchChapter').then(async () => {
       // 保存当前章节进度
-        if (!targetChapter.pages || targetChapter.pages.length === 0) {
-          logger.info(TAG, `章节 ${targetChapter.title} 无页面信息，开始加载...`);
+        if (!targetChapter.pages || targetChapter.pages.length === 0 || this.shouldRefreshVolatileSourcePages()) {
+          logger.info(TAG, `章节 ${targetChapter.title} 需要刷新页面信息，开始加载...`);
           this.readerState.isLoading = true;
           this.readerState.loadingMessage = `正在加载章节 ${targetChapter.title}...`;
           

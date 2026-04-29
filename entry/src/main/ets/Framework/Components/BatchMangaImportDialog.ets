@@ -5,6 +5,7 @@
  */
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
 import { AppColors } from '../Theme/AppColors';
@@ -923,8 +924,24 @@ export struct BatchMangaImportDialog {
     }
     .width('100%')
     .height('90%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(16)
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
+    .backgroundBlurStyle(
+      DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
+      DialogSurfaceStyleHelper.getPopupCardBlurOptions()
+    )
+    .backgroundEffect(DialogSurfaceStyleHelper.getPopupCardBackgroundEffect())
+    .borderRadius(26)
+    .clip(true)
+    .border({
+      width: 1,
+      color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState)
+    })
+    .shadow({
+      radius: 26,
+      color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
+      offsetX: 0,
+      offsetY: 10
+    })
     .opacity(this.animOpacity)
     .translate({ y: this.animTranslateY })
   }
@@ -2529,8 +2546,8 @@ export struct BatchMangaImportDialog {
 
       Button('开始导入')
         .fontSize(15)
-        .fontColor(AppColors.onPrimary)
-        .backgroundColor(AppColors.primary)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
         .height(44)
         .layoutWeight(1)

@@ -73,8 +73,17 @@ response.json
 # Third-party source code (too large, use pre-compiled libs)
 /entry/src/main/cpp/webdav/mbedtls-3.5.1/
 /entry/src/main/cpp/webdav/curl-8.5.0/
+/entry/src/main/cpp/webdav/libssh2-1.11.0/
+/entry/src/main/cpp/webdav/libssh2-1.11.0.tar.gz
 /entry/src/main/cpp/webdav/install-mbedtls-arm64/
 /entry/src/main/cpp/webdav/install-curl-arm64/
+/entry/src/main/cpp/webdav/install-curl-https-arm64/
+/entry/src/main/cpp/webdav/install-libssh2-arm64/
+
+# Native build directories
+/entry/src/main/cpp/webdav/build-curl-https-arm64/
+/entry/src/main/cpp/webdav/build-libssh2-arm64/
+/entry/src/main/cpp/webdav/build-mbedtls-arm64/
 
 # Compiled native libraries (keep source, ignore build outputs)
 # Note: libs/ contains pre-compiled dependencies, should be tracked
@@ -88,5 +97,6 @@ response.json
 # Hvigor cache
 /.hvigor/
 **/hvigorfile.ts.timestamp
-/entry/src/main/cpp/avif/build_windows
-/entry/src/main/cpp/avif/build_windows
+
+# AVIF build directory
+/entry/src/main/cpp/avif/build_windows/

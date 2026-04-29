@@ -25,6 +25,8 @@ import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarMana
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { DownloadDirManager } from '../Framework/Storage/DownloadDirManager';
+import fs from '@ohos.file.fs';
 
 const TAG = 'DownloadManagerPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -42,7 +44,27 @@ interface DownloadTask {
   remainingTime: string; // 剩余时间，如 "3分钟"
 }
 
-type DownloadContentTypeTab = 'downloads' | 'manga_cache' | 'migration';
+type DownloadContentTypeTab = 'downloads' | 'manga_cache' | 'migration' | 'file_structure';
+
+interface FileStructureNode {
+  name: string;
+  relativePath: string;
+  isDirectory: boolean;
+  size: number;
+  fileCount: number;
+  children: FileStructureNode[];
+  expanded: boolean;
+  depth: number;
+}
+
+interface FileStructureSection {
+  title: string;
+  symbolName: Resource;
+  basePath: string;
+  nodes: FileStructureNode[];
+  totalSize: number;
+  totalFiles: number;
+}
 
 // 使用NavDestinationContext官方类型
 // @kit.ArkUI提供的NavDestinationContext已包含必要的类型定义
@@ -86,6 +108,12 @@ struct DownloadManagerPage {
   @State migrationSummary: OnlineArchiveMigrationSummary | null = null;
   @State migrationResults: OnlineArchiveMigrationItem[] = [];
   
+  // 文件结构状态
+  @State fileSections: FileStructureSection[] = [];
+  @State isFileTreeLoading: boolean = false;
+  @State fileTreeTotalSize: number = 0;
+  @State downloadDirAvailable: boolean = false;
+  
   // 下载管理器
   private downloadManager: MangaDownloadManager = MangaDownloadManager.getInstance();
   private unifiedDownloadManager: UnifiedDownloadManager = getUnifiedDownloadManager();
@@ -93,8 +121,9 @@ struct DownloadManagerPage {
   private permanentCacheManager: PermanentImageCacheManager = PermanentImageCacheManager.getInstance();
   private onlineArchiveService: OnlineMangaArchiveService = OnlineMangaArchiveService.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
+  private hostContext: common.UIAbilityContext | null = null;
   private updateTimer: number = -1;
-  private readonly contentTypeTabOrder: DownloadContentTypeTab[] = ['downloads', 'manga_cache', 'migration'];
+  private readonly contentTypeTabOrder: DownloadContentTypeTab[] = ['downloads', 'manga_cache', 'migration', 'file_structure'];
 
   private onMangaCacheUpdated: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
     const cachePayload = payload as MangaCacheUpdatedPayload;
@@ -118,7 +147,8 @@ struct DownloadManagerPage {
   onReady(): void {
     const hostContext = this.getUIContext().getHostContext();
     if (hostContext) {
-      this.onlineArchiveService.setContext(hostContext as common.UIAbilityContext);
+      this.hostContext = hostContext as common.UIAbilityContext;
+      this.onlineArchiveService.setContext(this.hostContext);
     }
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
@@ -503,6 +533,236 @@ struct DownloadManagerPage {
     }
   }
 
+  // ==================== 文件结构扫描方法 ====================
+
+  private async loadFileStructure(): Promise<void> {
+    this.isFileTreeLoading = true;
+    try {
+      const sections: FileStructureSection[] = [];
+      let grandTotalSize = 0;
+
+      const downloadDirMgr = DownloadDirManager.getInstance();
+      this.downloadDirAvailable = downloadDirMgr.isReady();
+      if (this.downloadDirAvailable) {
+        const downloadPath = downloadDirMgr.getPath();
+        const downloadNodes = this.scanDirectoryTree(downloadPath, '', 0);
+        const downloadSize = this.sumTreeSize(downloadNodes);
+        const downloadFiles = this.sumTreeFileCount(downloadNodes);
+        sections.push({
+          title: '公共 Download 目录',
+          symbolName: $r('sys.symbol.arrow_down_circle'),
+          basePath: downloadPath,
+          nodes: downloadNodes,
+          totalSize: downloadSize,
+          totalFiles: downloadFiles
+        });
+        grandTotalSize += downloadSize;
+      }
+
+      if (this.hostContext) {
+        const privatePath = `${this.hostContext.filesDir}/downloads`;
+        try {
+          fs.accessSync(privatePath);
+          const privateNodes = this.scanDirectoryTree(privatePath, '', 0);
+          const privateSize = this.sumTreeSize(privateNodes);
+          const privateFiles = this.sumTreeFileCount(privateNodes);
+          sections.push({
+            title: '应用私有缓存',
+            symbolName: $r('sys.symbol.lock_shield'),
+            basePath: privatePath,
+            nodes: privateNodes,
+            totalSize: privateSize,
+            totalFiles: privateFiles
+          });
+          grandTotalSize += privateSize;
+        } catch (_err) {
+          logger.debug(TAG, `私有downloads目录不存在: ${privatePath}`);
+        }
+      }
+
+      this.fileSections = sections;
+      this.fileTreeTotalSize = grandTotalSize;
+      logger.info(TAG, `文件结构扫描完成: ${sections.length} 个区域, 总大小: ${this.formatTreeSize(grandTotalSize)}`);
+    } catch (error) {
+      logger.error(TAG, `加载文件结构失败: ${String(error)}`);
+    } finally {
+      this.isFileTreeLoading = false;
+    }
+  }
+
+  private scanDirectoryTree(fullPath: string, relativePath: string, depth: number): FileStructureNode[] {
+    const result: FileStructureNode[] = [];
+    try {
+      const entries: string[] = fs.listFileSync(fullPath);
+      for (const entry of entries) {
+        if (entry.startsWith('.')) {
+          continue;
+        }
+        const entryRelative = relativePath !== '' ? `${relativePath}/${entry}` : entry;
+        const entryFull = `${fullPath}/${entry}`;
+        try {
+          const stat = fs.statSync(entryFull);
+          if (stat.isDirectory()) {
+            const children = this.scanDirectoryTree(entryFull, entryRelative, depth + 1);
+            const dirSize = this.sumTreeSize(children);
+            const dirFileCount = this.sumTreeFileCount(children);
+            result.push({
+              name: entry,
+              relativePath: entryRelative,
+              isDirectory: true,
+              size: dirSize,
+              fileCount: dirFileCount,
+              children: children,
+              expanded: depth < 1,
+              depth: depth
+            });
+          } else {
+            result.push({
+              name: entry,
+              relativePath: entryRelative,
+              isDirectory: false,
+              size: stat.size,
+              fileCount: 0,
+              children: [],
+              expanded: false,
+              depth: depth
+            });
+          }
+        } catch (_statErr) {
+          logger.debug(TAG, `无法获取文件状态: ${entryFull}`);
+        }
+      }
+    } catch (_listErr) {
+      logger.warn(TAG, `扫描目录失败: ${fullPath}`);
+    }
+    result.sort((a: FileStructureNode, b: FileStructureNode) => {
+      if (a.isDirectory && !b.isDirectory) {
+        return -1;
+      }
+      if (!a.isDirectory && b.isDirectory) {
+        return 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+    return result;
+  }
+
+  private sumTreeSize(nodes: FileStructureNode[]): number {
+    let total = 0;
+    for (const node of nodes) {
+      total += node.size;
+    }
+    return total;
+  }
+
+  private sumTreeFileCount(nodes: FileStructureNode[]): number {
+    let total = 0;
+    for (const node of nodes) {
+      if (node.isDirectory) {
+        total += node.fileCount;
+      } else {
+        total++;
+      }
+    }
+    return total;
+  }
+
+  private formatTreeSize(bytes: number): string {
+    if (bytes === 0) {
+      return '0 B';
+    }
+    const k = 1024;
+    const sizes: string[] = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const clampedIndex = Math.min(i, sizes.length - 1);
+    return `${(bytes / Math.pow(k, clampedIndex)).toFixed(2)} ${sizes[clampedIndex]}`;
+  }
+
+  private calcTreePercent(part: number, total: number): number {
+    if (total <= 0) {
+      return 0;
+    }
+    return Math.round((part / total) * 100);
+  }
+
+  private getFileTypeSymbolName(name: string): Resource {
+    const dotIndex = name.lastIndexOf('.');
+    const ext = dotIndex >= 0 ? name.substring(dotIndex + 1).toLowerCase() : '';
+    if (['cbz', 'zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+      return $r('sys.symbol.archivebox');
+    }
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'].includes(ext)) {
+      return $r('sys.symbol.camera');
+    }
+    if (['epub', 'mobi', 'pdf'].includes(ext)) {
+      return $r('sys.symbol.book');
+    }
+    if (['txt', 'json', 'xml', 'html', 'css', 'js'].includes(ext)) {
+      return $r('sys.symbol.doc_text');
+    }
+    return $r('sys.symbol.doc');
+  }
+
+  private getFolderSymbolName(node: FileStructureNode): Resource {
+    if (node.expanded) {
+      return $r('sys.symbol.folder_fill');
+    }
+    return $r('sys.symbol.folder_fill');
+  }
+
+  private toggleFileNode(sectionIndex: number, nodePath: string): void {
+    const newSections: FileStructureSection[] = [];
+    for (let si = 0; si < this.fileSections.length; si++) {
+      const section = this.fileSections[si];
+      if (si === sectionIndex) {
+        const newNodes = this.toggleNodeInTree(section.nodes, nodePath);
+        newSections.push({
+          title: section.title,
+          symbolName: section.symbolName,
+          basePath: section.basePath,
+          nodes: newNodes,
+          totalSize: section.totalSize,
+          totalFiles: section.totalFiles
+        });
+      } else {
+        newSections.push(section);
+      }
+    }
+    this.fileSections = newSections;
+  }
+
+  private toggleNodeInTree(nodes: FileStructureNode[], targetPath: string): FileStructureNode[] {
+    const result: FileStructureNode[] = [];
+    for (const node of nodes) {
+      if (node.relativePath === targetPath && node.isDirectory) {
+        result.push({
+          name: node.name,
+          relativePath: node.relativePath,
+          isDirectory: node.isDirectory,
+          size: node.size,
+          fileCount: node.fileCount,
+          children: node.children,
+          expanded: !node.expanded,
+          depth: node.depth
+        });
+      } else if (node.isDirectory && node.children.length > 0) {
+        result.push({
+          name: node.name,
+          relativePath: node.relativePath,
+          isDirectory: node.isDirectory,
+          size: node.size,
+          fileCount: node.fileCount,
+          children: this.toggleNodeInTree(node.children, targetPath),
+          expanded: node.expanded,
+          depth: node.depth
+        });
+      } else {
+        result.push(node);
+      }
+    }
+    return result;
+  }
+
   /**
    * 获取状态文本
    */
@@ -629,6 +889,29 @@ struct DownloadManagerPage {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Center)
       .onClick(() => { this.activateContentTypeTab('migration'); })
+
+      Column() {
+        Text('文件结构')
+          .fontSize(14)
+          .fontWeight(this.contentTypeTab === 'file_structure' ? FontWeight.Bold : FontWeight.Normal)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.contentTypeTab === 'file_structure'
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        if (this.contentTypeTab === 'file_structure') {
+          Divider()
+            .width(40)
+            .height(3)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .margin({ top: 6 })
+        } else {
+          Blank().height(9)
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => { this.activateContentTypeTab('file_structure'); })
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 4 })
@@ -660,6 +943,8 @@ struct DownloadManagerPage {
       this.loadCacheLists();
     } else if (tab === 'migration' && !this.migrationHasRun && !this.migrationRunning) {
       this.startArchiveMigration();
+    } else if (tab === 'file_structure' && this.fileSections.length === 0 && !this.isFileTreeLoading) {
+      this.loadFileStructure();
     }
   }
 
@@ -785,6 +1070,35 @@ struct DownloadManagerPage {
         })
         .onClick(() => {
           this.activateContentTypeTab('migration');
+        })
+        .animation({ duration: 150 })
+
+        Row() {
+          SymbolGlyph($r('sys.symbol.folder'))
+            .fontSize(12)
+            .fontColor([this.contentTypeTab === 'file_structure'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 4 })
+          Text('文件结构')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.contentTypeTab === 'file_structure'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 10 })
+        .height(30)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.contentTypeTab === 'file_structure'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.contentTypeTab === 'file_structure' ? 2 : 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.activateContentTypeTab('file_structure');
         })
         .animation({ duration: 150 })
       }
@@ -1189,6 +1503,289 @@ struct DownloadManagerPage {
     }
   }
 
+  // ==================== 文件结构 Builder 方法 ====================
+
+  @Builder
+  buildFileStructureLoading() {
+    Column({ space: 20 }) {
+      LoadingProgress()
+        .width(48)
+        .height(48)
+        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+
+      Text('正在扫描文件结构...')
+        .fontSize(16)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .height(300)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  buildFileStructureEmpty() {
+    Column({ space: 16 }) {
+      SymbolGlyph($r('sys.symbol.questionmark_circle'))
+        .fontSize(48)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+
+      Text(this.downloadDirAvailable
+        ? '暂无缓存文件'
+        : '公共 Download 目录未授权，请先在数据管理页面授权访问')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .textAlign(TextAlign.Center)
+        .padding({ left: 32, right: 32 })
+    }
+    .width('100%')
+    .height(250)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  buildFileStructureView() {
+    if (this.fileSections.length === 0) {
+      this.buildFileStructureEmpty()
+    } else {
+      Column({ space: 12 }) {
+        this.buildFileTreeOverview()
+
+        ForEach(this.fileSections, (section: FileStructureSection, sectionIndex: number) => {
+          this.buildFileTreeSection(section, sectionIndex)
+        }, (section: FileStructureSection, sectionIndex: number) => `section_${sectionIndex}_${section.title}`)
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  buildFileTreeOverview() {
+    Column({ space: 8 }) {
+      Row() {
+        SymbolGlyph($r('sys.symbol.externaldrive'))
+          .fontSize(16)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          .margin({ right: 6 })
+
+        Text('缓存文件总览')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Blank()
+
+        Text(this.formatTreeSize(this.fileTreeTotalSize))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      if (this.fileSections.length > 1) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.fileSections, (section: FileStructureSection, sectionIndex: number) => {
+            Row({ space: 4 }) {
+              SymbolGlyph(section.symbolName)
+                .fontSize(10)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+              Text(`${section.title}: ${this.formatTreeSize(section.totalSize)}`)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ right: 8, bottom: 8 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(6)
+          }, (section: FileStructureSection, sectionIndex: number) => `overview_${sectionIndex}_${section.title}`)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(12)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 16,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 6
+    })
+    .margin({ left: 16, right: 16, bottom: 4 })
+  }
+
+  @Builder
+  buildFileTreeSection(section: FileStructureSection, sectionIndex: number) {
+    Column({ space: 0 }) {
+      Row() {
+        SymbolGlyph(section.symbolName)
+          .fontSize(14)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          .margin({ right: 6 })
+
+        Text(section.title)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Blank()
+
+        Text(`${this.formatTreeSize(section.totalSize)} · ${section.totalFiles} 文件`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 10 })
+
+      Divider()
+        .width('100%')
+        .height(0.5)
+        .color(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+
+      if (section.nodes.length === 0) {
+        Column({ space: 8 }) {
+          Text('空目录')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .height(60)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        ForEach(section.nodes, (node: FileStructureNode, nodeIndex: number) => {
+          this.buildFileNodeRow(sectionIndex, node, section.totalSize)
+        }, (node: FileStructureNode, _nodeIndex: number) => `node_${sectionIndex}_${node.relativePath}_${node.expanded}`)
+      }
+    }
+    .width('100%')
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(12)
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: 16,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 6
+    })
+    .margin({ left: 16, right: 16, bottom: 4 })
+  }
+
+  @Builder
+  buildFileNodeRow(sectionIndex: number, node: FileStructureNode, sectionTotalSize: number) {
+    Column() {
+      Row() {
+        if (node.isDirectory) {
+          SymbolGlyph(node.expanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+            .fontSize(10)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            .margin({ right: 4 })
+        } else {
+          Blank().width(14).height(1)
+        }
+
+        SymbolGlyph(node.isDirectory ? this.getFolderSymbolName(node) : this.getFileTypeSymbolName(node.name))
+          .fontSize(14)
+          .fontColor([node.isDirectory
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          .margin({ right: 6 })
+
+        Text(node.name)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.formatTreeSize(node.size))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .margin({ left: 8 })
+
+        Text(`${this.calcTreePercent(node.size, sectionTotalSize)}%`)
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .margin({ left: 6 })
+          .width(40)
+          .textAlign(TextAlign.End)
+      }
+      .width('100%')
+      .padding({ left: 16 + node.depth * 16, right: 16, top: 10, bottom: 4 })
+      .onClick(() => {
+        if (node.isDirectory) {
+          this.toggleFileNode(sectionIndex, node.relativePath);
+        }
+      })
+
+      this.buildSizeRatioBar(
+        this.calcTreePercent(node.size, sectionTotalSize),
+        node.isDirectory
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+      )
+
+      if (node.isDirectory && node.expanded) {
+        ForEach(node.children, (child: FileStructureNode, _childIndex: number) => {
+          this.buildFileNodeRow(sectionIndex, child, sectionTotalSize)
+        }, (child: FileStructureNode, _childIndex: number) => `child_${sectionIndex}_${child.relativePath}_${child.expanded}`)
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  buildSizeRatioBar(ratio: number, barColor: ResourceColor) {
+    Stack({ alignContent: Alignment.Start }) {
+      Row()
+        .width('100%')
+        .height(3)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(1.5)
+
+      Row()
+        .width(`${Math.max(ratio, 1)}%`)
+        .height(3)
+        .backgroundColor(barColor)
+        .opacity(0.6)
+        .borderRadius(1.5)
+    }
+    .width('100%')
+    .height(3)
+    .margin({ left: 16, right: 16, bottom: 8 })
+  }
+
   /**
    * 构建过滤选项栏
    */
@@ -1518,6 +2115,23 @@ struct DownloadManagerPage {
                 .layoutWeight(1)
                 .edgeEffect(EdgeEffect.Spring)
                 .scrollBar(BarState.Auto)
+              } else if (this.contentTypeTab === 'file_structure') {
+                if (this.isFileTreeLoading) {
+                  this.buildFileStructureLoading()
+                } else {
+                  Scroll(this.scroller) {
+                    Column() {
+                      this.buildFileStructureView()
+                      Blank().height(24 + this.navigationBarHeight)
+                    }
+                    .width('100%')
+                    .padding({ top: 8 })
+                  }
+                  .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+                  .layoutWeight(1)
+                  .edgeEffect(EdgeEffect.Spring)
+                  .scrollBar(BarState.Auto)
+                }
               }
             }
             .width('100%')
