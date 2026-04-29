@@ -2344,6 +2344,40 @@ export class DataManager {
   }
 
   /**
+   * [优化] 批量添加页面信息（事务包裹）
+   * 替代逐条 addPageInfo，将所有 INSERT 放在一个事务内执行
+   */
+  public async batchAddPageInfo(pages: PageInfoInput[]): Promise<void> {
+    if (pages.length === 0) return;
+    try {
+      const now = Date.now();
+      await this.databaseManager.beginTransaction();
+      try {
+        const sql = `INSERT INTO page
+                     (id, chapterId, pageNumber, imageUrl, localPath, width, height, fileSize, isDownloaded, createTime)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        for (let i = 0; i < pages.length; i++) {
+          const p = pages[i];
+          const pageId = this.generateId();
+          await this.databaseManager.executeSql(sql, [
+            pageId, p.chapterId, Math.floor(p.index), p.imageUrl,
+            p.localPath || null, Math.floor(p.width), Math.floor(p.height), Math.floor(p.fileSize),
+            0, now
+          ]);
+        }
+        await this.databaseManager.commit();
+        logger.debug(TAG, `批量保存页面信息完成: count=${pages.length}`);
+      } catch (txError) {
+        await this.databaseManager.rollBack();
+        throw txError as Error;
+      }
+    } catch (error) {
+      logger.error(TAG, `批量保存页面信息失败: ${String(error)}`);
+      throw error as Error;
+    }
+  }
+
+  /**
    * 获取章节页面列表
    */
   public async getChapterPages(chapterId: string): Promise<PageInfo[]> {

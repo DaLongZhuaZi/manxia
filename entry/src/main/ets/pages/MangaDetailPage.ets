@@ -3750,6 +3750,23 @@ struct MangaDetailPage {
         logger.info(TAG, `传递漫画对象: title=${mTitle}, id=${mId}, sourceName=${mSrcName}`);
       }
       
+      // [优化] 在动画期间后台预取页面列表，阅读器打开后可直接使用
+      if (this.mangaEngine && readerParams.sourceId && readerParams.chapterId) {
+        const prefetchSourceId = readerParams.sourceId;
+        const prefetchChapterId = readerParams.chapterId;
+        const prefetchMangaId = readerParams.mangaId || '';
+        this.mangaEngine.getPageList(prefetchChapterId, prefetchMangaId).then((result) => {
+          if (result.success && result.data && result.data.length > 0) {
+            MangaSourceEngine.setPrefetchedPages(prefetchSourceId, prefetchChapterId, result.data);
+            logger.info(TAG, `[预取] 页面列表预取成功: ${result.data.length} 页`);
+          } else {
+            logger.warn(TAG, `[预取] 页面列表预取失败或为空: ${result.error || 'empty'}`);
+          }
+        }).catch((e: Error) => {
+          logger.warn(TAG, `[预取] 页面列表预取异常: ${e.message}`);
+        });
+      }
+
       // 触发翻开过渡动画（使用组件ID获取准确封面位置）
       const coverPath: string = this.currentManga.coverImagePath || '';
       const coverComponentId: string = `cover_manga_detail_${this.currentManga.id}`;
