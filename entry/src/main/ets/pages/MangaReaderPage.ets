@@ -17,7 +17,7 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { UIContext, curves, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { DataManager, PageInfo, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, OnlinePageInfoInput, UserSettingsDatabaseRecord } from '../Framework/Data/DataManager';
+import { DataManager, PageInfo, PageInfoInput, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, OnlinePageInfoInput, UserSettingsDatabaseRecord } from '../Framework/Data/DataManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
 import CookieManager from '../Framework/Managers/CookieManager';
@@ -3506,16 +3506,28 @@ export struct MangaReaderPage {
           // [修复] 显示加载状态
           this.readerState.loadingMessage = '正在从源站加载章节页面...';
           logger.info(TAG, `🔄 开始获取页面列表: mangaId=${externalMangaId}, chapterId=${externalChapterId}`);
-          
-          // [P0] 首屏不做固定延迟和长退避重试：立即请求，失败后仅即时重试一次
-          let pageListResult: ESObject | null = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
-          if (!pageListResult.success || !pageListResult.data || pageListResult.data.length === 0) {
-            logger.warn(TAG, '[P0] 首次获取页面列表失败/为空，立即重试一次');
-            pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
+
+          // [优化] 检查 MangaDetailPage 预取的页面列表缓存
+          let pageListResult: ESObject | null = null;
+          if (params.sourceId && externalChapterId) {
+            const prefetched = MangaSourceEngine.getPrefetchedPages(params.sourceId, externalChapterId);
+            if (prefetched && prefetched.length > 0) {
+              pageListResult = { success: true, data: prefetched, duration: 0, actionCount: 0 };
+              logger.info(TAG, `[预取] 使用预取的页面列表: ${prefetched.length} 页`);
+            }
           }
-          
+
           if (!pageListResult) {
-            throw new Error('从源站加载页面列表失败');
+            // [P0] 首屏不做固定延迟和长退避重试：立即请求，失败后仅即时重试一次
+            pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
+            if (!pageListResult.success || !pageListResult.data || pageListResult.data.length === 0) {
+              logger.warn(TAG, '[P0] 首次获取页面列表失败/为空，立即重试一次');
+              pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
+            }
+
+            if (!pageListResult) {
+              throw new Error('从源站加载页面列表失败');
+            }
           }
           
           logger.info(TAG, `📊 页面列表获取结果: success=${pageListResult.success}, hasData=${!!pageListResult.data}, dataLength=${pageListResult.data?.length || 0}`);
@@ -5316,18 +5328,16 @@ export struct MangaReaderPage {
         return;
       }
       
-      // 批量保存页面信息
-      for (let i = 0; i < pages.length; i++) {
-        const pageInfo = pages[i];
-        await dataManager.addPageInfo({
-          chapterId: chapterId,
-          index: i,
-          imageUrl: pageInfo.imageUrl,
-          width: pageInfo.width || 0,
-          height: pageInfo.height || 0,
-          fileSize: 0
-        });
-      }
+      // [优化] 批量保存页面信息（事务包裹）
+      const pageInputs: PageInfoInput[] = pages.map((pageInfo: SourcePageInfo, i: number): PageInfoInput => ({
+        chapterId: chapterId,
+        index: i,
+        imageUrl: pageInfo.imageUrl,
+        width: pageInfo.width || 0,
+        height: pageInfo.height || 0,
+        fileSize: 0
+      }));
+      await dataManager.batchAddPageInfo(pageInputs);
       
       logger.info(TAG, `Saved page info for chapter ${chapterId}, count=${pages.length}`);
     } catch (error) {

@@ -133,10 +133,50 @@ interface ConfigSummaryRecord extends Record<string, Object> {
   settings: ConfigSummarySettings;
 }
 
+/** [优化] 预取页面缓存条目 */
+interface PrefetchCacheEntry {
+  data: PageInfo[];
+  timestamp: number;
+}
+
+/** [优化] 源设置缓存条目 */
+interface SourceSettingsCacheEntry {
+  variables: Record<string, string>;
+  timestamp: number;
+}
+
 /**
  * 漫画图源引擎
  */
 export class MangaSourceEngine {
+  // [优化] 跨页面预取缓存：MangaDetailPage 预取页面列表，MangaReaderPage 直接使用
+  private static prefetchedPageLists: Map<string, PrefetchCacheEntry> = new Map();
+  private static readonly PREFETCH_CACHE_TTL_MS: number = 120000; // 2 分钟
+
+  /**
+   * [优化] 存储预取的页面列表（供 MangaDetailPage 调用）
+   */
+  static setPrefetchedPages(sourceId: number, chapterId: string, pages: PageInfo[]): void {
+    const key = `${sourceId}_${chapterId}`;
+    const entry: PrefetchCacheEntry = { data: pages, timestamp: Date.now() };
+    MangaSourceEngine.prefetchedPageLists.set(key, entry);
+    logger.info(TAG, `[预取] 已缓存页面列表: key=${key}, pages=${pages.length}`);
+  }
+
+  /**
+   * [优化] 获取预取的页面列表（供 MangaReaderPage 调用）
+   */
+  static getPrefetchedPages(sourceId: number, chapterId: string): PageInfo[] | null {
+    const key = `${sourceId}_${chapterId}`;
+    const cached = MangaSourceEngine.prefetchedPageLists.get(key);
+    if (cached && (Date.now() - cached.timestamp) < MangaSourceEngine.PREFETCH_CACHE_TTL_MS) {
+      MangaSourceEngine.prefetchedPageLists.delete(key); // 一次性消费
+      logger.info(TAG, `[预取] 命中预取缓存: key=${key}, pages=${cached.data.length}`);
+      return cached.data;
+    }
+    return null;
+  }
+
   private actionEngine: MangaSourceActionEngine;
   private selectorEngine: MangaSourceSelectorEngine;
   private configParser: MangaSourceConfigParser;
@@ -149,6 +189,11 @@ export class MangaSourceEngine {
   private currentToken: string | undefined = undefined;
   // 任务执行器
   private taskExecutor: TaskExecutor | null = null;
+  // [优化] 缓存 populateSourceSettings 结果，避免重复 DB 查询和 JSON.parse
+  private sourceSettingsCache: Map<string, SourceSettingsCacheEntry> = new Map();
+  private static readonly SOURCE_SETTINGS_CACHE_TTL_MS: number = 60000; // 60s TTL
+  // [优化] 缓存 rawConfigJson 解析结果，避免重复 JSON.parse
+  private parsedConfigCache: Record<string, Object> | null = null;
 
   constructor(engineConfig: EngineConfig) {
     this.engineConfig = engineConfig;
@@ -193,7 +238,9 @@ export class MangaSourceEngine {
     
     // 保存原始JSON用于提取API配置
     this.rawConfigJson = jsonContent;
-    
+    // [优化] 配置变更时清除缓存
+    this.clearEngineCache();
+
     const parseResult = this.configParser.parseConfig(jsonContent);
     
     if (parseResult.success && parseResult.config) {
@@ -3204,11 +3251,11 @@ export class MangaSourceEngine {
     if (this.config) {
       variables['baseUrl'] = this.config.metadata.baseUrl;
       logger.debug(TAG, `初始化baseUrl变量: ${variables['baseUrl']}`);
-      
-      // 初始化API配置变量
-      if (this.rawConfigJson) {
+
+      // [优化] 使用缓存的 parsed config
+      const rawConfig = this.getParsedConfig();
+      if (rawConfig) {
         try {
-          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
           if (rawConfig['api']) {
             const apiConfig = rawConfig['api'] as Record<string, Object>;
             if (apiConfig['endpoint']) {
@@ -3501,6 +3548,34 @@ export class MangaSourceEngine {
   }
 
   /**
+   * [优化] 获取解析后的 rawConfigJson，带缓存
+   */
+  private getParsedConfig(): Record<string, Object> | null {
+    if (this.parsedConfigCache) {
+      return this.parsedConfigCache;
+    }
+    if (!this.rawConfigJson) {
+      return null;
+    }
+    try {
+      this.parsedConfigCache = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+      return this.parsedConfigCache;
+    } catch (e) {
+      logger.warn(TAG, `解析 rawConfigJson 失败: ${e}`);
+      return null;
+    }
+  }
+
+  /**
+   * [优化] 清除引擎内部缓存（在源配置更新时调用）
+   */
+  clearEngineCache(): void {
+    this.sourceSettingsCache.clear();
+    this.parsedConfigCache = null;
+    logger.debug(TAG, '引擎内部缓存已清除');
+  }
+
+  /**
    * 填充源级设置与登录变量到上下文
    */
   private async populateSourceSettings(context: ActionContext): Promise<void> {
@@ -3509,6 +3584,24 @@ export class MangaSourceEngine {
       return;
     }
     const sid: number = Number(sidStr);
+
+    // [优化] 检查缓存
+    const cached = this.sourceSettingsCache.get(sidStr);
+    if (cached && (Date.now() - cached.timestamp) < MangaSourceEngine.SOURCE_SETTINGS_CACHE_TTL_MS) {
+      const cachedKeys = Object.keys(cached.variables);
+      for (let i = 0; i < cachedKeys.length; i++) {
+        context.variables[cachedKeys[i]] = cached.variables[cachedKeys[i]];
+      }
+      logger.debug(TAG, `populateSourceSettings 缓存命中，注入 ${cachedKeys.length} 个变量`);
+      // Token 和 credentials 仍需每次注入（可能在会话中变化）
+      if (this.currentToken) {
+        context.variables['token'] = this.currentToken;
+      }
+      return;
+    }
+
+    // 缓存未命中，执行完整加载
+    const variablesSnapshot: Record<string, string> = {};
     try {
       const creds = await this.dataManager.getSourceCredentials(sid);
       if (creds) {
@@ -3538,11 +3631,11 @@ export class MangaSourceEngine {
 
       // [修复] 加载图源自定义设置（如 domain、API选项等）
       // 首先从 source.json 中加载设置的默认值
-      if (this.rawConfigJson) {
+      const rawConfig1 = this.getParsedConfig();
+      if (rawConfig1) {
         try {
-          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
-          if (rawConfig['settings']) {
-            const settingsConfig = rawConfig['settings'] as Record<string, Object>;
+          if (rawConfig1['settings']) {
+            const settingsConfig = rawConfig1['settings'] as Record<string, Object>;
             const settingKeys = Object.keys(settingsConfig);
             for (let i = 0; i < settingKeys.length; i++) {
               const settingKey = settingKeys[i];
@@ -3573,10 +3666,10 @@ export class MangaSourceEngine {
       // apiDomain 可能存储的是:
       // 1. 键名如 "copy20", "mangacopy" - 需要从 alternativeUrls 查找
       // 2. 直接的 URL 如 "https://api.manga2025.com" - 直接使用
-      if (this.rawConfigJson && context.variables['apiDomain']) {
+      const rawConfig2 = this.getParsedConfig();
+      if (rawConfig2 && context.variables['apiDomain']) {
         try {
-          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
-          const metadata = rawConfig['metadata'] as Record<string, Object>;
+          const metadata = rawConfig2['metadata'] as Record<string, Object>;
           const apiDomainValue = context.variables['apiDomain'];
           let resolvedDomain: string = '';
           
@@ -3617,11 +3710,10 @@ export class MangaSourceEngine {
         } catch (e) {
           logger.warn(TAG, `解析 apiDomain 失败: ${e}`);
         }
-      } else if (this.rawConfigJson && !context.variables['domain']) {
+      } else if (rawConfig2 && !context.variables['domain']) {
         // 如果没有 apiDomain 设置但也没有 domain，使用 baseUrl
         try {
-          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
-          const metadata = rawConfig['metadata'] as Record<string, Object>;
+          const metadata = rawConfig2['metadata'] as Record<string, Object>;
           if (metadata && metadata['baseUrl']) {
             let baseUrl = String(metadata['baseUrl']);
             if (baseUrl.endsWith('/')) {
@@ -3666,6 +3758,19 @@ export class MangaSourceEngine {
           logger.debug(TAG, `未找到保存的Token: key=${storageKey}`);
         }
       }
+
+      // [优化] 将结果存入缓存（排除会话级变量 token 和 credentials）
+      const cacheVars: Record<string, string> = {};
+      const varKeys = Object.keys(context.variables);
+      for (let i = 0; i < varKeys.length; i++) {
+        const k = varKeys[i];
+        if (k !== 'token' && k !== 'login.username' && k !== 'login.password') {
+          cacheVars[k] = context.variables[k];
+        }
+      }
+      const settingsEntry: SourceSettingsCacheEntry = { variables: cacheVars, timestamp: Date.now() };
+      this.sourceSettingsCache.set(sidStr, settingsEntry);
+      logger.debug(TAG, `populateSourceSettings 结果已缓存，${Object.keys(cacheVars).length} 个变量`);
     } catch (error) {
       logger.warn(TAG, `填充源设置失败: ${String(error)}`);
     }

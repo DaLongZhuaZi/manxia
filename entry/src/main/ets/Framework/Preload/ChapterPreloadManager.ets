@@ -101,17 +101,18 @@ export class ChapterPreloadManager {
   
   /**
    * 设置阅读器活跃状态
+   * [优化] 阅读器活跃时降低预加载优先级而非完全暂停
    */
   public setReaderActive(active: boolean): void {
     this.isReaderActive = active;
     logger.info(TAG, `阅读器活跃状态: ${active}`);
-    
-    // 如果阅读器激活，暂停所有预加载任务
+
     if (active) {
-      logger.info(TAG, '阅读器已激活，暂停预加载任务');
+      // 阅读器激活：降低预加载并发数（而非完全暂停）
+      logger.info(TAG, '阅读器已激活，降低预加载优先级');
     } else {
-      // 阅读器关闭，可以恢复预加载
-      logger.info(TAG, '阅读器已关闭，可以恢复预加载');
+      // 阅读器关闭：恢复预加载
+      logger.info(TAG, '阅读器已关闭，恢复预加载');
       this.processNextTask();
     }
   }
@@ -179,17 +180,15 @@ export class ChapterPreloadManager {
   
   /**
    * 处理下一个任务
+   * [优化] 阅读器活跃时降低并发而非完全暂停
    */
   private async processNextTask(): Promise<void> {
-    // 如果阅读器活跃，不处理新任务
-    if (this.isReaderActive) {
-      logger.debug(TAG, '阅读器活跃中，跳过预加载');
-      return;
-    }
-    
+    // [优化] 阅读器活跃时，将并发限制降到0（不再启动新任务，但不阻塞队列处理逻辑）
+    const effectiveMaxConcurrent = this.isReaderActive ? 0 : this.config.maxConcurrentTasks;
+
     // 如果已达到最大并发数，等待
-    if (this.activeTaskCount >= this.config.maxConcurrentTasks) {
-      logger.debug(TAG, `已达到最大并发数 ${this.config.maxConcurrentTasks}，等待`);
+    if (this.activeTaskCount >= effectiveMaxConcurrent) {
+      logger.debug(TAG, `已达到最大并发数 ${effectiveMaxConcurrent}（阅读器活跃: ${this.isReaderActive}），等待`);
       return;
     }
     

@@ -286,30 +286,51 @@ export class MangaSourceActionEngine {
   }
 
   /**
-   * 执行导航操作
+   * 执行导航操作（智能等待：轮询 readyState + 最小额外等待）
    */
   private async executeNavigate(action: NavigateAction, context: ActionContext): Promise<string> {
     const url = this.replaceVariables(action.url, context.variables);
-    // 注意：timeout是最大超时时间，不是固定等待时间
-    // 使用waitAfterLoad作为导航后的固定等待时间，默认1秒
     const waitAfterLoad = action.waitAfterLoad !== undefined ? action.waitAfterLoad : 1000;
-    
+    const minReadyWait = 300; // 页面 ready 后的最小额外等待（确保 JS 执行）
+
     logger.info(TAG, `导航到: ${url}, waitAfterLoad=${waitAfterLoad}ms`);
 
     try {
       // 开始导航
       this.webviewController.loadUrl(url);
-      
-      // 等待页面加载（简单的固定时间等待）
-      // 注意：WebView的onPageEnd等事件只能在UI组件层面监听，无法在控制器层面注册
-      logger.debug(TAG, `等待页面加载，时间: ${waitAfterLoad}ms`);
-      await this.sleep(waitAfterLoad);
-      
+
+      // [优化] 智能等待：轮询 document.readyState 替代盲等
+      const startTime = Date.now();
+      const pollInterval = 200;
+      let pageReady = false;
+
+      while (Date.now() - startTime < waitAfterLoad) {
+        try {
+          const readyState = await this.executeJavaScript<string>('document.readyState', 3000);
+          if (readyState === 'complete' || readyState === 'interactive') {
+            pageReady = true;
+            break;
+          }
+        } catch (_e) {
+          // readyState 检查失败，继续等待
+        }
+        await this.sleep(pollInterval);
+      }
+
+      const elapsed = Date.now() - startTime;
+      if (pageReady) {
+        // 页面已就绪，等待最小额外时间确保 JS 执行完成
+        await this.sleep(minReadyWait);
+        logger.debug(TAG, `页面就绪，耗时: ${elapsed}ms（盲等节省: ${waitAfterLoad - elapsed}ms）`);
+      } else {
+        logger.debug(TAG, `页面未就绪，已等待最大时间: ${waitAfterLoad}ms`);
+      }
+
       // 更新上下文URL
       context.currentUrl = url;
-      
+
       logger.debug(TAG, `导航完成: ${url}`);
-      
+
       // 首次导航后输出UserAgent
       if (!context.variables['_uaLogged']) {
         try {
@@ -320,7 +341,7 @@ export class MangaSourceActionEngine {
           logger.warn(TAG, `获取UserAgent失败`);
         }
       }
-      
+
       return url;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -919,12 +940,28 @@ export class MangaSourceActionEngine {
   }
 
   /**
-   * 执行JavaScript代码
+   * 执行JavaScript代码（带默认超时保护）
    */
-  private async executeJavaScript<T>(code: string): Promise<T> {
+  private async executeJavaScript<T>(code: string, timeoutMs: number = 15000): Promise<T> {
     return new Promise<T>((resolve, reject) => {
+      let finished: boolean = false;
+      const timerId: number = setTimeout(() => {
+        if (!finished) {
+          finished = true;
+          logger.warn(TAG, `JavaScript执行超时(${timeoutMs}ms): ${code.substring(0, 100)}`);
+          reject(new MangaSourceError(
+            MangaSourceErrorCode.TIMEOUT_ERROR,
+            `JavaScript执行超时: ${timeoutMs}ms`
+          ));
+        }
+      }, timeoutMs);
+
       try {
         this.webviewController.runJavaScript(code, (error: BusinessError | null, result: string) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timerId);
+
           if (error) {
             // 特殊处理UNDEFINED转换错误
             if (error.message && error.message.includes('Cannot convert a UNDEFINED value')) {
@@ -932,7 +969,7 @@ export class MangaSourceActionEngine {
               resolve('' as T);
               return;
             }
-            
+
             logger.error(TAG, `JavaScript执行失败: ${error.message}` + error);
             reject(new MangaSourceError(
               MangaSourceErrorCode.SCRIPT_ERROR,
@@ -948,7 +985,7 @@ export class MangaSourceActionEngine {
               resolve('' as T);
               return;
             }
-            
+
             // 尝试解析JSON结果
             if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
               const parsedResult = JSON.parse(result) as T;
@@ -964,6 +1001,10 @@ export class MangaSourceActionEngine {
           }
         });
       } catch (error) {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timerId);
+        }
         logger.error(TAG, `runJavaScript调用失败: ${error}`);
         reject(new MangaSourceError(
           MangaSourceErrorCode.SCRIPT_ERROR,
@@ -1050,7 +1091,7 @@ export class MangaSourceActionEngine {
       if (exists) {
         return true;
       }
-      await this.sleep(500);
+      await this.sleep(200);
     }
 
     throw new MangaSourceError(
@@ -1099,13 +1140,13 @@ export class MangaSourceActionEngine {
               resolve();
             } else if (!isResolved) {
               // 继续检查，使用setTimeout递归调度
-              setTimeout(checkPageState, 500);
+              setTimeout(checkPageState, 200);
             }
           })
           .catch(() => {
             // 忽略检查错误，继续等待
             if (!isResolved) {
-              setTimeout(checkPageState, 500);
+              setTimeout(checkPageState, 200);
             }
           });
       };

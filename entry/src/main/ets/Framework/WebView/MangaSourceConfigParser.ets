@@ -513,7 +513,7 @@ export class MangaSourceConfigParser {
     }
 
     // 直达搜索使用原始query，不进行URL规范化
-    return this.processActions(workflow, { 
+    return this.processActions(workflow, {
       searchType: searchType,
       query: query,
       rawQuery: query  // 保留原始值的别名
@@ -807,10 +807,10 @@ export class MangaSourceConfigParser {
    */
   private processActions(actions: Action[], context: Partial<WorkflowContext>): Action[] {
     const variables: VariableMap = {};
-    
+
     // 调试日志
     logger.debug(TAG, `processActions context: mangaId=${context.mangaId}, chapterId=${context.chapterId}`);
-    
+
     // 设置上下文变量
     if (context.searchKeyword) {
       variables.searchKeyword = context.searchKeyword;
@@ -828,7 +828,7 @@ export class MangaSourceConfigParser {
     if (context.pageIndex !== undefined) {
       variables.pageIndex = context.pageIndex.toString();
     }
-    
+
     // ========== 搜索增强变量 ==========
     const extContext: Record<string, string | number | undefined> = context as Record<string, string | number | undefined>;
     if (extContext['illustId']) {
@@ -951,7 +951,9 @@ export class MangaSourceConfigParser {
           optional: navigateAction.optional,
           waitAfter: navigateAction.waitAfter,
           url: navigateAction.url,
-          waitFor: navigateAction.waitFor
+          waitFor: navigateAction.waitFor,
+          timeout: navigateAction.timeout,
+          waitAfterLoad: navigateAction.waitAfterLoad
         };
         return clonedNavigate;
 

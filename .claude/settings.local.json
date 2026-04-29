@@ -20,7 +20,15 @@
       "Bash(python3 *)",
       "Bash(tee *)",
       "WebFetch(domain:bytedance.larkoffice.com)",
-      "WebFetch(domain:godamh.com)"
+      "WebFetch(domain:godamh.com)",
+      "Bash(python -m json.tool)",
+      "Bash(python *)",
+      "Bash(curl *)",
+      "Read(//tmp/**)",
+      "Bash(grep *)",
+      "Bash(python3 -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\); m=d.get\\('\\\\''metadata'\\\\'',{}\\); print\\(json.dumps\\({'\\\\''id'\\\\'':m.get\\('\\\\''id'\\\\'','\\\\'''\\\\''\\),'\\\\''name'\\\\'':m.get\\('\\\\''name'\\\\'','\\\\'''\\\\''\\),'\\\\''version'\\\\'':m.get\\('\\\\''version'\\\\'','\\\\'''\\\\''\\),'\\\\''language'\\\\'':m.get\\('\\\\''language'\\\\'','\\\\'''\\\\''\\),'\\\\''baseUrl'\\\\'':m.get\\('\\\\''baseUrl'\\\\'','\\\\'''\\\\''\\),'\\\\''nsfw'\\\\'':m.get\\('\\\\''nsfw'\\\\'','\\\\'''\\\\''\\),'\\\\''tags'\\\\'':m.get\\('\\\\''tags'\\\\'',[]\\)}, ensure_ascii=False\\)\\)')",
+      "Bash(python -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\'', encoding='\\\\''utf-8'\\\\''\\)\\); m=d.get\\('\\\\''metadata'\\\\'',{}\\); print\\(json.dumps\\({'\\\\''id'\\\\'':m.get\\('\\\\''id'\\\\'','\\\\'''\\\\''\\),'\\\\''name'\\\\'':m.get\\('\\\\''name'\\\\'','\\\\'''\\\\''\\),'\\\\''version'\\\\'':m.get\\('\\\\''version'\\\\'','\\\\'''\\\\''\\),'\\\\''language'\\\\'':m.get\\('\\\\''language'\\\\'','\\\\'''\\\\''\\),'\\\\''baseUrl'\\\\'':m.get\\('\\\\''baseUrl'\\\\'','\\\\'''\\\\''\\),'\\\\''nsfw'\\\\'':m.get\\('\\\\''nsfw'\\\\'','\\\\'''\\\\''\\),'\\\\''tags'\\\\'':m.get\\('\\\\''tags'\\\\'',[]\\)}, ensure_ascii=False\\)\\)')",
+      "Bash(git checkout *)"
     ]
   }
 }
