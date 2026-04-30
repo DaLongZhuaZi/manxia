@@ -336,3 +336,17 @@ export function getMangaStatusDisplayText(status: MangaStatus): string {
 export function getDownloadStatusDisplayText(status: DownloadStatus): string {
   return StatusConverter.downloadStatusToDisplayText(status);
 }
+
+/**
+ * 判断是否为部分下载状态（已下载部分页面但有失败）
+ */
+export function isPartiallyDownloaded(downloadedCount: number, totalCount: number, status: DownloadStatus): boolean {
+  return status === DownloadStatus.FAILED && downloadedCount > 0 && downloadedCount < totalCount;
+}
+
+/**
+ * 获取部分下载状态描述文本
+ */
+export function getPartialDownloadText(downloadedCount: number, totalCount: number): string {
+  return `部分缓存 (${downloadedCount}/${totalCount}页)`;
+}

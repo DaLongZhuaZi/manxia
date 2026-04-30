@@ -62,6 +62,8 @@ export interface OnlineArchiveCreateRequest {
   pageFiles: OnlineArchivePageFile[];
   metadata: OnlineArchiveMetadata;
   preferPublicDownloadDir: boolean;
+  totalPageCount?: number;       // 总页数（部分归档时需要）
+  failedPageIndexes?: number[];  // 失败页索引列表（部分归档时需要）
 }
 
 export interface OnlineArchiveCreateResult {
@@ -84,6 +86,7 @@ export interface OnlineArchiveExtractedPage {
   width: number;
   height: number;
   fileSize: number;
+  isPlaceholder?: boolean;  // 是否为占位图（部分归档中的缺失页）
 }
 
 export interface OnlineArchiveExtractResult {
@@ -198,10 +201,37 @@ export class OnlineMangaArchiveService {
     return this.pathExists(path);
   }
 
+  /**
+   * 生成最小占位PNG图片（白色1x1像素，约67字节）
+   * 用于部分归档中缺失的页面位置
+   */
+  private generatePlaceholderPng(targetPath: string): void {
+    // 最小合法PNG: 1x1 白色像素
+    const placeholder = new Uint8Array([
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+      0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR length + type
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+      0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // 8-bit RGB
+      0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, // IDAT length + type
+      0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, // compressed data
+      0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC, //
+      0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND length + type
+      0x44, 0xAE, 0x42, 0x60, 0x82                    // IEND CRC
+    ]);
+    const file = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    fs.writeSync(file.fd, placeholder.buffer);
+    fs.closeSync(file.fd);
+  }
+
   public async createArchiveFromPageFiles(request: OnlineArchiveCreateRequest): Promise<OnlineArchiveCreateResult> {
     if (request.pageFiles.length === 0) {
       throw new Error('归档页面不能为空');
     }
+
+    const isPartialArchive = request.failedPageIndexes !== undefined
+      && request.failedPageIndexes.length > 0
+      && request.totalPageCount !== undefined
+      && request.totalPageCount > request.pageFiles.length;
 
     const workDir = this.createWorkDir(request.chapterId);
     try {
@@ -209,40 +239,96 @@ export class OnlineMangaArchiveService {
         return left.pageIndex - right.pageIndex;
       });
 
-      for (let i = 0; i < sortedPages.length; i++) {
-        const page = sortedPages[i];
-        if (!this.pathExists(page.sourcePath)) {
-          throw new Error(`页面文件不存在: ${page.sourcePath}`);
+      if (isPartialArchive) {
+        // 部分归档：按总页数创建完整序列，缺失页用占位图填充
+        const totalPageCount = request.totalPageCount!;
+        const failedSet = new Set(request.failedPageIndexes!);
+        let realPageIdx = 0;
+
+        for (let i = 0; i < totalPageCount; i++) {
+          const targetPath = `${workDir}/${String(i + 1).padStart(4, '0')}.png`;
+          if (failedSet.has(i)) {
+            // 失败页：生成占位图
+            this.generatePlaceholderPng(targetPath);
+          } else {
+            // 成功页：从已下载的页面中取
+            if (realPageIdx < sortedPages.length) {
+              const page = sortedPages[realPageIdx];
+              if (!this.pathExists(page.sourcePath)) {
+                this.generatePlaceholderPng(targetPath);
+              } else {
+                const extension = this.resolveImageExtension(page.sourcePath, page.imageUrl);
+                const finalTarget = `${workDir}/${String(i + 1).padStart(4, '0')}.${extension}`;
+                fs.copyFileSync(page.sourcePath, finalTarget);
+              }
+              realPageIdx++;
+            } else {
+              this.generatePlaceholderPng(targetPath);
+            }
+          }
         }
-        const extension = this.resolveImageExtension(page.sourcePath, page.imageUrl);
-        const targetPath = `${workDir}/${String(i + 1).padStart(4, '0')}.${extension}`;
-        fs.copyFileSync(page.sourcePath, targetPath);
+
+        const comicInfoXml = this.buildComicInfoXml(request.metadata, totalPageCount, request.failedPageIndexes);
+        this.writeTextFile(`${workDir}/ComicInfo.xml`, comicInfoXml);
+
+        const archivePath = this.resolveArchivePath(request);
+        const tempArchivePath = `${archivePath}.tmp.zip`;
+        const legacyTempArchivePath = `${archivePath}.tmp`;
+        this.deleteArchiveOutputFiles(archivePath);
+
+        await zlib.compressFile(workDir, tempArchivePath, {
+          level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
+          memLevel: zlib.MemLevel.MEM_LEVEL_DEFAULT,
+          strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY
+        });
+        const compressedOutputPath = this.resolveCompressedOutputPath(tempArchivePath, legacyTempArchivePath);
+        fs.renameSync(compressedOutputPath, archivePath);
+        this.deleteArchiveTempFiles(archivePath);
+
+        const archiveSize = this.getFileSize(archivePath);
+        logger.info(TAG, `在线漫画CBZ部分归档完成: ${archivePath}, pages=${sortedPages.length}/${totalPageCount}, failed=${request.failedPageIndexes!.length}, size=${archiveSize}`);
+        return {
+          archivePath: archivePath,
+          archiveSize: archiveSize,
+          pageCount: totalPageCount
+        };
+      } else {
+        // 完整归档：原有逻辑
+        for (let i = 0; i < sortedPages.length; i++) {
+          const page = sortedPages[i];
+          if (!this.pathExists(page.sourcePath)) {
+            throw new Error(`页面文件不存在: ${page.sourcePath}`);
+          }
+          const extension = this.resolveImageExtension(page.sourcePath, page.imageUrl);
+          const targetPath = `${workDir}/${String(i + 1).padStart(4, '0')}.${extension}`;
+          fs.copyFileSync(page.sourcePath, targetPath);
+        }
+
+        const comicInfoXml = this.buildComicInfoXml(request.metadata, sortedPages.length);
+        this.writeTextFile(`${workDir}/ComicInfo.xml`, comicInfoXml);
+
+        const archivePath = this.resolveArchivePath(request);
+        const tempArchivePath = `${archivePath}.tmp.zip`;
+        const legacyTempArchivePath = `${archivePath}.tmp`;
+        this.deleteArchiveOutputFiles(archivePath);
+
+        await zlib.compressFile(workDir, tempArchivePath, {
+          level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
+          memLevel: zlib.MemLevel.MEM_LEVEL_DEFAULT,
+          strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY
+        });
+        const compressedOutputPath = this.resolveCompressedOutputPath(tempArchivePath, legacyTempArchivePath);
+        fs.renameSync(compressedOutputPath, archivePath);
+        this.deleteArchiveTempFiles(archivePath);
+
+        const archiveSize = this.getFileSize(archivePath);
+        logger.info(TAG, `在线漫画CBZ归档完成: ${archivePath}, pages=${sortedPages.length}, size=${archiveSize}`);
+        return {
+          archivePath: archivePath,
+          archiveSize: archiveSize,
+          pageCount: sortedPages.length
+        };
       }
-
-      const comicInfoXml = this.buildComicInfoXml(request.metadata, sortedPages.length);
-      this.writeTextFile(`${workDir}/ComicInfo.xml`, comicInfoXml);
-
-      const archivePath = this.resolveArchivePath(request);
-      const tempArchivePath = `${archivePath}.tmp.zip`;
-      const legacyTempArchivePath = `${archivePath}.tmp`;
-      this.deleteArchiveOutputFiles(archivePath);
-
-      await zlib.compressFile(workDir, tempArchivePath, {
-        level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
-        memLevel: zlib.MemLevel.MEM_LEVEL_DEFAULT,
-        strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY
-      });
-      const compressedOutputPath = this.resolveCompressedOutputPath(tempArchivePath, legacyTempArchivePath);
-      fs.renameSync(compressedOutputPath, archivePath);
-      this.deleteArchiveTempFiles(archivePath);
-
-      const archiveSize = this.getFileSize(archivePath);
-      logger.info(TAG, `在线漫画CBZ归档完成: ${archivePath}, pages=${sortedPages.length}, size=${archiveSize}`);
-      return {
-        archivePath: archivePath,
-        archiveSize: archiveSize,
-        pageCount: sortedPages.length
-      };
     } finally {
       this.deleteDirectoryRecursive(workDir);
     }
@@ -270,18 +356,23 @@ export class OnlineMangaArchiveService {
       return left.pageNumber - right.pageNumber;
     });
 
+    // 检测是否为部分归档（占位图文件大小通常 <= 200 字节）
+    const PLACEHOLDER_SIZE_THRESHOLD = 200;
+
     for (let i = 0; i < imageFiles.length; i++) {
       const pageInfo = i < pageInfos.length ? pageInfos[i] : null;
       const localPath = imageFiles[i];
       const fileSize = this.getFileSize(localPath);
+      const isPlaceholder = fileSize > 0 && fileSize <= PLACEHOLDER_SIZE_THRESHOLD;
       const page: OnlineArchiveExtractedPage = {
         pageId: pageInfo ? pageInfo.id : `${request.chapterId}_archive_${i}`,
         pageIndex: i,
         imageUrl: pageInfo ? pageInfo.imageUrl : localPath,
-        localPath: localPath,
+        localPath: isPlaceholder ? '' : localPath,
         width: pageInfo ? pageInfo.width : 0,
         height: pageInfo ? pageInfo.height : 0,
-        fileSize: fileSize
+        fileSize: fileSize,
+        isPlaceholder: isPlaceholder
       };
       pages.push(page);
     }
@@ -1539,7 +1630,7 @@ export class OnlineMangaArchiveService {
     };
   }
 
-  private buildComicInfoXml(metadata: OnlineArchiveMetadata, pageCount: number): string {
+  private buildComicInfoXml(metadata: OnlineArchiveMetadata, pageCount: number, failedPageIndexes?: number[]): string {
     const mangaMetadata: MangaMetadata = {
       title: metadata.chapterTitle,
       series: metadata.mangaTitle,
@@ -1561,6 +1652,11 @@ export class OnlineMangaArchiveService {
     extraLines.push(`  <MangaId>${this.escapeXml(metadata.mangaId)}</MangaId>`);
     extraLines.push(`  <ChapterId>${this.escapeXml(metadata.chapterId)}</ChapterId>`);
     extraLines.push(`  <SourcePkg>${this.escapeXml(metadata.sourcePkg)}</SourcePkg>`);
+    if (failedPageIndexes && failedPageIndexes.length > 0) {
+      extraLines.push(`  <IsPartialArchive>true</IsPartialArchive>`);
+      extraLines.push(`  <FailedPages>${failedPageIndexes.join(',')}</FailedPages>`);
+      extraLines.push(`  <DownloadedPageCount>${pageCount - failedPageIndexes.length}</DownloadedPageCount>`);
+    }
     return baseXml.replace('</ComicInfo>', `${extraLines.join('\n')}\n</ComicInfo>`);
   }
 
