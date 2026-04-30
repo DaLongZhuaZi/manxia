@@ -32,6 +32,7 @@ export interface ChapterCacheStatus {
   chapterTitle: string;
   chapterIndex: number;
   isCached: boolean;
+  isPartiallyCached?: boolean;  // 0 < cachedPageCount < totalPageCount
   cachedPageCount: number;
   totalPageCount: number;
   cacheSize: number;  // 字节
@@ -137,7 +138,14 @@ export class CacheStatusService {
         const resolvedArchivePath = this.resolveReadableArchivePath(archivePath);
         const hasArchive = resolvedArchivePath.length > 0;
         if (hasArchive) {
-          chapterCachedPages = chapterTotalPages;
+          // CBZ归档存在：通过online_page表检查实际已下载页数（区分完整归档和部分归档）
+          let downloadedPageCount = 0;
+          try {
+            const downloadedRows = await this.databaseManager.querySql(
+              'SELECT id FROM online_page WHERE chapterId = ? AND isDownloaded = 1', [chapter.id]);
+            downloadedPageCount = downloadedRows.length;
+          } catch (_e) { /* 查询失败时回退 */ }
+          chapterCachedPages = downloadedPageCount > 0 ? downloadedPageCount : chapterTotalPages;
           chapterCacheSize = this.getFileSize(resolvedArchivePath);
         } else {
           for (const page of pages) {
@@ -156,12 +164,15 @@ export class CacheStatusService {
         if (isChapterCached) {
           cachedChapterCount++;
         }
-        
+
+        const isPartiallyCached = !isChapterCached && chapterCachedPages > 0 && chapterTotalPages > 0;
+
         chapterStats.push({
           chapterId: chapter.id,
           chapterTitle: chapter.title || `第${chapter.index + 1}话`,
           chapterIndex: chapter.index,
           isCached: isChapterCached,
+          isPartiallyCached: isPartiallyCached,
           cachedPageCount: chapterCachedPages,
           totalPageCount: chapterTotalPages,
           cacheSize: chapterCacheSize,

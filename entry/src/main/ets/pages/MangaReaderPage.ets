@@ -2670,7 +2670,12 @@ export struct MangaReaderPage {
       chapter.downloadStatus = DownloadStatus.COMPLETED;
       chapter.downloadProgress = 100;
 
-      logger.info(TAG, `在线已下载章节已从CBZ解压加载: ${chapter.title}, pages=${chapter.pages.length}, archive=${archivePath}`);
+      const networkPages = chapter.pages.filter(p => p.sourceType === ImageSourceType.NETWORK).length;
+      if (networkPages > 0) {
+        logger.info(TAG, `在线已下载章节(部分归档)已从CBZ解压加载: ${chapter.title}, pages=${chapter.pages.length}, network=${networkPages}, archive=${archivePath}`);
+      } else {
+        logger.info(TAG, `在线已下载章节已从CBZ解压加载: ${chapter.title}, pages=${chapter.pages.length}, archive=${archivePath}`);
+      }
       if (kickstartViewer && this.mangaViewerComponent) {
         this.mangaViewerComponent.kickstartLoading();
       }
@@ -2683,21 +2688,31 @@ export struct MangaReaderPage {
 
   private convertArchivePagesToMangaPages(pages: OnlineArchiveExtractedPage[]): MangaPage[] {
     const mangaPages: MangaPage[] = [];
+    let placeholderCount = 0;
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
+      // 占位图页面：设置为NETWORK类型，阅读器将从网络加载
+      const isPlaceholder = page.isPlaceholder === true || (!page.localPath && !!page.imageUrl);
+      const sourceType = isPlaceholder ? ImageSourceType.NETWORK : ImageSourceType.LOCAL;
+      if (isPlaceholder) {
+        placeholderCount++;
+      }
       const mangaPage: MangaPage = {
         id: page.pageId,
         index: page.pageIndex,
-        sourceType: ImageSourceType.LOCAL,
-        imagePath: page.localPath,
+        sourceType: sourceType,
+        imagePath: isPlaceholder ? page.imageUrl : page.localPath,
         imageUrl: page.imageUrl,
-        localPath: page.localPath,
+        localPath: isPlaceholder ? '' : page.localPath,
         width: page.width,
         height: page.height,
         fileSize: page.fileSize,
         isLoaded: false
       };
       mangaPages.push(mangaPage);
+    }
+    if (placeholderCount > 0) {
+      logger.info(TAG, `部分归档检测: ${placeholderCount}/${pages.length} 页为占位图，将从网络加载`);
     }
     return mangaPages;
   }

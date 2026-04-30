@@ -499,8 +499,31 @@ export class UnifiedDownloadManager {
     }
   }
   
+  // ==================== 部分保存 ====================
+
+  /**
+   * 手动保存部分下载为归档
+   * @param contentId 漫画ID
+   * @param chapterId 章节ID
+   * @returns 是否保存成功
+   */
+  public async savePartialDownload(contentId: string, chapterId: string): Promise<boolean> {
+    try {
+      const tasks = this.getTasksByContent(contentId);
+      const task = tasks.find(t => t.chapterId === chapterId);
+      if (!task) {
+        logger.warn(TAG, `未找到章节对应的下载任务: contentId=${contentId}, chapterId=${chapterId}`);
+        return false;
+      }
+      return await this.mangaDownloadManager.savePartialDownload(task.id);
+    } catch (error) {
+      logger.error(TAG, `保存部分下载失败: ${String(error)}`);
+      return false;
+    }
+  }
+
   // ==================== 查询方法 ====================
-  
+
   /**
    * 获取所有下载任务
    */

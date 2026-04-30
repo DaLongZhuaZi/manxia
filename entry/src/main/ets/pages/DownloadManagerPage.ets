@@ -40,6 +40,7 @@ interface DownloadTask {
   status: DownloadStatus;
   totalPages: number;
   downloadedPages: number;
+  failedPages: number; // 失败页数 (非失败任务为 0)
   speed: string; // 下载速度，如 "2.5 MB/s"
   remainingTime: string; // 剩余时间，如 "3分钟"
 }
@@ -203,6 +204,7 @@ struct DownloadManagerPage {
           status: this.convertTaskStatus(task.status),
           totalPages: task.totalCount,
           downloadedPages: task.downloadedCount,
+          failedPages: task.failedPageIndexes?.length || 0,
           speed: this.calculateSpeed(task),
           remainingTime: this.calculateRemainingTime(task)
         } as DownloadTask;
@@ -246,6 +248,7 @@ struct DownloadManagerPage {
         status: this.convertTaskStatus(task.status),
         totalPages: task.totalCount,
         downloadedPages: task.downloadedCount,
+        failedPages: task.failedPageIndexes?.length || 0,
         speed: this.calculateSpeed(task),
         remainingTime: this.calculateRemainingTime(task)
       } as DownloadTask;
@@ -459,11 +462,32 @@ struct DownloadManagerPage {
       if (task.status === DownloadStatus.DOWNLOADING) {
         await this.downloadManager.pauseTask(taskId);
         logger.info(TAG, `暂停任务: ${task.chapterTitle}`);
-      } else if (task.status === DownloadStatus.PAUSED) {
+      } else if (task.status === DownloadStatus.FAILED && task.failedPages > 0) {
+        // 部分失败：选择性重试失败页面
+        await this.downloadManager.retryFailedPages(taskId);
+        logger.info(TAG, `重试失败页面: ${task.chapterTitle}, ${task.failedPages}页`);
+      } else if (task.status === DownloadStatus.PAUSED || task.status === DownloadStatus.FAILED) {
         await this.downloadManager.resumeTask(taskId);
         logger.info(TAG, `继续任务: ${task.chapterTitle}`);
       }
       // 立即刷新
+      this.refreshTasks();
+    }
+  }
+
+  /**
+   * 保存部分下载为归档
+   */
+  private async savePartialDownload(taskId: string): Promise<void> {
+    const taskIndex = this.downloadTasks.findIndex((t: DownloadTask) => t.id === taskId);
+    if (taskIndex >= 0) {
+      const task = this.downloadTasks[taskIndex];
+      const success = await this.downloadManager.savePartialDownload(taskId);
+      if (success) {
+        logger.info(TAG, `部分下载已保存: ${task.chapterTitle}`);
+      } else {
+        logger.warn(TAG, `部分下载保存失败: ${task.chapterTitle}`);
+      }
       this.refreshTasks();
     }
   }
@@ -518,6 +542,12 @@ struct DownloadManagerPage {
     for (const task of this.downloadTasks) {
       if (task.status === DownloadStatus.PAUSED) {
         await this.downloadManager.resumeTask(task.id);
+      } else if (task.status === DownloadStatus.FAILED) {
+        if (task.failedPages > 0 && task.failedPages < task.totalPages) {
+          await this.downloadManager.retryFailedPages(task.id);
+        } else {
+          await this.downloadManager.resumeTask(task.id);
+        }
       }
     }
     logger.info(TAG, '继续所有下载任务');
@@ -766,7 +796,7 @@ struct DownloadManagerPage {
   /**
    * 获取状态文本
    */
-  private getStatusText(status: DownloadStatus): string {
+  private getStatusText(status: DownloadStatus, failedPages?: number, totalPages?: number): string {
     switch (status) {
       case DownloadStatus.DOWNLOADING:
         return '下载中';
@@ -775,6 +805,9 @@ struct DownloadManagerPage {
       case DownloadStatus.COMPLETED:
         return '已完成';
       case DownloadStatus.FAILED:
+        if (failedPages !== undefined && totalPages !== undefined && failedPages > 0 && failedPages < totalPages) {
+          return '部分完成';
+        }
         return '失败';
       case DownloadStatus.PENDING:
         return '等待中';
@@ -786,7 +819,7 @@ struct DownloadManagerPage {
   /**
    * 获取状态颜色
    */
-  private getStatusColor(status: DownloadStatus): ResourceColor {
+  private getStatusColor(status: DownloadStatus, failedPages?: number, totalPages?: number): ResourceColor {
     switch (status) {
       case DownloadStatus.DOWNLOADING:
         return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
@@ -795,6 +828,9 @@ struct DownloadManagerPage {
       case DownloadStatus.COMPLETED:
         return ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme);
       case DownloadStatus.FAILED:
+        if (failedPages !== undefined && totalPages !== undefined && failedPages > 0 && failedPages < totalPages) {
+          return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
+        }
         return ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme);
       default:
         return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
@@ -1867,12 +1903,12 @@ struct DownloadManagerPage {
         .layoutWeight(1)
 
         // 状态标签
-        Text(this.getStatusText(task.status))
+        Text(this.getStatusText(task.status, task.failedPages, task.totalPages))
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor(this.getStatusColor(task.status))
+          .backgroundColor(this.getStatusColor(task.status, task.failedPages, task.totalPages))
           .borderRadius(4)
       }
       .width('100%')
@@ -1935,9 +1971,59 @@ struct DownloadManagerPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
           .borderRadius(6)
           .onClick(() => { this.toggleTaskPause(task.id); })
+        } else if (task.status === DownloadStatus.FAILED && task.failedPages > 0 && task.failedPages < task.totalPages) {
+          // 部分失败：显示重试失败页和保存按钮
+          Button({ stateEffect: true }) {
+            Text('重试失败页')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+          .width(80)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => { this.toggleTaskPause(task.id); })
+
+          Button({ stateEffect: true }) {
+            Text('保存')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+          .width(60)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => { this.savePartialDownload(task.id); })
+        } else if (task.status === DownloadStatus.FAILED && task.downloadedPages > 0) {
+          // 全部失败但有已下载页面：显示保存和重试按钮
+          Button({ stateEffect: true }) {
+            Text('保存')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+          .width(60)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => { this.savePartialDownload(task.id); })
+
+          Button({ stateEffect: true }) {
+            Text('重试')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+          .width(60)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => { this.toggleTaskPause(task.id); })
         } else if (task.status === DownloadStatus.PAUSED || task.status === DownloadStatus.FAILED) {
           Button({ stateEffect: true }) {
-            Text('继续')
+            Text(task.status === DownloadStatus.FAILED ? '重试' : '继续')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))

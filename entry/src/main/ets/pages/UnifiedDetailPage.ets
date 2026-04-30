@@ -3978,6 +3978,95 @@ export struct UnifiedDetailPage {
   }
   
   /**
+   * 判断章节是否完全缓存
+   */
+  private isChapterFullyCached(chapterId: string): boolean {
+    if (this.cacheStats && this.cacheStats.chapterStats) {
+      const stat = this.cacheStats.chapterStats.find(s => s.chapterId === chapterId);
+      if (stat) {
+        return stat.isCached;
+      }
+    }
+    // 回退到 chapter.isDownloaded
+    const chapter = this.content?.chapters.find(c => c.id === chapterId);
+    return chapter?.isDownloaded || false;
+  }
+
+  /**
+   * 判断章节是否部分缓存
+   */
+  private isChapterPartiallyCached(chapterId: string): boolean {
+    if (this.cacheStats && this.cacheStats.chapterStats) {
+      const stat = this.cacheStats.chapterStats.find(s => s.chapterId === chapterId);
+      if (stat) {
+        return stat.isPartiallyCached === true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 获取部分缓存描述文本
+   */
+  private getPartialCacheText(chapterId: string): string {
+    if (this.cacheStats && this.cacheStats.chapterStats) {
+      const stat = this.cacheStats.chapterStats.find(s => s.chapterId === chapterId);
+      if (stat && stat.isPartiallyCached) {
+        return `部分缓存 ${stat.cachedPageCount}/${stat.totalPageCount}`;
+      }
+    }
+    return '部分缓存';
+  }
+
+  /**
+   * 检查是否存在部分缓存的章节
+   */
+  private hasPartiallyCachedChapters(): boolean {
+    if (this.cacheStats && this.cacheStats.chapterStats) {
+      return this.cacheStats.chapterStats.some(s => s.isPartiallyCached === true);
+    }
+    return false;
+  }
+
+  /**
+   * 保存所有部分缓存的章节为部分归档
+   */
+  private async savePartiallyCachedChapters(): Promise<void> {
+    if (!this.content || !this.cacheStats || !this.cacheStats.chapterStats) {
+      return;
+    }
+
+    const partialChapters = this.cacheStats.chapterStats.filter(s => s.isPartiallyCached === true);
+    if (partialChapters.length === 0) {
+      return;
+    }
+
+    this.isDownloading = true;
+    let savedCount = 0;
+
+    try {
+      for (const chapter of partialChapters) {
+        const success = await this.unifiedDownloadManager.savePartialDownload(this.content.id, chapter.chapterId);
+        if (success) {
+          savedCount++;
+        }
+      }
+
+      if (savedCount > 0) {
+        promptAction.showToast({ message: `已保存 ${savedCount} 个章节` });
+        await this.loadCacheStatus();
+      } else {
+        promptAction.showToast({ message: '保存失败' });
+      }
+    } catch (error) {
+      logger.error(TAG, `保存部分缓存章节失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存失败' });
+    } finally {
+      this.isDownloading = false;
+    }
+  }
+
+  /**
    * 加载缓存状态信息
    * 对于在线漫画和小说，检查并加载缓存状态
    */
@@ -7753,7 +7842,7 @@ export struct UnifiedDetailPage {
           .width('100%')
 
           if (this.content && this.isOnlineContent()) {
-            Row() {
+            Row({ space: 10 }) {
               Button() {
                 Row({ space: 6 }) {
                   SymbolGlyph($r('sys.symbol.arrow_down_circle'))
@@ -7771,6 +7860,27 @@ export struct UnifiedDetailPage {
               .borderRadius(17)
               .enabled(!this.isDownloading)
               .onClick(() => this.openCacheDialogFromDetail('cache_status_card'))
+
+              // 部分缓存章节存在时，显示保存已下载按钮
+              if (this.hasPartiallyCachedChapters()) {
+                Button() {
+                  Row({ space: 6 }) {
+                    SymbolGlyph($r('sys.symbol.externaldrive'))
+                      .fontSize(13)
+                      .fontColor([Color.White])
+                    Text('保存已下载')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(Color.White)
+                  }
+                }
+                .height(34)
+                .padding({ left: 14, right: 14 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                .borderRadius(17)
+                .enabled(!this.isDownloading)
+                .onClick(() => this.savePartiallyCachedChapters())
+              }
             }
             .width('100%')
           }
@@ -10178,7 +10288,7 @@ export struct UnifiedDetailPage {
     }
 
     const chaptersToDownload = selectedIndexes
-      .filter((idx: number) => idx < this.content!.chapters.length && !this.content!.chapters[idx].isDownloaded)
+      .filter((idx: number) => idx < this.content!.chapters.length && !this.isChapterFullyCached(this.content!.chapters[idx].id))
       .map((idx: number) => this.content!.chapters[idx]);
 
     if (chaptersToDownload.length === 0) {
@@ -10663,14 +10773,22 @@ export struct UnifiedDetailPage {
 
             // 右侧：状态图标/文字
             Row({ space: 6 }) {
-              // 在线漫画显示"已下载"文字标记
-              if (chapter.isDownloaded && !this.content?.isLocal) {
+              // 在线漫画显示缓存状态标记
+              if (this.isChapterFullyCached(chapter.id) && !this.content?.isLocal) {
                 Text('已下载')
                   .fontSize(10)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
                   .padding({ left: 6, right: 6, top: 3, bottom: 3 })
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) + '15')
+                  .borderRadius(8)
+              } else if (this.isChapterPartiallyCached(chapter.id) && !this.content?.isLocal) {
+                Text(this.getPartialCacheText(chapter.id))
+                  .fontSize(10)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+                  .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme) + '15')
                   .borderRadius(8)
               }
               if (chapter.isBookmarked) {
@@ -15288,11 +15406,11 @@ export struct UnifiedDetailPage {
                               .select(this.downloadSelectedChapters.has(index))
                               .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
                                 this.themeState.currentTheme))
-                              .enabled(!chapter.isDownloaded)  // 已缓存章节禁用选择
+                              .enabled(!this.isChapterFullyCached(chapter.id))  // 已缓存章节禁用选择
                               .hitTestBehavior(HitTestMode.Block)  // 阻止事件穿透到Row
                               .onChange((checked: boolean) => {
                                 // 已缓存章节不可选中
-                                if (chapter.isDownloaded) return;
+                                if (this.isChapterFullyCached(chapter.id)) return;
 
                                 const newSet = new Set(this.downloadSelectedChapters);
                                 if (checked) {
@@ -15306,7 +15424,7 @@ export struct UnifiedDetailPage {
                             Text(`${index + 1}. ${chapter.title}`)
                               .fontSize(13)
                               .fontFamily(this.appFontFamily)
-                              .fontColor(chapter.isDownloaded
+                              .fontColor(this.isChapterFullyCached(chapter.id)
                                 ? ThemeAwareHelper.getTestManagementThemedColor('text_muted',
                                   this.themeState.currentTheme)
                                 : ThemeAwareHelper.getTestManagementThemedColor('text_primary',
@@ -15315,11 +15433,17 @@ export struct UnifiedDetailPage {
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
                               .layoutWeight(1)
 
-                            if (chapter.isDownloaded) {
+                            if (this.isChapterFullyCached(chapter.id)) {
                               Text(this.content?.contentType === UnifiedContentType.NOVEL ? this.getNovelDownloadedTagLabel() : '已缓存')
                                 .fontSize(11)
                                 .fontFamily(this.appFontFamily)
                                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
+                                  this.themeState.currentTheme))
+                            } else if (this.isChapterPartiallyCached(chapter.id)) {
+                              Text('部分缓存')
+                                .fontSize(11)
+                                .fontFamily(this.appFontFamily)
+                                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange',
                                   this.themeState.currentTheme))
                             }
                           }
@@ -15331,8 +15455,8 @@ export struct UnifiedDetailPage {
                               this.themeState.currentTheme) + '15'
                             : Color.Transparent)
                           .borderRadius(8)
-                          .enabled(!chapter.isDownloaded) // 已缓存章节整行不可点击
-                          .opacity(chapter.isDownloaded ? 0.5 : 1) // 已缓存章节半透明
+                          .enabled(!this.isChapterFullyCached(chapter.id)) // 已缓存章节整行不可点击
+                          .opacity(this.isChapterFullyCached(chapter.id) ? 0.5 : 1) // 已缓存章节半透明
                           .onClick(() => this.toggleChapterSelection(index))
                         }
                       }, (chapter: UnifiedChapter,
@@ -15358,10 +15482,10 @@ export struct UnifiedDetailPage {
                         this.themeState.currentTheme))
                       .borderRadius(14)
                       .onClick(() => {
-                        // 全选只选中未缓存的章节
+                        // 全选只选中未完全缓存的章节（包含部分缓存的章节，用于重试）
                         const newSet = new Set<number>();
                         this.content!.chapters.forEach((ch, idx) => {
-                          if (!ch.isDownloaded) {
+                          if (!this.isChapterFullyCached(ch.id)) {
                             newSet.add(idx);
                           }
                         });
