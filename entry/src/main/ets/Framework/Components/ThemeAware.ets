@@ -284,7 +284,7 @@ export class ThemeAwareHelper {
       // 按钮颜色
       'button_primary': {
         light: 'test_management_button_primary_light',
-        dark: 'test_management_button_primary_dark'
+        dark: 'test_management_button_primary'
       },
       'button_secondary': {
         light: 'test_management_button_secondary_light',

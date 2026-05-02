@@ -714,16 +714,11 @@ export struct AdvancedSettingsSubPage {
         .alignSelf(ItemAlign.Start)
 
       Column({ space: 0 }) {
-        // 生命周期监控
-        this.buildToolItem('生命周期监控', '查看页面生命周期状态', $r('sys.symbol.timer'), 'LifecycleMonitorPage')
-        
-        Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)).margin({ left: 52 })
-        
         // 日志管理
         this.buildToolItem('日志管理', '查看和导出应用日志', $r('sys.symbol.doc_plaintext'), 'LogManagerPage')
-        
+
         Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)).margin({ left: 52 })
-        
+
         // 系统资源预览
         this.buildToolItem('系统资源预览', '预览系统图标和资源', $r('sys.symbol.paintpalette'), 'SystemResourcePreviewPage')
       }

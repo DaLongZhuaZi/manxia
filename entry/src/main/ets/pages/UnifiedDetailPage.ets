@@ -1298,6 +1298,20 @@ export struct UnifiedDetailPage {
           providerType: providerType
         };
       }
+      if (providerType === SubscriptionProviderType.WEBVIEW && !this.content.isLocal && fallbackMangaId.length > 0) {
+        const originalMangaId = originalManga !== null ? this.normalizeTrackingText(originalManga.id) : '';
+        const targetId = originalMangaId.length > 0 ? originalMangaId : fallbackMangaId;
+        return {
+          supported: true,
+          unsupportedReason: '',
+          contentType: SubscriptionContentType.MANGA,
+          targetId: targetId,
+          targetTitle: this.content.title,
+          sourceId: this.normalizeTrackingText(this.content.sourceId),
+          sourceName: this.normalizeTrackingText(this.content.sourceName),
+          providerType: SubscriptionProviderType.WEBVIEW
+        };
+      }
       unsupportedTarget.contentType = SubscriptionContentType.MANGA;
       unsupportedTarget.providerType = providerType;
       unsupportedTarget.unsupportedReason = this.content.isLocal
@@ -1392,7 +1406,8 @@ export struct UnifiedDetailPage {
     }
     return targetInfo.contentType === SubscriptionContentType.MANGA &&
       (targetInfo.providerType === SubscriptionProviderType.SUWAYOMI ||
-        targetInfo.providerType === SubscriptionProviderType.KOMGA);
+        targetInfo.providerType === SubscriptionProviderType.KOMGA ||
+        targetInfo.providerType === SubscriptionProviderType.WEBVIEW);
   }
 
   private async autoCreateTrackingRule(targetInfo: UnifiedDetailTrackingTargetInfo): Promise<SubscriptionRule | null> {
@@ -1404,6 +1419,10 @@ export struct UnifiedDetailPage {
       (targetInfo.providerType === SubscriptionProviderType.SUWAYOMI ||
         targetInfo.providerType === SubscriptionProviderType.KOMGA)) {
       return this.subscriptionManager.createOrUpdateRemoteMangaItemRule(targetInfo.targetId);
+    }
+    if (targetInfo.contentType === SubscriptionContentType.MANGA &&
+      targetInfo.providerType === SubscriptionProviderType.WEBVIEW) {
+      return this.subscriptionManager.createOrUpdateOnlineMangaItemRule(targetInfo.targetId);
     }
     return null;
   }

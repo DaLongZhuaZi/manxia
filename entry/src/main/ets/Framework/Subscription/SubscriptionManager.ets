@@ -42,9 +42,12 @@ import { ParsedRemoteMangaId, RemoteLibraryMangaBridge } from '../Source/RemoteL
 import { BookshelfCategoryManager, CategoryItem, ContentType } from '../Data/BookshelfCategoryManager';
 import { DynamicMatchItem, DynamicShelfFilter, getTypeShelfManager, matchesDynamicFilter, ShelfContentType, ShelfType, TypeShelf, TypeShelfManager } from '../Data/TypeShelfManager';
 import { SettingsManager } from '../Managers/SettingsManager';
-import { ComicInfo, DataManager, FavoriteInfo } from '../Data/DataManager';
+import { ComicInfo, DataManager, FavoriteInfo, OnlineChapterInfoInput } from '../Data/DataManager';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { EBook } from '../../Models/EBookModels';
+import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
+import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
+import { ChapterInfo as WebViewChapterInfo, PageInfo as WebViewPageInfo } from '../WebView/MangaSourceTypes';
 
 const TAG = 'SubscriptionManager';
 const AUTO_RULE_SCAN_INTERVAL_MS = 60 * 1000;
@@ -98,6 +101,7 @@ export class SubscriptionManager {
   private readonly settingsManager: SettingsManager = SettingsManager.getInstance();
   private readonly categoryManager: BookshelfCategoryManager = BookshelfCategoryManager.getInstance();
   private readonly typeShelfManager: TypeShelfManager = getTypeShelfManager();
+  private readonly webViewSourceManager: WebViewSourceManager = WebViewSourceManager.getInstance();
 
   private isInitialized: boolean = false;
   private autoRunRegistered: boolean = false;
@@ -486,6 +490,76 @@ export class SubscriptionManager {
       return this.saveRuleWithCreateOptions(existingRule, options);
     }
     return this.createRemoteMangaItemRule(mangaId, options);
+  }
+
+  public async createOnlineMangaItemRule(
+    comicId: string,
+    options?: Partial<SubscriptionRuleCreateOptions>
+  ): Promise<SubscriptionRule> {
+    this.ensureInitialized();
+    const comicInfo = await this.appDataManager.getComicById(comicId);
+    if (comicInfo === null) {
+      throw new Error('找不到这部漫画，不能创建提醒');
+    }
+
+    const externalId = comicInfo.externalId || '';
+    if (externalId.length <= 0) {
+      throw new Error('漫画缺少外部ID，不能创建提醒');
+    }
+
+    const mergedOptions = this.mergeCreateOptions(options);
+    const actions = this.buildActionsFromCreateOptions(mergedOptions);
+    const conditions = this.buildConditionsFromCreateOptions(mergedOptions);
+    const sourceName = await this.resolveMangaSourceName(comicInfo);
+    const rule: SubscriptionRule = {
+      id: '',
+      name: mergedOptions.ruleName.length > 0 ? mergedOptions.ruleName : `漫画提醒 - ${comicInfo.title}`,
+      enabled: true,
+      targetType: SubscriptionTargetType.ITEM,
+      contentType: SubscriptionContentType.MANGA,
+      targetId: comicInfo.id,
+      targetTitle: comicInfo.title,
+      sourceId: comicInfo.sourceId,
+      sourceName: sourceName,
+      providerType: SubscriptionProviderType.WEBVIEW,
+      checkIntervalMin: mergedOptions.checkIntervalMin,
+      conditions: conditions,
+      actions: actions,
+      lastCheckTime: 0,
+      lastSuccessTime: 0,
+      lastError: '',
+      lastTriggeredScene: '',
+      createTime: Date.now(),
+      updateTime: Date.now()
+    };
+
+    const savedRule = await this.saveRule(rule);
+    await this.dataManager.upsertCheckpoint({
+      ruleId: savedRule.id,
+      targetId: savedRule.targetId,
+      contentId: savedRule.targetId,
+      contentType: savedRule.contentType,
+      remoteFingerprint: this.buildCountFingerprint(comicInfo.chapterCount, ''),
+      remoteCount: comicInfo.chapterCount,
+      localCount: comicInfo.chapterCount,
+      latestItemTitle: '',
+      lastSeenTime: Date.now(),
+      updateTime: Date.now()
+    });
+    logger.info(TAG, `已创建在线漫画内容跟踪规则: ${savedRule.name}`);
+    return savedRule;
+  }
+
+  public async createOrUpdateOnlineMangaItemRule(
+    comicId: string,
+    options?: Partial<SubscriptionRuleCreateOptions>
+  ): Promise<SubscriptionRule> {
+    this.ensureInitialized();
+    const existingRule = await this.getItemRule(SubscriptionContentType.MANGA, comicId);
+    if (existingRule !== null) {
+      return this.saveRuleWithCreateOptions(existingRule, options);
+    }
+    return this.createOnlineMangaItemRule(comicId, options);
   }
 
   public async createShelfRule(
@@ -1074,18 +1148,14 @@ export class SubscriptionManager {
   }
 
   private async executeMangaRule(rule: SubscriptionRule, scene: string): Promise<SubscriptionRuleRunResult> {
+    if (rule.providerType === SubscriptionProviderType.WEBVIEW) {
+      return await this.executeOnlineMangaRule(rule, scene);
+    }
+
     const cachedManga = await this.remoteLibraryBridge.getCachedMangaById(rule.targetId);
     const remoteManga = await this.remoteLibraryBridge.loadRemoteMangaDetail(cachedManga, rule.targetId);
     if (remoteManga === null) {
       return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '没拿到漫画详情');
-    }
-
-    if (!this.remoteLibraryBridge.isRemoteProviderManga(remoteManga)) {
-      return this.buildSimpleResult(
-        rule,
-        SubscriptionExecutionStatus.UNSUPPORTED,
-        '这种在线漫画暂时还不能自动检查'
-      );
     }
 
     const conditionSubject = this.buildConditionSubjectFromManga(remoteManga);
@@ -1163,6 +1233,217 @@ export class SubscriptionManager {
       latestItemTitle: latestItemTitle,
       checkpoint: this.buildCheckpoint(rule, localCount, remoteCount, latestItemTitle)
     };
+  }
+
+  private async executeOnlineMangaRule(rule: SubscriptionRule, scene: string): Promise<SubscriptionRuleRunResult> {
+    const comicInfo = await this.appDataManager.getComicById(rule.targetId);
+    if (comicInfo === null) {
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '找不到这部漫画');
+    }
+
+    const externalId = comicInfo.externalId || '';
+    if (externalId.length <= 0) {
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '漫画缺少外部ID');
+    }
+
+    const sourceIdText = comicInfo.sourceId.trim();
+    const sourceId = Number(sourceIdText);
+    if (Number.isNaN(sourceId) || sourceId <= 0) {
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '漫画缺少图源ID');
+    }
+
+    const sourceName = await this.resolveMangaSourceName(comicInfo);
+
+    let engine: MangaSourceEngine;
+    try {
+      engine = await this.webViewSourceManager.getMangaEngine(sourceId, sourceName);
+    } catch (error) {
+      logger.warn(TAG, `获取在线漫画引擎失败: ${rule.targetTitle}, ${String(error)}`);
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.FAILED, '获取图源引擎失败，可能需要先打开一次漫画详情页');
+    }
+
+    const chaptersResult = await engine.getChapterList(externalId);
+    if (!chaptersResult.success || !chaptersResult.data || chaptersResult.data.length <= 0) {
+      return this.buildSimpleResult(
+        rule,
+        SubscriptionExecutionStatus.FAILED,
+        chaptersResult.error || '没拿到远程章节列表'
+      );
+    }
+
+    const remoteChapters: WebViewChapterInfo[] = chaptersResult.data;
+    await this.updateOnlineChaptersToDatabase(comicInfo.id, remoteChapters);
+
+    const localChapters = await this.appDataManager.getOnlineComicChapters(comicInfo.id);
+    const localCount = localChapters.length;
+    const remoteCount = remoteChapters.length;
+    const latestItemTitle = remoteCount > 0 ? remoteChapters[remoteCount - 1].title : '';
+
+    const conditionSubject: SubscriptionConditionSubject = {
+      title: comicInfo.title,
+      tags: comicInfo.tags ? comicInfo.tags.concat() : [],
+      sourceName: sourceName,
+      providerType: SubscriptionProviderType.WEBVIEW,
+      isFavorite: true,
+      isNSFW: comicInfo.isNSFW === true || comicInfo.isNSFW === 1
+    };
+    const conditionSkipReason = this.resolveConditionSkipReason(rule.conditions, conditionSubject);
+    if (conditionSkipReason.length > 0) {
+      return this.buildSimpleResult(rule, SubscriptionExecutionStatus.SKIPPED, conditionSkipReason);
+    }
+
+    const checkpoint = await this.dataManager.getCheckpoint(rule.id, rule.targetId, rule.targetId);
+    const seenCount = this.resolveSeenCount(localCount, checkpoint);
+    const deltaCount = remoteCount > seenCount ? (remoteCount - seenCount) : 0;
+    const minNewItems = this.resolveMinNewItems(rule.conditions);
+
+    if (deltaCount < minNewItems) {
+      const message = deltaCount > 0
+        ? `发现 ${deltaCount} 个新章节，但还没达到你设定的 ${minNewItems}`
+        : '这部漫画还没有新章节';
+      return {
+        rule: rule,
+        status: SubscriptionExecutionStatus.NO_UPDATE,
+        hasUpdate: false,
+        localCount: localCount,
+        remoteCount: remoteCount,
+        deltaCount: deltaCount,
+        downloadedCount: 0,
+        message: message,
+        actionSummary: '',
+        latestItemTitle: latestItemTitle,
+        checkpoint: deltaCount > 0 ? null : this.buildCheckpoint(rule, localCount, remoteCount, latestItemTitle)
+      };
+    }
+
+    let downloadedCount = 0;
+    const actionSummaryParts: string[] = [];
+    if (deltaCount > 0) {
+      if (this.isActionEnabled(rule.actions, SubscriptionActionType.NOTIFY)) {
+        await this.sendUpdateNotification(rule, deltaCount, latestItemTitle);
+        actionSummaryParts.push('notify');
+      }
+      const downloadAction = this.getAction(rule.actions, SubscriptionActionType.AUTO_DOWNLOAD_NEW);
+      if (downloadAction !== null && downloadAction.enabled) {
+        downloadedCount = await this.triggerOnlineMangaAutoDownload(comicInfo, remoteChapters, seenCount, downloadAction.limitCount);
+        if (downloadedCount > 0) {
+          actionSummaryParts.push(`auto_download:${downloadedCount}`);
+        }
+      }
+      return {
+        rule: rule,
+        status: SubscriptionExecutionStatus.SUCCESS,
+        hasUpdate: true,
+        localCount: localCount,
+        remoteCount: remoteCount,
+        deltaCount: deltaCount,
+        downloadedCount: downloadedCount,
+        message: `发现 ${deltaCount} 个新章节`,
+        actionSummary: this.joinSummaryParts(actionSummaryParts),
+        latestItemTitle: latestItemTitle,
+        checkpoint: this.buildCheckpoint(rule, localCount, remoteCount, latestItemTitle)
+      };
+    }
+
+    return {
+      rule: rule,
+      status: SubscriptionExecutionStatus.NO_UPDATE,
+      hasUpdate: false,
+      localCount: localCount,
+      remoteCount: remoteCount,
+      deltaCount: 0,
+      downloadedCount: 0,
+      message: '这部漫画还没有新章节',
+      actionSummary: '',
+      latestItemTitle: latestItemTitle,
+      checkpoint: this.buildCheckpoint(rule, localCount, remoteCount, latestItemTitle)
+    };
+  }
+
+  private async updateOnlineChaptersToDatabase(comicId: string, remoteChapters: WebViewChapterInfo[]): Promise<void> {
+    try {
+      for (let index = 0; index < remoteChapters.length; index++) {
+        const chapter = remoteChapters[index];
+        const chapterExternalId = chapter.id || `chapter_${index}`;
+        const existing = await this.appDataManager.getOnlineChapterByExternalId(comicId, chapterExternalId);
+        if (!existing) {
+          let chapterNumber = index;
+          if (chapter.number !== undefined && chapter.number !== null && !isNaN(chapter.number)) {
+            chapterNumber = chapter.number;
+          }
+          const chapterInput: OnlineChapterInfoInput = {
+            comicId: comicId,
+            externalId: chapterExternalId,
+            title: chapter.title || `第${index + 1}章`,
+            chapterNumber: chapterNumber,
+            url: '',
+            pageCount: 0,
+            publishTime: chapter.publishTime ? new Date(chapter.publishTime).getTime() : Date.now(),
+            isDownloaded: false,
+            index: chapterNumber
+          };
+          await this.appDataManager.addOnlineChapterInfo(chapterInput);
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `更新在线漫画章节到数据库失败: ${String(error)}`);
+    }
+  }
+
+  private async triggerOnlineMangaAutoDownload(
+    comicInfo: ComicInfo,
+    remoteChapters: WebViewChapterInfo[],
+    seenCount: number,
+    limitCount: number
+  ): Promise<number> {
+    const sourceId = Number(comicInfo.sourceId);
+    if (Number.isNaN(sourceId) || sourceId <= 0) {
+      return 0;
+    }
+
+    let engine: MangaSourceEngine;
+    try {
+      const sourceName = await this.resolveMangaSourceName(comicInfo);
+      engine = await this.webViewSourceManager.getMangaEngine(sourceId, sourceName);
+    } catch (error) {
+      logger.warn(TAG, `获取在线漫画引擎失败（自动下载）: ${String(error)}`);
+      return 0;
+    }
+
+    const items: MangaChapterDownloadItem[] = [];
+    const maxCount = limitCount > 0 ? limitCount : remoteChapters.length;
+    for (let index = seenCount; index < remoteChapters.length && items.length < maxCount; index++) {
+      const chapter = remoteChapters[index];
+      const chapterExternalId = chapter.id || `chapter_${index}`;
+      items.push({
+        chapterId: chapterExternalId,
+        chapterTitle: chapter.title || `第${index + 1}章`,
+        chapterIndex: chapter.number !== undefined ? chapter.number : index,
+        pageListFetcher: async (_chapterId: string, _mangaId: string): Promise<string[]> => {
+          const pagesResult = await engine.getPageList(chapterExternalId);
+          if (pagesResult.success && pagesResult.data) {
+            const pages: WebViewPageInfo[] = pagesResult.data;
+            const urls: string[] = [];
+            for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+              const page: WebViewPageInfo = pages[pageIndex];
+              if (page.imageUrl && page.imageUrl.length > 0) {
+                urls.push(page.imageUrl);
+              }
+            }
+            return urls;
+          }
+          return [];
+        }
+      });
+    }
+
+    if (items.length <= 0) {
+      return 0;
+    }
+
+    await this.unifiedDownloadManager.downloadMangaChapters(comicInfo.id, comicInfo.title, 0, items);
+    logger.info(TAG, `已触发在线漫画自动下载: ${comicInfo.title}, 数量=${items.length}`);
+    return items.length;
   }
 
   private async ensureShelfManagersReady(): Promise<boolean> {
@@ -1835,6 +2116,13 @@ export class SubscriptionManager {
   private buildMangaCandidateFromRemoteManga(manga: Manga): SubscriptionShelfCandidate {
     const providerType = this.resolveMangaProviderType(manga);
     const isRemoteProvider = this.remoteLibraryBridge.isRemoteProviderManga(manga);
+    const hasSourceInfo = providerType === SubscriptionProviderType.WEBVIEW &&
+      manga.sourceInfo !== undefined &&
+      manga.sourceInfo.sourceId !== undefined &&
+      String(manga.sourceInfo.sourceId).length > 0 &&
+      manga.sourceInfo.externalId !== undefined &&
+      String(manga.sourceInfo.externalId).length > 0;
+    const isSupported = isRemoteProvider || hasSourceInfo;
     return {
       itemId: manga.id,
       title: manga.title,
@@ -1850,8 +2138,8 @@ export class SubscriptionManager {
       latestItemTitle: manga.chapters.length > 0 ? manga.chapters[manga.chapters.length - 1].title : '',
       novelBook: null,
       remoteManga: isRemoteProvider ? manga : null,
-      supported: isRemoteProvider,
-      unsupportedReason: isRemoteProvider ? '' : '这类漫画暂时还不能用于书架提醒'
+      supported: isSupported,
+      unsupportedReason: isSupported ? '' : '这类漫画暂时还不能用于书架提醒'
     };
   }
 
@@ -1864,6 +2152,12 @@ export class SubscriptionManager {
       ? this.resolveRemoteProviderType(parsedProvider.providerType)
       : SubscriptionProviderType.WEBVIEW;
     const sourceName = await this.resolveMangaSourceName(comicInfo);
+    const hasOnlineSourceInfo = providerType === SubscriptionProviderType.WEBVIEW &&
+      comicInfo.sourceId !== undefined &&
+      String(comicInfo.sourceId).trim().length > 0 &&
+      comicInfo.externalId !== undefined &&
+      String(comicInfo.externalId).trim().length > 0;
+    const isSupported = parsedProvider !== null || hasOnlineSourceInfo;
     return {
       itemId: comicInfo.id,
       title: comicInfo.title,
@@ -1879,8 +2173,8 @@ export class SubscriptionManager {
       latestItemTitle: '',
       novelBook: null,
       remoteManga: null,
-      supported: parsedProvider !== null,
-      unsupportedReason: parsedProvider !== null ? '' : '这类漫画暂时还不能用于书架提醒'
+      supported: isSupported,
+      unsupportedReason: isSupported ? '' : '这类漫画暂时还不能用于书架提醒'
     };
   }
 

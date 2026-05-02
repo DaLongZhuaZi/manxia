@@ -128,7 +128,7 @@ export class SettingsSearchSupport {
 
     // 高级设置
     { id: 'advanced_debug', title: '调试设置', description: '高级模式、日志、布局、SFW、更新与日志等级', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_debug', scrollOffset: 0, keywords: ['调试设置', '高级模式', '日志悬浮窗', '强制平板模式', '强制横屏模式', '预加载调试信息', 'SFW模式', '自动检查更新', '日志等级'] },
-    { id: 'advanced_tools', title: '开发者工具', description: '生命周期监控、日志管理、系统资源预览', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_tools', scrollOffset: 930, keywords: ['开发者工具', '生命周期监控', '日志管理', '系统资源预览'] },
+    { id: 'advanced_tools', title: '开发者工具', description: '日志管理、系统资源预览', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_tools', scrollOffset: 930, keywords: ['开发者工具', '日志管理', '系统资源预览'] },
     { id: 'advanced_actions', title: '高级其他操作', description: '重播引导页面等操作', targetPage: 'AdvancedSettingsSubPage', anchorId: 'advanced_actions', scrollOffset: 1560, keywords: ['其他操作', '重播引导页面', '需要重启应用'] },
 
     // 错误管理
