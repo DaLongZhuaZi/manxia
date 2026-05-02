@@ -4,12 +4,18 @@
  * 支持按需加载和分类浏览
  */
 
+import { HdsNavDestination } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
-import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { SYSTEM_SYMBOL_GROUPS, SYSTEM_SYMBOL_TOTAL_COUNT, SystemSymbolResourceGroup } from '../Framework/Resources/SystemSymbolCatalog';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'SystemResourcePreviewPage';
 const GROUP_BATCH_SIZE: number = 8;
@@ -28,9 +34,6 @@ enum ResourceCategory {
 /**
  * 图标分组
  */
-interface ThemeState {
-  currentTheme: ThemeType;
-}
 
 // Media图标列表（按分组）- 完整列表
 const MEDIA_GROUPS: SystemSymbolResourceGroup[] = [
@@ -174,41 +177,39 @@ const SYSTEM_COLORS: string[] = [
   'ohos_id_color_list_separator', 'ohos_id_color_click_effect', 'ohos_id_color_hover'
 ];
 
-@ComponentV2
+@Component
 export struct SystemResourcePreviewPage {
-  @Local themeState: ThemeState = { currentTheme: ThemeType.DARK };
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = 'SystemResourcePreviewPage';
   pathStack: NavPathStack = new NavPathStack();
-  
-  @Local private selectedCategory: ResourceCategory = ResourceCategory.SYMBOL;
-  @Local private selectedGroupIndex: number = 0;
-  @Local private searchText: string = '';
-  @Local private visibleGroupCount: number = GROUP_BATCH_SIZE;
-  @Local private visibleGridItemCount: number = GRID_ITEM_BATCH_SIZE;
-  @Local private visibleSearchResultCount: number = SEARCH_RESULT_BATCH_SIZE;
-  @Local private isSearching: boolean = false; // 是否正在搜索
-  @Local private searchResults: string[] = []; // 搜索结果
-  private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
+
+  @State private selectedCategory: ResourceCategory = ResourceCategory.SYMBOL;
+  @State private selectedGroupIndex: number = 0;
+  @State private searchText: string = '';
+  @State private visibleGroupCount: number = GROUP_BATCH_SIZE;
+  @State private visibleGridItemCount: number = GRID_ITEM_BATCH_SIZE;
+  @State private visibleSearchResultCount: number = SEARCH_RESULT_BATCH_SIZE;
+  @State private isSearching: boolean = false;
+  @State private searchResults: string[] = [];
   
   aboutToAppear(): void {
     logger.info(TAG, '系统资源预览页面初始化');
     this.resetSegmentedLoading();
-    // 使用getActualTheme获取实际显示的主题
-    this.themeManager.getActualTheme().then((theme: ThemeType) => {
-      this.themeState = { currentTheme: theme };
-    });
-    this.themeChangeCallback = (newTheme: ThemeType) => {
+    ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
-      this.themeState = { currentTheme: newTheme };
-    };
-    this.themeManager.onThemeChange(this.themeChangeCallback);
+    });
+    FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+    });
   }
-  
+
   aboutToDisappear(): void {
-    // 移除主题监听器
-    if (this.themeChangeCallback) {
-      this.themeManager.offThemeChange(this.themeChangeCallback);
-    }
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
   
   private resetSegmentedLoading(): void {
@@ -567,19 +568,11 @@ export struct SystemResourcePreviewPage {
         .layoutWeight(1)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
-
-        if (this.hasMoreSearchResults()) {
-          Button(`加载更多结果 (${this.getVisibleSearchResultCount()}/${this.searchResults.length})`)
-            .fontSize(13)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .height(36)
-            .borderRadius(18)
-            .margin({ left: 16, right: 16, bottom: 8 })
-            .onClick(() => {
-              this.loadMoreSearchResults();
-            })
-        }
+        .onScrollEnd(() => {
+          if (this.hasMoreSearchResults()) {
+            this.loadMoreSearchResults();
+          }
+        })
       }
     }
     .width('100%')
@@ -688,19 +681,11 @@ export struct SystemResourcePreviewPage {
       .scrollBar(BarState.Off)
       .width('100%')
       .height(40)
-
-      if (this.hasMoreGroups()) {
-        Button(`加载更多分组 (${this.getVisibleGroupCount()}/${this.getCurrentGroups().length})`)
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .height(32)
-          .borderRadius(16)
-          .margin({ left: 16, right: 16, top: 2 })
-          .onClick(() => {
-            this.loadMoreGroups();
-          })
-      }
+      .onScrollEnd(() => {
+        if (this.hasMoreGroups()) {
+          this.loadMoreGroups();
+        }
+      })
     }
     .width('100%')
     .padding({ top: 4, bottom: 4 })
@@ -750,24 +735,16 @@ export struct SystemResourcePreviewPage {
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-
-      if (this.hasMoreCurrentGridItems()) {
-        Button(`加载更多图标 (${this.getVisibleCurrentGridItemCount()}/${this.getCurrentGridItemCount()})`)
-          .fontSize(13)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .height(36)
-          .borderRadius(18)
-          .margin({ left: 16, right: 16, bottom: 8 })
-          .onClick(() => {
-            this.loadMoreCurrentGridItems();
-          })
-      }
+      .onScrollEnd(() => {
+        if (this.hasMoreCurrentGridItems()) {
+          this.loadMoreCurrentGridItems();
+        }
+      })
     }
     .width('100%')
     .layoutWeight(1)
   }
-  
+
   /**
    * 构建Media图标网格
    */
@@ -813,24 +790,16 @@ export struct SystemResourcePreviewPage {
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-
-      if (this.hasMoreCurrentGridItems()) {
-        Button(`加载更多图标 (${this.getVisibleCurrentGridItemCount()}/${this.getCurrentGridItemCount()})`)
-          .fontSize(13)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .height(36)
-          .borderRadius(18)
-          .margin({ left: 16, right: 16, bottom: 8 })
-          .onClick(() => {
-            this.loadMoreCurrentGridItems();
-          })
-      }
+      .onScrollEnd(() => {
+        if (this.hasMoreCurrentGridItems()) {
+          this.loadMoreCurrentGridItems();
+        }
+      })
     }
     .width('100%')
     .layoutWeight(1)
   }
-  
+
   /**
    * 构建颜色列表
    */
@@ -878,44 +847,50 @@ export struct SystemResourcePreviewPage {
   }
   
   build() {
-    NavDestination() {
-      Column() {
-        // 搜索框
-        this.buildSearchBar()
-        
-        // 分类选择器
-        this.buildCategorySelector()
-        
-        // 根据是否在搜索状态显示不同内容
-        if (this.isSearching) {
-          // 搜索结果
-          this.buildSearchResultGrid()
-        } else {
-          // 正常浏览模式
-          if (this.selectedCategory === ResourceCategory.SYMBOL) {
-            // 分组选择器
-            this.buildGroupSelector()
-            // Symbol图标网格
-            this.buildSymbolGrid()
-          } else if (this.selectedCategory === ResourceCategory.MEDIA) {
-            // 分组选择器
-            this.buildGroupSelector()
-            // Media图标网格
-            this.buildMediaGrid()
+    HdsNavDestination() {
+      Stack() {
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
+          .width('100%')
+          .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        Column() {
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
+          this.buildSearchBar()
+          this.buildCategorySelector()
+
+          if (this.isSearching) {
+            this.buildSearchResultGrid()
           } else {
-            // 颜色列表
-            this.buildColorList()
+            if (this.selectedCategory === ResourceCategory.SYMBOL) {
+              this.buildGroupSelector()
+              this.buildSymbolGrid()
+            } else if (this.selectedCategory === ResourceCategory.MEDIA) {
+              this.buildGroupSelector()
+              this.buildMediaGrid()
+            } else {
+              this.buildColorList()
+            }
           }
+
         }
+        .width('100%')
+        .height('100%')
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '系统资源预览',
+          appFontFamily: this.appFontFamily
+        })
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
-    .title('系统资源预览')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
     })

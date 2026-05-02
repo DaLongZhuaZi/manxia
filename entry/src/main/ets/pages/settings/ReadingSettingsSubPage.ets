@@ -1809,7 +1809,7 @@ export struct ReadingSettingsSubPage {
           Button({ stateEffect: true }) {
             Text(font.displayName)
               .fontSize(12)
-              .fontFamily(this.appFontFamily)
+              .fontFamily(font.name)
               .fontColor(
                 this.ebookFontFamily === font.name
                   ? Color.White
@@ -3050,7 +3050,7 @@ export struct ReadingSettingsSubPage {
             Button({ stateEffect: true }) {
               Text(font.displayName)
                 .fontSize(12)
-                .fontFamily(this.appFontFamily)
+                .fontFamily(font.name)
                 .fontColor(
                   this.textFontFamily === font.name
                     ? Color.White
@@ -3085,7 +3085,7 @@ export struct ReadingSettingsSubPage {
               Button({ stateEffect: true }) {
                 Text(font.displayName)
                   .fontSize(12)
-                  .fontFamily(this.appFontFamily)
+                  .fontFamily(font.familyName)
                   .fontColor(
                     this.textFontFamily === font.familyName
                       ? Color.White

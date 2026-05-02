@@ -52,7 +52,6 @@ export class PageWindowRegistry {
     'KomgaMangaDetailPage',
     'KomgaSettingsPage',
     'JsvmPlaygroundPage',
-    'LifecycleMonitorPage',
     'LogManagerPage',
     'MangaDetailPage',
     'MangaFeedbackPage',

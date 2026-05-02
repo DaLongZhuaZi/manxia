@@ -131,7 +131,6 @@ import { RssSubscriptionManagementPage } from './RssSubscriptionManagementPage';
 import { RssSourceDebugPage } from './RssSourceDebugPage';
 import { SubscriptionManagementPage } from './SubscriptionManagementPage';
 import { JsvmPlaygroundPage } from './JsvmPlaygroundPage';
-import { LifecycleMonitorPage } from './LifecycleMonitorPage';
 import { FileEditorPage, FileEditorParams } from './FileEditorPage';
 import { BackgroundBlurOverlay } from '../Framework/Components/BackgroundBlurOverlay';
 import { WindowModeTransitionOverlay } from '../Framework/Components/WindowModeTransitionOverlay';
@@ -599,6 +598,7 @@ struct MainMenuPage {
 
   // 漫画列表相关状态
   @State mangaList: Manga[] = [];
+  private allMangaList: Manga[] = [];
   @State isLoadingMangaList: boolean = false;
   @State isRefreshing: boolean = false;
   @State isRefreshingHome: boolean = false; // 首页下拉刷新状态
@@ -714,6 +714,7 @@ struct MainMenuPage {
 
   // 电子书相关状态
   @State ebookList: EBook[] = [];
+  private allEBookList: EBook[] = [];
   @State filteredEbookList: EBook[] = [];
   @State isLoadingEbookList: boolean = false;
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
@@ -733,6 +734,7 @@ struct MainMenuPage {
 
   // 小说相关状态
   @State novelList: NovelBook[] = [];
+  private allNovelList: NovelBook[] = [];
   @State filteredNovelList: NovelBook[] = [];
   @State isLoadingNovelList: boolean = false;
   private novelDataManager: NovelDataManager | null = null;
@@ -5073,7 +5075,8 @@ struct MainMenuPage {
       logger.info(TAG, `从数据库获取到 ${ebookList.length} 本电子书，其中收藏 ${favoriteEbooks.length} 本`);
       logger.info(TAG, `从漫画收藏列表获取到 ${favoritePdfEbooks.length} 本PDF电子书`);
 
-      // 书库仅展示已收藏内容
+      // 书库仅展示已收藏内容，完整列表供发现/历史页使用
+      this.allEBookList = ebookList;
       this.ebookList = favoriteEbooks;
       this.pdfEbookList = favoritePdfEbooks;
       logger.info(TAG, `电子书列表加载完成: 普通电子书 ${this.ebookList.length} 本，PDF电子书 ${this.pdfEbookList.length} 本`);
@@ -5214,8 +5217,9 @@ struct MainMenuPage {
         logger.info(TAG, `普通模式：从数据库获取到 ${novels.length} 本非隐私小说`);
       }
 
-      // 书库仅展示已收藏内容
+      // 书库仅展示已收藏内容，完整列表供发现/历史页使用
       await this.normalizeNovelCoversForDisplay(novels);
+      this.allNovelList = novels;
       this.novelList = this.filterFavoriteNovelItems(novels);
       logger.info(TAG, `小说列表加载完成: 收藏 ${this.novelList.length} 本 / 全部 ${novels.length} 本`);
       this.applyNovelFilter(); // 应用筛选
@@ -5727,8 +5731,8 @@ struct MainMenuPage {
    */
   private applyDiscoverFilter(): void {
     try {
-      // 筛选漫画
-      let filteredManga = [...this.mangaList];
+      // 筛选漫画（使用完整列表，不限于收藏）
+      let filteredManga = [...this.allMangaList];
 
       // 多标签筛选：漫画需要包含所有选中的标签
       if (this.selectedTags.size > 0) {
@@ -5755,9 +5759,9 @@ struct MainMenuPage {
         });
       }
 
-      // 筛选电子书
+      // 筛选电子书（使用完整列表，不限于收藏）
       let filteredEBook: EBook[] = [];
-      for (const ebook of this.ebookList) {
+      for (const ebook of this.allEBookList) {
         filteredEBook.push(ebook);
       }
 
@@ -5781,8 +5785,8 @@ struct MainMenuPage {
         });
       }
 
-      // 筛选小说
-      let filteredNovel = [...this.novelList];
+      // 筛选小说（使用完整列表，不限于收藏）
+      let filteredNovel = [...this.allNovelList];
       
       // 多标签筛选小说（使用kind字段）
       if (this.selectedTags.size > 0) {
@@ -5840,9 +5844,9 @@ struct MainMenuPage {
 
     } catch (error) {
       logger.error(TAG, `应用发现页面筛选失败: ${String(error)}`);
-      this.discoveredMangaList = [...this.mangaList];
-      this.discoveredEBookList = [...this.ebookList];
-      this.discoveredNovelList = [...this.novelList];
+      this.discoveredMangaList = [...this.allMangaList];
+      this.discoveredEBookList = [...this.allEBookList];
+      this.discoveredNovelList = [...this.allNovelList];
     }
   }
 
@@ -8184,7 +8188,8 @@ struct MainMenuPage {
         manga.chapters = []; // 书库列表不需要章节数据
       }
 
-      // 保留完整列表，交由 applyLibraryFilter 根据当前筛选类型统一处理
+      // 保留完整列表供发现/历史页使用，书库仅展示收藏
+      this.allMangaList = mangaList;
       this.mangaList = favoriteMangaList;
       logger.info(TAG, `成功加载 ${this.mangaList.length} 部漫画（未加载章节）`);
 
@@ -28795,8 +28800,6 @@ struct MainMenuPage {
         NovelDictRulePage()
       } else if (name === 'JsvmPlaygroundPage') {
         JsvmPlaygroundPage()
-      } else if (name === 'LifecycleMonitorPage') {
-        LifecycleMonitorPage()
       } else if (name === 'BackupPage') {
         BackupPage()
       } else if (name === 'FileEditorPage') {

@@ -17,6 +17,10 @@ import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
 import { LogCollector, LogEntry, LogFilter, LogStats } from '../Framework/Debug/LogCollector';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'LogManagerPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -27,13 +31,13 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
 @Component
 struct LogManagerPage {
   @State pathStack: NavPathStack = new NavPathStack();
-  private scroller: Scroller = new Scroller();
   private uiContext: UIContext | undefined = undefined;
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'LogManagerPage';
 
@@ -61,11 +65,28 @@ struct LogManagerPage {
   @State selectedTag: string = '';
   @State isExporting: boolean = false;
 
+  // 缓存的主题颜色（避免在 ForEach 中重复创建 colorMapping 对象导致内存崩溃）
+  @State cachedTextWhite: Resource = $r('app.color.test_management_text_white');
+  @State cachedAccentBlue: Resource = $r('app.color.test_management_accent_blue');
+  @State cachedTextMuted: Resource = $r('app.color.test_management_text_muted');
+  @State cachedTextPrimary: Resource = $r('app.color.test_management_text_primary_dark');
+  @State cachedTextSecondary: Resource = $r('app.color.test_management_font_secondary_dark');
+  @State cachedPanelBg: Resource = $r('app.color.test_management_panel_background');
+  @State cachedPanelBorder: Resource = $r('app.color.test_management_panel_border');
+  @State cachedAccentOrange: Resource = $r('app.color.test_management_accent_orange');
+  @State cachedButtonDanger: Resource = $r('app.color.test_management_button_danger');
+  @State cachedBgDark: Resource = $r('app.color.test_management_background_dark');
+  @State cachedButtonInactive: Resource = $r('app.color.test_management_button_inactive');
+  @State cachedButtonPrimary: Resource = $r('app.color.test_management_button_primary');
+  @State cachedAccentGreen: Resource = $r('app.color.test_management_accent_green');
+  @State cachedButtonTextSecondary: Resource = $r('app.color.test_management_button_text_secondary_dark');
+
   // 设备方向
   @State private isLandscape: boolean = false;
   private deviceOrientationListener: DeviceChangeListener | null = null;
   private deviceAdaptationManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
   private isRefreshPaused: boolean = false;
+  private refreshTimerId: number = -1;
 
   onPageShow(): void {
     try {
@@ -77,6 +98,24 @@ struct LogManagerPage {
     } catch (err) {
       logger.error(TAG, 'AppStorage.get 异常', String(err));
     }
+    this.loadLogs();
+    this.startAutoRefresh();
+  }
+
+  private startAutoRefresh(): void {
+    this.stopAutoRefresh();
+    this.refreshTimerId = this.lifecycle.setInterval(() => {
+      if (!this.isRefreshPaused) {
+        this.loadLogs();
+      }
+    }, 3000);
+  }
+
+  private stopAutoRefresh(): void {
+    if (this.refreshTimerId >= 0) {
+      this.lifecycle.clearInterval(this.refreshTimerId);
+      this.refreshTimerId = -1;
+    }
   }
 
   onReady(): void {
@@ -85,7 +124,9 @@ struct LogManagerPage {
 
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
+      this.cacheThemeColors();
     });
+    this.cacheThemeColors();
     FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
       this.fontState = newState;
     });
@@ -158,8 +199,27 @@ struct LogManagerPage {
   private lifecycle = new PageLifecycleManager('LogManagerPage', { enableDebug: true });
 
   aboutToDisappear(): void {
+    this.stopAutoRefresh();
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+  }
+
+  private cacheThemeColors(): void {
+    const theme = this.themeState.currentTheme;
+    this.cachedTextWhite = ThemeAwareHelper.getTestManagementThemedColor('text_white', theme);
+    this.cachedAccentBlue = ThemeAwareHelper.getTestManagementThemedColor('accent_blue', theme);
+    this.cachedTextMuted = ThemeAwareHelper.getTestManagementThemedColor('text_muted', theme);
+    this.cachedTextPrimary = ThemeAwareHelper.getTestManagementThemedColor('text_primary', theme);
+    this.cachedTextSecondary = ThemeAwareHelper.getTestManagementThemedColor('text_secondary', theme);
+    this.cachedPanelBg = ThemeAwareHelper.getTestManagementThemedColor('panel_background', theme);
+    this.cachedPanelBorder = ThemeAwareHelper.getTestManagementThemedColor('panel_border', theme);
+    this.cachedAccentOrange = ThemeAwareHelper.getTestManagementThemedColor('accent_orange', theme);
+    this.cachedButtonDanger = ThemeAwareHelper.getTestManagementThemedColor('button_danger', theme);
+    this.cachedBgDark = ThemeAwareHelper.getTestManagementThemedColor('background_dark', theme);
+    this.cachedButtonInactive = ThemeAwareHelper.getTestManagementThemedColor('button_inactive', theme);
+    this.cachedButtonPrimary = ThemeAwareHelper.getTestManagementThemedColor('button_primary', theme);
+    this.cachedAccentGreen = ThemeAwareHelper.getTestManagementThemedColor('accent_green', theme);
+    this.cachedButtonTextSecondary = ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', theme);
   }
 
   /**
@@ -342,15 +402,15 @@ struct LogManagerPage {
   private getLevelColor(level: LogLevel): ResourceColor {
     switch (level) {
       case LogLevel.DEBUG:
-        return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+        return this.cachedTextMuted;
       case LogLevel.INFO:
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+        return this.cachedAccentBlue;
       case LogLevel.WARN:
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
+        return this.cachedAccentOrange;
       case LogLevel.ERROR:
-        return ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme);
+        return this.cachedButtonDanger;
       default:
-        return ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme);
+        return this.cachedTextSecondary;
     }
   }
 
@@ -366,14 +426,14 @@ struct LogManagerPage {
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.cachedTextPrimary)
           .layoutWeight(1)
 
         // 折叠/展开按钮
         Text(this.showDeviceInfo ? '收起' : '展开')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .fontColor(this.cachedAccentBlue)
           .onClick(() => {
             this.showDeviceInfo = !this.showDeviceInfo;
           })
@@ -389,12 +449,12 @@ struct LogManagerPage {
                 Text('•')
                   .fontSize(10)
                   .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-                
+                  .fontColor(this.cachedAccentBlue)
+
                 Text(line)
                   .fontSize(11)
                   .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .fontColor(this.cachedTextSecondary)
                   .layoutWeight(1)
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -406,16 +466,21 @@ struct LogManagerPage {
         }
         .width('100%')
         .padding({ top: 8 })
+        .transition(TransitionEffect.asymmetric(
+          TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut }).combine(
+            TransitionEffect.translate({ y: -8 }).animation({ duration: 250, curve: Curve.EaseOut })
+          ),
+          TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn }).combine(
+            TransitionEffect.translate({ y: -8 }).animation({ duration: 200, curve: Curve.EaseIn })
+          )
+        ))
       }
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(this.cachedPanelBg)
     .borderRadius(8)
-    .border({ 
-      width: 1, 
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) 
-    })
+    .border({ width: 1, color: this.cachedPanelBorder })
     .margin({ left: 16, right: 16, top: 12, bottom: 8 })
   }
 
@@ -430,15 +495,15 @@ struct LogManagerPage {
           .fontSize(18)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.cachedTextPrimary)
         Text('全部')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.cachedTextMuted)
       }
       .layoutWeight(1)
       .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(this.cachedPanelBg)
       .borderRadius(8)
 
       Column() {
@@ -446,15 +511,15 @@ struct LogManagerPage {
           .fontSize(18)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.cachedTextPrimary)
         Text('调试')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.cachedTextMuted)
       }
       .layoutWeight(1)
       .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(this.cachedPanelBg)
       .borderRadius(8)
 
       Column() {
@@ -462,15 +527,15 @@ struct LogManagerPage {
           .fontSize(18)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .fontColor(this.cachedAccentBlue)
         Text('信息')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.cachedTextMuted)
       }
       .layoutWeight(1)
       .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(this.cachedPanelBg)
       .borderRadius(8)
 
       Column() {
@@ -478,15 +543,15 @@ struct LogManagerPage {
           .fontSize(18)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+          .fontColor(this.cachedAccentOrange)
         Text('警告')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.cachedTextMuted)
       }
       .layoutWeight(1)
       .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(this.cachedPanelBg)
       .borderRadius(8)
 
       Column() {
@@ -494,15 +559,15 @@ struct LogManagerPage {
           .fontSize(18)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+          .fontColor(this.cachedButtonDanger)
         Text('错误')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.cachedTextMuted)
       }
       .layoutWeight(1)
       .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(this.cachedPanelBg)
       .borderRadius(8)
     }
     .width('100%')
@@ -519,7 +584,7 @@ struct LogManagerPage {
       TextInput({ placeholder: '搜索日志...', text: this.searchText })
         .width('100%')
         .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .backgroundColor(this.cachedPanelBg)
         .onChange((value: string) => {
           this.searchText = value;
           this.applyFilter();
@@ -530,20 +595,20 @@ struct LogManagerPage {
         Text('级别:')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.cachedTextSecondary)
 
         Button({ stateEffect: true }) {
           Text('DEBUG')
             .fontSize(11)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            .fontColor(this.cachedButtonTextSecondary)
         }
         .width(60)
         .height(28)
         .backgroundColor(
           this.filterLevel === LogLevel.DEBUG
-            ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            ? this.cachedTextMuted
+            : this.cachedButtonInactive
         )
         .borderRadius(6)
         .onClick(() => { this.filterLevel = LogLevel.DEBUG; this.applyFilter(); })
@@ -552,14 +617,14 @@ struct LogManagerPage {
           Text('INFO')
             .fontSize(11)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            .fontColor(this.cachedButtonTextSecondary)
         }
         .width(55)
         .height(28)
         .backgroundColor(
           this.filterLevel === LogLevel.INFO
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            ? this.cachedAccentBlue
+            : this.cachedButtonInactive
         )
         .borderRadius(6)
         .onClick(() => { this.filterLevel = LogLevel.INFO; this.applyFilter(); })
@@ -568,14 +633,14 @@ struct LogManagerPage {
           Text('WARN')
             .fontSize(11)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            .fontColor(this.cachedButtonTextSecondary)
         }
         .width(55)
         .height(28)
         .backgroundColor(
           this.filterLevel === LogLevel.WARN
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            ? this.cachedAccentOrange
+            : this.cachedButtonInactive
         )
         .borderRadius(6)
         .onClick(() => { this.filterLevel = LogLevel.WARN; this.applyFilter(); })
@@ -584,14 +649,14 @@ struct LogManagerPage {
           Text('ERROR')
             .fontSize(11)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            .fontColor(this.cachedButtonTextSecondary)
         }
         .width(60)
         .height(28)
         .backgroundColor(
           this.filterLevel === LogLevel.ERROR
-            ? ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            ? this.cachedButtonDanger
+            : this.cachedButtonInactive
         )
         .borderRadius(6)
         .onClick(() => { this.filterLevel = LogLevel.ERROR; this.applyFilter(); })
@@ -613,11 +678,11 @@ struct LogManagerPage {
           Text('刷新')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            .fontColor(this.cachedButtonTextSecondary)
         }
           .width('100%')
           .height(36)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .backgroundColor(this.cachedAccentBlue)
           .borderRadius(8)
           .onClick(() => { this.loadLogs(); })
       }.layoutWeight(1)
@@ -627,11 +692,11 @@ struct LogManagerPage {
           Text(this.isExporting ? '导出中...' : '导出')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            .fontColor(this.cachedButtonTextSecondary)
         }
           .width('100%')
           .height(36)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          .backgroundColor(this.cachedAccentGreen)
           .borderRadius(8)
           .onClick(() => {
             if (!this.isExporting) {
@@ -647,11 +712,11 @@ struct LogManagerPage {
           Text('清空')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            .fontColor(this.cachedButtonTextSecondary)
         }
           .width('100%')
           .height(36)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+          .backgroundColor(this.cachedButtonDanger)
           .borderRadius(8)
           .onClick(() => { this.clearLogs(); })
       }.layoutWeight(1)
@@ -670,7 +735,7 @@ struct LogManagerPage {
         Text(this.getLevelText(log.level))
           .fontSize(10)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .fontColor(this.cachedTextWhite)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .backgroundColor(this.getLevelColor(log.level))
           .borderRadius(4)
@@ -678,7 +743,7 @@ struct LogManagerPage {
         Text(log.tag)
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .fontColor(this.cachedAccentBlue)
           .fontWeight(FontWeight.Medium)
 
         Blank()
@@ -686,14 +751,14 @@ struct LogManagerPage {
         Text(new Date(log.timestamp).toLocaleTimeString())
           .fontSize(10)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(this.cachedTextMuted)
       }
       .width('100%')
 
       Text(log.message)
         .fontSize(12)
         .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor(this.cachedTextPrimary)
         .maxLines(3)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
@@ -701,73 +766,70 @@ struct LogManagerPage {
         Text(log.args.join(' '))
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.cachedTextSecondary)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(this.cachedPanelBg)
     .borderRadius(8)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .border({ width: 1, color: this.cachedPanelBorder })
     .margin({ left: 16, right: 16, bottom: 8 })
   }
 
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景区域
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: this.cachedBgDark,
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        
+
         if (this.isLandscape) {
-          // 横屏布局：左边40%显示设备信息和标签，右边60%显示日志
           Column() {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
-            
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
             Row() {
-            
-            // 左侧：设备信息和标签
-            Column() {
-              this.buildDeviceInfo()
-              this.buildLogStats()
-            }
-            .width('40%')
-            .height('100%')
-            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-            
-            // 右侧：搜索、筛选、按钮和日志列表
-            Column() {
-              this.buildFilter()
-              this.buildActionButtons()
-              
-              if (this.filteredLogs.length === 0) {
-                Column({ space: 20 }) {
-                  Text('暂无日志')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                }
-                .width('100%')
-                .layoutWeight(1)
-                .justifyContent(FlexAlign.Center)
-              } else {
-                Scroll(this.scroller) {
-                  Column() {
+              Column() {
+                this.buildDeviceInfo()
+                this.buildLogStats()
+              }
+              .width('40%')
+              .height('100%')
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+              Column() {
+                this.buildFilter()
+                this.buildActionButtons()
+
+                if (this.filteredLogs.length === 0) {
+                  Column({ space: 20 }) {
+                    Text('暂无日志')
+                      .fontSize(16)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.cachedTextMuted)
+                  }
+                  .width('100%')
+                  .layoutWeight(1)
+                  .justifyContent(FlexAlign.Center)
+                } else {
+                  List() {
                     ForEach(this.filteredLogs, (log: LogEntry) => {
-                      this.buildLogItem(log)
+                      ListItem() {
+                        this.buildLogItem(log)
+                      }
                     }, (log: LogEntry) => `${log.id}`)
                   }
                   .width('100%')
+                  .layoutWeight(1)
+                  .edgeEffect(EdgeEffect.Spring)
+                  .scrollBar(BarState.Auto)
                 }
-                .layoutWeight(1)
-                .edgeEffect(EdgeEffect.Spring)
-                .scrollBar(BarState.Auto)
-              }
               }
               .width('60%')
               .height('100%')
@@ -777,72 +839,58 @@ struct LogManagerPage {
           }
           .width('100%')
           .height('100%')
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else {
-          // 竖屏布局：原有布局
           Column() {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
-            
+            Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
             this.buildDeviceInfo()
             this.buildLogStats()
             this.buildFilter()
             this.buildActionButtons()
 
             if (this.filteredLogs.length === 0) {
-            Column({ space: 20 }) {
-              Text('暂无日志')
-                .fontSize(16)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            }
-            .width('100%')
-            .layoutWeight(1)
-            .justifyContent(FlexAlign.Center)
-            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          } else {
-            Scroll(this.scroller) {
-              Column() {
+              Column({ space: 20 }) {
+                Text('暂无日志')
+                  .fontSize(16)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.cachedTextMuted)
+              }
+              .width('100%')
+              .layoutWeight(1)
+              .justifyContent(FlexAlign.Center)
+            } else {
+              List() {
                 ForEach(this.filteredLogs, (log: LogEntry) => {
-                  this.buildLogItem(log)
+                  ListItem() {
+                    this.buildLogItem(log)
+                  }
                 }, (log: LogEntry) => `${log.id}`)
               }
               .width('100%')
-            }
               .layoutWeight(1)
               .edgeEffect(EdgeEffect.Spring)
               .scrollBar(BarState.Auto)
-            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             }
           }
           .width('100%')
           .height('100%')
         }
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '日志管理',
+          appFontFamily: this.appFontFamily
+        })
       }
     }
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '日志管理' }
-      }
-    })
+    .hideTitleBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+    .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.onPageShow();
       this.onReady();
     })
-    .backgroundColor(Color.Transparent)
   }
 }
 
