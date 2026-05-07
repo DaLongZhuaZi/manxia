@@ -2955,6 +2955,11 @@ export class LegadoJsEngine {
    * 重置引擎
    */
   reset(): void {
+    if (this.webviewController) {
+      try {
+        this.webviewController.stop();
+      } catch (_e) {}
+    }
     this.webviewController = null;
     this.isReady = false;
     this.pendingTasks = [];

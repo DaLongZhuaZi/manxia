@@ -111,10 +111,14 @@ export class DatabaseManager {
       const config: relationalStore.StoreConfig = {
         name: DATABASE_CONFIG.DATABASE_NAME,
         securityLevel: relationalStore.SecurityLevel.S1,
-        encrypt: DATABASE_CONFIG.ENCRYPT
+        encrypt: DATABASE_CONFIG.ENCRYPT,
       };
 
       this.store = await relationalStore.getRdbStore(context, config);
+
+      // WAL 模式下降低同步级别，减少 fsync 次数，提升写入性能
+      await this.store.executeSql('PRAGMA journal_mode=WAL');
+      await this.store.executeSql('PRAGMA synchronous = NORMAL');
       
       // 创建表（列添加和迁移已内嵌在createTables中）
       await this.createTables();

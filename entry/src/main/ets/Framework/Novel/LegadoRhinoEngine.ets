@@ -485,8 +485,11 @@ export class LegadoRhinoEngine {
       this.rhinoExecutor.destroy();
       this.rhinoExecutor = null;
     }
-    
-    this.legadoEngine = null;
+
+    if (this.legadoEngine) {
+      this.legadoEngine.reset();
+      this.legadoEngine = null;
+    }
     this.isInitialized = false;
     this.initPromise = null;
     this.currentEngineType = JsEngineType.AUTO;

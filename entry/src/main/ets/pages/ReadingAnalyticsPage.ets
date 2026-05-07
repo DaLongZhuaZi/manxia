@@ -3178,23 +3178,23 @@ struct ReadingAnalyticsPage {
     Column({ space: 6 }) {
       // 图标
       SymbolGlyph(this.getStatCardIconResource(icon))
-        .fontSize(32)
+        .fontSize(28)
         .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
         .alignSelf(ItemAlign.Start)
-      
-      Blank().layoutWeight(1)
-      
+
       // 数值和单位（同一行显示）
       Row({ space: 2 }) {
         Text(value)
-          .fontSize(24)
+          .fontSize(22)
           .fontWeight(FontWeight.Bold)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        
+          .constraintSize({ maxWidth: '100%' })
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
         if (unit) {
           Text(unit)
-            .fontSize(14)
+            .fontSize(13)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .alignSelf(ItemAlign.End)
@@ -3202,7 +3202,8 @@ struct ReadingAnalyticsPage {
         }
       }
       .alignSelf(ItemAlign.Start)
-      
+      .constraintSize({ maxWidth: '100%' })
+
       // 标题
       Text(title)
         .fontSize(12)
@@ -3215,8 +3216,7 @@ struct ReadingAnalyticsPage {
         .alignSelf(ItemAlign.Start)
     }
     .width('100%')
-    .height(120)
-    .padding(16)
+    .padding(14)
     .backgroundColor(this.getBlurPanelBackground())
     .linearGradient(this.getBlurPanelSurfaceGradient())
     .backgroundBlurStyle(this.getBlurPanelBlurStyle(), this.getBlurPanelBlurOptions())

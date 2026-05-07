@@ -28,7 +28,11 @@
       "Bash(grep *)",
       "Bash(python3 -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\); m=d.get\\('\\\\''metadata'\\\\'',{}\\); print\\(json.dumps\\({'\\\\''id'\\\\'':m.get\\('\\\\''id'\\\\'','\\\\'''\\\\''\\),'\\\\''name'\\\\'':m.get\\('\\\\''name'\\\\'','\\\\'''\\\\''\\),'\\\\''version'\\\\'':m.get\\('\\\\''version'\\\\'','\\\\'''\\\\''\\),'\\\\''language'\\\\'':m.get\\('\\\\''language'\\\\'','\\\\'''\\\\''\\),'\\\\''baseUrl'\\\\'':m.get\\('\\\\''baseUrl'\\\\'','\\\\'''\\\\''\\),'\\\\''nsfw'\\\\'':m.get\\('\\\\''nsfw'\\\\'','\\\\'''\\\\''\\),'\\\\''tags'\\\\'':m.get\\('\\\\''tags'\\\\'',[]\\)}, ensure_ascii=False\\)\\)')",
       "Bash(python -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\'', encoding='\\\\''utf-8'\\\\''\\)\\); m=d.get\\('\\\\''metadata'\\\\'',{}\\); print\\(json.dumps\\({'\\\\''id'\\\\'':m.get\\('\\\\''id'\\\\'','\\\\'''\\\\''\\),'\\\\''name'\\\\'':m.get\\('\\\\''name'\\\\'','\\\\'''\\\\''\\),'\\\\''version'\\\\'':m.get\\('\\\\''version'\\\\'','\\\\'''\\\\''\\),'\\\\''language'\\\\'':m.get\\('\\\\''language'\\\\'','\\\\'''\\\\''\\),'\\\\''baseUrl'\\\\'':m.get\\('\\\\''baseUrl'\\\\'','\\\\'''\\\\''\\),'\\\\''nsfw'\\\\'':m.get\\('\\\\''nsfw'\\\\'','\\\\'''\\\\''\\),'\\\\''tags'\\\\'':m.get\\('\\\\''tags'\\\\'',[]\\)}, ensure_ascii=False\\)\\)')",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(awk 'BEGIN{count=0} /{/{count++} /}/{count--} END{print \"Brace balance:\", count}' entry/src/main/ets/pages/MainMenuPage.ets)",
+      "Bash(awk 'BEGIN{count=0} /{/{count++} /}/{count--} END{print \"Brace balance:\", count}')",
+      "Bash(awk '{ *)",
+      "Bash(awk NR>=28740 && NR<=28760 *)"
     ]
   }
 }

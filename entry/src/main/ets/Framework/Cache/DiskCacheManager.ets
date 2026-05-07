@@ -7,6 +7,7 @@
  * 2. 自动清理过期缓存
  * 3. 缓存大小限制
  * 4. 缓存索引管理
+ * 5. 全异步文件IO，不阻塞主线程
  */
 
 import { image } from '@kit.ImageKit';
@@ -41,20 +42,20 @@ interface CacheIndex {
 
 export class DiskCacheManager {
   private static instance: DiskCacheManager | null = null;
-  
+
   // 缓存配置
   private readonly MAX_CACHE_SIZE = 500 * 1024 * 1024;  // 500MB
   private readonly MAX_CACHE_AGE = 7 * 24 * 60 * 60 * 1000;  // 7天
   private readonly INDEX_VERSION = 1;
-  
+
   // 缓存目录
   private cacheDir: string = '';
   private indexFilePath: string = '';
-  
+
   // 缓存索引
   private cacheIndex: Map<string, CacheEntry> = new Map();
   private totalSize: number = 0;
-  
+
   // 初始化状态
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
@@ -80,11 +81,11 @@ export class DiskCacheManager {
     if (this.initialized) {
       return;
     }
-    
+
     if (this.initPromise) {
       return this.initPromise;
     }
-    
+
     this.initPromise = this.doInitialize(baseDir);
     await this.initPromise;
   }
@@ -92,50 +93,52 @@ export class DiskCacheManager {
   private async doInitialize(baseDir: string): Promise<void> {
     try {
       logger.info(TAG, `开始初始化磁盘缓存管理器，baseDir: ${baseDir}`);
-      
+
       // 验证baseDir参数
       if (!baseDir || baseDir.trim() === '') {
         throw new Error('baseDir参数为空或无效');
       }
-      
+
       // 检查baseDir是否存在
-      if (!fs.accessSync(baseDir)) {
+      const baseDirExists = await fs.access(baseDir);
+      if (!baseDirExists) {
         logger.warn(TAG, `baseDir不存在，尝试创建: ${baseDir}`);
         try {
-          fs.mkdirSync(baseDir, true);
+          await fs.mkdir(baseDir);
           logger.info(TAG, `✅ 成功创建baseDir: ${baseDir}`);
         } catch (mkdirError) {
           throw new Error(`无法创建baseDir: ${baseDir}, 错误: ${String(mkdirError)}`);
         }
       }
-      
+
       this.cacheDir = `${baseDir}/image_cache`;
       this.indexFilePath = `${this.cacheDir}/cache_index.json`;
-      
+
       logger.debug(TAG, `缓存目录: ${this.cacheDir}`);
       logger.debug(TAG, `索引文件: ${this.indexFilePath}`);
-      
+
       // 创建缓存目录
-      if (!fs.accessSync(this.cacheDir)) {
-        fs.mkdirSync(this.cacheDir, true);
+      const cacheDirExists = await fs.access(this.cacheDir);
+      if (!cacheDirExists) {
+        await fs.mkdir(this.cacheDir);
         logger.info(TAG, `✅ 创建缓存目录: ${this.cacheDir}`);
       } else {
         logger.debug(TAG, `缓存目录已存在: ${this.cacheDir}`);
       }
-      
+
       // 加载缓存索引
       logger.debug(TAG, '开始加载缓存索引...');
       await this.loadIndex();
       logger.debug(TAG, `✅ 缓存索引加载完成: ${this.cacheIndex.size}条记录`);
-      
+
       // 清理过期缓存
       logger.debug(TAG, '开始清理过期缓存...');
       await this.cleanExpiredCache();
       logger.debug(TAG, '✅ 过期缓存清理完成');
-      
+
       this.initialized = true;
       logger.info(TAG, `✅ 磁盘缓存初始化完成: 缓存数=${this.cacheIndex.size}, 总大小=${(this.totalSize / 1024 / 1024).toFixed(2)}MB`);
-      
+
     } catch (error) {
       const err = error as Error;
       logger.error(TAG, `❌ 初始化失败: ${err.message}, stack: ${err.stack}`);
@@ -149,24 +152,25 @@ export class DiskCacheManager {
    */
   private async loadIndex(): Promise<void> {
     try {
-      if (fs.accessSync(this.indexFilePath)) {
-        const file = fs.openSync(this.indexFilePath, fs.OpenMode.READ_ONLY);
-        const stat = fs.statSync(this.indexFilePath);
+      const indexExists = await fs.access(this.indexFilePath);
+      if (indexExists) {
+        const file = await fs.open(this.indexFilePath, fs.OpenMode.READ_ONLY);
+        const stat = await fs.stat(this.indexFilePath);
         const buffer = new ArrayBuffer(stat.size);
-        fs.readSync(file.fd, buffer);
-        fs.closeSync(file);
-        
+        await fs.read(file.fd, buffer);
+        await fs.close(file);
+
         const uint8Array = new Uint8Array(buffer);
         const decoder = new util.TextDecoder('utf-8');
         const content = decoder.decodeWithStream(uint8Array);
-        
+
         interface IndexData {
           version: number;
           entries: Array<[string, CacheEntry]>;
           totalSize: number;
         }
         const indexData = JSON.parse(content) as IndexData;
-        
+
         if (indexData.version === this.INDEX_VERSION) {
           this.cacheIndex = new Map(indexData.entries);
           this.totalSize = indexData.totalSize;
@@ -200,15 +204,15 @@ export class DiskCacheManager {
         entries: Array.from(this.cacheIndex.entries()),
         totalSize: this.totalSize
       };
-      
+
       const content = JSON.stringify(indexData);
       const encoder = new util.TextEncoder();
       const buffer = encoder.encodeInto(content);
-      
-      const file = fs.openSync(this.indexFilePath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, buffer.buffer);
-      fs.closeSync(file);
-      
+
+      const file = await fs.open(this.indexFilePath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      await fs.write(file.fd, buffer.buffer);
+      await fs.close(file);
+
       logger.debug(TAG, `保存缓存索引: ${this.cacheIndex.size}条记录`);
     } catch (error) {
       logger.error(TAG, `保存缓存索引失败: ${String(error)}`);
@@ -222,20 +226,21 @@ export class DiskCacheManager {
     try {
       this.cacheIndex.clear();
       this.totalSize = 0;
-      
-      if (!fs.accessSync(this.cacheDir)) {
+
+      const cacheDirExists = await fs.access(this.cacheDir);
+      if (!cacheDirExists) {
         return;
       }
-      
-      const files = fs.listFileSync(this.cacheDir);
+
+      const files = await fs.listFile(this.cacheDir);
       for (const fileName of files) {
         if (fileName === 'cache_index.json') {
           continue;
         }
-        
+
         const filePath = `${this.cacheDir}/${fileName}`;
         try {
-          const stat = fs.statSync(filePath);
+          const stat = await fs.stat(filePath);
           const entry: CacheEntry = {
             key: fileName,
             filePath: filePath,
@@ -244,14 +249,14 @@ export class DiskCacheManager {
             lastAccessTime: stat.atime,
             accessCount: 0
           };
-          
+
           this.cacheIndex.set(fileName, entry);
           this.totalSize += stat.size;
         } catch (e) {
           logger.warn(TAG, `跳过无效文件: ${fileName}`);
         }
       }
-      
+
       await this.saveIndex();
       logger.info(TAG, `重建缓存索引完成: ${this.cacheIndex.size}条记录`);
     } catch (error) {
@@ -293,23 +298,24 @@ export class DiskCacheManager {
       logger.debug(TAG, '缓存未初始化，跳过磁盘缓存读取');
       return null;
     }
-    
+
     try {
       const cacheKey = await this.generateCacheKey(url);
       const entry = this.cacheIndex.get(cacheKey);
-      
+
       if (!entry) {
         return null;
       }
-      
+
       // 检查文件是否存在
-      if (!fs.accessSync(entry.filePath)) {
+      const fileExists = await fs.access(entry.filePath);
+      if (!fileExists) {
         logger.warn(TAG, `缓存文件不存在: ${entry.filePath}`);
         this.cacheIndex.delete(cacheKey);
         await this.saveIndex();
         return null;
       }
-      
+
       // 检查是否过期
       const now = Date.now();
       if (now - entry.createTime > this.MAX_CACHE_AGE) {
@@ -317,19 +323,19 @@ export class DiskCacheManager {
         await this.remove(cacheKey);
         return null;
       }
-      
+
       // 读取图片
       const imageSource = image.createImageSource(entry.filePath);
       const pixelMap = await imageSource.createPixelMap();
-      
+
       // 更新访问时间
       entry.lastAccessTime = now;
       entry.accessCount++;
       await this.saveIndex();
-      
+
       logger.debug(TAG, `从磁盘缓存读取: ${url.substring(0, 80)}`);
       return pixelMap;
-      
+
     } catch (error) {
       logger.error(TAG, `从缓存读取失败: ${String(error)}`);
       return null;
@@ -345,29 +351,29 @@ export class DiskCacheManager {
       logger.debug(TAG, '缓存未初始化，跳过磁盘缓存写入');
       return;
     }
-    
+
     try {
       const cacheKey = await this.generateCacheKey(url);
       const filePath = `${this.cacheDir}/${cacheKey}.webp`;
-      
+
       // 打包为WebP格式
       const packer = image.createImagePacker();
       const packOpts: image.PackingOption = {
         format: 'image/webp',
         quality: 85
       };
-      
+
       const buffer = await packer.packing(pixelMap, packOpts);
       const size = buffer.byteLength;
-      
+
       // 检查缓存大小，必要时清理
       await this.ensureCacheSpace(size);
-      
+
       // 写入文件
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, buffer);
-      fs.closeSync(file);
-      
+      const file = await fs.open(filePath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      await fs.write(file.fd, buffer);
+      await fs.close(file);
+
       // 更新索引
       const now = Date.now();
       const entry: CacheEntry = {
@@ -378,20 +384,20 @@ export class DiskCacheManager {
         lastAccessTime: now,
         accessCount: 1
       };
-      
+
       // 如果已存在，先减去旧的大小
       const oldEntry = this.cacheIndex.get(cacheKey);
       if (oldEntry) {
         this.totalSize -= oldEntry.size;
       }
-      
+
       this.cacheIndex.set(cacheKey, entry);
       this.totalSize += size;
-      
+
       await this.saveIndex();
-      
+
       logger.debug(TAG, `保存到磁盘缓存: ${url.substring(0, 80)}, size=${(size / 1024).toFixed(2)}KB`);
-      
+
     } catch (error) {
       logger.error(TAG, `保存到缓存失败: ${String(error)}`);
     }
@@ -404,24 +410,24 @@ export class DiskCacheManager {
     if (this.totalSize + requiredSize <= this.MAX_CACHE_SIZE) {
       return;
     }
-    
+
     logger.info(TAG, `缓存空间不足，开始清理: 当前=${(this.totalSize / 1024 / 1024).toFixed(2)}MB, 需要=${(requiredSize / 1024 / 1024).toFixed(2)}MB`);
-    
+
     // 按LRU策略排序（最近最少使用的在前）
     const entries = Array.from(this.cacheIndex.values()).sort((a, b) => {
       return a.lastAccessTime - b.lastAccessTime;
     });
-    
+
     // 删除最旧的缓存，直到有足够空间
     for (const entry of entries) {
       if (this.totalSize + requiredSize <= this.MAX_CACHE_SIZE) {
         break;
       }
-      
+
       await this.remove(entry.key);
       logger.debug(TAG, `清理缓存: ${entry.key}, size=${(entry.size / 1024).toFixed(2)}KB`);
     }
-    
+
     logger.info(TAG, `缓存清理完成: 当前=${(this.totalSize / 1024 / 1024).toFixed(2)}MB`);
   }
 
@@ -434,16 +440,17 @@ export class DiskCacheManager {
       if (!entry) {
         return;
       }
-      
+
       // 删除文件
-      if (fs.accessSync(entry.filePath)) {
-        fs.unlinkSync(entry.filePath);
+      const fileExists = await fs.access(entry.filePath);
+      if (fileExists) {
+        await fs.unlink(entry.filePath);
       }
-      
+
       // 更新索引
       this.cacheIndex.delete(cacheKey);
       this.totalSize -= entry.size;
-      
+
     } catch (error) {
       logger.error(TAG, `删除缓存失败: ${String(error)}`);
     }
@@ -456,7 +463,7 @@ export class DiskCacheManager {
     try {
       const now = Date.now();
       const expiredKeys: string[] = [];
-      
+
       const entries = Array.from(this.cacheIndex.entries());
       for (let i = 0; i < entries.length; i++) {
         const key = entries[i][0];
@@ -465,7 +472,7 @@ export class DiskCacheManager {
           expiredKeys.push(key);
         }
       }
-      
+
       if (expiredKeys.length > 0) {
         logger.info(TAG, `清理过期缓存: ${expiredKeys.length}项`);
         for (const key of expiredKeys) {
@@ -473,7 +480,7 @@ export class DiskCacheManager {
         }
         await this.saveIndex();
       }
-      
+
     } catch (error) {
       logger.error(TAG, `清理过期缓存失败: ${String(error)}`);
     }
@@ -485,17 +492,18 @@ export class DiskCacheManager {
   public async clear(): Promise<void> {
     try {
       logger.info(TAG, '清空所有缓存');
-      
+
       for (const entry of this.cacheIndex.values()) {
-        if (fs.accessSync(entry.filePath)) {
-          fs.unlinkSync(entry.filePath);
+        const fileExists = await fs.access(entry.filePath);
+        if (fileExists) {
+          await fs.unlink(entry.filePath);
         }
       }
-      
+
       this.cacheIndex.clear();
       this.totalSize = 0;
       await this.saveIndex();
-      
+
       logger.info(TAG, '缓存已清空');
     } catch (error) {
       logger.error(TAG, `清空缓存失败: ${String(error)}`);
@@ -522,15 +530,18 @@ export class DiskCacheManager {
     if (!this.initialized) {
       return null;
     }
-    
+
     try {
       const cacheKey = await this.generateCacheKey(url);
       const entry = this.cacheIndex.get(cacheKey);
-      
-      if (entry && fs.accessSync(entry.filePath)) {
-        return entry.filePath;
+
+      if (entry) {
+        const fileExists = await fs.access(entry.filePath);
+        if (fileExists) {
+          return entry.filePath;
+        }
       }
-      
+
       return null;
     } catch (error) {
       logger.error(TAG, `获取缓存文件路径失败: ${String(error)}`);
@@ -545,11 +556,11 @@ export class DiskCacheManager {
     if (!this.initialized) {
       return 0;
     }
-    
+
     try {
       const cacheKey = await this.generateCacheKey(url);
       const entry = this.cacheIndex.get(cacheKey);
-      
+
       return entry ? entry.size : 0;
     } catch (error) {
       logger.error(TAG, `获取缓存文件大小失败: ${String(error)}`);

@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.dlzz.manxia",
     "vendor": "DaLongzhuazi",
-    "versionCode": 104502303,
-    "versionName": "0.0.9",
+    "versionCode": 104602300,
+    "versionName": "0.1.0",
     "icon": "$media:layered_image",
     "label": "$string:app_name"
   }

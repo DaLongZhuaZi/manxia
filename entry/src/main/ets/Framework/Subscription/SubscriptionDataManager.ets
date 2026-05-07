@@ -66,11 +66,12 @@ export class SubscriptionDataManager {
     const config: relationalStore.StoreConfig = {
       name: 'manxia_comic.db',
       securityLevel: relationalStore.SecurityLevel.S1,
-      encrypt: false
+      encrypt: false,
     };
 
     logger.info(TAG, '开始初始化统一内容跟踪数据库');
     this.store = await relationalStore.getRdbStore(context, config);
+    await this.store.executeSql('PRAGMA journal_mode=WAL');
     await this.createTables();
     await this.createIndexes();
     this.isInitialized = true;

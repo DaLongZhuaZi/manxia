@@ -73,11 +73,12 @@ export class RssSubscriptionDataManager {
     const config: relationalStore.StoreConfig = {
       name: 'manxia_comic.db',
       securityLevel: relationalStore.SecurityLevel.S1,
-      encrypt: false
+      encrypt: false,
     };
 
     logger.info(TAG, '开始初始化订阅源数据库');
     this.store = await relationalStore.getRdbStore(context, config);
+    await this.store.executeSql('PRAGMA journal_mode=WAL');
     await this.createTables();
     await this.runSchemaMigrations();
     await this.migrateLegacyReadAndStarState();
