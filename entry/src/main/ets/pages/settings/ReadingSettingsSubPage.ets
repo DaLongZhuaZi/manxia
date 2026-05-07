@@ -84,10 +84,13 @@ export struct ReadingSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
-  @State private activeSearchAnchorId: string = '';
+  @State @Watch('onSearchAnchorChanged') private activeSearchAnchorId: string = '';
   @State private searchHighlightPulse: boolean = false;
   private searchHighlightPulseTimer: number = -1;
   private searchHighlightClearTimer: number = -1;
+
+  // 标签页状态
+  @State private selectedReadingTab: number = 0; // 0=漫画, 1=电子书, 2=小说
 
   // 主题与字体状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -275,6 +278,22 @@ export struct ReadingSettingsSubPage {
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
+    }
+  }
+
+  private getTabIndexForAnchor(anchorId: string): number {
+    if (anchorId === 'reading_manga') return 0;
+    if (anchorId === 'reading_ebook') return 1;
+    if (anchorId === 'reading_novel') return 2;
+    return -1;
+  }
+
+  private onSearchAnchorChanged(): void {
+    if (this.activeSearchAnchorId !== '') {
+      const targetTab = this.getTabIndexForAnchor(this.activeSearchAnchorId);
+      if (targetTab >= 0 && targetTab !== this.selectedReadingTab) {
+        this.selectedReadingTab = targetTab;
+      }
     }
   }
 
@@ -3373,6 +3392,36 @@ export struct ReadingSettingsSubPage {
     })
   }
 
+  @Builder
+  buildReadingTabBar() {
+    Row({ space: 0 }) {
+      ForEach(['漫画', '电子书', '小说'], (tab: string, index: number) => {
+        Column() {
+          Text(tab)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.selectedReadingTab === index
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .fontWeight(this.selectedReadingTab === index ? FontWeight.Bold : FontWeight.Normal)
+            .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+          Divider()
+            .strokeWidth(2)
+            .color(this.selectedReadingTab === index
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : Color.Transparent)
+            .width('60%')
+        }
+        .layoutWeight(1)
+        .onClick(() => { this.selectedReadingTab = index; })
+      })
+    }
+    .width('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .margin({ left: 16, right: 16 })
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -3388,200 +3437,90 @@ export struct ReadingSettingsSubPage {
           Column({ space: 16 }) {
             Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
 
-            if (this.responsive_isLandscape) {
-              // 横屏双列布局
-              Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-                Column({ space: 16 }) {
-                  this.buildMangaReadingSettings()
-                }
-                .width('48%')
-                .padding(4)
-                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_manga'
-                ))
-                .borderRadius(16)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_manga') ? 1 : 0,
-                  color: SettingsSearchSupport.getHighlightOverlayBorder(
-                    this.themeState.currentTheme,
-                    this.activeSearchAnchorId,
-                    'reading_manga'
-                  )
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_manga',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
-                .margin({ bottom: 16 })
-                
-                Column({ space: 16 }) {
-                  this.buildEBookSettings()
-                }
-                .width('48%')
-                .padding(4)
-                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_ebook'
-                ))
-                .borderRadius(16)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_ebook') ? 1 : 0,
-                  color: SettingsSearchSupport.getHighlightOverlayBorder(
-                    this.themeState.currentTheme,
-                    this.activeSearchAnchorId,
-                    'reading_ebook'
-                  )
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_ebook',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
-                .margin({ bottom: 16 })
-                
-                Column({ space: 16 }) {
-                  this.buildTextReaderSettings()
-                }
-                .width('100%')
-                .padding(4)
-                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_novel'
-                ))
-                .borderRadius(16)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_novel') ? 1 : 0,
-                  color: SettingsSearchSupport.getHighlightOverlayBorder(
-                    this.themeState.currentTheme,
-                    this.activeSearchAnchorId,
-                    'reading_novel'
-                  )
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_novel',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
-                .margin({ bottom: 16 })
-              }
-              .width('100%')
-            } else {
-              // 竖屏单列布局
+            this.buildReadingTabBar()
+
+            if (this.selectedReadingTab === 0) {
               Column() {
                 this.buildMangaReadingSettings()
               }
               .width('100%')
               .padding(4)
               .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                this.themeState.currentTheme,
-                this.activeSearchAnchorId,
-                'reading_manga'
-              ))
+                this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_manga'))
               .borderRadius(16)
               .border({
                 width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_manga') ? 1 : 0,
                 color: SettingsSearchSupport.getHighlightOverlayBorder(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_manga'
-                )
+                  this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_manga')
               })
               .scale({
                 x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse),
                 y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse)
               })
               .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                this.themeState.currentTheme,
-                this.activeSearchAnchorId,
-                'reading_manga',
-                this.searchHighlightPulse
-              ))
+                this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse))
               .animation({ duration: 260, curve: Curve.EaseOut })
+              .transition(TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                  .combine(TransitionEffect.translate({ y: 12 }).animation({ duration: 220, curve: Curve.EaseOut })),
+                TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseIn })
+              ))
+            }
 
+            if (this.selectedReadingTab === 1) {
               Column() {
                 this.buildEBookSettings()
               }
               .width('100%')
               .padding(4)
               .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                this.themeState.currentTheme,
-                this.activeSearchAnchorId,
-                'reading_ebook'
-              ))
+                this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_ebook'))
               .borderRadius(16)
               .border({
                 width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_ebook') ? 1 : 0,
                 color: SettingsSearchSupport.getHighlightOverlayBorder(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_ebook'
-                )
+                  this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_ebook')
               })
               .scale({
                 x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse),
                 y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse)
               })
               .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                this.themeState.currentTheme,
-                this.activeSearchAnchorId,
-                'reading_ebook',
-                this.searchHighlightPulse
-              ))
+                this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse))
               .animation({ duration: 260, curve: Curve.EaseOut })
+              .transition(TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                  .combine(TransitionEffect.translate({ y: 12 }).animation({ duration: 220, curve: Curve.EaseOut })),
+                TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseIn })
+              ))
+            }
 
+            if (this.selectedReadingTab === 2) {
               Column() {
                 this.buildTextReaderSettings()
               }
               .width('100%')
               .padding(4)
               .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                this.themeState.currentTheme,
-                this.activeSearchAnchorId,
-                'reading_novel'
-              ))
+                this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_novel'))
               .borderRadius(16)
               .border({
                 width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_novel') ? 1 : 0,
                 color: SettingsSearchSupport.getHighlightOverlayBorder(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'reading_novel'
-                )
+                  this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_novel')
               })
               .scale({
                 x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse),
                 y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse)
               })
               .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                this.themeState.currentTheme,
-                this.activeSearchAnchorId,
-                'reading_novel',
-                this.searchHighlightPulse
-              ))
+                this.themeState.currentTheme, this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse))
               .animation({ duration: 260, curve: Curve.EaseOut })
+              .transition(TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                  .combine(TransitionEffect.translate({ y: 12 }).animation({ duration: 220, curve: Curve.EaseOut })),
+                TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseIn })
+              ))
             }
 
             Blank().height(40)

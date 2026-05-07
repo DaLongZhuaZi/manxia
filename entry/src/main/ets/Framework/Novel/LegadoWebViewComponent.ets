@@ -27,7 +27,14 @@ export struct LegadoWebViewComponent {
 
   aboutToDisappear(): void {
     logger.info(TAG, 'LegadoWebView组件销毁');
-    // 不销毁执行器，因为可能还有其他页面需要使用
+    // 停止WebView加载，释放WebView资源
+    try {
+      this.webviewController.stop();
+    } catch (_e) {}
+    // 重置JS引擎的WebView引用，防止单例持有已销毁的WebView
+    try {
+      getLegadoJsEngine().reset();
+    } catch (_e) {}
   }
 
   build() {

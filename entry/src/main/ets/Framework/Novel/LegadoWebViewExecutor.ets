@@ -519,6 +519,11 @@ export class LegadoWebViewExecutor {
     this.taskQueue = [];
     this.currentTask = null;
     this.isProcessing = false;
+    if (this.webviewController) {
+      try {
+        this.webviewController.stop();
+      } catch (_e) {}
+    }
     this.webviewController = null;
     this.isReady = false;
     LegadoWebViewExecutor.instance = null;

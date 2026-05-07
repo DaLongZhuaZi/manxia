@@ -374,25 +374,6 @@ struct AboutPage {
   }
 
   /**
-   * 打开爱发电页面
-   */
-  private async openAfdianPage(): Promise<void> {
-    const afdianUrl = 'https://afdian.com/a/dalongzz';
-    
-    try {
-      const context = getContext(this) as common.UIAbilityContext;
-      await context.openLink(afdianUrl, { appLinkingOnly: false });
-      logger.info(TAG, '已打开爱发电页面');
-    } catch (error) {
-      logger.error(TAG, '打开爱发电页面失败', String(error));
-      promptAction.showToast({
-        message: '无法打开浏览器，请手动访问 afdian.com/a/dalongzz',
-        duration: 3000
-      });
-    }
-  }
-
-  /**
    * 打开邀测版本页面
    */
   private async openInviteTestPage(): Promise<void> {
@@ -512,8 +493,12 @@ struct AboutPage {
       })
 
       this.buildButtonItem('支持本项目', () => {
-        logger.info(TAG, '打开爱发电页面');
-        this.openAfdianPage();
+        try {
+          logger.info(TAG, '导航到支持本项目页面');
+          this.pathStack.pushPath({ name: 'SupportProjectPage' });
+        } catch (error) {
+          logger.error(TAG, '导航到支持本项目页面失败', String(error));
+        }
       })
 
       this.buildButtonItem('支持者鸣谢', () => {
@@ -522,6 +507,15 @@ struct AboutPage {
           this.pathStack.pushPath({ name: 'SupportersPage' });
         } catch (error) {
           logger.error(TAG, '导航到支持者鸣谢页面失败', String(error));
+        }
+      })
+
+      this.buildButtonItem('同开发者APP', () => {
+        try {
+          logger.info(TAG, '导航到同开发者页面');
+          this.pathStack.pushPath({ name: 'DeveloperAppsPage' });
+        } catch (error) {
+          logger.error(TAG, '导航到同开发者页面失败', String(error));
         }
       })
     }

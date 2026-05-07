@@ -1532,6 +1532,9 @@ export class OnlineImageLoader {
         if (entry) {
           this.memoryCacheSize -= entry.size;
           this.memoryCache.delete(oldestKey);
+          try {
+            entry.pixelMap.release();
+          } catch (_e) {}
           logger.debug(TAG, `淘汰缓存: key=${oldestKey}, size=${entry.size}`);
         }
       } else {
@@ -1544,6 +1547,11 @@ export class OnlineImageLoader {
    * 清空缓存
    */
   public clearCache(): void {
+    this.memoryCache.forEach((entry) => {
+      try {
+        entry.pixelMap.release();
+      } catch (_e) {}
+    });
     this.memoryCache.clear();
     this.memoryCacheSize = 0;
     logger.info(TAG, '缓存已清空');

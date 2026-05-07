@@ -19,10 +19,6 @@ import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
-import { DialogSurfaceStyleHelper } from '../Framework/Components/DialogSurfaceStyleHelper';
-import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
-import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
@@ -33,28 +29,12 @@ import CookieManager from '../Framework/Managers/CookieManager';
 import {
   ContentTrackingCardCallbacks,
   ContentTrackingCardState,
-  ContentTrackingHighlight,
-  ContentTrackingHighlightTone,
   ContentTrackingStatusCard
 } from '../components/ContentTrackingStatusCard';
 import {
-  getSubscriptionInitializer,
   getSubscriptionManager,
-  convertSubscriptionIntervalDisplayToMinutes,
-  SubscriptionActionType,
-  SubscriptionConditionMatchMode,
-  SubscriptionConditionType,
-  SubscriptionContentType,
-  SubscriptionExecutionRecord,
-  SubscriptionExecutionStatus,
   SubscriptionIntervalUnit,
-  SubscriptionProviderType,
-  SubscriptionRule,
-  SubscriptionRuleCreateOptions,
-  SubscriptionManager,
-  formatSubscriptionIntervalSchedule,
-  getSubscriptionIntervalUnitLabel,
-  splitSubscriptionIntervalMinutesForDisplay
+  SubscriptionManager
 } from '../Framework/Subscription';
 
 import {
@@ -100,7 +80,7 @@ import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCach
 import { getNovelContentProcessor } from '../Framework/Novel/NovelContentProcessor';
 import { getNovelTxtTocRuleManager, TxtTocRule } from '../Framework/Novel/NovelTxtTocRuleManager';
 import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Framework/Novel/NovelReplaceRuleManager';
-import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle, SearchResultCache } from '../Framework/Novel/NovelSourceSearchService';
+
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
 import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadType, UnifiedTaskStatus, UnifiedDownloadTask, UnifiedDownloadCallback, MangaChapterDownloadItem, PageListFetcher } from '../Framework/Download/UnifiedDownloadManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
@@ -177,7 +157,15 @@ import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } f
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { SettingsGlassStyleHelper } from './settings/SettingsGlassStyleHelper';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from './settings/SettingsPageSurfaceManager';
-
+import { ReadAloudCacheDialogComponent } from '../Framework/Components/ReadAloudCacheDialogComponent';
+import { TrackingSettingsDialogComponent, UnifiedDetailTrackingTargetInfo } from '../Framework/Components/TrackingSettingsDialogComponent';
+import { NovelSettingsDialogComponent } from '../Framework/Components/NovelSettingsDialogComponent';
+import { DownloadDialogComponent } from '../Framework/Components/DownloadDialogComponent';
+import { ChangeSourceDialogComponent } from '../Framework/Components/ChangeSourceDialogComponent';
+import { CacheConfirmDialogComponent, CacheConfirmConfig } from '../Framework/Components/CacheConfirmDialogComponent';
+import { GenerateCoverDialogComponent } from '../Framework/Components/GenerateCoverDialogComponent';
+import { AddToShelfDialogComponent } from '../Framework/Components/AddToShelfDialogComponent';
+import { ReplaceBookDialogComponent } from '../Framework/Components/ReplaceBookDialogComponent';
 
 const TAG = 'UnifiedDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -253,17 +241,6 @@ interface TagChipItem {
   id: string;
   rawLabel: string;
   isGenre: boolean;
-}
-
-interface UnifiedDetailTrackingTargetInfo {
-  supported: boolean;
-  unsupportedReason: string;
-  contentType: SubscriptionContentType;
-  targetId: string;
-  targetTitle: string;
-  sourceId: string;
-  sourceName: string;
-  providerType: SubscriptionProviderType;
 }
 
 interface OnlineEBookDetailRecord {
@@ -347,55 +324,13 @@ export struct UnifiedDetailPage {
   @State showCacheStatusCard: boolean = false;  // 控制是否显示缓存卡片
   @State isDownloading: boolean = false;        // 是否正在下载
 
-  // 听书缓存状态
+  // 听书缓存状态（已提取至 ReadAloudCacheDialogComponent）
+  @State readAloudCacheLoadSignal: number = 0;
   @State readAloudCacheSummary: RemoteReadAloudCacheBookSummary | null = null;
+
+  // 应用引导状态
   @State private appGuideStep: AppGuideStep | null = null;
   @State private appGuideHighlightRect: GuideHighlightRect | null = null;
-  @State isReadAloudCacheLoading: boolean = false;
-  @State isReadAloudCacheExpanded: boolean = true;
-  @State showReadAloudCacheDialog: boolean = false;
-  @State readAloudCacheDialogOpacity: number = 0;
-  @State readAloudCacheDialogScale: number = 0.8;
-  @State readAloudCacheDialogTranslateY: number = 50;
-  @State readAloudCacheDialogActiveTab: number = 0;
-  @State readAloudCacheSelectionMode: 'range' | 'individual' = 'range';
-  @State readAloudCacheRangeStart: number = 0;
-  @State readAloudCacheRangeEnd: number = 0;
-  @State readAloudCacheSelectedChapters: Set<number> = new Set();
-  @State readAloudCacheChapterListExpanded: boolean = true;
-  @State readAloudCacheTaskSettings: RemoteReadAloudSettings = DEFAULT_REMOTE_READ_ALOUD_SETTINGS;
-  @State readAloudCacheManageChapterIndex: number = 0;
-  @State readAloudCacheManageDetail: RemoteReadAloudCacheChapterDetail | null = null;
-  @State isReadAloudCacheManageLoading: boolean = false;
-  @State isReadAloudCacheManageMutating: boolean = false;
-  @State readAloudCacheManageChapterSectionExpanded: boolean = true;
-  @State readAloudCacheManageTargetSectionExpanded: boolean = true;
-  @State readAloudCacheManageSourceSectionExpanded: boolean = true;
-  @State readAloudCacheManageSelectedTargetIndex: number = -1;
-  @State readAloudCacheManageBlockedSuggestionKeys: Set<string> = new Set();
-  @State readAloudCacheManageStatusMessage: string = '';
-  @State readAloudCachePresetDraftName: string = '';
-  @State readAloudCachePresetStatusMessage: string = '';
-  @State isReadAloudCurrentSettingsSaving: boolean = false;
-  @State isReadAloudPrecaching: boolean = false;
-  @State readAloudPrecachingStatusText: string = '';
-  @State readAloudPrecachingDetailText: string = '';
-  @State readAloudPrecachingChapterOrder: number = 0;
-  @State readAloudPrecachingChapterTotal: number = 0;
-  @State readAloudPrecachingSegmentDone: number = 0;
-  @State readAloudPrecachingSegmentTotal: number = 0;
-  @State readAloudPrecachingBytes: number = 0;
-  private readAloudCacheRefreshTimer: number = -1;
-  private readAloudCacheManageLoadToken: number = 0;
-
-  private onReadAloudCacheUpdated: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
-    const cachePayload = payload as ReadAloudCacheUpdatedPayload;
-    const currentBookId = this.getCurrentReadAloudCacheBookId();
-    if (!currentBookId || cachePayload.bookId !== currentBookId) {
-      return;
-    }
-    this.scheduleReadAloudCacheRefresh(cachePayload.reason || 'event');
-  };
 
   private onMangaCacheUpdated: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
     const cachePayload = payload as MangaCacheUpdatedPayload;
@@ -406,51 +341,11 @@ export struct UnifiedDetailPage {
     logger.info(TAG, `收到漫画缓存更新事件，刷新详情页缓存状态: chapterId=${cachePayload.chapterId}, reason=${cachePayload.reason}`);
   };
   
-  // 下载对话框状态
-  @State showDownloadDialog: boolean = false;           // 显示下载对话框
-  @State downloadDialogOpacity: number = 0;             // 对话框背景透明度
-  @State downloadDialogScale: number = 0.8;             // 对话框缩放
-  @State downloadDialogTranslateY: number = 50;         // 对话框Y偏移
-  @State downloadSelectionMode: 'range' | 'individual' = 'range';  // 选择模式
-  @State downloadRangeStart: number = 0;                // 区间开始
-  @State downloadRangeEnd: number = 0;                  // 区间结束
-  @State downloadSelectedChapters: Set<number> = new Set();  // 单独选中的章节
-  @State downloadChapterListExpanded: boolean = false;  // 章节列表是否展开
+  // 下载对话框状态（已提取至 DownloadDialogComponent）
+  @State downloadDialogLoadSignal: number = 0;
 
-  // 小说设置对话框状态
-  @State showNovelSettingsDialog: boolean = false;
-  @State novelSettingsDialogOpacity: number = 0;
-  @State novelSettingsDialogScale: number = 0.8;
-  @State novelSettingsDialogTranslateY: number = 50;
-  @State novelEnableReadWhileDownload: boolean = true;
-  @State novelDefaultLoadChapters: number = 50;
-  @State novelEnableDirectoryParsing: boolean = true;
-  @State novelEnableReplaceRules: boolean = true;
-  @State novelSettingsActiveTab: number = 0;
-  @State novelDirectoryParsingSelection: boolean = true;
-  @State novelReplaceRulesSelection: boolean = true;
-  @State novelTocRules: TxtTocRule[] = [];
-  @State novelReplaceRules: ReplaceRule[] = [];
-  @State novelSelectedTocRuleIds: string[] = [];
-  @State novelSelectedReplaceRuleIds: string[] = [];
-  @State novelAppliedTocRuleIds: string[] = [];
-  @State novelAppliedReplaceRuleIds: string[] = [];
-  @State novelDirectoryRulesDirty: boolean = false;
-  @State novelReplaceRulesDirty: boolean = false;
-  @State isApplyingNovelDirectoryParsing: boolean = false;
-  @State isApplyingNovelReplaceRules: boolean = false;
-  @State ebookInfoTitle: string = '';
-  @State ebookInfoAuthor: string = '';
-  @State ebookInfoPublisher: string = '';
-  @State ebookInfoPublishDate: string = '';
-  @State ebookInfoIsbn: string = '';
-  @State ebookInfoLanguage: string = '';
-  @State ebookInfoDescription: string = '';
-  @State ebookInfoTagsText: string = '';
-  @State ebookInfoCoverPath: string = '';
-  @State ebookInfoDirty: boolean = false;
-  @State isSavingEBookInfo: boolean = false;
-  private ebookInfoScraperDialogController: CustomDialogController | null = null;
+  // 小说设置对话框状态（已提取至 NovelSettingsDialogComponent）
+  @State novelSettingsLoadSignal: number = 0;
   
   // 下载进度实时显示状态
   @State downloadProgressCurrent: number = 0;           // 当前下载进度
@@ -459,28 +354,13 @@ export struct UnifiedDetailPage {
   private downloadCallbackRegistered: boolean = false;  // 是否已注册下载回调
   private downloadCallback: UnifiedDownloadCallback | null = null;
   
-  // 换源对话框状态
-  @State showChangeSourceDialog: boolean = false;       // 显示换源对话框
-  @State changeSourceDialogOpacity: number = 0;         // 对话框背景透明度
-  @State changeSourceDialogScale: number = 0.8;         // 对话框缩放
-  @State changeSourceDialogTranslateY: number = 30;     // 对话框Y偏移
-  @State isSearchingSource: boolean = false;            // 是否正在搜索书源
-  @State searchSourceProgress: number = 0;              // 搜索进度(0-100)
-  @State searchSourceTotal: number = 0;                 // 总书源数
-  @State searchSourceCompleted: number = 0;             // 已完成搜索的书源数
-  @State alternativeSourceResults: SourceSearchResult[] = [];  // 按书源分组的搜索结果
-  @State alternativeSources: NovelSearchResult[] = [];  // 所有搜索结果
-  @State changeSourceKeyword: string = '';              // 换源搜索关键词
-  private searchTaskHandle: SearchTaskHandle | null = null;    // 搜索任务句柄
-  private sourceSearchService = getNovelSourceSearchService(); // 换源搜索服务
+  // 换源对话框状态（已提取至 ChangeSourceDialogComponent）
+  @State changeSourceDialogLoadSignal: number = 0;
   
   // 换源替换相关状态
   @State isFromChangeSource: boolean = false;           // 是否来自换源
   @State originalBookInfo: OriginalBookInfo | null = null;  // 原书信息
-  @State showReplaceBookDialog: boolean = false;        // 显示替换小说对话框
-  @State replaceDialogOpacity: number = 0;              // 替换对话框透明度
-  @State replaceDialogScale: number = 0.8;              // 替换对话框缩放
-  @State replaceDialogTranslateY: number = 30;          // 替换对话框Y偏移
+  @State replaceBookDialogLoadSignal: number = 0;
   @State matchedChapterIndex: number = -1;              // 匹配到的新书章节索引
 
   // UI状态
@@ -498,37 +378,14 @@ export struct UnifiedDetailPage {
   @State isInShelf: boolean = false;                    // 是否已在书架中
   @State currentShelfName: string = '';                 // 当前所在书架名称
   @State currentShelfId: string = '';                   // 当前所在书架ID
-  @State showAddToShelfDialog: boolean = false;         // 显示添加到书架对话框
-  @State addToShelfDialogOpacity: number = 0;           // 对话框背景透明度
-  @State addToShelfDialogScale: number = 0.8;           // 对话框缩放
-  @State availableCustomShelves: TypeShelf[] = [];      // 可用的自定义书架列表
+  @State addToShelfDialogLoadSignal: number = 0;
+  @State availableCustomShelves: TypeShelf[] = [];      // 可用的自定义书架列表（传递给组件）
   @State isShelfActionPending: boolean = false;         // 书架操作进行中（防重复点击）
 
-  // 内容跟踪状态
-  @State trackingRule: SubscriptionRule | null = null;
-  @State trackingExecution: SubscriptionExecutionRecord | null = null;
-  @State isTrackingLoading: boolean = false;
-  @State isTrackingBusy: boolean = false;
-  @State trackingSupported: boolean = false;
-  @State trackingUnsupportedReason: string = '';
-  @State showTrackingSettingsDialog: boolean = false;
-  @State trackingDialogOpacity: number = 0;
-  @State trackingDialogScale: number = 0.8;
-  @State trackingDialogTranslateY: number = 36;
-  @State trackingSettingsActiveTab: number = 0;
-  @State trackingCheckIntervalText: string = '3';
-  @State trackingCheckIntervalUnit: SubscriptionIntervalUnit = SubscriptionIntervalUnit.HOUR;
-  @State trackingMinNewItemsText: string = '1';
-  @State trackingAutoDownloadCountText: string = '0';
-  @State trackingConditionMatchMode: SubscriptionConditionMatchMode = SubscriptionConditionMatchMode.ALL;
-  @State trackingRequireFavorite: boolean = false;
-  @State trackingExcludeNSFW: boolean = false;
-  @State trackingTitleKeywordText: string = '';
-  @State trackingTagKeywordText: string = '';
-  @State trackingSourceKeywordText: string = '';
-  @State trackingEnableNotify: boolean = true;
-  @State trackingAutoCreateAttempted: boolean = false;
-  @State trackingAutoCreatedThisSession: boolean = false;
+  // 内容跟踪状态（已提取至 TrackingSettingsDialogComponent）
+  @State trackingLoadSignal: number = 0;
+  @State trackingCardState: ContentTrackingCardState | null = null;
+  @State trackingCardCallbacks: ContentTrackingCardCallbacks | null = null;
   
   // 同书架内容状态
   @State shelfContentItems: ShelfContentItem[] = [];    // 同书架的其他内容
@@ -546,34 +403,14 @@ export struct UnifiedDetailPage {
   private subscriptionManager: SubscriptionManager = getSubscriptionManager();
   private novelCacheManager = getNovelChapterCacheManager();
   private coverGenerator = getNovelCoverGenerator();
-  private trackingTargetInfo: UnifiedDetailTrackingTargetInfo | null = null;
-  
+
   // 生成封面状态
   @State isGeneratingCover: boolean = false;
-  @State showGenerateCoverDialog: boolean = false;
-  @State coverTitleInput: string = '';
-  @State coverFontScale: number = 1.0;
-  @State dialogOpacity: number = 0;
-  @State dialogScale: number = 0.8;
-  @State dialogTranslateY: number = 30;
+  @State generateCoverDialogLoadSignal: number = 0;
   @State coverRefreshKey: number = 0;
 
-  @State isCacheConfirmDialogVisible: boolean = false;
-  @State cacheConfirmDialogOpacity: number = 0;
-  @State cacheConfirmDialogScale: number = 0.8;
-  @State cacheConfirmDialogTranslateY: number = 28;
-  @State cacheConfirmTitle: string = '';
-  @State cacheConfirmMessage: string = '';
-  @State cacheConfirmActionLabel: string = '';
-  @State cacheConfirmActionKind: 'danger' | 'primary' = 'danger';
-  @State cacheConfirmPendingAction: '' | 'clear_content' | 'clear_novel' | 'clear_manga' = '';
-
-  @State isNovelSettingsCloseConfirmDialogVisible: boolean = false;
-  @State novelSettingsCloseConfirmOpacity: number = 0;
-  @State novelSettingsCloseConfirmScale: number = 0.8;
-  @State novelSettingsCloseConfirmTranslateY: number = 28;
-  private novelSettingsCloseAfterClose: (() => void) | undefined = undefined;
-
+  @State cacheConfirmDialogLoadSignal: number = 0;
+  @State cacheConfirmConfig: CacheConfirmConfig = { title: '', message: '', actionLabel: '', actionKind: 'danger', pendingAction: '' };
 
   // 封面生成器常量
   static readonly COVER_WIDTH = 400;
@@ -640,24 +477,6 @@ export struct UnifiedDetailPage {
       return false;
     }
     return this.content.isLocal === true;
-  }
-
-  private isNovelSettingsDialogForLocalEBook(): boolean {
-    return this.showNovelSettingsDialog && this.isLocalImportedEBookContent();
-  }
-
-  private canUseNovelStyleSettingsDialog(): boolean {
-    if (!this.content) {
-      return false;
-    }
-    if (this.content.contentType === UnifiedContentType.NOVEL) {
-      return true;
-    }
-    return this.isLocalImportedEBookContent();
-  }
-
-  private shouldShowTrackingStatusSection(): boolean {
-    return !!this.content && !this.isCurrentLocalImportedContent();
   }
 
   private normalizeNovelSourceLookupId(sourceId: string): string {
@@ -862,16 +681,16 @@ export struct UnifiedDetailPage {
         TAG,
         `打开小说缓存对话框: 触发源=${trigger}, 听书源=${this.isCurrentNovelAudioSource()}, 图源=${this.getCurrentNovelSourceId()}`
       );
-      this.showDownloadOptions();
+      this.downloadDialogLoadSignal++;
       return;
     }
     if (this.content.contentType === UnifiedContentType.MANGA) {
       logger.info(TAG, `打开漫画缓存对话框: 触发源=${trigger}`);
-      this.showDownloadOptions();
+      this.downloadDialogLoadSignal++;
       return;
     }
     logger.info(TAG, `打开通用缓存对话框: 触发源=${trigger}, 内容类型=${this.content.contentType}`);
-    this.showDownloadOptions();
+    this.downloadDialogLoadSignal++;
   }
   
   /**
@@ -946,7 +765,6 @@ export struct UnifiedDetailPage {
 
     this.initializeResponsiveLayout();
     this.webViewControllerAttached = false;
-    eventBus.subscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
     eventBus.subscribe(GameEvent.MANGA_CACHE_UPDATED, this.onMangaCacheUpdated);
     logger.info(TAG, 'Waiting hidden WebView controller attach');
     void this.refreshPageGuide('aboutToAppear');
@@ -1045,9 +863,7 @@ export struct UnifiedDetailPage {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
-    eventBus.unsubscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
     eventBus.unsubscribe(GameEvent.MANGA_CACHE_UPDATED, this.onMangaCacheUpdated);
-    this.clearReadAloudCacheRefreshTimer();
 
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
@@ -1061,12 +877,6 @@ export struct UnifiedDetailPage {
     // 取消下载回调注册
     if (this.downloadCallbackRegistered) {
       this.unregisterDownloadCallback();
-    }
-    
-    // 取消正在进行的换源搜索
-    if (this.searchTaskHandle) {
-      this.searchTaskHandle.cancel();
-      this.searchTaskHandle = null;
     }
     
     // 释放封面 PixelMap 资源（仅释放自己拥有的，不释放从 CoverImageManager 借用的）
@@ -1125,8 +935,6 @@ export struct UnifiedDetailPage {
       this.isLoading = true;
       this.errorMessage = '';
       this.expandedTagChipIds = [];
-      this.trackingAutoCreateAttempted = false;
-      this.trackingAutoCreatedThisSession = false;
 
       switch (this.pageParams.contentType) {
         case UnifiedContentType.MANGA:
@@ -1162,11 +970,11 @@ export struct UnifiedDetailPage {
       
       // 加载缓存状态（在线漫画和小说）
       await this.loadCacheStatus();
-      await this.loadReadAloudCacheSummary();
+      this.readAloudCacheLoadSignal++;
       
       // 检查是否已在书架中
       await this.checkIfInShelf();
-      await this.refreshTrackingState();
+      this.trackingLoadSignal++;
       
       // 加载同书架内容（非阻塞，仅当在自定义书架中且设置开启时）
       if (this.currentShelfId && this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true)) {
@@ -1188,994 +996,6 @@ export struct UnifiedDetailPage {
     } finally {
       this.isLoading = false;
     }
-  }
-
-  private async ensureContentTrackingReady(): Promise<boolean> {
-    try {
-      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      if (!hostContext) {
-        return false;
-      }
-      await getSubscriptionInitializer().initialize(hostContext);
-      return true;
-    } catch (error) {
-      logger.warn(TAG, `初始化内容跟踪模块失败: ${String(error)}`);
-      return false;
-    }
-  }
-
-  private resolveCurrentMangaTrackingProviderType(
-    manga: Manga | null,
-    fallbackMangaId: string
-  ): SubscriptionProviderType {
-    if (manga !== null && manga.sourceInfo?.providerType === 'suwayomi') {
-      return SubscriptionProviderType.SUWAYOMI;
-    }
-    if (manga !== null && manga.sourceInfo?.providerType === 'komga') {
-      return SubscriptionProviderType.KOMGA;
-    }
-    const parsedProvider = RemoteLibraryMangaBridge.parseProviderMangaId(fallbackMangaId);
-    if (parsedProvider !== null) {
-      if (parsedProvider.providerType === 'suwayomi') {
-        return SubscriptionProviderType.SUWAYOMI;
-      }
-      if (parsedProvider.providerType === 'komga') {
-        return SubscriptionProviderType.KOMGA;
-      }
-    }
-    return SubscriptionProviderType.WEBVIEW;
-  }
-
-  private async resolveCurrentTrackingTargetInfo(): Promise<UnifiedDetailTrackingTargetInfo> {
-    const unsupportedTarget: UnifiedDetailTrackingTargetInfo = {
-      supported: false,
-      unsupportedReason: '这类内容暂时还不能自动检查',
-      contentType: SubscriptionContentType.MIXED,
-      targetId: '',
-      targetTitle: this.content?.title || '',
-      sourceId: this.normalizeTrackingText(this.content?.sourceId),
-      sourceName: this.normalizeTrackingText(this.content?.sourceName),
-      providerType: SubscriptionProviderType.NONE
-    };
-    if (!this.content) {
-      unsupportedTarget.unsupportedReason = '内容还在加载中';
-      return unsupportedTarget;
-    }
-    if (this.isCurrentLocalImportedContent()) {
-      unsupportedTarget.unsupportedReason = '本地导入内容不显示更新提醒';
-      if (this.content.contentType === UnifiedContentType.NOVEL) {
-        unsupportedTarget.contentType = SubscriptionContentType.NOVEL;
-        unsupportedTarget.providerType = SubscriptionProviderType.LEGADO;
-      } else if (this.content.contentType === UnifiedContentType.MANGA) {
-        unsupportedTarget.contentType = SubscriptionContentType.MANGA;
-      } else if (this.content.contentType === UnifiedContentType.EBOOK) {
-        unsupportedTarget.contentType = SubscriptionContentType.EBOOK;
-      }
-      return unsupportedTarget;
-    }
-
-    if (this.content.contentType === UnifiedContentType.NOVEL) {
-      const sourceId = this.getCurrentNovelSourceId();
-      const bookUrl = this.normalizeTrackingText(typeof this.content.id === 'string' ? this.content.id : '');
-      if (sourceId.length <= 0 || bookUrl.length <= 0) {
-        unsupportedTarget.unsupportedReason = '这本小说缺少来源信息，暂时不能开启提醒';
-        unsupportedTarget.contentType = SubscriptionContentType.NOVEL;
-        unsupportedTarget.providerType = SubscriptionProviderType.LEGADO;
-        return unsupportedTarget;
-      }
-      let novelBookId = await this.resolveExistingNovelTrackingBookId(sourceId, bookUrl);
-      if (novelBookId.length <= 0) {
-        novelBookId = this.getNovelCacheBookId(sourceId, bookUrl);
-      }
-        return {
-          supported: true,
-          unsupportedReason: '',
-          contentType: SubscriptionContentType.NOVEL,
-          targetId: novelBookId,
-          targetTitle: this.content.title,
-          sourceId: sourceId,
-          sourceName: this.normalizeTrackingText(this.content.sourceName),
-          providerType: SubscriptionProviderType.LEGADO
-        };
-    }
-
-    if (this.content.contentType === UnifiedContentType.MANGA) {
-      const originalManga = MangaAdapter.getOriginalManga(this.content);
-      const fallbackMangaId = this.normalizeTrackingText(typeof this.content.id === 'string' ? this.content.id : '');
-      const providerType = this.resolveCurrentMangaTrackingProviderType(originalManga, fallbackMangaId);
-      if ((providerType === SubscriptionProviderType.SUWAYOMI || providerType === SubscriptionProviderType.KOMGA) &&
-        fallbackMangaId.length > 0) {
-        const originalMangaId = originalManga !== null ? this.normalizeTrackingText(originalManga.id) : '';
-        const targetId = originalMangaId.length > 0 ? originalMangaId : fallbackMangaId;
-        return {
-          supported: true,
-          unsupportedReason: '',
-          contentType: SubscriptionContentType.MANGA,
-          targetId: targetId,
-          targetTitle: this.content.title,
-          sourceId: this.normalizeTrackingText(this.content.sourceId),
-          sourceName: this.normalizeTrackingText(this.content.sourceName),
-          providerType: providerType
-        };
-      }
-      if (providerType === SubscriptionProviderType.WEBVIEW && !this.content.isLocal && fallbackMangaId.length > 0) {
-        const originalMangaId = originalManga !== null ? this.normalizeTrackingText(originalManga.id) : '';
-        const targetId = originalMangaId.length > 0 ? originalMangaId : fallbackMangaId;
-        return {
-          supported: true,
-          unsupportedReason: '',
-          contentType: SubscriptionContentType.MANGA,
-          targetId: targetId,
-          targetTitle: this.content.title,
-          sourceId: this.normalizeTrackingText(this.content.sourceId),
-          sourceName: this.normalizeTrackingText(this.content.sourceName),
-          providerType: SubscriptionProviderType.WEBVIEW
-        };
-      }
-      unsupportedTarget.contentType = SubscriptionContentType.MANGA;
-      unsupportedTarget.providerType = providerType;
-      unsupportedTarget.unsupportedReason = this.content.isLocal
-        ? '本地漫画暂时还不能自动检查'
-        : '这种在线漫画暂时还不能自动检查';
-      return unsupportedTarget;
-    }
-
-    if (this.content.contentType === UnifiedContentType.EBOOK) {
-      unsupportedTarget.contentType = SubscriptionContentType.EBOOK;
-      unsupportedTarget.unsupportedReason = '电子书的更新提醒还在准备中';
-      return unsupportedTarget;
-    }
-
-    return unsupportedTarget;
-  }
-
-  private async resolveExistingNovelTrackingBookId(sourceId: string, bookUrl: string): Promise<string> {
-    const originalNovel = this.content !== null ? NovelAdapter.getOriginalNovel(this.content) : null;
-    if (originalNovel !== null && this.normalizeTrackingText(originalNovel.id).length > 0) {
-      return this.normalizeTrackingText(originalNovel.id);
-    }
-
-    const storedBook = await this.novelDataManager.getBookByUrl(sourceId, bookUrl);
-    if (storedBook !== null && this.normalizeTrackingText(storedBook.id).length > 0) {
-      return this.normalizeTrackingText(storedBook.id);
-    }
-
-    const constructedId = this.getNovelCacheBookId(sourceId, bookUrl);
-    const constructedBook = await this.novelDataManager.getBook(constructedId);
-    if (constructedBook !== null && this.normalizeTrackingText(constructedBook.id).length > 0) {
-      return this.normalizeTrackingText(constructedBook.id);
-    }
-    return '';
-  }
-
-  private async ensureNovelTrackingBookId(): Promise<string> {
-    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
-      throw new Error('当前内容不是小说，暂时不能这样开启提醒');
-    }
-
-    const sourceId = this.getCurrentNovelSourceId();
-    const bookUrl = this.normalizeTrackingText(typeof this.content.id === 'string' ? this.content.id : '');
-    if (sourceId.length <= 0 || bookUrl.length <= 0) {
-      throw new Error('这本小说缺少来源信息，暂时不能开启提醒');
-    }
-
-    const existingBookId = await this.resolveExistingNovelTrackingBookId(sourceId, bookUrl);
-    if (existingBookId.length > 0) {
-      return existingBookId;
-    }
-
-    const now = Date.now();
-    const latestChapterTitle = this.content.chapters.length > 0
-      ? this.content.chapters[this.content.chapters.length - 1].title
-      : '';
-    const novelTags = this.content.tags && this.content.tags.length > 0
-      ? this.content.tags.join('，')
-      : '';
-    const bookId = this.getNovelCacheBookId(sourceId, bookUrl);
-    const newBook: NovelBook = {
-      id: bookId,
-      sourceId: sourceId,
-      sourceName: this.normalizeTrackingText(this.content.sourceName),
-      bookUrl: bookUrl,
-      name: this.content.title,
-      author: this.content.author,
-      kind: novelTags.length > 0 ? novelTags : undefined,
-      intro: this.content.description,
-      coverUrl: this.content.coverUrl,
-      coverLocalPath: this.localCoverPath.length > 0 ? this.localCoverPath : undefined,
-      latestChapterTitle: latestChapterTitle.length > 0 ? latestChapterTitle : undefined,
-      chapterCount: this.content.totalChapters,
-      readStatus: NovelReadStatus.UNREAD,
-      totalReadingTime: 0,
-      isFavorite: this.isFavorite,
-      isNSFW: this.content.isNSFW,
-      createTime: now,
-      updateDbTime: now
-    };
-    await this.novelDataManager.saveBook(newBook);
-    logger.info(TAG, `已为内容跟踪补建小说本地记录: ${newBook.name}`);
-    return bookId;
-  }
-
-  private shouldAutoCreateTrackingOnInitialEntry(targetInfo: UnifiedDetailTrackingTargetInfo): boolean {
-    if (!targetInfo.supported || this.trackingAutoCreateAttempted || !this.isOnlineContent()) {
-      return false;
-    }
-    if (targetInfo.contentType === SubscriptionContentType.NOVEL) {
-      return true;
-    }
-    return targetInfo.contentType === SubscriptionContentType.MANGA &&
-      (targetInfo.providerType === SubscriptionProviderType.SUWAYOMI ||
-        targetInfo.providerType === SubscriptionProviderType.KOMGA ||
-        targetInfo.providerType === SubscriptionProviderType.WEBVIEW);
-  }
-
-  private async autoCreateTrackingRule(targetInfo: UnifiedDetailTrackingTargetInfo): Promise<SubscriptionRule | null> {
-    if (targetInfo.contentType === SubscriptionContentType.NOVEL) {
-      const novelBookId = await this.ensureNovelTrackingBookId();
-      return this.subscriptionManager.createOrUpdateNovelItemRule(novelBookId);
-    }
-    if (targetInfo.contentType === SubscriptionContentType.MANGA &&
-      (targetInfo.providerType === SubscriptionProviderType.SUWAYOMI ||
-        targetInfo.providerType === SubscriptionProviderType.KOMGA)) {
-      return this.subscriptionManager.createOrUpdateRemoteMangaItemRule(targetInfo.targetId);
-    }
-    if (targetInfo.contentType === SubscriptionContentType.MANGA &&
-      targetInfo.providerType === SubscriptionProviderType.WEBVIEW) {
-      return this.subscriptionManager.createOrUpdateOnlineMangaItemRule(targetInfo.targetId);
-    }
-    return null;
-  }
-
-  private getTrackingProviderName(providerType: SubscriptionProviderType): string {
-    if (providerType === SubscriptionProviderType.SUWAYOMI) {
-      return 'Suwayomi';
-    }
-    if (providerType === SubscriptionProviderType.KOMGA) {
-      return 'Komga';
-    }
-    if (providerType === SubscriptionProviderType.LEGADO) {
-      return 'Legado';
-    }
-    if (providerType === SubscriptionProviderType.WEBVIEW) {
-      return 'WebView';
-    }
-    return '通用';
-  }
-
-  private getTrackingProviderText(): string {
-    if (this.trackingRule !== null) {
-      const providerName = this.getTrackingProviderName(this.trackingRule.providerType);
-      if (this.trackingRule.sourceName.length > 0 && this.trackingRule.sourceName !== providerName) {
-        return `${providerName} · ${this.trackingRule.sourceName}`;
-      }
-      return providerName;
-    }
-    if (this.trackingTargetInfo !== null) {
-      const providerName = this.getTrackingProviderName(this.trackingTargetInfo.providerType);
-      if (this.trackingTargetInfo.sourceName.length > 0 && this.trackingTargetInfo.sourceName !== providerName) {
-        return `${providerName} · ${this.trackingTargetInfo.sourceName}`;
-      }
-      return providerName;
-    }
-    return '';
-  }
-
-  private getTrackingExecutionStatusLabel(status: SubscriptionExecutionStatus): string {
-    if (status === SubscriptionExecutionStatus.SUCCESS) {
-      return '发现更新';
-    }
-    if (status === SubscriptionExecutionStatus.NO_UPDATE) {
-      return '没有更新';
-    }
-    if (status === SubscriptionExecutionStatus.SKIPPED) {
-      return '已跳过';
-    }
-    if (status === SubscriptionExecutionStatus.FAILED) {
-      return '检查失败';
-    }
-    return '暂不支持';
-  }
-
-  private formatTrackingTimestamp(timestamp: number): string {
-    if (timestamp <= 0) {
-      return '还没检查过';
-    }
-    try {
-      return new Date(timestamp).toLocaleString();
-    } catch (_error) {
-      return `${timestamp}`;
-    }
-  }
-
-  private getTrackingMinNewItems(rule: SubscriptionRule): number {
-    for (let index = 0; index < rule.conditions.length; index++) {
-      const condition = rule.conditions[index];
-      if (condition.type === SubscriptionConditionType.MIN_NEW_ITEMS && condition.enabled) {
-        return condition.numericValue > 0 ? condition.numericValue : 1;
-      }
-    }
-    return 1;
-  }
-
-  private trackingRequiresFavorite(rule: SubscriptionRule): boolean {
-    for (let index = 0; index < rule.conditions.length; index++) {
-      const condition = rule.conditions[index];
-      if (condition.type === SubscriptionConditionType.ONLY_IF_FAVORITE && condition.enabled) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private getTrackingConditionMatchMode(rule: SubscriptionRule): SubscriptionConditionMatchMode {
-    for (let index = 0; index < rule.conditions.length; index++) {
-      const condition = rule.conditions[index];
-      if (condition.type === SubscriptionConditionType.MATCH_MODE && condition.enabled) {
-        return condition.textValue === SubscriptionConditionMatchMode.ANY
-          ? SubscriptionConditionMatchMode.ANY
-          : SubscriptionConditionMatchMode.ALL;
-      }
-    }
-    return SubscriptionConditionMatchMode.ALL;
-  }
-
-  private getTrackingPositiveConditionCount(rule: SubscriptionRule): number {
-    let count = 0;
-    if (this.trackingRequiresFavorite(rule)) {
-      count++;
-    }
-    if (this.getTrackingConditionText(rule, SubscriptionConditionType.TITLE_KEYWORD).length > 0) {
-      count++;
-    }
-    if (this.getTrackingConditionText(rule, SubscriptionConditionType.TAG_KEYWORD).length > 0) {
-      count++;
-    }
-    if (this.getTrackingConditionText(rule, SubscriptionConditionType.SOURCE_KEYWORD).length > 0) {
-      count++;
-    }
-    return count;
-  }
-
-  private getTrackingConditionMatchModeSummary(rule: SubscriptionRule): string {
-    if (this.getTrackingPositiveConditionCount(rule) <= 1) {
-      return '';
-    }
-    return this.getTrackingConditionMatchMode(rule) === SubscriptionConditionMatchMode.ANY
-      ? '满足任意一项'
-      : '需要全部满足';
-  }
-
-  private trackingExcludesNSFW(rule: SubscriptionRule): boolean {
-    for (let index = 0; index < rule.conditions.length; index++) {
-      const condition = rule.conditions[index];
-      if (condition.type === SubscriptionConditionType.EXCLUDE_NSFW && condition.enabled) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private getTrackingConditionText(rule: SubscriptionRule, conditionType: SubscriptionConditionType): string {
-    for (let index = 0; index < rule.conditions.length; index++) {
-      const condition = rule.conditions[index];
-      if (condition.type === conditionType && condition.enabled && condition.textValue.trim().length > 0) {
-        return condition.textValue.trim();
-      }
-    }
-    return '';
-  }
-
-  private getTrackingConditionSummary(rule: SubscriptionRule | null): string {
-    if (rule === null) {
-      return '';
-    }
-    const parts: string[] = [formatSubscriptionIntervalSchedule(rule.checkIntervalMin), `至少新增 ${this.getTrackingMinNewItems(rule)}`];
-    const matchModeSummary = this.getTrackingConditionMatchModeSummary(rule);
-    if (matchModeSummary.length > 0) {
-      parts.push(matchModeSummary);
-    }
-    if (this.trackingRequiresFavorite(rule)) {
-      parts.push('只检查已收藏的内容');
-    }
-    if (this.trackingExcludesNSFW(rule)) {
-      parts.push('跳过 NSFW');
-    }
-    const titleKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.TITLE_KEYWORD);
-    if (titleKeyword.length > 0) {
-      parts.push(`标题包含 ${titleKeyword}`);
-    }
-    const tagKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.TAG_KEYWORD);
-    if (tagKeyword.length > 0) {
-      parts.push(`标签包含 ${tagKeyword}`);
-    }
-    const sourceKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.SOURCE_KEYWORD);
-    if (sourceKeyword.length > 0) {
-      parts.push(`来源包含 ${sourceKeyword}`);
-    }
-    return parts.join(' · ');
-  }
-
-  private getTrackingActionSummary(rule: SubscriptionRule | null): string {
-    if (rule === null) {
-      return '';
-    }
-    const parts: string[] = [];
-    for (let index = 0; index < rule.actions.length; index++) {
-      const action = rule.actions[index];
-      if (!action.enabled) {
-        continue;
-      }
-      if (action.type === SubscriptionActionType.NOTIFY) {
-        parts.push('提醒我');
-      } else if (action.type === SubscriptionActionType.AUTO_DOWNLOAD_NEW) {
-        parts.push(`自动下载 ${action.limitCount > 0 ? action.limitCount : '全部'}`);
-      }
-    }
-    if (parts.length <= 0) {
-      return '只检查，不自动处理';
-    }
-    return parts.join(' · ');
-  }
-
-  private createTrackingHighlight(
-    id: string,
-    text: string,
-    tone: ContentTrackingHighlightTone
-  ): ContentTrackingHighlight {
-    return {
-      id: id,
-      text: text,
-      tone: tone
-    };
-  }
-
-  private buildTrackingConditionHighlights(rule: SubscriptionRule | null): ContentTrackingHighlight[] {
-    const highlights: ContentTrackingHighlight[] = [];
-    if (rule === null) {
-      return highlights;
-    }
-
-    if (this.trackingAutoCreatedThisSession) {
-      highlights.push(this.createTrackingHighlight(
-        'auto_created',
-        '这次已自动开启',
-        ContentTrackingHighlightTone.INFO
-      ));
-    }
-
-    highlights.push(this.createTrackingHighlight(
-      'interval',
-      formatSubscriptionIntervalSchedule(rule.checkIntervalMin),
-      ContentTrackingHighlightTone.NEUTRAL
-    ));
-    highlights.push(this.createTrackingHighlight(
-      'min_new_items',
-      `至少新增 ${this.getTrackingMinNewItems(rule)}`,
-      ContentTrackingHighlightTone.INFO
-    ));
-
-    if (this.getTrackingPositiveConditionCount(rule) > 1) {
-      highlights.push(this.createTrackingHighlight(
-        'match_mode',
-        this.getTrackingConditionMatchMode(rule) === SubscriptionConditionMatchMode.ANY ? '满足任意一项' : '需要全部满足',
-        ContentTrackingHighlightTone.PRIMARY
-      ));
-    }
-
-    if (this.trackingRequiresFavorite(rule)) {
-      highlights.push(this.createTrackingHighlight(
-        'favorite_only',
-        '只看已收藏',
-        ContentTrackingHighlightTone.INFO
-      ));
-    }
-
-    if (this.trackingExcludesNSFW(rule)) {
-      highlights.push(this.createTrackingHighlight(
-        'exclude_nsfw',
-        '跳过 NSFW',
-        ContentTrackingHighlightTone.WARNING
-      ));
-    }
-
-    const titleKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.TITLE_KEYWORD);
-    if (titleKeyword.length > 0) {
-      highlights.push(this.createTrackingHighlight(
-        'title_keyword',
-        `标题: ${titleKeyword}`,
-        ContentTrackingHighlightTone.PRIMARY
-      ));
-    }
-
-    const tagKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.TAG_KEYWORD);
-    if (tagKeyword.length > 0) {
-      highlights.push(this.createTrackingHighlight(
-        'tag_keyword',
-        `标签: ${tagKeyword}`,
-        ContentTrackingHighlightTone.SUCCESS
-      ));
-    }
-
-    const sourceKeyword = this.getTrackingConditionText(rule, SubscriptionConditionType.SOURCE_KEYWORD);
-    if (sourceKeyword.length > 0) {
-      highlights.push(this.createTrackingHighlight(
-        'source_keyword',
-        `来源: ${sourceKeyword}`,
-        ContentTrackingHighlightTone.INFO
-      ));
-    }
-
-    return highlights;
-  }
-
-  private buildTrackingActionHighlights(rule: SubscriptionRule | null): ContentTrackingHighlight[] {
-    const highlights: ContentTrackingHighlight[] = [];
-    if (rule === null) {
-      return highlights;
-    }
-
-    let hasExtraAction = false;
-    for (let index = 0; index < rule.actions.length; index++) {
-      const action = rule.actions[index];
-      if (!action.enabled || action.type === SubscriptionActionType.CHECK_UPDATE) {
-        continue;
-      }
-      hasExtraAction = true;
-      if (action.type === SubscriptionActionType.NOTIFY) {
-        highlights.push(this.createTrackingHighlight(
-          'notify',
-          '提醒我',
-          ContentTrackingHighlightTone.INFO
-        ));
-      } else if (action.type === SubscriptionActionType.AUTO_DOWNLOAD_NEW) {
-        highlights.push(this.createTrackingHighlight(
-          'auto_download',
-          action.limitCount > 0 ? `自动下载 ${action.limitCount} 项` : '自动下载全部',
-          ContentTrackingHighlightTone.SUCCESS
-        ));
-      }
-    }
-
-    if (!hasExtraAction) {
-      highlights.push(this.createTrackingHighlight(
-        'check_only',
-        '只检查更新',
-        ContentTrackingHighlightTone.NEUTRAL
-      ));
-    }
-    return highlights;
-  }
-
-  private getTrackingStatusText(): string {
-    if (!this.trackingSupported) {
-      return this.trackingUnsupportedReason.length > 0
-        ? this.trackingUnsupportedReason
-        : '这类内容暂时还不能自动检查';
-    }
-    if (this.trackingRule === null) {
-      return '这本内容还没开始提醒';
-    }
-    if (this.trackingExecution !== null) {
-      const label = this.getTrackingExecutionStatusLabel(this.trackingExecution.status);
-      if (this.trackingExecution.message.length > 0) {
-        return `${label} · ${this.trackingExecution.message}`;
-      }
-      return label;
-    }
-    if (this.trackingAutoCreatedThisSession) {
-      return '已自动开启提醒，之后会在 APP 回到前台时按设置补查';
-    }
-    if (!this.trackingRule.enabled) {
-      return '提醒已存在，当前已暂停';
-    }
-    return '提醒已开启，还没检查过';
-  }
-
-  private getTrackingChapterSummaryText(): string {
-    if (!this.trackingSupported) {
-      return '暂不支持';
-    }
-    if (this.trackingRule === null) {
-      return '还没有提醒';
-    }
-    if (this.trackingExecution !== null) {
-      if (this.trackingExecution.deltaCount > 0) {
-        return `发现 ${this.trackingExecution.deltaCount} 个新内容`;
-      }
-      if (this.trackingExecution.status === SubscriptionExecutionStatus.NO_UPDATE) {
-        return '最近没发现新内容';
-      }
-      if (this.trackingExecution.status === SubscriptionExecutionStatus.FAILED) {
-        return '上次检查失败';
-      }
-      if (this.trackingExecution.status === SubscriptionExecutionStatus.SKIPPED) {
-        return '这次没有检查';
-      }
-      if (this.trackingExecution.status === SubscriptionExecutionStatus.SUCCESS) {
-        return '已经发现更新';
-      }
-      return '暂不支持';
-    }
-    if (this.trackingAutoCreatedThisSession) {
-      return '已自动开启提醒';
-    }
-    if (!this.trackingRule.enabled) {
-      return '已暂停自动检查';
-    }
-    return '还没检查过';
-  }
-
-  private buildTrackingCardState(): ContentTrackingCardState {
-    let lastStatus = SubscriptionExecutionStatus.NO_UPDATE;
-    if (this.trackingExecution !== null) {
-      lastStatus = this.trackingExecution.status;
-    } else if (this.trackingRule !== null && !this.trackingRule.enabled) {
-      lastStatus = SubscriptionExecutionStatus.SKIPPED;
-    }
-
-    let lastCheckText = '尚未执行';
-    if (this.trackingExecution !== null) {
-      lastCheckText = this.formatTrackingTimestamp(this.trackingExecution.checkedAt);
-    } else if (this.trackingRule !== null && this.trackingRule.lastCheckTime > 0) {
-      lastCheckText = this.formatTrackingTimestamp(this.trackingRule.lastCheckTime);
-    }
-
-    let latestInfoText = '';
-    if (this.trackingExecution !== null && this.trackingExecution.deltaCount > 0) {
-      latestInfoText = `这次发现 ${this.trackingExecution.deltaCount} 个新内容`;
-    } else if (this.trackingAutoCreatedThisSession && this.trackingRule !== null) {
-      latestInfoText = '这次已自动开启提醒';
-    }
-
-    return {
-      isLoading: this.isTrackingLoading,
-      isBusy: this.isTrackingBusy,
-      supported: this.trackingSupported,
-      unsupportedReason: this.trackingUnsupportedReason,
-      hasRule: this.trackingRule !== null,
-      enabled: this.trackingRule !== null && this.trackingRule.enabled,
-      ruleName: this.trackingRule !== null ? this.trackingRule.name : '',
-      providerText: this.getTrackingProviderText(),
-      conditionSummary: this.getTrackingConditionSummary(this.trackingRule),
-      actionSummary: this.getTrackingActionSummary(this.trackingRule),
-      statusText: this.getTrackingStatusText(),
-      lastCheckText: lastCheckText,
-      chapterSummary: this.getTrackingChapterSummaryText(),
-      latestItemTitle: latestInfoText,
-      lastStatus: lastStatus,
-      conditionHighlights: this.buildTrackingConditionHighlights(this.trackingRule),
-      actionHighlights: this.buildTrackingActionHighlights(this.trackingRule)
-    };
-  }
-
-  private buildTrackingCardCallbacks(): ContentTrackingCardCallbacks {
-    return {
-      onConfigure: () => {
-        void this.openTrackingSettingsDialog();
-      },
-      onRunNow: () => {
-        void this.runCurrentContentTrackingNow();
-      },
-      onToggleEnabled: () => {
-        void this.toggleCurrentContentTrackingEnabled();
-      },
-      onOpenManagement: () => {
-        this.openTrackingManagementPage();
-      }
-    };
-  }
-
-  private async refreshTrackingState(showToastOnError: boolean = false): Promise<void> {
-    if (!this.content) {
-      this.trackingTargetInfo = null;
-      this.trackingRule = null;
-      this.trackingExecution = null;
-      this.trackingSupported = false;
-      this.trackingUnsupportedReason = '当前内容尚未加载完成';
-      return;
-    }
-    if (this.isCurrentLocalImportedContent()) {
-      this.trackingTargetInfo = null;
-      this.trackingRule = null;
-      this.trackingExecution = null;
-      this.trackingSupported = false;
-      this.trackingUnsupportedReason = '本地导入内容不显示更新提醒';
-      this.isTrackingLoading = false;
-      return;
-    }
-
-    this.isTrackingLoading = true;
-    try {
-      const targetInfo = await this.resolveCurrentTrackingTargetInfo();
-      this.trackingTargetInfo = targetInfo;
-      this.trackingSupported = targetInfo.supported;
-      this.trackingUnsupportedReason = targetInfo.unsupportedReason;
-
-      if (!targetInfo.supported) {
-        this.trackingRule = null;
-        this.trackingExecution = null;
-        return;
-      }
-
-      const ready = await this.ensureContentTrackingReady();
-      if (!ready) {
-        this.trackingRule = null;
-        this.trackingExecution = null;
-        this.trackingSupported = false;
-        this.trackingUnsupportedReason = '更新提醒暂时没准备好';
-        return;
-      }
-
-      let currentRule = await this.subscriptionManager.getItemRule(targetInfo.contentType, targetInfo.targetId);
-      if (currentRule === null && this.shouldAutoCreateTrackingOnInitialEntry(targetInfo)) {
-        this.trackingAutoCreateAttempted = true;
-        try {
-          currentRule = await this.autoCreateTrackingRule(targetInfo);
-          if (currentRule !== null) {
-            this.trackingAutoCreatedThisSession = true;
-            logger.info(TAG, `统一详情页首次进入已自动建立内容跟踪: ${targetInfo.targetTitle}`);
-          }
-        } catch (autoCreateError) {
-          logger.warn(TAG, `首次进入自动建立内容跟踪失败: ${String(autoCreateError)}`);
-        }
-      }
-
-      this.trackingRule = currentRule;
-      if (currentRule !== null) {
-        this.trackingExecution = await this.subscriptionManager.getLatestExecution(currentRule.id);
-      } else {
-        this.trackingExecution = null;
-      }
-    } catch (error) {
-      logger.warn(TAG, `刷新内容跟踪状态失败: ${String(error)}`);
-      this.trackingTargetInfo = null;
-      this.trackingRule = null;
-      this.trackingExecution = null;
-      this.trackingSupported = false;
-      this.trackingUnsupportedReason = '没能读到提醒状态';
-      if (showToastOnError) {
-        promptAction.showToast({ message: `没能读到提醒状态: ${String(error)}`, duration: 2000 });
-      }
-    } finally {
-      this.isTrackingLoading = false;
-    }
-  }
-
-  private parseTrackingPositiveInteger(text: string, defaultValue: number, minValue: number): number {
-    const parsedValue = Number(text.trim());
-    if (Number.isNaN(parsedValue) || !Number.isFinite(parsedValue)) {
-      return defaultValue;
-    }
-    const normalizedValue = Math.floor(parsedValue);
-    if (normalizedValue < minValue) {
-      return minValue;
-    }
-    return normalizedValue;
-  }
-
-  private fillTrackingDialogFromRule(rule: SubscriptionRule | null): void {
-    if (rule === null) {
-      this.trackingCheckIntervalText = '3';
-      this.trackingCheckIntervalUnit = SubscriptionIntervalUnit.HOUR;
-      this.trackingMinNewItemsText = '1';
-      this.trackingAutoDownloadCountText = '0';
-      this.trackingConditionMatchMode = SubscriptionConditionMatchMode.ALL;
-      this.trackingRequireFavorite = false;
-      this.trackingExcludeNSFW = false;
-      this.trackingTitleKeywordText = '';
-      this.trackingTagKeywordText = '';
-      this.trackingSourceKeywordText = '';
-      this.trackingEnableNotify = true;
-      return;
-    }
-
-    const intervalDisplay = splitSubscriptionIntervalMinutesForDisplay(rule.checkIntervalMin);
-    this.trackingCheckIntervalText = intervalDisplay.valueText;
-    this.trackingCheckIntervalUnit = intervalDisplay.unit;
-    this.trackingMinNewItemsText = `${this.getTrackingMinNewItems(rule)}`;
-    this.trackingAutoDownloadCountText = '0';
-    this.trackingConditionMatchMode = this.getTrackingConditionMatchMode(rule);
-    this.trackingEnableNotify = false;
-    for (let index = 0; index < rule.actions.length; index++) {
-      const action = rule.actions[index];
-      if (action.type === SubscriptionActionType.NOTIFY && action.enabled) {
-        this.trackingEnableNotify = true;
-      } else if (action.type === SubscriptionActionType.AUTO_DOWNLOAD_NEW && action.enabled) {
-        this.trackingAutoDownloadCountText = `${action.limitCount > 0 ? action.limitCount : 0}`;
-      }
-    }
-    this.trackingRequireFavorite = this.trackingRequiresFavorite(rule);
-    this.trackingExcludeNSFW = this.trackingExcludesNSFW(rule);
-    this.trackingTitleKeywordText = this.getTrackingConditionText(rule, SubscriptionConditionType.TITLE_KEYWORD);
-    this.trackingTagKeywordText = this.getTrackingConditionText(rule, SubscriptionConditionType.TAG_KEYWORD);
-    this.trackingSourceKeywordText = this.getTrackingConditionText(rule, SubscriptionConditionType.SOURCE_KEYWORD);
-  }
-
-  private buildTrackingCreateOptions(): Partial<SubscriptionRuleCreateOptions> {
-    return {
-      checkIntervalMin: convertSubscriptionIntervalDisplayToMinutes(
-        this.trackingCheckIntervalText,
-        this.trackingCheckIntervalUnit,
-        180
-      ),
-      minNewItems: this.parseTrackingPositiveInteger(this.trackingMinNewItemsText, 1, 1),
-      autoDownloadCount: this.parseTrackingPositiveInteger(this.trackingAutoDownloadCountText, 0, 0),
-      conditionMatchMode: this.trackingConditionMatchMode,
-      requireFavorite: this.trackingRequireFavorite,
-      enableNotify: this.trackingEnableNotify,
-      excludeNSFW: this.trackingExcludeNSFW,
-      titleKeyword: this.trackingTitleKeywordText.trim(),
-      tagKeyword: this.trackingTagKeywordText.trim(),
-      sourceKeyword: this.trackingSourceKeywordText.trim()
-    };
-  }
-
-  private async openTrackingSettingsDialog(): Promise<void> {
-    if (this.isTrackingBusy) {
-      return;
-    }
-    if (this.trackingTargetInfo === null || (this.trackingRule === null && !this.trackingSupported)) {
-      await this.refreshTrackingState(true);
-    }
-    if (!this.trackingSupported) {
-      promptAction.showToast({
-        message: this.trackingUnsupportedReason.length > 0 ? this.trackingUnsupportedReason : '这类内容暂时还不能添加提醒',
-        duration: 2000
-      });
-      return;
-    }
-
-    this.fillTrackingDialogFromRule(this.trackingRule);
-    this.trackingSettingsActiveTab = 0;
-    this.showTrackingSettingsDialog = true;
-    animateTo({
-      duration: 260,
-      curve: Curve.EaseOut
-    }, () => {
-      this.trackingDialogOpacity = 1;
-      this.trackingDialogScale = 1;
-      this.trackingDialogTranslateY = 0;
-    });
-  }
-
-  private closeTrackingSettingsDialog(): void {
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseIn
-    }, () => {
-      this.trackingDialogOpacity = 0;
-      this.trackingDialogScale = 0.96;
-      this.trackingDialogTranslateY = 12;
-    });
-    setTimeout(() => {
-      this.showTrackingSettingsDialog = false;
-    }, 200);
-  }
-
-  private async saveCurrentContentTracking(): Promise<void> {
-    if (this.isTrackingBusy) {
-      return;
-    }
-    const targetInfo = this.trackingTargetInfo;
-    if (targetInfo === null || !targetInfo.supported) {
-      promptAction.showToast({ message: '这类内容暂时还不能在这里开启提醒', duration: 2000 });
-      return;
-    }
-
-    this.isTrackingBusy = true;
-    const hadExistingRule = this.trackingRule !== null;
-    try {
-      const createOptions = this.buildTrackingCreateOptions();
-      if (targetInfo.contentType === SubscriptionContentType.NOVEL) {
-        const novelBookId = await this.ensureNovelTrackingBookId();
-        this.trackingRule = await this.subscriptionManager.createOrUpdateNovelItemRule(novelBookId, createOptions);
-      } else if (targetInfo.contentType === SubscriptionContentType.MANGA &&
-        (targetInfo.providerType === SubscriptionProviderType.SUWAYOMI || targetInfo.providerType === SubscriptionProviderType.KOMGA)) {
-        this.trackingRule = await this.subscriptionManager.createOrUpdateRemoteMangaItemRule(targetInfo.targetId, createOptions);
-      } else {
-        throw new Error('这类内容暂时还不能在详情页开启提醒');
-      }
-
-      await this.refreshTrackingState();
-      this.closeTrackingSettingsDialog();
-      promptAction.showToast({
-        message: hadExistingRule
-          ? '提醒设置已更新，之后会在 APP 回到前台时补查'
-          : '已为当前内容开启提醒，之后会在 APP 回到前台时补查',
-        duration: 1800
-      });
-    } catch (error) {
-      logger.error(TAG, `保存内容跟踪配置失败: ${String(error)}`);
-      promptAction.showToast({ message: `保存失败: ${String(error)}`, duration: 2000 });
-    } finally {
-      this.isTrackingBusy = false;
-    }
-  }
-
-  private async runCurrentContentTrackingNow(): Promise<void> {
-    if (this.trackingRule === null || this.isTrackingBusy) {
-      return;
-    }
-    this.isTrackingBusy = true;
-    try {
-      const result = await this.subscriptionManager.runRuleNow(this.trackingRule.id, 'detail_page_manual');
-      await this.refreshTrackingState();
-      promptAction.showToast({
-        message: result.message.length > 0 ? result.message : '已开始检查当前内容',
-        duration: 2000
-      });
-    } catch (error) {
-      logger.error(TAG, `立即执行内容跟踪失败: ${String(error)}`);
-      promptAction.showToast({ message: `执行失败: ${String(error)}`, duration: 2000 });
-    } finally {
-      this.isTrackingBusy = false;
-    }
-  }
-
-  private async toggleCurrentContentTrackingEnabled(): Promise<void> {
-    if (this.trackingRule === null || this.isTrackingBusy) {
-      return;
-    }
-    this.isTrackingBusy = true;
-    try {
-      await this.subscriptionManager.setRuleEnabled(this.trackingRule.id, !this.trackingRule.enabled);
-      await this.refreshTrackingState();
-      promptAction.showToast({
-        message: this.trackingRule !== null && this.trackingRule.enabled
-          ? '已开启更新提醒，APP 回到前台时会自动补查'
-          : '已暂停更新提醒',
-        duration: 1600
-      });
-    } catch (error) {
-      logger.error(TAG, `切换内容跟踪启用状态失败: ${String(error)}`);
-      promptAction.showToast({ message: `操作失败: ${String(error)}`, duration: 2000 });
-    } finally {
-      this.isTrackingBusy = false;
-    }
-  }
-
-  private confirmDeleteCurrentContentTracking(): void {
-    if (this.trackingRule === null) {
-      return;
-    }
-    const ruleName = this.trackingRule.name.length > 0
-      ? this.trackingRule.name
-      : (this.content ? this.content.title : '当前内容');
-    promptAction.showDialog({
-      title: '关闭更新提醒',
-      message: `确认关闭「${ruleName}」的更新提醒？`,
-      buttons: [
-        { text: '取消', color: '#666666' },
-        { text: '关闭', color: '#FF4D4F' }
-      ]
-    }).then((dialogResult: DialogResult) => {
-      if (dialogResult.index === 1) {
-        void this.deleteCurrentContentTracking();
-      }
-    });
-  }
-
-  private async deleteCurrentContentTracking(): Promise<void> {
-    if (this.trackingRule === null || this.isTrackingBusy) {
-      return;
-    }
-    this.isTrackingBusy = true;
-    try {
-      await this.subscriptionManager.deleteRule(this.trackingRule.id);
-      this.closeTrackingSettingsDialog();
-      await this.refreshTrackingState();
-      promptAction.showToast({ message: '已关闭当前内容的更新提醒', duration: 1800 });
-    } catch (error) {
-      logger.error(TAG, `删除内容跟踪规则失败: ${String(error)}`);
-      promptAction.showToast({ message: `删除失败: ${String(error)}`, duration: 2000 });
-    } finally {
-      this.isTrackingBusy = false;
-    }
-  }
-
-  private openTrackingManagementPage(): void {
-    this.navigateWithManagedWindowTransition('SubscriptionManagementPage', null);
   }
 
   /**
@@ -2930,10 +1750,6 @@ export struct UnifiedDetailPage {
       enableDirectoryParsing = true;
       enableReplaceRules = true;
     }
-    this.novelEnableDirectoryParsing = enableDirectoryParsing;
-    this.novelEnableReplaceRules = enableReplaceRules;
-    this.novelDirectoryParsingSelection = enableDirectoryParsing;
-    this.novelReplaceRulesSelection = enableReplaceRules;
     const chapterListCacheHours = enableDirectoryParsing ? 24 : 36500;
 
     // 优先从数据库获取书籍信息（尝试多种查询方式）
@@ -3102,25 +1918,340 @@ export struct UnifiedDetailPage {
     const ruleScopeId = this.getNovelCacheBookId(actualSourceId, actualBookUrl);
     const scopedTocRuleIds = await this.getScopedRuleIds(ruleScopeId, this.buildBookTocRuleKey(ruleScopeId));
     const scopedReplaceRuleIds = await this.getScopedRuleIds(ruleScopeId, this.buildBookReplaceRuleKey(ruleScopeId));
-    if (scopedTocRuleIds !== null) {
-      this.novelSelectedTocRuleIds = scopedTocRuleIds;
-    } else {
-      this.novelSelectedTocRuleIds = [];
-    }
-    if (scopedReplaceRuleIds !== null) {
-      this.novelSelectedReplaceRuleIds = scopedReplaceRuleIds;
-    } else {
-      this.novelSelectedReplaceRuleIds = [];
-    }
+    const selectedTocRuleIds: string[] = scopedTocRuleIds !== null ? scopedTocRuleIds : [];
+    const selectedReplaceRuleIds: string[] = scopedReplaceRuleIds !== null ? scopedReplaceRuleIds : [];
     logger.info(
       TAG,
       `小说规则生效: scopeId=${ruleScopeId}, scopedToc=${scopedTocRuleIds === null ? 'default' : scopedTocRuleIds.length}, scopedReplace=${scopedReplaceRuleIds === null ? 'default' : scopedReplaceRuleIds.length}`
     );
-    await this.applyDirectoryRulesToCurrentContent(enableDirectoryParsing, this.novelSelectedTocRuleIds);
+    await this.applyDirectoryRulesToCurrentContent(enableDirectoryParsing, selectedTocRuleIds);
     await this.applyReplaceRulesToCurrentNovelContent(enableReplaceRules, scopedReplaceRuleIds);
     
     // 章节加载完成
     this.isChaptersLoading = false;
+  }
+
+  private buildBookTocRuleKey(scopeId: string): string {
+    return `${NOVEL_BOOK_TOC_RULE_IDS_PREFIX}${scopeId}`;
+  }
+
+  private buildBookReplaceRuleKey(scopeId: string): string {
+    return `${NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX}${scopeId}`;
+  }
+
+  private parseRuleIdArray(rawValue: string): string[] {
+    if (!rawValue || rawValue.length === 0) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(rawValue) as Array<string>;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      const result: string[] = [];
+      for (const item of parsed) {
+        if (typeof item === 'string' && item.length > 0) {
+          result.push(item);
+        }
+      }
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `解析规则ID数组失败: ${String(error)}`);
+      return [];
+    }
+  }
+
+  private async getScopedRuleIds(scopeId: string, key: string): Promise<string[] | null> {
+    if (scopeId.length === 0) {
+      return null;
+    }
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
+      const raw = await store.get(key, '') as string;
+      if (!raw || raw.length === 0) {
+        return null;
+      }
+      return this.parseRuleIdArray(raw);
+    } catch (error) {
+      logger.warn(TAG, `读取书籍规则失败: key=${key}, error=${String(error)}`);
+      return null;
+    }
+  }
+
+  private async applyDirectoryRulesToCurrentContent(enableDirectoryParsing: boolean, selectedTocRuleIds: string[]): Promise<void> {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL || !enableDirectoryParsing) {
+      return;
+    }
+    if (selectedTocRuleIds.length === 0) {
+      return;
+    }
+    const tocRuleManager = getNovelTxtTocRuleManager();
+    await tocRuleManager.initialize();
+    const regexList: RegExp[] = [];
+    for (const ruleId of selectedTocRuleIds) {
+      const rule = tocRuleManager.getRule(ruleId);
+      if (!rule || !rule.rule) {
+        continue;
+      }
+      try {
+        regexList.push(new RegExp(rule.rule, 'm'));
+      } catch (error) {
+        logger.warn(TAG, `目录规则无效正则: id=${ruleId}, error=${String(error)}`);
+      }
+    }
+    if (regexList.length === 0) {
+      return;
+    }
+    const currentContent = this.content;
+    const nextChapters: UnifiedChapter[] = [];
+    let matchedCount = 0;
+    let changedCount = 0;
+    for (const chapter of currentContent.chapters) {
+      const baseTitle = chapter.title || '';
+      let nextTitle = baseTitle;
+      for (const regex of regexList) {
+        regex.lastIndex = 0;
+        const matched = regex.exec(baseTitle);
+        if (matched && matched[0]) {
+          matchedCount += 1;
+          nextTitle = matched[0].trim();
+          break;
+        }
+      }
+      if (nextTitle !== baseTitle) {
+        changedCount += 1;
+      }
+      const updatedChapter: UnifiedChapter = {
+        id: chapter.id,
+        title: nextTitle,
+        index: chapter.index,
+        isRead: chapter.isRead,
+        isDownloaded: chapter.isDownloaded,
+        isBookmarked: chapter.isBookmarked,
+        pageCount: chapter.pageCount,
+        wordCount: chapter.wordCount,
+        publishDate: chapter.publishDate,
+        originalData: chapter.originalData,
+        originalType: chapter.originalType
+      };
+      nextChapters.push(updatedChapter);
+    }
+    if (changedCount <= 0) {
+      logger.info(TAG, `目录规则已应用: 匹配章节=${matchedCount}, 标题变化=${changedCount}`);
+      return;
+    }
+    this.content = {
+      id: currentContent.id,
+      title: currentContent.title,
+      coverUrl: currentContent.coverUrl,
+      author: currentContent.author,
+      description: currentContent.description,
+      contentType: currentContent.contentType,
+      genres: currentContent.genres,
+      tags: currentContent.tags,
+      readStatus: currentContent.readStatus,
+      isFavorite: currentContent.isFavorite,
+      isNSFW: currentContent.isNSFW,
+      totalChapters: currentContent.totalChapters,
+      readChapters: currentContent.readChapters,
+      lastReadChapterIndex: currentContent.lastReadChapterIndex,
+      lastReadChapterTitle: currentContent.lastReadChapterTitle,
+      lastReadTime: currentContent.lastReadTime,
+      readProgress: currentContent.readProgress,
+      sourceId: currentContent.sourceId,
+      sourceName: currentContent.sourceName,
+      sourceUrl: currentContent.sourceUrl,
+      isLocal: currentContent.isLocal,
+      publisher: currentContent.publisher,
+      publishDate: currentContent.publishDate,
+      isbn: currentContent.isbn,
+      fileSize: currentContent.fileSize,
+      filePath: currentContent.filePath,
+      format: currentContent.format,
+      chapters: nextChapters,
+      originalData: currentContent.originalData,
+      originalType: currentContent.originalType
+    };
+    logger.info(TAG, `目录规则已应用: 匹配章节=${matchedCount}, 标题变化=${changedCount}`);
+  }
+
+  private async applyReplaceRulesToCurrentNovelContent(
+    enableReplaceRules: boolean,
+    selectedRuleIds: string[] | null = null
+  ): Promise<void> {
+    if (!this.content) {
+      return;
+    }
+    if (this.isLocalImportedEBookContent()) {
+      await this.applyReplaceRulesToCurrentEBookContent(enableReplaceRules, selectedRuleIds);
+      return;
+    }
+    if (this.content.contentType !== UnifiedContentType.NOVEL) {
+      return;
+    }
+    const sourceId = this.content.sourceId || this.pageParams?.sourceId;
+    const originalNovel = NovelAdapter.getOriginalNovel(this.content);
+    if (!originalNovel) {
+      return;
+    }
+    if (enableReplaceRules) {
+      const replaceRuleManager = NovelReplaceRuleManager.getInstance();
+      await replaceRuleManager.initialize();
+      await replaceRuleManager.refreshRules();
+    }
+    const contentProcessor = getNovelContentProcessor();
+    const baseDescription = originalNovel.intro || this.content.description;
+    const scopedRuleIds = selectedRuleIds === null ? undefined : selectedRuleIds;
+    const nextDescription = enableReplaceRules
+      ? contentProcessor.quickReplace(baseDescription, ReplaceScope.CONTENT, sourceId, scopedRuleIds)
+      : baseDescription;
+
+    const nextChapters: UnifiedChapter[] = [];
+    for (const chapter of this.content.chapters) {
+      const originalChapter = NovelAdapter.getOriginalChapter(chapter);
+      if (!originalChapter) {
+        nextChapters.push(chapter);
+        continue;
+      }
+      const baseTitle = originalChapter.title || chapter.title;
+      const nextTitle = enableReplaceRules
+        ? contentProcessor.processTitle(baseTitle, sourceId, scopedRuleIds)
+        : baseTitle;
+      const updatedChapter: UnifiedChapter = {
+        id: chapter.id,
+        title: nextTitle,
+        index: chapter.index,
+        isRead: chapter.isRead,
+        isDownloaded: chapter.isDownloaded,
+        isBookmarked: chapter.isBookmarked,
+        pageCount: chapter.pageCount,
+        wordCount: chapter.wordCount,
+        publishDate: chapter.publishDate,
+        originalData: chapter.originalData,
+        originalType: chapter.originalType
+      };
+      nextChapters.push(updatedChapter);
+    }
+    let nextLastReadChapterTitle = this.content.lastReadChapterTitle;
+    if (this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < nextChapters.length) {
+      nextLastReadChapterTitle = nextChapters[this.content.lastReadChapterIndex].title;
+    }
+    const currentContent = this.content;
+    this.content = {
+      id: currentContent.id,
+      title: currentContent.title,
+      coverUrl: currentContent.coverUrl,
+      author: currentContent.author,
+      description: nextDescription,
+      contentType: currentContent.contentType,
+      genres: currentContent.genres,
+      tags: currentContent.tags,
+      readStatus: currentContent.readStatus,
+      isFavorite: currentContent.isFavorite,
+      isNSFW: currentContent.isNSFW,
+      totalChapters: currentContent.totalChapters,
+      readChapters: currentContent.readChapters,
+      lastReadChapterIndex: currentContent.lastReadChapterIndex,
+      lastReadChapterTitle: nextLastReadChapterTitle,
+      lastReadTime: currentContent.lastReadTime,
+      readProgress: currentContent.readProgress,
+      sourceId: currentContent.sourceId,
+      sourceName: currentContent.sourceName,
+      sourceUrl: currentContent.sourceUrl,
+      isLocal: currentContent.isLocal,
+      publisher: currentContent.publisher,
+      publishDate: currentContent.publishDate,
+      isbn: currentContent.isbn,
+      fileSize: currentContent.fileSize,
+      filePath: currentContent.filePath,
+      format: currentContent.format,
+      chapters: nextChapters,
+      originalData: currentContent.originalData,
+      originalType: currentContent.originalType
+    };
+  }
+
+  private async applyReplaceRulesToCurrentEBookContent(
+    enableReplaceRules: boolean,
+    selectedRuleIds: string[] | null = null
+  ): Promise<void> {
+    if (!this.content) {
+      return;
+    }
+    const ebook = EBookAdapter.getOriginalEBook(this.content);
+    if (!ebook) {
+      return;
+    }
+    if (enableReplaceRules) {
+      const replaceRuleManager = NovelReplaceRuleManager.getInstance();
+      await replaceRuleManager.initialize();
+      await replaceRuleManager.refreshRules();
+    }
+    const contentProcessor = getNovelContentProcessor();
+    const scopedRuleIds = selectedRuleIds === null ? undefined : selectedRuleIds;
+    const nextDescription = enableReplaceRules
+      ? contentProcessor.quickReplace(ebook.metadata?.description || this.content.description, ReplaceScope.CONTENT, '', scopedRuleIds)
+      : (ebook.metadata?.description || this.content.description);
+
+    const nextChapters: UnifiedChapter[] = [];
+    for (const chapter of this.content.chapters) {
+      const baseTitle = chapter.title || '';
+      const nextTitle = enableReplaceRules
+        ? contentProcessor.processTitle(baseTitle, '', scopedRuleIds)
+        : baseTitle;
+      const updatedChapter: UnifiedChapter = {
+        id: chapter.id,
+        title: nextTitle,
+        index: chapter.index,
+        isRead: chapter.isRead,
+        isDownloaded: chapter.isDownloaded,
+        isBookmarked: chapter.isBookmarked,
+        pageCount: chapter.pageCount,
+        wordCount: chapter.wordCount,
+        publishDate: chapter.publishDate,
+        originalData: chapter.originalData,
+        originalType: chapter.originalType
+      };
+      nextChapters.push(updatedChapter);
+    }
+    let nextLastReadChapterTitle = this.content.lastReadChapterTitle;
+    if (this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < nextChapters.length) {
+      nextLastReadChapterTitle = nextChapters[this.content.lastReadChapterIndex].title;
+    }
+    const currentContent = this.content;
+    this.content = {
+      id: currentContent.id,
+      title: currentContent.title,
+      coverUrl: currentContent.coverUrl,
+      author: currentContent.author,
+      description: nextDescription,
+      contentType: currentContent.contentType,
+      genres: currentContent.genres,
+      tags: currentContent.tags,
+      readStatus: currentContent.readStatus,
+      isFavorite: currentContent.isFavorite,
+      isNSFW: currentContent.isNSFW,
+      totalChapters: currentContent.totalChapters,
+      readChapters: currentContent.readChapters,
+      lastReadChapterIndex: currentContent.lastReadChapterIndex,
+      lastReadChapterTitle: nextLastReadChapterTitle,
+      lastReadTime: currentContent.lastReadTime,
+      readProgress: currentContent.readProgress,
+      sourceId: currentContent.sourceId,
+      sourceName: currentContent.sourceName,
+      sourceUrl: currentContent.sourceUrl,
+      isLocal: currentContent.isLocal,
+      publisher: currentContent.publisher,
+      publishDate: currentContent.publishDate,
+      isbn: currentContent.isbn,
+      fileSize: currentContent.fileSize,
+      filePath: currentContent.filePath,
+      format: currentContent.format,
+      chapters: nextChapters,
+      originalData: currentContent.originalData,
+      originalType: currentContent.originalType
+    };
   }
 
   /**
@@ -4187,917 +3318,6 @@ export struct UnifiedDetailPage {
     return this.isLocalTxtNovelEBookContent() || this.isLocalWebTextEBookContent();
   }
 
-  private getCurrentReadAloudCacheBookId(): string {
-    if (this.readAloudCacheSummary?.bookId) {
-      return this.readAloudCacheSummary.bookId;
-    }
-    if (!this.content) {
-      return '';
-    }
-    if (this.content.contentType === UnifiedContentType.NOVEL) {
-      return this.getNovelCacheBookId((this.content.sourceId || 'local').trim(), this.content.id);
-    }
-    if (this.isLocalTxtNovelEBookContent()) {
-      const ebook = EBookAdapter.getOriginalEBook(this.content);
-      return ebook ? buildLocalTextNovelBookId(ebook.id) : '';
-    }
-    return '';
-  }
-
-  private clearReadAloudCacheRefreshTimer(): void {
-    if (this.readAloudCacheRefreshTimer < 0) {
-      return;
-    }
-    clearTimeout(this.readAloudCacheRefreshTimer);
-    this.readAloudCacheRefreshTimer = -1;
-  }
-
-  private scheduleReadAloudCacheRefresh(reason: string): void {
-    if (!this.supportsReadAloudCacheSection()) {
-      return;
-    }
-    this.clearReadAloudCacheRefreshTimer();
-    this.readAloudCacheRefreshTimer = setTimeout(() => {
-      this.readAloudCacheRefreshTimer = -1;
-      logger.debug(TAG, `刷新听书缓存摘要: reason=${reason}`);
-      void this.loadReadAloudCacheSummary();
-    }, 180);
-  }
-
-  private toggleReadAloudCacheExpanded(): void {
-    animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
-      this.isReadAloudCacheExpanded = !this.isReadAloudCacheExpanded;
-    });
-  }
-
-  private async loadReadAloudCacheSummary(showToastOnError: boolean = false): Promise<void> {
-    if (!this.supportsReadAloudCacheSection()) {
-      this.readAloudCacheSummary = null;
-      this.isReadAloudCacheLoading = false;
-      return;
-    }
-    this.isReadAloudCacheLoading = true;
-    try {
-      this.readAloudCacheSummary = await this.remoteReadAloudCacheService.inspectBookCache(this.content);
-      const chapterCount = this.readAloudCacheSummary?.chapterCount ?? 0;
-      if (chapterCount > 0 && this.readAloudCacheManageChapterIndex >= chapterCount) {
-        this.readAloudCacheManageChapterIndex = chapterCount - 1;
-      }
-      if (this.showReadAloudCacheDialog && this.readAloudCacheDialogActiveTab === 1 && !this.isReadAloudCacheManageMutating) {
-        await this.loadReadAloudCacheManageDetail();
-      }
-    } catch (error) {
-      logger.error(TAG, `加载听书缓存失败: ${String(error)}`);
-      this.readAloudCacheSummary = null;
-      if (showToastOnError) {
-        promptAction.showToast({ message: '加载听书缓存失败', duration: 1400 });
-      }
-    } finally {
-      this.isReadAloudCacheLoading = false;
-    }
-  }
-
-  private formatReadAloudCacheSize(bytes: number): string {
-    const safeBytes = Math.max(0, Math.floor(bytes));
-    if (safeBytes >= 1024 * 1024 * 1024) {
-      return `${(safeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-    }
-    if (safeBytes >= 1024 * 1024) {
-      return `${(safeBytes / (1024 * 1024)).toFixed(1)} MB`;
-    }
-    if (safeBytes >= 1024) {
-      return `${(safeBytes / 1024).toFixed(1)} KB`;
-    }
-    return `${safeBytes} B`;
-  }
-
-  private getReadAloudCacheUpdatedLabel(timestamp: number): string {
-    if (!timestamp || timestamp <= 0) {
-      return '未缓存';
-    }
-    return this.formatRelativeTime(timestamp);
-  }
-
-  private getReadAloudCacheQuickSelectionStart(): number {
-    const chapters = this.readAloudCacheSummary?.chapters ?? [];
-    for (let index = 0; index < chapters.length; index++) {
-      if (!chapters[index].cached) {
-        return index;
-      }
-    }
-    if (this.content && this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < chapters.length) {
-      return this.content.lastReadChapterIndex;
-    }
-    return 0;
-  }
-
-  private openReadAloudCacheDialog(): void {
-    if (this.isCurrentNovelAudioSource()) {
-      this.openCacheDialogFromDetail('read_aloud_cache_section');
-      return;
-    }
-    if (!this.supportsReadAloudCacheSection()) {
-      return;
-    }
-    const totalChapters = Math.max(1, this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 1);
-    const quickStart = this.getReadAloudCacheQuickSelectionStart();
-    this.readAloudCacheDialogActiveTab = 0;
-    this.readAloudCacheSelectionMode = 'range';
-    this.readAloudCacheRangeStart = Math.max(0, Math.min(quickStart, totalChapters - 1));
-    this.readAloudCacheRangeEnd = Math.max(this.readAloudCacheRangeStart, totalChapters - 1);
-    this.readAloudCacheSelectedChapters = new Set<number>();
-    this.readAloudCacheChapterListExpanded = true;
-    this.readAloudCacheManageChapterIndex = Math.max(0, Math.min(quickStart, totalChapters - 1));
-    this.readAloudCacheManageDetail = null;
-    this.isReadAloudCacheManageLoading = false;
-    this.isReadAloudCacheManageMutating = false;
-    this.readAloudCacheManageChapterSectionExpanded = true;
-    this.readAloudCacheManageTargetSectionExpanded = true;
-    this.readAloudCacheManageSourceSectionExpanded = true;
-    this.readAloudCacheManageSelectedTargetIndex = -1;
-    this.readAloudCacheManageBlockedSuggestionKeys = new Set();
-    this.readAloudCacheManageStatusMessage = '';
-    this.readAloudCacheTaskSettings = this.remoteReadAloudCacheService.buildEditableRemoteSettings(this.content, {
-      cacheAudioFiles: true
-    });
-    this.syncReadAloudCachePresetDraftName();
-    this.readAloudCachePresetStatusMessage = '';
-    this.showReadAloudCacheDialog = true;
-    animateTo({
-      duration: 260,
-      curve: Curve.EaseOut
-    }, () => {
-      this.readAloudCacheDialogOpacity = 1;
-      this.readAloudCacheDialogScale = 1;
-      this.readAloudCacheDialogTranslateY = 0;
-    });
-  }
-
-  private handleReadAloudCacheDialogTabChange(index: number): void {
-    if (this.readAloudCacheDialogActiveTab === index) {
-      return;
-    }
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
-      this.readAloudCacheDialogActiveTab = index;
-    });
-    if (index === 1) {
-      this.readAloudCacheManageSelectedTargetIndex = -1;
-      void this.loadReadAloudCacheManageDetail();
-      return;
-    }
-    if (index === 2) {
-      this.syncReadAloudCachePresetDraftName();
-      this.readAloudCachePresetStatusMessage = '';
-    }
-  }
-
-  private closeReadAloudCacheDialog(): void {
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseIn
-    }, () => {
-      this.readAloudCacheDialogOpacity = 0;
-      this.readAloudCacheDialogScale = 0.96;
-      this.readAloudCacheDialogTranslateY = 12;
-    });
-    setTimeout(() => {
-      this.showReadAloudCacheDialog = false;
-    }, 200);
-  }
-
-  private async loadReadAloudCacheManageDetail(showToastOnError: boolean = false): Promise<void> {
-    if (!this.supportsReadAloudCacheSection()) {
-      this.readAloudCacheManageDetail = null;
-      this.isReadAloudCacheManageLoading = false;
-      return;
-    }
-    const requestToken = this.readAloudCacheManageLoadToken + 1;
-    this.readAloudCacheManageLoadToken = requestToken;
-    const requestedChapterIndex = this.readAloudCacheManageChapterIndex;
-    this.isReadAloudCacheManageLoading = true;
-    try {
-      const detail = await this.remoteReadAloudCacheService.inspectChapterCacheDetail(
-        this.content,
-        requestedChapterIndex
-      );
-      if (requestToken !== this.readAloudCacheManageLoadToken || requestedChapterIndex !== this.readAloudCacheManageChapterIndex) {
-        return;
-      }
-      this.readAloudCacheManageDetail = detail;
-    } catch (error) {
-      if (requestToken !== this.readAloudCacheManageLoadToken) {
-        return;
-      }
-      logger.error(TAG, `加载听书缓存管理明细失败: chapter=${requestedChapterIndex}, error=${String(error)}`);
-      this.readAloudCacheManageDetail = null;
-      if (showToastOnError) {
-        promptAction.showToast({ message: '加载听书缓存管理明细失败', duration: 1400 });
-      }
-    } finally {
-      if (requestToken === this.readAloudCacheManageLoadToken) {
-        this.isReadAloudCacheManageLoading = false;
-      }
-    }
-  }
-
-  private selectReadAloudCacheManageChapter(chapterIndex: number): void {
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
-      this.readAloudCacheManageChapterIndex = Math.max(0, chapterIndex);
-      this.readAloudCacheManageDetail = null;
-      this.readAloudCacheManageSelectedTargetIndex = -1;
-      this.readAloudCacheManageBlockedSuggestionKeys = new Set();
-      this.readAloudCacheManageStatusMessage = '';
-    });
-    void this.loadReadAloudCacheManageDetail();
-  }
-
-  private selectReadAloudCacheManageTarget(segmentIndex: number): void {
-    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
-      this.readAloudCacheManageSelectedTargetIndex = this.readAloudCacheManageSelectedTargetIndex === segmentIndex ? -1 : segmentIndex;
-    });
-  }
-
-  private toggleReadAloudCacheManageSection(section: 'chapter' | 'target' | 'source'): void {
-    animateTo({ duration: 280, curve: Curve.EaseInOut }, () => {
-      switch (section) {
-        case 'chapter':
-          this.readAloudCacheManageChapterSectionExpanded = !this.readAloudCacheManageChapterSectionExpanded;
-          break;
-        case 'target':
-          this.readAloudCacheManageTargetSectionExpanded = !this.readAloudCacheManageTargetSectionExpanded;
-          break;
-        default:
-          this.readAloudCacheManageSourceSectionExpanded = !this.readAloudCacheManageSourceSectionExpanded;
-          break;
-      }
-    });
-  }
-
-  private buildReadAloudCacheSuggestionPairKey(
-    segment: RemoteReadAloudCacheSegmentDetail,
-    targetSegmentIndex: number
-  ): string {
-    return `${segment.manifestPath ?? ''}::${segment.segmentIndex}::${targetSegmentIndex}`;
-  }
-
-  private getEffectiveReadAloudCacheSuggestedTarget(
-    segment: RemoteReadAloudCacheSegmentDetail,
-    blockedKeys?: Set<string>
-  ): RemoteReadAloudCacheTargetSuggestion | null {
-    const effectiveBlockedKeys = blockedKeys ?? this.readAloudCacheManageBlockedSuggestionKeys;
-    const suggestions = segment.suggestedTargets ?? [];
-    for (let index = 0; index < suggestions.length; index++) {
-      const suggestion = suggestions[index];
-      if (!effectiveBlockedKeys.has(this.buildReadAloudCacheSuggestionPairKey(segment, suggestion.targetSegmentIndex))) {
-        return suggestion;
-      }
-    }
-    return null;
-  }
-
-  private getReadAloudCacheBlockedSuggestionCount(segment: RemoteReadAloudCacheSegmentDetail): number {
-    let count = 0;
-    const suggestions = segment.suggestedTargets ?? [];
-    for (let index = 0; index < suggestions.length; index++) {
-      if (this.readAloudCacheManageBlockedSuggestionKeys.has(
-        this.buildReadAloudCacheSuggestionPairKey(segment, suggestions[index].targetSegmentIndex)
-      )) {
-        count += 1;
-      }
-    }
-    return count;
-  }
-
-  private async attachReadAloudCacheSourceSegmentToTarget(
-    segment: RemoteReadAloudCacheSegmentDetail,
-    targetSegmentIndex: number,
-    successMessage: string
-  ): Promise<void> {
-    if (this.isReadAloudCacheManageMutating || targetSegmentIndex < 0) {
-      return;
-    }
-    this.readAloudCacheManageSelectedTargetIndex = targetSegmentIndex;
-    this.isReadAloudCacheManageMutating = true;
-    try {
-      await this.remoteReadAloudCacheService.attachSegmentToCurrentSlot(
-        this.content,
-        this.readAloudCacheManageChapterIndex,
-        targetSegmentIndex,
-        segment.manifestPath ?? '',
-        segment.segmentIndex
-      );
-      await this.loadReadAloudCacheSummary();
-      await this.loadReadAloudCacheManageDetail();
-      this.readAloudCacheManageStatusMessage = successMessage;
-      promptAction.showToast({ message: '已完成分段匹配', duration: 1400 });
-    } catch (error) {
-      logger.error(TAG, `匹配听书分段失败: target=${targetSegmentIndex}, error=${String(error)}`);
-      this.readAloudCacheManageStatusMessage = '分段匹配失败';
-      promptAction.showToast({ message: '分段匹配失败', duration: 1400 });
-    } finally {
-      this.isReadAloudCacheManageMutating = false;
-    }
-  }
-
-  private async attachReadAloudCacheSourceSegment(segment: RemoteReadAloudCacheSegmentDetail): Promise<void> {
-    if (this.readAloudCacheManageSelectedTargetIndex < 0) {
-      return;
-    }
-    await this.attachReadAloudCacheSourceSegmentToTarget(
-      segment,
-      this.readAloudCacheManageSelectedTargetIndex,
-      `已将分段匹配到当前文本槽位 S${this.readAloudCacheManageSelectedTargetIndex + 1}`
-    );
-  }
-
-  private async attachReadAloudCacheSourceSegmentToSuggestedTarget(segment: RemoteReadAloudCacheSegmentDetail): Promise<void> {
-    const suggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment);
-    if (!suggestion) {
-      this.readAloudCacheManageStatusMessage = '当前没有可直接采用的建议槽位';
-      promptAction.showToast({ message: '当前没有可直接采用的建议槽位', duration: 1400 });
-      return;
-    }
-    await this.attachReadAloudCacheSourceSegmentToTarget(
-      segment,
-      suggestion.targetSegmentIndex,
-      `已将分段按建议匹配到 S${suggestion.targetSegmentIndex + 1}`
-    );
-  }
-
-  private forbidReadAloudCacheSuggestedTarget(segment: RemoteReadAloudCacheSegmentDetail): void {
-    const suggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment);
-    if (!suggestion) {
-      this.readAloudCacheManageStatusMessage = '该分段已经没有可建议的目标槽位';
-      return;
-    }
-    const nextBlockedKeys = new Set(this.readAloudCacheManageBlockedSuggestionKeys);
-    nextBlockedKeys.add(this.buildReadAloudCacheSuggestionPairKey(segment, suggestion.targetSegmentIndex));
-    const nextSuggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment, nextBlockedKeys);
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
-      this.readAloudCacheManageBlockedSuggestionKeys = nextBlockedKeys;
-    });
-    if (nextSuggestion) {
-      this.readAloudCacheManageStatusMessage = `已禁止建议到 S${suggestion.targetSegmentIndex + 1}，当前改为建议 S${nextSuggestion.targetSegmentIndex + 1}`;
-      return;
-    }
-    this.readAloudCacheManageStatusMessage = `已禁止建议到 S${suggestion.targetSegmentIndex + 1}，该分段暂时不再推荐匹配`;
-  }
-
-  private async removeReadAloudCacheManageSegment(segment: RemoteReadAloudCacheSegmentDetail): Promise<void> {
-    if (this.isReadAloudCacheManageMutating) {
-      return;
-    }
-    this.isReadAloudCacheManageMutating = true;
-    try {
-      await this.remoteReadAloudCacheService.removeSegmentFromManifest(
-        this.content,
-        this.readAloudCacheManageChapterIndex,
-        segment.manifestPath ?? '',
-        segment.segmentIndex
-      );
-      await this.loadReadAloudCacheSummary();
-      await this.loadReadAloudCacheManageDetail();
-      this.readAloudCacheManageStatusMessage = `已删除分段 S${segment.segmentIndex + 1}`;
-      promptAction.showToast({ message: '已删除分段缓存记录', duration: 1400 });
-    } catch (error) {
-      logger.error(TAG, `删除听书分段失败: segment=${segment.segmentIndex}, error=${String(error)}`);
-      this.readAloudCacheManageStatusMessage = '删除分段失败';
-      promptAction.showToast({ message: '删除分段失败', duration: 1400 });
-    } finally {
-      this.isReadAloudCacheManageMutating = false;
-    }
-  }
-
-  private toggleReadAloudCacheChapterSelection(index: number): void {
-    const next = new Set(this.readAloudCacheSelectedChapters);
-    if (next.has(index)) {
-      next.delete(index);
-    } else {
-      next.add(index);
-    }
-    this.readAloudCacheSelectedChapters = next;
-  }
-
-  private getSelectedReadAloudChapterIndexes(): number[] {
-    const totalChapters = this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0;
-    if (totalChapters <= 0) {
-      return [];
-    }
-    if (this.readAloudCacheSelectionMode === 'range') {
-      const start = Math.max(0, Math.min(this.readAloudCacheRangeStart, totalChapters - 1));
-      const end = Math.max(start, Math.min(this.readAloudCacheRangeEnd, totalChapters - 1));
-      const indexes: number[] = [];
-      for (let index = start; index <= end; index++) {
-        indexes.push(index);
-      }
-      return indexes;
-    }
-    return Array.from(this.readAloudCacheSelectedChapters.values())
-      .filter((index: number) => index >= 0 && index < totalChapters)
-      .sort((left: number, right: number) => left - right);
-  }
-
-  private getSelectedReadAloudChapterCount(): number {
-    return this.getSelectedReadAloudChapterIndexes().length;
-  }
-
-  private updateReadAloudCacheTaskSettings(partial: Partial<RemoteReadAloudSettings>): void {
-    const mergedSettings = mergeRemoteReadAloudSettings(this.readAloudCacheTaskSettings, partial);
-    mergedSettings.cacheAudioFiles = true;
-    this.readAloudCacheTaskSettings = mergedSettings;
-  }
-
-  private isMiMoReadAloudCacheSettings(): boolean {
-    return isXiaomiMimoRemoteReadAloud(this.readAloudCacheTaskSettings);
-  }
-
-  private getReadAloudCacheStylePrompt(): string {
-    return normalizeRemoteReadAloudStylePrompt(this.readAloudCacheTaskSettings.stylePrompt);
-  }
-
-  private isReadAloudCacheStyleSelected(style: string): boolean {
-    return hasRemoteReadAloudStylePrompt(this.getReadAloudCacheStylePrompt(), style);
-  }
-
-  private toggleReadAloudCacheStyle(style: string): void {
-    this.updateReadAloudCacheTaskSettings({
-      stylePrompt: toggleRemoteReadAloudStylePrompt(this.getReadAloudCacheStylePrompt(), style)
-    });
-  }
-
-  private getReadAloudCacheVoiceLabel(voice: string): string {
-    if (this.isMiMoReadAloudCacheSettings()) {
-      return getXiaomiMimoRemoteReadAloudVoiceLabel(voice);
-    }
-    const normalizedVoice = voice.trim();
-    return normalizedVoice.length > 0 ? normalizedVoice : '默认音色';
-  }
-
-  private syncReadAloudCachePresetDraftName(): void {
-    const activePreset = this.getActiveReadAloudCachePreset();
-    this.readAloudCachePresetDraftName = activePreset ? activePreset.name : '';
-  }
-
-  private getReadAloudCacheCurrentConfig(): RemoteReadAloudPresetConfig {
-    return extractRemoteReadAloudPresetConfig(this.readAloudCacheTaskSettings);
-  }
-
-  private getReadAloudCacheConfigWithoutApiKey(config: RemoteReadAloudPresetConfig): RemoteReadAloudPresetConfig {
-    return {
-      endpoint: config.endpoint,
-      apiPath: config.apiPath,
-      apiKey: '',
-      model: config.model,
-      voice: config.voice,
-      stylePrompt: config.stylePrompt,
-      audioFormat: config.audioFormat,
-      streamEnabled: config.streamEnabled,
-      prefetchSegments: config.prefetchSegments,
-      connectTimeoutMs: config.connectTimeoutMs,
-      readTimeoutMs: config.readTimeoutMs,
-      maxInputChars: config.maxInputChars,
-      reservedInputChars: config.reservedInputChars,
-      minChunkChars: config.minChunkChars,
-      targetChunkChars: config.targetChunkChars,
-      maxChunkChars: config.maxChunkChars,
-      cacheAudioFiles: config.cacheAudioFiles,
-      autoConcatAudio: config.autoConcatAudio,
-      customHeadersJson: config.customHeadersJson,
-      extraBodyJson: config.extraBodyJson
-    };
-  }
-
-  private getActiveReadAloudCachePreset(): RemoteReadAloudPreset | null {
-    const activePresetId = this.readAloudCacheTaskSettings.activePresetId ?? '';
-    if (activePresetId.length <= 0) {
-      return null;
-    }
-    return this.readAloudCacheTaskSettings.presets.find((preset: RemoteReadAloudPreset) => preset.id === activePresetId) ?? null;
-  }
-
-  private isCurrentReadAloudCacheConfigMatchingPreset(preset: RemoteReadAloudPreset): boolean {
-    const current = this.getReadAloudCacheCurrentConfig();
-    if (isRemoteReadAloudPresetConfigEqual(current, preset.settings)) {
-      return true;
-    }
-    if (!preset.builtIn) {
-      return false;
-    }
-    return isRemoteReadAloudPresetConfigEqual(
-      this.getReadAloudCacheConfigWithoutApiKey(current),
-      this.getReadAloudCacheConfigWithoutApiKey(preset.settings)
-    );
-  }
-
-  private getReadAloudCachePresetSummary(): string {
-    const activePreset = this.getActiveReadAloudCachePreset();
-    if (!activePreset) {
-      return '当前配置还没有保存为预设';
-    }
-    if (this.isCurrentReadAloudCacheConfigMatchingPreset(activePreset)) {
-      return `当前预设：${activePreset.name}`;
-    }
-    return `当前基于“${activePreset.name}”修改`;
-  }
-
-  private buildReadAloudCachePresetDescriptionFromCurrentConfig(): string {
-    const remote = this.readAloudCacheTaskSettings;
-    if (remote.endpoint.toLowerCase().includes('xiaomimimo.com') || remote.model.toLowerCase() === 'mimo-v2-tts') {
-      const stylePrompt = this.getReadAloudCacheStylePrompt();
-      const voiceLabel = this.getReadAloudCacheVoiceLabel(remote.voice);
-      return stylePrompt.length > 0
-        ? `基于 Xiaomi MiMo-V2-TTS / ${voiceLabel} / ${stylePrompt}`
-        : `基于 Xiaomi MiMo-V2-TTS / ${voiceLabel}`;
-    }
-    const model = remote.model.trim().length > 0 ? remote.model.trim() : '自定义模型';
-    const voice = this.getReadAloudCacheVoiceLabel(remote.voice);
-    return `${model} / ${voice}`;
-  }
-
-  private generateReadAloudCachePresetId(): string {
-    return `remote_preset_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-  }
-
-  private canEditActiveReadAloudCachePreset(): boolean {
-    const activePreset = this.getActiveReadAloudCachePreset();
-    return activePreset !== null && activePreset.builtIn !== true;
-  }
-
-  private buildReadAloudCacheSettingsUpdate(
-    config: RemoteReadAloudPresetConfig,
-    activePresetId: string,
-    presets?: RemoteReadAloudPreset[]
-  ): Partial<RemoteReadAloudSettings> {
-    const update: Partial<RemoteReadAloudSettings> = {
-      endpoint: config.endpoint,
-      apiPath: config.apiPath,
-      apiKey: config.apiKey,
-      model: config.model,
-      voice: config.voice,
-      stylePrompt: config.stylePrompt,
-      audioFormat: config.audioFormat,
-      streamEnabled: config.streamEnabled,
-      prefetchSegments: config.prefetchSegments,
-      connectTimeoutMs: config.connectTimeoutMs,
-      readTimeoutMs: config.readTimeoutMs,
-      maxInputChars: config.maxInputChars,
-      reservedInputChars: config.reservedInputChars,
-      minChunkChars: config.minChunkChars,
-      targetChunkChars: config.targetChunkChars,
-      maxChunkChars: config.maxChunkChars,
-      cacheAudioFiles: config.cacheAudioFiles,
-      autoConcatAudio: config.autoConcatAudio,
-      customHeadersJson: config.customHeadersJson,
-      extraBodyJson: config.extraBodyJson,
-      activePresetId
-    };
-    if (presets !== undefined) {
-      update.presets = presets;
-    }
-    return update;
-  }
-
-  private saveReadAloudCachePresetAsNew(): void {
-    const name = this.readAloudCachePresetDraftName.trim().length > 0 ? this.readAloudCachePresetDraftName.trim() : '新的远程预设';
-    const nextPreset: RemoteReadAloudPreset = {
-      id: this.generateReadAloudCachePresetId(),
-      name,
-      description: this.buildReadAloudCachePresetDescriptionFromCurrentConfig(),
-      builtIn: false,
-      settings: this.getReadAloudCacheCurrentConfig()
-    };
-    const nextPresets = this.readAloudCacheTaskSettings.presets.slice();
-    nextPresets.push(nextPreset);
-    this.updateReadAloudCacheTaskSettings(this.buildReadAloudCacheSettingsUpdate(nextPreset.settings, nextPreset.id, nextPresets));
-    this.readAloudCachePresetDraftName = name;
-    this.readAloudCachePresetStatusMessage = `已保存预设：${name}`;
-  }
-
-  private updateCurrentReadAloudCachePreset(): void {
-    const activePreset = this.getActiveReadAloudCachePreset();
-    if (!activePreset || activePreset.builtIn) {
-      this.saveReadAloudCachePresetAsNew();
-      return;
-    }
-    const name = this.readAloudCachePresetDraftName.trim().length > 0 ? this.readAloudCachePresetDraftName.trim() : activePreset.name;
-    const nextPresets = this.readAloudCacheTaskSettings.presets.map((preset: RemoteReadAloudPreset) => {
-      if (preset.id !== activePreset.id) {
-        return preset;
-      }
-      return {
-        id: preset.id,
-        name,
-        description: this.buildReadAloudCachePresetDescriptionFromCurrentConfig(),
-        builtIn: false,
-        settings: this.getReadAloudCacheCurrentConfig()
-      };
-    });
-    this.updateReadAloudCacheTaskSettings({
-      activePresetId: activePreset.id,
-      presets: nextPresets
-    });
-    this.readAloudCachePresetDraftName = name;
-    this.readAloudCachePresetStatusMessage = `已更新预设：${name}`;
-  }
-
-  private applyReadAloudCachePreset(preset: RemoteReadAloudPreset): void {
-    const currentRemote = this.readAloudCacheTaskSettings;
-    const presetApiKey = preset.settings.apiKey ?? '';
-    const shouldPreserveApiKey = preset.builtIn === true &&
-      presetApiKey.trim().length <= 0 &&
-      currentRemote.apiKey.trim().length > 0;
-    const appliedConfig: RemoteReadAloudPresetConfig = {
-      endpoint: preset.settings.endpoint,
-      apiPath: preset.settings.apiPath,
-      apiKey: shouldPreserveApiKey ? currentRemote.apiKey : presetApiKey,
-      model: preset.settings.model,
-      voice: preset.settings.voice,
-      stylePrompt: preset.settings.stylePrompt,
-      audioFormat: preset.settings.audioFormat,
-      streamEnabled: preset.settings.streamEnabled,
-      prefetchSegments: preset.settings.prefetchSegments,
-      connectTimeoutMs: preset.settings.connectTimeoutMs,
-      readTimeoutMs: preset.settings.readTimeoutMs,
-      maxInputChars: preset.settings.maxInputChars,
-      reservedInputChars: preset.settings.reservedInputChars,
-      minChunkChars: preset.settings.minChunkChars,
-      targetChunkChars: preset.settings.targetChunkChars,
-      maxChunkChars: preset.settings.maxChunkChars,
-      cacheAudioFiles: preset.settings.cacheAudioFiles,
-      autoConcatAudio: preset.settings.autoConcatAudio,
-      customHeadersJson: preset.settings.customHeadersJson,
-      extraBodyJson: preset.settings.extraBodyJson
-    };
-    this.updateReadAloudCacheTaskSettings(this.buildReadAloudCacheSettingsUpdate(appliedConfig, preset.id));
-    this.readAloudCachePresetDraftName = preset.name;
-    this.readAloudCachePresetStatusMessage = `已应用预设：${preset.name}`;
-  }
-
-  private deleteCurrentReadAloudCachePreset(): void {
-    const activePreset = this.getActiveReadAloudCachePreset();
-    if (!activePreset) {
-      this.readAloudCachePresetStatusMessage = '当前没有可删除的预设';
-      return;
-    }
-    if (activePreset.builtIn) {
-      this.readAloudCachePresetStatusMessage = '内置预设不可删除';
-      return;
-    }
-    const nextPresets = this.readAloudCacheTaskSettings.presets.filter((preset: RemoteReadAloudPreset) => preset.id !== activePreset.id);
-    const fallbackPreset = nextPresets.find((preset: RemoteReadAloudPreset) => preset.id === DEFAULT_REMOTE_READ_ALOUD_PRESET_ID) ??
-      (nextPresets.length > 0 ? nextPresets[0] : null);
-    if (fallbackPreset) {
-      this.updateReadAloudCacheTaskSettings(this.buildReadAloudCacheSettingsUpdate(fallbackPreset.settings, fallbackPreset.id, nextPresets));
-      this.readAloudCachePresetDraftName = fallbackPreset.name;
-    } else {
-      this.updateReadAloudCacheTaskSettings({
-        activePresetId: '',
-        presets: nextPresets
-      });
-      this.readAloudCachePresetDraftName = '';
-    }
-    this.readAloudCachePresetStatusMessage = `已删除预设：${activePreset.name}`;
-  }
-
-  private parseReadAloudCacheIntegerInput(text: string, fallback: number, min: number, max: number): number {
-    const parsed = Math.floor(Number(text));
-    if (!Number.isFinite(parsed)) {
-      return fallback;
-    }
-    return Math.max(min, Math.min(max, parsed));
-  }
-
-  private async applyReadAloudCacheTaskSettingsToCurrent(): Promise<void> {
-    if (this.isReadAloudCurrentSettingsSaving) {
-      return;
-    }
-    this.isReadAloudCurrentSettingsSaving = true;
-    try {
-      await this.remoteReadAloudCacheService.saveCurrentRemoteSettings(this.content, this.readAloudCacheTaskSettings);
-      await this.loadReadAloudCacheSummary();
-      this.readAloudCacheTaskSettings = this.remoteReadAloudCacheService.buildEditableRemoteSettings(this.content, {
-        cacheAudioFiles: true
-      });
-      this.syncReadAloudCachePresetDraftName();
-      if (this.showReadAloudCacheDialog && this.readAloudCacheDialogActiveTab === 1) {
-        await this.loadReadAloudCacheManageDetail();
-      }
-      promptAction.showToast({ message: '已保存当前书籍远程 TTS 设置', duration: 1500 });
-    } catch (error) {
-      logger.error(TAG, `保存当前远程TTS设置失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存当前远程 TTS 设置失败', duration: 1500 });
-    } finally {
-      this.isReadAloudCurrentSettingsSaving = false;
-    }
-  }
-
-  private buildReadAloudCacheChapterLabel(index: number): string {
-    const summaryChapter = this.readAloudCacheSummary?.chapters[index];
-    if (summaryChapter) {
-      return summaryChapter.chapterTitle || `第 ${index + 1} 章`;
-    }
-    const contentChapter = this.content?.chapters[index];
-    if (contentChapter) {
-      return contentChapter.title || `第 ${index + 1} 章`;
-    }
-    return `第 ${index + 1} 章`;
-  }
-
-  private async quickPrecacheReadAloudChapter(chapterIndex: number): Promise<void> {
-    if (this.isReadAloudPrecaching) {
-      return;
-    }
-    const chapterTitle = this.buildReadAloudCacheChapterLabel(chapterIndex);
-    try {
-      await this.runReadAloudPrecacheTask([chapterIndex], false);
-      promptAction.showToast({ message: `已缓存 ${chapterTitle}`, duration: 1400 });
-    } catch (error) {
-      logger.error(TAG, `单章听书缓存失败: chapter=${chapterIndex}, error=${String(error)}`);
-      promptAction.showToast({ message: '当前章节缓存失败', duration: 1400 });
-    }
-  }
-
-  private async clearReadAloudCacheChapter(chapterIndex: number): Promise<void> {
-    if (this.isReadAloudPrecaching) {
-      return;
-    }
-    try {
-      await this.remoteReadAloudCacheService.clearChapterCache(this.content, chapterIndex);
-      await this.loadReadAloudCacheSummary();
-      promptAction.showToast({ message: `已清理第 ${chapterIndex + 1} 章听书缓存`, duration: 1400 });
-    } catch (error) {
-      logger.error(TAG, `清理章节听书缓存失败: chapter=${chapterIndex}, error=${String(error)}`);
-      promptAction.showToast({ message: '清理章节缓存失败', duration: 1400 });
-    }
-  }
-
-  private async clearReadAloudCacheBook(): Promise<void> {
-    if (this.isReadAloudPrecaching) {
-      return;
-    }
-    try {
-      await this.remoteReadAloudCacheService.clearBookCache(this.content);
-      await this.loadReadAloudCacheSummary();
-      promptAction.showToast({ message: '已清理当前小说听书缓存', duration: 1400 });
-    } catch (error) {
-      logger.error(TAG, `清理当前小说听书缓存失败: ${String(error)}`);
-      promptAction.showToast({ message: '清理听书缓存失败', duration: 1400 });
-    }
-  }
-
-  private async startReadAloudCacheTaskFromDialog(): Promise<void> {
-    const targetIndexes = this.getSelectedReadAloudChapterIndexes();
-    if (targetIndexes.length <= 0) {
-      promptAction.showToast({ message: '请先选择要缓存的章节', duration: 1400 });
-      return;
-    }
-    try {
-      await this.runReadAloudPrecacheTask(targetIndexes, true);
-      await this.loadReadAloudCacheSummary();
-      promptAction.showToast({ message: `已完成 ${targetIndexes.length} 章听书缓存`, duration: 1500 });
-    } catch (error) {
-      logger.error(TAG, `批量听书缓存失败: ${String(error)}`);
-      promptAction.showToast({ message: '听书缓存任务失败', duration: 1500 });
-    }
-  }
-
-  private async runReadAloudPrecacheTask(chapterIndexes: number[], closeDialogOnSuccess: boolean): Promise<void> {
-    if (this.isReadAloudPrecaching) {
-      return;
-    }
-    this.isReadAloudPrecaching = true;
-    this.readAloudPrecachingStatusText = '正在准备听书缓存';
-    this.readAloudPrecachingDetailText = '';
-    this.readAloudPrecachingChapterOrder = 0;
-    this.readAloudPrecachingChapterTotal = chapterIndexes.length;
-    this.readAloudPrecachingSegmentDone = 0;
-    this.readAloudPrecachingSegmentTotal = 0;
-    this.readAloudPrecachingBytes = 0;
-    try {
-      if (!this.showReadAloudCacheDialog) {
-        this.readAloudCacheTaskSettings = this.remoteReadAloudCacheService.buildEditableRemoteSettings(this.content, {
-          cacheAudioFiles: true
-        });
-      }
-      const effectiveRemoteSettings = mergeRemoteReadAloudSettings(this.readAloudCacheTaskSettings, {
-        cacheAudioFiles: true
-      });
-      await this.remoteReadAloudCacheService.saveCurrentRemoteSettings(this.content, effectiveRemoteSettings);
-      await this.remoteReadAloudCacheService.precacheChapters(this.content, chapterIndexes, {
-        remoteOverrides: effectiveRemoteSettings,
-        onProgress: (progress: RemoteReadAloudCacheTaskProgress) => {
-          this.readAloudPrecachingChapterOrder = progress.chapterOrder;
-          this.readAloudPrecachingChapterTotal = progress.chapterTotal;
-          this.readAloudPrecachingSegmentDone = progress.segmentProgress.completedSegments;
-          this.readAloudPrecachingSegmentTotal = progress.segmentProgress.totalSegments;
-          this.readAloudPrecachingBytes = progress.totalCachedBytes;
-          this.readAloudPrecachingStatusText = `正在缓存 ${progress.chapterTitle}`;
-          this.readAloudPrecachingDetailText = `章节 ${progress.chapterOrder}/${progress.chapterTotal} · 分片 ${progress.segmentProgress.completedSegments}/${progress.segmentProgress.totalSegments}`;
-        }
-      });
-      await this.loadReadAloudCacheSummary();
-      if (closeDialogOnSuccess) {
-        this.closeReadAloudCacheDialog();
-      }
-    } finally {
-      this.isReadAloudPrecaching = false;
-    }
-  }
-
-  private getReadAloudCacheProgressPercent(): number {
-    const total = Math.max(0, this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0);
-    if (total <= 0) {
-      return 0;
-    }
-    const cached = Math.max(0, Math.min(this.readAloudCacheSummary?.cachedChapterCount ?? 0, total));
-    return Math.round((cached / total) * 100);
-  }
-
-  private getReadAloudCacheSectionDescription(): string {
-    return this.isLocalTxtNovelEBookContent()
-      ? '当前 TXT 电子书的远程 TTS 音频缓存，可按章节批量生成整章听书音频。'
-      : '当前小说的远程 TTS 音频缓存，可按章节批量生成整章听书音频。';
-  }
-
-  private getReadAloudCacheSelectionSummary(): string {
-    const count = this.getSelectedReadAloudChapterCount();
-    return count > 0 ? `已选择 ${count} 章` : '未选择章节';
-  }
-
-  private getReadAloudCachePreviewIndexes(): number[] {
-    const chapters = this.readAloudCacheSummary?.chapters ?? [];
-    if (chapters.length <= 0) {
-      return [];
-    }
-    const start = Math.max(0, Math.min(this.getReadAloudCacheQuickSelectionStart(), chapters.length - 1));
-    const result: number[] = [];
-    for (let index = start; index < chapters.length && result.length < 3; index++) {
-      result.push(index);
-    }
-    for (let index = 0; index < start && result.length < 3; index++) {
-      result.push(index);
-    }
-    return result;
-  }
-
-  private getReadAloudCacheEffectiveChapterStatusText(chapter: RemoteReadAloudCacheChapterSummary): string {
-    if (chapter.cached) {
-      const sizeText = chapter.currentTotalBytes > 0 ? this.formatReadAloudCacheSize(chapter.currentTotalBytes) : '0 B';
-      const updatedText = this.getReadAloudCacheUpdatedLabel(chapter.currentLastUpdatedAt);
-      return `当前配置已缓存 · ${chapter.currentSegmentCount} 段 · ${sizeText} · ${updatedText}`;
-    }
-    if (chapter.variantCount > 0) {
-      const historySize = chapter.totalBytes > 0 ? this.formatReadAloudCacheSize(chapter.totalBytes) : '0 B';
-      return `当前配置未命中 · 历史有 ${chapter.variantCount} 个版本 · ${historySize}`;
-    }
-    return '当前配置未缓存';
-  }
-
-  private isReadAloudCacheChapterSelected(index: number): boolean {
-    const total = this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0;
-    if (index < 0 || index >= total) {
-      return false;
-    }
-    if (this.readAloudCacheSelectionMode === 'range') {
-      const start = Math.max(0, Math.min(this.readAloudCacheRangeStart, total - 1));
-      const end = Math.max(start, Math.min(this.readAloudCacheRangeEnd, total - 1));
-      return index >= start && index <= end;
-    }
-    return this.readAloudCacheSelectedChapters.has(index);
-  }
-
-  private getReadAloudCacheChapterStatusText(chapter: RemoteReadAloudCacheChapterSummary): string {
-    const statusText = chapter.cached ? '已缓存' : '未缓存';
-    const sizeText = chapter.totalBytes > 0 ? this.formatReadAloudCacheSize(chapter.totalBytes) : '0 B';
-    const updatedText = chapter.cached ? this.getReadAloudCacheUpdatedLabel(chapter.lastUpdatedAt) : '等待生成';
-    return `${statusText} · ${chapter.segmentCount} 段 · ${sizeText} · ${updatedText}`;
-  }
-
-  private getReadAloudCacheSegmentSourceLabel(chapter: RemoteReadAloudCacheChapterSummary): string {
-    switch (chapter.displaySegmentsSource) {
-      case 'current':
-        return '当前命中';
-      case 'history':
-        return '历史版本';
-      default:
-        return '无文本映射';
-    }
-  }
-
-  private formatReadAloudCacheSegmentRange(segment: RemoteReadAloudCacheSegmentSummary): string {
-    return this.formatReadAloudCacheCharRange(segment.startCharIndex, segment.endCharIndex);
-  }
-
-  private formatReadAloudCacheTargetSegmentRange(segment: RemoteReadAloudCacheTargetSegment): string {
-    return this.formatReadAloudCacheCharRange(segment.startCharIndex, segment.endCharIndex);
-  }
-
-  private formatReadAloudCacheCharRange(startCharIndex: number, endCharIndex: number): string {
-    const start = Math.max(0, Math.floor(startCharIndex)) + 1;
-    const end = Math.max(start, Math.max(0, Math.floor(endCharIndex) - 1) + 1);
-    return `${start}-${end}`;
-  }
-
   private getReadAloudCacheFadeSlideTransition(offsetY: number = 10) {
     return TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: offsetY }));
   }
@@ -5113,51 +3333,6 @@ export struct UnifiedDetailPage {
     animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
       this.isChapterListExpanded = !this.isChapterListExpanded;
     });
-  }
-
-  private getReadAloudCacheSegmentPreviewText(
-    chapter: RemoteReadAloudCacheChapterSummary,
-    maxSegments: number = 3
-  ): string {
-    const segments = chapter.displaySegments ?? [];
-    if (segments.length <= 0) {
-      return '';
-    }
-    const lines: string[] = [];
-    const limit = Math.max(1, Math.min(maxSegments, segments.length));
-    for (let index = 0; index < limit; index++) {
-      const segment = segments[index];
-      const preview = segment.textPreview && segment.textPreview.length > 0
-        ? segment.textPreview
-        : `${Math.max(0, segment.textLength)} 字符`;
-      lines.push(
-        `S${segment.segmentIndex + 1} · ${this.formatReadAloudCacheSegmentRange(segment)} · ${preview}`
-      );
-    }
-    if (segments.length > limit) {
-      lines.push(`还有 ${segments.length - limit} 个分片`);
-    }
-    return lines.join('\n');
-  }
-
-  private applyReadAloudCacheQuickRange(mode: 'uncached' | 'current' | 'full'): void {
-    const total = this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0;
-    if (total <= 0) {
-      return;
-    }
-    if (mode === 'full') {
-      this.readAloudCacheRangeStart = 0;
-      this.readAloudCacheRangeEnd = total - 1;
-      return;
-    }
-    if (mode === 'current' && this.content && this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < total) {
-      this.readAloudCacheRangeStart = this.content.lastReadChapterIndex;
-      this.readAloudCacheRangeEnd = total - 1;
-      return;
-    }
-    const quickStart = Math.max(0, Math.min(this.getReadAloudCacheQuickSelectionStart(), total - 1));
-    this.readAloudCacheRangeStart = quickStart;
-    this.readAloudCacheRangeEnd = total - 1;
   }
 
   private isValidReadProgressPercent(value: number | undefined | null): boolean {
@@ -6274,52 +4449,6 @@ export struct UnifiedDetailPage {
     return SettingsGlassStyleHelper.getSheetBorderWidth();
   }
 
-  private getDialogShadowColor(): string {
-    return SettingsGlassStyleHelper.getSheetShadowColor();
-  }
-
-  private getDialogMaskColor(): ResourceColor {
-    return DialogSurfaceStyleHelper.getPopupMaskColor();
-  }
-
-  private getDialogMaskBlurStyle(): BlurStyle {
-    return DialogSurfaceStyleHelper.getPopupMaskBlurStyle();
-  }
-
-  private getDialogChromeTopEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.18)'
-      : 'rgba(255, 255, 255, 0.58)';
-  }
-
-  private getDialogChromeBottomEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(154, 196, 255, 0.08)'
-      : 'rgba(126, 166, 220, 0.10)';
-  }
-
-  private getDialogChromeGradient(): LinearGradient {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? {
-          angle: 145,
-          colors: [
-            ['rgba(220, 236, 255, 0.10)', 0],
-            ['rgba(54, 78, 116, 0.04)', 0.32],
-            ['rgba(12, 18, 28, 0.03)', 0.76],
-            ['rgba(154, 196, 255, 0.06)', 1]
-          ]
-        }
-      : {
-          angle: 145,
-          colors: [
-            ['rgba(255, 255, 255, 0.38)', 0],
-            ['rgba(222, 236, 252, 0.16)', 0.30],
-            ['rgba(202, 222, 246, 0.08)', 0.72],
-            ['rgba(255, 255, 255, 0.16)', 1]
-          ]
-        };
-  }
-
   @Builder
   private buildGlassSectionChrome() {
     Column()
@@ -6332,20 +4461,6 @@ export struct UnifiedDetailPage {
       .height(1)
       .align(Alignment.Bottom)
       .backgroundColor(this.getSectionSurfaceStyle().bottomEdgeColor)
-  }
-
-  @Builder
-  private buildDialogChrome(radius?: number) {
-    Column()
-      .width('100%')
-      .height(1)
-      .backgroundColor(this.getDialogChromeTopEdgeColor())
-
-    Column()
-      .width('100%')
-      .height(1)
-      .align(Alignment.Bottom)
-      .backgroundColor(this.getDialogChromeBottomEdgeColor())
   }
 
   /**
@@ -6404,7 +4519,6 @@ export struct UnifiedDetailPage {
     .shadow({ radius: this.getFloatingRadius() + 2, color: this.getFloatingShadowColor(), offsetX: 0, offsetY: 4 })
     .clip(true)
   }
-
 
   private getTagChipItems(): TagChipItem[] {
     const result: TagChipItem[] = [];
@@ -6689,7 +4803,6 @@ export struct UnifiedDetailPage {
     .id('guide_unified_detail_description')
   }
 
-
   @Builder
   buildActionBar() {
     Stack({ alignContent: Alignment.TopStart }) {
@@ -6780,7 +4893,7 @@ export struct UnifiedDetailPage {
           .borderRadius(18)
           .onClick(() => {
             if (this.isLocalImportedEBookContent()) {
-              void this.openNovelSettings();
+              this.novelSettingsLoadSignal++;
             } else {
               this.openEBookSettings();
             }
@@ -6824,7 +4937,7 @@ export struct UnifiedDetailPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
           .borderRadius(18)
           .onClick(() => {
-            void this.openNovelSettings();
+            this.novelSettingsLoadSignal++;
           })
 
           Button() {
@@ -6853,23 +4966,18 @@ export struct UnifiedDetailPage {
             Row({ space: 6 }) {
               SymbolGlyph($r('sys.symbol.arrow_clockwise'))
                 .fontSize(16)
-                .fontColor([this.isSearchingSource
-                  ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
-              Text(this.isSearchingSource ? '搜索中...' : '换源')
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
+              Text('换源')
                 .fontSize(14)
                 .fontFamily(this.appFontFamily)
-                .fontColor(this.isSearchingSource
-                  ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
             }
           }
           .height(36)
           .padding({ left: 16, right: 16 })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
           .borderRadius(18)
-          .enabled(!this.isSearchingSource)
-          .onClick(() => this.openChangeSourceDialog())
+          .onClick(() => this.changeSourceDialogLoadSignal++)
         }
 
         if (this.isOnlineContent()) {
@@ -6939,756 +5047,6 @@ export struct UnifiedDetailPage {
     .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
     .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
     .id('guide_unified_detail_action_bar')
-  }
-
-  @Builder
-  buildTrackingStatusSection() {
-    if (this.shouldShowTrackingStatusSection()) {
-      Stack({ alignContent: Alignment.TopStart }) {
-        this.buildGlassSectionChrome()
-        ContentTrackingStatusCard({
-          state: this.buildTrackingCardState(),
-          themeState: this.themeState,
-          appFontFamily: this.appFontFamily,
-          callbacks: this.buildTrackingCardCallbacks()
-        })
-        .width('100%')
-        .padding(18)
-      }
-      .width('100%')
-      .backgroundColor(this.getSectionBackgroundColor())
-      .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
-      .backgroundEffect(this.getSectionBackgroundEffect())
-      .borderRadius(this.getSectionRadius())
-      .clip(true)
-      .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
-      .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-      .id('guide_unified_detail_tracking')
-    }
-  }
-
-  @Builder
-  private buildTrackingToggleRow(
-    titleText: string,
-    subtitleText: string,
-    isOn: boolean,
-    onChange: (value: boolean) => void
-  ) {
-    Row() {
-      Column({ space: 4 }) {
-        Text(titleText)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Text(subtitleText)
-          .fontSize(11)
-          .lineHeight(17)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      Toggle({ type: ToggleType.Switch, isOn: isOn })
-        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .onChange((value: boolean) => {
-          onChange(value);
-        })
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
-  private getTrackingIntervalPreviewText(): string {
-    const totalMinutes = convertSubscriptionIntervalDisplayToMinutes(
-      this.trackingCheckIntervalText,
-      this.trackingCheckIntervalUnit,
-      180
-    );
-    return `当前会按 ${formatSubscriptionIntervalSchedule(totalMinutes)}，并在 APP 回到前台时补查`;
-  }
-
-  @Builder
-  private buildTrackingIntervalUnitOption(unit: SubscriptionIntervalUnit) {
-    Button(getSubscriptionIntervalUnitLabel(unit))
-      .layoutWeight(1)
-      .height(34)
-      .fontSize(12)
-      .fontWeight(FontWeight.Medium)
-      .fontFamily(this.appFontFamily)
-      .fontColor(this.trackingCheckIntervalUnit === unit
-        ? Color.White
-        : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-      .backgroundColor(this.trackingCheckIntervalUnit === unit
-        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-        : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .border({
-        width: 1,
-        color: this.trackingCheckIntervalUnit === unit
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-      })
-      .onClick(() => {
-        this.trackingCheckIntervalUnit = unit;
-      })
-  }
-
-  @Builder
-  private buildTrackingIntervalInput() {
-    Column({ space: 8 }) {
-      Column({ space: 6 }) {
-        Text('多久检查一次')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-        TextInput({ placeholder: '例如 3', text: $$this.trackingCheckIntervalText })
-          .width('100%')
-          .height(40)
-          .type(InputType.Number)
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-          .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .padding({ left: 10, right: 10 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(12)
-      }
-      .width('100%')
-
-      Column({ space: 8 }) {
-        Text('时间单位')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-        Row({ space: 8 }) {
-          this.buildTrackingIntervalUnitOption(SubscriptionIntervalUnit.MINUTE)
-          this.buildTrackingIntervalUnitOption(SubscriptionIntervalUnit.HOUR)
-          this.buildTrackingIntervalUnitOption(SubscriptionIntervalUnit.DAY)
-          this.buildTrackingIntervalUnitOption(SubscriptionIntervalUnit.WEEK)
-        }
-        .width('100%')
-        Text(this.getTrackingIntervalPreviewText())
-          .fontSize(11)
-          .lineHeight(17)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-      }
-      .width('100%')
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildTrackingConditionMatchModeSelector() {
-    Column({ space: 8 }) {
-      Text('条件怎么判断')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .width('100%')
-      Row({ space: 8 }) {
-        this.buildTrackingConditionMatchModeOption(
-          SubscriptionConditionMatchMode.ALL,
-          '全部满足',
-          '设定的条件都满足时才继续'
-        )
-        this.buildTrackingConditionMatchModeOption(
-          SubscriptionConditionMatchMode.ANY,
-          '任意一项',
-          '满足其中一项就继续'
-        )
-      }
-      .width('100%')
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildTrackingConditionMatchModeOption(
-    optionMode: SubscriptionConditionMatchMode,
-    titleText: string,
-    subtitleText: string
-  ) {
-    Button() {
-      Column({ space: 4 }) {
-        Text(titleText)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.trackingConditionMatchMode === optionMode
-            ? '#FFFFFF'
-            : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Text(subtitleText)
-          .fontSize(10)
-          .lineHeight(15)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.trackingConditionMatchMode === optionMode
-            ? '#FFFFFFCC'
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .textAlign(TextAlign.Center)
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Center)
-    }
-    .layoutWeight(1)
-    .padding(12)
-    .backgroundColor(this.trackingConditionMatchMode === optionMode
-      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-      : ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
-    .borderRadius(14)
-    .onClick(() => {
-      this.trackingConditionMatchMode = optionMode;
-    })
-  }
-
-  @Builder
-  private buildTrackingSettingsTabButton(label: string, icon: Resource, index: number) {
-    Row({ space: 6 }) {
-      SymbolGlyph(icon)
-        .fontSize(13)
-        .fontColor([this.trackingSettingsActiveTab === index
-          ? Color.White
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-      Text(label)
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.trackingSettingsActiveTab === index
-          ? Color.White
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-    }
-    .layoutWeight(1)
-    .height(34)
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(this.trackingSettingsActiveTab === index
-      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-      : Color.Transparent)
-    .borderRadius(14)
-    .scale({
-      x: this.trackingSettingsActiveTab === index ? 1 : 0.97,
-      y: this.trackingSettingsActiveTab === index ? 1 : 0.97
-    })
-    .animation({ duration: 160, curve: Curve.EaseOut })
-    .onClick(() => {
-      this.handleTrackingSettingsDialogTabChange(index);
-    })
-  }
-
-  private handleTrackingSettingsDialogTabChange(index: number): void {
-    if (this.trackingSettingsActiveTab === index) {
-      return;
-    }
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
-      this.trackingSettingsActiveTab = index;
-    });
-  }
-
-  private getTrackingDialogStatusColor(): ResourceColor {
-    if (this.trackingExecution !== null) {
-      if (this.trackingExecution.status === SubscriptionExecutionStatus.SUCCESS) {
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme);
-      }
-      if (this.trackingExecution.status === SubscriptionExecutionStatus.NO_UPDATE) {
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
-      }
-      if (this.trackingExecution.status === SubscriptionExecutionStatus.SKIPPED) {
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
-      }
-      if (this.trackingExecution.status === SubscriptionExecutionStatus.FAILED) {
-        return ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme);
-      }
-    }
-    if (this.trackingRule !== null && !this.trackingRule.enabled) {
-      return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
-    }
-    return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
-  }
-
-  private getTrackingDialogLastCheckText(): string {
-    if (this.trackingExecution !== null) {
-      return this.formatTrackingTimestamp(this.trackingExecution.checkedAt);
-    }
-    if (this.trackingRule !== null && this.trackingRule.lastCheckTime > 0) {
-      return this.formatTrackingTimestamp(this.trackingRule.lastCheckTime);
-    }
-    if (this.trackingAutoCreatedThisSession && this.trackingRule !== null) {
-      return '本次已自动开启';
-    }
-    return '还没检查过';
-  }
-
-  private isTrackingRuleEnabled(): boolean {
-    return this.trackingRule !== null && this.trackingRule.enabled;
-  }
-
-  private getTrackingDialogFooterHintText(): string {
-    if (this.trackingRule === null) {
-      return '保存后会开始记录，但自动检查只会在 APP 回到前台时补查。';
-    }
-    if (this.trackingSettingsActiveTab === 0) {
-      return this.isTrackingRuleEnabled()
-        ? '可以先手动检查一次；自动检查目前只会在 APP 回到前台时补查。'
-        : '提醒当前已暂停，重新开启后也只会在 APP 回到前台时自动补查。';
-    }
-    if (this.trackingSettingsActiveTab === 1) {
-      return '这些筛选条件会决定哪些更新会被算进去；自动检查仍只会在 APP 回到前台时补查。';
-    }
-    return '这里决定发现更新后要提醒你，还是顺手自动下载；这些动作会跟着前台补查一起执行。';
-  }
-
-  private getTrackingOverviewInlineText(): string {
-    const parts: string[] = [];
-    const providerText = this.getTrackingProviderText().trim();
-    if (providerText.length > 0) {
-      parts.push(providerText);
-    }
-
-    if (this.trackingRule === null) {
-      parts.push('还没开启提醒');
-    } else if (!this.trackingRule.enabled) {
-      parts.push('已暂停');
-    } else if (this.trackingExecution !== null) {
-      parts.push(this.getTrackingExecutionStatusLabel(this.trackingExecution.status));
-    } else if (this.trackingAutoCreatedThisSession) {
-      parts.push('本次已自动开启');
-    } else {
-      parts.push('已开启');
-    }
-
-    const lastCheckText = this.getTrackingDialogLastCheckText();
-    if (lastCheckText.length > 0) {
-      parts.push(`上次 ${lastCheckText}`);
-    }
-
-    if (this.trackingExecution !== null && this.trackingExecution.deltaCount > 0) {
-      parts.push(`新增 ${this.trackingExecution.deltaCount}`);
-    }
-
-    return parts.join(' · ');
-  }
-
-  @Builder
-  private buildTrackingSettingsMetricCard(labelText: string, valueText: string, accentColor: ResourceColor) {
-    Column({ space: 6 }) {
-      Text(labelText)
-        .fontSize(11)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .width('100%')
-      Text(valueText)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(accentColor)
-        .width('100%')
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .layoutWeight(1)
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private buildTrackingSettingsOverviewCard() {
-    Column({ space: 6 }) {
-      Text(this.getTrackingOverviewInlineText())
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .width('100%')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text('当前版本只会在 APP 回到前台时自动补查，后台不会定时执行。')
-        .fontSize(11)
-        .lineHeight(17)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .width('100%')
-    }
-    .width('100%')
-    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
-  @Builder
-  private buildTrackingSettingsDialogFooter() {
-    Column({ space: 10 }) {
-      Row() {
-        Text(this.getTrackingDialogFooterHintText())
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .layoutWeight(1)
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        if (this.trackingRule !== null) {
-          Text(this.getTrackingDialogLastCheckText())
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        }
-      }
-      .width('100%')
-
-      if (this.trackingRule !== null && this.trackingSettingsActiveTab === 0) {
-        Row({ space: 10 }) {
-          Button(this.isTrackingRuleEnabled() ? '暂停提醒' : '开启提醒')
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .fontColor(this.isTrackingRuleEnabled()
-              ? ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
-              : ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-            .borderRadius(18)
-            .enabled(!this.isTrackingBusy)
-            .onClick(() => {
-              void this.toggleCurrentContentTrackingEnabled();
-            })
-
-          Button(this.isTrackingBusy ? '检查中...' : '立即检查')
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .fontColor(Color.White)
-            .borderRadius(18)
-            .enabled(!this.isTrackingBusy)
-            .onClick(() => {
-              void this.runCurrentContentTrackingNow();
-            })
-        }
-        .width('100%')
-      } else if (this.trackingRule !== null && this.trackingSettingsActiveTab === 2) {
-        Row({ space: 10 }) {
-          Button('关闭提醒')
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-            .borderRadius(18)
-            .enabled(!this.isTrackingBusy)
-            .onClick(() => {
-              this.confirmDeleteCurrentContentTracking();
-            })
-
-          Button(this.isTrackingBusy ? '保存中...' : '保存设置')
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .fontColor(Color.White)
-            .borderRadius(18)
-            .enabled(!this.isTrackingBusy)
-            .onClick(() => {
-              void this.saveCurrentContentTracking();
-            })
-        }
-        .width('100%')
-      } else {
-        Row({ space: 10 }) {
-          Button('取消')
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .borderRadius(18)
-            .enabled(!this.isTrackingBusy)
-            .onClick(() => {
-              this.closeTrackingSettingsDialog();
-            })
-
-          Button(this.isTrackingBusy ? '保存中...' : (this.trackingRule !== null ? '保存设置' : '开启提醒'))
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .fontColor(Color.White)
-            .borderRadius(18)
-            .enabled(!this.isTrackingBusy)
-            .onClick(() => {
-              void this.saveCurrentContentTracking();
-            })
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .animation({ duration: 200, curve: Curve.EaseOut })
-  }
-
-  @Builder
-  private buildTrackingDialogHintCard(titleText: string, descriptionText: string) {
-    Column({ space: 6 }) {
-      Text(titleText)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .width('100%')
-      Text(descriptionText)
-        .fontSize(11)
-        .lineHeight(17)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .width('100%')
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(14)
-  }
-
-  @Builder
-  private buildTrackingBasicSettingsTab() {
-    Column({ space: 12 }) {
-      this.buildTrackingDialogHintCard('基础设置', '先决定多久检查一次，以及最少出现多少新内容时再提醒你。当前版本只会在 APP 回到前台时自动补查。')
-
-      Column({ space: 12 }) {
-        this.buildTrackingIntervalInput()
-
-        Column({ space: 6 }) {
-          Text('至少新增多少才提醒')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-          TextInput({ placeholder: '例如 1', text: $$this.trackingMinNewItemsText })
-            .width('100%')
-            .height(40)
-            .type(InputType.Number)
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .borderRadius(12)
-        }
-        .width('100%')
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(14)
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildTrackingFilterSettingsTab() {
-    Column({ space: 12 }) {
-      this.buildTrackingDialogHintCard('筛选条件', '这些条件会先帮你筛一遍内容。你可以选“全部满足”或“任意一项”；同一个输入框里用逗号分隔多个词，命中一个就算通过。')
-
-      Column({ space: 12 }) {
-        this.buildTrackingConditionMatchModeSelector()
-
-        Column({ space: 6 }) {
-          Text('标题包含')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-          TextInput({ placeholder: '例如：番外，合集', text: $$this.trackingTitleKeywordText })
-            .width('100%')
-            .height(40)
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
-            .borderRadius(12)
-        }
-        .width('100%')
-
-        Column({ space: 6 }) {
-          Text('标签包含')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-          TextInput({ placeholder: '例如：校园，悬疑', text: $$this.trackingTagKeywordText })
-            .width('100%')
-            .height(40)
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
-            .borderRadius(12)
-        }
-        .width('100%')
-
-        Column({ space: 6 }) {
-          Text('来源包含')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-          TextInput({ placeholder: '例如：Suwayomi，Komga，书源名', text: $$this.trackingSourceKeywordText })
-            .width('100%')
-            .height(40)
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
-            .borderRadius(12)
-        }
-        .width('100%')
-
-        this.buildTrackingToggleRow('只检查已收藏的内容', '取消收藏后会自动跳过。', this.trackingRequireFavorite, (value: boolean) => {
-          this.trackingRequireFavorite = value;
-        })
-
-        this.buildTrackingToggleRow('跳过 NSFW 内容', '内容带有 NSFW 标记时会直接跳过。', this.trackingExcludeNSFW, (value: boolean) => {
-          this.trackingExcludeNSFW = value;
-        })
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(14)
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildTrackingActionSettingsTab() {
-    Column({ space: 12 }) {
-      this.buildTrackingDialogHintCard('发现更新后', '这里决定发现更新以后要做什么。支持的内容可以自动下载，不需要的也可以只提醒；这些动作会跟着前台补查一起执行。')
-
-      Column({ space: 12 }) {
-        Column({ space: 6 }) {
-          Text('自动下载数量（填 0 关闭）')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-          TextInput({ placeholder: '例如 0 / 3 / 10', text: $$this.trackingAutoDownloadCountText })
-            .width('100%')
-            .height(40)
-            .type(InputType.Number)
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .borderRadius(12)
-        }
-        .width('100%')
-
-        this.buildTrackingToggleRow('更新时提醒我', '有更新时发应用内通知。提醒会跟着前台补查一起触发。', this.trackingEnableNotify, (value: boolean) => {
-          this.trackingEnableNotify = value;
-        })
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(14)
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildTrackingSettingsDialog() {
-    if (this.showTrackingSettingsDialog && this.content && this.shouldShowTrackingStatusSection()) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => {
-          if (!this.isTrackingBusy) {
-            this.closeTrackingSettingsDialog();
-          }
-        },
-        dialogWidth: '90%',
-        maxWidth: 620,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 121,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
-            Row() {
-              Text(this.trackingRule !== null ? '调整更新提醒' : '开启更新提醒')
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Blank()
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .enabled(!this.isTrackingBusy)
-              .onClick(() => {
-                this.closeTrackingSettingsDialog();
-              })
-            }
-            .width('100%')
-
-            this.buildTrackingSettingsOverviewCard()
-
-            Row({ space: 8 }) {
-              this.buildTrackingSettingsTabButton('基础', $r('sys.symbol.bookshelf_badge_checkmark'), 0)
-              this.buildTrackingSettingsTabButton('筛选', $r('sys.symbol.bookshelf_badge_checkmark'), 1)
-              this.buildTrackingSettingsTabButton('操作', $r('sys.symbol.gearshape'), 2)
-            }
-            .width('100%')
-            .padding(4)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .borderRadius(18)
-
-            Scroll() {
-              Column({ space: 12 }) {
-                if (this.trackingSettingsActiveTab === 0) {
-                  this.buildTrackingBasicSettingsTab()
-                } else if (this.trackingSettingsActiveTab === 1) {
-                  this.buildTrackingFilterSettingsTab()
-                } else {
-                  this.buildTrackingActionSettingsTab()
-                }
-              }
-              .width('100%')
-              .alignItems(HorizontalAlign.Start)
-              .animation({ duration: 220, curve: Curve.EaseOut })
-            }
-            .width('100%')
-            .constraintSize({ maxHeight: 420 })
-            .scrollBar(BarState.Auto)
-            .edgeEffect(EdgeEffect.Spring)
-
-            this.buildTrackingSettingsDialogFooter()
-          }
-          .width('100%')
-          .padding(20)
-          .scale({ x: this.trackingDialogScale, y: this.trackingDialogScale })
-          .translate({ y: this.trackingDialogTranslateY })
-          .opacity(this.trackingDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
-      }
-    }
   }
 
   private async toggleNSFW(): Promise<void> {
@@ -7990,407 +5348,6 @@ export struct UnifiedDetailPage {
     }
   }
 
-  @Builder
-  buildReadAloudCacheSection() {
-    if (this.supportsReadAloudCacheSection()) {
-      if (!this.readAloudCacheSummary && this.isReadAloudCacheLoading) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildGlassSectionChrome()
-          Row({ space: 8 }) {
-            LoadingProgress()
-              .width(16)
-              .height(16)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            Text('正在加载听书缓存...')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          }
-          .width('100%')
-          .height(72)
-          .justifyContent(FlexAlign.Center)
-        }
-        .width('100%')
-        .backgroundColor(this.getSectionBackgroundColor())
-        .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
-        .backgroundEffect(this.getSectionBackgroundEffect())
-        .borderRadius(this.getSectionRadius())
-        .clip(true)
-        .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
-        .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-      } else if (!this.readAloudCacheSummary) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildGlassSectionChrome()
-          Column({ space: 10 }) {
-            Row({ space: 8 }) {
-              SymbolGlyph($r('sys.symbol.book'))
-                .fontSize(16)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-              Text('听书缓存暂不可用')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            }
-            .width('100%')
-
-            Text('稍后可重试加载当前书籍的远程 TTS 缓存摘要。')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .width('100%')
-
-            Button() {
-              Row({ space: 6 }) {
-                SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-                  .fontSize(13)
-                  .fontColor([Color.White])
-                Text('重新加载')
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(Color.White)
-              }
-            }
-            .height(32)
-            .padding({ left: 14, right: 14 })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .borderRadius(16)
-            .onClick(() => {
-              void this.loadReadAloudCacheSummary(true);
-            })
-          }
-          .width('100%')
-          .padding(18)
-          .alignItems(HorizontalAlign.Start)
-        }
-        .width('100%')
-        .backgroundColor(this.getSectionBackgroundColor())
-        .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
-        .backgroundEffect(this.getSectionBackgroundEffect())
-        .borderRadius(this.getSectionRadius())
-        .clip(true)
-        .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
-        .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-      } else {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildGlassSectionChrome()
-          Column({ space: 12 }) {
-            Row({ space: 10 }) {
-              Row({ space: 10 }) {
-                SymbolGlyph($r('sys.symbol.book'))
-                  .fontSize(16)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-                Column({ space: 2 }) {
-                  Text('听书缓存')
-                    .fontSize(14)
-                    .fontWeight(FontWeight.Medium)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  Text(this.isLocalTxtNovelEBookContent() ? '本地 TXT 电子书' : '远程 TTS 章节缓存')
-                    .fontSize(11)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                }
-                .alignItems(HorizontalAlign.Start)
-              }
-
-              Blank()
-
-              Row() {
-                Text(`当前 ${this.readAloudCacheSummary.cachedChapterCount}/${Math.max(1, this.readAloudCacheSummary.chapterCount)}`)
-                  .fontSize(11)
-                  .fontWeight(FontWeight.Medium)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              }
-              .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(12)
-
-              SymbolGlyph($r('sys.symbol.chevron_down'))
-                .fontSize(16)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-                .rotate({ angle: this.isReadAloudCacheExpanded ? 0 : -90 })
-                .animation({ duration: 250, curve: Curve.EaseInOut })
-                .onClick(() => {
-                  this.toggleReadAloudCacheExpanded();
-                })
-            }
-            .width('100%')
-            .onClick(() => {
-              this.toggleReadAloudCacheExpanded();
-            })
-
-            if (this.isReadAloudCacheExpanded) {
-              Column({ space: 12 }) {
-                Text(this.getReadAloudCacheSectionDescription())
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  .width('100%')
-
-                if (this.isReadAloudPrecaching) {
-                  Column({ space: 8 }) {
-                    Row({ space: 8 }) {
-                      LoadingProgress()
-                        .width(14)
-                        .height(14)
-                        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-                      Text(this.readAloudPrecachingStatusText || '正在缓存听书音频')
-                        .fontSize(12)
-                        .fontWeight(FontWeight.Medium)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-                      Blank()
-                      Text(`${this.readAloudPrecachingChapterOrder}/${Math.max(1, this.readAloudPrecachingChapterTotal)}`)
-                        .fontSize(11)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                    }
-                    .width('100%')
-
-                    if (this.readAloudPrecachingDetailText) {
-                      Text(this.readAloudPrecachingDetailText)
-                        .fontSize(11)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                        .width('100%')
-                    }
-
-                    Progress({
-                      value: this.readAloudPrecachingSegmentTotal > 0
-                        ? Math.round((this.readAloudPrecachingSegmentDone / this.readAloudPrecachingSegmentTotal) * 100)
-                        : 0,
-                      total: 100,
-                      type: ProgressType.Linear
-                    })
-                      .width('100%')
-                      .height(6)
-                      .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                      .borderRadius(3)
-                  }
-                  .width('100%')
-                  .padding(12)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                  .borderRadius(12)
-                }
-
-                Row({ space: 8 }) {
-                  this.buildReadAloudCacheMetric(
-                    `${this.readAloudCacheSummary.cachedChapterCount}/${this.readAloudCacheSummary.chapterCount}`,
-                    '当前命中章节',
-                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                  )
-                  this.buildReadAloudCacheMetric(
-                    `${this.readAloudCacheSummary.currentSettings.totalSegments}`,
-                    '当前分片',
-                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-                  )
-                  this.buildReadAloudCacheMetric(
-                    this.formatReadAloudCacheSize(this.readAloudCacheSummary.currentSettings.totalBytes),
-                    '当前占用',
-                    ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
-                  )
-                  this.buildReadAloudCacheMetric(
-                    this.getReadAloudCacheUpdatedLabel(this.readAloudCacheSummary.currentSettings.latestUpdatedAt),
-                    '最近更新',
-                    ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
-                  )
-                }
-                .width('100%')
-
-                Progress({ value: this.getReadAloudCacheProgressPercent(), total: 100, type: ProgressType.Linear })
-                  .width('100%')
-                  .height(4)
-                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-
-                Text(`历史缓存版本 ${this.readAloudCacheSummary.variantCount} 个，历史整章音频 ${this.readAloudCacheSummary.mergedAudioCount} 个`)
-                  .fontSize(11)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                  .width('100%')
-
-                Text(`当前配置来源 ${this.readAloudCacheSummary.settingsSourceLabel} · 当前命中 ${this.readAloudCacheSummary.currentSettings.cachedChapterCount} 章 · 当前占用 ${this.formatReadAloudCacheSize(this.readAloudCacheSummary.currentSettings.totalBytes)}`)
-                  .fontSize(11)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                  .width('100%')
-
-                if ((this.readAloudCacheSummary.chapters.length ?? 0) > 0) {
-                  Column({ space: 8 }) {
-                    Row() {
-                      Text('章节预览')
-                        .fontSize(12)
-                        .fontWeight(FontWeight.Medium)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                      Blank()
-                      Text('可进入管理面板查看全部章节')
-                        .fontSize(11)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                    }
-                    .width('100%')
-
-                    ForEach(this.getReadAloudCachePreviewIndexes(), (chapterIndex: number) => {
-                      if (this.readAloudCacheSummary) {
-                        this.buildReadAloudCachePreviewRow(this.readAloudCacheSummary.chapters[chapterIndex])
-                      }
-                    }, (chapterIndex: number) => `read_aloud_cache_preview_${chapterIndex}`)
-                  }
-                  .width('100%')
-                }
-
-                Row({ space: 10 }) {
-                  Button() {
-                    Row({ space: 6 }) {
-                      SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-                        .fontSize(13)
-                        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-                      Text('刷新')
-                        .fontSize(12)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                    }
-                  }
-                  .layoutWeight(1)
-                  .height(34)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                  .borderRadius(17)
-                  .enabled(!this.isReadAloudCacheLoading)
-                  .onClick(() => {
-                    void this.loadReadAloudCacheSummary(true);
-                  })
-
-                  Button() {
-                    Row({ space: 6 }) {
-                      SymbolGlyph($r('sys.symbol.gearshape'))
-                        .fontSize(13)
-                        .fontColor([Color.White])
-                      Text('管理听书缓存')
-                        .fontSize(12)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(Color.White)
-                    }
-                  }
-                  .layoutWeight(1)
-                  .height(34)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                  .borderRadius(17)
-                  .onClick(() => {
-                    this.openReadAloudCacheDialog();
-                  })
-                }
-                .width('100%')
-              }
-              .width('100%')
-              .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: -8 })))
-            }
-          }
-          .width('100%')
-          .padding(18)
-        }
-        .width('100%')
-        .backgroundColor(this.getSectionBackgroundColor())
-        .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
-        .backgroundEffect(this.getSectionBackgroundEffect())
-        .borderRadius(this.getSectionRadius())
-        .clip(true)
-        .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
-        .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-      }
-    }
-  }
-
-  @Builder
-  private buildReadAloudCacheMetric(value: string, label: string, accentColor: ResourceColor) {
-    Column({ space: 4 }) {
-      Text(value)
-        .fontSize(16)
-        .fontWeight(FontWeight.Bold)
-        .fontFamily(this.appFontFamily)
-        .fontColor(accentColor)
-        .maxLines(2)
-        .textAlign(TextAlign.Center)
-      Text(label)
-        .fontSize(11)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .textAlign(TextAlign.Center)
-    }
-    .layoutWeight(1)
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  private buildReadAloudCachePreviewRow(chapter: RemoteReadAloudCacheChapterSummary) {
-    Row({ space: 10 }) {
-      Column({ space: 4 }) {
-        Text(this.buildReadAloudCacheChapterLabel(chapter.chapterIndex))
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(`${this.getReadAloudCacheSegmentSourceLabel(chapter)} · ${this.getReadAloudCacheEffectiveChapterStatusText(chapter)}`)
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        if (this.getReadAloudCacheSegmentPreviewText(chapter, 2).length > 0) {
-          Text(this.getReadAloudCacheSegmentPreviewText(chapter, 2))
-            .fontSize(10)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .maxLines(3)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-        }
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      if (!chapter.cached) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.arrow_down_circle'))
-            .fontSize(15)
-            .fontColor([Color.White])
-        }
-        .width(30)
-        .height(30)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .borderRadius(15)
-        .enabled(!this.isReadAloudPrecaching)
-        .onClick(() => {
-          void this.quickPrecacheReadAloudChapter(chapter.chapterIndex);
-        })
-      } else {
-        Button() {
-          SymbolGlyph($r('sys.symbol.trash'))
-            .fontSize(14)
-            .fontColor([Color.White])
-        }
-        .width(30)
-        .height(30)
-        .backgroundColor('#FF5252')
-        .borderRadius(15)
-        .enabled(!this.isReadAloudPrecaching)
-        .onClick(() => {
-          void this.clearReadAloudCacheChapter(chapter.chapterIndex);
-        })
-      }
-    }
-    .width('100%')
-    .padding(10)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
   private showClearCacheConfirm(): void {
     if (!this.cacheStats) {
       return;
@@ -8403,17 +5360,14 @@ export struct UnifiedDetailPage {
       ? '清理后需要重新阅读才能再次缓存。'
       : (this.isCurrentNovelAudioSource() ? '清理后需要重新缓存才能离线播放。' : '清理后需要重新阅读才能再次缓存。');
     const sizeText = this.cacheStatusService.formatSize(this.cacheStats.cacheSize);
-    this.cacheConfirmTitle = '清理缓存';
-    this.cacheConfirmMessage = `确定要清理此${contentTypeName}的所有缓存吗？\n\n缓存大小: ${sizeText}\n${cachedLabel}: ${this.cacheStats.cachedChapterCount}章\n\n${restoreTip}`;
-    this.cacheConfirmActionLabel = '清理';
-    this.cacheConfirmActionKind = 'danger';
-    this.cacheConfirmPendingAction = 'clear_content';
-    this.isCacheConfirmDialogVisible = true;
-    animateTo({ duration: 260, curve: curves.springMotion(0.6, 0.9) }, () => {
-      this.cacheConfirmDialogOpacity = 1;
-      this.cacheConfirmDialogScale = 1;
-      this.cacheConfirmDialogTranslateY = 0;
-    });
+    this.cacheConfirmConfig = {
+      title: '清理缓存',
+      message: `确定要清理此${contentTypeName}的所有缓存吗？\n\n缓存大小: ${sizeText}\n${cachedLabel}: ${this.cacheStats.cachedChapterCount}章\n\n${restoreTip}`,
+      actionLabel: '清理',
+      actionKind: 'danger',
+      pendingAction: 'clear_content'
+    };
+    this.cacheConfirmDialogLoadSignal++;
   }
 
   private async clearContentCache(): Promise<void> {
@@ -9152,1068 +6106,19 @@ export struct UnifiedDetailPage {
     this.navigateWithManagedWindowTransition('EBookSettingsPage', params);
   }
 
-  private async openNovelSettings(): Promise<void> {
-    if (!this.content || !this.pageParams || !this.canUseNovelStyleSettingsDialog()) {
+  private async executeDownloadWithIndexes(selectedIndexes: number[]): Promise<void> {
+    if (!this.content || selectedIndexes.length === 0) {
       return;
     }
-    await this.loadNovelSettingsDialogConfig();
-    await this.loadNovelRuleConfigurations();
-    if (this.isLocalImportedEBookContent()) {
-      this.initializeEBookInfoEditState();
-    }
-    logger.info(
-      TAG,
-      `打开小说设置: contentType=${this.content.contentType}, online=${this.isOnlineNovelContent()}, prefetchEnabled=${this.novelEnableReadWhileDownload}, prefetchCount=${this.novelDefaultLoadChapters}`
-    );
-    this.novelSettingsActiveTab = 0;
-    this.showNovelSettingsDialog = true;
-    animateTo({
-      duration: 260,
-      curve: Curve.EaseOut
-    }, () => {
-      this.novelSettingsDialogOpacity = 1;
-      this.novelSettingsDialogScale = 1;
-      this.novelSettingsDialogTranslateY = 0;
-    });
-  }
 
-  private closeNovelSettingsDialog(): void {
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseIn
-    }, () => {
-      this.novelSettingsDialogOpacity = 0;
-      this.novelSettingsDialogScale = 0.96;
-      this.novelSettingsDialogTranslateY = 12;
-    });
-    setTimeout(() => {
-      this.showNovelSettingsDialog = false;
-    }, 200);
-  }
-
-  private cloneRuleIdList(source: string[]): string[] {
-    const result: string[] = [];
-    for (const id of source) {
-      result.push(id);
-    }
-    return result;
-  }
-
-  private areSameRuleIdList(a: string[], b: string[]): boolean {
-    if (a.length !== b.length) {
-      return false;
-    }
-    for (const id of a) {
-      if (b.indexOf(id) < 0) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private refreshNovelRuleDirtyState(): void {
-    this.novelDirectoryRulesDirty = !this.areSameRuleIdList(this.novelSelectedTocRuleIds, this.novelAppliedTocRuleIds);
-    this.novelReplaceRulesDirty = !this.areSameRuleIdList(this.novelSelectedReplaceRuleIds, this.novelAppliedReplaceRuleIds);
-  }
-
-  private hasPendingNovelSettingChanges(): boolean {
-    return this.novelDirectoryRulesDirty ||
-      this.novelReplaceRulesDirty ||
-      (this.isLocalImportedEBookContent() && this.ebookInfoDirty);
-  }
-
-  private async applyPendingNovelSettingsChanges(): Promise<void> {
-    if (this.novelDirectoryRulesDirty) {
-      await this.applyNovelDirectoryParsingSelection();
-    }
-    if (this.novelReplaceRulesDirty) {
-      await this.applyNovelReplaceRulesSelection();
-    }
-    if (this.isLocalImportedEBookContent() && this.ebookInfoDirty) {
-      await this.saveEBookInfoEdit();
-    }
-  }
-
-  private async requestCloseNovelSettingsDialog(afterClose?: () => void): Promise<void> {
-    if (!this.showNovelSettingsDialog) {
-      if (afterClose) {
-        afterClose();
-      }
-      return;
-    }
-    if (this.isApplyingNovelDirectoryParsing || this.isApplyingNovelReplaceRules || this.isSavingEBookInfo) {
-      return;
-    }
-    if (!this.hasPendingNovelSettingChanges()) {
-      this.closeNovelSettingsDialog();
-      if (afterClose) {
-        afterClose();
-      }
-      return;
-    }
-    this.novelSettingsCloseAfterClose = afterClose;
-    this.isNovelSettingsCloseConfirmDialogVisible = true;
-    animateTo({ duration: 240, curve: curves.springMotion(0.65, 0.92) }, () => {
-      this.novelSettingsCloseConfirmOpacity = 1;
-      this.novelSettingsCloseConfirmScale = 1;
-      this.novelSettingsCloseConfirmTranslateY = 0;
-    });
-  }
-
-  private isOnlineNovelContent(): boolean {
-    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
-      return false;
-    }
-    return !this.content.isLocal && !!this.content.sourceId;
-  }
-
-  private pushUniqueRuleScopeId(target: string[], scopeId: string): void {
-    if (scopeId.length <= 0 || target.indexOf(scopeId) >= 0) {
-      return;
-    }
-    target.push(scopeId);
-  }
-
-  private getCurrentNovelRuleScopeIds(): string[] {
-    const scopeIds: string[] = [];
-    if (!this.content) {
-      return scopeIds;
-    }
     if (this.content.contentType === UnifiedContentType.NOVEL) {
-      const sourceId = this.content.sourceId || this.pageParams?.sourceId || 'local';
-      this.pushUniqueRuleScopeId(scopeIds, this.getNovelCacheBookId(sourceId, this.content.id));
-      return scopeIds;
-    }
-    if (this.isLocalImportedEBookContent()) {
-      const ebook = EBookAdapter.getOriginalEBook(this.content);
-      if (!ebook) {
-        return scopeIds;
-      }
-      if (ebook.format === EBookFormat.TXT) {
-        this.pushUniqueRuleScopeId(scopeIds, buildLocalTextNovelBookId(ebook.id));
-      }
-      this.pushUniqueRuleScopeId(scopeIds, ebook.id);
-    }
-    return scopeIds;
-  }
-
-  private getCurrentNovelRuleScopeId(): string {
-    const scopeIds = this.getCurrentNovelRuleScopeIds();
-    if (scopeIds.length <= 0) {
-      return '';
-    }
-    return scopeIds[0];
-  }
-
-  private buildBookTocRuleKey(scopeId: string): string {
-    return `${NOVEL_BOOK_TOC_RULE_IDS_PREFIX}${scopeId}`;
-  }
-
-  private buildBookReplaceRuleKey(scopeId: string): string {
-    return `${NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX}${scopeId}`;
-  }
-
-  private parseRuleIdArray(rawValue: string): string[] {
-    if (!rawValue || rawValue.length === 0) {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(rawValue) as Array<string>;
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-      const result: string[] = [];
-      for (const item of parsed) {
-        if (typeof item === 'string' && item.length > 0) {
-          result.push(item);
-        }
-      }
-      return result;
-    } catch (error) {
-      logger.warn(TAG, `解析规则ID列表失败: ${String(error)}`);
-      return [];
-    }
-  }
-
-  private isRuleSelected(selectedIds: string[], ruleId: string): boolean {
-    return selectedIds.indexOf(ruleId) >= 0;
-  }
-
-  private toggleRuleSelection(selectedIds: string[], ruleId: string, enabled: boolean): string[] {
-    const result: string[] = [];
-    for (const id of selectedIds) {
-      if (id !== ruleId) {
-        result.push(id);
-      }
-    }
-    if (enabled) {
-      result.push(ruleId);
-    }
-    return result;
-  }
-
-  private getReplaceRuleScopeLabel(scope: ReplaceScope): string {
-    if (scope === ReplaceScope.TITLE) {
-      return '标题';
-    }
-    if (scope === ReplaceScope.CONTENT) {
-      return '内容';
-    }
-    return '全部';
-  }
-
-  private getReplaceRuleSourceLabel(rule: ReplaceRule): string {
-    if (!rule.sourceIds || rule.sourceIds.length === 0) {
-      return '全部书源';
-    }
-    return `指定书源(${rule.sourceIds.length})`;
-  }
-
-  private async loadNovelRuleConfigurations(): Promise<void> {
-    try {
-      const tocRuleManager = getNovelTxtTocRuleManager();
-      await tocRuleManager.initialize();
-      this.novelTocRules = tocRuleManager.getAllRules();
-
-      const replaceRuleManager = NovelReplaceRuleManager.getInstance();
-      await replaceRuleManager.initialize();
-      await replaceRuleManager.refreshRules();
-      this.novelReplaceRules = replaceRuleManager.getAllRules();
-
-      const scopeIds = this.getCurrentNovelRuleScopeIds();
-      const primaryScopeId = scopeIds.length > 0 ? scopeIds[0] : '';
-      let scopedTocRuleIds: string[] = [];
-      let scopedReplaceRuleIds: string[] = [];
-      let hasScopedTocRuleIds = false;
-      let hasScopedReplaceRuleIds = false;
-      if (scopeIds.length > 0) {
-        const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
-        const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
-        for (const scopeId of scopeIds) {
-          if (!hasScopedTocRuleIds) {
-            const rawTocRuleIds = await store.get(this.buildBookTocRuleKey(scopeId), '') as string;
-            if (rawTocRuleIds.length > 0) {
-              hasScopedTocRuleIds = true;
-              scopedTocRuleIds = this.parseRuleIdArray(rawTocRuleIds);
-            }
-          }
-          if (!hasScopedReplaceRuleIds) {
-            const rawReplaceRuleIds = await store.get(this.buildBookReplaceRuleKey(scopeId), '') as string;
-            if (rawReplaceRuleIds.length > 0) {
-              hasScopedReplaceRuleIds = true;
-              scopedReplaceRuleIds = this.parseRuleIdArray(rawReplaceRuleIds);
-            }
-          }
-          if (hasScopedTocRuleIds && hasScopedReplaceRuleIds) {
-            break;
-          }
-        }
-      }
-      if (!hasScopedTocRuleIds) {
-        scopedTocRuleIds = this.novelTocRules.filter((rule: TxtTocRule) => rule.enabled).map((rule: TxtTocRule) => rule.id);
-      }
-      if (!hasScopedReplaceRuleIds) {
-        scopedReplaceRuleIds = this.novelReplaceRules.filter((rule: ReplaceRule) => rule.enabled).map((rule: ReplaceRule) => rule.id);
-      }
-      this.novelSelectedTocRuleIds = scopedTocRuleIds;
-      this.novelSelectedReplaceRuleIds = scopedReplaceRuleIds;
-      this.novelAppliedTocRuleIds = this.cloneRuleIdList(this.novelSelectedTocRuleIds);
-      this.novelAppliedReplaceRuleIds = this.cloneRuleIdList(this.novelSelectedReplaceRuleIds);
-      this.novelDirectoryRulesDirty = false;
-      this.novelReplaceRulesDirty = false;
-      logger.info(
-        TAG,
-        `小说规则配置已加载: scopeId=${primaryScopeId}, scopeCount=${scopeIds.length}, tocRules=${this.novelSelectedTocRuleIds.length}, replaceRules=${this.novelSelectedReplaceRuleIds.length}`
-      );
-    } catch (error) {
-      logger.warn(TAG, `加载小说规则配置失败: ${String(error)}`);
-      this.novelTocRules = [];
-      this.novelReplaceRules = [];
-      this.novelSelectedTocRuleIds = [];
-      this.novelSelectedReplaceRuleIds = [];
-      this.novelAppliedTocRuleIds = [];
-      this.novelAppliedReplaceRuleIds = [];
-      this.novelDirectoryRulesDirty = false;
-      this.novelReplaceRulesDirty = false;
-    }
-  }
-
-  private async loadNovelSettingsDialogConfig(): Promise<void> {
-    try {
-      const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
-      const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
-      this.novelEnableReadWhileDownload = await store.get('enableReadWhileDownload', true) as boolean;
-      this.novelDefaultLoadChapters = Number(await store.get('defaultLoadChapters', 50));
-      this.novelEnableDirectoryParsing = await store.get(NOVEL_SETTING_ENABLE_DIRECTORY_PARSING, true) as boolean;
-      this.novelEnableReplaceRules = await store.get(NOVEL_SETTING_ENABLE_REPLACE_RULES, true) as boolean;
-      this.novelDirectoryParsingSelection = this.novelEnableDirectoryParsing;
-      this.novelReplaceRulesSelection = this.novelEnableReplaceRules;
-      logger.info(
-        TAG,
-        `加载小说设置: prefetchEnabled=${this.novelEnableReadWhileDownload}, prefetchCount=${this.novelDefaultLoadChapters}, directory=${this.novelEnableDirectoryParsing}, replace=${this.novelEnableReplaceRules}`
-      );
-      if (!Number.isFinite(this.novelDefaultLoadChapters) || this.novelDefaultLoadChapters < 0) {
-        this.novelDefaultLoadChapters = 50;
-      }
-    } catch (error) {
-      logger.warn(TAG, `加载小说设置对话框配置失败: ${String(error)}`);
-      this.novelEnableReadWhileDownload = true;
-      this.novelDefaultLoadChapters = 50;
-      this.novelEnableDirectoryParsing = true;
-      this.novelEnableReplaceRules = true;
-      this.novelDirectoryParsingSelection = true;
-      this.novelReplaceRulesSelection = true;
-    }
-  }
-
-  private async saveNovelSettingValue(key: string, value: number | boolean): Promise<boolean> {
-    try {
-      const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
-      const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
-      await store.put(key, value);
-      await store.flush();
-      logger.info(TAG, `小说设置已保存: ${key}=${String(value)}`);
-      return true;
-    } catch (error) {
-      logger.error(TAG, `保存小说设置失败: key=${key}, error=${String(error)}`);
-      promptAction.showToast({ message: '保存设置失败', duration: 1200 });
-      return false;
-    }
-  }
-
-  private getNovelPrefetchChapterOptions(): number[] {
-    return [10, 20, 50, 100, 200, 9999];
-  }
-
-  private formatNovelPrefetchChapterCount(value: number): string {
-    if (value >= 9999) {
-      return '全部';
-    }
-    return `${value}章`;
-  }
-
-  private onNovelPrefetchChapterCountChange(value: number): void {
-    this.novelDefaultLoadChapters = value;
-    logger.info(TAG, `小说预下载范围切换: ${value}章`);
-    void this.saveNovelSettingValue('defaultLoadChapters', value);
-  }
-
-  private async saveBookScopedRuleIds(tocRuleIds: string[], replaceRuleIds: string[]): Promise<boolean> {
-    const scopeIds = this.getCurrentNovelRuleScopeIds();
-    if (scopeIds.length === 0) {
-      return false;
-    }
-    try {
-      const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
-      const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
-      for (const scopeId of scopeIds) {
-        await store.put(this.buildBookTocRuleKey(scopeId), JSON.stringify(tocRuleIds));
-        await store.put(this.buildBookReplaceRuleKey(scopeId), JSON.stringify(replaceRuleIds));
-      }
-      await store.flush();
-      logger.info(
-        TAG,
-        `小说书籍专属规则已保存: scopeIds=${scopeIds.join('|')}, tocRules=${tocRuleIds.length}, replaceRules=${replaceRuleIds.length}`
-      );
-      return true;
-    } catch (error) {
-      logger.error(TAG, `保存小说书籍专属规则失败: ${String(error)}`);
-      return false;
-    }
-  }
-
-  private async getScopedRuleIds(scopeId: string, key: string): Promise<string[] | null> {
-    if (scopeId.length === 0) {
-      return null;
-    }
-    try {
-      const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
-      const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
-      const raw = await store.get(key, '') as string;
-      if (!raw || raw.length === 0) {
-        return null;
-      }
-      return this.parseRuleIdArray(raw);
-    } catch (error) {
-      logger.warn(TAG, `读取书籍规则失败: key=${key}, error=${String(error)}`);
-      return null;
-    }
-  }
-
-  private async applyNovelDirectoryParsingSelection(): Promise<void> {
-    if (this.isApplyingNovelDirectoryParsing || !this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
-      return;
-    }
-    this.isApplyingNovelDirectoryParsing = true;
-    try {
-      const nextEnabled = true;
-      this.novelDirectoryParsingSelection = true;
-      const saved = await this.saveNovelSettingValue(NOVEL_SETTING_ENABLE_DIRECTORY_PARSING, nextEnabled);
-      if (!saved) {
-        return;
-      }
-      const scopedSaved = await this.saveBookScopedRuleIds(this.novelSelectedTocRuleIds, this.novelSelectedReplaceRuleIds);
-      if (!scopedSaved) {
-        promptAction.showToast({ message: '保存书籍规则失败', duration: 1400 });
-        return;
-      }
-      this.novelEnableDirectoryParsing = nextEnabled;
-      await this.refreshNovelContentByDirectorySetting(nextEnabled, this.novelSelectedTocRuleIds);
-      this.novelAppliedTocRuleIds = this.cloneRuleIdList(this.novelSelectedTocRuleIds);
-      this.refreshNovelRuleDirtyState();
-      logger.info(TAG, `目录解析应用完成: enabled=${nextEnabled}, selectedRules=${this.novelSelectedTocRuleIds.length}`);
-      promptAction.showToast({ message: '目录规则已应用并刷新章节', duration: 1400 });
-    } catch (error) {
-      logger.error(TAG, `应用目录解析规则失败: ${String(error)}`);
-      promptAction.showToast({ message: '应用目录解析规则失败', duration: 1400 });
-    } finally {
-      this.isApplyingNovelDirectoryParsing = false;
-    }
-  }
-
-  private async applyNovelReplaceRulesSelection(): Promise<void> {
-    if (this.isApplyingNovelReplaceRules || !this.content ||
-      (this.content.contentType !== UnifiedContentType.NOVEL && !this.isLocalImportedEBookContent())) {
-      return;
-    }
-    this.isApplyingNovelReplaceRules = true;
-    try {
-      const nextEnabled = true;
-      this.novelReplaceRulesSelection = true;
-      const saved = await this.saveNovelSettingValue(NOVEL_SETTING_ENABLE_REPLACE_RULES, nextEnabled);
-      if (!saved) {
-        return;
-      }
-      const scopedSaved = await this.saveBookScopedRuleIds(this.novelSelectedTocRuleIds, this.novelSelectedReplaceRuleIds);
-      if (!scopedSaved) {
-        promptAction.showToast({ message: '保存书籍规则失败', duration: 1400 });
-        return;
-      }
-      this.novelEnableReplaceRules = nextEnabled;
-      await this.applyReplaceRulesToCurrentNovelContent(nextEnabled, this.novelSelectedReplaceRuleIds);
-      this.novelAppliedReplaceRuleIds = this.cloneRuleIdList(this.novelSelectedReplaceRuleIds);
-      this.refreshNovelRuleDirtyState();
-      logger.info(TAG, `净化规则应用完成: enabled=${nextEnabled}, selectedRules=${this.novelSelectedReplaceRuleIds.length}`);
-      promptAction.showToast({ message: '净化规则已应用到当前内容', duration: 1400 });
-    } catch (error) {
-      logger.error(TAG, `应用净化规则失败: ${String(error)}`);
-      promptAction.showToast({ message: '应用净化规则失败', duration: 1400 });
-    } finally {
-      this.isApplyingNovelReplaceRules = false;
-    }
-  }
-
-  private openNovelTxtTocRulePage(): void {
-    void this.requestCloseNovelSettingsDialog(() => {
-      try {
-        this.navigateWithManagedWindowTransition('NovelTxtTocRulePage', null);
-      } catch (error) {
-        logger.error(TAG, `打开TXT目录规则页失败: ${String(error)}`);
-      }
-    });
-  }
-
-  private openNovelReplaceRulePage(): void {
-    void this.requestCloseNovelSettingsDialog(() => {
-      try {
-        this.navigateWithManagedWindowTransition('NovelReplaceRulePage', null);
-      } catch (error) {
-        logger.error(TAG, `打开净化规则页失败: ${String(error)}`);
-      }
-    });
-  }
-
-  private async refreshNovelContentByDirectorySetting(enableDirectoryParsing: boolean, selectedTocRuleIds: string[]): Promise<void> {
-    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
-      return;
-    }
-    const previousContent = this.content;
-    if (enableDirectoryParsing && this.isOnlineNovelContent() && this.content.id) {
-      await this.novelCacheManager.clearChapterListCache(this.content.id);
-    }
-    await this.loadNovelContent();
-    await this.applyDirectoryRulesToCurrentContent(enableDirectoryParsing, selectedTocRuleIds);
-    if (
-      previousContent &&
-      previousContent.chapters.length > 0 &&
-      (!this.content || this.content.contentType !== UnifiedContentType.NOVEL || this.content.chapters.length === 0)
-    ) {
-      this.content = previousContent;
-      this.isChaptersLoading = false;
-      logger.warn(TAG, '目录解析结果为空，已回退到应用前内容');
-      promptAction.showToast({ message: '目录解析结果为空，已恢复原目录', duration: 1400 });
-    }
-  }
-
-  private async applyDirectoryRulesToCurrentContent(enableDirectoryParsing: boolean, selectedTocRuleIds: string[]): Promise<void> {
-    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL || !enableDirectoryParsing) {
-      return;
-    }
-    if (selectedTocRuleIds.length === 0) {
-      return;
-    }
-    const tocRuleManager = getNovelTxtTocRuleManager();
-    await tocRuleManager.initialize();
-    const regexList: RegExp[] = [];
-    for (const ruleId of selectedTocRuleIds) {
-      const rule = tocRuleManager.getRule(ruleId);
-      if (!rule || !rule.rule) {
-        continue;
-      }
-      try {
-        regexList.push(new RegExp(rule.rule, 'm'));
-      } catch (error) {
-        logger.warn(TAG, `目录规则无效正则: id=${ruleId}, error=${String(error)}`);
-      }
-    }
-    if (regexList.length === 0) {
-      return;
-    }
-    const currentContent = this.content;
-    const nextChapters: UnifiedChapter[] = [];
-    let matchedCount = 0;
-    let changedCount = 0;
-    for (const chapter of currentContent.chapters) {
-      const baseTitle = chapter.title || '';
-      let nextTitle = baseTitle;
-      for (const regex of regexList) {
-        regex.lastIndex = 0;
-        const matched = regex.exec(baseTitle);
-        if (matched && matched[0]) {
-          matchedCount += 1;
-          nextTitle = matched[0].trim();
-          break;
-        }
-      }
-      if (nextTitle !== baseTitle) {
-        changedCount += 1;
-      }
-      const updatedChapter: UnifiedChapter = {
-        id: chapter.id,
-        title: nextTitle,
-        index: chapter.index,
-        isRead: chapter.isRead,
-        isDownloaded: chapter.isDownloaded,
-        isBookmarked: chapter.isBookmarked,
-        pageCount: chapter.pageCount,
-        wordCount: chapter.wordCount,
-        publishDate: chapter.publishDate,
-        originalData: chapter.originalData,
-        originalType: chapter.originalType
-      };
-      nextChapters.push(updatedChapter);
-    }
-    if (changedCount <= 0) {
-      logger.info(TAG, `目录规则已应用: 匹配章节=${matchedCount}, 标题变化=${changedCount}`);
-      return;
-    }
-    const updatedContent: UnifiedContent = {
-      id: currentContent.id,
-      title: currentContent.title,
-      coverUrl: currentContent.coverUrl,
-      author: currentContent.author,
-      description: currentContent.description,
-      contentType: currentContent.contentType,
-      genres: currentContent.genres,
-      tags: currentContent.tags,
-      readStatus: currentContent.readStatus,
-      isFavorite: currentContent.isFavorite,
-      isNSFW: currentContent.isNSFW,
-      totalChapters: currentContent.totalChapters,
-      readChapters: currentContent.readChapters,
-      lastReadChapterIndex: currentContent.lastReadChapterIndex,
-      lastReadChapterTitle: currentContent.lastReadChapterTitle,
-      lastReadTime: currentContent.lastReadTime,
-      readProgress: currentContent.readProgress,
-      sourceId: currentContent.sourceId,
-      sourceName: currentContent.sourceName,
-      sourceUrl: currentContent.sourceUrl,
-      isLocal: currentContent.isLocal,
-      publisher: currentContent.publisher,
-      publishDate: currentContent.publishDate,
-      isbn: currentContent.isbn,
-      fileSize: currentContent.fileSize,
-      filePath: currentContent.filePath,
-      format: currentContent.format,
-      chapters: nextChapters,
-      originalData: currentContent.originalData,
-      originalType: currentContent.originalType
-    };
-    this.content = updatedContent;
-    logger.info(TAG, `目录规则已应用: 匹配章节=${matchedCount}, 标题变化=${changedCount}`);
-  }
-
-  private async applyReplaceRulesToCurrentNovelContent(
-    enableReplaceRules: boolean,
-    selectedRuleIds: string[] | null = null
-  ): Promise<void> {
-    if (!this.content) {
-      return;
-    }
-    if (this.isLocalImportedEBookContent()) {
-      await this.applyReplaceRulesToCurrentEBookContent(enableReplaceRules, selectedRuleIds);
-      return;
-    }
-    if (this.content.contentType !== UnifiedContentType.NOVEL) {
-      return;
-    }
-    const sourceId = this.content.sourceId || this.pageParams?.sourceId;
-    const originalNovel = NovelAdapter.getOriginalNovel(this.content);
-    if (!originalNovel) {
-      return;
-    }
-    if (enableReplaceRules) {
-      const replaceRuleManager = NovelReplaceRuleManager.getInstance();
-      await replaceRuleManager.initialize();
-      await replaceRuleManager.refreshRules();
-    }
-    const contentProcessor = getNovelContentProcessor();
-    const baseDescription = originalNovel.intro || this.content.description;
-    const scopedRuleIds = selectedRuleIds === null ? undefined : selectedRuleIds;
-    const nextDescription = enableReplaceRules
-      ? contentProcessor.quickReplace(baseDescription, ReplaceScope.CONTENT, sourceId, scopedRuleIds)
-      : baseDescription;
-
-    const nextChapters: UnifiedChapter[] = [];
-    for (const chapter of this.content.chapters) {
-      const originalChapter = NovelAdapter.getOriginalChapter(chapter);
-      if (!originalChapter) {
-        nextChapters.push(chapter);
-        continue;
-      }
-      const baseTitle = originalChapter.title || chapter.title;
-      const nextTitle = enableReplaceRules
-        ? contentProcessor.processTitle(baseTitle, sourceId, scopedRuleIds)
-        : baseTitle;
-      const updatedChapter: UnifiedChapter = {
-        id: chapter.id,
-        title: nextTitle,
-        index: chapter.index,
-        isRead: chapter.isRead,
-        isDownloaded: chapter.isDownloaded,
-        isBookmarked: chapter.isBookmarked,
-        pageCount: chapter.pageCount,
-        wordCount: chapter.wordCount,
-        publishDate: chapter.publishDate,
-        originalData: chapter.originalData,
-        originalType: chapter.originalType
-      };
-      nextChapters.push(updatedChapter);
-    }
-    let nextLastReadChapterTitle = this.content.lastReadChapterTitle;
-    if (this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < nextChapters.length) {
-      nextLastReadChapterTitle = nextChapters[this.content.lastReadChapterIndex].title;
-    }
-    const currentContent = this.content;
-    const updatedContent: UnifiedContent = {
-      id: currentContent.id,
-      title: currentContent.title,
-      coverUrl: currentContent.coverUrl,
-      author: currentContent.author,
-      description: nextDescription,
-      contentType: currentContent.contentType,
-      genres: currentContent.genres,
-      tags: currentContent.tags,
-      readStatus: currentContent.readStatus,
-      isFavorite: currentContent.isFavorite,
-      isNSFW: currentContent.isNSFW,
-      totalChapters: currentContent.totalChapters,
-      readChapters: currentContent.readChapters,
-      lastReadChapterIndex: currentContent.lastReadChapterIndex,
-      lastReadChapterTitle: nextLastReadChapterTitle,
-      lastReadTime: currentContent.lastReadTime,
-      readProgress: currentContent.readProgress,
-      sourceId: currentContent.sourceId,
-      sourceName: currentContent.sourceName,
-      sourceUrl: currentContent.sourceUrl,
-      isLocal: currentContent.isLocal,
-      publisher: currentContent.publisher,
-      publishDate: currentContent.publishDate,
-      isbn: currentContent.isbn,
-      fileSize: currentContent.fileSize,
-      filePath: currentContent.filePath,
-      format: currentContent.format,
-      chapters: nextChapters,
-      originalData: currentContent.originalData,
-      originalType: currentContent.originalType
-    };
-    this.content = updatedContent;
-  }
-
-  private async applyReplaceRulesToCurrentEBookContent(
-    enableReplaceRules: boolean,
-    selectedRuleIds: string[] | null = null
-  ): Promise<void> {
-    if (!this.content || !this.isLocalImportedEBookContent()) {
-      return;
-    }
-    const ebook = EBookAdapter.getOriginalEBook(this.content);
-    if (!ebook) {
-      return;
-    }
-    if (enableReplaceRules) {
-      const replaceRuleManager = NovelReplaceRuleManager.getInstance();
-      await replaceRuleManager.initialize();
-      await replaceRuleManager.refreshRules();
-    }
-    const contentProcessor = getNovelContentProcessor();
-    const scopedRuleIds = selectedRuleIds === null ? undefined : selectedRuleIds;
-    const baseDescription = ebook.metadata?.description || this.content.description;
-    const nextDescription = enableReplaceRules
-      ? contentProcessor.quickReplace(baseDescription, ReplaceScope.CONTENT, undefined, scopedRuleIds)
-      : baseDescription;
-
-    const nextChapters: UnifiedChapter[] = [];
-    for (const chapter of this.content.chapters) {
-      const originalChapter = EBookAdapter.getOriginalChapter(chapter);
-      const baseTitle = originalChapter ? (originalChapter.title || chapter.title) : chapter.title;
-      const nextTitle = enableReplaceRules
-        ? contentProcessor.processTitle(baseTitle, undefined, scopedRuleIds)
-        : baseTitle;
-      const updatedChapter: UnifiedChapter = {
-        id: chapter.id,
-        title: nextTitle,
-        index: chapter.index,
-        isRead: chapter.isRead,
-        isDownloaded: chapter.isDownloaded,
-        isBookmarked: chapter.isBookmarked,
-        pageCount: chapter.pageCount,
-        wordCount: chapter.wordCount,
-        publishDate: chapter.publishDate,
-        originalData: chapter.originalData,
-        originalType: chapter.originalType
-      };
-      nextChapters.push(updatedChapter);
-    }
-    let nextLastReadChapterTitle = this.content.lastReadChapterTitle;
-    if (this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < nextChapters.length) {
-      nextLastReadChapterTitle = nextChapters[this.content.lastReadChapterIndex].title;
-    }
-    const currentContent = this.content;
-    const updatedContent: UnifiedContent = {
-      id: currentContent.id,
-      title: currentContent.title,
-      coverUrl: currentContent.coverUrl,
-      author: currentContent.author,
-      description: nextDescription,
-      contentType: currentContent.contentType,
-      genres: currentContent.genres,
-      tags: currentContent.tags,
-      readStatus: currentContent.readStatus,
-      isFavorite: currentContent.isFavorite,
-      isNSFW: currentContent.isNSFW,
-      totalChapters: currentContent.totalChapters,
-      readChapters: currentContent.readChapters,
-      lastReadChapterIndex: currentContent.lastReadChapterIndex,
-      lastReadChapterTitle: nextLastReadChapterTitle,
-      lastReadTime: currentContent.lastReadTime,
-      readProgress: currentContent.readProgress,
-      sourceId: currentContent.sourceId,
-      sourceName: currentContent.sourceName,
-      sourceUrl: currentContent.sourceUrl,
-      isLocal: currentContent.isLocal,
-      publisher: currentContent.publisher,
-      publishDate: currentContent.publishDate,
-      isbn: currentContent.isbn,
-      fileSize: currentContent.fileSize,
-      filePath: currentContent.filePath,
-      format: currentContent.format,
-      chapters: nextChapters,
-      originalData: currentContent.originalData,
-      originalType: currentContent.originalType
-    };
-    this.content = updatedContent;
-  }
-
-  private initializeEBookInfoEditState(): void {
-    const ebook = this.content ? EBookAdapter.getOriginalEBook(this.content) : null;
-    const metadata = ebook?.metadata;
-    this.ebookInfoTitle = metadata?.title || this.content?.title || '';
-    this.ebookInfoAuthor = metadata?.author || this.content?.author || '';
-    this.ebookInfoPublisher = metadata?.publisher || this.content?.publisher || '';
-    this.ebookInfoPublishDate = metadata?.publishDate || this.content?.publishDate || '';
-    this.ebookInfoIsbn = metadata?.isbn || this.content?.isbn || '';
-    this.ebookInfoLanguage = metadata?.language || '';
-    this.ebookInfoDescription = metadata?.description || this.content?.description || '';
-    this.ebookInfoCoverPath = metadata?.coverImagePath || this.content?.coverUrl || '';
-    const tags: string[] = metadata?.tags || this.content?.tags || [];
-    this.ebookInfoTagsText = tags.join(', ');
-    this.ebookInfoDirty = false;
-  }
-
-  private markEBookInfoDirty(): void {
-    this.ebookInfoDirty = true;
-  }
-
-  private parseEBookInfoTags(tagsText: string): string[] {
-    if (!tagsText || tagsText.trim().length === 0) {
-      return [];
-    }
-    return tagsText
-      .split(/[,，、]/)
-      .map((tag: string) => tag.trim())
-      .filter((tag: string) => tag.length > 0);
-  }
-
-  private buildEBookMetadataFromInfoDraft(ebook: EBook): EBookMetadata {
-    const metadata: EBookMetadata = {
-      title: this.ebookInfoTitle.trim(),
-      author: this.ebookInfoAuthor.trim(),
-      publisher: this.ebookInfoPublisher.trim(),
-      publishDate: this.ebookInfoPublishDate.trim(),
-      isbn: this.ebookInfoIsbn.trim(),
-      language: this.ebookInfoLanguage.trim(),
-      description: this.ebookInfoDescription.trim(),
-      coverImagePath: this.ebookInfoCoverPath.trim(),
-      tags: this.parseEBookInfoTags(this.ebookInfoTagsText),
-      rating: ebook.metadata?.rating ?? 0
-    };
-    return metadata;
-  }
-
-  private isNetworkPath(path: string): boolean {
-    return path.startsWith('http://') || path.startsWith('https://');
-  }
-
-  private syncCurrentContentFromEBookInfo(ebook: EBook, previousCoverPath: string): void {
-    if (!this.content) {
-      return;
-    }
-    const metadata = ebook.metadata;
-    this.content.title = metadata.title;
-    this.content.author = metadata.author;
-    this.content.description = metadata.description;
-    this.content.coverUrl = metadata.coverImagePath;
-    this.content.publisher = metadata.publisher;
-    this.content.publishDate = metadata.publishDate;
-    this.content.isbn = metadata.isbn;
-    this.content.tags = metadata.tags;
-    this.coverRefreshKey = Date.now();
-    this.localCoverPath = this.isNetworkPath(metadata.coverImagePath) ? '' : metadata.coverImagePath;
-    if (previousCoverPath !== metadata.coverImagePath) {
-      const ebookPayload: CoverChangedPayload = {
-        bookId: ebook.id,
-        coverPath: metadata.coverImagePath
-      };
-      eventBus.publish(GameEvent.EBOOK_COVER_CHANGED, ebookPayload);
-    }
-  }
-
-  private async saveEBookInfoEdit(): Promise<void> {
-    if (this.isSavingEBookInfo || !this.content || !this.isLocalImportedEBookContent()) {
-      return;
-    }
-    const ebook = EBookAdapter.getOriginalEBook(this.content);
-    if (!ebook) {
-      promptAction.showToast({ message: '未找到电子书数据', duration: 1400 });
-      return;
-    }
-    if (this.ebookInfoTitle.trim().length <= 0) {
-      promptAction.showToast({ message: '请输入书名', duration: 1400 });
-      return;
-    }
-    if (this.ebookInfoAuthor.trim().length <= 0) {
-      promptAction.showToast({ message: '请输入作者', duration: 1400 });
-      return;
-    }
-    this.isSavingEBookInfo = true;
-    try {
-      const previousCoverPath = ebook.metadata?.coverImagePath || '';
-      ebook.metadata = this.buildEBookMetadataFromInfoDraft(ebook);
-      ebook.lastUpdateTime = Date.now();
-      await this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
-      this.syncCurrentContentFromEBookInfo(ebook, previousCoverPath);
-      eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
-      this.ebookInfoDirty = false;
-      logger.info(TAG, `本地电子书信息已保存: ${ebook.id}, title=${ebook.metadata.title}`);
-      promptAction.showToast({ message: '电子书信息已保存', duration: 1400 });
-    } catch (error) {
-      logger.error(TAG, `保存电子书信息失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存电子书信息失败', duration: 1600 });
-    } finally {
-      this.isSavingEBookInfo = false;
-    }
-  }
-
-  private openEBookInfoScraperDialog(): void {
-    const config: ScraperDialogConfig = {
-      initialKeyword: this.ebookInfoTitle || this.content?.title || '',
-      contentType: ScraperContentType.BOOK,
-      title: '搜索电子书信息'
-    };
-    this.ebookInfoScraperDialogController = new CustomDialogController({
-      builder: ScraperDialog({
-        themeState: this.themeState,
-        config: config,
-        onConfirm: (result: ScraperDialogResult) => {
-          this.applyEBookInfoScraperResult(result);
-        },
-        onCancel: () => {
-          logger.info(TAG, '用户取消电子书信息刮削');
-        }
-      }),
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      customStyle: true
-    });
-    this.ebookInfoScraperDialogController.open();
-  }
-
-  private appendUniqueEBookInfoTags(target: string[], values: string[] | undefined): void {
-    if (!values || values.length <= 0) {
-      return;
-    }
-    for (const value of values) {
-      const normalized = value.trim();
-      if (normalized.length > 0 && target.indexOf(normalized) < 0) {
-        target.push(normalized);
-      }
-    }
-  }
-
-  private applyEBookInfoScraperResult(result: ScraperDialogResult): void {
-    const metadata = result.metadata;
-    logger.info(TAG, `应用电子书刮削结果到编辑字段: ${metadata.title}`);
-    if (metadata.title && metadata.title.trim().length > 0) {
-      this.ebookInfoTitle = metadata.title.trim();
-    }
-    if (result.applyAuthor) {
-      if (metadata.author && metadata.author.trim().length > 0) {
-        this.ebookInfoAuthor = metadata.author.trim();
-      } else if (metadata.authors && metadata.authors.length > 0) {
-        this.ebookInfoAuthor = metadata.authors.join(', ');
-      }
-    }
-    if (result.applyDescription) {
-      const description = metadata.description || metadata.summary || '';
-      if (description.trim().length > 0) {
-        this.ebookInfoDescription = description.trim();
-      }
-    }
-    if (result.applyPublisher && metadata.publisher && metadata.publisher.trim().length > 0) {
-      this.ebookInfoPublisher = metadata.publisher.trim();
-    }
-    if (metadata.releaseDate && metadata.releaseDate.trim().length > 0) {
-      this.ebookInfoPublishDate = metadata.releaseDate.trim();
-    }
-    if (result.applyTags) {
-      const tags: string[] = [];
-      this.appendUniqueEBookInfoTags(tags, metadata.genres);
-      this.appendUniqueEBookInfoTags(tags, metadata.tags);
-      this.appendUniqueEBookInfoTags(tags, metadata.themes);
-      if (tags.length > 0) {
-        this.ebookInfoTagsText = tags.join(', ');
-      }
-    }
-    if (result.applyCover) {
-      const coverPath = metadata.coverUrlLarge || metadata.coverUrl || metadata.coverUrlMedium || metadata.coverUrlSmall || '';
-      if (coverPath.trim().length > 0) {
-        this.ebookInfoCoverPath = coverPath.trim();
-      }
-    }
-    this.ebookInfoDirty = true;
-    promptAction.showToast({ message: '刮削信息已填入，请确认保存', duration: 1400 });
-  }
-
-  private showDownloadOptions(): void {
-    if (!this.content || this.content.chapters.length === 0) {
-      return;
-    }
-
-    this.downloadSelectionMode = 'range';
-    this.downloadChapterListExpanded = false;
-
-    let firstUncachedIndex = 0;
-    for (let i = 0; i < this.content.chapters.length; i++) {
-      if (!this.content.chapters[i].isDownloaded) {
-        firstUncachedIndex = i;
-        break;
-      }
-    }
-
-    this.downloadRangeStart = firstUncachedIndex;
-    this.downloadRangeEnd = this.content.chapters.length - 1;
-    this.downloadSelectedChapters = new Set<number>();
-    this.showDownloadDialog = true;
-    animateTo({
-      duration: 260,
-      curve: Curve.EaseOut
-    }, () => {
-      this.downloadDialogOpacity = 1;
-      this.downloadDialogScale = 1;
-      this.downloadDialogTranslateY = 0;
-    });
-  }
-
-  private closeDownloadDialog(): void {
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseIn
-    }, () => {
-      this.downloadDialogOpacity = 0;
-      this.downloadDialogScale = 0.96;
-      this.downloadDialogTranslateY = 12;
-    });
-    setTimeout(() => {
-      this.showDownloadDialog = false;
-    }, 200);
-  }
-
-  private toggleChapterSelection(index: number): void {
-    if (this.content && this.content.chapters[index]?.isDownloaded) {
-      return;
-    }
-
-    const newSet = new Set(this.downloadSelectedChapters);
-    if (newSet.has(index)) {
-      newSet.delete(index);
-    } else {
-      newSet.add(index);
-    }
-    this.downloadSelectedChapters = newSet;
-  }
-
-  private getSelectedChapterCount(): number {
-    if (!this.content) {
-      return 0;
-    }
-
-    if (this.downloadSelectionMode === 'range') {
-      let count = 0;
-      for (let i = this.downloadRangeStart; i <= this.downloadRangeEnd; i++) {
-        if (!this.content.chapters[i]?.isDownloaded) {
-          count++;
-        }
-      }
-      return count;
-    }
-    return this.downloadSelectedChapters.size;
-  }
-
-  private async executeDownloadSelected(): Promise<void> {
-    if (!this.content) {
-      return;
-    }
-
-    const selectedCount = this.getSelectedChapterCount();
-    if (selectedCount === 0) {
-      promptAction.showToast({
-        message: this.content.contentType === UnifiedContentType.NOVEL && this.isCurrentNovelAudioSource()
-          ? '未选择要缓存的音频章节'
-          : '未选择要缓存的章节'
-      });
-      return;
-    }
-
-    this.closeDownloadDialog();
-    if (this.content.contentType === UnifiedContentType.NOVEL) {
-      await this.downloadSelectedNovelChapters();
+      await this.downloadSelectedNovelChapters(selectedIndexes);
     } else if (this.content.contentType === UnifiedContentType.MANGA) {
-      await this.downloadSelectedMangaChapters();
+      await this.downloadSelectedMangaChapters(selectedIndexes);
     }
   }
 
-  private async downloadSelectedNovelChapters(): Promise<void> {
+  private async downloadSelectedNovelChapters(selectedIndexes: number[]): Promise<void> {
     if (!this.content) {
       return;
     }
@@ -10222,16 +6127,6 @@ export struct UnifiedDetailPage {
     if (!sourceId) {
       promptAction.showToast({ message: '缺少书源信息' });
       return;
-    }
-
-    const selectedIndexes: number[] = [];
-    if (this.downloadSelectionMode === 'range') {
-      for (let i = this.downloadRangeStart; i <= this.downloadRangeEnd; i++) {
-        selectedIndexes.push(i);
-      }
-    } else {
-      this.downloadSelectedChapters.forEach((idx: number) => selectedIndexes.push(idx));
-      selectedIndexes.sort((a: number, b: number) => a - b);
     }
 
     const chapters: LegadoChapter[] = [];
@@ -10285,7 +6180,7 @@ export struct UnifiedDetailPage {
     }
   }
 
-  private async downloadSelectedMangaChapters(): Promise<void> {
+  private async downloadSelectedMangaChapters(selectedIndexes: number[]): Promise<void> {
     if (!this.content || !this.isOnlineManga()) {
       return;
     }
@@ -10294,16 +6189,6 @@ export struct UnifiedDetailPage {
     if (!sourceId || sourceId <= 0) {
       promptAction.showToast({ message: '缺少图源信息' });
       return;
-    }
-
-    const selectedIndexes: number[] = [];
-    if (this.downloadSelectionMode === 'range') {
-      for (let i = this.downloadRangeStart; i <= this.downloadRangeEnd; i++) {
-        selectedIndexes.push(i);
-      }
-    } else {
-      this.downloadSelectedChapters.forEach((idx: number) => selectedIndexes.push(idx));
-      selectedIndexes.sort((a: number, b: number) => a - b);
     }
 
     const chaptersToDownload = selectedIndexes
@@ -10448,53 +6333,30 @@ export struct UnifiedDetailPage {
   }
 
   private showNovelCacheClearConfirm(): void {
-    if (this.isCurrentNovelAudioSource()) {
-      this.cacheConfirmTitle = '清理听书缓存';
-      this.cacheConfirmMessage = '确定要清理当前小说的听书缓存吗？清理后需要重新缓存才能离线播放。';
-    } else {
-      this.cacheConfirmTitle = '清理小说缓存';
-      this.cacheConfirmMessage = '确定要清理当前小说的章节缓存吗？清理后需要重新缓存才能离线阅读。';
-    }
-    this.cacheConfirmActionLabel = '清理';
-    this.cacheConfirmActionKind = 'danger';
-    this.cacheConfirmPendingAction = 'clear_novel';
-    this.isCacheConfirmDialogVisible = true;
-    animateTo({ duration: 260, curve: curves.springMotion(0.6, 0.9) }, () => {
-      this.cacheConfirmDialogOpacity = 1;
-      this.cacheConfirmDialogScale = 1;
-      this.cacheConfirmDialogTranslateY = 0;
-    });
+    this.cacheConfirmConfig = {
+      title: this.isCurrentNovelAudioSource() ? '清理听书缓存' : '清理小说缓存',
+      message: this.isCurrentNovelAudioSource()
+        ? '确定要清理当前小说的听书缓存吗？清理后需要重新缓存才能离线播放。'
+        : '确定要清理当前小说的章节缓存吗？清理后需要重新缓存才能离线阅读。',
+      actionLabel: '清理',
+      actionKind: 'danger',
+      pendingAction: 'clear_novel'
+    };
+    this.cacheConfirmDialogLoadSignal++;
   }
 
   private showMangaCacheClearConfirm(): void {
-    this.cacheConfirmTitle = '清理漫画缓存';
-    this.cacheConfirmMessage = '确定要清理当前漫画的章节与页面缓存吗？清理后需要重新缓存才能离线阅读。';
-    this.cacheConfirmActionLabel = '清理';
-    this.cacheConfirmActionKind = 'danger';
-    this.cacheConfirmPendingAction = 'clear_manga';
-    this.isCacheConfirmDialogVisible = true;
-    animateTo({ duration: 260, curve: curves.springMotion(0.6, 0.9) }, () => {
-      this.cacheConfirmDialogOpacity = 1;
-      this.cacheConfirmDialogScale = 1;
-      this.cacheConfirmDialogTranslateY = 0;
-    });
+    this.cacheConfirmConfig = {
+      title: '清理漫画缓存',
+      message: '确定要清理当前漫画的章节与页面缓存吗？清理后需要重新缓存才能离线阅读。',
+      actionLabel: '清理',
+      actionKind: 'danger',
+      pendingAction: 'clear_manga'
+    };
+    this.cacheConfirmDialogLoadSignal++;
   }
 
-  private hideCacheConfirmDialog(): void {
-    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
-      this.cacheConfirmDialogOpacity = 0;
-      this.cacheConfirmDialogScale = 0.86;
-      this.cacheConfirmDialogTranslateY = 28;
-    });
-    setTimeout(() => {
-      this.isCacheConfirmDialogVisible = false;
-      this.cacheConfirmPendingAction = '';
-    }, 230);
-  }
-
-  private async confirmCacheAction(): Promise<void> {
-    const pendingAction = this.cacheConfirmPendingAction;
-    this.hideCacheConfirmDialog();
+  private async handleCacheConfirmAction(pendingAction: string): Promise<void> {
     if (pendingAction === 'clear_content') {
       await this.clearContentCache();
     } else if (pendingAction === 'clear_novel') {
@@ -10504,196 +6366,16 @@ export struct UnifiedDetailPage {
     }
   }
 
-  private closeNovelSettingsDialogImmediately(): void {
-    this.novelDirectoryRulesDirty = false;
-    this.novelReplaceRulesDirty = false;
-    this.closeNovelSettingsDialog();
-    const afterClose = this.novelSettingsCloseAfterClose;
-    this.novelSettingsCloseAfterClose = undefined;
-    if (afterClose) {
-      afterClose();
-    }
-  }
-
-  private hideNovelSettingsCloseConfirmDialog(): void {
-    animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
-      this.novelSettingsCloseConfirmOpacity = 0;
-      this.novelSettingsCloseConfirmScale = 0.96;
-      this.novelSettingsCloseConfirmTranslateY = 12;
-    });
-    setTimeout(() => {
-      this.isNovelSettingsCloseConfirmDialogVisible = false;
-      this.novelSettingsCloseAfterClose = undefined;
-    }, 200);
-  }
-
   @Builder
   private buildCacheConfirmDialog() {
-    if (this.isCacheConfirmDialogVisible) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => this.hideCacheConfirmDialog(),
-        dialogWidth: '88%',
-        maxWidth: 420,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 14 }) {
-            Text(this.cacheConfirmTitle)
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-            Text(this.cacheConfirmMessage)
-              .fontSize(13)
-              .lineHeight(22)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .width('100%')
-
-            Row({ space: 10 }) {
-              Button('取消')
-                .layoutWeight(1)
-                .height(40)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .borderRadius(20)
-                .onClick(() => this.hideCacheConfirmDialog())
-
-              Button(this.cacheConfirmActionLabel)
-                .layoutWeight(1)
-                .height(40)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(this.cacheConfirmActionKind === 'danger'
-                  ? ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .fontColor(Color.White)
-                .borderRadius(20)
-                .onClick(() => {
-                  void this.confirmCacheAction();
-                })
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .padding(20)
-        }
-        .width('100%')
-        .scale({ x: this.cacheConfirmDialogScale, y: this.cacheConfirmDialogScale })
-        .translate({ y: this.cacheConfirmDialogTranslateY })
-        .opacity(this.cacheConfirmDialogOpacity)
-        .borderRadius(18)
-        .clip(true)
-        .onClick(() => {})
+    CacheConfirmDialogComponent({
+      themeState: this.themeState,
+      loadSignal: this.cacheConfirmDialogLoadSignal,
+      config: this.cacheConfirmConfig,
+      onConfirm: (pendingAction: string) => {
+        void this.handleCacheConfirmAction(pendingAction);
       }
-    }
-  }
-
-  @Builder
-  private buildNovelSettingsCloseConfirmDialog() {
-    if (this.isNovelSettingsCloseConfirmDialogVisible) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => this.hideNovelSettingsCloseConfirmDialog(),
-        dialogWidth: '92%',
-        maxWidth: 520,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 14 }) {
-            Text('存在未应用修改')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-            Text(this.isLocalImportedEBookContent()
-              ? '净化规则或信息修改还有未保存内容。你可以先应用再退出，也可以直接退出。'
-              : '目录规则或净化规则还有未应用的修改。你可以先应用再退出，也可以直接退出。')
-              .fontSize(13)
-              .lineHeight(22)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .width('100%')
-
-            Row({ space: 10 }) {
-              Button('继续编辑')
-                .layoutWeight(1)
-                .height(40)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .borderRadius(20)
-                .onClick(() => this.hideNovelSettingsCloseConfirmDialog())
-
-              Button('直接退出')
-                .layoutWeight(1)
-                .height(40)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .borderRadius(20)
-                .onClick(() => {
-                  this.hideNovelSettingsCloseConfirmDialog();
-                  this.closeNovelSettingsDialogImmediately();
-                })
-
-              Button('应用后退出')
-                .layoutWeight(1)
-                .height(40)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .fontColor(Color.White)
-                .borderRadius(20)
-                .enabled(!this.isApplyingNovelDirectoryParsing && !this.isApplyingNovelReplaceRules && !this.isSavingEBookInfo)
-                .onClick(() => {
-                  void (async () => {
-                    await this.applyPendingNovelSettingsChanges();
-                    if (!this.hasPendingNovelSettingChanges()) {
-                      this.hideNovelSettingsCloseConfirmDialog();
-                      this.closeNovelSettingsDialog();
-                      const afterClose = this.novelSettingsCloseAfterClose;
-                      this.novelSettingsCloseAfterClose = undefined;
-                      if (afterClose) {
-                        afterClose();
-                      }
-                    }
-                  })();
-                })
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .padding(20)
-        }
-        .width('100%')
-        .scale({ x: this.novelSettingsCloseConfirmScale, y: this.novelSettingsCloseConfirmScale })
-        .translate({ y: this.novelSettingsCloseConfirmTranslateY })
-        .opacity(this.novelSettingsCloseConfirmOpacity)
-        .borderRadius(26)
-        .clip(true)
-        .onClick(() => {})
-      }
-    }
+    })
   }
 
   /**
@@ -11711,6 +7393,32 @@ export struct UnifiedDetailPage {
     .edgeEffect(EdgeEffect.Spring)
   }
 
+  @Builder
+  buildTrackingStatusSection() {
+    if (this.content && !this.isCurrentLocalImportedContent() && this.trackingCardState !== null && this.trackingCardCallbacks !== null) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        this.buildGlassSectionChrome()
+        ContentTrackingStatusCard({
+          state: this.trackingCardState,
+          themeState: this.themeState,
+          appFontFamily: this.appFontFamily,
+          callbacks: this.trackingCardCallbacks
+        })
+        .width('100%')
+        .padding(18)
+      }
+      .width('100%')
+      .backgroundColor(this.getSectionBackgroundColor())
+      .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
+      .backgroundEffect(this.getSectionBackgroundEffect())
+      .borderRadius(this.getSectionRadius())
+      .clip(true)
+      .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
+      .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
+      .id('guide_unified_detail_tracking')
+    }
+  }
+
   /**
    * 横屏布局 - 右侧面板
    * 包含：工具栏、缓存状态卡片、章节列表，右下角浮动阅读按钮
@@ -11724,12 +7432,22 @@ export struct UnifiedDetailPage {
         this.buildActionBar()
 
         // 内容跟踪
-        if (this.shouldShowTrackingStatusSection()) {
-          this.buildTrackingStatusSection()
-        }
+        this.buildTrackingStatusSection()
 
         // 听书缓存
-        this.buildReadAloudCacheSection()
+        ReadAloudCacheDialogComponent({
+          content: this.content,
+          supportsReadAloudCache: this.supportsReadAloudCacheSection(),
+          isCurrentNovelAudioSource: this.isCurrentNovelAudioSource(),
+          isLocalTxtNovelEBook: this.isLocalTxtNovelEBookContent(),
+          loadSignal: this.readAloudCacheLoadSignal,
+          onOpenCacheDialog: (trigger: string) => {
+            this.openCacheDialogFromDetail(trigger);
+          },
+          onSummaryChanged: (summary: RemoteReadAloudCacheBookSummary | null) => {
+            this.readAloudCacheSummary = summary;
+          }
+        })
 
         // 缓存状态卡片
         this.buildCacheStatusCard()
@@ -11937,10 +7655,20 @@ export struct UnifiedDetailPage {
                   this.buildHeader()
                   this.buildDescription()
                   this.buildActionBar()
-                  if (this.shouldShowTrackingStatusSection()) {
-                    this.buildTrackingStatusSection()
-                  }
-                  this.buildReadAloudCacheSection()
+                  this.buildTrackingStatusSection()
+                  ReadAloudCacheDialogComponent({
+                    content: this.content,
+                    supportsReadAloudCache: this.supportsReadAloudCacheSection(),
+                    isCurrentNovelAudioSource: this.isCurrentNovelAudioSource(),
+                    isLocalTxtNovelEBook: this.isLocalTxtNovelEBookContent(),
+                    loadSignal: this.readAloudCacheLoadSignal,
+                    onOpenCacheDialog: (trigger: string) => {
+                      this.openCacheDialogFromDetail(trigger);
+                    },
+                    onSummaryChanged: (summary: RemoteReadAloudCacheBookSummary | null) => {
+                      this.readAloudCacheSummary = summary;
+                    }
+                  })
                   this.buildCacheStatusCard()
                   this.buildShelfContentSection()
                   this.buildRecommendationSection()
@@ -11979,19 +7707,86 @@ export struct UnifiedDetailPage {
         this.buildGenerateCoverDialog()
         
         // 下载章节选择对话框
-        this.buildDownloadDialog()
-
-        // 听书缓存管理对话框
-        this.buildReadAloudCacheDialog()
+        DownloadDialogComponent({
+          content: this.content,
+          themeState: this.themeState,
+          loadSignal: this.downloadDialogLoadSignal,
+          isDownloading: this.isDownloading,
+          downloadProgressCurrent: this.downloadProgressCurrent,
+          downloadProgressTotal: this.downloadProgressTotal,
+          downloadCurrentChapterTitle: this.downloadCurrentChapterTitle,
+          onStartDownload: (selectedIndexes: number[]) => {
+            this.executeDownloadWithIndexes(selectedIndexes);
+          },
+          onClearCache: (contentType: string) => {
+            if (contentType === 'novel') {
+              this.showNovelCacheClearConfirm();
+            } else {
+              this.showMangaCacheClearConfirm();
+            }
+          },
+          isChapterFullyCached: (chapterId: string) => this.isChapterFullyCached(chapterId),
+          isChapterPartiallyCached: (chapterId: string) => this.isChapterPartiallyCached(chapterId),
+          getNovelCacheActionTitle: () => this.getNovelCacheActionTitle(),
+          getNovelDownloadedTagLabel: () => this.getNovelDownloadedTagLabel(),
+          getNovelCacheCountActionLabel: (count: number) => this.getNovelCacheCountActionLabel(count),
+          isCurrentNovelAudioSource: () => this.isCurrentNovelAudioSource()
+        })
 
         // 小说设置对话框
-        this.buildNovelSettingsDialog()
+        NovelSettingsDialogComponent({
+          content: this.content,
+          themeState: this.themeState,
+          pageParams: this.pageParams,
+          loadSignal: this.novelSettingsLoadSignal,
+          onNavigate: (pageName: string, params: object | null) => {
+            this.navigateWithManagedWindowTransition(pageName, params);
+          },
+          isLocalImportedEBookContent: () => this.isLocalImportedEBookContent(),
+          getNovelCacheBookId: (sourceId: string, bookUrl: string) => this.getNovelCacheBookId(sourceId, bookUrl),
+          loadNovelContent: async () => {
+            await this.loadNovelContent();
+          },
+          onContentUpdated: (content: UnifiedContent) => {
+            this.content = content;
+            this.coverRefreshKey = Date.now();
+          },
+          onCoverChanged: (bookId: string, coverPath: string) => {
+            eventBus.publish(GameEvent.EBOOK_COVER_CHANGED, { bookId, coverPath });
+          },
+          onChaptersReloaded: () => {
+            this.isChaptersLoading = false;
+          }
+        })
 
         // 内容跟踪设置对话框
-        this.buildTrackingSettingsDialog()
+        TrackingSettingsDialogComponent({
+          content: this.content,
+          themeState: this.themeState,
+          loadSignal: this.trackingLoadSignal,
+          onNavigate: (pageName: string, params: object | null) => {
+            this.navigateWithManagedWindowTransition(pageName, params);
+          },
+          getCurrentNovelSourceId: () => this.getCurrentNovelSourceId(),
+          isCurrentLocalImportedContent: () => this.isCurrentLocalImportedContent(),
+          isLocalImportedEBookContent: () => this.isLocalImportedEBookContent(),
+          getNovelCacheBookId: (sourceId: string, bookUrl: string) => this.getNovelCacheBookId(sourceId, bookUrl),
+          onTrackingStateChanged: (state: ContentTrackingCardState, callbacks: ContentTrackingCardCallbacks) => {
+            this.trackingCardState = state;
+            this.trackingCardCallbacks = callbacks;
+          }
+        })
         
         // 换源对话框
-        this.buildChangeSourceDialog()
+        ChangeSourceDialogComponent({
+          content: this.content,
+          themeState: this.themeState,
+          loadSignal: this.changeSourceDialogLoadSignal,
+          currentSourceId: this.pageParams?.sourceId || '',
+          onSourceSelected: (source: NovelSearchResult) => {
+            this.changeNovelSource(source);
+          }
+        })
         
         // 添加书架选择对话框
         this.buildAddToShelfDialog()
@@ -12001,7 +7796,6 @@ export struct UnifiedDetailPage {
 
         this.buildReplaceBookDialog()
         this.buildCacheConfirmDialog()
-        this.buildNovelSettingsCloseConfirmDialog()
  
         if (this.appGuideStep) {
 
@@ -12047,7 +7841,7 @@ export struct UnifiedDetailPage {
       this.applyPageDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE);
       // 页面显示时刷新阅读记录（从阅读器返回时）
       this.refreshReadingProgress();
-      void this.loadReadAloudCacheSummary();
+      this.readAloudCacheLoadSignal++;
       void this.refreshPageGuide('onShown');
     })
     .backgroundColor(Color.Transparent)
@@ -12212,47 +8006,27 @@ export struct UnifiedDetailPage {
    * 显示生成封面提示对话框
    */
   private showGenerateCoverPrompt(): void {
-    this.coverTitleInput = this.content?.title || '';
-    this.coverFontScale = 1.0;
-    
-    // 重置动画状态
-    this.dialogOpacity = 0;
-    this.dialogScale = 0.8;
-    this.dialogTranslateY = 30;
-    
-    // 显示对话框
-    this.showGenerateCoverDialog = true;
-    
-    // 触发入场动画
-    animateTo({
-      duration: 260,
-      curve: Curve.EaseOut
-    }, () => {
-      this.dialogOpacity = 1;
-      this.dialogScale = 1;
-      this.dialogTranslateY = 0;
-    });
+    this.generateCoverDialogLoadSignal++;
   }
   
   /**
    * 生成封面
    */
-  private async generateCoverForContent(): Promise<void> {
-    if (!this.content || !this.coverTitleInput.trim()) {
+  private async generateCoverForContent(title: string, fontScale: number): Promise<void> {
+    if (!this.content || !title.trim()) {
       promptAction.showToast({ message: '请输入标题', duration: 2000 });
       return;
     }
-    
+
     this.isGeneratingCover = true;
-    this.showGenerateCoverDialog = false;
-    
+
     try {
-      logger.info(TAG, `开始生成封面: ${this.coverTitleInput}`);
-      
+      logger.info(TAG, `开始生成封面: ${title}`);
+
       const coverPath = await this.coverGenerator.generateCover(
         this.content.id,
-        this.coverTitleInput,
-        () => { this.buildCoverForSnapshot(this.coverTitleInput); }
+        title,
+        () => { this.buildCoverForSnapshot(title, fontScale); }
       );
       
       if (coverPath) {
@@ -12319,29 +8093,29 @@ export struct UnifiedDetailPage {
    * 构建封面组件（用于componentSnapshot）
    */
   @Builder
-  buildCoverForSnapshot(title: string) {
+  buildCoverForSnapshot(title: string, fontScale: number = 1.0) {
     Stack() {
       Image($r('app.media.ebook'))
         .width(COVER_WIDTH)
         .height(COVER_HEIGHT)
         .objectFit(ImageFit.Cover)
-      
+
       Text(this.formatCoverTitle(title))
         .fontFamily(this.appFontFamily)
-        .fontSize(this.calculateCoverFontSize(title))
+        .fontSize(this.calculateCoverFontSize(title, fontScale))
         .fontWeight(FontWeight.Bold)
         .fontColor('#1a1a1a')
         .textAlign(TextAlign.Center)
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .lineHeight(this.calculateCoverFontSize(title) * 1.3)
+        .lineHeight(this.calculateCoverFontSize(title, fontScale) * 1.3)
         .width(COVER_WIDTH * (UnifiedDetailPage.TITLE_AREA_RIGHT_PERCENT - UnifiedDetailPage.TITLE_AREA_LEFT_PERCENT) - 24)
         .constraintSize({
           maxHeight: COVER_HEIGHT * (UnifiedDetailPage.TITLE_AREA_BOTTOM_PERCENT - UnifiedDetailPage.TITLE_AREA_TOP_PERCENT) - 20
         })
         .position({
           x: COVER_WIDTH * UnifiedDetailPage.TITLE_AREA_LEFT_PERCENT + 12,
-          y: COVER_HEIGHT * (UnifiedDetailPage.TITLE_AREA_TOP_PERCENT + UnifiedDetailPage.TITLE_AREA_BOTTOM_PERCENT) / 2 - this.calculateCoverFontSize(title) * 0.65
+          y: COVER_HEIGHT * (UnifiedDetailPage.TITLE_AREA_TOP_PERCENT + UnifiedDetailPage.TITLE_AREA_BOTTOM_PERCENT) / 2 - this.calculateCoverFontSize(title, fontScale) * 0.65
         })
     }
     .width(COVER_WIDTH)
@@ -12362,7 +8136,7 @@ export struct UnifiedDetailPage {
   /**
    * 计算封面字体大小
    */
-  private calculateCoverFontSize(title: string): number {
+  private calculateCoverFontSize(title: string, fontScale: number = 1.0): number {
     const length = title.length;
     let baseSize = 24;
     if (length <= 2) baseSize = 70;
@@ -12371,3360 +8145,11 @@ export struct UnifiedDetailPage {
     else if (length <= 8) baseSize = 36;
     else if (length <= 12) baseSize = 32;
     else if (length <= 16) baseSize = 28;
-    
-    return baseSize * this.coverFontScale;
+
+    return baseSize * fontScale;
   }
   
-  /**
-   * 关闭生成封面对话框（带动画）
-   */
-  private closeGenerateCoverDialog(): void {
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseIn
-    }, () => {
-      this.dialogOpacity = 0;
-      this.dialogScale = 0.96;
-      this.dialogTranslateY = 12;
-    });
 
-    setTimeout(() => {
-      this.showGenerateCoverDialog = false;
-    }, 200);
-  }
-  
-  /**
-   * 单章节下载视图（针对只有1章的漫画）
-   */
-  @Builder
-  buildSingleChapterDownloadView() {
-    Column({ space: 16 }) {
-      // 章节信息卡片
-      Row({ space: 12 }) {
-        // 章节图标
-        Column() {
-          SymbolGlyph($r('sys.symbol.doc_plaintext_2'))
-            .fontSize(24)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-        .borderRadius(12)
-        .justifyContent(FlexAlign.Center)
-        
-        // 章节信息
-        Column({ space: 4 }) {
-          Text(this.content?.chapters[0]?.title || '第1章')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          
-          Row({ space: 8 }) {
-            if (this.content?.chapters[0]?.pageCount && this.content.chapters[0].pageCount > 0) {
-              Text(`${this.content.chapters[0].pageCount} 页`)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            }
-            
-            if (this.content?.chapters[0]?.isDownloaded) {
-              Row({ space: 4 }) {
-                SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
-                  .fontSize(12)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
-                Text('已缓存')
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-              }
-            }
-          }
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      
-      // 提示文字
-      if (this.content?.chapters[0]?.isDownloaded) {
-        Text('该章节已缓存，可离线阅读')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-          .textAlign(TextAlign.Center)
-      } else {
-        Text('点击下载按钮缓存该章节，缓存后可离线阅读')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-          .textAlign(TextAlign.Center)
-      }
-    }
-    .width('100%')
-  }
-
-  /**
-   * 听书缓存管理对话框
-   */
-  @Builder
-  buildReadAloudCacheDialog() {
-    if (this.showReadAloudCacheDialog && this.content && this.supportsReadAloudCacheSection()) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => {
-          this.closeReadAloudCacheDialog();
-        },
-        dialogWidth: '90%',
-        maxWidth: 640,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
-
-            Row() {
-              Text('听书缓存')
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              Blank()
-
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .onClick(() => {
-                this.closeReadAloudCacheDialog();
-              })
-            }
-            .width('100%')
-
-            Row({ space: 8 }) {
-              this.buildReadAloudCacheDialogTabButton('缓存', $r('sys.symbol.arrow_down_circle'), 0)
-              this.buildReadAloudCacheDialogTabButton('管理', $r('sys.symbol.rectangle_stack'), 1)
-              this.buildReadAloudCacheDialogTabButton('设置', $r('sys.symbol.gearshape'), 2)
-            }
-            .width('100%')
-            .padding(4)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-              this.themeState.currentTheme))
-            .borderRadius(18)
-
-            if (this.isReadAloudPrecaching) {
-              Column({ space: 8 }) {
-                Row({ space: 8 }) {
-                  LoadingProgress()
-                    .width(14)
-                    .height(14)
-                    .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-                  Text(this.readAloudPrecachingStatusText || '正在缓存听书音频')
-                    .fontSize(12)
-                    .fontWeight(FontWeight.Medium)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                      this.themeState.currentTheme))
-                  Blank()
-                  Text(this.formatReadAloudCacheSize(this.readAloudPrecachingBytes))
-                    .fontSize(11)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                      this.themeState.currentTheme))
-                }
-                .width('100%')
-
-                if (this.readAloudPrecachingDetailText) {
-                  Text(this.readAloudPrecachingDetailText)
-                    .fontSize(11)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                      this.themeState.currentTheme))
-                    .width('100%')
-                }
-
-                Progress({
-                  value: this.readAloudPrecachingSegmentTotal > 0
-                    ? Math.round((this.readAloudPrecachingSegmentDone / this.readAloudPrecachingSegmentTotal) * 100)
-                    : 0,
-                  total: 100,
-                  type: ProgressType.Linear
-                })
-                  .width('100%')
-                  .height(6)
-                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary',
-                    this.themeState.currentTheme))
-                  .borderRadius(3)
-              }
-              .width('100%')
-              .padding(12)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                this.themeState.currentTheme))
-              .borderRadius(12)
-              .transition(this.getReadAloudCacheFadeSlideTransition(8))
-            }
-
-            Scroll() {
-              Column({ space: 12 }) {
-                if (this.readAloudCacheDialogActiveTab === 0) {
-                  this.buildReadAloudCacheChapterSelectionTab()
-                } else if (this.readAloudCacheDialogActiveTab === 1) {
-                  this.buildReadAloudCacheManagementTab()
-                } else {
-                  this.buildReadAloudCacheSettingsTab()
-                }
-              }
-              .width('100%')
-              .alignItems(HorizontalAlign.Start)
-              .animation({ duration: 220, curve: Curve.EaseOut })
-            }
-            .width('100%')
-            .constraintSize({ maxHeight: 500 })
-            .scrollBar(BarState.Auto)
-
-            this.buildReadAloudCacheDialogFooter()
-          }
-          .width('100%')
-          .padding(20)
-          .scale({ x: this.readAloudCacheDialogScale, y: this.readAloudCacheDialogScale })
-          .translate({ y: this.readAloudCacheDialogTranslateY })
-          .opacity(this.readAloudCacheDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
-      }
-    }
-  }
-
-
-  @Builder
-  private buildReadAloudCacheDialogTabButton(label: string, icon: Resource, index: number) {
-    Row({ space: 6 }) {
-      SymbolGlyph(icon)
-        .fontSize(13)
-        .fontColor([this.readAloudCacheDialogActiveTab === index
-          ? Color.White
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-      Text(label)
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.readAloudCacheDialogActiveTab === index
-          ? Color.White
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-    }
-    .layoutWeight(1)
-    .height(34)
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(this.readAloudCacheDialogActiveTab === index
-      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-      : Color.Transparent)
-    .borderRadius(14)
-    .scale({
-      x: this.readAloudCacheDialogActiveTab === index ? 1 : 0.97,
-      y: this.readAloudCacheDialogActiveTab === index ? 1 : 0.97
-    })
-    .animation({ duration: 160, curve: Curve.EaseOut })
-    .onClick(() => {
-      this.handleReadAloudCacheDialogTabChange(index);
-    })
-  }
-
-  private formatReadAloudCacheDuration(durationMs: number): string {
-    const safeMs = Math.max(0, Math.floor(durationMs));
-    if (safeMs <= 0) {
-      return '0s';
-    }
-    const totalSeconds = Math.round(safeMs / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-  }
-
-  private getReadAloudCacheDigestShortLabel(digest: string | undefined): string {
-    const normalized = (digest ?? '').trim();
-    if (normalized.length <= 8) {
-      return normalized.length > 0 ? normalized : '未生成';
-    }
-    return `${normalized.slice(0, 8)}…`;
-  }
-
-  private getReadAloudCachePercentValue(numerator: number, denominator: number): number {
-    const safeNumerator = Number.isFinite(numerator) ? Math.max(0, numerator) : 0;
-    const safeDenominator = Number.isFinite(denominator) ? Math.max(0, denominator) : 0;
-    if (safeDenominator <= 0) {
-      return 0;
-    }
-    return Math.max(0, Math.min(100, (safeNumerator / safeDenominator) * 100));
-  }
-
-  private formatReadAloudCacheCoveragePercent(coveredTextChars: number, totalTextChars: number): string {
-    return `${this.getReadAloudCachePercentValue(coveredTextChars, totalTextChars).toFixed(1)}%`;
-  }
-
-  private formatReadAloudCacheMatchPercent(score: number): string {
-    const safeScore = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0;
-    return `${(safeScore * 100).toFixed(1)}%`;
-  }
-
-  private getReadAloudCacheSuggestedTargetReasonText(reason: string | undefined): string {
-    switch (reason) {
-      case 'exact_digest':
-        return '文本摘要一致';
-      case 'cache_key':
-        return '缓存键一致';
-      case 'range_overlap':
-        return '字符区间最接近';
-      case 'preview_similarity':
-        return '文本预览最相似';
-      case 'length_similarity':
-        return '文本长度最接近';
-      case 'segment_index':
-        return '分段序号接近';
-      default:
-        return '弱匹配，仅供参考';
-    }
-  }
-
-  private getReadAloudCacheSuggestedTargetLabel(segment: RemoteReadAloudCacheSegmentDetail): string {
-    const suggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment);
-    if (!suggestion) {
-      if (segment.suggestedTargets.length > 0 && this.getReadAloudCacheBlockedSuggestionCount(segment) > 0) {
-        return '当前已禁止所有建议匹配，可继续手动指定槽位';
-      }
-      return '暂未找到可建议的目标槽位';
-    }
-    const blockedCount = this.getReadAloudCacheBlockedSuggestionCount(segment);
-    const blockedSuffix = blockedCount > 0 ? ` · 已跳过 ${blockedCount} 个建议` : '';
-    return `最匹配目标槽位 S${suggestion.targetSegmentIndex + 1} · ${this.formatReadAloudCacheMatchPercent(suggestion.score)} · ${this.getReadAloudCacheSuggestedTargetReasonText(suggestion.reason)}${blockedSuffix}`;
-  }
-
-  private getReadAloudCacheSuggestedTargetDetailText(segment: RemoteReadAloudCacheSegmentDetail): string {
-    const suggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment);
-    const detail = this.readAloudCacheManageDetail;
-    if (!suggestion || !detail) {
-      return '';
-    }
-    const target = detail.targetSegments.find((item: RemoteReadAloudCacheTargetSegment) =>
-      item.segmentIndex === suggestion.targetSegmentIndex
-    ) ?? null;
-    if (!target) {
-      return '';
-    }
-    const preview = target.textPreview.length > 0 ? target.textPreview : `${target.textLength} 字符`;
-    return `目标范围 ${this.formatReadAloudCacheTargetSegmentRange(target)} · ${preview}`;
-  }
-
-  private getReadAloudCacheSuggestedTargetColor(segment: RemoteReadAloudCacheSegmentDetail): ResourceColor {
-    const suggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment);
-    if (!suggestion) {
-      return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
-    }
-    if (suggestion.score >= 0.85) {
-      return ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme);
-    }
-    if (suggestion.score >= 0.6) {
-      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
-    }
-    return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
-  }
-
-  private getReadAloudCacheSuggestedAttachButtonText(segment: RemoteReadAloudCacheSegmentDetail): string {
-    const suggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment);
-    if (!suggestion) {
-      return '暂无建议槽位';
-    }
-    return `按建议匹配到 S${suggestion.targetSegmentIndex + 1}`;
-  }
-
-  private hasReadAloudCacheSuggestedTarget(segment: RemoteReadAloudCacheSegmentDetail): boolean {
-    return this.getEffectiveReadAloudCacheSuggestedTarget(segment) !== null;
-  }
-
-  private getReadAloudCacheTargetStatusText(segment: RemoteReadAloudCacheTargetSegment): string {
-    if (!segment.attachedSegment) {
-      return '当前槽位尚未挂接音频';
-    }
-    const matchMode = segment.attachedSegment.matchMode === 'manual' ? '手动挂接' : '自动命中';
-    return `${matchMode} · ${this.formatReadAloudCacheSize(segment.attachedSegment.bytes)} · ${this.formatReadAloudCacheDuration(segment.attachedSegment.durationMs)}`;
-  }
-
-  private getReadAloudCacheSourceSegmentStatusText(segment: RemoteReadAloudCacheSegmentDetail): string {
-    const labels: string[] = [];
-    switch (segment.matchMode) {
-      case 'current_unmatched':
-        labels.push('当前残留');
-        break;
-      case 'manual':
-        labels.push('手动挂接');
-        break;
-      default:
-        labels.push('历史缓存');
-        break;
-    }
-    labels.push(segment.isCurrentConfigMatch ? '同配置' : '跨配置');
-    labels.push(segment.isCurrentTextMatch ? '同文本版本' : '历史文本版本');
-    labels.push(`S${segment.segmentIndex + 1}`);
-    labels.push(this.formatReadAloudCacheSize(segment.bytes));
-    return labels.join(' · ');
-  }
-
-  private getReadAloudCacheManageSummaryText(): string {
-    if (this.readAloudCacheDialogActiveTab === 0) {
-      return this.getReadAloudCacheSelectionSummary();
-    }
-    if (this.readAloudCacheDialogActiveTab === 1) {
-      const chapterLabel = this.buildReadAloudCacheChapterLabel(this.readAloudCacheManageChapterIndex);
-      const targetLabel = this.readAloudCacheManageSelectedTargetIndex >= 0
-        ? `已选槽位 S${this.readAloudCacheManageSelectedTargetIndex + 1}`
-        : '未选择目标槽位';
-      return `${chapterLabel} · ${targetLabel}`;
-    }
-    return this.getReadAloudCachePresetSummary();
-  }
-
-  @Builder
-  private buildReadAloudCacheDialogFooter() {
-    Column({ space: 10 }) {
-      Row() {
-        Text(this.getReadAloudCacheManageSummaryText())
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        Blank()
-        if (this.readAloudCacheSummary) {
-          Text(`总占用 ${this.formatReadAloudCacheSize(this.readAloudCacheSummary.totalBytes)}`)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        }
-      }
-      .width('100%')
-
-      if (this.readAloudCacheDialogActiveTab === 0) {
-        Row({ space: 10 }) {
-          Button() {
-            Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.trash'))
-                .fontSize(13)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)])
-              Text('清理本书缓存')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-            }
-          }
-          .layoutWeight(1)
-          .height(36)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(18)
-          .enabled((this.readAloudCacheSummary?.totalBytes ?? 0) > 0 && !this.isReadAloudPrecaching)
-          .onClick(() => {
-            void this.clearReadAloudCacheBook();
-          })
-
-          Button() {
-            Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.arrow_down_circle'))
-                .fontSize(13)
-                .fontColor([Color.White])
-              Text(this.isReadAloudPrecaching ? '缓存中...' : `开始缓存 ${this.getSelectedReadAloudChapterCount()} 章`)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(Color.White)
-            }
-          }
-          .layoutWeight(1)
-          .height(36)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .borderRadius(18)
-          .enabled(!this.isReadAloudPrecaching)
-          .onClick(() => {
-            void this.startReadAloudCacheTaskFromDialog();
-          })
-        }
-        .width('100%')
-      } else if (this.readAloudCacheDialogActiveTab === 1) {
-        Row({ space: 10 }) {
-          Button('清理本章') 
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-            .borderRadius(18)
-            .enabled(!this.isReadAloudPrecaching && !this.isReadAloudCacheManageMutating)
-            .onClick(() => {
-              void this.clearReadAloudCacheChapter(this.readAloudCacheManageChapterIndex);
-            })
-
-          Button(this.isReadAloudCacheManageLoading ? '刷新中...' : '刷新明细')
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .fontColor(Color.White)
-            .borderRadius(18)
-            .enabled(!this.isReadAloudCacheManageLoading && !this.isReadAloudCacheManageMutating)
-            .onClick(() => {
-              void this.loadReadAloudCacheManageDetail(true);
-            })
-        }
-            .width('100%')
-            .transition(this.getReadAloudCacheFadeSlideTransition(8))
-        } else {
-        Row({ space: 10 }) {
-          Button() {
-            Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.trash'))
-                .fontSize(13)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)])
-              Text('清理本书缓存')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-            }
-          }
-          .layoutWeight(1)
-          .height(36)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(18)
-          .enabled((this.readAloudCacheSummary?.totalBytes ?? 0) > 0 && !this.isReadAloudPrecaching)
-          .onClick(() => {
-            void this.clearReadAloudCacheBook();
-          })
-
-          Button(this.isReadAloudCurrentSettingsSaving ? '保存中...' : '设为当前内容默认')
-            .layoutWeight(1)
-            .height(36)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .fontColor(Color.White)
-            .borderRadius(18)
-            .enabled(!this.isReadAloudCurrentSettingsSaving)
-            .onClick(() => {
-              void this.applyReadAloudCacheTaskSettingsToCurrent();
-            })
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .animation({ duration: 200, curve: Curve.EaseOut })
-  }
-
-  @Builder
-  private buildReadAloudCacheManagementTab() {
-    Column({ space: 12 }) {
-      Column({ space: 10 }) {
-        Row() {
-          Text('章节管理')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          Blank()
-          if (this.readAloudCacheManageDetail) {
-            Text(`精确命中 ${this.readAloudCacheManageDetail.currentExactMatchedCount}/${this.readAloudCacheManageDetail.targetSegments.length}`)
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          }
-        }
-        .width('100%')
-
-        Text('这里会同时显示当前文本应该生成的目标分段槽位、当前已挂接的音频，以及历史版本里可复用的音频来源。选中一个目标槽位后，就可以把任意历史分段手动挂接过来。')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-
-        if (this.readAloudCacheManageDetail) {
-          Text(`当前文本摘要 ${this.getReadAloudCacheDigestShortLabel(this.readAloudCacheManageDetail.currentContentDigest)} · 当前配置摘要 ${this.getReadAloudCacheDigestShortLabel(this.readAloudCacheManageDetail.currentRemoteDigest)}`)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .width('100%')
-        }
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(6))
-
-      this.buildReadAloudCacheCoverageCard()
-
-      Column({ space: 10 }) {
-        Row() {
-          Text('选择章节')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          Blank()
-          Text(`当前：${this.buildReadAloudCacheChapterLabel(this.readAloudCacheManageChapterIndex)}`)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          Button() {
-            SymbolGlyph($r(this.readAloudCacheManageChapterSectionExpanded ? 'sys.symbol.chevron_down' : 'sys.symbol.chevron_right'))
-              .fontSize(14)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-              .rotate({ angle: this.readAloudCacheManageChapterSectionExpanded ? 0 : -90 })
-              .animation({ duration: 250, curve: Curve.EaseInOut })
-          }
-          .width(28)
-          .height(28)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            this.toggleReadAloudCacheManageSection('chapter');
-          })
-        }
-        .width('100%')
-
-        if (this.readAloudCacheManageChapterSectionExpanded) {
-          Scroll() {
-            Column({ space: 8 }) {
-              ForEach(this.readAloudCacheSummary?.chapters ?? [], (chapter: RemoteReadAloudCacheChapterSummary) => {
-                this.buildReadAloudCacheManageChapterRow(chapter)
-              }, (chapter: RemoteReadAloudCacheChapterSummary) => `read_aloud_cache_manage_${chapter.chapterIndex}`)
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .constraintSize({ maxHeight: 180 })
-          .scrollBar(BarState.Auto)
-          .transition(this.getReadAloudCacheFadeSlideTransition(8))
-        } else {
-          Text('章节列表已收起，展开后可切换当前管理章节。')
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .width('100%')
-            .transition(this.getReadAloudCacheFadeSlideTransition(6))
-        }
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(8))
-
-      if (this.isReadAloudCacheManageLoading) {
-        Row({ space: 8 }) {
-          LoadingProgress()
-            .width(16)
-            .height(16)
-            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          Text('正在加载章节缓存明细...')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        }
-        .width('100%')
-        .padding(14)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(12)
-        .transition(this.getReadAloudCacheFadeSlideTransition(10))
-      } else if (this.readAloudCacheManageDetail) {
-        Column({ space: 12 }) {
-          Column({ space: 8 }) {
-            Row() {
-              Text('目标文本槽位')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Blank()
-              Text(this.readAloudCacheManageSelectedTargetIndex >= 0
-                ? `已选 S${this.readAloudCacheManageSelectedTargetIndex + 1}`
-                : '请选择一个槽位')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              Button() {
-                SymbolGlyph($r(this.readAloudCacheManageTargetSectionExpanded ? 'sys.symbol.chevron_down' : 'sys.symbol.chevron_right'))
-                  .fontSize(14)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-                  .rotate({ angle: this.readAloudCacheManageTargetSectionExpanded ? 0 : -90 })
-                  .animation({ duration: 250, curve: Curve.EaseInOut })
-              }
-              .width(28)
-              .height(28)
-              .backgroundColor(Color.Transparent)
-              .onClick(() => {
-                this.toggleReadAloudCacheManageSection('target');
-              })
-            }
-            .width('100%')
-
-            if (this.readAloudCacheManageTargetSectionExpanded) {
-              ForEach(this.readAloudCacheManageDetail.targetSegments, (segment: RemoteReadAloudCacheTargetSegment) => {
-                this.buildReadAloudCacheTargetSegmentRow(segment)
-              }, (segment: RemoteReadAloudCacheTargetSegment) => `read_aloud_target_${segment.segmentIndex}`)
-            } else {
-              Text('目标槽位列表已收起，展开后可查看每个文本槽位的挂接情况。')
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                .width('100%')
-                .transition(this.getReadAloudCacheFadeSlideTransition(6))
-            }
-          }
-          .width('100%')
-          .padding(12)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .borderRadius(12)
-          .transition(this.getReadAloudCacheFadeSlideTransition(8))
-
-          Column({ space: 8 }) {
-            Row() {
-              Text('可复用音频来源')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Blank()
-              Text(`来源 ${this.readAloudCacheManageDetail.sourceSegments.length} 个`)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              Button() {
-                SymbolGlyph($r(this.readAloudCacheManageSourceSectionExpanded ? 'sys.symbol.chevron_down' : 'sys.symbol.chevron_right'))
-                  .fontSize(14)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-                  .rotate({ angle: this.readAloudCacheManageSourceSectionExpanded ? 0 : -90 })
-                  .animation({ duration: 250, curve: Curve.EaseInOut })
-              }
-              .width(28)
-              .height(28)
-              .backgroundColor(Color.Transparent)
-              .onClick(() => {
-                this.toggleReadAloudCacheManageSection('source');
-              })
-            }
-            .width('100%')
-
-            if (this.readAloudCacheManageStatusMessage.length > 0) {
-              Text(this.readAloudCacheManageStatusMessage)
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .width('100%')
-                .transition(this.getReadAloudCacheFadeSlideTransition(6))
-            }
-
-            if (!this.readAloudCacheManageSourceSectionExpanded) {
-              Text('可复用音频列表已收起，展开后可继续查看建议槽位、快速匹配和禁止建议操作。')
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                .width('100%')
-                .transition(this.getReadAloudCacheFadeSlideTransition(6))
-            } else if (this.readAloudCacheManageDetail.sourceSegments.length <= 0) {
-              Text('当前没有可复用的历史分段。可以先缓存本章，或者切换到其他章节查看历史版本。')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .width('100%')
-            } else {
-              ForEach(this.readAloudCacheManageDetail.sourceSegments, (segment: RemoteReadAloudCacheSegmentDetail) => {
-                this.buildReadAloudCacheSourceSegmentRow(segment)
-              }, (segment: RemoteReadAloudCacheSegmentDetail) =>
-                `read_aloud_source_${segment.manifestPath}_${segment.segmentIndex}`
-              )
-            }
-          }
-          .width('100%')
-          .padding(12)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .borderRadius(12)
-          .transition(this.getReadAloudCacheFadeSlideTransition(10))
-
-          Column({ space: 8 }) {
-            Row() {
-              Text('Manifest 版本')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Blank()
-              Text(`${this.readAloudCacheManageDetail.manifests.length} 个版本`)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            }
-            .width('100%')
-
-            ForEach(this.readAloudCacheManageDetail.manifests, (manifest: RemoteReadAloudCacheManifestSummary) => {
-              Column({ space: 4 }) {
-                Text(`${manifest.isCurrentManifest ? '当前版本' : '历史版本'} · ${manifest.segmentCount} 段 · ${this.formatReadAloudCacheSize(manifest.mergedFileBytes)} 整章音频`)
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  .width('100%')
-                Text(`文本 ${this.getReadAloudCacheDigestShortLabel(manifest.contentDigest)} · 配置 ${this.getReadAloudCacheDigestShortLabel(manifest.remoteDigest)} · ${this.getReadAloudCacheUpdatedLabel(manifest.updatedAt)}`)
-                  .fontSize(11)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                  .width('100%')
-              }
-              .width('100%')
-              .padding(10)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-              .borderRadius(10)
-              .animation({ duration: 180, curve: Curve.EaseOut })
-            }, (manifest: RemoteReadAloudCacheManifestSummary) => `read_aloud_manifest_${manifest.manifestPath}`)
-          }
-          .width('100%')
-          .padding(12)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .borderRadius(12)
-          .transition(this.getReadAloudCacheFadeSlideTransition(12))
-        }
-        .width('100%')
-        .transition(this.getReadAloudCacheFadeSlideTransition(12))
-      }
-    }
-    .width('100%')
-    .transition(this.getReadAloudCacheFadeSlideTransition(12))
-  }
-
-  @Builder
-  private buildReadAloudCacheCoverageCard() {
-    Column({ space: 10 }) {
-      Row() {
-        Text('覆盖情况')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Blank()
-        Text(`当前章节：${this.buildReadAloudCacheChapterLabel(this.readAloudCacheManageChapterIndex)}`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-      }
-      .width('100%')
-
-      if (
-        this.readAloudCacheManageDetail &&
-        this.readAloudCacheManageDetail.chapterIndex === this.readAloudCacheManageChapterIndex
-      ) {
-        Text(`已命中 ${this.readAloudCacheManageDetail.coverage.coveredTextChars}/${this.readAloudCacheManageDetail.coverage.totalTextChars} 字`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .width('100%')
-
-        Row({ space: 8 }) {
-          this.buildReadAloudCacheMetric(
-            this.formatReadAloudCacheCoveragePercent(
-              this.readAloudCacheManageDetail.coverage.coveredTextChars,
-              this.readAloudCacheManageDetail.coverage.totalTextChars
-            ),
-            '文本覆盖率',
-            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          )
-          this.buildReadAloudCacheMetric(
-            `${this.readAloudCacheManageDetail.coverage.coveredTargetCount}/${this.readAloudCacheManageDetail.coverage.totalTargetCount}`,
-            '已命中槽位',
-            ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
-          )
-          this.buildReadAloudCacheMetric(
-            `${this.readAloudCacheManageDetail.coverage.uncoveredTextChars} 字`,
-            '待补全文本',
-            ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
-          )
-        }
-        .width('100%')
-
-        Progress({
-          value: this.getReadAloudCachePercentValue(
-            this.readAloudCacheManageDetail.coverage.coveredTextChars,
-            this.readAloudCacheManageDetail.coverage.totalTextChars
-          ),
-          total: 100,
-          type: ProgressType.Linear
-        })
-          .width('100%')
-          .height(6)
-          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(3)
-
-        Column({ space: 4 }) {
-          Text(`自动命中 ${this.readAloudCacheManageDetail.coverage.exactCoveredTextChars} 字 · ${this.formatReadAloudCacheCoveragePercent(this.readAloudCacheManageDetail.coverage.exactCoveredTextChars, this.readAloudCacheManageDetail.coverage.totalTextChars)} · ${this.readAloudCacheManageDetail.coverage.exactCoveredTargetCount} 个槽位`)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-            .width('100%')
-          Text(`手动挂接 ${this.readAloudCacheManageDetail.coverage.manualCoveredTextChars} 字 · ${this.formatReadAloudCacheCoveragePercent(this.readAloudCacheManageDetail.coverage.manualCoveredTextChars, this.readAloudCacheManageDetail.coverage.totalTextChars)} · ${this.readAloudCacheManageDetail.coverage.manualCoveredTargetCount} 个槽位`)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .width('100%')
-          Text(`待补全文本 ${this.readAloudCacheManageDetail.coverage.uncoveredTextChars} 字 · ${this.formatReadAloudCacheCoveragePercent(this.readAloudCacheManageDetail.coverage.uncoveredTextChars, this.readAloudCacheManageDetail.coverage.totalTextChars)} · ${this.readAloudCacheManageDetail.coverage.uncoveredTargetCount} 个槽位`)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
-            .width('100%')
-        }
-        .width('100%')
-        .transition(this.getReadAloudCacheFadeSlideTransition(6))
-
-        Text('按当前已选择章节的文本字数实时统计，自动命中和手动挂接都会计入已覆盖。')
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .width('100%')
-      } else {
-        Row({ space: 8 }) {
-          LoadingProgress()
-            .width(14)
-            .height(14)
-            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          Text('正在刷新当前章节的覆盖情况...')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        }
-        .width('100%')
-        .transition(this.getReadAloudCacheFadeSlideTransition(6))
-      }
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(12)
-    .animation({ duration: 220, curve: Curve.EaseOut })
-    .transition(this.getReadAloudCacheFadeSlideTransition(7))
-  }
-
-  @Builder
-  private buildReadAloudCacheManageChapterRow(chapter: RemoteReadAloudCacheChapterSummary) {
-    Row({ space: 10 }) {
-      Column({ space: 4 }) {
-        Text(this.buildReadAloudCacheChapterLabel(chapter.chapterIndex))
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(`${this.getReadAloudCacheSegmentSourceLabel(chapter)} · ${this.getReadAloudCacheEffectiveChapterStatusText(chapter)}`)
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      SymbolGlyph($r(this.readAloudCacheManageChapterIndex === chapter.chapterIndex ? 'sys.symbol.checkmark_circle_fill' : 'sys.symbol.chevron_right'))
-        .fontSize(16)
-        .fontColor([this.readAloudCacheManageChapterIndex === chapter.chapterIndex
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-    }
-    .width('100%')
-    .padding(10)
-    .backgroundColor(this.readAloudCacheManageChapterIndex === chapter.chapterIndex
-      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '18'
-      : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
-    .animation({ duration: 200, curve: Curve.EaseOut })
-    .onClick(() => {
-      this.selectReadAloudCacheManageChapter(chapter.chapterIndex);
-    })
-  }
-
-  @Builder
-  private buildReadAloudCacheTargetSegmentRow(segment: RemoteReadAloudCacheTargetSegment) {
-    Row({ space: 10 }) {
-      Column({ space: 4 }) {
-        Text(`S${segment.segmentIndex + 1} · ${this.formatReadAloudCacheTargetSegmentRange(segment)}`)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .width('100%')
-        Text(segment.textPreview.length > 0 ? segment.textPreview : `${segment.textLength} 字符`)
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(this.getReadAloudCacheTargetStatusText(segment))
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(segment.attachedSegment
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .width('100%')
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      if (segment.attachedSegment) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.trash'))
-            .fontSize(13)
-            .fontColor([Color.White])
-        }
-        .width(28)
-        .height(28)
-        .backgroundColor('#FF5252')
-        .borderRadius(14)
-        .enabled(!this.isReadAloudCacheManageMutating)
-        .onClick(() => {
-          const attachedSegment = segment.attachedSegment;
-          if (attachedSegment) {
-            void this.removeReadAloudCacheManageSegment(attachedSegment);
-          }
-        })
-      }
-    }
-    .width('100%')
-    .padding(10)
-    .backgroundColor(this.readAloudCacheManageSelectedTargetIndex === segment.segmentIndex
-      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '18'
-      : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({
-      width: this.readAloudCacheManageSelectedTargetIndex === segment.segmentIndex ? 1 : 0,
-      color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-    })
-    .animation({ duration: 200, curve: Curve.EaseOut })
-    .transition(this.getReadAloudCacheFadeSlideTransition(8))
-    .onClick(() => {
-      this.selectReadAloudCacheManageTarget(segment.segmentIndex);
-    })
-  }
-
-  @Builder
-  private buildReadAloudCacheSourceSegmentRow(segment: RemoteReadAloudCacheSegmentDetail) {
-    Column({ space: 8 }) {
-      Text(`S${segment.segmentIndex + 1} · ${this.formatReadAloudCacheSegmentRange(segment)}`)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .width('100%')
-      Text(segment.textPreview.length > 0 ? segment.textPreview : `${segment.textLength} 字符`)
-        .fontSize(11)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .maxLines(3)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-      Text(this.getReadAloudCacheSourceSegmentStatusText(segment))
-        .fontSize(11)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .width('100%')
-      Text(this.getReadAloudCacheSuggestedTargetLabel(segment))
-        .fontSize(11)
-        .fontFamily(this.appFontFamily)
-        .fontColor(this.getReadAloudCacheSuggestedTargetColor(segment))
-        .width('100%')
-      if (this.getReadAloudCacheSuggestedTargetDetailText(segment).length > 0) {
-        Text(this.getReadAloudCacheSuggestedTargetDetailText(segment))
-          .fontSize(10)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-          .transition(this.getReadAloudCacheFadeSlideTransition(4))
-      }
-      Text(`cacheKey ${segment.cacheKey ?? '未记录'} · 文本 ${this.getReadAloudCacheDigestShortLabel(segment.textDigest)}`)
-        .fontSize(10)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .width('100%')
-      Row({ space: 8 }) {
-        Button(this.getReadAloudCacheSuggestedAttachButtonText(segment))
-          .layoutWeight(1)
-          .height(30)
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-          .fontColor(Color.White)
-          .borderRadius(15)
-          .enabled(this.hasReadAloudCacheSuggestedTarget(segment) && !this.isReadAloudCacheManageMutating)
-          .onClick(() => {
-            void this.attachReadAloudCacheSourceSegmentToSuggestedTarget(segment);
-          })
-
-        Button(this.hasReadAloudCacheSuggestedTarget(segment) ? '禁止该建议' : '已无建议')
-          .height(30)
-          .padding({ left: 12, right: 12 })
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
-          .borderRadius(15)
-          .enabled(this.hasReadAloudCacheSuggestedTarget(segment) && !this.isReadAloudCacheManageMutating)
-          .onClick(() => {
-            this.forbidReadAloudCacheSuggestedTarget(segment);
-          })
-      }
-      .width('100%')
-      .transition(this.getReadAloudCacheFadeSlideTransition(4))
-      Row({ space: 8 }) {
-        Button(this.readAloudCacheManageSelectedTargetIndex >= 0
-          ? `匹配到 S${this.readAloudCacheManageSelectedTargetIndex + 1}`
-          : '先选择槽位')
-          .layoutWeight(1)
-          .height(30)
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .fontColor(Color.White)
-          .borderRadius(15)
-          .enabled(this.readAloudCacheManageSelectedTargetIndex >= 0 && !this.isReadAloudCacheManageMutating)
-          .onClick(() => {
-            void this.attachReadAloudCacheSourceSegment(segment);
-          })
-
-        Button('删除')
-          .height(30)
-          .padding({ left: 12, right: 12 })
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-          .borderRadius(15)
-          .enabled(!this.isReadAloudCacheManageMutating)
-          .onClick(() => {
-            void this.removeReadAloudCacheManageSegment(segment);
-          })
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
-    .animation({ duration: 200, curve: Curve.EaseOut })
-    .transition(this.getReadAloudCacheFadeSlideTransition(8))
-  }
-
-  @Builder
-  private buildReadAloudCacheChapterSelectionTab() {
-    Column({ space: 12 }) {
-      Column({ space: 10 }) {
-        Row() {
-          Text('章节范围')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          Blank()
-          if (this.readAloudCacheSummary) {
-            Text(`当前已缓存 ${this.readAloudCacheSummary.cachedChapterCount}/${this.readAloudCacheSummary.chapterCount} 章`)
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-        }
-        .width('100%')
-
-        Row({ space: 8 }) {
-          Button() {
-            Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.slider_horizontal_2_1'))
-                .fontSize(14)
-                .fontColor([this.readAloudCacheSelectionMode === 'range'
-                  ? Color.White
-                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-              Text('区间选择')
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor(this.readAloudCacheSelectionMode === 'range'
-                  ? Color.White
-                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            }
-          }
-          .height(36)
-          .padding({ left: 14, right: 14 })
-          .backgroundColor(this.readAloudCacheSelectionMode === 'range'
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(18)
-          .animation({ duration: 200, curve: Curve.EaseOut })
-          .onClick(() => {
-            animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
-              this.readAloudCacheSelectionMode = 'range';
-            });
-          })
-
-          Button() {
-            Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.checkmark_circle'))
-                .fontSize(14)
-                .fontColor([this.readAloudCacheSelectionMode === 'individual'
-                  ? Color.White
-                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-              Text('单独选择')
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor(this.readAloudCacheSelectionMode === 'individual'
-                  ? Color.White
-                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            }
-          }
-          .height(36)
-          .padding({ left: 14, right: 14 })
-          .backgroundColor(this.readAloudCacheSelectionMode === 'individual'
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(18)
-          .animation({ duration: 200, curve: Curve.EaseOut })
-          .onClick(() => {
-            animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
-              this.readAloudCacheSelectionMode = 'individual';
-              this.readAloudCacheChapterListExpanded = true;
-            });
-          })
-        }
-        .width('100%')
-
-        if ((this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0) <= 1) {
-          Text('当前书籍只有一个章节，可直接生成整章听书缓存。')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-        } else if (this.readAloudCacheSelectionMode === 'range') {
-          Column({ space: 12 }) {
-            Row() {
-              Text(`第 ${this.readAloudCacheRangeStart + 1} 章`)
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              Text(' 至 ')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              Text(`第 ${this.readAloudCacheRangeEnd + 1} 章`)
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              Blank()
-              Text(this.getReadAloudCacheSelectionSummary())
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            }
-            .width('100%')
-
-            Row({ space: 8 }) {
-              Button('未缓存起点')
-                .layoutWeight(1)
-                .height(28)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .borderRadius(14)
-                .onClick(() => {
-                  this.applyReadAloudCacheQuickRange('uncached');
-                })
-              Button('当前阅读章')
-                .layoutWeight(1)
-                .height(28)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .borderRadius(14)
-                .onClick(() => {
-                  this.applyReadAloudCacheQuickRange('current');
-                })
-              Button('整本')
-                .layoutWeight(1)
-                .height(28)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .borderRadius(14)
-                .onClick(() => {
-                  this.applyReadAloudCacheQuickRange('full');
-                })
-            }
-            .width('100%')
-
-            Column({ space: 4 }) {
-              Text('开始章节')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-
-              Slider({
-                value: this.readAloudCacheRangeStart,
-                min: 0,
-                max: Math.max(0, (this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 1) - 1),
-                step: 1,
-                style: SliderStyle.OutSet
-              })
-                .showTips(true)
-                .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .onChange((value: number) => {
-                  const safeValue = Math.round(value);
-                  this.readAloudCacheRangeStart = safeValue;
-                  if (this.readAloudCacheRangeEnd < safeValue) {
-                    this.readAloudCacheRangeEnd = safeValue;
-                  }
-                })
-            }
-            .width('100%')
-
-            Column({ space: 4 }) {
-              Text('结束章节')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-
-              Slider({
-                value: this.readAloudCacheRangeEnd,
-                min: this.readAloudCacheRangeStart,
-                max: Math.max(this.readAloudCacheRangeStart, (this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 1) - 1),
-                step: 1,
-                style: SliderStyle.OutSet
-              })
-                .showTips(true)
-                .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .onChange((value: number) => {
-                  this.readAloudCacheRangeEnd = Math.max(this.readAloudCacheRangeStart, Math.round(value));
-                })
-            }
-            .width('100%')
-            }
-            .width('100%')
-            .transition(this.getReadAloudCacheFadeSlideTransition(8))
-        } else {
-          Text('点击下方章节即可加入或移出批量缓存队列。')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-        }
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(8))
-
-      Column({ space: 10 }) {
-        Row() {
-          Text('章节缓存状态')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          Blank()
-          Button() {
-            SymbolGlyph($r(this.readAloudCacheChapterListExpanded ? 'sys.symbol.chevron_down' : 'sys.symbol.chevron_right'))
-              .fontSize(14)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-              .rotate({ angle: this.readAloudCacheChapterListExpanded ? 0 : -90 })
-              .animation({ duration: 250, curve: Curve.EaseInOut })
-          }
-          .width(28)
-          .height(28)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
-              this.readAloudCacheChapterListExpanded = !this.readAloudCacheChapterListExpanded;
-            });
-          })
-        }
-        .width('100%')
-
-        if (this.readAloudCacheChapterListExpanded) {
-          Scroll() {
-            Column({ space: 8 }) {
-              ForEach(this.readAloudCacheSummary?.chapters ?? [], (chapter: RemoteReadAloudCacheChapterSummary) => {
-                this.buildReadAloudCacheDialogChapterRow(chapter)
-              }, (chapter: RemoteReadAloudCacheChapterSummary) => `read_aloud_cache_dialog_${chapter.chapterIndex}`)
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .constraintSize({ maxHeight: 280 })
-          .scrollBar(BarState.Auto)
-          .transition(this.getReadAloudCacheFadeSlideTransition(10))
-        }
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(10))
-    }
-    .width('100%')
-    .transition(this.getReadAloudCacheFadeSlideTransition(12))
-  }
-
-  @Builder
-  private buildReadAloudCacheDialogChapterRow(chapter: RemoteReadAloudCacheChapterSummary) {
-    Row({ space: 10 }) {
-      if (this.readAloudCacheSelectionMode === 'individual') {
-        SymbolGlyph($r(this.readAloudCacheSelectedChapters.has(chapter.chapterIndex)
-          ? 'sys.symbol.checkmark_circle_fill'
-          : 'sys.symbol.circle'))
-          .fontSize(16)
-          .fontColor([this.readAloudCacheSelectedChapters.has(chapter.chapterIndex)
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-      } else {
-        SymbolGlyph($r(chapter.cached ? 'sys.symbol.checkmark_circle_fill' : 'sys.symbol.circle'))
-          .fontSize(16)
-          .fontColor([chapter.cached
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-      }
-
-      Column({ space: 4 }) {
-        Text(this.buildReadAloudCacheChapterLabel(chapter.chapterIndex))
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(`${this.getReadAloudCacheSegmentSourceLabel(chapter)} · ${this.getReadAloudCacheEffectiveChapterStatusText(chapter)}`)
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        if (this.getReadAloudCacheSegmentPreviewText(chapter, 3).length > 0) {
-          Text(this.getReadAloudCacheSegmentPreviewText(chapter, 3))
-            .fontSize(10)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .maxLines(4)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-        }
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      Row({ space: 6 }) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.arrow_down_circle'))
-            .fontSize(14)
-            .fontColor([Color.White])
-        }
-        .width(28)
-        .height(28)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .borderRadius(14)
-        .enabled(!this.isReadAloudPrecaching)
-        .onClick(() => {
-          void this.quickPrecacheReadAloudChapter(chapter.chapterIndex);
-        })
-
-        if (chapter.cached) {
-          Button() {
-            SymbolGlyph($r('sys.symbol.trash'))
-              .fontSize(13)
-              .fontColor([Color.White])
-          }
-          .width(28)
-          .height(28)
-          .backgroundColor('#FF5252')
-          .borderRadius(14)
-          .enabled(!this.isReadAloudPrecaching)
-          .onClick(() => {
-            void this.clearReadAloudCacheChapter(chapter.chapterIndex);
-          })
-        }
-      }
-    }
-    .width('100%')
-    .padding(10)
-    .backgroundColor(this.isReadAloudCacheChapterSelected(chapter.chapterIndex)
-      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '18'
-      : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
-    .animation({ duration: 200, curve: Curve.EaseOut })
-    .onClick(() => {
-      if (this.readAloudCacheSelectionMode === 'individual') {
-        this.toggleReadAloudCacheChapterSelection(chapter.chapterIndex);
-      }
-    })
-  }
-
-  @Builder
-  private buildReadAloudCacheChoiceChip(label: string, selected: boolean, onClick: () => void) {
-    Button(label)
-      .height(32)
-      .padding({ left: 12, right: 12 })
-      .fontSize(12)
-      .fontFamily(this.appFontFamily)
-      .backgroundColor(selected
-        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-        : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-      .fontColor(selected
-        ? Color.White
-        : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-      .borderRadius(16)
-      .scale({ x: selected ? 1 : 0.98, y: selected ? 1 : 0.98 })
-      .animation({ duration: 180, curve: Curve.EaseOut })
-      .onClick(() => {
-        onClick();
-      })
-  }
-
-  @Builder
-  private buildReadAloudCacheMiMoVoiceSelector() {
-    Column({ space: 8 }) {
-      Text('MiMo 预设音色')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
-        ForEach(XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS, (option: RemoteReadAloudChoiceOption) => {
-          this.buildReadAloudCacheChoiceChip(
-            option.label,
-            this.readAloudCacheTaskSettings.voice.trim() === option.value,
-            () => this.updateReadAloudCacheTaskSettings({ voice: option.value })
-          )
-        }, (option: RemoteReadAloudChoiceOption) => `read_aloud_cache_voice_${option.value}`)
-      }
-      .width('100%')
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildReadAloudCacheMiMoStyleSelector() {
-    Column({ space: 8 }) {
-      Text('MiMo 风格控制')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-      Text('支持多选风格，也可手动输入；生成时会自动写成 <style>风格...</style> 正文。')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .width('100%')
-      ForEach(XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES, (category: RemoteReadAloudStyleCategory) => {
-        Column({ space: 6 }) {
-          Text(category.label)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
-            ForEach(category.styles, (style: string) => {
-              this.buildReadAloudCacheChoiceChip(style, this.isReadAloudCacheStyleSelected(style), () => {
-                this.toggleReadAloudCacheStyle(style);
-              })
-            }, (style: string) => `read_aloud_cache_style_${category.label}_${style}`)
-          }
-          .width('100%')
-        }
-        .width('100%')
-      }, (category: RemoteReadAloudStyleCategory) => `read_aloud_cache_style_category_${category.label}`)
-
-      Column({ space: 6 }) {
-        Text('自定义风格')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        TextInput({ text: this.getReadAloudCacheStylePrompt(), placeholder: '如 开心 东北话' })
-          .height(38)
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-          .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .padding({ left: 10, right: 10 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(12)
-          .onChange((value: string) => {
-            this.updateReadAloudCacheTaskSettings({ stylePrompt: value });
-          })
-      }
-      .width('100%')
-
-      if (this.getReadAloudCacheStylePrompt().length > 0) {
-        Text(`实际发送：<style>${this.getReadAloudCacheStylePrompt()}</style>待合成内容`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .width('100%')
-      }
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildReadAloudCacheTextInput(
-    label: string,
-    value: string,
-    placeholder: string,
-    onChange: (value: string) => void
-  ) {
-    Column({ space: 6 }) {
-      Text(label)
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .width('100%')
-      TextInput({ text: value, placeholder })
-        .height(38)
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-        .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .padding({ left: 10, right: 10 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-        .borderRadius(12)
-        .onChange((nextValue: string) => {
-          onChange(nextValue);
-        })
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildReadAloudCacheNumberInput(
-    label: string,
-    value: number,
-    min: number,
-    max: number,
-    onChange: (value: number) => void
-  ) {
-    Column({ space: 6 }) {
-      Row() {
-        Text(label)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        Blank()
-        Text(`${value}`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      }
-      .width('100%')
-      TextInput({ text: `${value}`, placeholder: `${min}-${max}` })
-        .type(InputType.Number)
-        .height(38)
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-        .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .padding({ left: 10, right: 10 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-        .borderRadius(12)
-        .onChange((nextValue: string) => {
-          onChange(this.parseReadAloudCacheIntegerInput(nextValue, value, min, max));
-        })
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildReadAloudCacheJsonInput(
-    label: string,
-    value: string,
-    placeholder: string,
-    onChange: (value: string) => void
-  ) {
-    Column({ space: 6 }) {
-      Text(label)
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .width('100%')
-      TextArea({ text: value, placeholder })
-        .height(92)
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-        .padding(10)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-        .borderRadius(12)
-        .onChange((nextValue: string) => {
-          onChange(nextValue);
-        })
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildReadAloudCacheToggleRow(
-    title: string,
-    description: string,
-    value: boolean,
-    enabled: boolean,
-    onChange: (value: boolean) => void
-  ) {
-    Column({ space: 6 }) {
-      Row() {
-        Column({ space: 2 }) {
-          Text(title)
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .width('100%')
-          Text(description)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        Toggle({ type: ToggleType.Switch, isOn: value })
-          .enabled(enabled)
-          .onChange((isOn: boolean) => {
-            onChange(isOn);
-          })
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
-  @Builder
-  private buildReadAloudCacheSettingsTab() {
-    Column({ space: 12 }) {
-      Column({ space: 10 }) {
-        Row() {
-          Text('远程预设')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          Blank()
-          Text(this.readAloudCacheSummary?.settingsSourceLabel ?? '全局默认设置')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        }
-        .width('100%')
-
-        Text('这里的配置既会用于当前详情页的缓存任务，也可以保存为当前内容的默认远程 TTS 配置，和阅读器内直接听书共用。')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-
-        Text(this.getReadAloudCachePresetSummary())
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .width('100%')
-
-        ForEach(
-          this.readAloudCacheTaskSettings.presets,
-          (preset: RemoteReadAloudPreset) => {
-            Column({ space: 6 }) {
-              Button(
-                `${preset.name}${this.readAloudCacheTaskSettings.activePresetId === preset.id ? ' · 当前' : ''}`
-              )
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .height(36)
-                .width('100%')
-                .backgroundColor(
-                  this.readAloudCacheTaskSettings.activePresetId === preset.id
-                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                    : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme)
-                )
-                .fontColor(
-                  this.readAloudCacheTaskSettings.activePresetId === preset.id
-                    ? Color.White
-                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
-                )
-                .borderRadius(18)
-                .animation({ duration: 180, curve: Curve.EaseOut })
-                .onClick(() => {
-                  this.applyReadAloudCachePreset(preset);
-                })
-
-              if (preset.description.length > 0) {
-                Text(preset.description)
-                  .fontSize(11)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  .width('100%')
-              }
-            }
-            .width('100%')
-          },
-          (preset: RemoteReadAloudPreset) => preset.id
-        )
-
-        this.buildReadAloudCacheTextInput(
-          '预设名称',
-          this.readAloudCachePresetDraftName,
-          '输入名称后保存为新预设',
-          (value: string) => {
-            this.readAloudCachePresetDraftName = value;
-          }
-        )
-
-        Row({ space: 8 }) {
-          Button('保存为新预设')
-            .layoutWeight(1)
-            .height(34)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .borderRadius(17)
-            .onClick(() => {
-              this.saveReadAloudCachePresetAsNew();
-            })
-
-          Button('更新当前预设')
-            .layoutWeight(1)
-            .height(34)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .borderRadius(17)
-            .enabled(this.canEditActiveReadAloudCachePreset())
-            .onClick(() => {
-              this.updateCurrentReadAloudCachePreset();
-            })
-
-          Button('删除当前预设')
-            .layoutWeight(1)
-            .height(34)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-            .borderRadius(17)
-            .enabled(this.canEditActiveReadAloudCachePreset())
-            .onClick(() => {
-              this.deleteCurrentReadAloudCachePreset();
-            })
-        }
-        .width('100%')
-
-        if (this.readAloudCachePresetStatusMessage.length > 0) {
-          Text(this.readAloudCachePresetStatusMessage)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .width('100%')
-            .transition(this.getReadAloudCacheFadeSlideTransition(6))
-        }
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(6))
-
-      Column({ space: 10 }) {
-        Text('基础连接')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        this.buildReadAloudCacheTextInput(
-          'Endpoint',
-          this.readAloudCacheTaskSettings.endpoint,
-          'https://api.xiaomimimo.com',
-          (value: string) => this.updateReadAloudCacheTaskSettings({ endpoint: value.trim() })
-        )
-        this.buildReadAloudCacheTextInput(
-          'API Path',
-          this.readAloudCacheTaskSettings.apiPath,
-          '/v1/chat/completions',
-          (value: string) => this.updateReadAloudCacheTaskSettings({ apiPath: value.trim() })
-        )
-        this.buildReadAloudCacheTextInput(
-          'API Key',
-          this.readAloudCacheTaskSettings.apiKey,
-          '输入远程 TTS API Key',
-          (value: string) => this.updateReadAloudCacheTaskSettings({ apiKey: value })
-        )
-        this.buildReadAloudCacheTextInput(
-          'Model',
-          this.readAloudCacheTaskSettings.model,
-          'mimo-v2-tts',
-          (value: string) => this.updateReadAloudCacheTaskSettings({ model: value.trim() })
-        )
-        if (this.isMiMoReadAloudCacheSettings()) {
-          this.buildReadAloudCacheMiMoVoiceSelector()
-          this.buildReadAloudCacheMiMoStyleSelector()
-        }
-        this.buildReadAloudCacheTextInput(
-          'Voice',
-          this.readAloudCacheTaskSettings.voice,
-          this.isMiMoReadAloudCacheSettings() ? 'mimo_default / default_zh / default_en' : '输入 voice 参数',
-          (value: string) => this.updateReadAloudCacheTaskSettings({ voice: value.trim() })
-        )
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(8))
-
-      Column({ space: 10 }) {
-        Text('输出与缓存')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Row({ space: 8 }) {
-          ForEach(['wav', 'mp3'], (format: string) => {
-            Button(format.toUpperCase())
-              .layoutWeight(1)
-              .height(32)
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor(this.readAloudCacheTaskSettings.audioFormat === format
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-              .fontColor(this.readAloudCacheTaskSettings.audioFormat === format
-                ? Color.White
-                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .borderRadius(16)
-              .animation({ duration: 180, curve: Curve.EaseOut })
-              .onClick(() => {
-                this.updateReadAloudCacheTaskSettings({ audioFormat: format });
-              })
-          }, (format: string) => `read_aloud_cache_format_${format}`)
-        }
-        .width('100%')
-        this.buildReadAloudCacheToggleRow(
-          '流式响应',
-          '是否使用服务端流式返回音频。部分接口关闭后更稳定。',
-          this.readAloudCacheTaskSettings.streamEnabled,
-          true,
-          (value: boolean) => this.updateReadAloudCacheTaskSettings({ streamEnabled: value })
-        )
-        this.buildReadAloudCacheToggleRow(
-          '整章合成',
-          '章节缓存完成后自动尝试生成整章合并音频。',
-          this.readAloudCacheTaskSettings.autoConcatAudio,
-          true,
-          (value: boolean) => this.updateReadAloudCacheTaskSettings({ autoConcatAudio: value })
-        )
-        this.buildReadAloudCacheToggleRow(
-          '音频文件缓存',
-          '为了章节缓存管理、阅读器命中和手动分段挂接稳定工作，这里固定开启。',
-          true,
-          false,
-          (_value: boolean) => {
-          }
-        )
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(10))
-
-      Column({ space: 10 }) {
-        Text('分段与超时')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        this.buildReadAloudCacheNumberInput(
-          '预取分段数',
-          this.readAloudCacheTaskSettings.prefetchSegments,
-          1,
-          8,
-          (value: number) => this.updateReadAloudCacheTaskSettings({ prefetchSegments: value })
-        )
-        this.buildReadAloudCacheNumberInput(
-          '连接超时（ms）',
-          this.readAloudCacheTaskSettings.connectTimeoutMs,
-          3000,
-          120000,
-          (value: number) => this.updateReadAloudCacheTaskSettings({ connectTimeoutMs: value })
-        )
-        this.buildReadAloudCacheNumberInput(
-          '读取超时（ms）',
-          this.readAloudCacheTaskSettings.readTimeoutMs,
-          5000,
-          300000,
-          (value: number) => this.updateReadAloudCacheTaskSettings({ readTimeoutMs: value })
-        )
-        this.buildReadAloudCacheNumberInput(
-          '最大输入字符',
-          this.readAloudCacheTaskSettings.maxInputChars,
-          256,
-          12000,
-          (value: number) => this.updateReadAloudCacheTaskSettings({ maxInputChars: value })
-        )
-        this.buildReadAloudCacheNumberInput(
-          '保留字符数',
-          this.readAloudCacheTaskSettings.reservedInputChars,
-          0,
-          2000,
-          (value: number) => this.updateReadAloudCacheTaskSettings({ reservedInputChars: value })
-        )
-        this.buildReadAloudCacheNumberInput(
-          '最小分段字符',
-          this.readAloudCacheTaskSettings.minChunkChars,
-          32,
-          5000,
-          (value: number) => this.updateReadAloudCacheTaskSettings({ minChunkChars: value })
-        )
-        this.buildReadAloudCacheNumberInput(
-          '目标分段字符',
-          this.readAloudCacheTaskSettings.targetChunkChars,
-          64,
-          7000,
-          (value: number) => this.updateReadAloudCacheTaskSettings({ targetChunkChars: value })
-        )
-        this.buildReadAloudCacheNumberInput(
-          '最大分段字符',
-          this.readAloudCacheTaskSettings.maxChunkChars,
-          80,
-          9000,
-          (value: number) => this.updateReadAloudCacheTaskSettings({ maxChunkChars: value })
-        )
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(12))
-
-      Column({ space: 10 }) {
-        Text('自定义请求')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        this.buildReadAloudCacheJsonInput(
-          '自定义请求头 JSON',
-          this.readAloudCacheTaskSettings.customHeadersJson,
-          '{\"X-Trace\": \"manxia\"}',
-          (value: string) => this.updateReadAloudCacheTaskSettings({ customHeadersJson: value })
-        )
-        this.buildReadAloudCacheJsonInput(
-          '额外请求体 JSON',
-          this.readAloudCacheTaskSettings.extraBodyJson,
-          '{\"temperature\": 0.2}',
-          (value: string) => this.updateReadAloudCacheTaskSettings({ extraBodyJson: value })
-        )
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(14))
-
-      Column({ space: 8 }) {
-        Row({ space: 6 }) {
-          SymbolGlyph($r('sys.symbol.info_circle'))
-            .fontSize(13)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('当前生效说明')
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        }
-        .width('100%')
-
-        Text(`模型：${this.readAloudCacheTaskSettings.model} / ${this.getReadAloudCacheVoiceLabel(this.readAloudCacheTaskSettings.voice)}`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-        if (this.getReadAloudCacheStylePrompt().length > 0) {
-          Text(`风格：${this.getReadAloudCacheStylePrompt()}`)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width('100%')
-        }
-        Text('开始缓存前会自动把当前任务配置同步为当前内容默认远程 TTS，确保统一详情页缓存和阅读器内直接听书使用同一套配置与缓存索引。')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .transition(this.getReadAloudCacheFadeSlideTransition(14))
-    }
-    .width('100%')
-    .transition(this.getReadAloudCacheFadeSlideTransition(12))
-  }
-  
-  /**
-   * 小说设置对话框
-   */
-  @Builder
-  buildNovelSettingsDialog() {
-    if (this.showNovelSettingsDialog && this.content && this.canUseNovelStyleSettingsDialog()) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => {
-          void this.requestCloseNovelSettingsDialog();
-        },
-        dialogWidth: '90%',
-        maxWidth: 400,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
-
-            Row() {
-              Text(this.isNovelSettingsDialogForLocalEBook() ? '电子书设置' : '小说设置')
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              Blank()
-
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .onClick(() => {
-                void this.requestCloseNovelSettingsDialog();
-              })
-            }
-            .width('100%')
-
-            Row({ space: 8 }) {
-              if (this.isNovelSettingsDialogForLocalEBook()) {
-                this.buildNovelSettingsTabButton('净化规则', 0)
-                this.buildNovelSettingsTabButton('信息修改', 1)
-              } else {
-                this.buildNovelSettingsTabButton('预下载', 0)
-                this.buildNovelSettingsTabButton('目录解析', 1)
-                this.buildNovelSettingsTabButton('净化规则', 2)
-              }
-            }
-            .width('100%')
-            .padding(4)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-              this.themeState.currentTheme))
-            .borderRadius(18)
-
-            Scroll() {
-              Column({ space: 12 }) {
-                if (this.isNovelSettingsDialogForLocalEBook()) {
-                  if (this.novelSettingsActiveTab === 0) {
-                    this.buildNovelReplaceRuleSettingsTab()
-                  } else {
-                    this.buildEBookInfoEditTab()
-                  }
-                } else {
-                  if (this.novelSettingsActiveTab === 0) {
-                    this.buildNovelPrefetchSettingsTab()
-                  } else if (this.novelSettingsActiveTab === 1) {
-                    this.buildNovelDirectorySettingsTab()
-                  } else {
-                    this.buildNovelReplaceRuleSettingsTab()
-                  }
-                }
-              }
-              .width('100%')
-              .alignItems(HorizontalAlign.Start)
-            }
-            .width('100%')
-            .constraintSize({ maxHeight: 420 })
-            .scrollBar(BarState.Auto)
-          }
-          .width('100%')
-          .padding(20)
-          .scale({ x: this.novelSettingsDialogScale, y: this.novelSettingsDialogScale })
-          .translate({ y: this.novelSettingsDialogTranslateY })
-          .opacity(this.novelSettingsDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
-      }
-    }
-  }
-
-
-  @Builder
-  private buildNovelSettingsTabButton(label: string, index: number) {
-    Row() {
-      Text(label)
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.novelSettingsActiveTab === index
-          ? Color.White
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-    }
-    .layoutWeight(1)
-    .height(34)
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(this.novelSettingsActiveTab === index
-      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-      : Color.Transparent)
-    .borderRadius(14)
-    .animation({ duration: 160, curve: Curve.EaseOut })
-    .onClick(() => {
-      logger.info(TAG, `小说设置标签切换: ${label}`);
-      this.novelSettingsActiveTab = index;
-    })
-  }
-
-  @Builder
-  private buildNovelPrefetchSettingsTab() {
-    Column({ space: 10 }) {
-      Row() {
-        Text('预下载设置（仅在线）')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Blank()
-        if (this.isOnlineNovelContent()) {
-          Toggle({ type: ToggleType.Switch, isOn: this.novelEnableReadWhileDownload })
-            .onChange((isOn: boolean) => {
-              this.novelEnableReadWhileDownload = isOn;
-              logger.info(TAG, `小说预下载开关变更: ${isOn}`);
-              void this.saveNovelSettingValue('enableReadWhileDownload', isOn);
-            })
-        }
-      }
-      .width('100%')
-
-      if (this.isOnlineNovelContent()) {
-        Text('在阅读时提前缓存后续章节，设置实时生效')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-
-        if (this.novelEnableReadWhileDownload) {
-          Column({ space: 8 }) {
-            Text(`预下载范围：${this.formatNovelPrefetchChapterCount(this.novelDefaultLoadChapters)}`)
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .width('100%')
-            Row({ space: 8 }) {
-              ForEach(this.getNovelPrefetchChapterOptions(), (count: number) => {
-                Button(this.formatNovelPrefetchChapterCount(count))
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .height(28)
-                  .padding({ left: 10, right: 10 })
-                  .backgroundColor(this.novelDefaultLoadChapters === count
-                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                    : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                  .fontColor(this.novelDefaultLoadChapters === count
-                    ? Color.White
-                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  .borderRadius(14)
-                  .onClick(() => this.onNovelPrefetchChapterCountChange(count))
-              }, (count: number) => `novel_prefetch_${count}`)
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .alignItems(HorizontalAlign.Start)
-        }
-      } else {
-        Text('当前为本地小说，预下载仅在线小说可用')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-      }
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
-  @Builder
-  private buildNovelDirectorySettingsTab() {
-    Column({ space: 10 }) {
-      Text('目录解析（书籍专属）')
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-      Text('为当前小说单独选择目录解析规则，点击“应用”后会保存并重新解析目录')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .width('100%')
-      Row({ space: 8 }) {
-        Button(this.isApplyingNovelDirectoryParsing ? '应用中...' : '应用')
-          .layoutWeight(1)
-          .height(32)
-          .borderRadius(16)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .fontColor(Color.White)
-          .enabled(!this.isApplyingNovelDirectoryParsing)
-          .onClick(() => {
-            void this.applyNovelDirectoryParsingSelection();
-          })
-        Button('管理目录规则')
-          .layoutWeight(1)
-          .height(32)
-          .borderRadius(16)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .onClick(() => {
-            this.openNovelTxtTocRulePage();
-          })
-      }
-      .width('100%')
-
-      if (this.novelTocRules.length <= 0) {
-        Text('暂无目录规则')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-      } else {
-        ForEach(this.novelTocRules, (rule: TxtTocRule) => {
-          Row({ space: 8 }) {
-            Column({ space: 4 }) {
-              Text(rule.name)
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(rule.rule)
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .maxLines(3)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(`序号：${rule.serialNumber}  默认：${rule.enabled ? '启用' : '禁用'}`)
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              if (rule.example && rule.example.length > 0) {
-                Text(`示例：${rule.example}`)
-                  .fontSize(11)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-              }
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-            Toggle({ type: ToggleType.Switch, isOn: this.isRuleSelected(this.novelSelectedTocRuleIds, rule.id) })
-              .onChange((isOn: boolean) => {
-                this.novelSelectedTocRuleIds = this.toggleRuleSelection(this.novelSelectedTocRuleIds, rule.id, isOn);
-                this.refreshNovelRuleDirtyState();
-                logger.info(TAG, `目录规则选择变更: rule=${rule.name}, enabled=${isOn}`);
-              })
-          }
-          .width('100%')
-          .padding(10)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(10)
-        }, (rule: TxtTocRule) => `toc_rule_${rule.id}`)
-      }
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
-  @Builder
-  private buildNovelReplaceRuleSettingsTab() {
-    Column({ space: 10 }) {
-      Text('净化规则（书籍专属）')
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-      Text(this.isNovelSettingsDialogForLocalEBook()
-        ? '为当前电子书单独选择净化规则，点击“应用”后会保存到阅读器并立即作用于详情页内容'
-        : '为当前小说单独选择净化规则，点击“应用”后会立即作用于当前内容并持久化')
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .width('100%')
-      Row({ space: 8 }) {
-        Button(this.isApplyingNovelReplaceRules ? '应用中...' : '应用')
-          .layoutWeight(1)
-          .height(32)
-          .borderRadius(16)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .fontColor(Color.White)
-          .enabled(!this.isApplyingNovelReplaceRules)
-          .onClick(() => {
-            void this.applyNovelReplaceRulesSelection();
-          })
-        Button('管理净化规则')
-          .layoutWeight(1)
-          .height(32)
-          .borderRadius(16)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .onClick(() => {
-            this.openNovelReplaceRulePage();
-          })
-      }
-      .width('100%')
-
-      if (this.novelReplaceRules.length <= 0) {
-        Text('暂无净化规则')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-      } else {
-        ForEach(this.novelReplaceRules, (rule: ReplaceRule) => {
-          Row({ space: 8 }) {
-            Column({ space: 4 }) {
-              Text(rule.name)
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(`匹配：${rule.pattern}`)
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .maxLines(3)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(`替换：${rule.replacement}`)
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(`范围：${this.getReplaceRuleScopeLabel(rule.scope)}  来源：${this.getReplaceRuleSourceLabel(rule)}  默认：${rule.enabled ? '启用' : '禁用'}`)
-                .fontSize(11)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-            Toggle({ type: ToggleType.Switch, isOn: this.isRuleSelected(this.novelSelectedReplaceRuleIds, rule.id) })
-              .onChange((isOn: boolean) => {
-                this.novelSelectedReplaceRuleIds = this.toggleRuleSelection(this.novelSelectedReplaceRuleIds, rule.id, isOn);
-                this.refreshNovelRuleDirtyState();
-                logger.info(TAG, `净化规则选择变更: rule=${rule.name}, enabled=${isOn}`);
-              })
-          }
-          .width('100%')
-          .padding(10)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .borderRadius(10)
-        }, (rule: ReplaceRule) => `replace_rule_${rule.id}`)
-      }
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
-  private normalizeEBookInfoCoverPath(path: string): string {
-    const trimmed = path.trim();
-    if (trimmed.length <= 0) {
-      return '';
-    }
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('file://')) {
-      return trimmed;
-    }
-    if (trimmed.startsWith('/')) {
-      return `file://${trimmed}`;
-    }
-    return trimmed;
-  }
-
-  private getEBookInfoCoverPreviewSource(): string {
-    const normalizedPath = this.normalizeEBookInfoCoverPath(this.ebookInfoCoverPath);
-    if (normalizedPath.startsWith('http://') || normalizedPath.startsWith('https://')) {
-      const connector = normalizedPath.indexOf('?') >= 0 ? '&' : '?';
-      return `${normalizedPath}${connector}refresh=${this.coverRefreshKey}`;
-    }
-    return normalizedPath;
-  }
-
-  @Builder
-  private buildEBookInfoTextInput(
-    label: string,
-    value: string,
-    placeholder: string,
-    onChange: (value: string) => void
-  ) {
-    Column({ space: 6 }) {
-      Text(label)
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .width('100%')
-      TextInput({ text: value, placeholder: placeholder })
-        .height(38)
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-        .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .padding({ left: 10, right: 10 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-        .borderRadius(12)
-        .onChange((nextValue: string) => {
-          onChange(nextValue);
-          this.markEBookInfoDirty();
-        })
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildEBookInfoTextArea(
-    label: string,
-    value: string,
-    placeholder: string,
-    onChange: (value: string) => void
-  ) {
-    Column({ space: 6 }) {
-      Text(label)
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        .width('100%')
-      TextArea({ text: value, placeholder: placeholder })
-        .height(92)
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-        .padding(10)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-        .borderRadius(12)
-        .onChange((nextValue: string) => {
-          onChange(nextValue);
-          this.markEBookInfoDirty();
-        })
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private buildEBookInfoEditTab() {
-    Column({ space: 12 }) {
-      Row() {
-        Column({ space: 4 }) {
-          Text('信息修改')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          Text(this.ebookInfoDirty ? '有未保存修改' : '修改后会同步到书库与详情页')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(this.ebookInfoDirty
-              ? ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
-              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-
-        Button() {
-          Row({ space: 5 }) {
-            SymbolGlyph($r('sys.symbol.magnifyingglass'))
-              .fontSize(13)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-            Text('刮削')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          }
-        }
-        .height(30)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '18')
-        .borderRadius(15)
-        .onClick(() => {
-          this.openEBookInfoScraperDialog();
-        })
-      }
-      .width('100%')
-
-      Row({ space: 12 }) {
-        if (this.ebookInfoCoverPath.trim().length > 0) {
-          Image(this.getEBookInfoCoverPreviewSource())
-            .width(68)
-            .height(96)
-            .objectFit(ImageFit.Cover)
-            .borderRadius(6)
-        } else {
-          Image($r('app.media.ebook'))
-            .width(68)
-            .height(96)
-            .objectFit(ImageFit.Cover)
-            .borderRadius(6)
-        }
-        Column({ space: 8 }) {
-          this.buildEBookInfoTextInput('封面路径 / URL', this.ebookInfoCoverPath, '可填本地路径或网络封面 URL', (value: string) => {
-            this.ebookInfoCoverPath = value;
-          })
-          Button('清空封面')
-            .height(30)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .borderRadius(15)
-            .onClick(() => {
-              this.ebookInfoCoverPath = '';
-              this.markEBookInfoDirty();
-            })
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-
-      this.buildEBookInfoTextInput('书名 *', this.ebookInfoTitle, '请输入书名', (value: string) => {
-        this.ebookInfoTitle = value;
-      })
-      this.buildEBookInfoTextInput('作者 *', this.ebookInfoAuthor, '请输入作者', (value: string) => {
-        this.ebookInfoAuthor = value;
-      })
-      this.buildEBookInfoTextInput('出版社', this.ebookInfoPublisher, '请输入出版社', (value: string) => {
-        this.ebookInfoPublisher = value;
-      })
-      this.buildEBookInfoTextInput('出版日期', this.ebookInfoPublishDate, '例如 2024-03 或 2024年3月', (value: string) => {
-        this.ebookInfoPublishDate = value;
-      })
-      this.buildEBookInfoTextInput('ISBN', this.ebookInfoIsbn, '请输入 ISBN', (value: string) => {
-        this.ebookInfoIsbn = value;
-      })
-      this.buildEBookInfoTextInput('语言', this.ebookInfoLanguage, '例如 zh-CN、en、ja', (value: string) => {
-        this.ebookInfoLanguage = value;
-      })
-      this.buildEBookInfoTextArea('简介', this.ebookInfoDescription, '请输入简介', (value: string) => {
-        this.ebookInfoDescription = value;
-      })
-      this.buildEBookInfoTextInput('标签（逗号分隔）', this.ebookInfoTagsText, '例如 科幻, 推理, 历史', (value: string) => {
-        this.ebookInfoTagsText = value;
-      })
-
-      Button(this.isSavingEBookInfo ? '保存中...' : '保存信息')
-        .width('100%')
-        .height(36)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(Color.White)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .borderRadius(18)
-        .enabled(!this.isSavingEBookInfo)
-        .onClick(() => {
-          void this.saveEBookInfoEdit();
-        })
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
-  /**
-   * 下载章节选择对话框
-   */
-  @Builder
-  buildDownloadDialog() {
-    if (this.showDownloadDialog && this.content) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => this.closeDownloadDialog(),
-        dialogWidth: '90%',
-        maxWidth: 400,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
-            // 标题栏
-
-            Row() {
-              Text(this.content.contentType === UnifiedContentType.NOVEL ? this.getNovelCacheActionTitle() : '缓存章节')
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              Blank()
-
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .onClick(() => this.closeDownloadDialog())
-            }
-            .width('100%')
-
-            // 根据章节数量显示不同的UI
-            if (this.content.chapters.length === 1) {
-              // 单章节漫画：简化UI
-              this.buildSingleChapterDownloadView()
-            } else {
-              // 多章节：显示完整的选择界面
-              // 选择模式切换
-              Row({ space: 8 }) {
-                Button() {
-                  Row({ space: 6 }) {
-                    SymbolGlyph($r('sys.symbol.slider_horizontal_2_1'))
-                      .fontSize(14)
-                      .fontColor([this.downloadSelectionMode === 'range'
-                        ? Color.White
-                        : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-                    Text('区间选择')
-                      .fontSize(13)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(this.downloadSelectionMode === 'range'
-                        ? Color.White
-                        : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  }
-                }
-                .height(36)
-                .padding({ left: 14, right: 14 })
-                .backgroundColor(this.downloadSelectionMode === 'range'
-                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                    this.themeState.currentTheme))
-                .borderRadius(18)
-                .animation({ duration: 200, curve: Curve.EaseOut })
-                .onClick(() => {
-                  animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-                    this.downloadSelectionMode = 'range';
-                  });
-                })
-
-                Button() {
-                  Row({ space: 6 }) {
-                    SymbolGlyph($r('sys.symbol.checkmark_circle'))
-                      .fontSize(14)
-                      .fontColor([this.downloadSelectionMode === 'individual'
-                        ? Color.White
-                        : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-                    Text('单独选择')
-                      .fontSize(13)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(this.downloadSelectionMode === 'individual'
-                        ? Color.White
-                        : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  }
-                }
-                .height(36)
-                .padding({ left: 14, right: 14 })
-                .backgroundColor(this.downloadSelectionMode === 'individual'
-                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                    this.themeState.currentTheme))
-                .borderRadius(18)
-                .animation({ duration: 200, curve: Curve.EaseOut })
-                .onClick(() => {
-                  animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-                    this.downloadSelectionMode = 'individual';
-                    // 单独选择模式默认展开章节列表
-                    this.downloadChapterListExpanded = true;
-                  });
-                })
-              }
-              .width('100%')
-
-              // 区间选择模式
-              if (this.downloadSelectionMode === 'range') {
-                Column({ space: 12 }) {
-                  // 区间显示
-                  Row() {
-                    Text(`第 ${this.downloadRangeStart + 1} 章`)
-                      .fontSize(14)
-                      .fontWeight(FontWeight.Medium)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme))
-
-                    Text(' — ')
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                        this.themeState.currentTheme))
-
-                    Text(`第 ${this.downloadRangeEnd + 1} 章`)
-                      .fontSize(14)
-                      .fontWeight(FontWeight.Medium)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme))
-
-                    Blank()
-
-                    Text(`共 ${this.downloadRangeEnd - this.downloadRangeStart + 1} 章`)
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                        this.themeState.currentTheme))
-                  }
-                  .width('100%')
-
-                  // 开始位置滑块
-                  Column({ space: 4 }) {
-                    Text('开始章节')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                        this.themeState.currentTheme))
-
-                    Slider({
-                      value: this.downloadRangeStart,
-                      min: 0,
-                      max: this.content.chapters.length - 1,
-                      step: 1,
-                      style: SliderStyle.OutSet
-                    })
-                      .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme))
-                      .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                        this.themeState.currentTheme))
-                      .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme))
-                      .onChange((value: number) => {
-                        this.downloadRangeStart = Math.round(value);
-                        if (this.downloadRangeStart > this.downloadRangeEnd) {
-                          this.downloadRangeEnd = this.downloadRangeStart;
-                        }
-                      })
-                  }
-                  .width('100%')
-                  .alignItems(HorizontalAlign.Start)
-
-                  // 结束位置滑块
-                  Column({ space: 4 }) {
-                    Text('结束章节')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                        this.themeState.currentTheme))
-
-                    Slider({
-                      value: this.downloadRangeEnd,
-                      min: 0,
-                      max: this.content.chapters.length - 1,
-                      step: 1,
-                      style: SliderStyle.OutSet
-                    })
-                      .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme))
-                      .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                        this.themeState.currentTheme))
-                      .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme))
-                      .onChange((value: number) => {
-                        this.downloadRangeEnd = Math.round(value);
-                        if (this.downloadRangeEnd < this.downloadRangeStart) {
-                          this.downloadRangeStart = this.downloadRangeEnd;
-                        }
-                      })
-                  }
-                  .width('100%')
-                  .alignItems(HorizontalAlign.Start)
-
-                  // 快捷选择按钮
-                  Row({ space: 8 }) {
-                    Button('全部')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .height(28)
-                      .padding({ left: 12, right: 12 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                        this.themeState.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-                      .borderRadius(14)
-                      .onClick(() => {
-                        animateTo({ duration: 150 }, () => {
-                          this.downloadRangeStart = 0;
-                          this.downloadRangeEnd = this.content!.chapters.length - 1;
-                        });
-                      })
-
-                    Button('前50章')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .height(28)
-                      .padding({ left: 12, right: 12 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                        this.themeState.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-                      .borderRadius(14)
-                      .onClick(() => {
-                        animateTo({ duration: 150 }, () => {
-                          this.downloadRangeStart = 0;
-                          this.downloadRangeEnd = Math.min(49, this.content!.chapters.length - 1);
-                        });
-                      })
-
-                    Button('后50章')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .height(28)
-                      .padding({ left: 12, right: 12 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                        this.themeState.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-                      .borderRadius(14)
-                      .onClick(() => {
-                        animateTo({ duration: 150 }, () => {
-                          const total = this.content!.chapters.length;
-                          this.downloadRangeStart = Math.max(0, total - 50);
-                          this.downloadRangeEnd = total - 1;
-                        });
-                      })
-                  }
-                  .width('100%')
-                }
-                .width('100%')
-                .animation({ duration: 200, curve: Curve.EaseOut })
-              } else {
-                // 单独选择模式
-                Column({ space: 8 }) {
-                  Row() {
-                    Text(`已选择 ${this.downloadSelectedChapters.size} 章`)
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                        this.themeState.currentTheme))
-
-                    Blank()
-
-                    Button(this.downloadChapterListExpanded ? '收起' : '展开列表')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .height(28)
-                      .padding({ left: 12, right: 12 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                        this.themeState.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme))
-                      .borderRadius(14)
-                      .onClick(() => {
-                        animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-                          this.downloadChapterListExpanded = !this.downloadChapterListExpanded;
-                        });
-                      })
-                  }
-                  .width('100%')
-
-                  // 章节列表
-                  if (this.downloadChapterListExpanded) {
-                    List() {
-                      ForEach(this.content.chapters, (chapter: UnifiedChapter, index: number) => {
-                        ListItem() {
-                          Row() {
-                            Checkbox({ name: `chapter_${index}` })
-                              .select(this.downloadSelectedChapters.has(index))
-                              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                                this.themeState.currentTheme))
-                              .enabled(!this.isChapterFullyCached(chapter.id))  // 已缓存章节禁用选择
-                              .hitTestBehavior(HitTestMode.Block)  // 阻止事件穿透到Row
-                              .onChange((checked: boolean) => {
-                                // 已缓存章节不可选中
-                                if (this.isChapterFullyCached(chapter.id)) return;
-
-                                const newSet = new Set(this.downloadSelectedChapters);
-                                if (checked) {
-                                  newSet.add(index);
-                                } else {
-                                  newSet.delete(index);
-                                }
-                                this.downloadSelectedChapters = newSet;
-                              })
-
-                            Text(`${index + 1}. ${chapter.title}`)
-                              .fontSize(13)
-                              .fontFamily(this.appFontFamily)
-                              .fontColor(this.isChapterFullyCached(chapter.id)
-                                ? ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                                  this.themeState.currentTheme)
-                                : ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                                  this.themeState.currentTheme))
-                              .maxLines(1)
-                              .textOverflow({ overflow: TextOverflow.Ellipsis })
-                              .layoutWeight(1)
-
-                            if (this.isChapterFullyCached(chapter.id)) {
-                              Text(this.content?.contentType === UnifiedContentType.NOVEL ? this.getNovelDownloadedTagLabel() : '已缓存')
-                                .fontSize(11)
-                                .fontFamily(this.appFontFamily)
-                                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                                  this.themeState.currentTheme))
-                            } else if (this.isChapterPartiallyCached(chapter.id)) {
-                              Text('部分缓存')
-                                .fontSize(11)
-                                .fontFamily(this.appFontFamily)
-                                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange',
-                                  this.themeState.currentTheme))
-                            }
-                          }
-                          .width('100%')
-                          .height(40)
-                          .padding({ left: 8, right: 8 })
-                          .backgroundColor(this.downloadSelectedChapters.has(index)
-                            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                              this.themeState.currentTheme) + '15'
-                            : Color.Transparent)
-                          .borderRadius(8)
-                          .enabled(!this.isChapterFullyCached(chapter.id)) // 已缓存章节整行不可点击
-                          .opacity(this.isChapterFullyCached(chapter.id) ? 0.5 : 1) // 已缓存章节半透明
-                          .onClick(() => this.toggleChapterSelection(index))
-                        }
-                      }, (chapter: UnifiedChapter,
-                        index: number) => `dl_chapter_${index}_${chapter.id}_${this.downloadSelectedChapters.has(index)}`)
-                    }
-                    .width('100%')
-                    .height(200)
-                    .scrollBar(BarState.Auto)
-                    .edgeEffect(EdgeEffect.Spring)
-                    .cachedCount(10) // 缓存列表项，提升滚动性能
-                  }
-
-                  // 快捷选择
-                  Row({ space: 8 }) {
-                    Button('全选')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .height(28)
-                      .padding({ left: 12, right: 12 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                        this.themeState.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-                      .borderRadius(14)
-                      .onClick(() => {
-                        // 全选只选中未完全缓存的章节（包含部分缓存的章节，用于重试）
-                        const newSet = new Set<number>();
-                        this.content!.chapters.forEach((ch, idx) => {
-                          if (!this.isChapterFullyCached(ch.id)) {
-                            newSet.add(idx);
-                          }
-                        });
-                        this.downloadSelectedChapters = newSet;
-                      })
-
-                    Button('全不选')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .height(28)
-                      .padding({ left: 12, right: 12 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                        this.themeState.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-                      .borderRadius(14)
-                      .onClick(() => {
-                        this.downloadSelectedChapters = new Set();
-                      })
-                  }
-                  .width('100%')
-                }
-                .width('100%')
-                .animation({ duration: 200, curve: Curve.EaseOut })
-              }
-            } // 多章节UI结束
-
-            // 底部按钮
-            Row({ space: 12 }) {
-              Button() {
-                Row({ space: 6 }) {
-                  SymbolGlyph($r('sys.symbol.trash'))
-                    .fontSize(16)
-                    .fontColor([Color.White])
-                  Text(`清除缓存`)
-                    .fontSize(14)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(Color.White)
-                }
-              }
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .height(44)
-              .backgroundColor('#FF5252')
-              .layoutWeight(1)
-              .borderRadius(22)
-              .onClick(() => {
-                this.closeDownloadDialog();
-                if (this.content?.contentType === UnifiedContentType.NOVEL) {
-                  this.showNovelCacheClearConfirm();
-                } else {
-                  this.showMangaCacheClearConfirm();
-                }
-              })
-
-
-              Button() {
-                Row({ space: 6 }) {
-                  SymbolGlyph($r('sys.symbol.arrow_down_circle'))
-                    .fontSize(16)
-                    .fontColor([Color.White])
-                  Text(this.content.contentType === UnifiedContentType.NOVEL
-                    ? this.getNovelCacheCountActionLabel(this.getSelectedChapterCount())
-                    : `缓存 ${this.getSelectedChapterCount()} 章`)
-                    .fontSize(14)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(Color.White)
-                }
-              }
-              .height(44)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                this.themeState.currentTheme))
-              .layoutWeight(2)
-              .borderRadius(22)
-              .onClick(() => this.executeDownloadSelected())
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .padding(20)
-          .scale({ x: this.downloadDialogScale, y: this.downloadDialogScale })
-          .translate({ y: this.downloadDialogTranslateY })
-          .opacity(this.downloadDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
-      }
-    }
-  }
-
-  
-  /**
-   * 打开换源对话框
-   */
-  private openChangeSourceDialog(): void {
-    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) return;
-    
-    // 初始化搜索关键词
-    this.changeSourceKeyword = this.content.title;
-    
-    // 显示对话框（带动画）
-    this.showChangeSourceDialog = true;
-    animateTo({
-      duration: 260,
-      curve: Curve.EaseOut
-    }, () => {
-      this.changeSourceDialogOpacity = 1;
-      this.changeSourceDialogScale = 1;
-      this.changeSourceDialogTranslateY = 0;
-    });
-    
-    // 开始搜索（使用缓存）
-    this.startChangeSourceSearch(false);
-  }
-  
-  /**
-   * 开始换源搜索
-   * @param forceRefresh 是否强制刷新（手动点击搜索按钮时为true）
-   */
-  private startChangeSourceSearch(forceRefresh: boolean = false): void {
-    // 取消之前的搜索任务
-    if (this.searchTaskHandle) {
-      this.searchTaskHandle.cancel();
-    }
-    
-    const keyword = this.changeSourceKeyword.trim();
-    if (!keyword) {
-      promptAction.showToast({ message: '请输入搜索关键词' });
-      return;
-    }
-    
-    const bookAuthor = this.content?.author;
-    
-    // 检查缓存（非强制刷新模式）
-    if (!forceRefresh) {
-      const cached = this.sourceSearchService.getCachedResults(keyword, bookAuthor);
-      if (cached) {
-        // 使用缓存结果
-        this.alternativeSources = cached.results;
-        this.alternativeSourceResults = cached.sourceResults;
-        this.searchSourceCompleted = cached.sourceResults.length;
-        this.searchSourceTotal = cached.sourceResults.length;
-        this.searchSourceProgress = 100;
-        this.isSearchingSource = false;
-        logger.info(TAG, `使用缓存的换源搜索结果: ${keyword}`);
-        return;
-      }
-    } else {
-      // 强制刷新时清除缓存
-      this.sourceSearchService.clearCache(keyword, bookAuthor);
-    }
-    
-    // 重置状态
-    this.isSearchingSource = true;
-    this.alternativeSources = [];
-    this.alternativeSourceResults = [];
-    this.searchSourceCompleted = 0;
-    this.searchSourceTotal = this.sourceSearchService.getSearchableSourceCount();
-    this.searchSourceProgress = 0;
-    
-    logger.info(TAG, `开始换源搜索: ${keyword}, 共 ${this.searchSourceTotal} 个书源`);
-    
-    // 使用换源搜索服务，传入 0 表示不限制书源数量
-    this.searchTaskHandle = this.sourceSearchService.searchForSource(
-      keyword,
-      bookAuthor,
-      {
-        onSourceComplete: (sourceResult: SourceSearchResult) => {
-          // 实时更新结果
-          this.alternativeSourceResults = [...this.alternativeSourceResults, sourceResult];
-          this.alternativeSources = [...this.alternativeSources, ...sourceResult.results];
-        },
-        onProgress: (completed: number, total: number) => {
-          this.searchSourceCompleted = completed;
-          this.searchSourceTotal = total;
-          this.searchSourceProgress = total > 0 ? Math.round((completed / total) * 100) : 0;
-        },
-        onComplete: (allResults: NovelSearchResult[], sourceResults: SourceSearchResult[]) => {
-          this.isSearchingSource = false;
-          this.searchSourceProgress = 100;
-          this.searchTaskHandle = null;
-          logger.info(TAG, `换源搜索完成: 共 ${sourceResults.length} 个书源有结果`);
-        },
-        onCancelled: () => {
-          this.isSearchingSource = false;
-          this.searchTaskHandle = null;
-          logger.info(TAG, '换源搜索已取消');
-        }
-      },
-      0  // 传入 0 表示搜索所有启用的书源
-    );
-  }
-  
-  /**
-   * 关闭换源对话框（带动画）
-   */
-  private closeChangeSourceDialog(): void {
-    // 取消搜索
-    if (this.searchTaskHandle) {
-      this.searchTaskHandle.cancel();
-      this.searchTaskHandle = null;
-    }
-    this.isSearchingSource = false;
-    
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseIn
-    }, () => {
-      this.changeSourceDialogOpacity = 0;
-      this.changeSourceDialogScale = 0.96;
-      this.changeSourceDialogTranslateY = 12;
-    });
-
-    setTimeout(() => {
-      this.showChangeSourceDialog = false;
-    }, 200);
-  }
-  
   /**
    * 切换小说书源
    */
@@ -15788,9 +8213,6 @@ export struct UnifiedDetailPage {
       logger.info(TAG, `保存原书信息: ${originalInfo.name}, 阅读至第${originalInfo.lastReadChapterIndex}章, 原书收藏状态=${originalInfo.isFavorite}, 书架ID=${originalShelfId}`);
     }
     
-    // 关闭对话框
-    this.closeChangeSourceDialog();
-    
     // 显示加载状态
     this.isLoading = true;
     
@@ -15831,43 +8253,17 @@ export struct UnifiedDetailPage {
    */
   private openReplaceBookDialog(): void {
     if (!this.content || !this.originalBookInfo) return;
-    
+
     // 计算章节匹配
     this.matchedChapterIndex = this.findMatchingChapterIndex(
       this.originalBookInfo.lastReadChapterTitle,
       this.originalBookInfo.lastReadChapterIndex
     );
-    
+
     logger.info(TAG, `打开替换对话框: 原章节=${this.originalBookInfo.lastReadChapterIndex}, 匹配章节=${this.matchedChapterIndex}`);
-    
+
     // 显示对话框
-    this.showReplaceBookDialog = true;
-    animateTo({
-      duration: 260,
-      curve: Curve.EaseOut
-    }, () => {
-      this.replaceDialogOpacity = 1;
-      this.replaceDialogScale = 1;
-      this.replaceDialogTranslateY = 0;
-    });
-  }
-  
-  /**
-   * 关闭替换小说对话框
-   */
-  private closeReplaceBookDialog(): void {
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseIn
-    }, () => {
-      this.replaceDialogOpacity = 0;
-      this.replaceDialogScale = 0.96;
-      this.replaceDialogTranslateY = 12;
-    });
-    
-    setTimeout(() => {
-      this.showReplaceBookDialog = false;
-    }, 200);
+    this.replaceBookDialogLoadSignal++;
   }
   
   /**
@@ -15929,8 +8325,7 @@ export struct UnifiedDetailPage {
    */
   private async executeReplaceBook(): Promise<void> {
     if (!this.content || !this.originalBookInfo) return;
-    
-    this.closeReplaceBookDialog();
+
     this.isLoading = true;
     
     try {
@@ -16081,1061 +8476,66 @@ export struct UnifiedDetailPage {
    */
   @Builder
   buildGenerateCoverDialog() {
-    if (this.showGenerateCoverDialog) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => {
-          this.closeGenerateCoverDialog();
-        },
-        dialogWidth: '80%',
-        maxWidth: 400,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 20 }) {
-
-            Text('生成封面')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-            Column({ space: 8 }) {
-              Text('请输入要显示在封面上的标题：')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                  this.themeState.currentTheme))
-
-              TextInput({ text: this.coverTitleInput })
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                  this.themeState.currentTheme))
-                .onChange((value: string) => {
-                  this.coverTitleInput = value;
-                })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .width('100%')
-
-            Column({ space: 8 }) {
-              Row() {
-                Text('字体倍率：')
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme))
-
-                Text(this.coverFontScale.toFixed(1) + 'x')
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                    this.themeState.currentTheme))
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.SpaceBetween)
-
-              Slider({
-                value: this.coverFontScale,
-                min: 0.1,
-                max: 2.0,
-                step: 0.1,
-                style: SliderStyle.OutSet
-              })
-                .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                  this.themeState.currentTheme))
-                .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                  this.themeState.currentTheme))
-                .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                  this.themeState.currentTheme))
-                .showSteps(false)
-                .showTips(false)
-                .onChange((value: number) => {
-                  this.coverFontScale = value;
-                })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .width('100%')
-
-            Row({ space: 12 }) {
-              Button('取消')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                  this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .layoutWeight(1)
-                .onClick(() => {
-                  this.closeGenerateCoverDialog();
-                })
-
-              Button('确定')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                  this.themeState.currentTheme))
-                .fontColor(Color.White)
-                .layoutWeight(1)
-                .onClick(() => {
-                  this.generateCoverForContent();
-                })
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .padding(24)
-          .scale({ x: this.dialogScale, y: this.dialogScale })
-          .translate({ y: this.dialogTranslateY })
-          .opacity(this.dialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
+    GenerateCoverDialogComponent({
+      themeState: this.themeState,
+      loadSignal: this.generateCoverDialogLoadSignal,
+      defaultTitle: this.content?.title || '',
+      onConfirm: (title: string, fontScale: number) => {
+        void this.generateCoverForContent(title, fontScale);
       }
-    }
+    })
   }
-
-  
-  /**
-   * 换源对话框（带丰富动画效果）
-   */
-  @Builder
-  buildChangeSourceDialog() {
-    if (this.showChangeSourceDialog) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => this.closeChangeSourceDialog(),
-        dialogWidth: '92%',
-        maxWidth: 420,
-        maxHeight: '80%',
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 0 }) {
-
-            // 标题栏
-            Row() {
-              Column() {
-                Row({ space: 8 }) {
-                  SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-                    .fontSize(20)
-                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                      this.themeState.currentTheme)])
-
-                  Text('换源')
-                    .fontSize(18)
-                    .fontWeight(FontWeight.Bold)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                      this.themeState.currentTheme))
-
-                  if (this.alternativeSourceResults.length > 0) {
-                    Text(`(${this.alternativeSourceResults.length}个书源)`)
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                        this.themeState.currentTheme))
-                      .opacity(this.changeSourceDialogOpacity)
-                      .animation({ duration: 200, curve: Curve.EaseOut })
-                  }
-                }
-
-                // 进度条
-                if (this.isSearchingSource) {
-                  Row() {
-                    Progress({ value: this.searchSourceProgress, total: 100, type: ProgressType.Linear })
-                      .width('100%')
-                      .height(3)
-                      .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                        this.themeState.currentTheme))
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('divider',
-                        this.themeState.currentTheme))
-                      .animation({ duration: 150, curve: Curve.EaseOut })
-                  }
-                  .width('100%')
-                  .margin({ top: 10 })
-                }
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-
-              Row({ space: 8 }) {
-                if (this.isSearchingSource) {
-                  Text(`${this.searchSourceCompleted}/${this.searchSourceTotal}`)
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                      this.themeState.currentTheme))
-                    .animation({ duration: 200, curve: Curve.EaseOut })
-                }
-
-                Button() {
-                  SymbolGlyph($r('sys.symbol.xmark'))
-                    .fontSize(18)
-                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                      this.themeState.currentTheme)])
-                }
-                .width(32)
-                .height(32)
-                .backgroundColor(Color.Transparent)
-                .onClick(() => this.closeChangeSourceDialog())
-              }
-            }
-            .width('100%')
-            .padding({
-              left: 20,
-              right: 16,
-              top: 16,
-              bottom: 12
-            })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
-              this.themeState.currentTheme))
-
-            // 搜索关键词输入框
-            Row({ space: 8 }) {
-              Row() {
-                SymbolGlyph($r('sys.symbol.magnifyingglass'))
-                  .fontSize(16)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                    this.themeState.currentTheme)])
-
-                TextInput({ text: this.changeSourceKeyword, placeholder: '输入搜索关键词' })
-                  .layoutWeight(1)
-                  .height(36)
-                  .backgroundColor(Color.Transparent)
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                    this.themeState.currentTheme))
-                  .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                    this.themeState.currentTheme))
-                  .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                    this.themeState.currentTheme))
-                  .padding({ left: 8, right: 8 })
-                  .onChange((value: string) => {
-                    this.changeSourceKeyword = value;
-                  })
-                  .onSubmit(() => {
-                    this.startChangeSourceSearch(true); // 手动输入后回车强制刷新
-                  })
-
-                if (this.changeSourceKeyword.length > 0) {
-                  Button() {
-                    SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-                      .fontSize(16)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                        this.themeState.currentTheme)])
-                  }
-                  .width(28)
-                  .height(28)
-                  .backgroundColor(Color.Transparent)
-                  .onClick(() => {
-                    this.changeSourceKeyword = '';
-                  })
-                }
-              }
-              .layoutWeight(1)
-              .height(40)
-              .padding({ left: 12, right: 4 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                this.themeState.currentTheme))
-              .borderRadius(20)
-
-              Button() {
-                if (this.isSearchingSource) {
-                  LoadingProgress()
-                    .width(18)
-                    .height(18)
-                    .color(Color.White)
-                } else {
-                  Text('搜索')
-                    .fontSize(14)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(Color.White)
-                }
-              }
-              .width(60)
-              .height(40)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                this.themeState.currentTheme))
-              .borderRadius(20)
-              .enabled(!this.isSearchingSource && this.changeSourceKeyword.trim().length > 0)
-              .opacity(!this.isSearchingSource && this.changeSourceKeyword.trim().length > 0 ? 1 : 0.5)
-              .onClick(() => {
-                this.startChangeSourceSearch(true); // 手动点击搜索按钮强制刷新
-              })
-            }
-            .width('100%')
-            .padding({
-              left: 16,
-              right: 16,
-              top: 8,
-              bottom: 12
-            })
-            .animation({ duration: 200, curve: Curve.EaseOut })
-
-            // 搜索结果列表
-            if (this.isSearchingSource && this.alternativeSourceResults.length === 0) {
-              // 正在搜索且还没有结果
-              Column() {
-                LoadingProgress()
-                  .width(40)
-                  .height(40)
-                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-
-                Text(`正在搜索可用书源...`)
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                    this.themeState.currentTheme))
-                  .margin({ top: 16 })
-
-                Text(`${this.searchSourceCompleted} / ${this.searchSourceTotal}`)
-                  .fontSize(24)
-                  .fontWeight(FontWeight.Bold)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                    this.themeState.currentTheme))
-                  .margin({ top: 8 })
-              }
-              .width('100%')
-              .height(280)
-              .justifyContent(FlexAlign.Center)
-              .animation({ duration: 300, curve: Curve.EaseOut })
-            } else if (!this.isSearchingSource && this.alternativeSourceResults.length === 0) {
-              // 搜索完成但没有结果
-              Column() {
-                SymbolGlyph($r('sys.symbol.magnifyingglass'))
-                  .fontSize(56)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                    this.themeState.currentTheme)])
-
-                Text('未找到其他书源')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme))
-                  .margin({ top: 16 })
-
-                Text('试试导入更多书源后再换源')
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                    this.themeState.currentTheme))
-                  .margin({ top: 6 })
-              }
-              .width('100%')
-              .height(280)
-              .justifyContent(FlexAlign.Center)
-            } else {
-              // 有结果，按书源分组展示
-              List() {
-                ForEach(this.alternativeSourceResults, (sourceResult: SourceSearchResult, sourceIndex: number) => {
-                  // 书源分组标题
-                  ListItem() {
-                    Row() {
-                      Row({ space: 6 }) {
-                        Text(sourceResult.sourceName)
-                          .fontSize(13)
-                          .fontWeight(FontWeight.Medium)
-                          .fontFamily(this.appFontFamily)
-                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                            this.themeState.currentTheme))
-
-                        Text(`${sourceResult.results.length}本`)
-                          .fontSize(11)
-                          .fontFamily(this.appFontFamily)
-                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                            this.themeState.currentTheme))
-                      }
-
-                      Blank()
-
-                      if (sourceResult.sourceGroup && sourceResult.sourceGroup !== '未分组') {
-                        Text(sourceResult.sourceGroup)
-                          .fontSize(10)
-                          .fontFamily(this.appFontFamily)
-                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                            this.themeState.currentTheme))
-                          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                            this.themeState.currentTheme) + '20')
-                          .padding({
-                            left: 8,
-                            right: 8,
-                            top: 3,
-                            bottom: 3
-                          })
-                          .borderRadius(10)
-                      }
-                    }
-                    .width('100%')
-                    .padding({
-                      left: 20,
-                      right: 20,
-                      top: 12,
-                      bottom: 6
-                    })
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                      this.themeState.currentTheme))
-                  }
-                  .animation({
-                    duration: 250,
-                    delay: sourceIndex * 30,
-                    curve: Curve.EaseOut
-                  })
-
-                  // 该书源下的书籍列表
-                  ForEach(sourceResult.results, (book: NovelSearchResult, bookIndex: number) => {
-                    ListItem() {
-                      Row() {
-                        Column() {
-                          Row({ space: 6 }) {
-                            Text(book.name)
-                              .fontSize(14)
-                              .fontWeight(FontWeight.Medium)
-                              .fontFamily(this.appFontFamily)
-                              .fontColor(book.sourceId === this.pageParams?.sourceId
-                                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                                  this.themeState.currentTheme)
-                                : ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                                  this.themeState.currentTheme))
-                              .maxLines(1)
-                              .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-                            if (book.author) {
-                              Text(`· ${book.author}`)
-                                .fontSize(12)
-                                .fontFamily(this.appFontFamily)
-                                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                                  this.themeState.currentTheme))
-                                .maxLines(1)
-                            }
-                          }
-
-                          Text(book.latestChapterTitle || '暂无最新章节信息')
-                            .fontSize(12)
-                            .fontFamily(this.appFontFamily)
-                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                              this.themeState.currentTheme))
-                            .margin({ top: 4 })
-                            .maxLines(1)
-                            .textOverflow({ overflow: TextOverflow.Ellipsis })
-                        }
-                        .alignItems(HorizontalAlign.Start)
-                        .layoutWeight(1)
-
-                        if (book.sourceId === this.pageParams?.sourceId) {
-                          Row({ space: 4 }) {
-                            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
-                              .fontSize(14)
-                              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                                this.themeState.currentTheme)])
-                            Text('当前')
-                              .fontSize(12)
-                              .fontFamily(this.appFontFamily)
-                              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                                this.themeState.currentTheme))
-                          }
-                          .padding({
-                            left: 10,
-                            right: 10,
-                            top: 5,
-                            bottom: 5
-                          })
-                          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                            this.themeState.currentTheme) + '20')
-                          .borderRadius(12)
-                        } else {
-                          SymbolGlyph($r('sys.symbol.chevron_right'))
-                            .fontSize(16)
-                            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                              this.themeState.currentTheme)])
-                        }
-                      }
-                      .width('100%')
-                      .padding({
-                        left: 20,
-                        right: 16,
-                        top: 12,
-                        bottom: 12
-                      })
-                      .backgroundColor(book.sourceId === this.pageParams?.sourceId
-                        ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) +
-                          '08'
-                        : Color.Transparent)
-                      .onClick(() => {
-                        if (book.sourceId !== this.pageParams?.sourceId) {
-                          this.changeNovelSource(book);
-                        }
-                      })
-                    }
-                    .animation({
-                      duration: 200,
-                      delay: sourceIndex * 30 + bookIndex * 20,
-                      curve: Curve.EaseOut
-                    })
-                  }, (book: NovelSearchResult) => `${sourceResult.sourceId}_${book.bookUrl}`)
-                }, (sourceResult: SourceSearchResult) => sourceResult.sourceId)
-              }
-              .width('100%')
-              .height(350)
-              .scrollBar(BarState.Auto)
-              .edgeEffect(EdgeEffect.Spring)
-              .divider({
-                strokeWidth: 0.5,
-                color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme),
-                startMargin: 20,
-                endMargin: 16
-              })
-            }
-          }
-          .width('100%')
-          .scale({ x: this.changeSourceDialogScale, y: this.changeSourceDialogScale })
-          .translate({ y: this.changeSourceDialogTranslateY })
-          .opacity(this.changeSourceDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
-      }
-    }
-  }
-
 
   /**
    * 添加书架选择对话框
    */
   @Builder
   buildAddToShelfDialog() {
-    if (this.showAddToShelfDialog) {
-      SourceDialogScaffold({
-        themeState: this.themeState,
-        onMaskTap: () => this.closeAddToShelfDialog(),
-        dialogWidth: '90%',
-        maxWidth: 360,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
-
-            // 标题栏
-            Row() {
-              Text('添加到书架')
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              Blank()
-
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .enabled(!this.isShelfActionPending)
-              .onClick(() => this.closeAddToShelfDialog())
-            }
-            .width('100%')
-
-            // 书架列表（始终显示默认书架选项）
-            List({ space: 8 }) {
-              // 默认书架选项（始终显示在最前面）
-              ListItem() {
-                Row({ space: 12 }) {
-                  // 默认书架图标
-                  Column() {
-                    SymbolGlyph($r('sys.symbol.books_vertical_fill'))
-                      .fontSize(24)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme)])
-                  }
-                  .width(44)
-                  .height(44)
-                  .justifyContent(FlexAlign.Center)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                    this.themeState.currentTheme) + '15')
-                  .borderRadius(10)
-
-                  // 默认书架信息
-                  Column({ space: 4 }) {
-                    Text('默认书架')
-                      .fontSize(15)
-                      .fontWeight(FontWeight.Medium)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-
-                    Text('仅收藏到默认书库，不添加到自定义书架')
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                        this.themeState.currentTheme))
-                  }
-                  .alignItems(HorizontalAlign.Start)
-                  .layoutWeight(1)
-
-                  SymbolGlyph($r('sys.symbol.chevron_right'))
-                    .fontSize(16)
-                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                      this.themeState.currentTheme)])
-                }
-                .width('100%')
-                .padding({
-                  left: 12,
-                  right: 12,
-                  top: 10,
-                  bottom: 10
-                })
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                  this.themeState.currentTheme))
-                .borderRadius(12)
-                .onClick(async () => {
-                  if (this.isShelfActionPending) {
-                    return;
-                  }
-                  await this.addToFavoriteOnly();
-                  this.closeAddToShelfDialog();
-                })
-              }
-
-              // 自定义书架列表
-              ForEach(this.availableCustomShelves, (shelf: TypeShelf) => {
-                ListItem() {
-                  Row({ space: 12 }) {
-                    // 书架图标
-                    Column() {
-                      SymbolGlyph($r('sys.symbol.books_vertical_fill'))
-                        .fontSize(24)
-                        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                          this.themeState.currentTheme)])
-                    }
-                    .width(44)
-                    .height(44)
-                    .justifyContent(FlexAlign.Center)
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                      this.themeState.currentTheme) + '15')
-                    .borderRadius(10)
-
-                    // 书架信息
-                    Column({ space: 4 }) {
-                      Text(shelf.name)
-                        .fontSize(15)
-                        .fontWeight(FontWeight.Medium)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                          this.themeState.currentTheme))
-
-                      Text(shelf.shelfType === ShelfType.MIXED ? '混合书架' :
-                        shelf.shelfType === ShelfType.DYNAMIC ? '动态书架' :
-                          shelf.contentTypes.includes(ShelfContentType.MANGA) ? '漫画' :
-                            shelf.contentTypes.includes(ShelfContentType.EBOOK) ? '电子书' : '小说')
-                        .fontSize(12)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                          this.themeState.currentTheme))
-                    }
-                    .alignItems(HorizontalAlign.Start)
-                    .layoutWeight(1)
-
-                    // 选中指示
-                    SymbolGlyph($r('sys.symbol.chevron_right'))
-                      .fontSize(16)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                        this.themeState.currentTheme)])
-                  }
-                  .width('100%')
-                  .padding({
-                    left: 12,
-                    right: 12,
-                    top: 10,
-                    bottom: 10
-                  })
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                    this.themeState.currentTheme))
-                  .borderRadius(12)
-                  .onClick(() => {
-                    if (this.isShelfActionPending) {
-                      return;
-                    }
-                    void this.addToShelf(shelf);
-                  })
-                }
-              }, (shelf: TypeShelf) => shelf.id)
-            }
-            .width('100%')
-            .constraintSize({ maxHeight: 300 })
-            .scrollBar(BarState.Off)
-            .edgeEffect(EdgeEffect.Spring)
-          }
-          .width('100%')
-          .padding(20)
-          .scale({ x: this.addToShelfDialogScale, y: this.addToShelfDialogScale })
-          .opacity(this.addToShelfDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .onClick(() => {
-          })
-        }
+    AddToShelfDialogComponent({
+      themeState: this.themeState,
+      loadSignal: this.addToShelfDialogLoadSignal,
+      shelves: this.availableCustomShelves,
+      isPending: this.isShelfActionPending,
+      onShelfSelected: (shelf: TypeShelf) => {
+        void this.addToShelf(shelf);
+      },
+      onFavoriteOnly: () => {
+        void this.addToFavoriteOnly();
       }
-    }
+    })
   }
 
-  
   /**
    * 替换小说对话框
    */
   @Builder
   buildReplaceBookDialog() {
-    if (this.showReplaceBookDialog && this.originalBookInfo && this.content) {
-      SourceDialogScaffold({
+    if (this.originalBookInfo && this.content) {
+      ReplaceBookDialogComponent({
         themeState: this.themeState,
-        onMaskTap: () => this.closeReplaceBookDialog(),
-        dialogWidth: '90%',
-        maxWidth: 380,
-        contentPadding: 0,
-        dialogRadius: 26,
-        zIndexValue: 120,
-        useMaskBlur: true,
-        maskBlurStyle: this.getDialogMaskBlurStyle(),
-        maskColor: this.getDialogMaskColor()
-      }) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          this.buildDialogChrome(26)
-          Column({ space: 16 }) {
-
-            // 标题栏
-            Row() {
-              Row({ space: 8 }) {
-                SymbolGlyph($r('sys.symbol.wrench_arrow_counterclockwise'))
-                  .fontSize(20)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange',
-                    this.themeState.currentTheme)])
-
-                Text('替换小说')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Bold)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                    this.themeState.currentTheme))
-              }
-
-              Blank()
-
-              Button() {
-                SymbolGlyph($r('sys.symbol.xmark'))
-                  .fontSize(18)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme)])
-              }
-              .width(32)
-              .height(32)
-              .backgroundColor(Color.Transparent)
-              .onClick(() => this.closeReplaceBookDialog())
-            }
-            .width('100%')
-
-            // 对比信息
-            Column({ space: 12 }) {
-              // 原书信息卡片
-              Column({ space: 8 }) {
-                Row() {
-                  Text('原书源')
-                    .fontSize(11)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                      this.themeState.currentTheme))
-                    .padding({
-                      left: 8,
-                      right: 8,
-                      top: 2,
-                      bottom: 2
-                    })
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                      this.themeState.currentTheme) + '20')
-                    .borderRadius(4)
-                }
-                .width('100%')
-
-                Text(this.originalBookInfo.sourceName || '未知书源')
-                  .fontSize(14)
-                  .fontWeight(FontWeight.Medium)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                    this.themeState.currentTheme))
-                  .maxLines(2)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-
-                Row({ space: 6 }) {
-                  Text('共')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                      this.themeState.currentTheme))
-
-                  Text(`${this.originalBookInfo.chapterCount}`)
-                    .fontSize(14)
-                    .fontWeight(FontWeight.Bold)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                      this.themeState.currentTheme))
-
-                  Text('章')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                      this.themeState.currentTheme))
-                }
-                .width('100%')
-              }
-              .width('100%')
-              .padding(12)
-              .alignItems(HorizontalAlign.Start)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                this.themeState.currentTheme))
-              .borderRadius(12)
-
-              // 箭头指示
-              Row() {
-                SymbolGlyph($r('sys.symbol.arrow_down'))
-                  .fontSize(20)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange',
-                    this.themeState.currentTheme)])
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.Center)
-
-              // 新书源信息卡片
-              Column({ space: 8 }) {
-                Row() {
-                  Text('新书源')
-                    .fontSize(11)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(Color.White)
-                    .padding({
-                      left: 8,
-                      right: 8,
-                      top: 2,
-                      bottom: 2
-                    })
-                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange',
-                      this.themeState.currentTheme))
-                    .borderRadius(4)
-                }
-                .width('100%')
-
-                Text(this.content.sourceName || '未知书源')
-                  .fontSize(14)
-                  .fontWeight(FontWeight.Medium)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange',
-                    this.themeState.currentTheme))
-                  .maxLines(2)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-
-                Row({ space: 6 }) {
-                  Text('共')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                      this.themeState.currentTheme))
-
-                  Text(`${this.content.totalChapters}`)
-                    .fontSize(16)
-                    .fontWeight(FontWeight.Bold)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                      this.themeState.currentTheme))
-
-                  Text('章')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted',
-                      this.themeState.currentTheme))
-
-                  // 显示章节数差异
-                  if (this.content.totalChapters !== this.originalBookInfo.chapterCount) {
-                    Text(`(${this.content.totalChapters > this.originalBookInfo.chapterCount ? '+' :
-                      ''}${this.content.totalChapters - this.originalBookInfo.chapterCount})`)
-                      .fontSize(12)
-                      .fontWeight(FontWeight.Medium)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(this.content.totalChapters > this.originalBookInfo.chapterCount
-                        ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
-                        : ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
-                  }
-                }
-                .width('100%')
-              }
-              .width('100%')
-              .padding(12)
-              .alignItems(HorizontalAlign.Start)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange',
-                this.themeState.currentTheme) + '15')
-              .borderRadius(12)
-              .border({
-                width: 1,
-                color: ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme) +
-                  '40'
-              })
-
-              // 阅读进度迁移信息
-              if (this.originalBookInfo.lastReadChapterIndex >= 0) {
-                Column({ space: 6 }) {
-                  Row({ space: 6 }) {
-                    SymbolGlyph($r('sys.symbol.bookmark_fill'))
-                      .fontSize(14)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                        this.themeState.currentTheme)])
-
-                    Text('阅读进度迁移')
-                      .fontSize(13)
-                      .fontWeight(FontWeight.Medium)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-                  }
-
-                  Text(`原书阅读至: 第${this.originalBookInfo.lastReadChapterIndex + 1}章`)
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                      this.themeState.currentTheme))
-
-                  if (this.originalBookInfo.lastReadChapterTitle) {
-                    Text(`「${this.originalBookInfo.lastReadChapterTitle}」`)
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary',
-                        this.themeState.currentTheme))
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  }
-
-                  Row({ space: 4 }) {
-                    SymbolGlyph($r('sys.symbol.arrow_right_circle'))
-                      .fontSize(12)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                        this.themeState.currentTheme)])
-
-                    if (this.matchedChapterIndex >= 0) {
-                      Text(`将从新书第${this.matchedChapterIndex + 1}章继续`)
-                        .fontSize(12)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                          this.themeState.currentTheme))
-                    } else {
-                      Text('将从第1章开始')
-                        .fontSize(12)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green',
-                          this.themeState.currentTheme))
-                    }
-                  }
-                  .margin({ top: 4 })
-                }
-                .width('100%')
-                .alignItems(HorizontalAlign.Start)
-                .padding(12)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary',
-                  this.themeState.currentTheme) + '10')
-                .borderRadius(12)
-              }
-
-              // 提示文字（根据原书是否在收藏中显示不同内容）
-              Text(this.originalBookInfo.isFavorite
-                ? '替换后原书将从书架中删除，缓存数据也将清除'
-                : '新书将添加到书架收藏')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                .textAlign(TextAlign.Center)
-            }
-            .width('100%')
-
-            // 按钮栏
-            Row({ space: 12 }) {
-              Button('取消')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
-                  this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .height(44)
-                .layoutWeight(1)
-                .borderRadius(22)
-                .onClick(() => this.closeReplaceBookDialog())
-
-              Button('确认替换')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange',
-                  this.themeState.currentTheme))
-                .fontColor(Color.White)
-                .height(44)
-                .layoutWeight(1)
-                .borderRadius(22)
-                .onClick(() => this.executeReplaceBook())
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .padding(20)
-          .scale({ x: this.replaceDialogScale, y: this.replaceDialogScale })
-          .translate({ y: this.replaceDialogTranslateY })
-          .opacity(this.replaceDialogOpacity)
-          .borderRadius(26)
-          .clip(true)
-          .borderRadius(20)
-          .clip(true)
-          .onClick(() => {
-          })
+        loadSignal: this.replaceBookDialogLoadSignal,
+        originalBookInfo: this.originalBookInfo,
+        newSourceName: this.content.sourceName || '',
+        newChapterCount: this.content.totalChapters,
+        matchedChapterIndex: this.matchedChapterIndex,
+        onConfirm: () => {
+          void this.executeReplaceBook();
         }
-      }
+      })
     }
   }
-
 
   /**
    * 显示添加书架选择
    */
   private async showAddToShelfSelection(): Promise<void> {
     if (!this.content || this.isShelfActionPending) return;
-    
+
     // 如果已在书架中，提示用户
     if (this.isInShelf) {
-      promptAction.showToast({ 
+      promptAction.showToast({
         message: this.currentShelfName ? `已在「${this.currentShelfName}」中` : '已在书架中',
-        duration: 1500 
+        duration: 1500
       });
       return;
     }
@@ -17144,39 +8544,12 @@ export struct UnifiedDetailPage {
     try {
       // 获取可用的自定义书架
       await this.getAvailableCustomShelves();
-      
-      // 始终显示对话框（包含默认书架选项）
-      this.showAddToShelfDialog = true;
-      animateTo({
-        duration: 260,
-        curve: Curve.EaseOut
-      }, () => {
-        this.addToShelfDialogOpacity = 1;
-        this.addToShelfDialogScale = 1;
-      });
+
+      // 显示对话框
+      this.addToShelfDialogLoadSignal++;
     } finally {
       this.isShelfActionPending = false;
     }
-  }
-
-  /**
-   * 关闭添加书架对话框
-   */
-  private closeAddToShelfDialog(force: boolean = false): void {
-    if (this.isShelfActionPending && !force) {
-      return;
-    }
-    animateTo({
-      duration: 180,
-      curve: Curve.EaseIn
-    }, () => {
-      this.addToShelfDialogOpacity = 0;
-      this.addToShelfDialogScale = 0.96;
-    });
-
-    setTimeout(() => {
-      this.showAddToShelfDialog = false;
-    }, 200);
   }
 
   /**
@@ -17310,9 +8683,6 @@ export struct UnifiedDetailPage {
       this.isInShelf = true;
       this.currentShelfName = shelf.name;
       this.currentShelfId = shelf.id;
-      
-      // 关闭对话框
-      this.closeAddToShelfDialog(true);
       
       // 加载同书架内容
       this.loadShelfContent();
@@ -17538,8 +8908,7 @@ export struct UnifiedDetailPage {
         break;
     }
 
-    await this.refreshTrackingState();
+    this.trackingLoadSignal++;
   }
 }
-
 

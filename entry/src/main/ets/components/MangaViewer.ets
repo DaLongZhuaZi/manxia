@@ -730,7 +730,8 @@ export struct MangaViewer {
     // 重置渲染计数器
     this.renderEpoch = 0;
 
-    // 清空所有缓存状态
+    // 释放所有PixelMap资源后再清空
+    this.releaseAllPagePixelMaps();
     this.pagePixelMaps.clear();
     this.imageLoadStates.clear();
     this.pixelMapEpochByPage.clear();
@@ -1101,6 +1102,10 @@ export struct MangaViewer {
     this.dualCurlNextLeftPM = null;
     this.dualCurlNextRightPM = null;
 
+    // 释放所有页面PixelMap资源
+    this.releaseAllPagePixelMaps();
+    this.pagePixelMaps.clear();
+
     // 清理图片缓存
     this.clearImageCache();
   }
@@ -1113,6 +1118,20 @@ export struct MangaViewer {
     this.imageCacheSize = 0;
     this.preloadedImages.clear();
     logger.debug(TAG, '图片缓存已清理');
+  }
+
+  /**
+   * 释放所有页面PixelMap资源
+   */
+  private releaseAllPagePixelMaps(): void {
+    this.pagePixelMaps.forEach((pm: image.PixelMap) => {
+      try {
+        ImageCacheManager.getInstance().evictFromMemoryCacheByPixelMap(pm);
+      } catch (_e) {}
+      try {
+        pm.release();
+      } catch (_e) {}
+    });
   }
 
   onPageShow() {
@@ -7787,10 +7806,12 @@ export struct MangaViewer {
       }
       const visible: boolean = this.isPageCurrentlyVisible(p);
       if (!visible) {
-        // 【修复】不再调用 pm.release()，因为同一个 PixelMap 对象也存在于
-        // ImageCacheManager.memoryCache 中。release() 会使两处的引用同时失效，
-        // 导致后续从缓存取回已释放的 PixelMap，引发 "Cannot read property size of undefined"。
-        // PixelMap 的生命周期由 ImageCacheManager 的 LRU 淘汰机制统一管理。
+        // 先从 ImageCacheManager 驱逐，再释放原生内存，避免缓存返回已释放的 PixelMap
+        const pm = this.pagePixelMaps.get(id);
+        if (pm) {
+          try { ImageCacheManager.getInstance().evictFromMemoryCacheByPixelMap(pm); } catch (_e) {}
+          try { pm.release(); } catch (_e) {}
+        }
         this.pagePixelMaps.delete(id);
         this.pagePixelMapMeta.delete(id);
         cleanedCount++;

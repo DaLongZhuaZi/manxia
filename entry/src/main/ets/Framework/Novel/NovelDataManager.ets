@@ -59,10 +59,11 @@ export class NovelDataManager {
       const config: relationalStore.StoreConfig = {
         name: 'manxia_comic.db',
         securityLevel: relationalStore.SecurityLevel.S1,
-        encrypt: false
+        encrypt: false,
       };
 
       this.store = await relationalStore.getRdbStore(context, config);
+      await this.store.executeSql('PRAGMA journal_mode=WAL');
       this.filesDir = context.filesDir;
       
       // 创建小说相关表（增量添加，不影响现有表）
