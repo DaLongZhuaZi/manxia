@@ -845,6 +845,12 @@ export interface TextChapter {
   endPosition: number;
 }
 
+export enum TextChapterSwitchIntent {
+  DEFAULT = 'DEFAULT',
+  FIRST_PAGE = 'FIRST_PAGE',
+  LAST_PAGE = 'LAST_PAGE'
+}
+
 /**
  * 文本阅读进度
  */
@@ -870,7 +876,7 @@ export interface TextReaderCallbacks {
   /** 当前页字符区间变化回调（用于听书进度映射） */
   onPageCharRangeChange?: (startCharIndex: number, endCharIndex: number) => void;
   /** 章节切换回调 */
-  onChapterChange?: (chapterIndex: number) => void;
+  onChapterChange?: (chapterIndex: number, switchIntent?: TextChapterSwitchIntent) => void;
   /** 进度变化回调 */
   onProgressChange?: (progress: number) => void;
   /** 点击中间区域回调（用于显示/隐藏工具栏） */

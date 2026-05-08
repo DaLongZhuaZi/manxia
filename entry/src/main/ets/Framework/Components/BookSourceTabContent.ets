@@ -6,7 +6,7 @@ import { common } from '@kit.AbilityKit';
 import { promptAction, curves } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
-import { TabContentCacheManager } from '../Cache/TabContentCacheManager';
+import { TabContentCacheManager, BookSourceCacheData } from '../Cache/TabContentCacheManager';
 import { ContentFilterManager } from '../Managers/ContentFilterManager';
 import { getNovelSourceManager } from '../Novel/NovelSourceManager';
 import { getNovelInitializer } from '../Novel/NovelInitializer';
@@ -74,6 +74,8 @@ export struct BookSourceTabContent {
   private bookSourceRefreshHintTimer: number = -1;
   private bookSourceListScroller: Scroller = new Scroller();
   private bookSourceModuleInitialized: boolean = false;
+  private bookSourceCacheRestored: boolean = false;
+  private bookSourceCacheRestorePromise: Promise<void> | null = null;
   private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
 
@@ -81,7 +83,8 @@ export struct BookSourceTabContent {
 
   aboutToAppear(): void {
     void ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState);
-    this.restoreBookSourceFromCache();
+    void this.ensureBookSourceCacheReady();
+    void this.loadBookSourceViewMode();
   }
 
   aboutToDisappear(): void {
@@ -161,6 +164,7 @@ export struct BookSourceTabContent {
 
   private async initializeAndLoadBookSources(): Promise<void> {
     try {
+      await this.ensureBookSourceCacheReady();
       if (!this.bookSourceModuleInitialized) {
         this.isLoadingBookSource = this.bookSourceBooks.length === 0;
         const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -191,12 +195,31 @@ export struct BookSourceTabContent {
     }
   }
 
+  private async ensureBookSourceCacheReady(): Promise<void> {
+    if (this.bookSourceCacheRestored) {
+      return;
+    }
+    if (!this.bookSourceCacheRestorePromise) {
+      this.bookSourceCacheRestorePromise = this.restoreBookSourceFromCacheAsync();
+    }
+    await this.bookSourceCacheRestorePromise;
+  }
+
+  private async restoreBookSourceFromCacheAsync(): Promise<void> {
+    try {
+      await this.tabContentCacheManager.initialize();
+      this.restoreBookSourceFromCache();
+    } finally {
+      this.bookSourceCacheRestored = true;
+    }
+  }
+
   private restoreBookSourceFromCache(): void {
     if (this.tabContentCacheManager.hasBookSourceCache()) {
       const cache = this.tabContentCacheManager.getBookSourceCache();
       if (cache) {
         this.bookSourceList = cache.bookSourceList;
-        this.filteredBookSourceList = cache.bookSourceList;
+        this.filterBookSourceList(this.bookSourceSearchKeyword);
         this.selectedBookSourceId = cache.selectedBookSourceId;
         this.selectedBookSourceName = cache.selectedBookSourceName;
         this.bookSourceExploreKinds = cache.bookSourceExploreKinds;
@@ -208,8 +231,10 @@ export struct BookSourceTabContent {
   }
 
   private saveBookSourceToCache(): void {
-    if (this.bookSourceBooks.length === 0) return;
-    this.tabContentCacheManager.saveBookSourceCache({
+    if (!this.selectedBookSourceId && this.bookSourceList.length === 0 && this.bookSourceBooks.length === 0) {
+      return;
+    }
+    const cacheData: BookSourceCacheData = {
       bookSourceList: this.bookSourceList,
       selectedBookSourceId: this.selectedBookSourceId,
       selectedBookSourceName: this.selectedBookSourceName,
@@ -217,6 +242,9 @@ export struct BookSourceTabContent {
       selectedBookSourceKindIndex: this.selectedBookSourceKindIndex,
       bookSourceBooks: this.bookSourceBooks,
       timestamp: Date.now()
+    };
+    this.tabContentCacheManager.saveBookSourceCache(cacheData).catch((error: Error) => {
+      logger.error(TAG, `保存书源缓存失败: ${error.message}`);
     });
   }
 
@@ -378,6 +406,10 @@ export struct BookSourceTabContent {
       if (!this.selectedBookSourceId) {
         this.selectedBookSourceId = this.bookSourceList[0].id;
         this.selectedBookSourceName = this.bookSourceList[0].name;
+        this.bookSourceExploreKinds = [];
+        this.selectedBookSourceKindIndex = 0;
+        this.bookSourceBooks = [];
+        this.saveBookSourceToCache();
         await this.loadBookSourceExploreKinds(loadBooks);
         return;
       }
@@ -388,8 +420,10 @@ export struct BookSourceTabContent {
       } else {
         this.selectedBookSourceId = this.bookSourceList[0].id;
         this.selectedBookSourceName = this.bookSourceList[0].name;
+        this.bookSourceExploreKinds = [];
         this.selectedBookSourceKindIndex = 0;
         this.bookSourceBooks = [];
+        this.saveBookSourceToCache();
         await this.loadBookSourceExploreKinds(loadBooks);
       }
     } catch (error) {
@@ -437,6 +471,7 @@ export struct BookSourceTabContent {
       } else {
         this.selectedBookSourceKindIndex = 0;
       }
+      this.saveBookSourceToCache();
       if (loadBooks && this.bookSourceExploreKinds.length > 0) {
         await this.loadBookSourceBooks(true);
       }
@@ -502,12 +537,15 @@ export struct BookSourceTabContent {
       this.selectedBookSourceId = source.id;
       this.selectedBookSourceName = source.name;
       this.bookSourceCurrentPage = 1;
+      this.bookSourceExploreKinds = [];
+      this.selectedBookSourceKindIndex = 0;
       this.bookSourceBooks = [];
       this.isBookSourceSearchMode = false;
       this.bookSourceSearchInput = '';
       this.showBookSourcePicker = false;
       this.bookSourceSearchKeyword = '';
       this.filterBookSourceList(this.bookSourceSearchKeyword);
+      this.saveBookSourceToCache();
       await this.loadBookSourceExploreKinds();
     } else {
       this.showBookSourcePicker = false;
@@ -575,6 +613,19 @@ export struct BookSourceTabContent {
       await dataManager.saveUserSetting('default_user', 'book_source_view_mode', mode);
     } catch (error) {
       logger.error(TAG, `保存书源视图模式失败: ${String(error)}`);
+    }
+  }
+
+  private async loadBookSourceViewMode(): Promise<void> {
+    try {
+      const dataManager = DataManager.getInstance();
+      const viewMode = await dataManager.getUserSetting('default_user', 'book_source_view_mode');
+      if (viewMode === LibraryViewMode.GRID || viewMode === LibraryViewMode.LIST) {
+        this.bookSourceViewMode = viewMode as LibraryViewMode;
+        logger.info(TAG, `恢复书源视图模式: ${viewMode}`);
+      }
+    } catch (error) {
+      logger.error(TAG, `加载书源视图模式失败: ${String(error)}`);
     }
   }
 
@@ -1206,6 +1257,13 @@ export struct BookSourceTabContent {
         .layoutWeight(1)
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
+        .onScrollFrameBegin((offset: number, _state: ScrollState) => {
+          AppStorage.setOrCreate<number>('extracted_tab_scroll_delta', offset);
+          return { offsetRemain: offset };
+        })
+        .onScrollStop(() => {
+          AppStorage.setOrCreate<number>('extracted_tab_scroll_stop', Date.now());
+        })
       }
     }
     .width('100%')

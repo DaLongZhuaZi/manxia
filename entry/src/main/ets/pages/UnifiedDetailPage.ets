@@ -63,6 +63,11 @@ import {
 } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { buildLocalTextNovelBookId, buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 
+// 重复检测导入
+import { DuplicateDetectionService } from '../Framework/DuplicateDetection/DuplicateDetectionService';
+import { DuplicateCheckContentType, DuplicateMatchItem } from '../Framework/DuplicateDetection/DuplicateDetectionModels';
+import { DuplicateDetectionDialog } from '../Framework/Components/DuplicateDetectionDialog';
+
 // 数据管理器导入
 import { DataManager, ChapterInfo, OnlineChapterInfo } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
@@ -381,6 +386,11 @@ export struct UnifiedDetailPage {
   @State addToShelfDialogLoadSignal: number = 0;
   @State availableCustomShelves: TypeShelf[] = [];      // 可用的自定义书架列表（传递给组件）
   @State isShelfActionPending: boolean = false;         // 书架操作进行中（防重复点击）
+
+  // 重复检测状态
+  @State duplicateDetectionMatches: DuplicateMatchItem[] = [];
+  @State duplicateDetectionLoadSignal: number = 0;
+  private pendingFavoriteAction: (() => Promise<void>) | null = null;
 
   // 内容跟踪状态（已提取至 TrackingSettingsDialogComponent）
   @State trackingLoadSignal: number = 0;
@@ -2718,6 +2728,38 @@ export struct UnifiedDetailPage {
    * 切换收藏状态
    */
   /**
+   * 执行重复检测，如果检测到重复则弹窗并暂存操作，返回 true 表示已暂停（等待弹窗回调）
+   * @param action 检测通过后要执行的操作
+   * @param actionDescription 操作描述（用于日志）
+   * @returns true 表示检测到重复并已暂停，false 表示无重复可继续
+   */
+  private async checkDuplicateAndExecute(action: () => Promise<void>, actionDescription: string): Promise<boolean> {
+    if (!this.content) {
+      return false;
+    }
+
+    const detectionService = DuplicateDetectionService.getInstance();
+    const contentType = this.mapToDuplicateCheckContentType(this.content.contentType);
+    logger.info(TAG, `开始重复检测(${actionDescription}): title="${this.content.title}", author="${this.content.author}", contentType=${contentType}`);
+    const checkResult = await detectionService.checkDuplicates({
+      title: this.content.title,
+      author: this.content.author,
+      contentType: contentType
+    });
+
+    logger.info(TAG, `重复检测结果: hasDuplicates=${checkResult.hasDuplicates}, matches=${checkResult.matches.length}, checkedCount=${checkResult.checkedCount}`);
+
+    if (checkResult.hasDuplicates) {
+      this.pendingFavoriteAction = action;
+      this.duplicateDetectionMatches = checkResult.matches;
+      this.duplicateDetectionLoadSignal++;
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Toggle favorite state.
    */
   private async toggleFavorite(): Promise<void> {
@@ -2727,10 +2769,34 @@ export struct UnifiedDetailPage {
 
     const previousState = this.isFavorite;
     const targetState = !previousState;
+
+    logger.info(TAG, `toggleFavorite: previousState=${previousState}, targetState=${targetState}, title="${this.content.title}"`);
+
+    // 添加到收藏时进行重复检测
+    if (targetState) {
+      const shouldStop = await this.checkDuplicateAndExecute(async () => {
+        try {
+          await this.setFavoriteStatus(true);
+          promptAction.showToast({ message: '已添加到收藏', duration: 1500 });
+        } catch (error) {
+          logger.error(TAG, `Failed to add to favorites: ${String(error)}`);
+          this.isFavorite = previousState;
+          if (this.content) {
+            this.content.isFavorite = previousState;
+          }
+          promptAction.showToast({ message: '操作失败', duration: 1500 });
+        }
+      }, '收藏');
+
+      if (shouldStop) {
+        return;
+      }
+    }
+
     try {
       await this.setFavoriteStatus(targetState);
       promptAction.showToast({
-        message: targetState ? 'Added to favorites' : 'Removed from favorites',
+        message: targetState ? '已添加到收藏' : '已取消收藏',
         duration: 1500
       });
     } catch (error) {
@@ -2738,9 +2804,22 @@ export struct UnifiedDetailPage {
       this.isFavorite = previousState;
       this.content.isFavorite = previousState;
       promptAction.showToast({
-        message: 'Operation failed',
+        message: '操作失败',
         duration: 1500
       });
+    }
+  }
+
+  /**
+   * 将 UnifiedContentType 映射为 DuplicateCheckContentType
+   */
+  private mapToDuplicateCheckContentType(contentType: UnifiedContentType): DuplicateCheckContentType {
+    if (contentType === UnifiedContentType.MANGA) {
+      return DuplicateCheckContentType.MANGA;
+    } else if (contentType === UnifiedContentType.EBOOK) {
+      return DuplicateCheckContentType.EBOOK;
+    } else {
+      return DuplicateCheckContentType.NOVEL;
     }
   }
   /**
@@ -7796,6 +7875,9 @@ export struct UnifiedDetailPage {
 
         this.buildReplaceBookDialog()
         this.buildCacheConfirmDialog()
+
+        // 重复检测弹窗
+        this.buildDuplicateDetectionDialog()
  
         if (this.appGuideStep) {
 
@@ -8526,6 +8608,33 @@ export struct UnifiedDetailPage {
   }
 
   /**
+   * 重复检测弹窗
+   */
+  @Builder
+  buildDuplicateDetectionDialog() {
+    if (this.content) {
+      DuplicateDetectionDialog({
+        themeState: this.themeState,
+        loadSignal: this.duplicateDetectionLoadSignal,
+        newItemTitle: this.content.title,
+        newItemAuthor: this.content.author,
+        newItemContentType: this.mapToDuplicateCheckContentType(this.content.contentType),
+        matches: this.duplicateDetectionMatches,
+        onConfirm: () => {
+          // 用户选择"仍然添加"
+          if (this.pendingFavoriteAction) {
+            void this.pendingFavoriteAction();
+            this.pendingFavoriteAction = null;
+          }
+        },
+        onCancel: () => {
+          this.pendingFavoriteAction = null;
+        }
+      })
+    }
+  }
+
+  /**
    * 显示添加书架选择
    */
   private async showAddToShelfSelection(): Promise<void> {
@@ -8671,26 +8780,46 @@ export struct UnifiedDetailPage {
           return;
       }
       
-      // 添加到书架
-      await this.typeShelfManager.moveItemToShelf(this.content.id, contentType, shelf.id);
-      
-      // 同时设置为收藏
+      const doAddToShelf = async (): Promise<void> => {
+        try {
+          // 添加到书架
+          await this.typeShelfManager.moveItemToShelf(this.content!.id, contentType, shelf.id);
+
+          // 同时设置为收藏
+          if (!this.isFavorite) {
+            await this.setFavoriteStatus(true);
+          }
+
+          // 更新状态
+          this.isInShelf = true;
+          this.currentShelfName = shelf.name;
+          this.currentShelfId = shelf.id;
+
+          // 加载同书架内容
+          this.loadShelfContent();
+
+          promptAction.showToast({
+            message: `已添加到「${shelf.name}」书架`,
+            duration: 1500
+          });
+        } catch (error) {
+          logger.error(TAG, `添加到书架失败: ${String(error)}`);
+          promptAction.showToast({
+            message: '添加失败，请重试',
+            duration: 1500
+          });
+        }
+      };
+
+      // 需要设置收藏时进行重复检测
       if (!this.isFavorite) {
-        await this.setFavoriteStatus(true);
+        const shouldStop = await this.checkDuplicateAndExecute(doAddToShelf, '添加到书架');
+        if (shouldStop) {
+          return;
+        }
       }
-      
-      // 更新状态
-      this.isInShelf = true;
-      this.currentShelfName = shelf.name;
-      this.currentShelfId = shelf.id;
-      
-      // 加载同书架内容
-      this.loadShelfContent();
-      
-      promptAction.showToast({ 
-        message: `已添加到「${shelf.name}」书架`,
-        duration: 1500 
-      });
+
+      await doAddToShelf();
     } catch (error) {
       logger.error(TAG, `添加到书架失败: ${String(error)}`);
       promptAction.showToast({ 
@@ -8707,24 +8836,32 @@ export struct UnifiedDetailPage {
    */
   private async addToFavoriteOnly(): Promise<void> {
     if (!this.content || this.isShelfActionPending) return;
-    
+
     this.isShelfActionPending = true;
-    try {
-      await this.setFavoriteStatus(true);
-      this.isInShelf = true;
-      this.currentShelfName = '';
-      promptAction.showToast({ 
-        message: '已添加到默认书架',
-        duration: 1500 
-      });
-    } catch (error) {
-      logger.error(TAG, `添加到收藏失败: ${String(error)}`);
-      promptAction.showToast({ 
-        message: '添加失败，请重试',
-        duration: 1500 
-      });
-    } finally {
-      this.isShelfActionPending = false;
+
+    const doAdd = async (): Promise<void> => {
+      try {
+        await this.setFavoriteStatus(true);
+        this.isInShelf = true;
+        this.currentShelfName = '';
+        promptAction.showToast({
+          message: '已添加到默认书架',
+          duration: 1500
+        });
+      } catch (error) {
+        logger.error(TAG, `添加到收藏失败: ${String(error)}`);
+        promptAction.showToast({
+          message: '添加失败，请重试',
+          duration: 1500
+        });
+      } finally {
+        this.isShelfActionPending = false;
+      }
+    };
+
+    const shouldStop = await this.checkDuplicateAndExecute(doAdd, '添加到默认书架');
+    if (!shouldStop) {
+      await doAdd();
     }
   }
 

@@ -137,6 +137,7 @@ export struct MainMenuSettingsSubPage {
   @State suwayomiBrowsePageAsEntryEnabled: boolean = false;
   @State komgaBrowsePageAsEntryEnabled: boolean = true;
   @State libraryDisplayMode: string = 'flat';
+  @State bottomBarStyle: string = 'custom';
 
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -354,6 +355,8 @@ export struct MainMenuSettingsSubPage {
     this.tabletTopBarPosition = this.normalizeTabletTopBarPosition(tabletTopBarPosition);
     AppStorage.setOrCreate('main_menu_tablet_top_bar_position', this.tabletTopBarPosition);
     this.mainPageBottomBarAnimationEnabled = this.animationSettingsManager.getSettings().mainPageBottomBarAnimationEnabled;
+    this.bottomBarStyle = this.settingsManager.getBottomBarStyle() === 'hds' ? 'hds' : 'custom';
+    AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', this.bottomBarStyle);
 
     logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}, skipPrivacyBiometric=${this.privacyLibrarySkipBiometricAuth}`);
   }
@@ -549,6 +552,32 @@ export struct MainMenuSettingsSubPage {
       this.mainPageBottomBarAnimationEnabled = enabled;
     } catch (error) {
       logger.error(TAG, '保存主页面底栏动画设置失败', String(error));
+      promptAction.showToast({
+        message: '保存失败，请重试',
+        duration: 1500
+      });
+    }
+  }
+
+  private async saveBottomBarStyle(style: string): Promise<void> {
+    const nextStyle: string = style === 'hds' ? 'hds' : 'custom';
+    if (nextStyle === this.bottomBarStyle) {
+      return;
+    }
+    const previousStyle: string = this.bottomBarStyle;
+    try {
+      await this.settingsManager.setBottomBarStyle(nextStyle);
+      this.bottomBarStyle = nextStyle;
+      AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', nextStyle);
+      logger.info(TAG, `底栏样式已切换: ${nextStyle}`);
+
+      promptAction.showToast({
+        message: '底栏样式已切换',
+        duration: 1500
+      });
+    } catch (error) {
+      logger.error(TAG, '保存底栏样式失败', String(error));
+      this.bottomBarStyle = previousStyle;
       promptAction.showToast({
         message: '保存失败，请重试',
         duration: 1500
@@ -1039,10 +1068,13 @@ export struct MainMenuSettingsSubPage {
             this.libraryCoverOpenReaderEnabled = true;
             this.privacyLibrarySkipBiometricAuth = false;
             this.mainPageBottomBarAnimationEnabled = DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled;
+            this.bottomBarStyle = 'custom';
             this.suwayomiBrowsePageAsEntryEnabled = false;
             await this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, true);
             await this.settingsManager.setBoolean(SettingKeys.PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH, false);
             await this.saveMainPageBottomBarAnimationSetting(DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled);
+            await this.settingsManager.setBottomBarStyle('custom');
+            AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', 'custom');
             await this.saveSuwayomiBrowseEntrySetting(false);
             this.resetTabsToDefault();
           }
@@ -1662,6 +1694,109 @@ export struct MainMenuSettingsSubPage {
               'main_menu_behavior',
               this.searchHighlightPulse
             ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
+            .margin({ bottom: 16 })
+
+            // 底栏样式选择
+            Column({ space: 8 }) {
+              Text('底栏样式')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .padding({ left: 4 })
+
+              Text('切换底栏渲染方式，无需重启，主页面会自动同步')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .padding({ left: 4, bottom: 8 })
+
+              Row({ space: 12 }) {
+                // 经典底栏选项
+                Column({ space: 6 }) {
+                  Text('经典底栏')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.bottomBarStyle === 'custom'
+                      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                      : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('自定义指示器、滚动隐藏、跟手拖拽')
+                    .fontSize(11)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                }
+                .layoutWeight(1)
+                .padding(14)
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
+                .border({
+                  width: this.bottomBarStyle === 'custom' ? 2 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                  color: this.bottomBarStyle === 'custom'
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                })
+                .shadow({
+                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                  offsetX: 0,
+                  offsetY: 4
+                })
+                .onClick((): void => {
+                  void this.saveBottomBarStyle('custom');
+                })
+
+                // HDS 底栏选项
+                Column({ space: 6 }) {
+                  Text('HDS 底栏')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.bottomBarStyle === 'hds'
+                      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                      : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('系统级材质、滚动隐藏、原生反馈')
+                    .fontSize(11)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                }
+                .layoutWeight(1)
+                .padding(14)
+                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+                .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+                .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+                .clip(true)
+                .border({
+                  width: this.bottomBarStyle === 'hds' ? 2 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                  color: this.bottomBarStyle === 'hds'
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+                })
+                .shadow({
+                  radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                  color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                  offsetX: 0,
+                  offsetY: 4
+                })
+                .onClick((): void => {
+                  void this.saveBottomBarStyle('hds');
+                })
+              }
+              .width('100%')
+            }
+            .width(this.responsive_isLandscape ? '48%' : '100%')
+            .alignItems(HorizontalAlign.Start)
+            .padding(4)
+            .borderRadius(16)
             .animation({ duration: 260, curve: Curve.EaseOut })
             .margin({ bottom: 16 })
 

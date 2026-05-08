@@ -153,6 +153,13 @@ export struct GlobalSettingsPage {
       targetPage: 'NetworkSettingsSubPage'
     },
     {
+      id: 'duplicate_detection',
+      title: '内容重复检测',
+      subtitle: '添加内容时检测书库中的重复与相似作品',
+      icon: $r('sys.symbol.list_book'),
+      targetPage: 'DuplicateDetectionSettingsSubPage'
+    },
+    {
       id: 'notification',
       title: '通知设置',
       subtitle: '下载完成通知、更新提醒',
@@ -484,6 +491,8 @@ export struct GlobalSettingsPage {
         return '进度记录与服务器';
       case 'NetworkSettingsSubPage':
         return '下载与网络';
+      case 'DuplicateDetectionSettingsSubPage':
+        return '内容重复检测';
       case 'NotificationSettingsSubPage':
         return '通知设置';
       case 'AdvancedSettingsSubPage':

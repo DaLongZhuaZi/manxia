@@ -11,6 +11,12 @@ import fs from '@ohos.file.fs';
 import { picker } from '@kit.CoreFileKit';
 import { hdsEffect } from '@kit.UIDesignKit';
 import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
+import { BasicDataSource } from '../Utils/BasicDataSource';
+import { MultiSelectState } from '../Utils/MultiSelectState';
+import { SwipeGestureState } from '../Utils/SwipeGestureState';
+import { ContextMenuState } from '../Utils/ContextMenuState';
+import { LoadingState } from '../Utils/LoadingState';
+import { MoveState } from '../Utils/MoveState';
 
 // 主题相关导入
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
@@ -52,11 +58,17 @@ import { ReadingSettingsSubPage } from './settings/ReadingSettingsSubPage';
 import { NetworkSettingsSubPage } from './settings/NetworkSettingsSubPage';
 import { NotificationSettingsSubPage } from './settings/NotificationSettingsSubPage';
 import { AdvancedSettingsSubPage } from './settings/AdvancedSettingsSubPage';
+import { DuplicateDetectionSettingsSubPage } from './settings/DuplicateDetectionSettingsSubPage';
 import { ErrorManagementSubPage } from './settings/ErrorManagementSubPage';
 import { InteractionSettingsSubPage } from './settings/InteractionSettingsSubPage';
 import { AnimationSettingsSubPage } from './settings/AnimationSettingsSubPage';
 import { VisualEffectsSettingsSubPage } from './settings/VisualEffectsSettingsSubPage';
-import { isMainPageBottomBarAnimationEnabled } from '../Framework/Animation/AnimationSettingsManager';
+import {
+  AnimationSettings,
+  AnimationSettingsListener,
+  getAnimationSettingsManager,
+  isMainPageBottomBarAnimationEnabled
+} from '../Framework/Animation/AnimationSettingsManager';
 import { TrackingSettingsSubPage } from './settings/TrackingSettingsSubPage';
 import { AniListLoginPage } from './settings/AniListLoginPage';
 import { SuwayomiSettingsPage } from './settings/SuwayomiSettingsPage';
@@ -76,6 +88,8 @@ import { MainMenuKomgaTabContent } from '../components/MainMenuKomgaTabContent';
 import { KomgaImage } from '../components/KomgaImage';
 import { SuwayomiTabContent } from '../Framework/Components/SuwayomiTabContent';
 import { BookSourceTabContent, LibraryViewMode } from '../Framework/Components/BookSourceTabContent';
+import { SettingsTabContent } from '../components/SettingsTabContent';
+import { HomeTabContent } from '../components/HomeTabContent';
 import { ZLibraryReaderPage } from './ZLibraryReaderPage';
 import { DownloadManagerPage } from './DownloadManagerPage';
 import { AboutPage } from './AboutPage';
@@ -211,6 +225,8 @@ import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryManga
 import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Framework/Source/RemoteLibraryShelfManager';
 import { getKomgaSourceExecutor } from '../Framework/Source/KomgaSourceExecutor';
 import { TabContentCacheManager } from '../Framework/Cache/TabContentCacheManager';
+import { HdsStyleBottomBar, HdsBottomBarTabConfig } from '../Framework/Components/HdsStyleBottomBar';
+import { HdsTabsController } from '@kit.UIDesignKit';
 
 // 导入事件总线
 import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload, BasePayload } from '../Framework/EventBus';
@@ -576,12 +592,16 @@ struct MainMenuPage {
   // 漫画列表相关状态
   @State mangaList: Manga[] = [];
   private allMangaList: Manga[] = [];
-  @State isLoadingMangaList: boolean = false;
-  @State isRefreshing: boolean = false;
-  @State isRefreshingHome: boolean = false; // 首页下拉刷新状态
+  @State loadingState: LoadingState = new LoadingState();
   private dataManager: DataManager = DataManager.getInstance();
   private dataService: DataService = DataService.getInstance();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
+  @StorageLink('main_menu_bottom_bar_style') @Watch('onBottomBarStyleStorageChanged') private bottomBarStyle: string = 'custom'; // 'custom' | 'hds'
+  @State private mainPageBottomBarAnimationEnabled: boolean = false;
+  private appliedBottomBarStyle: string = 'custom';
+  private bottomBarAnimationSettingsListener: AnimationSettingsListener | null = null;
+  private hdsTabsController: HdsTabsController | null = null;
+  private hdsSetSyncing: ((syncing: boolean) => void) | null = null;
   private remoteLibraryBridge: RemoteLibraryMangaBridge = RemoteLibraryMangaBridge.getInstance();
   private remoteLibraryShelfManager: RemoteLibraryShelfManager = getRemoteLibraryShelfManager();
   private isRefreshingRemoteLibrary: boolean = false;
@@ -603,6 +623,34 @@ struct MainMenuPage {
   @State showLibraryGridSettingsPopup: boolean = false;
   @State showLibraryRefreshFloatingBar: boolean = false;
   @State filteredMangaList: Manga[] = [];
+  // --- 预计算缓存（Phase 0 性能优化） ---
+  @State categoryFilteredMangaList: Manga[] = [];
+  @State categoryFilteredEbookList: EBook[] = [];
+  @State categoryFilteredNovelList: NovelBook[] = [];
+  @State libraryDefaultMixedItems: ShelfMixedItem[] = [];
+  @State customShelfMixedItems: ShelfMixedItem[] = [];
+
+  // --- LazyForEach DataSources（Phase 1） ---
+  private libraryDefaultMixedDS: BasicDataSource<ShelfMixedItem> = new BasicDataSource<ShelfMixedItem>();
+  private categoryMangaDS: BasicDataSource<Manga> = new BasicDataSource<Manga>();
+  private categoryEbookDS: BasicDataSource<EBook> = new BasicDataSource<EBook>();
+  private categoryNovelDS: BasicDataSource<NovelBook> = new BasicDataSource<NovelBook>();
+  private shelfMangaDS: BasicDataSource<Manga> = new BasicDataSource<Manga>();
+  private shelfEBookDS: BasicDataSource<ShelfMixedItem> = new BasicDataSource<ShelfMixedItem>();
+  private shelfNovelDS: BasicDataSource<NovelBook> = new BasicDataSource<NovelBook>();
+  private customShelfMixedDS: BasicDataSource<ShelfMixedItem> = new BasicDataSource<ShelfMixedItem>();
+  private sourceListDS: BasicDataSource<SourceInfo> = new BasicDataSource<SourceInfo>();
+  private discoveredMangaDS: BasicDataSource<Manga> = new BasicDataSource<Manga>();
+  private discoveredEBookDS: BasicDataSource<EBook> = new BasicDataSource<EBook>();
+  private discoveredNovelDS: BasicDataSource<NovelBook> = new BasicDataSource<NovelBook>();
+
+  // --- 书架详情预计算缓存（Phase 1） ---
+  @State shelfFilteredMangaList: Manga[] = [];
+  @State shelfFilteredEBookList: EBook[] = [];
+  @State shelfFilteredPdfEBookList: Manga[] = [];
+  @State shelfFilteredNovelList: NovelBook[] = [];
+  @State shelfCombinedEBookList: ShelfMixedItem[] = [];
+
   private libraryRefreshFloatingBarTimer: number = -1;
   
   // 分类书架相关状态
@@ -619,10 +667,7 @@ struct MainMenuPage {
   @State newCategoryName: string = ''; // 新分类名称
   @State showMoveToCategoryDialog: boolean = false; // 是否显示移动到分类对话框
   @State categoryDetailAnimationProgress: number = 0; // 分类详情展开动画进度
-  @State movingMangaId: string = ''; // 正在移动的漫画ID
-  @State movingEBookId: string = ''; // 正在移动的电子书ID
-  @State movingNovelId: string = ''; // 正在移动的小说ID
-  @State movingContentType: string = 'manga'; // 正在移动的内容类型
+  @State moveState: MoveState = new MoveState();
   @State isCategoryEditMode: boolean = false; // 是否处于分类编辑模式（用于拖动排序）
   @State draggingCategoryId: string = ''; // 正在拖动的分类ID
   // 类型书架相关状态（漫画书架、电子书书架、小说书架）
@@ -650,8 +695,6 @@ struct MainMenuPage {
   @State renameShelfName: string = ''; // 重命名书架的新名称
   // 移动到书架相关状态
   @State showMoveToShelfDialog: boolean = false; // 是否显示移动到书架对话框
-  @State movingToShelfItemId: string = ''; // 正在移动的内容ID
-  @State movingToShelfContentType: ContentType = ContentType.MANGA; // 正在移动的内容类型
   @State availableShelvesForMove: TypeShelf[] = []; // 可用于移动的书架列表
   // 自定义书架排序和筛选相关状态
   @State customShelfSortType: 'name_asc' | 'name_desc' | 'recent' | 'add_asc' | 'add_desc' = 'add_desc'; // 排序方式
@@ -680,20 +723,14 @@ struct MainMenuPage {
   @State dynamicShelfMatchedItems: ShelfMixedItem[] = []; // 动态书架匹配的内容
 
   // 多选模式相关状态
-  @State isMultiSelectMode: boolean = false;
-  @State selectedMangaIds: Set<string> = new Set();
-  @State isDeletingManga: boolean = false;
+  @State mangaMultiSelect: MultiSelectState = new MultiSelectState();
   // 列表条目左滑删除手势相关状态（仅用于书库 LIST 样式）
-  @State private activeSwipeId: string = '';
-  @State private isSwipeActive: boolean = false;
-  @State private swipeOffset: number = 0; // 当前激活条目的左滑偏移量（px）
-  @State private swipeThreshold: number = 100; // 左滑删除触发阈值（px）
+  @State mangaSwipe: SwipeGestureState = new SwipeGestureState();
 
   // 电子书相关状态
   @State ebookList: EBook[] = [];
   private allEBookList: EBook[] = [];
   @State filteredEbookList: EBook[] = [];
-  @State isLoadingEbookList: boolean = false;
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
 
   // PDF电子书相关状态（contentType='ebook'的漫画，显示在电子书列表中，但使用漫画阅读器）
@@ -701,34 +738,25 @@ struct MainMenuPage {
   @State filteredPdfEbookList: Manga[] = [];
 
   // 电子书多选模式相关状态
-  @State isEBookMultiSelectMode: boolean = false;
-  @State selectedEBookIds: Set<string> = new Set();
-  @State isDeletingEBook: boolean = false;
+  @State ebookMultiSelect: MultiSelectState = new MultiSelectState();
   // 电子书列表条目左滑删除手势相关状态
-  @State private activeEBookSwipeId: string = '';
-  @State private isEBookSwipeActive: boolean = false;
-  @State private ebookSwipeOffset: number = 0;
+  @State ebookSwipe: SwipeGestureState = new SwipeGestureState();
 
   // 小说相关状态
   @State novelList: NovelBook[] = [];
   private allNovelList: NovelBook[] = [];
   @State filteredNovelList: NovelBook[] = [];
-  @State isLoadingNovelList: boolean = false;
   private novelDataManager: NovelDataManager | null = null;
   // 小说多选模式相关状态
-  @State isNovelMultiSelectMode: boolean = false;
-  @State selectedNovelIds: Set<string> = new Set();
-  @State isDeletingNovel: boolean = false;
+  @State novelMultiSelect: MultiSelectState = new MultiSelectState();
   // 小说列表条目左滑删除手势相关状态
-  @State private activeNovelSwipeId: string = '';
-  @State private isNovelSwipeActive: boolean = false;
-  @State private novelSwipeOffset: number = 0;
+  @State novelSwipe: SwipeGestureState = new SwipeGestureState();
 
   // 发现页多选模式相关状态
   @State isDiscoverMultiSelectMode: boolean = false;
-  @State selectedDiscoverMangaIds: Set<string> = new Set();
-  @State selectedDiscoverEBookIds: Set<string> = new Set();
-  @State selectedDiscoverNovelIds: Set<string> = new Set();
+  @State discoverMangaMultiSelect: MultiSelectState = new MultiSelectState();
+  @State discoverEBookMultiSelect: MultiSelectState = new MultiSelectState();
+  @State discoverNovelMultiSelect: MultiSelectState = new MultiSelectState();
 
   // 图源仓库相关状态
   @State showSourceRepoDialog: boolean = false;
@@ -749,7 +777,6 @@ struct MainMenuPage {
   @State recentReadingList: Manga[] = [];
   @State recentEBookList: EBook[] = [];
   @State recentNovelList: NovelBook[] = []; // 最近阅读的小说
-  @State isLoadingRecentReading: boolean = false;
   private readonly RECENT_HISTORY_LIMIT: number = 100;
   
   // 后台模糊遮罩相关状态
@@ -773,7 +800,6 @@ struct MainMenuPage {
   @State filteredMangaCount: number = 0; // 当前筛选条件下的漫画数量
   @State filteredEBookCount: number = 0; // 当前筛选条件下的电子书数量
   @State filteredNovelCount: number = 0; // 当前筛选条件下的小说数量
-  @State isRefreshingDiscover: boolean = false; // 是否正在刷新发现页面
 
   // 图源相关状态
   @State sourceList: SourceInfo[] = []; // 图源列表
@@ -785,8 +811,6 @@ struct MainMenuPage {
   @State sourceSearchTypes: SearchTypeOption[] = []; // 当前图源支持的搜索类型
   @State selectedSourceSearchType: string = 'search'; // 选中的搜索类型
   @State sourceSearchPlaceholder: string = '输入关键词搜索'; // 搜索框占位符
-  @State isLoadingSourceList: boolean = false; // 是否正在加载图源列表
-  @State isRefreshingSourceList: boolean = false; // 是否正在下拉刷新图源列表
   @State hasSourceUpdate: boolean = false; // 是否有图源更新
   @State sourceViewMode: LibraryViewMode = LibraryViewMode.LIST; // 图源视图模式（LIST/GRID）
   @State sourceTypeFilter: 'all' | 'manga' | 'ebook' | 'novel' = 'all'; // 图源类型筛选
@@ -808,6 +832,11 @@ struct MainMenuPage {
   @State private bookSourceTabRefreshSignal: number = 0;
   @State private bookSourceSfwFilterSignal: number = 0;
   @State private bookSourcePickerCloseSignal: number = 0;
+  @State private homeRefreshSignal: number = 0;
+  @StorageLink('home_switch_to_library') @Watch('onHomeSwitchToLibrary') private homeSwitchToLibrary: boolean = false;
+  @StorageLink('extracted_tab_scroll_delta') @Watch('onExtractedTabScrollDelta') private extractedTabScrollDelta: number = 0;
+  @StorageLink('extracted_tab_scroll_stop') @Watch('onExtractedTabScrollStop') private extractedTabScrollStop: number = 0;
+  @State private settingsRefreshSignal: number = 0;
   private settingsScroller: Scroller = new Scroller();
   private sideTabListScroller: Scroller = new Scroller();
   private sideTabCenterTimer: number = -1;
@@ -1443,6 +1472,10 @@ struct MainMenuPage {
     // 加载可见标签配置
     this.loadVisibleTabs();
 
+    // 加载底栏样式与动画设置
+    this.loadBottomBarStyle('aboutToAppear');
+    this.loadBottomBarAnimationSetting('aboutToAppear');
+
     // 处理路由参数
     this.handleRouteParams();
 
@@ -1560,7 +1593,14 @@ struct MainMenuPage {
       }
     };
     this.contentFilterManager.addListener(this.sfwModeListener);
-    
+
+    if (this.bottomBarAnimationSettingsListener === null) {
+      this.bottomBarAnimationSettingsListener = (settings: AnimationSettings): void => {
+        this.applyBottomBarAnimationEnabled(settings.mainPageBottomBarAnimationEnabled, 'animation_settings_listener');
+      };
+      getAnimationSettingsManager().addListener(this.bottomBarAnimationSettingsListener);
+    }
+
     // 初始化Tab内容缓存管理器，完成后立即恢复缓存数据到@State
     // 确保Tab首次渲染时就能显示缓存内容，而不是"暂无"空状态
     this.tabContentCacheManager.initialize();
@@ -2103,6 +2143,54 @@ struct MainMenuPage {
       logger.error(TAG, '加载用户主题配置失败', String(error));
       // 保持默认值，不影响页面渲染
     }
+  }
+
+  private normalizeBottomBarStyle(style: string): string {
+    return style === 'hds' ? 'hds' : 'custom';
+  }
+
+  onBottomBarStyleStorageChanged(): void {
+    this.applyBottomBarStyle(this.bottomBarStyle, 'app_storage', false);
+  }
+
+  private applyBottomBarStyle(style: string, trigger: string, syncStorage: boolean): void {
+    const nextStyle: string = this.normalizeBottomBarStyle(style);
+    if (syncStorage) {
+      AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', nextStyle);
+    }
+    if (this.appliedBottomBarStyle === nextStyle && this.bottomBarStyle === nextStyle) {
+      return;
+    }
+    const previousStyle: string = this.appliedBottomBarStyle;
+    this.appliedBottomBarStyle = nextStyle;
+    if (this.bottomBarStyle !== nextStyle) {
+      this.bottomBarStyle = nextStyle;
+    }
+    this.resetBottomBarScrollState();
+    this.bottomBarOffsetY = this.isOverlayBottomNavTab(this.currentTabIndex) ? this.getBottomBarTravelDistance() : 0;
+    this.hdsTabsController = null;
+    this.hdsSetSyncing = null;
+    this.barRenderKey++;
+    logger.info(TAG, `底栏样式已同步: ${previousStyle} -> ${nextStyle}, trigger=${trigger}`);
+  }
+
+  private loadBottomBarStyle(trigger: string): void {
+    this.applyBottomBarStyle(this.settingsManager.getBottomBarStyle(), trigger, true);
+  }
+
+  private applyBottomBarAnimationEnabled(enabled: boolean, trigger: string): void {
+    if (this.mainPageBottomBarAnimationEnabled === enabled) {
+      return;
+    }
+    this.mainPageBottomBarAnimationEnabled = enabled;
+    this.resetBottomBarScrollState();
+    this.bottomBarOffsetY = this.isOverlayBottomNavTab(this.currentTabIndex) ? this.getBottomBarTravelDistance() : 0;
+    this.barRenderKey++;
+    logger.info(TAG, `底栏滚动动画设置已同步: enabled=${enabled}, trigger=${trigger}`);
+  }
+
+  private loadBottomBarAnimationSetting(trigger: string): void {
+    this.applyBottomBarAnimationEnabled(isMainPageBottomBarAnimationEnabled(), trigger);
   }
 
   /**
@@ -2928,7 +3016,7 @@ struct MainMenuPage {
    */
   private async loadSources(): Promise<void> {
     try {
-      this.isLoadingSourceList = true;
+      this.loadingState.sourceList = true;
       logger.info(TAG, '开始加载图源列表...');
 
       // 只加载启用的图源，并按置顶状态排序
@@ -2940,7 +3028,7 @@ struct MainMenuPage {
       logger.error(TAG, '加载图源列表失败', String(error));
       this.showToast('加载图源列表失败');
     } finally {
-      this.isLoadingSourceList = false;
+      this.loadingState.sourceList = false;
     }
   }
 
@@ -2980,8 +3068,9 @@ struct MainMenuPage {
     const nsfwFiltered = this.contentFilterManager.filterContentList(filtered);
     
     this.filteredSourceList = nsfwFiltered;
+    this.updateSourceListDS();
     logger.debug(TAG, `筛选图源: type=${this.sourceTypeFilter}, keyword="${keyword}", 结果=${nsfwFiltered.length}/${filtered.length}个, SFW模式: ${this.contentFilterManager.isSFWModeEnabled()}`);
-    
+
     // 记录NSFW过滤统计
     if (this.contentFilterManager.isSFWModeEnabled()) {
       const stats = this.contentFilterManager.getFilterStats(filtered);
@@ -4039,24 +4128,21 @@ struct MainMenuPage {
   }
 
   // 图源长按菜单状态
-  @State showSourceContextMenu: boolean = false;
-  @State contextMenuSource: SourceInfo | null = null;
+  @State sourceContextMenu: ContextMenuState<SourceInfo> = new ContextMenuState<SourceInfo>();
 
   /**
    * 显示图源操作菜单（长按触发）
    */
   private showSourceActionMenu(source: SourceInfo): void {
     logger.info(TAG, `显示图源操作菜单: ${source.name}`);
-    this.contextMenuSource = source;
-    this.showSourceContextMenu = true;
+    this.sourceContextMenu.showMenu(source);
   }
 
   /**
    * 隐藏图源操作菜单
    */
   private hideSourceContextMenu(): void {
-    this.showSourceContextMenu = false;
-    this.contextMenuSource = null;
+    this.sourceContextMenu.hide();
   }
 
   /**
@@ -4173,37 +4259,25 @@ struct MainMenuPage {
    * 处理图源列表下拉刷新
    */
   private async handleSourceRefresh(): Promise<void> {
-    this.isRefreshingSourceList = true;
+    this.loadingState.refreshingSourceList = true;
     try {
       await this.refreshSources();
     } finally {
-      this.isRefreshingSourceList = false;
+      this.loadingState.refreshingSourceList = false;
     }
   }
 
   // ==================== 图源相关方法结束 ====================
 
   // ==================== 书库长按菜单状态 ====================
-  @State showMangaContextMenu: boolean = false;
-  @State contextMenuManga: Manga | null = null;
-  @State mangaContextMenuAnchorKey: string = '';
-  @State showEBookContextMenu: boolean = false;
-  @State contextMenuEBook: EBook | null = null;
-  @State ebookContextMenuAnchorKey: string = '';
-  @State showNovelContextMenu: boolean = false;
-  @State contextMenuNovel: NovelBook | null = null;
-  @State novelContextMenuAnchorKey: string = '';
+  @State mangaContextMenu: ContextMenuState<Manga> = new ContextMenuState<Manga>();
+  @State ebookContextMenu: ContextMenuState<EBook> = new ContextMenuState<EBook>();
+  @State novelContextMenu: ContextMenuState<NovelBook> = new ContextMenuState<NovelBook>();
 
   // ==================== 发现页长按菜单状态 ====================
-  @State showDiscoverMangaContextMenu: boolean = false;
-  @State contextMenuDiscoverManga: Manga | null = null;
-  @State discoverMangaContextMenuAnchorKey: string = '';
-  @State showDiscoverEBookContextMenu: boolean = false;
-  @State contextMenuDiscoverEBook: EBook | null = null;
-  @State discoverEBookContextMenuAnchorKey: string = '';
-  @State showDiscoverNovelContextMenu: boolean = false;
-  @State contextMenuDiscoverNovel: NovelBook | null = null;
-  @State discoverNovelContextMenuAnchorKey: string = '';
+  @State discoverMangaContextMenu: ContextMenuState<Manga> = new ContextMenuState<Manga>();
+  @State discoverEBookContextMenu: ContextMenuState<EBook> = new ContextMenuState<EBook>();
+  @State discoverNovelContextMenu: ContextMenuState<NovelBook> = new ContextMenuState<NovelBook>();
 
   private getPopupAnchorKey(anchorScope: string, contentType: 'manga' | 'ebook' | 'novel', id: string | number): string {
     return `${anchorScope}_${contentType}_${String(id)}`;
@@ -4222,19 +4296,14 @@ struct MainMenuPage {
     logger.info(TAG, `显示漫画操作菜单: ${manga.title}`);
     this.hideEBookContextMenu();
     this.hideNovelContextMenu();
-    this.showMangaContextMenu = false;
-    this.contextMenuManga = manga;
-    this.mangaContextMenuAnchorKey = anchorKey;
-    this.showMangaContextMenu = true;
+    this.mangaContextMenu.showMenu(manga, anchorKey);
   }
 
   /**
    * 隐藏漫画操作菜单
    */
   private hideMangaContextMenu(): void {
-    this.showMangaContextMenu = false;
-    this.contextMenuManga = null;
-    this.mangaContextMenuAnchorKey = '';
+    this.mangaContextMenu.hide();
   }
 
   /**
@@ -4250,19 +4319,14 @@ struct MainMenuPage {
     logger.info(TAG, `显示电子书操作菜单: ${ebook.metadata.title}`);
     this.hideMangaContextMenu();
     this.hideNovelContextMenu();
-    this.showEBookContextMenu = false;
-    this.contextMenuEBook = ebook;
-    this.ebookContextMenuAnchorKey = anchorKey;
-    this.showEBookContextMenu = true;
+    this.ebookContextMenu.showMenu(ebook, anchorKey);
   }
 
   /**
    * 隐藏电子书操作菜单
    */
   private hideEBookContextMenu(): void {
-    this.showEBookContextMenu = false;
-    this.contextMenuEBook = null;
-    this.ebookContextMenuAnchorKey = '';
+    this.ebookContextMenu.hide();
   }
 
   /**
@@ -4278,19 +4342,14 @@ struct MainMenuPage {
     logger.info(TAG, `显示小说操作菜单: ${novel.name}`);
     this.hideMangaContextMenu();
     this.hideEBookContextMenu();
-    this.showNovelContextMenu = false;
-    this.contextMenuNovel = novel;
-    this.novelContextMenuAnchorKey = anchorKey;
-    this.showNovelContextMenu = true;
+    this.novelContextMenu.showMenu(novel, anchorKey);
   }
 
   /**
    * 隐藏小说操作菜单
    */
   private hideNovelContextMenu(): void {
-    this.showNovelContextMenu = false;
-    this.contextMenuNovel = null;
-    this.novelContextMenuAnchorKey = '';
+    this.novelContextMenu.hide();
   }
   // ==================== 书库长按菜单状态结束 ====================
 
@@ -4305,16 +4364,11 @@ struct MainMenuPage {
     this.hideNovelContextMenu();
     this.hideDiscoverEBookContextMenu();
     this.hideDiscoverNovelContextMenu();
-    this.showDiscoverMangaContextMenu = false;
-    this.contextMenuDiscoverManga = manga;
-    this.discoverMangaContextMenuAnchorKey = anchorKey;
-    this.showDiscoverMangaContextMenu = true;
+    this.discoverMangaContextMenu.showMenu(manga, anchorKey);
   }
 
   private hideDiscoverMangaContextMenu(): void {
-    this.showDiscoverMangaContextMenu = false;
-    this.contextMenuDiscoverManga = null;
-    this.discoverMangaContextMenuAnchorKey = '';
+    this.discoverMangaContextMenu.hide();
   }
 
   private showDiscoverNovelActionMenu(novel: NovelBook, anchorKey: string = `discover_novel_${novel.id}`): void {
@@ -4327,16 +4381,11 @@ struct MainMenuPage {
     this.hideNovelContextMenu();
     this.hideDiscoverMangaContextMenu();
     this.hideDiscoverEBookContextMenu();
-    this.showDiscoverNovelContextMenu = false;
-    this.contextMenuDiscoverNovel = novel;
-    this.discoverNovelContextMenuAnchorKey = anchorKey;
-    this.showDiscoverNovelContextMenu = true;
+    this.discoverNovelContextMenu.showMenu(novel, anchorKey);
   }
 
   private hideDiscoverNovelContextMenu(): void {
-    this.showDiscoverNovelContextMenu = false;
-    this.contextMenuDiscoverNovel = null;
-    this.discoverNovelContextMenuAnchorKey = '';
+    this.discoverNovelContextMenu.hide();
   }
 
   private showDiscoverEBookActionMenu(ebook: EBook, anchorKey: string = `discover_ebook_${ebook.id}`): void {
@@ -4349,16 +4398,11 @@ struct MainMenuPage {
     this.hideNovelContextMenu();
     this.hideDiscoverMangaContextMenu();
     this.hideDiscoverNovelContextMenu();
-    this.showDiscoverEBookContextMenu = false;
-    this.contextMenuDiscoverEBook = ebook;
-    this.discoverEBookContextMenuAnchorKey = anchorKey;
-    this.showDiscoverEBookContextMenu = true;
+    this.discoverEBookContextMenu.showMenu(ebook, anchorKey);
   }
 
   private hideDiscoverEBookContextMenu(): void {
-    this.showDiscoverEBookContextMenu = false;
-    this.contextMenuDiscoverEBook = null;
-    this.discoverEBookContextMenuAnchorKey = '';
+    this.discoverEBookContextMenu.hide();
   }
   // ==================== 发现页长按菜单方法结束 ====================
 
@@ -4467,7 +4511,7 @@ struct MainMenuPage {
    * 使用增量更新避免UI闪烁
    */
   private async loadRecentReadingList(): Promise<void> {
-    if (this.isLoadingRecentReading) {
+    if (this.loadingState.recentReading) {
       return;
     }
 
@@ -4476,7 +4520,7 @@ struct MainMenuPage {
                         this.recentEBookList.length === 0 && 
                         this.recentNovelList.length === 0;
     if (isFirstLoad) {
-      this.isLoadingRecentReading = true;
+      this.loadingState.recentReading = true;
     }
 
     try {
@@ -4513,7 +4557,7 @@ struct MainMenuPage {
       logger.error(TAG, `加载最近阅读列表失败: ${String(error)}`);
     } finally {
       if (isFirstLoad) {
-        this.isLoadingRecentReading = false;
+        this.loadingState.recentReading = false;
       }
     }
   }
@@ -5030,7 +5074,7 @@ struct MainMenuPage {
    */
   private async loadEBookList(): Promise<void> {
     try {
-      this.isLoadingEbookList = true;
+      this.loadingState.ebookList = true;
       logger.info(TAG, '开始加载电子书列表...');
 
       // 根据隐私模式选择查询方法
@@ -5064,8 +5108,9 @@ struct MainMenuPage {
       this.pdfEbookList = [];
       this.filteredEbookList = [];
       this.filteredPdfEbookList = [];
+      this.updateAllCachedLists();
     } finally {
-      this.isLoadingEbookList = false;
+      this.loadingState.ebookList = false;
     }
   }
 
@@ -5150,7 +5195,8 @@ struct MainMenuPage {
     
     this.filteredEbookList = nsfwFilteredEbook;
     this.filteredPdfEbookList = nsfwFilteredPdf;
-    
+    this.updateAllCachedLists();
+
     // 详细日志：输出每本电子书的状态和进度信息（用于调试）
     if (this.libraryFilterType === LibraryFilterType.READING || this.libraryFilterType === LibraryFilterType.UNREAD) {
       for (const ebook of this.ebookList) {
@@ -5172,7 +5218,7 @@ struct MainMenuPage {
    */
   private async loadNovelList(): Promise<void> {
     try {
-      this.isLoadingNovelList = true;
+      this.loadingState.novelList = true;
       logger.info(TAG, '开始加载小说列表...');
 
       // 初始化小说数据管理器
@@ -5203,8 +5249,9 @@ struct MainMenuPage {
       logger.error(TAG, `加载小说列表失败: ${String(error instanceof Error ? error.message : error)}`);
       this.novelList = [];
       this.filteredNovelList = [];
+      this.updateAllCachedLists();
     } finally {
-      this.isLoadingNovelList = false;
+      this.loadingState.novelList = false;
     }
   }
 
@@ -5251,6 +5298,7 @@ struct MainMenuPage {
     const nsfwFilteredNovel = this.contentFilterManager.filterContentList(filtered);
     
     this.filteredNovelList = nsfwFilteredNovel;
+    this.updateAllCachedLists();
     logger.info(TAG, `小说筛选完成: ${nsfwFilteredNovel.length}/${this.novelList.length}, 筛选类型=${this.libraryFilterType}, SFW模式: ${this.contentFilterManager.isSFWModeEnabled()}`);
     
     // 记录NSFW过滤统计
@@ -5309,12 +5357,12 @@ struct MainMenuPage {
     switch (contentType) {
       case 'manga':
       case 'pdfebook':
-        return `m_${this.isMultiSelectMode ? 1 : 0}_${this.selectedMangaIds.has(contentId) ? 1 : 0}`;
+        return `m_${this.mangaMultiSelect.isActive ? 1 : 0}_${this.mangaMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
       case 'ebook':
-        return `e_${this.isEBookMultiSelectMode ? 1 : 0}_${this.selectedEBookIds.has(contentId) ? 1 : 0}`;
+        return `e_${this.ebookMultiSelect.isActive ? 1 : 0}_${this.ebookMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
       case 'novel':
       default:
-        return `n_${this.isNovelMultiSelectMode ? 1 : 0}_${this.selectedNovelIds.has(contentId) ? 1 : 0}`;
+        return `n_${this.novelMultiSelect.isActive ? 1 : 0}_${this.novelMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
     }
   }
 
@@ -5350,15 +5398,15 @@ struct MainMenuPage {
   }
 
   private getMangaSelectionHitTestMode(): HitTestMode {
-    return this.isMultiSelectMode ? HitTestMode.None : HitTestMode.Default;
+    return this.mangaMultiSelect.isActive ? HitTestMode.None : HitTestMode.Default;
   }
 
   private getEBookSelectionHitTestMode(): HitTestMode {
-    return this.isEBookMultiSelectMode ? HitTestMode.None : HitTestMode.Default;
+    return this.ebookMultiSelect.isActive ? HitTestMode.None : HitTestMode.Default;
   }
 
   private getNovelSelectionHitTestMode(): HitTestMode {
-    return this.isNovelMultiSelectMode ? HitTestMode.None : HitTestMode.Default;
+    return this.novelMultiSelect.isActive ? HitTestMode.None : HitTestMode.Default;
   }
 
   private applyLibraryFilterSelection(filterType: LibraryFilterType): void {
@@ -5369,6 +5417,92 @@ struct MainMenuPage {
       this.libraryFilterType = filterType;
       this.applyLibraryFilterForAllTypes();
     });
+  }
+
+  // --- 预计算缓存更新方法（Phase 0 性能优化） ---
+  private updateCategoryFilteredLists(): void {
+    const catId = this.selectedCategoryId
+    if (!catId) {
+      this.categoryFilteredMangaList = this.filteredMangaList
+      this.categoryFilteredEbookList = this.filteredEbookList
+      this.categoryFilteredNovelList = this.filteredNovelList
+      this.categoryMangaDS.setData(this.categoryFilteredMangaList)
+      this.categoryEbookDS.setData(this.categoryFilteredEbookList)
+      this.categoryNovelDS.setData(this.categoryFilteredNovelList)
+      return
+    }
+    const isDefault = catId === 'default'
+    this.categoryFilteredMangaList = this.filteredMangaList.filter((manga: Manga) => {
+      return this.categoryManager.isItemInCategory(manga.id, ContentType.MANGA, catId) ||
+        (isDefault && this.categoryManager.getUncategorizedItemKey(manga.id, ContentType.MANGA))
+    })
+    this.categoryFilteredEbookList = this.filteredEbookList.filter((ebook: EBook) => {
+      return this.categoryManager.isItemInCategory(ebook.id, ContentType.EBOOK, catId) ||
+        (isDefault && this.categoryManager.getUncategorizedItemKey(ebook.id, ContentType.EBOOK))
+    })
+    this.categoryFilteredNovelList = this.filteredNovelList.filter((novel: NovelBook) => {
+      return this.categoryManager.isItemInCategory(novel.id, ContentType.NOVEL, catId) ||
+        (isDefault && this.categoryManager.getUncategorizedItemKey(novel.id, ContentType.NOVEL))
+    })
+    this.categoryMangaDS.setData(this.categoryFilteredMangaList)
+    this.categoryEbookDS.setData(this.categoryFilteredEbookList)
+    this.categoryNovelDS.setData(this.categoryFilteredNovelList)
+  }
+
+  private updateLibraryDefaultMixedItems(): void {
+    this.libraryDefaultMixedItems = this.getLibraryDefaultMixedItems()
+    this.libraryDefaultMixedDS.setData(this.libraryDefaultMixedItems)
+  }
+
+  private updateCustomShelfMixedItems(): void {
+    this.customShelfMixedItems = this.getCustomShelfMixedItems()
+    this.customShelfMixedDS.setData(this.customShelfMixedItems)
+  }
+
+  private updateAllCachedLists(): void {
+    this.updateCategoryFilteredLists()
+    this.updateLibraryDefaultMixedItems()
+    this.updateCustomShelfMixedItems()
+  }
+
+  private updateSourceListDS(): void {
+    this.sourceListDS.setData(this.filteredSourceList)
+  }
+
+  private updateShelfDetailDS(): void {
+    this.shelfFilteredMangaList = this.getShelfFilteredMangaList()
+    this.shelfFilteredEBookList = this.getShelfFilteredEBookList()
+    this.shelfFilteredPdfEBookList = this.getShelfFilteredPdfEBookList()
+    this.shelfFilteredNovelList = this.getShelfFilteredNovelList()
+
+    const combined: ShelfMixedItem[] = []
+    for (let i = 0; i < this.shelfFilteredEBookList.length; i++) {
+      const ebook: EBook = this.shelfFilteredEBookList[i]
+      combined.push({
+        id: ebook.id,
+        type: 'ebook',
+        name: ebook.metadata.title,
+        lastReadTime: ebook.readingProgress?.lastReadTime || 0,
+        addTime: ebook.addTime || 0,
+        data: ebook
+      })
+    }
+    for (let i = 0; i < this.shelfFilteredPdfEBookList.length; i++) {
+      const pdf: Manga = this.shelfFilteredPdfEBookList[i]
+      combined.push({
+        id: pdf.id,
+        type: 'pdfebook',
+        name: pdf.title,
+        lastReadTime: pdf.readingProgress?.lastReadAt || 0,
+        addTime: pdf.addedToLibraryAt || 0,
+        data: pdf
+      })
+    }
+    this.shelfCombinedEBookList = combined
+
+    this.shelfMangaDS.setData(this.shelfFilteredMangaList)
+    this.shelfEBookDS.setData(this.shelfCombinedEBookList)
+    this.shelfNovelDS.setData(this.shelfFilteredNovelList)
   }
 
   private getLibraryDefaultMixedItems(): ShelfMixedItem[] {
@@ -5466,7 +5600,7 @@ struct MainMenuPage {
   }
 
   private isLibraryDefaultViewLoading(): boolean {
-    return this.isLoadingMangaList && this.isLoadingEbookList && this.isLoadingNovelList;
+    return this.loadingState.mangaList && this.loadingState.ebookList && this.loadingState.novelList;
   }
 
   private isLibraryDataCompletelyEmpty(): boolean {
@@ -5526,6 +5660,7 @@ struct MainMenuPage {
     const nsfwFiltered = this.contentFilterManager.filterContentList(filtered);
     
     this.filteredMangaList = nsfwFiltered;
+    this.updateAllCachedLists();
     logger.info(TAG, `应用筛选: ${this.libraryFilterType}, 结果数量: ${nsfwFiltered.length}/${filtered.length} (排除电子书类PDF, SFW模式: ${this.contentFilterManager.isSFWModeEnabled()})`);
     
     // 记录过滤统计
@@ -5699,6 +5834,16 @@ struct MainMenuPage {
       this.discoveredEBookList = [];
       this.discoveredNovelList = [];
     }
+    this.syncDiscoverDataSources();
+  }
+
+  /**
+   * 同步发现页 DataSource（LazyForEach）
+   */
+  private syncDiscoverDataSources(): void {
+    this.discoveredMangaDS.setData(this.discoveredMangaList);
+    this.discoveredEBookDS.setData(this.discoveredEBookList);
+    this.discoveredNovelDS.setData(this.discoveredNovelList);
   }
 
   /**
@@ -5816,12 +5961,13 @@ struct MainMenuPage {
       const selectedTagsStr = Array.from(this.selectedTags).join(',');
       const selectedAuthorsStr = Array.from(this.selectedAuthors).join(',');
       logger.info(TAG, `发现页面筛选: 标签=[${selectedTagsStr}], 作者=[${selectedAuthorsStr}], 类型=${this.discoverContentType}, 漫画=${this.discoveredMangaList.length}本, 电子书=${this.discoveredEBookList.length}本, 小说=${this.discoveredNovelList.length}本`);
-
+      this.syncDiscoverDataSources();
     } catch (error) {
       logger.error(TAG, `应用发现页面筛选失败: ${String(error)}`);
       this.discoveredMangaList = [...this.allMangaList];
       this.discoveredEBookList = [...this.allEBookList];
       this.discoveredNovelList = [...this.allNovelList];
+      this.syncDiscoverDataSources();
     }
   }
 
@@ -5892,7 +6038,7 @@ struct MainMenuPage {
       this.showToast('刷新失败');
     } finally {
       // 确保刷新状态被重置
-      this.isRefreshingDiscover = false;
+      this.loadingState.refreshingDiscover = false;
     }
   }
 
@@ -7400,6 +7546,12 @@ struct MainMenuPage {
       this.deviceChangeListener = null;
     }
 
+    if (this.bottomBarAnimationSettingsListener !== null) {
+      getAnimationSettingsManager().removeListener(this.bottomBarAnimationSettingsListener);
+      this.bottomBarAnimationSettingsListener = null;
+      logger.debug(TAG, '底栏动画设置监听器已清理');
+    }
+
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
 
@@ -7628,6 +7780,8 @@ struct MainMenuPage {
     if (WindowManager.getCurrentMode() !== DisplayMode.DEFAULT || this.mainMenuReentryShieldVisible) {
       this.restoreBottomBarAfterMainMenuReturn();
     }
+    this.loadBottomBarStyle('onPageShow');
+    this.loadBottomBarAnimationSetting('onPageShow');
     void this.loadLibraryViewMode();
     if (this.fromGuide && this.guideTargetPageOpened && this.targetPage.length > 0) {
       try {
@@ -7940,6 +8094,21 @@ struct MainMenuPage {
     void this.refreshMainMenuGuide('source_features_changed');
   }
 
+  private onHomeSwitchToLibrary(): void {
+    if (this.homeSwitchToLibrary) {
+      AppStorage.set<boolean>('home_switch_to_library', false);
+      this.changeMainContentToTabIndex(TabIndex.LIBRARY);
+    }
+  }
+
+  private onExtractedTabScrollDelta(): void {
+    this.handleScrollForBottomBar(this.extractedTabScrollDelta);
+  }
+
+  private onExtractedTabScrollStop(): void {
+    this.settleBottomBarAfterScrollStop();
+  }
+
   /**
    * 保存可见标签配置
    */
@@ -8050,6 +8219,29 @@ struct MainMenuPage {
       }
     }
     return -1;
+  }
+
+  /**
+   * 将缓存的 TabConfig 转换为 HdsBottomBarTabConfig 数组供 HdsStyleBottomBar 使用
+   */
+  private getHdsBottomBarTabConfigs(): HdsBottomBarTabConfig[] {
+    const result: HdsBottomBarTabConfig[] = [];
+    for (let i = 0; i < this.cachedVisibleTabConfigs.length; i++) {
+      const cfg = this.cachedVisibleTabConfigs[i];
+      const hdsCfg: HdsBottomBarTabConfig = {
+        title: cfg.title,
+        icon: cfg.icon,
+        selectedIcon: cfg.selectedIcon,
+        systemIcon: cfg.systemIcon,
+        useSystemIcon: cfg.useSystemIcon,
+        hasMultiColor: cfg.hasMultiColor,
+        applyFillColor: cfg.applyFillColor,
+        index: cfg.index,
+        required: cfg.required
+      };
+      result.push(hdsCfg);
+    }
+    return result;
   }
 
   /**
@@ -8178,7 +8370,7 @@ struct MainMenuPage {
    */
   private async loadMangaList(): Promise<void> {
     try {
-      this.isLoadingMangaList = true;
+      this.loadingState.mangaList = true;
       logger.info(TAG, '开始加载漫画列表（不加载章节信息）...');
 
       // 同时加载本地和在线漫画（不加载章节，大幅提升速度）
@@ -8209,7 +8401,7 @@ struct MainMenuPage {
       // 应用筛选
       this.applyLibraryFilter();
     } finally {
-      this.isLoadingMangaList = false;
+      this.loadingState.mangaList = false;
     }
   }
 
@@ -8244,11 +8436,11 @@ struct MainMenuPage {
    * 刷新书库（漫画与电子书）列表
    */
   public async refreshMangaList(): Promise<void> {
-    if (this.isRefreshing || this.isLoadingMangaList || this.isLoadingEbookList) {
+    if (this.loadingState.refreshing || this.loadingState.mangaList || this.loadingState.ebookList) {
       return;
     }
 
-    this.isRefreshing = true;
+    this.loadingState.refreshing = true;
     try {
       await Promise.all([
         this.loadMangaList(),
@@ -8258,17 +8450,17 @@ struct MainMenuPage {
       logger.error(TAG, `刷新书库失败: ${String(error instanceof Error ? error.message : error)}`);
       this.showToast('刷新失败，请稍后重试');
     } finally {
-      this.isRefreshing = false;
+      this.loadingState.refreshing = false;
     }
   }
 
   private async refreshShelfViewContent(): Promise<void> {
-    if (this.isRefreshing || this.isLoadingMangaList || this.isLoadingEbookList || this.isLoadingNovelList) {
+    if (this.loadingState.refreshing || this.loadingState.mangaList || this.loadingState.ebookList || this.loadingState.novelList) {
       logger.debug(TAG, '[书架视图] 下拉刷新忽略：已有刷新任务进行中');
       return;
     }
 
-    this.isRefreshing = true;
+    this.loadingState.refreshing = true;
     logger.info(TAG, `[书架视图] 开始下拉刷新 (隐私模式=${this.isPrivacyMode})`);
     try {
       await Promise.all([
@@ -8284,7 +8476,7 @@ struct MainMenuPage {
       logger.error(TAG, `[书架视图] 下拉刷新失败: ${message}`);
       this.showToast('刷新失败，请稍后重试');
     } finally {
-      this.isRefreshing = false;
+      this.loadingState.refreshing = false;
     }
   }
 
@@ -8294,7 +8486,7 @@ struct MainMenuPage {
    * 是否存在任意一种书库多选模式
    */
   private hasActiveLibraryMultiSelectMode(): boolean {
-    return this.isMultiSelectMode || this.isEBookMultiSelectMode || this.isNovelMultiSelectMode;
+    return this.mangaMultiSelect.isActive || this.ebookMultiSelect.isActive || this.novelMultiSelect.isActive;
   }
 
   private shouldUseUnifiedLibraryMixedMultiSelect(): boolean {
@@ -8305,13 +8497,13 @@ struct MainMenuPage {
 
   private isUnifiedLibraryMixedMultiSelectActive(): boolean {
     return this.shouldUseUnifiedLibraryMixedMultiSelect()
-      && this.isMultiSelectMode
-      && this.isEBookMultiSelectMode
-      && this.isNovelMultiSelectMode;
+      && this.mangaMultiSelect.isActive
+      && this.ebookMultiSelect.isActive
+      && this.novelMultiSelect.isActive;
   }
 
   private getLibraryTotalSelectedCount(): number {
-    return this.selectedMangaIds.size + this.selectedEBookIds.size + this.selectedNovelIds.size;
+    return this.mangaMultiSelect.selectedIds.size + this.ebookMultiSelect.selectedIds.size + this.novelMultiSelect.selectedIds.size;
   }
 
   private animateLibraryMultiSelectState(update: () => void): void {
@@ -8338,12 +8530,12 @@ struct MainMenuPage {
       return;
     }
     this.animateLibraryMultiSelectState(() => {
-      this.isMultiSelectMode = false;
-      this.isEBookMultiSelectMode = false;
-      this.isNovelMultiSelectMode = false;
-      this.selectedMangaIds = new Set();
-      this.selectedEBookIds = new Set();
-      this.selectedNovelIds = new Set();
+      this.mangaMultiSelect.clear();
+      this.ebookMultiSelect.clear();
+      this.novelMultiSelect.clear();
+      this.mangaMultiSelect = this.mangaMultiSelect;
+      this.ebookMultiSelect = this.ebookMultiSelect;
+      this.novelMultiSelect = this.novelMultiSelect;
     });
     setTimeout(() => {
       void this.silentRefreshLibrary(true);
@@ -8365,14 +8557,14 @@ struct MainMenuPage {
   private getVisibleMangaMultiSelectItems(): Manga[] {
     if (this.libraryViewMode === LibraryViewMode.CATEGORY && this.showCategoryDetail) {
       if (this.selectedShelf !== null) {
-        return this.getCustomShelfMixedItems()
+        return this.customShelfMixedItems
           .filter((item: ShelfMixedItem) => item.type === 'manga' || item.type === 'pdfebook')
           .map((item: ShelfMixedItem) => item.data as Manga);
       }
       if (this.selectedShelfType === LibraryContentType.EBOOK) {
-        return this.getShelfFilteredPdfEBookList();
+        return this.shelfFilteredPdfEBookList;
       }
-      return this.getShelfFilteredMangaList();
+      return this.shelfFilteredMangaList;
     }
     return [...this.filteredMangaList, ...this.filteredPdfEbookList];
   }
@@ -8383,11 +8575,11 @@ struct MainMenuPage {
   private getVisibleEBookMultiSelectItems(): EBook[] {
     if (this.libraryViewMode === LibraryViewMode.CATEGORY && this.showCategoryDetail) {
       if (this.selectedShelf !== null) {
-        return this.getCustomShelfMixedItems()
+        return this.customShelfMixedItems
           .filter((item: ShelfMixedItem) => item.type === 'ebook')
           .map((item: ShelfMixedItem) => item.data as EBook);
       }
-      return this.getShelfFilteredEBookList();
+      return this.shelfFilteredEBookList;
     }
     return this.filteredEbookList.slice();
   }
@@ -8398,11 +8590,11 @@ struct MainMenuPage {
   private getVisibleNovelMultiSelectItems(): NovelBook[] {
     if (this.libraryViewMode === LibraryViewMode.CATEGORY && this.showCategoryDetail) {
       if (this.selectedShelf !== null) {
-        return this.getCustomShelfMixedItems()
+        return this.customShelfMixedItems
           .filter((item: ShelfMixedItem) => item.type === 'novel')
           .map((item: ShelfMixedItem) => item.data as NovelBook);
       }
-      return this.getShelfFilteredNovelList();
+      return this.shelfFilteredNovelList;
     }
     return this.filteredNovelList.slice();
   }
@@ -8413,27 +8605,21 @@ struct MainMenuPage {
   private enterMultiSelectMode(initialSelectedMangaId?: string): void {
     if (this.shouldUseUnifiedLibraryMixedMultiSelect()) {
       this.animateLibraryMultiSelectState(() => {
-        this.isMultiSelectMode = true;
-        this.isEBookMultiSelectMode = true;
-        this.isNovelMultiSelectMode = true;
-        const nextSelectedMangaIds = new Set<string>();
-        if (initialSelectedMangaId) {
-          nextSelectedMangaIds.add(initialSelectedMangaId);
-        }
-        this.selectedMangaIds = nextSelectedMangaIds;
-        this.selectedEBookIds = new Set();
-        this.selectedNovelIds = new Set();
+        const ids = initialSelectedMangaId ? [initialSelectedMangaId] : [];
+        this.mangaMultiSelect.selectAll(ids);
+        this.ebookMultiSelect.deselectAll();
+        this.novelMultiSelect.deselectAll();
+        this.mangaMultiSelect = this.mangaMultiSelect;
+        this.ebookMultiSelect = this.ebookMultiSelect;
+        this.novelMultiSelect = this.novelMultiSelect;
       });
       logger.info(TAG, '进入书库混合多选模式');
       return;
     }
     this.animateLibraryMultiSelectState(() => {
-      this.isMultiSelectMode = true;
-      const nextSelectedMangaIds = new Set<string>();
-      if (initialSelectedMangaId) {
-        nextSelectedMangaIds.add(initialSelectedMangaId);
-      }
-      this.selectedMangaIds = nextSelectedMangaIds;
+      const ids = initialSelectedMangaId ? [initialSelectedMangaId] : [];
+      this.mangaMultiSelect.selectAll(ids);
+      this.mangaMultiSelect = this.mangaMultiSelect;
     });
     logger.info(TAG, '进入多选模式');
   }
@@ -8447,8 +8633,8 @@ struct MainMenuPage {
       return;
     }
     this.animateLibraryMultiSelectState(() => {
-      this.isMultiSelectMode = false;
-      this.selectedMangaIds = new Set();
+      this.mangaMultiSelect.clear();
+      this.mangaMultiSelect = this.mangaMultiSelect;
     });
     setTimeout(() => {
       void this.silentRefreshLibrary(true);
@@ -8460,32 +8646,30 @@ struct MainMenuPage {
    * 切换漫画选中状态
    */
   private toggleMangaSelection(mangaId: string): void {
-    if (this.selectedMangaIds.has(mangaId)) {
-      this.selectedMangaIds.delete(mangaId);
-    } else {
-      this.selectedMangaIds.add(mangaId);
-    }
-    // 触发UI更新
-    this.selectedMangaIds = new Set(this.selectedMangaIds);
-    logger.debug(TAG, `切换漫画选中状态: ${mangaId}, 当前选中数量: ${this.selectedMangaIds.size}`);
+    this.mangaMultiSelect.toggle(mangaId);
+    this.mangaMultiSelect = this.mangaMultiSelect;
+    logger.debug(TAG, `切换漫画选中状态: ${mangaId}, 当前选中数量: ${this.mangaMultiSelect.size}`);
   }
 
   /**
    * 全选漫画
    */
   private selectAllManga(): void {
-    for (const manga of this.getVisibleMangaMultiSelectItems()) {
-      this.selectedMangaIds.add(manga.id);
+    const ids: string[] = [];
+    const items = this.getVisibleMangaMultiSelectItems();
+    for (let i = 0; i < items.length; i++) {
+      ids.push(items[i].id);
     }
-    this.selectedMangaIds = new Set(this.selectedMangaIds);
-    logger.info(TAG, `全选漫画: ${this.selectedMangaIds.size}个`);
+    this.mangaMultiSelect.selectAll(ids);
+    this.mangaMultiSelect = this.mangaMultiSelect;
+    logger.info(TAG, `全选漫画: ${this.mangaMultiSelect.size}个`);
   }
 
   /**
    * 显示删除确认对话框
    */
   private showBatchDeleteConfirm(): void {
-    if (this.selectedMangaIds.size === 0) {
+    if (this.mangaMultiSelect.selectedIds.size === 0) {
       this.showToast('请选择要删除的漫画');
       return;
     }
@@ -8500,36 +8684,42 @@ struct MainMenuPage {
   }
 
   private deselectAllManga(): void {
-    this.selectedMangaIds = new Set();
+    this.mangaMultiSelect.deselectAll();
+    this.mangaMultiSelect = this.mangaMultiSelect;
   }
 
   private deselectAllEBooks(): void {
-    this.selectedEBookIds = new Set();
+    this.ebookMultiSelect.deselectAll();
+    this.ebookMultiSelect = this.ebookMultiSelect;
   }
 
   private deselectAllNovels(): void {
-    this.selectedNovelIds = new Set();
+    this.novelMultiSelect.deselectAll();
+    this.novelMultiSelect = this.novelMultiSelect;
   }
 
   private deselectAllLibraryMixedItems(): void {
-    this.selectedMangaIds = new Set();
-    this.selectedEBookIds = new Set();
-    this.selectedNovelIds = new Set();
+    this.mangaMultiSelect.deselectAll();
+    this.ebookMultiSelect.deselectAll();
+    this.novelMultiSelect.deselectAll();
+    this.mangaMultiSelect = this.mangaMultiSelect;
+    this.ebookMultiSelect = this.ebookMultiSelect;
+    this.novelMultiSelect = this.novelMultiSelect;
   }
 
   private isAllMangaSelected(): boolean {
     const items = this.getVisibleMangaMultiSelectItems();
-    return items.length > 0 && items.every((m: Manga) => this.selectedMangaIds.has(m.id));
+    return items.length > 0 && items.every((m: Manga) => this.mangaMultiSelect.selectedIds.has(m.id));
   }
 
   private isAllEBooksSelected(): boolean {
     const items = this.getVisibleEBookMultiSelectItems();
-    return items.length > 0 && items.every((e: EBook) => this.selectedEBookIds.has(e.id));
+    return items.length > 0 && items.every((e: EBook) => this.ebookMultiSelect.selectedIds.has(e.id));
   }
 
   private isAllNovelsSelected(): boolean {
     const items = this.getVisibleNovelMultiSelectItems();
-    return items.length > 0 && items.every((n: NovelBook) => this.selectedNovelIds.has(n.id));
+    return items.length > 0 && items.every((n: NovelBook) => this.novelMultiSelect.selectedIds.has(n.id));
   }
 
   private isAllLibraryMixedItemsSelected(): boolean {
@@ -8601,14 +8791,17 @@ struct MainMenuPage {
       return;
     }
 
-    this.isDeletingManga = true;
-    this.isDeletingEBook = true;
-    this.isDeletingNovel = true;
+    this.mangaMultiSelect.isDeleting = true;
+    this.ebookMultiSelect.isDeleting = true;
+    this.novelMultiSelect.isDeleting = true;
+    this.mangaMultiSelect = this.mangaMultiSelect;
+    this.ebookMultiSelect = this.ebookMultiSelect;
+    this.novelMultiSelect = this.novelMultiSelect;
     try {
       let successCount = 0;
       let failedCount = 0;
 
-      const mangaIds = Array.from(this.selectedMangaIds);
+      const mangaIds = Array.from(this.mangaMultiSelect.selectedIds);
       const localMangaIds: string[] = [];
       for (let index = 0; index < mangaIds.length; index++) {
         const mangaId = mangaIds[index];
@@ -8643,7 +8836,7 @@ struct MainMenuPage {
         failedCount += result.failedCount;
       }
 
-      for (const ebookId of Array.from(this.selectedEBookIds)) {
+      for (const ebookId of Array.from(this.ebookMultiSelect.selectedIds)) {
         try {
           await this.ebookDataManager.deleteEBook(ebookId);
           successCount++;
@@ -8653,7 +8846,7 @@ struct MainMenuPage {
         }
       }
 
-      for (const novelId of Array.from(this.selectedNovelIds)) {
+      for (const novelId of Array.from(this.novelMultiSelect.selectedIds)) {
         try {
           await this.novelDataManager?.deleteBook(novelId);
           successCount++;
@@ -8678,9 +8871,12 @@ struct MainMenuPage {
       logger.error(TAG, `书库混合批量删除失败: ${errorMessage}`);
       this.showToast('删除失败，请稍后重试');
     } finally {
-      this.isDeletingManga = false;
-      this.isDeletingEBook = false;
-      this.isDeletingNovel = false;
+      this.mangaMultiSelect.isDeleting = false;
+      this.ebookMultiSelect.isDeleting = false;
+      this.novelMultiSelect.isDeleting = false;
+      this.mangaMultiSelect = this.mangaMultiSelect;
+      this.ebookMultiSelect = this.ebookMultiSelect;
+      this.novelMultiSelect = this.novelMultiSelect;
     }
   }
 
@@ -8688,13 +8884,14 @@ struct MainMenuPage {
    * 批量删除漫画
    */
   private async batchDeleteManga(): Promise<void> {
-    if (this.selectedMangaIds.size === 0) {
+    if (this.mangaMultiSelect.selectedIds.size === 0) {
       return;
     }
 
-    this.isDeletingManga = true;
+    this.mangaMultiSelect.isDeleting = true;
+    this.mangaMultiSelect = this.mangaMultiSelect;
     try {
-      const mangaIds = Array.from(this.selectedMangaIds);
+      const mangaIds = Array.from(this.mangaMultiSelect.selectedIds);
       logger.info(TAG, `开始批量删除漫画: ${mangaIds.length}个`);
 
       const localMangaIds: string[] = [];
@@ -8752,7 +8949,8 @@ struct MainMenuPage {
       logger.error(TAG, `批量删除漫画失败: ${errorMessage}`);
       this.showToast('删除失败，请稍后重试');
     } finally {
-      this.isDeletingManga = false;
+      this.mangaMultiSelect.isDeleting = false;
+      this.mangaMultiSelect = this.mangaMultiSelect;
     }
   }
 
@@ -8764,27 +8962,21 @@ struct MainMenuPage {
   private enterEBookMultiSelectMode(initialSelectedEBookId?: string): void {
     if (this.shouldUseUnifiedLibraryMixedMultiSelect()) {
       this.animateLibraryMultiSelectState(() => {
-        this.isMultiSelectMode = true;
-        this.isEBookMultiSelectMode = true;
-        this.isNovelMultiSelectMode = true;
-        this.selectedMangaIds = new Set();
-        const nextSelectedEBookIds = new Set<string>();
-        if (initialSelectedEBookId) {
-          nextSelectedEBookIds.add(initialSelectedEBookId);
-        }
-        this.selectedEBookIds = nextSelectedEBookIds;
-        this.selectedNovelIds = new Set();
+        this.mangaMultiSelect.deselectAll();
+        const ids = initialSelectedEBookId ? [initialSelectedEBookId] : [];
+        this.ebookMultiSelect.selectAll(ids);
+        this.novelMultiSelect.deselectAll();
+        this.mangaMultiSelect = this.mangaMultiSelect;
+        this.ebookMultiSelect = this.ebookMultiSelect;
+        this.novelMultiSelect = this.novelMultiSelect;
       });
       logger.info(TAG, '进入书库混合多选模式');
       return;
     }
     this.animateLibraryMultiSelectState(() => {
-      this.isEBookMultiSelectMode = true;
-      const nextSelectedEBookIds = new Set<string>();
-      if (initialSelectedEBookId) {
-        nextSelectedEBookIds.add(initialSelectedEBookId);
-      }
-      this.selectedEBookIds = nextSelectedEBookIds;
+      const ids = initialSelectedEBookId ? [initialSelectedEBookId] : [];
+      this.ebookMultiSelect.selectAll(ids);
+      this.ebookMultiSelect = this.ebookMultiSelect;
     });
     logger.info(TAG, '进入电子书多选模式');
   }
@@ -8798,8 +8990,8 @@ struct MainMenuPage {
       return;
     }
     this.animateLibraryMultiSelectState(() => {
-      this.isEBookMultiSelectMode = false;
-      this.selectedEBookIds = new Set();
+      this.ebookMultiSelect.clear();
+      this.ebookMultiSelect = this.ebookMultiSelect;
     });
     setTimeout(() => {
       void this.silentRefreshLibrary(true);
@@ -8811,14 +9003,9 @@ struct MainMenuPage {
    * 切换电子书选中状态
    */
   private toggleEBookSelection(ebookId: string): void {
-    if (this.selectedEBookIds.has(ebookId)) {
-      this.selectedEBookIds.delete(ebookId);
-    } else {
-      this.selectedEBookIds.add(ebookId);
-    }
-    // 触发UI更新
-    this.selectedEBookIds = new Set(this.selectedEBookIds);
-    logger.debug(TAG, `切换电子书选中状态: ${ebookId}, 当前选中数量: ${this.selectedEBookIds.size}`);
+    this.ebookMultiSelect.toggle(ebookId);
+    this.ebookMultiSelect = this.ebookMultiSelect;
+    logger.debug(TAG, `切换电子书选中状态: ${ebookId}, 当前选中数量: ${this.ebookMultiSelect.size}`);
   }
 
   /**
@@ -8827,27 +9014,21 @@ struct MainMenuPage {
   private enterNovelMultiSelectMode(initialSelectedNovelId?: string): void {
     if (this.shouldUseUnifiedLibraryMixedMultiSelect()) {
       this.animateLibraryMultiSelectState(() => {
-        this.isMultiSelectMode = true;
-        this.isEBookMultiSelectMode = true;
-        this.isNovelMultiSelectMode = true;
-        this.selectedMangaIds = new Set();
-        this.selectedEBookIds = new Set();
-        const nextSelectedNovelIds = new Set<string>();
-        if (initialSelectedNovelId) {
-          nextSelectedNovelIds.add(initialSelectedNovelId);
-        }
-        this.selectedNovelIds = nextSelectedNovelIds;
+        this.mangaMultiSelect.deselectAll();
+        this.ebookMultiSelect.deselectAll();
+        const ids = initialSelectedNovelId ? [initialSelectedNovelId] : [];
+        this.novelMultiSelect.selectAll(ids);
+        this.mangaMultiSelect = this.mangaMultiSelect;
+        this.ebookMultiSelect = this.ebookMultiSelect;
+        this.novelMultiSelect = this.novelMultiSelect;
       });
       logger.info(TAG, '进入书库混合多选模式');
       return;
     }
     this.animateLibraryMultiSelectState(() => {
-      this.isNovelMultiSelectMode = true;
-      const nextSelectedNovelIds = new Set<string>();
-      if (initialSelectedNovelId) {
-        nextSelectedNovelIds.add(initialSelectedNovelId);
-      }
-      this.selectedNovelIds = nextSelectedNovelIds;
+      const ids = initialSelectedNovelId ? [initialSelectedNovelId] : [];
+      this.novelMultiSelect.selectAll(ids);
+      this.novelMultiSelect = this.novelMultiSelect;
     });
     logger.info(TAG, '进入小说多选模式');
   }
@@ -8861,8 +9042,8 @@ struct MainMenuPage {
       return;
     }
     this.animateLibraryMultiSelectState(() => {
-      this.isNovelMultiSelectMode = false;
-      this.selectedNovelIds = new Set();
+      this.novelMultiSelect.clear();
+      this.novelMultiSelect = this.novelMultiSelect;
     });
     setTimeout(() => {
       void this.silentRefreshLibrary(true);
@@ -8874,39 +9055,37 @@ struct MainMenuPage {
    * 切换小说选中状态
    */
   private toggleNovelSelection(novelId: string): void {
-    if (this.selectedNovelIds.has(novelId)) {
-      this.selectedNovelIds.delete(novelId);
-    } else {
-      this.selectedNovelIds.add(novelId);
-    }
-    // 触发UI更新
-    this.selectedNovelIds = new Set(this.selectedNovelIds);
-    logger.debug(TAG, `切换小说选中状态: ${novelId}, 当前选中数量: ${this.selectedNovelIds.size}`);
+    this.novelMultiSelect.toggle(novelId);
+    this.novelMultiSelect = this.novelMultiSelect;
+    logger.debug(TAG, `切换小说选中状态: ${novelId}, 当前选中数量: ${this.novelMultiSelect.size}`);
   }
 
   /**
    * 全选电子书
    */
   private selectAllEBooks(): void {
-    for (const ebook of this.getVisibleEBookMultiSelectItems()) {
-      this.selectedEBookIds.add(ebook.id);
+    const ids: string[] = [];
+    const items = this.getVisibleEBookMultiSelectItems();
+    for (let i = 0; i < items.length; i++) {
+      ids.push(items[i].id);
     }
-    this.selectedEBookIds = new Set(this.selectedEBookIds);
-    logger.info(TAG, `全选电子书: ${this.selectedEBookIds.size}个`);
+    this.ebookMultiSelect.selectAll(ids);
+    this.ebookMultiSelect = this.ebookMultiSelect;
+    logger.info(TAG, `全选电子书: ${this.ebookMultiSelect.size}个`);
   }
 
   /**
    * 显示电子书批量删除确认
    */
   private showEBookBatchDeleteConfirm(): void {
-    if (this.selectedEBookIds.size === 0) {
+    if (this.ebookMultiSelect.selectedIds.size === 0) {
       this.showToast('请选择要删除的电子书');
       return;
     }
     // 使用 AlertDialog 确认删除
     AlertDialog.show({
       title: '确认删除',
-      message: `确定要删除选中的 ${this.selectedEBookIds.size} 本电子书吗？此操作不可恢复。`,
+      message: `确定要删除选中的 ${this.ebookMultiSelect.selectedIds.size} 本电子书吗？此操作不可恢复。`,
       autoCancel: true,
       alignment: DialogAlignment.Center,
       primaryButton: {
@@ -8929,13 +9108,14 @@ struct MainMenuPage {
    * 批量删除电子书
    */
   private async batchDeleteEBooks(): Promise<void> {
-    if (this.selectedEBookIds.size === 0) {
+    if (this.ebookMultiSelect.selectedIds.size === 0) {
       return;
     }
 
-    this.isDeletingEBook = true;
+    this.ebookMultiSelect.isDeleting = true;
+    this.ebookMultiSelect = this.ebookMultiSelect;
     try {
-      const ebookIds = Array.from(this.selectedEBookIds);
+      const ebookIds = Array.from(this.ebookMultiSelect.selectedIds);
       logger.info(TAG, `开始批量删除电子书: ${ebookIds.length}个`);
 
       let successCount = 0;
@@ -8970,7 +9150,8 @@ struct MainMenuPage {
       logger.error(TAG, `批量删除电子书失败: ${errorMessage}`);
       this.showToast('删除失败，请稍后重试');
     } finally {
-      this.isDeletingEBook = false;
+      this.ebookMultiSelect.isDeleting = false;
+      this.ebookMultiSelect = this.ebookMultiSelect;
     }
   }
 
@@ -8979,23 +9160,23 @@ struct MainMenuPage {
    */
   private selectAllNovels(): void {
     for (const novel of this.getVisibleNovelMultiSelectItems()) {
-      this.selectedNovelIds.add(novel.id);
+      this.novelMultiSelect.selectedIds.add(novel.id);
     }
-    this.selectedNovelIds = new Set(this.selectedNovelIds);
-    logger.info(TAG, `全选小说: ${this.selectedNovelIds.size}个`);
+    this.novelMultiSelect.selectedIds = new Set(this.novelMultiSelect.selectedIds);
+    logger.info(TAG, `全选小说: ${this.novelMultiSelect.selectedIds.size}个`);
   }
 
   /**
    * 显示小说批量删除确认
    */
   private showNovelBatchDeleteConfirm(): void {
-    if (this.selectedNovelIds.size === 0) {
+    if (this.novelMultiSelect.selectedIds.size === 0) {
       this.showToast('请选择要删除的小说');
       return;
     }
     AlertDialog.show({
       title: '确认删除',
-      message: `确定要删除选中的 ${this.selectedNovelIds.size} 本小说吗？此操作不可恢复。`,
+      message: `确定要删除选中的 ${this.novelMultiSelect.selectedIds.size} 本小说吗？此操作不可恢复。`,
       autoCancel: true,
       alignment: DialogAlignment.Center,
       primaryButton: {
@@ -9018,13 +9199,14 @@ struct MainMenuPage {
    * 批量删除小说
    */
   private async batchDeleteNovels(): Promise<void> {
-    if (this.selectedNovelIds.size === 0) {
+    if (this.novelMultiSelect.selectedIds.size === 0) {
       return;
     }
 
-    this.isDeletingNovel = true;
+    this.novelMultiSelect.isDeleting = true;
+    this.novelMultiSelect = this.novelMultiSelect;
     try {
-      const novelIds = Array.from(this.selectedNovelIds);
+      const novelIds = Array.from(this.novelMultiSelect.selectedIds);
       logger.info(TAG, `开始批量删除小说: ${novelIds.length}个`);
 
       let successCount = 0;
@@ -9059,18 +9241,19 @@ struct MainMenuPage {
       logger.error(TAG, `批量删除小说失败: ${errorMessage}`);
       this.showToast('删除失败，请稍后重试');
     } finally {
-      this.isDeletingNovel = false;
+      this.novelMultiSelect.isDeleting = false;
+      this.novelMultiSelect = this.novelMultiSelect;
     }
   }
 
   // ==================== 发现页多选核心方法 ====================
 
   private hasActiveDiscoverMultiSelectMode(): boolean {
-    return this.isDiscoverMultiSelectMode || this.selectedDiscoverEBookIds.size > 0 || this.selectedDiscoverNovelIds.size > 0;
+    return this.isDiscoverMultiSelectMode || this.discoverEBookMultiSelect.selectedIds.size > 0 || this.discoverNovelMultiSelect.selectedIds.size > 0;
   }
 
   private getDiscoverTotalSelectedCount(): number {
-    return this.selectedDiscoverMangaIds.size + this.selectedDiscoverEBookIds.size + this.selectedDiscoverNovelIds.size;
+    return this.discoverMangaMultiSelect.selectedIds.size + this.discoverEBookMultiSelect.selectedIds.size + this.discoverNovelMultiSelect.selectedIds.size;
   }
 
   private animateDiscoverMultiSelectState(update: () => void): void {
@@ -9089,13 +9272,16 @@ struct MainMenuPage {
   private enterDiscoverMultiSelectMode(initialSelectedMangaId?: string): void {
     this.animateDiscoverMultiSelectState(() => {
       this.isDiscoverMultiSelectMode = true;
-      this.selectedDiscoverEBookIds = new Set();
-      this.selectedDiscoverNovelIds = new Set();
+      this.discoverEBookMultiSelect.selectedIds = new Set();
+      this.discoverNovelMultiSelect.selectedIds = new Set();
       const nextIds = new Set<string>();
       if (initialSelectedMangaId) {
         nextIds.add(initialSelectedMangaId);
       }
-      this.selectedDiscoverMangaIds = nextIds;
+      this.discoverMangaMultiSelect.selectedIds = nextIds;
+      this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
+      this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
+      this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
     });
     logger.info(TAG, '进入发现页漫画多选模式');
   }
@@ -9103,7 +9289,8 @@ struct MainMenuPage {
   private exitDiscoverMultiSelectMode(): void {
     this.animateDiscoverMultiSelectState(() => {
       this.isDiscoverMultiSelectMode = false;
-      this.selectedDiscoverMangaIds = new Set();
+      this.discoverMangaMultiSelect.selectedIds = new Set();
+      this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
     });
     setTimeout(() => {
       void this.silentRefreshDiscoverData();
@@ -9117,9 +9304,12 @@ struct MainMenuPage {
     }
     this.animateDiscoverMultiSelectState(() => {
       this.isDiscoverMultiSelectMode = false;
-      this.selectedDiscoverMangaIds = new Set();
-      this.selectedDiscoverEBookIds = new Set();
-      this.selectedDiscoverNovelIds = new Set();
+      this.discoverMangaMultiSelect.selectedIds = new Set();
+      this.discoverEBookMultiSelect.selectedIds = new Set();
+      this.discoverNovelMultiSelect.selectedIds = new Set();
+      this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
+      this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
+      this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
     });
     setTimeout(() => {
       void this.silentRefreshDiscoverData();
@@ -9129,17 +9319,21 @@ struct MainMenuPage {
 
   private enterDiscoverEBookMultiSelectMode(initialSelectedEBookId?: string): void {
     this.animateDiscoverMultiSelectState(() => {
-      this.selectedDiscoverEBookIds = new Set(initialSelectedEBookId ? [initialSelectedEBookId] : []);
+      this.discoverEBookMultiSelect.selectedIds = new Set(initialSelectedEBookId ? [initialSelectedEBookId] : []);
       this.isDiscoverMultiSelectMode = false;
-      this.selectedDiscoverMangaIds = new Set();
-      this.selectedDiscoverNovelIds = new Set();
+      this.discoverMangaMultiSelect.selectedIds = new Set();
+      this.discoverNovelMultiSelect.selectedIds = new Set();
+      this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
+      this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
+      this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
     });
     logger.info(TAG, '进入发现页电子书多选模式');
   }
 
   private exitDiscoverEBookMultiSelectMode(): void {
     this.animateDiscoverMultiSelectState(() => {
-      this.selectedDiscoverEBookIds = new Set();
+      this.discoverEBookMultiSelect.selectedIds = new Set();
+      this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
     });
     setTimeout(() => {
       void this.silentRefreshDiscoverData();
@@ -9149,17 +9343,21 @@ struct MainMenuPage {
 
   private enterDiscoverNovelMultiSelectMode(initialSelectedNovelId?: string): void {
     this.animateDiscoverMultiSelectState(() => {
-      this.selectedDiscoverNovelIds = new Set(initialSelectedNovelId ? [initialSelectedNovelId] : []);
+      this.discoverNovelMultiSelect.selectedIds = new Set(initialSelectedNovelId ? [initialSelectedNovelId] : []);
       this.isDiscoverMultiSelectMode = false;
-      this.selectedDiscoverMangaIds = new Set();
-      this.selectedDiscoverEBookIds = new Set();
+      this.discoverMangaMultiSelect.selectedIds = new Set();
+      this.discoverEBookMultiSelect.selectedIds = new Set();
+      this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
+      this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
+      this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
     });
     logger.info(TAG, '进入发现页小说多选模式');
   }
 
   private exitDiscoverNovelMultiSelectMode(): void {
     this.animateDiscoverMultiSelectState(() => {
-      this.selectedDiscoverNovelIds = new Set();
+      this.discoverNovelMultiSelect.selectedIds = new Set();
+      this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
     });
     setTimeout(() => {
       void this.silentRefreshDiscoverData();
@@ -9168,30 +9366,33 @@ struct MainMenuPage {
   }
 
   private toggleDiscoverMangaSelection(mangaId: string): void {
-    if (this.selectedDiscoverMangaIds.has(mangaId)) {
-      this.selectedDiscoverMangaIds.delete(mangaId);
+    if (this.discoverMangaMultiSelect.selectedIds.has(mangaId)) {
+      this.discoverMangaMultiSelect.selectedIds.delete(mangaId);
     } else {
-      this.selectedDiscoverMangaIds.add(mangaId);
+      this.discoverMangaMultiSelect.selectedIds.add(mangaId);
     }
-    this.selectedDiscoverMangaIds = new Set(this.selectedDiscoverMangaIds);
+    this.discoverMangaMultiSelect.selectedIds = new Set(this.discoverMangaMultiSelect.selectedIds);
+    this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
   }
 
   private toggleDiscoverEBookSelection(ebookId: string): void {
-    if (this.selectedDiscoverEBookIds.has(ebookId)) {
-      this.selectedDiscoverEBookIds.delete(ebookId);
+    if (this.discoverEBookMultiSelect.selectedIds.has(ebookId)) {
+      this.discoverEBookMultiSelect.selectedIds.delete(ebookId);
     } else {
-      this.selectedDiscoverEBookIds.add(ebookId);
+      this.discoverEBookMultiSelect.selectedIds.add(ebookId);
     }
-    this.selectedDiscoverEBookIds = new Set(this.selectedDiscoverEBookIds);
+    this.discoverEBookMultiSelect.selectedIds = new Set(this.discoverEBookMultiSelect.selectedIds);
+    this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
   }
 
   private toggleDiscoverNovelSelection(novelId: string): void {
-    if (this.selectedDiscoverNovelIds.has(novelId)) {
-      this.selectedDiscoverNovelIds.delete(novelId);
+    if (this.discoverNovelMultiSelect.selectedIds.has(novelId)) {
+      this.discoverNovelMultiSelect.selectedIds.delete(novelId);
     } else {
-      this.selectedDiscoverNovelIds.add(novelId);
+      this.discoverNovelMultiSelect.selectedIds.add(novelId);
     }
-    this.selectedDiscoverNovelIds = new Set(this.selectedDiscoverNovelIds);
+    this.discoverNovelMultiSelect.selectedIds = new Set(this.discoverNovelMultiSelect.selectedIds);
+    this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
   }
 
   private getVisibleDiscoverMangaItems(): Manga[] {
@@ -9208,18 +9409,20 @@ struct MainMenuPage {
 
   private selectAllDiscoverManga(): void {
     for (const manga of this.getVisibleDiscoverMangaItems()) {
-      this.selectedDiscoverMangaIds.add(manga.id);
+      this.discoverMangaMultiSelect.selectedIds.add(manga.id);
     }
-    this.selectedDiscoverMangaIds = new Set(this.selectedDiscoverMangaIds);
+    this.discoverMangaMultiSelect.selectedIds = new Set(this.discoverMangaMultiSelect.selectedIds);
+    this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
   }
 
   private deselectAllDiscoverManga(): void {
-    this.selectedDiscoverMangaIds = new Set();
+    this.discoverMangaMultiSelect.selectedIds = new Set();
+    this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
   }
 
   private isAllDiscoverMangaSelected(): boolean {
     const items = this.getVisibleDiscoverMangaItems();
-    return items.length > 0 && items.every((m: Manga) => this.selectedDiscoverMangaIds.has(m.id));
+    return items.length > 0 && items.every((m: Manga) => this.discoverMangaMultiSelect.selectedIds.has(m.id));
   }
 
   private toggleSelectAllDiscoverManga(): void {
@@ -9232,18 +9435,20 @@ struct MainMenuPage {
 
   private selectAllDiscoverEBooks(): void {
     for (const ebook of this.getVisibleDiscoverEBookItems()) {
-      this.selectedDiscoverEBookIds.add(ebook.id);
+      this.discoverEBookMultiSelect.selectedIds.add(ebook.id);
     }
-    this.selectedDiscoverEBookIds = new Set(this.selectedDiscoverEBookIds);
+    this.discoverEBookMultiSelect.selectedIds = new Set(this.discoverEBookMultiSelect.selectedIds);
+    this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
   }
 
   private deselectAllDiscoverEBooks(): void {
-    this.selectedDiscoverEBookIds = new Set();
+    this.discoverEBookMultiSelect.selectedIds = new Set();
+    this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
   }
 
   private isAllDiscoverEBooksSelected(): boolean {
     const items = this.getVisibleDiscoverEBookItems();
-    return items.length > 0 && items.every((e: EBook) => this.selectedDiscoverEBookIds.has(e.id));
+    return items.length > 0 && items.every((e: EBook) => this.discoverEBookMultiSelect.selectedIds.has(e.id));
   }
 
   private toggleSelectAllDiscoverEBooks(): void {
@@ -9256,18 +9461,20 @@ struct MainMenuPage {
 
   private selectAllDiscoverNovels(): void {
     for (const novel of this.getVisibleDiscoverNovelItems()) {
-      this.selectedDiscoverNovelIds.add(novel.id);
+      this.discoverNovelMultiSelect.selectedIds.add(novel.id);
     }
-    this.selectedDiscoverNovelIds = new Set(this.selectedDiscoverNovelIds);
+    this.discoverNovelMultiSelect.selectedIds = new Set(this.discoverNovelMultiSelect.selectedIds);
+    this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
   }
 
   private deselectAllDiscoverNovels(): void {
-    this.selectedDiscoverNovelIds = new Set();
+    this.discoverNovelMultiSelect.selectedIds = new Set();
+    this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
   }
 
   private isAllDiscoverNovelsSelected(): boolean {
     const items = this.getVisibleDiscoverNovelItems();
-    return items.length > 0 && items.every((n: NovelBook) => this.selectedDiscoverNovelIds.has(n.id));
+    return items.length > 0 && items.every((n: NovelBook) => this.discoverNovelMultiSelect.selectedIds.has(n.id));
   }
 
   private toggleSelectAllDiscoverNovels(): void {
@@ -9279,13 +9486,13 @@ struct MainMenuPage {
   }
 
   private showDiscoverMangaBatchDeleteConfirm(): void {
-    if (this.selectedDiscoverMangaIds.size === 0) {
+    if (this.discoverMangaMultiSelect.selectedIds.size === 0) {
       this.showToast('请选择要删除的漫画');
       return;
     }
     AlertDialog.show({
       title: '确认删除',
-      message: `确定要删除选中的 ${this.selectedDiscoverMangaIds.size} 本漫画吗？\n\n此操作将删除漫画的所有数据和文件，且不可恢复。`,
+      message: `确定要删除选中的 ${this.discoverMangaMultiSelect.selectedIds.size} 本漫画吗？\n\n此操作将删除漫画的所有数据和文件，且不可恢复。`,
       autoCancel: true,
       alignment: DialogAlignment.Center,
       primaryButton: {
@@ -9395,12 +9602,13 @@ struct MainMenuPage {
   }
 
   private async batchDeleteDiscoverManga(): Promise<void> {
-    if (this.selectedDiscoverMangaIds.size === 0) {
+    if (this.discoverMangaMultiSelect.selectedIds.size === 0) {
       return;
     }
-    this.isDeletingManga = true;
+    this.discoverMangaMultiSelect.isDeleting = true;
+    this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
     try {
-      const mangaIds = Array.from(this.selectedDiscoverMangaIds);
+      const mangaIds = Array.from(this.discoverMangaMultiSelect.selectedIds);
       const result = await this.dataManager.deleteComics(mangaIds);
       if (result.failedCount > 0) {
         this.showToast(`删除完成，成功${result.successCount}个，失败${result.failedCount}个`);
@@ -9414,18 +9622,19 @@ struct MainMenuPage {
       logger.error(TAG, `发现页批量删除漫画失败: ${errorMessage}`);
       this.showToast('删除失败，请稍后重试');
     } finally {
-      this.isDeletingManga = false;
+      this.discoverMangaMultiSelect.isDeleting = false;
+      this.discoverMangaMultiSelect = this.discoverMangaMultiSelect;
     }
   }
 
   private showDiscoverEBookBatchDeleteConfirm(): void {
-    if (this.selectedDiscoverEBookIds.size === 0) {
+    if (this.discoverEBookMultiSelect.selectedIds.size === 0) {
       this.showToast('请选择要删除的电子书');
       return;
     }
     AlertDialog.show({
       title: '确认删除',
-      message: `确定要删除选中的 ${this.selectedDiscoverEBookIds.size} 本电子书吗？\n\n此操作将删除电子书的所有数据和文件，且不可恢复。`,
+      message: `确定要删除选中的 ${this.discoverEBookMultiSelect.selectedIds.size} 本电子书吗？\n\n此操作将删除电子书的所有数据和文件，且不可恢复。`,
       autoCancel: true,
       alignment: DialogAlignment.Center,
       primaryButton: {
@@ -9445,12 +9654,13 @@ struct MainMenuPage {
   }
 
   private async batchDeleteDiscoverEBooks(): Promise<void> {
-    if (this.selectedDiscoverEBookIds.size === 0) {
+    if (this.discoverEBookMultiSelect.selectedIds.size === 0) {
       return;
     }
-    this.isDeletingEBook = true;
+    this.discoverEBookMultiSelect.isDeleting = true;
+    this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
     try {
-      const ebookIds = Array.from(this.selectedDiscoverEBookIds);
+      const ebookIds = Array.from(this.discoverEBookMultiSelect.selectedIds);
       let successCount = 0;
       let failedCount = 0;
       for (const ebookId of ebookIds) {
@@ -9474,18 +9684,19 @@ struct MainMenuPage {
       logger.error(TAG, `发现页批量删除电子书失败: ${errorMessage}`);
       this.showToast('删除失败，请稍后重试');
     } finally {
-      this.isDeletingEBook = false;
+      this.discoverEBookMultiSelect.isDeleting = false;
+      this.discoverEBookMultiSelect = this.discoverEBookMultiSelect;
     }
   }
 
   private showDiscoverNovelBatchDeleteConfirm(): void {
-    if (this.selectedDiscoverNovelIds.size === 0) {
+    if (this.discoverNovelMultiSelect.selectedIds.size === 0) {
       this.showToast('请选择要删除的小说');
       return;
     }
     AlertDialog.show({
       title: '确认删除',
-      message: `确定要删除选中的 ${this.selectedDiscoverNovelIds.size} 本小说吗？\n\n此操作将删除小说的所有数据和文件，且不可恢复。`,
+      message: `确定要删除选中的 ${this.discoverNovelMultiSelect.selectedIds.size} 本小说吗？\n\n此操作将删除小说的所有数据和文件，且不可恢复。`,
       autoCancel: true,
       alignment: DialogAlignment.Center,
       primaryButton: {
@@ -9505,12 +9716,13 @@ struct MainMenuPage {
   }
 
   private async batchDeleteDiscoverNovels(): Promise<void> {
-    if (this.selectedDiscoverNovelIds.size === 0) {
+    if (this.discoverNovelMultiSelect.selectedIds.size === 0) {
       return;
     }
-    this.isDeletingNovel = true;
+    this.discoverNovelMultiSelect.isDeleting = true;
+    this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
     try {
-      const novelIds = Array.from(this.selectedDiscoverNovelIds);
+      const novelIds = Array.from(this.discoverNovelMultiSelect.selectedIds);
       let successCount = 0;
       let failedCount = 0;
       for (const novelId of novelIds) {
@@ -9534,7 +9746,8 @@ struct MainMenuPage {
       logger.error(TAG, `发现页批量删除小说失败: ${errorMessage}`);
       this.showToast('删除失败，请稍后重试');
     } finally {
-      this.isDeletingNovel = false;
+      this.discoverNovelMultiSelect.isDeleting = false;
+      this.discoverNovelMultiSelect = this.discoverNovelMultiSelect;
     }
   }
 
@@ -11174,7 +11387,7 @@ struct MainMenuPage {
         .width('100%')
 
         // 显示真实的阅读记录或空状态
-        if (this.isLoadingRecentReading) {
+        if (this.loadingState.recentReading) {
           // 加载中状态
           Row() {
             LoadingProgress()
@@ -11264,11 +11477,11 @@ struct MainMenuPage {
     Column() {
       if (this.isUnifiedLibraryMixedMultiSelectActive()) {
         this.buildLibraryMixedMultiSelectToolbar()
-      } else if (this.isMultiSelectMode) {
+      } else if (this.mangaMultiSelect.isActive) {
         this.buildMultiSelectToolbar()
-      } else if (this.isEBookMultiSelectMode) {
+      } else if (this.ebookMultiSelect.isActive) {
         this.buildEBookMultiSelectToolbar()
-      } else if (this.isNovelMultiSelectMode) {
+      } else if (this.novelMultiSelect.isActive) {
         this.buildNovelMultiSelectToolbar()
       }
     }
@@ -11437,7 +11650,7 @@ struct MainMenuPage {
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        Text(`已选择 ${this.selectedMangaIds.size} 项`)
+        Text(`已选择 ${this.mangaMultiSelect.selectedIds.size} 项`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
@@ -11497,8 +11710,8 @@ struct MainMenuPage {
       .onClick(() => {
         this.showBatchDeleteConfirm();
       })
-      .enabled(this.selectedMangaIds.size > 0)
-      .opacity(this.selectedMangaIds.size > 0 ? 1.0 : 0.5)
+      .enabled(this.mangaMultiSelect.selectedIds.size > 0)
+      .opacity(this.mangaMultiSelect.selectedIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
@@ -11551,7 +11764,7 @@ struct MainMenuPage {
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        Text(`已选择 ${this.selectedEBookIds.size} 项`)
+        Text(`已选择 ${this.ebookMultiSelect.selectedIds.size} 项`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
@@ -11611,8 +11824,8 @@ struct MainMenuPage {
       .onClick(() => {
         this.showEBookBatchDeleteConfirm();
       })
-      .enabled(this.selectedEBookIds.size > 0)
-      .opacity(this.selectedEBookIds.size > 0 ? 1.0 : 0.5)
+      .enabled(this.ebookMultiSelect.selectedIds.size > 0)
+      .opacity(this.ebookMultiSelect.selectedIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
@@ -11665,7 +11878,7 @@ struct MainMenuPage {
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        Text(`已选择 ${this.selectedNovelIds.size} 项`)
+        Text(`已选择 ${this.novelMultiSelect.selectedIds.size} 项`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
@@ -11725,8 +11938,8 @@ struct MainMenuPage {
       .onClick(() => {
         this.showNovelBatchDeleteConfirm();
       })
-      .enabled(this.selectedNovelIds.size > 0)
-      .opacity(this.selectedNovelIds.size > 0 ? 1.0 : 0.5)
+      .enabled(this.novelMultiSelect.selectedIds.size > 0)
+      .opacity(this.novelMultiSelect.selectedIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
@@ -11748,9 +11961,9 @@ struct MainMenuPage {
     Column() {
       if (this.isDiscoverMultiSelectMode) {
         this.buildDiscoverMangaMultiSelectToolbar()
-      } else if (this.selectedDiscoverEBookIds.size > 0) {
+      } else if (this.discoverEBookMultiSelect.selectedIds.size > 0) {
         this.buildDiscoverEBookMultiSelectToolbar()
-      } else if (this.selectedDiscoverNovelIds.size > 0) {
+      } else if (this.discoverNovelMultiSelect.selectedIds.size > 0) {
         this.buildDiscoverNovelMultiSelectToolbar()
       }
     }
@@ -11798,7 +12011,7 @@ struct MainMenuPage {
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        Text(`已选择 ${this.selectedDiscoverMangaIds.size} 项`)
+        Text(`已选择 ${this.discoverMangaMultiSelect.selectedIds.size} 项`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
@@ -11858,8 +12071,8 @@ struct MainMenuPage {
       .onClick(() => {
         this.showDiscoverMangaBatchDeleteConfirm();
       })
-      .enabled(this.selectedDiscoverMangaIds.size > 0)
-      .opacity(this.selectedDiscoverMangaIds.size > 0 ? 1.0 : 0.5)
+      .enabled(this.discoverMangaMultiSelect.selectedIds.size > 0)
+      .opacity(this.discoverMangaMultiSelect.selectedIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
@@ -11909,7 +12122,7 @@ struct MainMenuPage {
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        Text(`已选择 ${this.selectedDiscoverEBookIds.size} 项`)
+        Text(`已选择 ${this.discoverEBookMultiSelect.selectedIds.size} 项`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
@@ -11969,8 +12182,8 @@ struct MainMenuPage {
       .onClick(() => {
         this.showDiscoverEBookBatchDeleteConfirm();
       })
-      .enabled(this.selectedDiscoverEBookIds.size > 0)
-      .opacity(this.selectedDiscoverEBookIds.size > 0 ? 1.0 : 0.5)
+      .enabled(this.discoverEBookMultiSelect.selectedIds.size > 0)
+      .opacity(this.discoverEBookMultiSelect.selectedIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
@@ -12020,7 +12233,7 @@ struct MainMenuPage {
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        Text(`已选择 ${this.selectedDiscoverNovelIds.size} 项`)
+        Text(`已选择 ${this.discoverNovelMultiSelect.selectedIds.size} 项`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
@@ -12080,8 +12293,8 @@ struct MainMenuPage {
       .onClick(() => {
         this.showDiscoverNovelBatchDeleteConfirm();
       })
-      .enabled(this.selectedDiscoverNovelIds.size > 0)
-      .opacity(this.selectedDiscoverNovelIds.size > 0 ? 1.0 : 0.5)
+      .enabled(this.discoverNovelMultiSelect.selectedIds.size > 0)
+      .opacity(this.discoverNovelMultiSelect.selectedIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
@@ -12102,7 +12315,7 @@ struct MainMenuPage {
   private showBatchDeleteConfirmDialog(): void {
     this.getUIContext().showAlertDialog({
       title: '确认删除',
-      message: `您确定要删除选中的 ${this.selectedMangaIds.size} 部漫画吗？\n\n此操作将删除这些漫画的所有数据和文件，包括阅读进度、书签等，且不可恢复。`,
+      message: `您确定要删除选中的 ${this.mangaMultiSelect.selectedIds.size} 部漫画吗？\n\n此操作将删除这些漫画的所有数据和文件，包括阅读进度、书签等，且不可恢复。`,
       autoCancel: true,
       alignment: DialogAlignment.Center,
       primaryButton: {
@@ -12244,7 +12457,7 @@ struct MainMenuPage {
 
   @Builder
   buildLibraryDefaultExpandedContent() {
-    if (this.isLibraryDefaultViewLoading() && this.getLibraryDefaultMixedItems().length === 0) {
+    if (this.isLibraryDefaultViewLoading() && this.libraryDefaultMixedItems.length === 0) {
       Row({ space: 8 }) {
         LoadingProgress()
           .width(18)
@@ -12256,13 +12469,13 @@ struct MainMenuPage {
       }
       .width('100%')
       .padding({ left: 4, right: 4, top: 4, bottom: 4 })
-    } else if (this.getLibraryDefaultMixedItems().length === 0) {
+    } else if (this.libraryDefaultMixedItems.length === 0) {
       this.buildLibraryDefaultEmptyState(
         this.isLibraryDataCompletelyEmpty() ? '书库为空，先导入一些内容吧' : '当前筛选条件下没有匹配内容'
       )
     } else if (this.libraryViewMode === LibraryViewMode.LIST) {
       Column({ space: 12 }) {
-        ForEach(this.getLibraryDefaultMixedItems(), (item: ShelfMixedItem) => {
+        LazyForEach(this.libraryDefaultMixedDS, (item: ShelfMixedItem, index: number) => {
           Column() {
             this.buildLibraryDefaultMixedListCard(item)
           }
@@ -12277,7 +12490,7 @@ struct MainMenuPage {
     } else {
       Column({ space: 0 }) {
         Grid() {
-          ForEach(this.getLibraryDefaultMixedItems(), (item: ShelfMixedItem) => {
+          LazyForEach(this.libraryDefaultMixedDS, (item: ShelfMixedItem, index: number) => {
             GridItem() {
               this.buildLibraryDefaultMixedGridCard(item)
             }
@@ -12289,6 +12502,7 @@ struct MainMenuPage {
         .columnsGap(this.responsive_gridGap)
         .rowsGap(this.responsive_gridGap)
         .width('100%')
+        .cachedCount(10)
         .animation(this.getLibraryCollectionLayoutAnimationOptions())
         Blank().height(this.getLibraryDefaultBottomSpacerHeight())
       }
@@ -12745,9 +12959,9 @@ struct MainMenuPage {
           .width('100%')
           .height('100%')
 
-          if (this.isMultiSelectMode) {
+          if (this.mangaMultiSelect.isActive) {
             this.buildLibraryListSelectionOverlay(
-              this.selectedMangaIds.has(manga.id),
+              this.mangaMultiSelect.selectedIds.has(manga.id),
               this.getCoverImageRadius(),
               true,
               6
@@ -12811,7 +13025,7 @@ struct MainMenuPage {
         })
       }
       .onClick(() => {
-        if (this.isMultiSelectMode) {
+        if (this.mangaMultiSelect.isActive) {
           this.toggleMangaSelection(manga.id);
         }
       })
@@ -12822,8 +13036,8 @@ struct MainMenuPage {
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
       .border({
-        width: this.isMultiSelectMode ? (this.selectedMangaIds.has(manga.id) ? 1.5 : 1) : 0,
-        color: this.getLibraryListSelectionBorderColor(this.isMultiSelectMode, this.selectedMangaIds.has(manga.id))
+        width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 1.5 : 1) : 0,
+        color: this.getLibraryListSelectionBorderColor(this.mangaMultiSelect.isActive, this.mangaMultiSelect.selectedIds.has(manga.id))
       })
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
@@ -12831,20 +13045,20 @@ struct MainMenuPage {
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
-            if (!this.isMultiSelectMode) {
+            if (!this.mangaMultiSelect.isActive) {
               this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
             }
           })
       )
-      if (this.isMultiSelectMode) {
-        this.buildLibraryListSelectionOverlay(this.selectedMangaIds.has(manga.id), this.getGlassRadius(), false)
+      if (this.mangaMultiSelect.isActive) {
+        this.buildLibraryListSelectionOverlay(this.mangaMultiSelect.selectedIds.has(manga.id), this.getGlassRadius(), false)
       }
     }
     .width('100%')
     .height(140)
-      .bindPopup(this.showMangaContextMenu
-      && this.contextMenuManga?.id === manga.id
-      && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
+      .bindPopup(this.mangaContextMenu.show
+      && this.mangaContextMenu.item?.id === manga.id
+      && this.mangaContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
       builder: this.buildMangaCustomContextMenu(manga),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -14188,11 +14402,14 @@ struct MainMenuPage {
         setTimeout(() => {
           if (this.showCategoryDetail && this.selectedShelf !== null && this.selectedShelf.id === shelf.id) {
             this.dynamicShelfMatchedItems = this.getDynamicShelfMatchedItems(shelf);
+            this.updateCustomShelfMixedItems();
           }
         }, 140);
       } else {
         this.dynamicShelfMatchedItems = [];
       }
+      this.updateShelfDetailDS();
+      this.updateCustomShelfMixedItems();
     })
   }
 
@@ -14897,6 +15114,7 @@ struct MainMenuPage {
       this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
       this.customShelfSortType = 'add_desc';
       this.dynamicShelfMatchedItems = [];
+      this.updateShelfDetailDS();
     })
   }
 
@@ -14992,6 +15210,7 @@ struct MainMenuPage {
     .onClick(() => {
       // 先设置选中的分类ID，然后用动画展开详情
       this.selectedCategoryId = category.id;
+      this.updateCategoryFilteredLists();
       animateTo({
         duration: 300,
         curve: Curve.EaseOut
@@ -15391,19 +15610,19 @@ struct MainMenuPage {
     if (this.isPrivacyMode) {
       return;
     }
-    if (this.isRefreshingRemoteLibrary) {
+    if (this.loadingState.refreshingRemoteLibrary) {
       this.pendingRemoteLibraryRefresh = true;
       return;
     }
 
-    this.isRefreshingRemoteLibrary = true;
+    this.loadingState.refreshingRemoteLibrary = true;
     void this.remoteLibraryBridge.refreshAllLibraryManga().then((remoteMangaList: Manga[]) => {
       this.applyRemoteLibraryRefresh(remoteMangaList, enableCollectionLayoutAnimation);
       logger.info(TAG, `远程书库后台刷新完成: count=${remoteMangaList.length}`);
     }).catch((error: Error) => {
       logger.warn(TAG, `远程书库后台刷新失败: ${error.message}`);
     }).finally(() => {
-      this.isRefreshingRemoteLibrary = false;
+      this.loadingState.refreshingRemoteLibrary = false;
       if (this.pendingRemoteLibraryRefresh) {
         this.pendingRemoteLibraryRefresh = false;
         this.refreshRemoteLibraryInBackground(enableCollectionLayoutAnimation);
@@ -17145,8 +17364,8 @@ struct MainMenuPage {
    * 显示移动到书架对话框
    */
   private showMoveToShelf(itemId: string, contentType: ContentType): void {
-    this.movingToShelfItemId = itemId;
-    this.movingToShelfContentType = contentType;
+    this.moveState.toShelfItemId = itemId;
+    this.moveState.toShelfContentType = contentType;
     // 获取可用于移动的书架列表（只显示支持该内容类型的自定义书架）
     this.availableShelvesForMove = this.typeShelfManager.getShelvesForContentType(contentType);
     animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
@@ -17158,11 +17377,11 @@ struct MainMenuPage {
    * 执行移动到书架
    */
   private async moveItemToShelf(shelfId: string): Promise<void> {
-    if (!this.movingToShelfItemId) return;
+    if (!this.moveState.toShelfItemId) return;
 
     await this.typeShelfManager.moveItemToShelf(
-      this.movingToShelfItemId,
-      this.movingToShelfContentType,
+      this.moveState.toShelfItemId,
+      this.moveState.toShelfContentType,
       shelfId
     );
 
@@ -17173,7 +17392,7 @@ struct MainMenuPage {
       this.showMoveToShelfDialog = false;
     });
 
-    this.movingToShelfItemId = '';
+    this.moveState.toShelfItemId = '';
     const shelf = this.typeShelfManager.getShelf(shelfId);
     this.showToast(`已移动到「${shelf?.name || '书架'}」`);
   }
@@ -17243,9 +17462,9 @@ struct MainMenuPage {
    */
   @Builder
   buildShelfMangaList() {
-    if (this.getShelfFilteredMangaList().length > 0) {
+    if (this.shelfFilteredMangaList.length > 0) {
       Grid() {
-        ForEach(this.getShelfFilteredMangaList(), (manga: Manga) => {
+        LazyForEach(this.shelfMangaDS, (manga: Manga, index: number) => {
           GridItem() {
             this.buildMangaGridCard(manga, 'shelf_detail')
           }
@@ -17260,6 +17479,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
+      .cachedCount(10)
       .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       this.buildShelfEmptyState('没有漫画')
@@ -17267,26 +17487,23 @@ struct MainMenuPage {
   }
 
   /**
-   * 构建书架电子书列表（显示当前书架的所有电子书）
+   * 构建书架电子书列表（显示当前书架的所有电子书，含PDF）
    */
   @Builder
   buildShelfEBookList() {
-    if (this.getShelfFilteredEBookList().length > 0 || this.getShelfFilteredPdfEBookList().length > 0) {
+    if (this.shelfCombinedEBookList.length > 0) {
       Grid() {
-        ForEach(this.getShelfFilteredEBookList(), (ebook: EBook) => {
+        LazyForEach(this.shelfEBookDS, (item: ShelfMixedItem, index: number) => {
           GridItem() {
-            this.buildEBookGridCard(ebook, 'shelf_detail')
+            if (item.type === 'ebook') {
+              this.buildEBookGridCard(item.data as EBook, 'shelf_detail')
+            } else {
+              this.buildPdfEBookGridCard(item.data as Manga, 'shelf_detail')
+            }
           }
           .transition(this.getLibraryContentCollectionItemTransition())
           .animation(this.getLibraryCollectionLayoutAnimationOptions())
-        }, (ebook: EBook) => this.getLibraryContentRenderKey('shelf_ebook_grid', 'ebook', ebook.id))
-        ForEach(this.getShelfFilteredPdfEBookList(), (pdfEbook: Manga) => {
-          GridItem() {
-            this.buildPdfEBookGridCard(pdfEbook, 'shelf_detail')
-          }
-          .transition(this.getLibraryContentCollectionItemTransition())
-          .animation(this.getLibraryCollectionLayoutAnimationOptions())
-        }, (pdfEbook: Manga) => this.getLibraryContentRenderKey('shelf_pdfebook_grid', 'pdfebook', pdfEbook.id))
+        }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('shelf_ebook_grid', item.type, item.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
@@ -17295,6 +17512,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
+      .cachedCount(10)
       .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       this.buildShelfEmptyState('没有电子书')
@@ -17306,9 +17524,9 @@ struct MainMenuPage {
    */
   @Builder
   buildShelfNovelList() {
-    if (this.getShelfFilteredNovelList().length > 0) {
+    if (this.shelfFilteredNovelList.length > 0) {
       Grid() {
-        ForEach(this.getShelfFilteredNovelList(), (novel: NovelBook) => {
+        LazyForEach(this.shelfNovelDS, (novel: NovelBook, index: number) => {
           GridItem() {
             this.buildNovelGridCard(novel, 'shelf_detail')
           }
@@ -17323,6 +17541,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
+      .cachedCount(10)
       .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       this.buildShelfEmptyState('没有小说')
@@ -17521,6 +17740,7 @@ struct MainMenuPage {
             this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
             this.customShelfSelectedAuthors.clear();
             this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+            this.updateShelfDetailDS();
           })
         }
       }
@@ -17545,15 +17765,15 @@ struct MainMenuPage {
   buildCustomShelfSortMenu(): CustomBuilder {
     Menu() {
       MenuItem({ content: '按名称 A-Z' })
-        .onClick(() => { this.customShelfSortType = 'name_asc'; })
+        .onClick(() => { this.customShelfSortType = 'name_asc'; this.updateShelfDetailDS(); })
       MenuItem({ content: '按名称 Z-A' })
-        .onClick(() => { this.customShelfSortType = 'name_desc'; })
+        .onClick(() => { this.customShelfSortType = 'name_desc'; this.updateShelfDetailDS(); })
       MenuItem({ content: '最近阅读' })
-        .onClick(() => { this.customShelfSortType = 'recent'; })
+        .onClick(() => { this.customShelfSortType = 'recent'; this.updateShelfDetailDS(); })
       MenuItem({ content: '添加时间 最新' })
-        .onClick(() => { this.customShelfSortType = 'add_desc'; })
+        .onClick(() => { this.customShelfSortType = 'add_desc'; this.updateShelfDetailDS(); })
       MenuItem({ content: '添加时间 最旧' })
-        .onClick(() => { this.customShelfSortType = 'add_asc'; })
+        .onClick(() => { this.customShelfSortType = 'add_asc'; this.updateShelfDetailDS(); })
     }
   }
 
@@ -17621,6 +17841,7 @@ struct MainMenuPage {
                     this.customShelfSelectedTags.add(tag);
                   }
                   this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
+                  this.updateShelfDetailDS();
                 })
             }, (tag: string) => tag)
           }
@@ -17690,6 +17911,7 @@ struct MainMenuPage {
                     this.customShelfSelectedAuthors.add(author);
                   }
                   this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+                  this.updateShelfDetailDS();
                 })
             }, (author: string) => author)
           }
@@ -17714,9 +17936,9 @@ struct MainMenuPage {
    */
   @Builder
   buildCustomShelfMixedList() {
-    if (this.getCustomShelfMixedItems().length > 0) {
+    if (this.customShelfMixedDS.totalCount() > 0) {
       Grid() {
-        ForEach(this.getCustomShelfMixedItems(), (item: ShelfMixedItem) => {
+        LazyForEach(this.customShelfMixedDS, (item: ShelfMixedItem, index: number) => {
           GridItem() {
             if (item.type === 'manga') {
               this.buildMangaGridCard(item.data as Manga, 'shelf_detail')
@@ -17739,6 +17961,7 @@ struct MainMenuPage {
       .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
+      .cachedCount(10)
       .animation(this.getLibraryCollectionLayoutAnimationOptions())
     } else {
       this.buildShelfEmptyState('书架为空')
@@ -18302,10 +18525,7 @@ struct MainMenuPage {
   @Builder
   buildCategoryMangaList() {
     Grid() {
-      ForEach(this.filteredMangaList.filter((manga: Manga) => {
-        return this.categoryManager.isItemInCategory(manga.id, ContentType.MANGA, this.selectedCategoryId) ||
-          (this.selectedCategoryId === 'default' && this.categoryManager.getUncategorizedItemKey(manga.id, ContentType.MANGA));
-      }), (manga: Manga) => {
+      LazyForEach(this.categoryMangaDS, (manga: Manga, index: number) => {
         GridItem() {
           this.buildMangaGridCard(manga, 'category_grid')
         }
@@ -18316,6 +18536,7 @@ struct MainMenuPage {
     .columnsGap(this.responsive_gridGap)
     .width('100%')
     .padding(16)
+    .cachedCount(10)
   }
 
   /**
@@ -18324,10 +18545,7 @@ struct MainMenuPage {
   @Builder
   buildCategoryEBookList() {
     Grid() {
-      ForEach(this.filteredEbookList.filter((ebook: EBook) => {
-        return this.categoryManager.isItemInCategory(ebook.id, ContentType.EBOOK, this.selectedCategoryId) ||
-          (this.selectedCategoryId === 'default' && this.categoryManager.getUncategorizedItemKey(ebook.id, ContentType.EBOOK));
-      }), (ebook: EBook) => {
+      LazyForEach(this.categoryEbookDS, (ebook: EBook, index: number) => {
         GridItem() {
           this.buildEBookGridCard(ebook, 'category_grid')
         }
@@ -18338,6 +18556,7 @@ struct MainMenuPage {
     .columnsGap(this.responsive_gridGap)
     .width('100%')
     .padding(16)
+    .cachedCount(10)
   }
 
   /**
@@ -18346,10 +18565,7 @@ struct MainMenuPage {
   @Builder
   buildCategoryNovelList() {
     Grid() {
-      ForEach(this.filteredNovelList.filter((novel: NovelBook) => {
-        return this.categoryManager.isItemInCategory(novel.id, ContentType.NOVEL, this.selectedCategoryId) ||
-          (this.selectedCategoryId === 'default' && this.categoryManager.getUncategorizedItemKey(novel.id, ContentType.NOVEL));
-      }), (novel: NovelBook) => {
+      LazyForEach(this.categoryNovelDS, (novel: NovelBook, index: number) => {
         GridItem() {
           this.buildNovelGridCard(novel, 'category_grid')
         }
@@ -18360,6 +18576,7 @@ struct MainMenuPage {
     .columnsGap(this.responsive_gridGap)
     .width('100%')
     .padding(16)
+    .cachedCount(10)
   }
 
   /**
@@ -18402,6 +18619,7 @@ struct MainMenuPage {
           setTimeout(() => {
             this.showCategoryDetail = false;
             this.selectedCategoryId = '';
+            this.updateCategoryFilteredLists();
           }, 300);
         })
 
@@ -18659,12 +18877,12 @@ struct MainMenuPage {
               .borderRadius(8)
               .onClick(() => {
                 // 根据内容类型调用移动方法
-                if (this.movingContentType === 'ebook') {
-                  this.moveItemToCategory(this.movingEBookId, ContentType.EBOOK, category.id);
-                } else if (this.movingContentType === 'novel') {
-                  this.moveItemToCategory(this.movingNovelId, ContentType.NOVEL, category.id);
+                if (this.moveState.contentType === 'ebook') {
+                  this.moveItemToCategory(this.moveState.ebookId, ContentType.EBOOK, category.id);
+                } else if (this.moveState.contentType === 'novel') {
+                  this.moveItemToCategory(this.moveState.novelId, ContentType.NOVEL, category.id);
                 } else {
-                  this.moveItemToCategory(this.movingMangaId, ContentType.MANGA, category.id);
+                  this.moveItemToCategory(this.moveState.mangaId, ContentType.MANGA, category.id);
                 }
               })
             }, (category: BookshelfCategory) => category.id)
@@ -18685,10 +18903,10 @@ struct MainMenuPage {
             animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.showMoveToCategoryDialog = false;
             });
-            this.movingMangaId = '';
-            this.movingEBookId = '';
-            this.movingNovelId = '';
-            this.movingContentType = 'manga';
+            this.moveState.mangaId = '';
+            this.moveState.ebookId = '';
+            this.moveState.novelId = '';
+            this.moveState.contentType = 'manga';
           })
       }
       .width('85%')
@@ -18733,15 +18951,16 @@ struct MainMenuPage {
     } else if (contentType === ContentType.NOVEL) {
       this.filteredNovelList = this.filteredNovelList.slice();
     }
-    
+    this.updateAllCachedLists();
+
     animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.showMoveToCategoryDialog = false;
     });
     // 清除所有移动状态
-    this.movingMangaId = '';
-    this.movingEBookId = '';
-    this.movingNovelId = '';
-    this.movingContentType = 'manga';
+    this.moveState.mangaId = '';
+    this.moveState.ebookId = '';
+    this.moveState.novelId = '';
+    this.moveState.contentType = 'manga';
     logger.info(TAG, `已将 ${itemId} 移动到分类 ${categoryId}`);
   }
 
@@ -18800,10 +19019,7 @@ struct MainMenuPage {
     if (this.libraryContentType === LibraryContentType.MANGA) {
       // 显示该分类下的漫画
       Grid() {
-        ForEach(this.filteredMangaList.filter((manga: Manga) => {
-          return this.categoryManager.isItemInCategory(manga.id, ContentType.MANGA, this.selectedCategoryId) ||
-            (this.selectedCategoryId === 'default' && this.categoryManager.getUncategorizedItemKey(manga.id, ContentType.MANGA));
-        }), (manga: Manga) => {
+        LazyForEach(this.categoryMangaDS, (manga: Manga, index: number) => {
           GridItem() {
             this.buildMangaGridCard(manga, 'category_grid')
           }
@@ -18814,13 +19030,11 @@ struct MainMenuPage {
       .columnsGap(this.responsive_gridGap)
       .width('100%')
       .padding(16)
+      .cachedCount(10)
     } else if (this.libraryContentType === LibraryContentType.EBOOK) {
       // 显示该分类下的电子书
       Grid() {
-        ForEach(this.filteredEbookList.filter((ebook: EBook) => {
-          return this.categoryManager.isItemInCategory(ebook.id, ContentType.EBOOK, this.selectedCategoryId) ||
-            (this.selectedCategoryId === 'default' && this.categoryManager.getUncategorizedItemKey(ebook.id, ContentType.EBOOK));
-        }), (ebook: EBook) => {
+        LazyForEach(this.categoryEbookDS, (ebook: EBook, index: number) => {
           GridItem() {
             this.buildEBookGridCard(ebook, 'category_grid')
           }
@@ -18831,13 +19045,11 @@ struct MainMenuPage {
       .columnsGap(this.responsive_gridGap)
       .width('100%')
       .padding(16)
+      .cachedCount(10)
     } else {
       // 显示该分类下的小说
       Grid() {
-        ForEach(this.filteredNovelList.filter((novel: NovelBook) => {
-          return this.categoryManager.isItemInCategory(novel.id, ContentType.NOVEL, this.selectedCategoryId) ||
-            (this.selectedCategoryId === 'default' && this.categoryManager.getUncategorizedItemKey(novel.id, ContentType.NOVEL));
-        }), (novel: NovelBook) => {
+        LazyForEach(this.categoryNovelDS, (novel: NovelBook, index: number) => {
           GridItem() {
             this.buildNovelGridCard(novel, 'category_grid')
           }
@@ -18848,6 +19060,7 @@ struct MainMenuPage {
       .columnsGap(this.responsive_gridGap)
       .width('100%')
       .padding(16)
+      .cachedCount(10)
     }
   }
 
@@ -19260,9 +19473,9 @@ struct MainMenuPage {
       Stack() {
         this.buildLibraryDirectCoverSurface(
           this.resolveMangaCoverAsset(manga),
-          this.selectedMangaIds.has(manga.id),
-          this.isMultiSelectMode,
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMultiSelectMode ? '漫画' : '',
+          this.mangaMultiSelect.selectedIds.has(manga.id),
+          this.mangaMultiSelect.isActive,
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.mangaMultiSelect.isActive ? '漫画' : '',
           manga
         )
       }
@@ -19310,15 +19523,15 @@ struct MainMenuPage {
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
-      width: this.isMultiSelectMode ? (this.selectedMangaIds.has(manga.id) ? 2 : 1) : 0,
-      color: this.selectedMangaIds.has(manga.id)
+      width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      color: this.mangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.isMultiSelectMode) {
+      if (this.mangaMultiSelect.isActive) {
         this.toggleMangaSelection(manga.id);
       } else {
         this.handleLibraryMangaCoverClick(manga, `library_manga_${manga.id}`);
@@ -19327,14 +19540,14 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.isMultiSelectMode) {
+          if (!this.mangaMultiSelect.isActive) {
             this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
           }
         })
     )
-    .bindPopup(this.showMangaContextMenu
-      && this.contextMenuManga?.id === manga.id
-      && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
+    .bindPopup(this.mangaContextMenu.show
+      && this.mangaContextMenu.item?.id === manga.id
+      && this.mangaContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
       builder: this.buildMangaCustomContextMenu(manga),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -19354,9 +19567,9 @@ struct MainMenuPage {
       Stack() {
         this.buildLibraryDirectCoverSurface(
           this.resolveEBookCoverAsset(ebook),
-          this.selectedEBookIds.has(ebook.id),
-          this.isEBookMultiSelectMode,
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isEBookMultiSelectMode ? '电子书' : ''
+          this.ebookMultiSelect.selectedIds.has(ebook.id),
+          this.ebookMultiSelect.isActive,
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.ebookMultiSelect.isActive ? '电子书' : ''
         )
       }
       .width('100%')
@@ -19403,15 +19616,15 @@ struct MainMenuPage {
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
-      width: this.isEBookMultiSelectMode ? (this.selectedEBookIds.has(ebook.id) ? 2 : 1) : 0,
-      color: this.selectedEBookIds.has(ebook.id)
+      width: this.ebookMultiSelect.isActive ? (this.ebookMultiSelect.selectedIds.has(ebook.id) ? 2 : 1) : 0,
+      color: this.ebookMultiSelect.selectedIds.has(ebook.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.isEBookMultiSelectMode) {
+      if (this.ebookMultiSelect.isActive) {
         this.toggleEBookSelection(ebook.id);
       } else {
         this.handleLibraryEBookCoverClick(ebook, `cover_ebook_grid_${ebook.id}`);
@@ -19420,14 +19633,14 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.isEBookMultiSelectMode) {
+          if (!this.ebookMultiSelect.isActive) {
             this.showEBookActionMenu(ebook, this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id));
           }
         })
     )
-    .bindPopup(this.showEBookContextMenu
-      && this.contextMenuEBook?.id === ebook.id
-      && this.ebookContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id), {
+    .bindPopup(this.ebookContextMenu.show
+      && this.ebookContextMenu.item?.id === ebook.id
+      && this.ebookContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id), {
       builder: this.buildEBookCustomContextMenu(ebook),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -19447,9 +19660,9 @@ struct MainMenuPage {
       Stack() {
         this.buildLibraryDirectCoverSurface(
           this.resolveNovelCoverAsset(novel),
-          this.selectedNovelIds.has(novel.id),
-          this.isNovelMultiSelectMode,
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isNovelMultiSelectMode
+          this.novelMultiSelect.selectedIds.has(novel.id),
+          this.novelMultiSelect.isActive,
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.novelMultiSelect.isActive
             ? this.getNovelCoverTypeMarker(novel)
             : ''
         )
@@ -19498,15 +19711,15 @@ struct MainMenuPage {
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
-      width: this.isNovelMultiSelectMode ? (this.selectedNovelIds.has(novel.id) ? 2 : 1) : 0,
-      color: this.selectedNovelIds.has(novel.id)
+      width: this.novelMultiSelect.isActive ? (this.novelMultiSelect.selectedIds.has(novel.id) ? 2 : 1) : 0,
+      color: this.novelMultiSelect.selectedIds.has(novel.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.isNovelMultiSelectMode) {
+      if (this.novelMultiSelect.isActive) {
         this.toggleNovelSelection(novel.id);
       } else {
         this.handleLibraryNovelCoverClick(novel, `library_novel_${novel.id}`);
@@ -19515,14 +19728,14 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.isNovelMultiSelectMode) {
+          if (!this.novelMultiSelect.isActive) {
             this.showNovelActionMenu(novel, this.getPopupAnchorKey(anchorScope, 'novel', novel.id));
           }
         })
     )
-    .bindPopup(this.showNovelContextMenu
-      && this.contextMenuNovel?.id === novel.id
-      && this.novelContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'novel', novel.id), {
+    .bindPopup(this.novelContextMenu.show
+      && this.novelContextMenu.item?.id === novel.id
+      && this.novelContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'novel', novel.id), {
       builder: this.buildNovelCustomContextMenu(novel),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -19542,9 +19755,9 @@ struct MainMenuPage {
       Stack() {
         this.buildLibraryDirectCoverSurface(
           this.resolvePdfEBookCoverAsset(manga),
-          this.selectedMangaIds.has(manga.id),
-          this.isMultiSelectMode,
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMultiSelectMode ? '电子书' : ''
+          this.mangaMultiSelect.selectedIds.has(manga.id),
+          this.mangaMultiSelect.isActive,
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.mangaMultiSelect.isActive ? '电子书' : ''
         )
       }
       .width('100%')
@@ -19588,15 +19801,15 @@ struct MainMenuPage {
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
-      width: this.isMultiSelectMode ? (this.selectedMangaIds.has(manga.id) ? 2 : 1) : 0,
-      color: this.selectedMangaIds.has(manga.id)
+      width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      color: this.mangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.isMultiSelectMode) {
+      if (this.mangaMultiSelect.isActive) {
         this.toggleMangaSelection(manga.id);
       } else {
         this.handleLibraryMangaCoverClick(manga, `cover_pdf_ebook_grid_${manga.id}`);
@@ -19605,14 +19818,14 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.isMultiSelectMode) {
+          if (!this.mangaMultiSelect.isActive) {
             this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
           }
         })
     )
-    .bindPopup(this.showMangaContextMenu
-      && this.contextMenuManga?.id === manga.id
-      && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
+    .bindPopup(this.mangaContextMenu.show
+      && this.mangaContextMenu.item?.id === manga.id
+      && this.mangaContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
       builder: this.buildMangaCustomContextMenu(manga),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -19683,17 +19896,17 @@ struct MainMenuPage {
             .id(`library_manga_${manga.id}`)
         }
 
-        if (!this.isMultiSelectMode && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+        if (!this.mangaMultiSelect.isActive && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
           this.buildLibraryCoverTypeMarkerOverlay('漫画')
         }
 
         // 多选模式蒙版层
-        if (this.isMultiSelectMode) {
+        if (this.mangaMultiSelect.isActive) {
           // 半透明蒙版（未选中时较浅，选中时较深）
           Column()
             .width('100%')
             .height('100%')
-            .backgroundColor(this.selectedMangaIds.has(manga.id) 
+            .backgroundColor(this.mangaMultiSelect.selectedIds.has(manga.id) 
               ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
               : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
             .borderRadius(this.getCoverImageRadius())
@@ -19711,23 +19924,23 @@ struct MainMenuPage {
               Circle()
                 .width(28)
                 .height(28)
-                .fill(this.selectedMangaIds.has(manga.id)
+                .fill(this.mangaMultiSelect.selectedIds.has(manga.id)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                   : AppColors.withAlpha(ColorRole.SHADOW, 0.5))
-                .stroke(this.selectedMangaIds.has(manga.id)
+                .stroke(this.mangaMultiSelect.selectedIds.has(manga.id)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                   : '#FFFFFF')
                 .strokeWidth(2)
                 .animation({ duration: 200, curve: Curve.EaseOut })
               
               // 勾选图标（仅选中时显示）
-              if (this.selectedMangaIds.has(manga.id)) {
+              if (this.mangaMultiSelect.selectedIds.has(manga.id)) {
                 SymbolGlyph($r('sys.symbol.checkmark'))
                   .fontSize(16)
                   .fontColor(['#FFFFFF'])
               }
             }
-            .scale({ x: this.selectedMangaIds.has(manga.id) ? 1.0 : 0.9, y: this.selectedMangaIds.has(manga.id) ? 1.0 : 0.9 })
+            .scale({ x: this.mangaMultiSelect.selectedIds.has(manga.id) ? 1.0 : 0.9, y: this.mangaMultiSelect.selectedIds.has(manga.id) ? 1.0 : 0.9 })
             .animation({ duration: 200, curve: Curve.EaseOut })
           }
           .width('100%')
@@ -19797,28 +20010,28 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .border({
-      width: this.isMultiSelectMode ? (this.selectedMangaIds.has(manga.id) ? 2 : 1) : 0,
-      color: this.selectedMangaIds.has(manga.id)
+      width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      color: this.mangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.isMultiSelectMode) {
+      if (this.mangaMultiSelect.isActive) {
         this.toggleMangaSelection(manga.id);
       }
     })
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.isMultiSelectMode) {
+          if (!this.mangaMultiSelect.isActive) {
             this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
           }
         })
     )
-    .bindPopup(this.showMangaContextMenu
-      && this.contextMenuManga?.id === manga.id
-      && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
+    .bindPopup(this.mangaContextMenu.show
+      && this.mangaContextMenu.item?.id === manga.id
+      && this.mangaContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
       builder: this.buildMangaCustomContextMenu(manga),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -19872,7 +20085,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const mangaToMove = this.contextMenuManga;
+        const mangaToMove = this.mangaContextMenu.item;
         this.hideMangaContextMenu();
         if (mangaToMove) {
           this.showMoveToShelf(mangaToMove.id, ContentType.MANGA);
@@ -19915,7 +20128,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const mangaToToggle = this.contextMenuManga;
+        const mangaToToggle = this.mangaContextMenu.item;
         this.hideMangaContextMenu();
         if (mangaToToggle) {
           this.toggleMangaPrivacy(mangaToToggle.id, !this.isPrivacyMode);
@@ -19958,9 +20171,9 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const mangaToSelect = this.contextMenuManga;
+        const mangaToSelect = this.mangaContextMenu.item;
         this.hideMangaContextMenu();
-        if (mangaToSelect && !this.isMultiSelectMode) {
+        if (mangaToSelect && !this.mangaMultiSelect.isActive) {
           this.runAfterLibraryContextMenuDismissed(() => {
             this.enterMultiSelectMode(mangaToSelect.id);
           });
@@ -20003,7 +20216,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const mangaToDelete = this.contextMenuManga;
+        const mangaToDelete = this.mangaContextMenu.item;
         this.hideMangaContextMenu();
         if (mangaToDelete) {
           this.showDeleteMangaDialog(mangaToDelete.id);
@@ -20022,7 +20235,7 @@ struct MainMenuPage {
     Menu() {
       MenuItem({ content: '移动到分类' })
         .onClick(() => {
-          this.movingMangaId = manga.id;
+          this.moveState.mangaId = manga.id;
           this.showMoveToCategoryDialog = true;
         })
       if (!this.isPrivacyMode) {
@@ -20038,7 +20251,7 @@ struct MainMenuPage {
       }
       MenuItem({ content: '进入多选模式' })
         .onClick(() => {
-          if (!this.isMultiSelectMode) {
+          if (!this.mangaMultiSelect.isActive) {
             this.enterMultiSelectMode(manga.id);
           }
         })
@@ -20057,8 +20270,8 @@ struct MainMenuPage {
     Menu() {
       MenuItem({ content: '移动到分类' })
         .onClick(() => {
-          this.movingEBookId = ebook.id;
-          this.movingContentType = 'ebook';
+          this.moveState.ebookId = ebook.id;
+          this.moveState.contentType = 'ebook';
           animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
             this.showMoveToCategoryDialog = true;
           });
@@ -20076,7 +20289,7 @@ struct MainMenuPage {
       }
       MenuItem({ content: '进入多选模式' })
         .onClick(() => {
-          if (!this.isEBookMultiSelectMode) {
+          if (!this.ebookMultiSelect.isActive) {
             this.enterEBookMultiSelectMode(ebook.id);
           }
         })
@@ -20095,8 +20308,8 @@ struct MainMenuPage {
     Menu() {
       MenuItem({ content: '移动到分类' })
         .onClick(() => {
-          this.movingNovelId = novel.id;
-          this.movingContentType = 'novel';
+          this.moveState.novelId = novel.id;
+          this.moveState.contentType = 'novel';
           animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
             this.showMoveToCategoryDialog = true;
           });
@@ -20114,7 +20327,7 @@ struct MainMenuPage {
       }
       MenuItem({ content: '进入多选模式' })
         .onClick(() => {
-          if (!this.isNovelMultiSelectMode) {
+          if (!this.novelMultiSelect.isActive) {
             this.enterNovelMultiSelectMode(novel.id);
           }
         })
@@ -20164,7 +20377,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const ebookToMove = this.contextMenuEBook;
+        const ebookToMove = this.ebookContextMenu.item;
         this.hideEBookContextMenu();
         if (ebookToMove) {
           this.showMoveToShelf(ebookToMove.id, ContentType.EBOOK);
@@ -20207,7 +20420,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const ebookToToggle = this.contextMenuEBook;
+        const ebookToToggle = this.ebookContextMenu.item;
         this.hideEBookContextMenu();
         if (ebookToToggle) {
           this.toggleEBookPrivacy(ebookToToggle.id, !this.isPrivacyMode);
@@ -20250,9 +20463,9 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const ebookToSelect = this.contextMenuEBook;
+        const ebookToSelect = this.ebookContextMenu.item;
         this.hideEBookContextMenu();
-        if (ebookToSelect && !this.isEBookMultiSelectMode) {
+        if (ebookToSelect && !this.ebookMultiSelect.isActive) {
           this.runAfterLibraryContextMenuDismissed(() => {
             this.enterEBookMultiSelectMode(ebookToSelect.id);
           });
@@ -20295,7 +20508,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const ebookToDelete = this.contextMenuEBook;
+        const ebookToDelete = this.ebookContextMenu.item;
         this.hideEBookContextMenu();
         if (ebookToDelete) {
           this.showDeleteEBookDialog(ebookToDelete.id);
@@ -20345,7 +20558,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const novelToMove = this.contextMenuNovel;
+        const novelToMove = this.novelContextMenu.item;
         this.hideNovelContextMenu();
         if (novelToMove) {
           this.showMoveToShelf(novelToMove.id, ContentType.NOVEL);
@@ -20388,7 +20601,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const novelToToggle = this.contextMenuNovel;
+        const novelToToggle = this.novelContextMenu.item;
         this.hideNovelContextMenu();
         if (novelToToggle) {
           this.toggleNovelPrivacy(novelToToggle.id, !this.isPrivacyMode);
@@ -20431,9 +20644,9 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const novelToSelect = this.contextMenuNovel;
+        const novelToSelect = this.novelContextMenu.item;
         this.hideNovelContextMenu();
-        if (novelToSelect && !this.isNovelMultiSelectMode) {
+        if (novelToSelect && !this.novelMultiSelect.isActive) {
           this.runAfterLibraryContextMenuDismissed(() => {
             this.enterNovelMultiSelectMode(novelToSelect.id);
           });
@@ -20476,7 +20689,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const novelToDelete = this.contextMenuNovel;
+        const novelToDelete = this.novelContextMenu.item;
         this.hideNovelContextMenu();
         if (novelToDelete) {
           this.showDeleteNovelDialog(novelToDelete.id);
@@ -20525,7 +20738,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const mangaToSelect = this.contextMenuDiscoverManga;
+        const mangaToSelect = this.discoverMangaContextMenu.item;
         this.hideDiscoverMangaContextMenu();
         if (mangaToSelect && !this.isDiscoverMultiSelectMode) {
           setTimeout(() => {
@@ -20570,7 +20783,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const mangaToDelete = this.contextMenuDiscoverManga;
+        const mangaToDelete = this.discoverMangaContextMenu.item;
         this.hideDiscoverMangaContextMenu();
         if (mangaToDelete) {
           this.showDiscoverMangaDeleteDialog(mangaToDelete);
@@ -20617,9 +20830,9 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const novelToSelect = this.contextMenuDiscoverNovel;
+        const novelToSelect = this.discoverNovelContextMenu.item;
         this.hideDiscoverNovelContextMenu();
-        if (novelToSelect && !this.selectedDiscoverNovelIds.size) {
+        if (novelToSelect && !this.discoverNovelMultiSelect.selectedIds.size) {
           setTimeout(() => {
             this.enterDiscoverNovelMultiSelectMode(novelToSelect.id);
           }, 80);
@@ -20662,7 +20875,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const novelToDelete = this.contextMenuDiscoverNovel;
+        const novelToDelete = this.discoverNovelContextMenu.item;
         this.hideDiscoverNovelContextMenu();
         if (novelToDelete) {
           this.showDiscoverNovelDeleteDialog(novelToDelete);
@@ -20709,9 +20922,9 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const ebookToSelect = this.contextMenuDiscoverEBook;
+        const ebookToSelect = this.discoverEBookContextMenu.item;
         this.hideDiscoverEBookContextMenu();
-        if (ebookToSelect && !this.selectedDiscoverEBookIds.size) {
+        if (ebookToSelect && !this.discoverEBookMultiSelect.selectedIds.size) {
           setTimeout(() => {
             this.enterDiscoverEBookMultiSelectMode(ebookToSelect.id);
           }, 80);
@@ -20754,7 +20967,7 @@ struct MainMenuPage {
       })
       .clip(true)
       .onClick(() => {
-        const ebookToDelete = this.contextMenuDiscoverEBook;
+        const ebookToDelete = this.discoverEBookContextMenu.item;
         this.hideDiscoverEBookContextMenu();
         if (ebookToDelete) {
           this.showDiscoverEBookDeleteDialog(ebookToDelete);
@@ -20912,8 +21125,8 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .border({
-      width: this.isDiscoverMultiSelectMode ? (this.selectedDiscoverMangaIds.has(manga.id) ? 2 : 1) : 0,
-      color: this.selectedDiscoverMangaIds.has(manga.id)
+      width: this.isDiscoverMultiSelectMode ? (this.discoverMangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      color: this.discoverMangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
@@ -20936,8 +21149,8 @@ struct MainMenuPage {
         })
     )
     .bindPopup(
-      this.showDiscoverMangaContextMenu && this.contextMenuDiscoverManga?.id === manga.id
-        && this.discoverMangaContextMenuAnchorKey === this.getPopupAnchorKey('discover_grid', 'manga', manga.id), {
+      this.discoverMangaContextMenu.show && this.discoverMangaContextMenu.item?.id === manga.id
+        && this.discoverMangaContextMenu.anchorKey === this.getPopupAnchorKey('discover_grid', 'manga', manga.id), {
         builder: this.buildDiscoverMangaCustomContextMenu(manga),
         placement: Placement.Bottom,
         popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -21019,15 +21232,15 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .border({
-      width: this.selectedDiscoverNovelIds.size > 0 ? (this.selectedDiscoverNovelIds.has(novel.id) ? 2 : 1) : 0,
-      color: this.selectedDiscoverNovelIds.has(novel.id)
+      width: this.discoverNovelMultiSelect.selectedIds.size > 0 ? (this.discoverNovelMultiSelect.selectedIds.has(novel.id) ? 2 : 1) : 0,
+      color: this.discoverNovelMultiSelect.selectedIds.has(novel.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.selectedDiscoverNovelIds.size > 0) {
+      if (this.discoverNovelMultiSelect.selectedIds.size > 0) {
         this.toggleDiscoverNovelSelection(novel.id);
       } else {
         this.openNovelDetail(novel);
@@ -21043,8 +21256,8 @@ struct MainMenuPage {
         })
     )
     .bindPopup(
-      this.showDiscoverNovelContextMenu && this.contextMenuDiscoverNovel?.id === novel.id
-        && this.discoverNovelContextMenuAnchorKey === this.getPopupAnchorKey('discover_grid', 'novel', novel.id), {
+      this.discoverNovelContextMenu.show && this.discoverNovelContextMenu.item?.id === novel.id
+        && this.discoverNovelContextMenu.anchorKey === this.getPopupAnchorKey('discover_grid', 'novel', novel.id), {
         builder: this.buildDiscoverNovelCustomContextMenu(novel),
         placement: Placement.Bottom,
         popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -21121,15 +21334,15 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .border({
-      width: this.selectedDiscoverEBookIds.size > 0 ? (this.selectedDiscoverEBookIds.has(ebook.id) ? 2 : 1) : 0,
-      color: this.selectedDiscoverEBookIds.has(ebook.id)
+      width: this.discoverEBookMultiSelect.selectedIds.size > 0 ? (this.discoverEBookMultiSelect.selectedIds.has(ebook.id) ? 2 : 1) : 0,
+      color: this.discoverEBookMultiSelect.selectedIds.has(ebook.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.selectedDiscoverEBookIds.size > 0) {
+      if (this.discoverEBookMultiSelect.selectedIds.size > 0) {
         this.toggleDiscoverEBookSelection(ebook.id);
       } else {
         this.openEBookDetail(ebook);
@@ -21145,8 +21358,8 @@ struct MainMenuPage {
         })
     )
     .bindPopup(
-      this.showDiscoverEBookContextMenu && this.contextMenuDiscoverEBook?.id === ebook.id
-        && this.discoverEBookContextMenuAnchorKey === this.getPopupAnchorKey('discover_grid', 'ebook', ebook.id), {
+      this.discoverEBookContextMenu.show && this.discoverEBookContextMenu.item?.id === ebook.id
+        && this.discoverEBookContextMenu.anchorKey === this.getPopupAnchorKey('discover_grid', 'ebook', ebook.id), {
         builder: this.buildDiscoverEBookCustomContextMenu(ebook),
         placement: Placement.Bottom,
         popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -21198,9 +21411,9 @@ struct MainMenuPage {
           .width('100%')
           .height('100%')
 
-          if (this.isEBookMultiSelectMode) {
+          if (this.ebookMultiSelect.isActive) {
             this.buildLibraryListSelectionOverlay(
-              this.selectedEBookIds.has(ebook.id),
+              this.ebookMultiSelect.selectedIds.has(ebook.id),
               this.getCoverImageRadius(),
               true,
               6
@@ -21276,7 +21489,7 @@ struct MainMenuPage {
         })
       }
       .onClick(() => {
-        if (this.isEBookMultiSelectMode) {
+        if (this.ebookMultiSelect.isActive) {
           this.toggleEBookSelection(ebook.id);
         }
       })
@@ -21287,8 +21500,8 @@ struct MainMenuPage {
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
       .border({
-        width: this.isEBookMultiSelectMode ? (this.selectedEBookIds.has(ebook.id) ? 1.5 : 1) : 0,
-        color: this.getLibraryListSelectionBorderColor(this.isEBookMultiSelectMode, this.selectedEBookIds.has(ebook.id))
+        width: this.ebookMultiSelect.isActive ? (this.ebookMultiSelect.selectedIds.has(ebook.id) ? 1.5 : 1) : 0,
+        color: this.getLibraryListSelectionBorderColor(this.ebookMultiSelect.isActive, this.ebookMultiSelect.selectedIds.has(ebook.id))
       })
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
@@ -21296,20 +21509,20 @@ struct MainMenuPage {
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
-            if (!this.isEBookMultiSelectMode) {
+            if (!this.ebookMultiSelect.isActive) {
               this.showEBookActionMenu(ebook, this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id));
             }
           })
       )
-      if (this.isEBookMultiSelectMode) {
-        this.buildLibraryListSelectionOverlay(this.selectedEBookIds.has(ebook.id), this.getGlassRadius(), false)
+      if (this.ebookMultiSelect.isActive) {
+        this.buildLibraryListSelectionOverlay(this.ebookMultiSelect.selectedIds.has(ebook.id), this.getGlassRadius(), false)
       }
     }
     .width('100%')
     .height(140)
-    .bindPopup(this.showEBookContextMenu
-      && this.contextMenuEBook?.id === ebook.id
-      && this.ebookContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id), {
+    .bindPopup(this.ebookContextMenu.show
+      && this.ebookContextMenu.item?.id === ebook.id
+      && this.ebookContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id), {
       builder: this.buildEBookCustomContextMenu(ebook),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -21800,7 +22013,7 @@ struct MainMenuPage {
   }
 
   private handleLibraryMangaCoverClick(manga: Manga, coverComponentId: string): void {
-    if (this.isMultiSelectMode) {
+    if (this.mangaMultiSelect.isActive) {
       return;
     }
     if (this.hasActiveLibraryMultiSelectMode()) {
@@ -21814,7 +22027,7 @@ struct MainMenuPage {
   }
 
   private handleLibraryMangaTitleClick(manga: Manga): void {
-    if (this.isMultiSelectMode) {
+    if (this.mangaMultiSelect.isActive) {
       return;
     }
     if (this.hasActiveLibraryMultiSelectMode()) {
@@ -21824,7 +22037,7 @@ struct MainMenuPage {
   }
 
   private handleLibraryEBookCoverClick(ebook: EBook, coverComponentId: string): void {
-    if (this.isEBookMultiSelectMode) {
+    if (this.ebookMultiSelect.isActive) {
       return;
     }
     if (this.hasActiveLibraryMultiSelectMode()) {
@@ -21838,7 +22051,7 @@ struct MainMenuPage {
   }
 
   private handleLibraryEBookTitleClick(ebook: EBook): void {
-    if (this.isEBookMultiSelectMode) {
+    if (this.ebookMultiSelect.isActive) {
       return;
     }
     if (this.hasActiveLibraryMultiSelectMode()) {
@@ -21848,7 +22061,7 @@ struct MainMenuPage {
   }
 
   private handleLibraryNovelCoverClick(novel: NovelBook, coverComponentId: string): void {
-    if (this.isNovelMultiSelectMode) {
+    if (this.novelMultiSelect.isActive) {
       return;
     }
     if (this.hasActiveLibraryMultiSelectMode()) {
@@ -21862,7 +22075,7 @@ struct MainMenuPage {
   }
 
   private handleLibraryNovelTitleClick(novel: NovelBook): void {
-    if (this.isNovelMultiSelectMode) {
+    if (this.novelMultiSelect.isActive) {
       return;
     }
     if (this.hasActiveLibraryMultiSelectMode()) {
@@ -22056,25 +22269,28 @@ struct MainMenuPage {
 
   // ==================== 左滑删除：辅助方法与确认弹窗 ====================
   private activateSwipeFor(mangaId: string): void {
-    if (this.isMultiSelectMode) { return; }
-    this.activeSwipeId = mangaId;
-    this.isSwipeActive = true;
-    this.swipeOffset = 0;
+    if (this.mangaMultiSelect.isActive) { return; }
+    this.mangaSwipe.activeId = mangaId;
+    this.mangaSwipe.isActive = true;
+    this.mangaSwipe.offset = 0;
+    this.mangaSwipe = this.mangaSwipe;
     logger.info(TAG, `长按激活左滑删除: ${mangaId}`);
   }
 
   private updateSwipeOffset(mangaId: string, event: GestureEvent): void {
-    if (!this.isSwipeActive || this.activeSwipeId !== mangaId) { return; }
+    if (!this.mangaSwipe.isActive || this.mangaSwipe.activeId !== mangaId) { return; }
     const deltaX: number = -event.offsetX; // 左滑为负，取反为正进度
     const maxHintWidth: number = 120;
     const newOffset: number = Math.max(0, deltaX);
-    this.swipeOffset = Math.min(newOffset, maxHintWidth);
+    this.mangaSwipe.offset = Math.min(newOffset, maxHintWidth);
+    this.mangaSwipe = this.mangaSwipe;
   }
 
   private endSwipe(mangaId: string): void {
-    if (!this.isSwipeActive || this.activeSwipeId !== mangaId) { return; }
-    const reached: boolean = this.swipeOffset >= this.swipeThreshold;
-    this.isSwipeActive = false;
+    if (!this.mangaSwipe.isActive || this.mangaSwipe.activeId !== mangaId) { return; }
+    const reached: boolean = this.mangaSwipe.offset >= this.mangaSwipe.threshold;
+    this.mangaSwipe.isActive = false;
+    this.mangaSwipe = this.mangaSwipe;
     if (reached) {
       logger.info(TAG, `达到删除阈值，显示删除确认对话框: ${mangaId}`);
       this.showDeleteMangaDialog(mangaId);
@@ -22085,9 +22301,10 @@ struct MainMenuPage {
   }
 
   private resetSwipeState(): void {
-    this.activeSwipeId = '';
-    this.isSwipeActive = false;
-    this.swipeOffset = 0;
+    this.mangaSwipe.activeId = '';
+    this.mangaSwipe.isActive = false;
+    this.mangaSwipe.offset = 0;
+    this.mangaSwipe = this.mangaSwipe;
   }
 
   private getLibraryFilesDir(): string {
@@ -22114,11 +22331,11 @@ struct MainMenuPage {
   }
 
   private getItemSwipeOffset(mangaId: string): number {
-    return (this.activeSwipeId === mangaId && this.isSwipeActive) ? this.swipeOffset : 0;
+    return (this.mangaSwipe.activeId === mangaId && this.mangaSwipe.isActive) ? this.mangaSwipe.offset : 0;
   }
 
   private getSwipeProgressText(mangaId: string): string {
-    const progress: number = this.activeSwipeId === mangaId ? Math.min(100, Math.floor((this.getItemSwipeOffset(mangaId) / this.swipeThreshold) * 100)) : 0;
+    const progress: number = this.mangaSwipe.activeId === mangaId ? Math.min(100, Math.floor((this.getItemSwipeOffset(mangaId) / this.mangaSwipe.threshold) * 100)) : 0;
     return progress >= 100 ? '释放删除' : `左滑 ${progress}%`;
   }
 
@@ -22227,25 +22444,28 @@ struct MainMenuPage {
 
   // ==================== 电子书左滑删除：辅助方法与确认弹窗 ====================
   private activateEBookSwipeFor(ebookId: string): void {
-    if (this.isEBookMultiSelectMode) { return; }
-    this.activeEBookSwipeId = ebookId;
-    this.isEBookSwipeActive = true;
-    this.ebookSwipeOffset = 0;
+    if (this.ebookMultiSelect.isActive) { return; }
+    this.ebookSwipe.activeId = ebookId;
+    this.ebookSwipe.isActive = true;
+    this.ebookSwipe.offset = 0;
+    this.ebookSwipe = this.ebookSwipe;
     logger.info(TAG, `长按激活电子书左滑删除: ${ebookId}`);
   }
 
   private updateEBookSwipeOffset(ebookId: string, event: GestureEvent): void {
-    if (!this.isEBookSwipeActive || this.activeEBookSwipeId !== ebookId) { return; }
+    if (!this.ebookSwipe.isActive || this.ebookSwipe.activeId !== ebookId) { return; }
     const deltaX: number = -event.offsetX;
     const maxHintWidth: number = 120;
     const newOffset: number = Math.max(0, deltaX);
-    this.ebookSwipeOffset = Math.min(newOffset, maxHintWidth);
+    this.ebookSwipe.offset = Math.min(newOffset, maxHintWidth);
+    this.ebookSwipe = this.ebookSwipe;
   }
 
   private endEBookSwipe(ebookId: string): void {
-    if (!this.isEBookSwipeActive || this.activeEBookSwipeId !== ebookId) { return; }
-    const reached: boolean = this.ebookSwipeOffset >= this.swipeThreshold;
-    this.isEBookSwipeActive = false;
+    if (!this.ebookSwipe.isActive || this.ebookSwipe.activeId !== ebookId) { return; }
+    const reached: boolean = this.ebookSwipe.offset >= this.ebookSwipe.threshold;
+    this.ebookSwipe.isActive = false;
+    this.ebookSwipe = this.ebookSwipe;
     if (reached) {
       this.showDeleteEBookDialog(ebookId);
     } else {
@@ -22254,17 +22474,18 @@ struct MainMenuPage {
   }
 
   private resetEBookSwipeState(): void {
-    this.activeEBookSwipeId = '';
-    this.isEBookSwipeActive = false;
-    this.ebookSwipeOffset = 0;
+    this.ebookSwipe.activeId = '';
+    this.ebookSwipe.isActive = false;
+    this.ebookSwipe.offset = 0;
+    this.ebookSwipe = this.ebookSwipe;
   }
 
   private getEBookSwipeOffset(ebookId: string): number {
-    return (this.activeEBookSwipeId === ebookId && this.isEBookSwipeActive) ? this.ebookSwipeOffset : 0;
+    return (this.ebookSwipe.activeId === ebookId && this.ebookSwipe.isActive) ? this.ebookSwipe.offset : 0;
   }
 
   private getEBookSwipeProgressText(ebookId: string): string {
-    const progress: number = this.activeEBookSwipeId === ebookId ? Math.min(100, Math.floor((this.getEBookSwipeOffset(ebookId) / this.swipeThreshold) * 100)) : 0;
+    const progress: number = this.ebookSwipe.activeId === ebookId ? Math.min(100, Math.floor((this.getEBookSwipeOffset(ebookId) / this.ebookSwipe.threshold) * 100)) : 0;
     return progress >= 100 ? '释放删除' : `左滑 ${progress}%`;
   }
 
@@ -22334,25 +22555,28 @@ struct MainMenuPage {
 
   // ==================== 小说左滑删除：辅助方法与确认弹窗 ====================
   private activateNovelSwipeFor(novelId: string): void {
-    if (this.isNovelMultiSelectMode) { return; }
-    this.activeNovelSwipeId = novelId;
-    this.isNovelSwipeActive = true;
-    this.novelSwipeOffset = 0;
+    if (this.novelMultiSelect.isActive) { return; }
+    this.novelSwipe.activeId = novelId;
+    this.novelSwipe.isActive = true;
+    this.novelSwipe.offset = 0;
+    this.novelSwipe = this.novelSwipe;
     logger.info(TAG, `长按激活小说左滑删除: ${novelId}`);
   }
 
   private updateNovelSwipeOffset(novelId: string, event: GestureEvent): void {
-    if (!this.isNovelSwipeActive || this.activeNovelSwipeId !== novelId) { return; }
+    if (!this.novelSwipe.isActive || this.novelSwipe.activeId !== novelId) { return; }
     const deltaX: number = -event.offsetX;
     const maxHintWidth: number = 120;
     const newOffset: number = Math.max(0, deltaX);
-    this.novelSwipeOffset = Math.min(newOffset, maxHintWidth);
+    this.novelSwipe.offset = Math.min(newOffset, maxHintWidth);
+    this.novelSwipe = this.novelSwipe;
   }
 
   private endNovelSwipe(novelId: string): void {
-    if (!this.isNovelSwipeActive || this.activeNovelSwipeId !== novelId) { return; }
-    const reached: boolean = this.novelSwipeOffset >= this.swipeThreshold;
-    this.isNovelSwipeActive = false;
+    if (!this.novelSwipe.isActive || this.novelSwipe.activeId !== novelId) { return; }
+    const reached: boolean = this.novelSwipe.offset >= this.novelSwipe.threshold;
+    this.novelSwipe.isActive = false;
+    this.novelSwipe = this.novelSwipe;
     if (reached) {
       this.showDeleteNovelDialog(novelId);
     } else {
@@ -22361,13 +22585,14 @@ struct MainMenuPage {
   }
 
   private resetNovelSwipeState(): void {
-    this.activeNovelSwipeId = '';
-    this.isNovelSwipeActive = false;
-    this.novelSwipeOffset = 0;
+    this.novelSwipe.activeId = '';
+    this.novelSwipe.isActive = false;
+    this.novelSwipe.offset = 0;
+    this.novelSwipe = this.novelSwipe;
   }
 
   private getNovelSwipeOffset(novelId: string): number {
-    return (this.activeNovelSwipeId === novelId && this.isNovelSwipeActive) ? this.novelSwipeOffset : 0;
+    return (this.novelSwipe.activeId === novelId && this.novelSwipe.isActive) ? this.novelSwipe.offset : 0;
   }
 
   private getNovelById(novelId: string): NovelBook | null {
@@ -22483,17 +22708,17 @@ struct MainMenuPage {
               offsetY: 4
             })
 
-          if (!this.isEBookMultiSelectMode && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+          if (!this.ebookMultiSelect.isActive && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
             this.buildLibraryCoverTypeMarkerOverlay('电子书')
           }
 
           // 多选模式蒙版层
-          if (this.isEBookMultiSelectMode) {
+          if (this.ebookMultiSelect.isActive) {
             // 半透明蒙版（未选中时较浅，选中时较深）
             Column()
               .width('100%')
               .height('100%')
-              .backgroundColor(this.selectedEBookIds.has(ebook.id) 
+              .backgroundColor(this.ebookMultiSelect.selectedIds.has(ebook.id) 
                 ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
                 : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
               .borderRadius(this.getCoverImageRadius())
@@ -22511,23 +22736,23 @@ struct MainMenuPage {
                 Circle()
                   .width(28)
                   .height(28)
-                  .fill(this.selectedEBookIds.has(ebook.id)
+                  .fill(this.ebookMultiSelect.selectedIds.has(ebook.id)
                     ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                     : AppColors.withAlpha(ColorRole.SHADOW, 0.5))
-                  .stroke(this.selectedEBookIds.has(ebook.id)
+                  .stroke(this.ebookMultiSelect.selectedIds.has(ebook.id)
                     ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                     : '#FFFFFF')
                   .strokeWidth(2)
                   .animation({ duration: 200, curve: Curve.EaseOut })
                 
                 // 勾选图标（仅选中时显示）
-                if (this.selectedEBookIds.has(ebook.id)) {
+                if (this.ebookMultiSelect.selectedIds.has(ebook.id)) {
                   SymbolGlyph($r('sys.symbol.checkmark'))
                     .fontSize(16)
                     .fontColor(['#FFFFFF'])
                 }
               }
-              .scale({ x: this.selectedEBookIds.has(ebook.id) ? 1.0 : 0.9, y: this.selectedEBookIds.has(ebook.id) ? 1.0 : 0.9 })
+              .scale({ x: this.ebookMultiSelect.selectedIds.has(ebook.id) ? 1.0 : 0.9, y: this.ebookMultiSelect.selectedIds.has(ebook.id) ? 1.0 : 0.9 })
               .animation({ duration: 200, curve: Curve.EaseOut })
             }
             .width('100%')
@@ -22600,18 +22825,18 @@ struct MainMenuPage {
     }
     .key(this.getLibraryContentRenderKey(`${anchorScope}_ebook_grid_card`, 'ebook', ebook.id))
     .border({
-      width: this.isEBookMultiSelectMode ? (this.selectedEBookIds.has(ebook.id) ? 2 : 1) : 0,
-      color: this.selectedEBookIds.has(ebook.id)
+      width: this.ebookMultiSelect.isActive ? (this.ebookMultiSelect.selectedIds.has(ebook.id) ? 2 : 1) : 0,
+      color: this.ebookMultiSelect.selectedIds.has(ebook.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .borderRadius(this.getGlassRadius())
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (!this.isEBookMultiSelectMode) {
+      if (!this.ebookMultiSelect.isActive) {
         return;
       }
-      if (this.isEBookMultiSelectMode) {
+      if (this.ebookMultiSelect.isActive) {
         // 多选模式：切换选中状态
         this.toggleEBookSelection(ebook.id);
       } else {
@@ -22622,14 +22847,14 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.isEBookMultiSelectMode) {
+          if (!this.ebookMultiSelect.isActive) {
             this.showEBookActionMenu(ebook, this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id));
           }
         })
     )
-    .bindPopup(this.showEBookContextMenu
-      && this.contextMenuEBook?.id === ebook.id
-      && this.ebookContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id), {
+    .bindPopup(this.ebookContextMenu.show
+      && this.ebookContextMenu.item?.id === ebook.id
+      && this.ebookContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id), {
       builder: this.buildEBookCustomContextMenu(ebook),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -22676,9 +22901,9 @@ struct MainMenuPage {
           .width('100%')
           .height('100%')
 
-          if (this.isNovelMultiSelectMode) {
+          if (this.novelMultiSelect.isActive) {
             this.buildLibraryListSelectionOverlay(
-              this.selectedNovelIds.has(novel.id),
+              this.novelMultiSelect.selectedIds.has(novel.id),
               this.getCoverImageRadius(),
               true,
               6
@@ -22749,7 +22974,7 @@ struct MainMenuPage {
         })
       }
       .onClick(() => {
-        if (this.isNovelMultiSelectMode) {
+        if (this.novelMultiSelect.isActive) {
           this.toggleNovelSelection(novel.id);
         }
       })
@@ -22760,8 +22985,8 @@ struct MainMenuPage {
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
       .border({
-        width: this.isNovelMultiSelectMode ? (this.selectedNovelIds.has(novel.id) ? 1.5 : 1) : 0,
-        color: this.getLibraryListSelectionBorderColor(this.isNovelMultiSelectMode, this.selectedNovelIds.has(novel.id))
+        width: this.novelMultiSelect.isActive ? (this.novelMultiSelect.selectedIds.has(novel.id) ? 1.5 : 1) : 0,
+        color: this.getLibraryListSelectionBorderColor(this.novelMultiSelect.isActive, this.novelMultiSelect.selectedIds.has(novel.id))
       })
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
@@ -22769,20 +22994,20 @@ struct MainMenuPage {
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
-            if (!this.isNovelMultiSelectMode) {
+            if (!this.novelMultiSelect.isActive) {
               this.showNovelActionMenu(novel, this.getPopupAnchorKey(anchorScope, 'novel', novel.id));
             }
           })
       )
-      if (this.isNovelMultiSelectMode) {
-        this.buildLibraryListSelectionOverlay(this.selectedNovelIds.has(novel.id), this.getGlassRadius(), false)
+      if (this.novelMultiSelect.isActive) {
+        this.buildLibraryListSelectionOverlay(this.novelMultiSelect.selectedIds.has(novel.id), this.getGlassRadius(), false)
       }
     }
     .width('100%')
     .height(144)
-    .bindPopup(this.showNovelContextMenu
-      && this.contextMenuNovel?.id === novel.id
-      && this.novelContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'novel', novel.id), {
+    .bindPopup(this.novelContextMenu.show
+      && this.novelContextMenu.item?.id === novel.id
+      && this.novelContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'novel', novel.id), {
       builder: this.buildNovelCustomContextMenu(novel),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -22836,7 +23061,7 @@ struct MainMenuPage {
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
 
         // 阅读状态标签（非多选模式时显示）
-        if (!this.isNovelMultiSelectMode) {
+        if (!this.novelMultiSelect.isActive) {
           Text(this.getNovelReadStatusText(novel.readStatus))
             .fontSize(10)
             .fontFamily(this.appFontFamily)
@@ -22848,17 +23073,17 @@ struct MainMenuPage {
             .hitTestBehavior(HitTestMode.None)
         }
 
-        if (!this.isNovelMultiSelectMode && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+        if (!this.novelMultiSelect.isActive && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
           this.buildLibraryCoverTypeMarkerOverlay(this.getNovelCoverTypeMarker(novel))
         }
 
         // 多选模式蒙版层
-        if (this.isNovelMultiSelectMode) {
+        if (this.novelMultiSelect.isActive) {
           // 半透明蒙版（未选中时较浅，选中时较深）
           Column()
             .width('100%')
             .height('100%')
-            .backgroundColor(this.selectedNovelIds.has(novel.id) 
+            .backgroundColor(this.novelMultiSelect.selectedIds.has(novel.id) 
               ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
               : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
             .borderRadius(this.getCoverImageRadius())
@@ -22876,23 +23101,23 @@ struct MainMenuPage {
               Circle()
                 .width(28)
                 .height(28)
-                .fill(this.selectedNovelIds.has(novel.id)
+                .fill(this.novelMultiSelect.selectedIds.has(novel.id)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                   : AppColors.withAlpha(ColorRole.SHADOW, 0.5))
-                .stroke(this.selectedNovelIds.has(novel.id)
+                .stroke(this.novelMultiSelect.selectedIds.has(novel.id)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                   : '#FFFFFF')
                 .strokeWidth(2)
                 .animation({ duration: 200, curve: Curve.EaseOut })
               
               // 勾选图标（仅选中时显示）
-              if (this.selectedNovelIds.has(novel.id)) {
+              if (this.novelMultiSelect.selectedIds.has(novel.id)) {
                 SymbolGlyph($r('sys.symbol.checkmark'))
                   .fontSize(16)
                   .fontColor(['#FFFFFF'])
               }
             }
-            .scale({ x: this.selectedNovelIds.has(novel.id) ? 1.0 : 0.9, y: this.selectedNovelIds.has(novel.id) ? 1.0 : 0.9 })
+            .scale({ x: this.novelMultiSelect.selectedIds.has(novel.id) ? 1.0 : 0.9, y: this.novelMultiSelect.selectedIds.has(novel.id) ? 1.0 : 0.9 })
             .animation({ duration: 200, curve: Curve.EaseOut })
           }
           .width('100%')
@@ -22962,28 +23187,28 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .border({
-      width: this.isNovelMultiSelectMode ? (this.selectedNovelIds.has(novel.id) ? 2 : 1) : 0,
-      color: this.selectedNovelIds.has(novel.id)
+      width: this.novelMultiSelect.isActive ? (this.novelMultiSelect.selectedIds.has(novel.id) ? 2 : 1) : 0,
+      color: this.novelMultiSelect.selectedIds.has(novel.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.isNovelMultiSelectMode) {
+      if (this.novelMultiSelect.isActive) {
         this.toggleNovelSelection(novel.id);
       }
     })
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.isNovelMultiSelectMode) {
+          if (!this.novelMultiSelect.isActive) {
             this.showNovelActionMenu(novel, this.getPopupAnchorKey(anchorScope, 'novel', novel.id));
           }
         })
     )
-    .bindPopup(this.showNovelContextMenu
-      && this.contextMenuNovel?.id === novel.id
-      && this.novelContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'novel', novel.id), {
+    .bindPopup(this.novelContextMenu.show
+      && this.novelContextMenu.item?.id === novel.id
+      && this.novelContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'novel', novel.id), {
       builder: this.buildNovelCustomContextMenu(novel),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -23099,9 +23324,9 @@ struct MainMenuPage {
           .width('100%')
           .height('100%')
 
-          if (this.isMultiSelectMode) {
+          if (this.mangaMultiSelect.isActive) {
             this.buildLibraryListSelectionOverlay(
-              this.selectedMangaIds.has(manga.id),
+              this.mangaMultiSelect.selectedIds.has(manga.id),
               this.getCoverImageRadius(),
               true,
               6
@@ -23180,8 +23405,8 @@ struct MainMenuPage {
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
       .border({
-        width: this.isMultiSelectMode ? (this.selectedMangaIds.has(manga.id) ? 1.5 : 1) : 0,
-        color: this.getLibraryListSelectionBorderColor(this.isMultiSelectMode, this.selectedMangaIds.has(manga.id))
+        width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 1.5 : 1) : 0,
+        color: this.getLibraryListSelectionBorderColor(this.mangaMultiSelect.isActive, this.mangaMultiSelect.selectedIds.has(manga.id))
       })
       .shadow({
         radius: this.getGlassRadius(),
@@ -23190,7 +23415,7 @@ struct MainMenuPage {
       })
       .animation({ duration: 220, curve: Curve.EaseOut })
       .onClick(() => {
-        if (!this.isMultiSelectMode) {
+        if (!this.mangaMultiSelect.isActive) {
           return;
         }
         this.toggleMangaSelection(manga.id);
@@ -23198,21 +23423,21 @@ struct MainMenuPage {
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
-            if (!this.isMultiSelectMode) {
+            if (!this.mangaMultiSelect.isActive) {
               this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
             }
           })
       )
 
-      if (this.isMultiSelectMode) {
-        this.buildLibraryListSelectionOverlay(this.selectedMangaIds.has(manga.id), this.getGlassRadius(), false)
+      if (this.mangaMultiSelect.isActive) {
+        this.buildLibraryListSelectionOverlay(this.mangaMultiSelect.selectedIds.has(manga.id), this.getGlassRadius(), false)
       }
     }
     .width('100%')
     .height(140)
-    .bindPopup(this.showMangaContextMenu
-      && this.contextMenuManga?.id === manga.id
-      && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
+    .bindPopup(this.mangaContextMenu.show
+      && this.mangaContextMenu.item?.id === manga.id
+      && this.mangaContextMenu.anchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
       builder: this.buildMangaCustomContextMenu(manga),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -23265,15 +23490,15 @@ struct MainMenuPage {
             offsetY: 4
           })
 
-          if (!this.isMultiSelectMode && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+          if (!this.mangaMultiSelect.isActive && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
             this.buildLibraryCoverTypeMarkerOverlay('电子书')
           }
 
-          if (this.isMultiSelectMode) {
+          if (this.mangaMultiSelect.isActive) {
             Column()
               .width('100%')
               .height('100%')
-              .backgroundColor(this.selectedMangaIds.has(manga.id)
+              .backgroundColor(this.mangaMultiSelect.selectedIds.has(manga.id)
                 ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
                 : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
               .borderRadius(this.getCoverImageRadius())
@@ -23284,7 +23509,7 @@ struct MainMenuPage {
               )
 
             Column() {
-              this.buildLibraryDirectCoverSelectionBadge(this.selectedMangaIds.has(manga.id))
+              this.buildLibraryDirectCoverSelectionBadge(this.mangaMultiSelect.selectedIds.has(manga.id))
             }
             .width('100%')
             .height('100%')
@@ -23353,8 +23578,8 @@ struct MainMenuPage {
     }
     .key(this.getLibraryContentRenderKey(`${anchorScope}_pdfebook_grid_card`, 'pdfebook', manga.id))
     .border({
-      width: this.isMultiSelectMode ? (this.selectedMangaIds.has(manga.id) ? 2 : 1) : 0,
-      color: this.selectedMangaIds.has(manga.id)
+      width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      color: this.mangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
@@ -23362,7 +23587,7 @@ struct MainMenuPage {
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
       // 点击打开漫画详情页
-      if (!this.isMultiSelectMode) {
+      if (!this.mangaMultiSelect.isActive) {
         return;
       }
       this.toggleMangaSelection(manga.id);
@@ -24276,7 +24501,7 @@ struct MainMenuPage {
                     .margin({ bottom: 8 })
                 }
                 Grid() {
-                  ForEach(this.discoveredMangaList, (manga: Manga) => {
+                  LazyForEach(this.discoveredMangaDS, (manga: Manga) => {
                     GridItem() {
                       this.buildDiscoverMangaGridCard(manga)
                     }
@@ -24305,7 +24530,7 @@ struct MainMenuPage {
                     .margin({ top: 16, bottom: 8 })
                 }
                 Grid() {
-                  ForEach(this.discoveredEBookList, (ebook: EBook) => {
+                  LazyForEach(this.discoveredEBookDS, (ebook: EBook) => {
                     GridItem() {
                       this.buildDiscoverEBookGridCard(ebook)
                     }
@@ -24334,7 +24559,7 @@ struct MainMenuPage {
                     .margin({ top: 16, bottom: 8 })
                 }
                 Grid() {
-                  ForEach(this.discoveredNovelList, (novel: NovelBook) => {
+                  LazyForEach(this.discoveredNovelDS, (novel: NovelBook) => {
                     GridItem() {
                       this.buildDiscoverNovelGridCard(novel)
                     }
@@ -24992,7 +25217,7 @@ struct MainMenuPage {
       .padding({ left: 16, right: 16, bottom: 12 })
 
       // 图源列表区域（支持下拉刷新）
-      Refresh({ refreshing: this.isRefreshingSourceList }) {
+      Refresh({ refreshing: this.loadingState.refreshingSourceList }) {
         Scroll() {
           Column({ space: 12 }) {
 
@@ -25006,7 +25231,7 @@ struct MainMenuPage {
             .padding({ left: 16, right: 16 })
           
           // 图源列表或空状态
-          if (this.isLoadingSourceList) {
+          if (this.loadingState.sourceList) {
             // 加载状态
             Column({ space: 16 }) {
               LoadingProgress()
@@ -25062,31 +25287,36 @@ struct MainMenuPage {
               // 列表视图
               if (this.sourceViewMode === LibraryViewMode.LIST) {
                 // 图源卡片列表
-                Column({ space: 12 }) {
-                  ForEach(this.filteredSourceList, (source: SourceInfo) => {
-                    this.buildSourceCard(source)
-                  })
+                List() {
+                  LazyForEach(this.sourceListDS, (item: SourceInfo, index: number) => {
+                    ListItem() {
+                      this.buildSourceCard(item)
+                    }
+                  }, (item: SourceInfo) => String(item.id))
                 }
                 .width('100%')
+                .layoutWeight(1)
                 .padding({ left: 16, right: 16 })
+                .cachedCount(5)
                 .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
               }
-              
+
               // 网格视图
               if (this.sourceViewMode === LibraryViewMode.GRID) {
                 // 图源网格视图
                 Grid() {
-                  ForEach(this.filteredSourceList, (source: SourceInfo) => {
+                  LazyForEach(this.sourceListDS, (item: SourceInfo, index: number) => {
                     GridItem() {
-                      this.buildSourceGridCard(source)
+                      this.buildSourceGridCard(item)
                     }
-                  }, (source: SourceInfo) => String(source.id))
+                  }, (item: SourceInfo) => String(item.id))
                 }
                 .columnsTemplate(this.getLibraryGridColumnsTemplate())
                 .columnsGap(this.responsive_gridGap)
                 .rowsGap(this.responsive_gridGap)
                 .width('100%')
                 .padding({ left: 16, right: 16 })
+                .cachedCount(10)
                 .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
               }
             }
@@ -25846,7 +26076,7 @@ struct MainMenuPage {
           this.showSourceActionMenu(source);
         })
     )
-    .bindPopup(this.showSourceContextMenu && this.contextMenuSource?.id === source.id, {
+    .bindPopup(this.sourceContextMenu.show && this.sourceContextMenu.item?.id === source.id, {
       builder: this.buildSourceContextMenu(source),
       placement: Placement.Bottom,
       popupColor: this.getSettingsAnalyticsCardBackground(),
@@ -25900,7 +26130,7 @@ struct MainMenuPage {
       .clip(true)
       .onClick(() => {
         logger.info(TAG, '点击编辑按钮');
-        const sourceToEdit = this.contextMenuSource;
+        const sourceToEdit = this.sourceContextMenu.item;
         this.hideSourceContextMenu();
         if (sourceToEdit) {
           this.editSourceConfig(sourceToEdit);
@@ -25944,7 +26174,7 @@ struct MainMenuPage {
       .clip(true)
       .onClick(() => {
         logger.info(TAG, '点击删除按钮');
-        const sourceToDelete = this.contextMenuSource;
+        const sourceToDelete = this.sourceContextMenu.item;
         this.hideSourceContextMenu();
         if (sourceToDelete) {
           this.confirmDeleteSource(sourceToDelete);
@@ -26165,7 +26395,7 @@ struct MainMenuPage {
           this.showSourceActionMenu(source);
         })
     )
-    .bindPopup(this.showSourceContextMenu && this.contextMenuSource?.id === source.id, {
+    .bindPopup(this.sourceContextMenu.show && this.sourceContextMenu.item?.id === source.id, {
       builder: this.buildSourceContextMenu(source),
       placement: Placement.Bottom,
       popupColor: this.getSettingsAnalyticsCardBackground(),
@@ -26283,574 +26513,6 @@ struct MainMenuPage {
     return SettingsPageSurfaceManager.getManagementContentSurfaceStyle(this.themeState.currentTheme);
   }
 
-  @Builder
-  buildSettingsAnalyticsCard() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .borderRadius(this.getSettingsAnalyticsCardRadius())
-        .linearGradient(this.getSettingsAnalyticsCardSurfaceGradient())
-
-      Column()
-        .width('100%')
-        .height(1)
-        .backgroundColor(this.getSettingsAnalyticsCardTopEdgeColor())
-
-      Column()
-        .width('100%')
-        .height(1)
-        .align(Alignment.Bottom)
-        .backgroundColor(this.getSettingsAnalyticsCardBottomEdgeColor())
-
-      Row() {
-        Column() {
-          SymbolGlyph($r('sys.symbol.histogram_fill'))
-            .fontSize(54)
-            .fontColor([this.getSettingsAnalyticsCardIconColor()])
-        }
-        .width(60)
-        .height(60)
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-
-        Column({ space: 4 }) {
-          Text('阅读报告')
-            .fontSize(18)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(this.getSettingsAnalyticsCardTitleColor())
-
-          Text('查看您的阅读统计与趋势分析')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-        .margin({ left: 16 })
-
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(20)
-          .fontColor([this.getSettingsAnalyticsCardChevronColor()])
-          .opacity(this.getSettingsAnalyticsCardChevronOpacity())
-      }
-      .width('100%')
-      .height('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding(16)
-    }
-    .width('100%')
-    .height(92)
-    .backgroundColor(this.getSettingsAnalyticsCardBackground())
-    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-    .borderRadius(this.getSettingsAnalyticsCardRadius())
-    .clip(true)
-    .border({
-      width: this.getSettingsAnalyticsCardBorderWidth(),
-      color: this.getSettingsAnalyticsCardBorderColor()
-    })
-    .shadow({
-      radius: this.getSettingsAnalyticsCardRadius() + 4,
-      color: this.getSettingsAnalyticsCardShadowColor(),
-      offsetX: 0,
-      offsetY: 8
-    })
-    .margin({ bottom: 16 })
-    .id('guide_main_setting_analytics')
-    .onClick(() => {
-      try {
-        const navigationPath: NavigationPath = {
-          name: 'ReadingAnalyticsPage',
-          param: {
-            fromPage: 'MainMenuPage',
-            timestamp: Date.now()
-          }
-        };
-        this.pathStack.pushPath(navigationPath);
-        logger.info(TAG, '导航到阅读报告页面');
-      } catch (error) {
-        logger.error(TAG, '导航到阅读报告页面失败', String(error));
-        this.showToast('打开阅读报告页面失败');
-      }
-    })
-  }
-
-  @Builder
-  buildSettingsContent() {
-    Scroll(this.settingsScroller) {
-      Column({ space: 0 }) {
-        Blank().height(this.getInitialTopOverlaySpacerHeight())
-        this.buildSettingsAnalyticsCard()
-        // 用户信息区域
-        Row() {
-          Column() {
-            SymbolGlyph($r('sys.symbol.histogram_fill'))
-              .fontSize(54)
-              .fontColor([this.getSettingsAnalyticsCardIconColor()])
-          }
-          .width(60)
-          .height(60)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-
-          Column({ space: 4 }) {
-            Text('阅读报告')
-              .fontSize(18)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-            Text('查看您的阅读统计和分析')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          .margin({ left: 16 })
-
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(20)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-        }
-        .width('100%')
-        .height(0)
-        .padding(0)
-        .backgroundColor(this.getSettingsAnalyticsCardBackground())
-        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-        .borderRadius(this.getSettingsAnalyticsCardRadius())
-        .border({
-          width: this.getSettingsAnalyticsCardBorderWidth(),
-          color: this.getSettingsAnalyticsCardBorderColor()
-        })
-        .shadow({ radius: this.getSettingsAnalyticsCardRadius() + 4, color: 'rgba(0, 0, 0, 0)', offsetX: 0, offsetY: 0 })
-        .margin({ bottom: 0 })
-        .opacity(0)
-        .hitTestBehavior(HitTestMode.None)
-        .id('guide_main_setting_analytics_legacy_hidden')
-        .onClick(() => {
-          try {
-            const navigationPath: NavigationPath = {
-              name: 'ReadingAnalyticsPage',
-              param: {
-                fromPage: 'MainMenuPage',
-                timestamp: Date.now()
-              }
-            };
-            this.pathStack.pushPath(navigationPath);
-            logger.info(TAG, '导航到阅读报告页面');
-          } catch (error) {
-            logger.error(TAG, '导航到阅读报告页面失败', String(error));
-            this.showToast('打开阅读报告页面失败');
-          }
-        })
-
-        // 设置选项列表
-        Column() {
-          this.buildSettingItem('主题设置', '自定义背景、强调色', $r('sys.symbol.paintpalette'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'ThemeSettingsPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到主题设置页面');
-            } catch (error) {
-              logger.error(TAG, '导航到主题设置页面失败', String(error));
-              this.showToast('打开主题设置页面失败');
-            }
-          }, 'guide_main_setting_theme')
-          this.buildSettingItem('视觉效果', '查看设备材质能力与材质档位策略', $r('sys.symbol.lightbulb'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'VisualEffectsSettingsSubPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到视觉效果设置页面');
-            } catch (error) {
-              logger.error(TAG, '导航到视觉效果设置页面失败', String(error));
-              this.showToast('打开视觉效果设置页面失败');
-            }
-          }, 'guide_main_setting_visual_effects')
-          this.buildSettingItem('全局设置', '默认阅读模式、下载选项', $r('sys.symbol.slider_horizontal_2_square'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'GlobalSettingsPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到全局设置页面');
-            } catch (error) {
-              logger.error(TAG, '导航到全局设置页面失败', String(error));
-              this.showToast('打开全局设置页面失败');
-            }
-          }, 'guide_main_setting_global')
-          this.buildSettingItem('灵感', '查看和管理全部内容的书签、划线与想法', $r('sys.symbol.stickers'), () => {
-            try {
-              const params: AnnotationCenterPageParams = {
-                contentTitle: '全部内容'
-              };
-              this.pathStack.pushPathByName('AnnotationCenterPage', params);
-              logger.info(TAG, '导航到灵感页面');
-            } catch (error) {
-              logger.error(TAG, '导航到灵感页面失败', String(error));
-              this.showToast('打开灵感页面失败');
-            }
-          }, 'guide_main_setting_inspiration')
-          if (this.sourceFeaturesEnabled) {
-            this.buildSettingItem('更新提醒', '统一管理作品、书架和远程库的更新提醒', $r('sys.symbol.bookshelf_badge_checkmark'), () => {
-              try {
-                this.pathStack.pushPathByName('SubscriptionManagementPage', null);
-                logger.info(TAG, '导航到更新提醒页面');
-              } catch (error) {
-                logger.error(TAG, '导航到更新提醒页面失败', String(error));
-                this.showToast('打开更新提醒页面失败');
-              }
-            }, 'guide_main_setting_subscription_management')
-          }
-          // 下载管理仅在高级模式下显示
-          if (this.advancedModeEnabled) {
-            this.buildSettingItem('下载管理', '离线下载管理', $r('sys.symbol.arrow_down_circle'), () => {
-              try {
-                const navigationPath: NavigationPath = {
-                  name: 'DownloadManagerPage',
-                  param: {
-                    fromPage: 'MainMenuPage',
-                    timestamp: Date.now()
-                  }
-                };
-                this.pathStack.pushPath(navigationPath);
-                logger.info(TAG, '导航到下载管理页面');
-              } catch (error) {
-                logger.error(TAG, '导航到下载管理页面失败', String(error));
-                this.showToast('打开下载管理页面失败');
-              }
-            }, 'guide_main_setting_download_manager')
-          }
-
-          this.buildSettingItem('备份与恢复', '备份所有数据或从备份恢复', $r('sys.symbol.arrow_2_circlepath'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'BackupPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到备份页面');
-            } catch (error) {
-              logger.error(TAG, '导航到备份页面失败', String(error));
-              this.showToast('打开备份页面失败');
-            }
-          }, 'guide_main_setting_backup')
-          
-          // 存储管理仅在高级模式下显示
-          if (this.advancedModeEnabled) {
-            this.buildSettingItem('存储管理', '清理缓存、管理存储空间', $r('sys.symbol.externaldrive_fill'), () => {
-              try {
-                const navigationPath: NavigationPath = {
-                  name: 'StorageManagementPage',
-                  param: {
-                    fromPage: 'MainMenuPage',
-                    timestamp: Date.now()
-                  }
-                };
-                this.pathStack.pushPath(navigationPath);
-                logger.info(TAG, '导航到存储管理页面');
-              } catch (error) {
-                logger.error(TAG, '导航到存储管理页面失败', String(error));
-                this.showToast('打开存储管理页面失败');
-              }
-            }, 'guide_main_setting_storage')
-          }
-          this.buildSettingItem('文件导入', '单独导入Mihon/Komikku本地漫画、电子书、小说', $r('sys.symbol.folder_badge_plus'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'DataManagementPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到数据管理页面');
-            } catch (error) {
-              logger.error(TAG, '导航到数据管理页面失败', String(error));
-              this.showToast('打开数据管理页面失败');
-            }
-          }, 'guide_main_setting_data_management')
-          this.buildSettingItem('网络文件夹', '通过 WebDAV/FTP/FTPS/SMB 连接远程文件夹并导入文件', $r('sys.symbol.wifi'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'NetworkFolderPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到网络文件夹页面');
-            } catch (error) {
-              logger.error(TAG, '导航到网络文件夹页面失败', String(error));
-              this.showToast('打开网络文件夹页面失败');
-            }
-          }, 'guide_main_setting_network_folder')
-          this.buildSettingItem('Download导入', '从Download目录扫描并导入文件', $r('sys.symbol.square_and_arrow_down'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'DownloadSyncPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到Download导入页面');
-            } catch (error) {
-              logger.error(TAG, '导航到Download导入页面失败', String(error));
-              this.showToast('打开Download导入页面失败');
-            }
-          }, 'guide_main_setting_download_sync')
-          // 文件编辑器仅在高级模式下显示
-          if (this.advancedModeEnabled) {
-            this.buildSettingItem('文件编辑器', '编辑代码、配置文件、Markdown', $r('sys.symbol.doc_plaintext'), () => {
-              try {
-                const navigationPath: NavigationPath = {
-                  name: 'FileEditorPage',
-                  param: {
-                    fromPage: 'MainMenuPage',
-                    timestamp: Date.now()
-                  }
-                };
-                this.pathStack.pushPath(navigationPath);
-                logger.info(TAG, '导航到文件编辑器页面');
-              } catch (error) {
-                logger.error(TAG, '导航到文件编辑器页面失败', String(error));
-                this.showToast('打开文件编辑器页面失败');
-              }
-            }, 'guide_main_setting_file_editor')
-          //   this.buildSettingItem('系统资源预览', '浏览系统图标和颜色资源', $r('sys.symbol.paintpalette'), () => {
-          //     try {
-          //       const navigationPath: NavigationPath = {
-          //         name: 'SystemResourcePreviewPage',
-          //         param: {
-          //           fromPage: 'MainMenuPage',
-          //           timestamp: Date.now()
-          //         }
-          //       };
-          //       this.pathStack.pushPath(navigationPath);
-          //       logger.info(TAG, '导航到系统资源预览页面');
-          //     } catch (error) {
-          //       logger.error(TAG, '导航到系统资源预览页面失败', String(error));
-          //       this.showToast('打开系统资源预览页面失败');
-          //     }
-          //   })
-          // }
-          // // 日志管理仅在高级模式下显示
-          // if (this.advancedModeEnabled) {
-          //   this.buildSettingItem('日志管理', '查看和导出应用日志', $r('sys.symbol.doc_text'), () => {
-          //     try {
-          //       const navigationPath: NavigationPath = {
-          //         name: 'LogManagerPage',
-          //         param: {
-          //           fromPage: 'MainMenuPage',
-          //           timestamp: Date.now()
-          //         }
-          //       };
-          //       this.pathStack.pushPath(navigationPath);
-          //       logger.info(TAG, '导航到日志管理页面');
-          //     } catch (error) {
-          //       logger.error(TAG, '导航到日志管理页面失败', String(error));
-          //       this.showToast('打开日志管理页面失败');
-          //     }
-          //   })
-          //   this.buildSettingItem('生命周期监控', '实时监控页面任务和资源', $r('sys.symbol.checkmark_shield_fill'), () => {
-          //     try {
-          //       const navigationPath: NavigationPath = {
-          //         name: 'LifecycleMonitorPage',
-          //         param: {
-          //           fromPage: 'MainMenuPage',
-          //           timestamp: Date.now()
-          //         }
-          //       };
-          //       this.pathStack.pushPath(navigationPath);
-          //       logger.info(TAG, '导航到生命周期监控页面');
-          //     } catch (error) {
-          //       logger.error(TAG, '导航到生命周期监控页面失败', String(error));
-          //       this.showToast('打开生命周期监控页面失败');
-          //     }
-          //   })
-          }
-          this.buildSettingItem('AVIF图片查看器', '测试AVIF图片查看、导出功能', $r('sys.symbol.camera_macro'), () => {
-            const navigationPath: NavigationPath = {
-              name: 'AvifTestPage',
-              param: {
-                fromPage: 'MainMenuPage',
-                timestamp: Date.now()
-              }
-            };
-            this.pathStack.pushPath(navigationPath);
-          }, 'guide_main_setting_avif')
-          this.buildSettingItem('帮助中心', '查看功能说明和常见问题', $r('sys.symbol.questionmark_circle'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'HelpCenterPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到帮助中心页面');
-            } catch (error) {
-              logger.error(TAG, '导航到帮助中心页面失败', String(error));
-              this.showToast('打开帮助中心页面失败');
-            }
-          }, 'guide_main_setting_help')
-          this.buildSettingItem('关于应用', `版本 ${this.appVersion}`, $r('sys.symbol.info_circle'), () => {
-            try {
-              const navigationPath: NavigationPath = {
-                name: 'AboutPage',
-                param: {
-                  fromPage: 'MainMenuPage',
-                  timestamp: Date.now()
-                }
-              };
-              this.pathStack.pushPath(navigationPath);
-              logger.info(TAG, '导航到关于应用页面');
-            } catch (error) {
-              logger.error(TAG, '导航到关于应用页面失败', String(error));
-              this.showToast('打开关于应用页面失败');
-            }
-          }, 'guide_main_setting_about')
-          // NGF测试入口已移除，测试页面仍保留在代码中但不再从主菜单导航
-          // this.buildSettingItem('Reader Kit 测试', '测试 EPUB/MOBI 等格式解析', $r('app.media.ic_settings'), () => {
-          //   // 导航到ReaderKitTestPage
-          //   const navigationPath: NavigationPath = {
-          //     name: 'ReaderKitTestPage',
-          //     param: {
-          //       fromPage: 'MainMenuPage',
-          //       timestamp: Date.now()
-          //     }
-          //   };
-          //   this.pathStack.pushPath(navigationPath);
-          // })
-          // this.buildSettingItem('PDF Kit 测试', '测试 PDF 文档预览和操作', $r('app.media.ic_settings'), () => {
-          //   // 导航到PdfKitTestPage
-          //   const navigationPath: NavigationPath = {
-          //     name: 'PdfKitTestPage',
-          //     param: {
-          //       fromPage: 'MainMenuPage',
-          //       timestamp: Date.now()
-          //     }
-          //   };
-          //   this.pathStack.pushPath(navigationPath);
-          // })
-
-          
-        }
-        .backgroundColor(this.getSettingsManagementContentSurfaceStyle().backgroundColor)
-        .backgroundBlurStyle(
-          this.getSettingsManagementContentSurfaceStyle().blurStyle,
-          this.getSettingsManagementContentSurfaceStyle().blurOptions
-        )
-        .backgroundEffect(this.getSettingsManagementContentSurfaceStyle().backgroundEffect)
-        .borderRadius(this.getSettingsManagementContentSurfaceStyle().radius)
-        .clip(true)
-        .border({
-          width: this.getSettingsManagementContentSurfaceStyle().borderWidth,
-          color: this.getSettingsManagementContentSurfaceStyle().borderColor
-        })
-        .shadow({
-          radius: this.getSettingsManagementContentSurfaceStyle().radius + 4,
-          color: this.getSettingsManagementContentSurfaceStyle().shadowColor,
-          offsetX: 0,
-          offsetY: 8
-        })
-
-        Blank().height(this.getMainTabBottomSpacerHeight())
-      }
-      .width('100%')
-      .padding(16)
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(Color.Transparent)
-    .id('guide_main_settings_scroll')
-    .scrollBar(BarState.Off)
-    .edgeEffect(EdgeEffect.Spring)
-    .onScrollFrameBegin((offset: number, _state: ScrollState) => {
-      this.handleScrollForBottomBar(offset);
-      return { offsetRemain: offset };
-    })
-    .onScrollStop(() => {
-      this.handleScrollEndForBottomBar();
-    })
-  }
-
-  /**
-   * 构建设置项
-   */
-  @Builder
-  buildSettingItem(title: string, subtitle: string, icon: ResourceStr, onClick?: () => void, guideId?: string) {
-    Row() {
-      // 使用SymbolGlyph系统图标
-      SymbolGlyph(icon as Resource)
-        .fontSize(24)
-        .fontColor([this.getSettingsManagementItemIconColor()])
-        .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-
-      Column({ space: 2 }) {
-        Text(title)
-          .fontSize(16)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getSettingsManagementItemTitleColor())
-          .textAlign(TextAlign.Start)
-          .width('100%')
-
-        Text(subtitle)
-          .fontSize(14)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getSettingsManagementItemSubtitleColor())
-          .textAlign(TextAlign.Start)
-          .width('100%')
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-      .margin({ left: 16 })
-
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(20)
-        .fontColor([this.getSettingsManagementItemChevronColor()])
-        .opacity(this.getSettingsManagementItemChevronOpacity())
-    }
-    .width('100%')
-    .height(64)
-    .padding({ left: 16, right: 16 })
-    .id(guideId && guideId.length > 0 ? guideId : `main_setting_${title}`)
-    .onClick(() => {
-      if (onClick) {
-        onClick();
-      } else {
-        this.showToast(`${title}功能开发中...`);
-      }
-    })
-  }
-
   /**
    * 构建导航目标页面
    */
@@ -26905,6 +26567,8 @@ struct MainMenuPage {
         NotificationSettingsSubPage()
       } else if (name === 'AdvancedSettingsSubPage') {
         AdvancedSettingsSubPage()
+      } else if (name === 'DuplicateDetectionSettingsSubPage') {
+        DuplicateDetectionSettingsSubPage()
       } else if (name === 'ErrorManagementSubPage') {
         ErrorManagementSubPage()
       } else if (name === 'InteractionSettingsSubPage') {
@@ -27097,14 +26761,21 @@ struct MainMenuPage {
   buildTabContentForIndex(tabIndex: number) {
     if (tabIndex === TabIndex.HOME) {
       // 首页标签（支持下拉刷新）
-      Refresh({ refreshing: $$this.isRefreshingHome }) {
+      Refresh({ refreshing: $$this.loadingState.refreshingHome }) {
         Scroll() {
-          Column({ space: 0 }) {
-            Blank().height(this.getInitialTopOverlaySpacerHeight())
-            this.buildHomeContent()
-            Blank().height(this.getMainTabBottomSpacerHeight())
-          }
-          .width('100%')
+          HomeTabContent({
+            topSpacerHeight: this.getInitialTopOverlaySpacerHeight(),
+            bottomSpacerHeight: this.getMainTabBottomSpacerHeight(),
+            refreshSignal: this.homeRefreshSignal,
+            homeGridColumns: this.responsive_homeGridColumns,
+            homeGridGap: this.responsive_gridGap,
+            isLandscape: this.responsive_isLandscape,
+            isLoadingRecentReading: this.loadingState.recentReading,
+            recentReadingList: this.recentReadingList,
+            recentEBookList: this.recentEBookList,
+            recentNovelList: this.recentNovelList
+          })
+            .width('100%').height('100%').backgroundColor(Color.Transparent)
         }
           .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
           .onScrollFrameBegin((offset: number, _state: ScrollState) => {
@@ -27117,7 +26788,7 @@ struct MainMenuPage {
       }
       .onRefreshing(async () => {
         await this.silentRefreshRecentReadingList();
-        this.isRefreshingHome = false;
+        this.loadingState.refreshingHome = false;
       })
       .width('100%')
       .height('100%')
@@ -27125,7 +26796,7 @@ struct MainMenuPage {
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.LIBRARY) {
       // 书库标签
-      Refresh({ refreshing: this.isRefreshing }) {
+      Refresh({ refreshing: this.loadingState.refreshing }) {
         Scroll() {
           Column({ space: 0 }) {
             Blank().height(this.getInitialTopOverlaySpacerHeight())
@@ -27159,19 +26830,15 @@ struct MainMenuPage {
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.DISCOVER) {
       // 发现标签
-      Refresh({ refreshing: $$this.isRefreshingDiscover }) {
-        Scroll() { this.buildDiscoverContent() }
-          .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
-          .onScrollFrameBegin((offset: number, _state: ScrollState) => {
-            this.handleScrollForBottomBar(offset);
-            return { offsetRemain: offset };
-          })
-          .onScrollStop(() => {
-            this.handleScrollEndForBottomBar();
-          })
+      Refresh({ refreshing: $$this.loadingState.refreshingDiscover }) {
+        Column() {
+          this.buildDiscoverContent()
+        }
+        .width('100%')
+        .height('100%')
       }
       .onRefreshing(() => {
-        this.refreshDiscoverData();
+        void this.refreshDiscoverData();
       })
       .width('100%')
       .height('100%')
@@ -27220,7 +26887,11 @@ struct MainMenuPage {
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.SETTINGS) {
       // 设置标签
-      Column() { this.buildSettingsContent() }
+      SettingsTabContent({
+        topSpacerHeight: this.getInitialTopOverlaySpacerHeight(),
+        bottomSpacerHeight: this.getMainTabBottomSpacerHeight(),
+        refreshSignal: this.settingsRefreshSignal
+      })
         .width('100%').height('100%').backgroundColor(Color.Transparent)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     }
@@ -28268,10 +27939,19 @@ struct MainMenuPage {
     if (this.isOverlayBottomNavTab(this.currentTabIndex)) {
       return this.getBottomBarTravelDistance();
     }
-    if (!isMainPageBottomBarAnimationEnabled()) {
+    if (!this.mainPageBottomBarAnimationEnabled) {
       return 0;
     }
     return this.bottomBarOffsetY;
+  }
+
+  private getBottomBarRenderOpacity(): number {
+    const travelDistance: number = this.getBottomBarTravelDistance();
+    if (travelDistance <= 0) {
+      return 1;
+    }
+    const opacity: number = 1 - this.getEffectiveBottomBarOffset() / travelDistance * 0.3;
+    return Math.max(0, Math.min(1, opacity));
   }
 
   private getBottomBarTravelDistance(): number {
@@ -28334,7 +28014,7 @@ struct MainMenuPage {
    * @param deltaY Y轴滚动偏移量变化值（正值=向下滚动，负值=向上滚动）
    */
   private handleScrollForBottomBar(deltaY: number): void {
-    if (!isMainPageBottomBarAnimationEnabled() || this.useTopTabsNavigation || this.isOverlayBottomNavTab(this.currentTabIndex)) {
+    if (!this.mainPageBottomBarAnimationEnabled || this.useTopTabsNavigation || this.isOverlayBottomNavTab(this.currentTabIndex)) {
       return;
     }
     this.clearBottomBarSettleTimer();
@@ -28358,7 +28038,7 @@ struct MainMenuPage {
     this.bottomBarSettleTimer = setTimeout(() => {
       this.bottomBarSettleTimer = -1;
 
-      if (!isMainPageBottomBarAnimationEnabled()) {
+      if (!this.mainPageBottomBarAnimationEnabled) {
         this.resetBottomBarScrollState();
         return;
       }
@@ -28384,7 +28064,7 @@ struct MainMenuPage {
    * 处理滚动结束事件，自动完成底栏的显示/隐藏
    */
   private handleScrollEndForBottomBar(): void {
-    if (!isMainPageBottomBarAnimationEnabled()) {
+    if (!this.mainPageBottomBarAnimationEnabled) {
       this.resetBottomBarScrollState();
       return;
     }
@@ -28445,6 +28125,8 @@ struct MainMenuPage {
     if (previousTabIndex === TabIndex.SETTINGS && tabIndex !== TabIndex.SETTINGS) {
       logger.info(TAG, '从设置页返回，重新加载用户配置');
       this.loadUserThemeConfig();
+      this.loadBottomBarStyle('return_from_settings');
+      this.loadBottomBarAnimationSetting('return_from_settings');
       this.loadVisibleTabs();
       void this.loadLibraryViewMode();
       if (tabIndex === TabIndex.KOMGA) {
@@ -28536,7 +28218,7 @@ struct MainMenuPage {
           // 使用barRenderKey触发重新渲染（屏幕方向或折叠状态变化时）
           // 主要内容区域包装器 - 包含底部导航栏避让
           Column() {
-            // 主要内容区域 - 使用Tabs动态渲染可见标签页
+            // Swiper 统一负责内容切换（经典模式和 HDS 模式共用）
             Swiper(this.tabsController) {
               // 动态渲染可见的标签页（使用缓存数组避免ForEach无限渲染）
               ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig) => {
@@ -28567,6 +28249,11 @@ struct MainMenuPage {
             })
             .onChange((actualIndex: number) => {
               this.handleMainContentIndexChanged(actualIndex);
+              if (this.bottomBarStyle === 'hds' && this.hdsTabsController !== null && this.hdsSetSyncing !== null) {
+                this.hdsSetSyncing(true);
+                this.hdsTabsController.changeIndex(actualIndex);
+                this.hdsSetSyncing(false);
+              }
             })
           }
           .layoutWeight(1)
@@ -28646,7 +28333,41 @@ struct MainMenuPage {
 
         // 底栏：使用barRenderKey触发重新渲染（屏幕方向或折叠状态变化时）
         // 支持跟手滑动隐藏/显示
-        if (!this.useTopTabsNavigation) {
+        // HDS模式下使用 HdsStyleBottomBar 渲染系统级材质底栏
+        if (!this.useTopTabsNavigation && this.bottomBarStyle === 'hds') {
+          HdsStyleBottomBar({
+            selectedIndex: this.getActualTabsIndexForTabIndex(this.currentTabIndex),
+            visibleTabConfigs: this.getHdsBottomBarTabConfigs(),
+            tabBarOpacity: this.getTabBarOpacity(),
+            themeType: this.themeState.currentTheme,
+            hasSourceUpdate: this.hasSourceUpdate,
+            isPrivacyMode: this.isPrivacyMode,
+            cornerRadius: this.getGlassRadius(),
+            onChangeCallback: (actualIndex: number): void => {
+              this.changeMainContentToActualIndex(actualIndex);
+            },
+            longPressCallback: (tabIndex: number): void => {
+              void this.handleTabButtonLongPress(tabIndex);
+            },
+            controllerRefCallback: (controller: HdsTabsController): void => {
+              this.hdsTabsController = controller;
+            },
+            setSyncingCallback: (setter: (syncing: boolean) => void): void => {
+              this.hdsSetSyncing = setter;
+            }
+          })
+          .id('guide_main_bottom_bar_horizontal')
+          .width(this.getBottomBarWidth())
+          .height(this.BOTTOM_BAR_HEIGHT)
+          .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
+          .translate({ y: this.getEffectiveBottomBarOffset() })
+          .opacity(this.getBottomBarRenderOpacity())
+          .zIndex(15)
+          .key(`hdsBottomBar_${this.barRenderKey}`)
+        }
+
+        // 经典底栏：自定义动画指示器、跟手拖拽、弹跳反馈
+        if (!this.useTopTabsNavigation && this.bottomBarStyle === 'custom') {
           Column() {
             this.buildHorizontalTabBar()
           }
@@ -28682,7 +28403,7 @@ struct MainMenuPage {
           )
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
           .translate({ y: this.getEffectiveBottomBarOffset() })
-          .opacity(1 - this.getEffectiveBottomBarOffset() / this.getBottomBarTravelDistance() * 0.3)
+          .opacity(this.getBottomBarRenderOpacity())
           .key(`bottomBar_${this.barRenderKey}`)
         }
 
@@ -28956,5 +28677,3 @@ struct MainMenuPage {
 }
 
 export { MainMenuPage };
-
-

@@ -158,6 +158,7 @@ export class SettingKeys {
   
   // 底部导航栏自定义设置
   static readonly VISIBLE_TABS = 'visible_tabs'; // JSON数组，存储可见的标签索引
+  static readonly BOTTOM_BAR_STYLE = 'bottom_bar_style'; // 底栏样式: 'custom' | 'hds'
   static readonly MAIN_MENU_TABLET_TOP_BAR_POSITION = 'main_menu_tablet_top_bar_position';
   static readonly LIBRARY_DEFAULT_GRID_COLUMNS = 'library_default_grid_columns';
   static readonly LIBRARY_SHELF_GRID_COLUMNS = 'library_shelf_grid_columns';
@@ -209,6 +210,12 @@ export class SettingKeys {
   static readonly READER_KIT_ENABLED = 'reader_kit_enabled'; // ReaderKit 能力开关（默认开启）
   static readonly EPUB_WEBVIEW_RENDERER_ENABLED = 'epub_webview_renderer_enabled'; // 文字型 EPUB 使用 WebView 渲染引擎（默认关闭）
   static readonly NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED = 'non_main_page_global_background_enabled'; // 非主页面全局背景开关（默认开启）
+
+  // 内容重复检测设置
+  static readonly DUPLICATE_DETECTION_ENABLED = 'duplicate_detection_enabled'; // 启用重复检测（默认关闭）
+  static readonly DUPLICATE_DETECTION_THRESHOLD = 'duplicate_detection_threshold'; // 相似度阈值 0.0~1.0（默认0.5）
+  static readonly DUPLICATE_DETECTION_SCOPE = 'duplicate_detection_scope'; // 检测范围: same_type | all_types
+  static readonly DUPLICATE_DETECTION_TITLE_WEIGHT = 'duplicate_detection_title_weight'; // 标题权重 0.1~0.9（默认0.7）
 }
 
 /**
@@ -399,6 +406,21 @@ export class SettingsManager {
   }
 
   /**
+   * 获取底栏样式
+   * @returns 'custom'（经典自定义底栏）| 'hds'（HDS系统底栏）
+   */
+  getBottomBarStyle(): string {
+    return this.getString(SettingKeys.BOTTOM_BAR_STYLE, 'custom');
+  }
+
+  /**
+   * 设置底栏样式
+   */
+  async setBottomBarStyle(style: string): Promise<void> {
+    await this.setString(SettingKeys.BOTTOM_BAR_STYLE, style);
+  }
+
+  /**
    * 设置值（内部方法）
    */
   private async setValue(key: string, value: string, type: SettingType): Promise<void> {
@@ -482,6 +504,62 @@ export class SettingsManager {
     } catch (error) {
       logger.error(TAG, '同步设置到AppStorage失败', String(error));
     }
+  }
+
+  /**
+   * 获取重复检测是否启用
+   */
+  async getDuplicateDetectionEnabled(): Promise<boolean> {
+    return this.getBoolean(SettingKeys.DUPLICATE_DETECTION_ENABLED, false);
+  }
+
+  /**
+   * 设置重复检测是否启用
+   */
+  async setDuplicateDetectionEnabled(enabled: boolean): Promise<void> {
+    await this.setBoolean(SettingKeys.DUPLICATE_DETECTION_ENABLED, enabled);
+  }
+
+  /**
+   * 获取重复检测相似度阈值
+   */
+  async getDuplicateDetectionThreshold(): Promise<number> {
+    return this.getNumber(SettingKeys.DUPLICATE_DETECTION_THRESHOLD, 0.5);
+  }
+
+  /**
+   * 设置重复检测相似度阈值
+   */
+  async setDuplicateDetectionThreshold(threshold: number): Promise<void> {
+    await this.setNumber(SettingKeys.DUPLICATE_DETECTION_THRESHOLD, threshold);
+  }
+
+  /**
+   * 获取重复检测范围
+   */
+  async getDuplicateDetectionScope(): Promise<string> {
+    return this.getString(SettingKeys.DUPLICATE_DETECTION_SCOPE, 'same_type');
+  }
+
+  /**
+   * 设置重复检测范围
+   */
+  async setDuplicateDetectionScope(scope: string): Promise<void> {
+    await this.setString(SettingKeys.DUPLICATE_DETECTION_SCOPE, scope);
+  }
+
+  /**
+   * 获取重复检测标题权重
+   */
+  async getDuplicateDetectionTitleWeight(): Promise<number> {
+    return this.getNumber(SettingKeys.DUPLICATE_DETECTION_TITLE_WEIGHT, 0.7);
+  }
+
+  /**
+   * 设置重复检测标题权重
+   */
+  async setDuplicateDetectionTitleWeight(weight: number): Promise<void> {
+    await this.setNumber(SettingKeys.DUPLICATE_DETECTION_TITLE_WEIGHT, weight);
   }
 
   /**

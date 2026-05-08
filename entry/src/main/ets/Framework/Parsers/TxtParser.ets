@@ -161,16 +161,31 @@ export class TxtParser extends EBookParser {
       // 检查是否是章节标题（优先使用规则管理器）
       if (this.isChapterTitle(line)) {
         // 保存上一章节
-        if (currentChapterTitle || currentChapterContent) {
-          // 应用替换规则到章节内容
+        if (currentChapterTitle) {
+          // 有标题的正常章节
           const processedContent = this.contentProcessor.quickReplace(
-            currentChapterContent, 
+            currentChapterContent,
             ReplaceScope.CONTENT
           );
           chapters.push(this.createChapter(
             bookTitle,
             chapterNumber,
-            currentChapterTitle || `第${chapterNumber + 1}章`,
+            currentChapterTitle,
+            processedContent,
+            currentChapterStart,
+            position
+          ));
+          chapterNumber++;
+        } else if (currentChapterContent) {
+          // 第一个章节标题之前的内容，作为前言/序章保存
+          const processedContent = this.contentProcessor.quickReplace(
+            currentChapterContent,
+            ReplaceScope.CONTENT
+          );
+          chapters.push(this.createChapter(
+            bookTitle,
+            chapterNumber,
+            '前言',
             processedContent,
             currentChapterStart,
             position

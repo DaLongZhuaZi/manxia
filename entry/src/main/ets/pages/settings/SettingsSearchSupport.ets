@@ -80,6 +80,12 @@ export class SettingsSearchSupport {
     { id: 'main_menu_reset', title: '主页面设置恢复默认', description: '恢复主页面相关设置和主导航栏配置', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_reset', scrollOffset: 2000, keywords: ['恢复主页面设置', '确认重置'] },
     { id: 'page_reset', title: '页面设置恢复默认', description: '恢复详情页和推荐相关设置', targetPage: 'PageSettingsSubPage', anchorId: 'page_reset', scrollOffset: 1500, keywords: ['恢复页面设置', '确认重置'] },
 
+    // 重复检测设置
+    { id: 'dup_detect_enabled', title: '重复检测开关', description: '添加内容时自动检测书库中的重复', targetPage: 'DuplicateDetectionSettingsSubPage', anchorId: 'dup_detect_rules', scrollOffset: 0, keywords: ['重复检测', '去重', '重复内容', '相似内容', '内容重复'] },
+    { id: 'dup_detect_threshold', title: '重复检测阈值', description: '设置相似度百分比阈值', targetPage: 'DuplicateDetectionSettingsSubPage', anchorId: 'dup_detect_rules', scrollOffset: 0, keywords: ['相似度阈值', '重复度', '检测灵敏度', '阈值'] },
+    { id: 'dup_detect_scope', title: '检测范围', description: '同类型检测或跨类型检测', targetPage: 'DuplicateDetectionSettingsSubPage', anchorId: 'dup_detect_rules', scrollOffset: 0, keywords: ['检测范围', '跨类型', '同类型'] },
+    { id: 'dup_detect_weight', title: '匹配权重', description: '标题与作者的匹配权重分配', targetPage: 'DuplicateDetectionSettingsSubPage', anchorId: 'dup_detect_weight', scrollOffset: 400, keywords: ['标题权重', '作者权重', '匹配权重'] },
+
     // 字体设置
     { id: 'font_custom_manage', title: '自定义字体管理', description: '导入、预览与管理自定义字体', targetPage: 'FontSettingsSubPage', anchorId: 'font_custom', scrollOffset: 0, keywords: ['自定义字体管理', '导入字体', '系统字体', '自定义字体'] },
     { id: 'font_app', title: '界面字体设置', description: '切换APP界面字体样式', targetPage: 'FontSettingsSubPage', anchorId: 'font_app', scrollOffset: 320, keywords: ['界面字体', '界面字体样式'] },

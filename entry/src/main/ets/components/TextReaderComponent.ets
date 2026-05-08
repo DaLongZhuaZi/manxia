@@ -23,6 +23,7 @@ import {
   TextReaderCallbacks,
   TextPage,
   TextChapter,
+  TextChapterSwitchIntent,
   PageMargins,
   TextReadingMode,
   TextReadingDirection,
@@ -139,6 +140,8 @@ export struct TextReaderComponent {
   @Prop bottomStatusBarHeight: number = 28;
   /** 分页模式：LOCAL（本地文件）或 ONLINE（在线小说） */
   @Prop paginationMode: PaginationMode = PaginationMode.LOCAL;
+  @Prop pendingSeekChapterIndex: number = -1;
+  @Prop pendingSeekChapterFraction: number = -1;
   @Prop enableNovelAnnotations: boolean = false;
   @Prop @Watch('onNovelHighlightRangesChange') novelHighlightRanges: TextReaderHighlightRange[] = [];
   
@@ -156,7 +159,7 @@ export struct TextReaderComponent {
   onPageChange: (pageIndex: number, totalPages: number) => void = () => {};
   onPageCharRangeChange: (startCharIndex: number, endCharIndex: number) => void = () => {};
   onUserPageTurnStart: () => void = () => {};
-  onChapterChange: (chapterIndex: number) => void = () => {};
+  onChapterChange: (chapterIndex: number, switchIntent?: TextChapterSwitchIntent) => void = () => {};
   onProgressChange: (progress: number) => void = () => {};
   /** 点击中间区域回调（用于显示/隐藏工具栏） */
   onTapCenter: () => void = () => {};
@@ -526,7 +529,9 @@ export struct TextReaderComponent {
       logger.info(TAG, `章节索引变化: ${this.lastChapterIndex} -> ${this.currentChapterIndex}`);
       this.lastChapterIndex = this.currentChapterIndex;
       this.clearAutoPageTurnTimer();
-      // 章节变化时，页码会在 onContentChange 中重置
+      // 章节变化时重置页码（内部重置，不触发外部 onPageChange）
+      this.currentPageIndex = 0;
+      this.lastExternalPageIndex = 0;
     }
   }
 
@@ -892,8 +897,32 @@ export struct TextReaderComponent {
     return entry;
   }
 
+  private tryApplyPendingSeekFraction(reason: string): boolean {
+    if (this.pendingSeekChapterIndex !== this.currentChapterIndex || this.pendingSeekChapterFraction < 0 || this.totalPages <= 0) {
+      return false;
+    }
+
+    const safeFraction = Math.max(0, Math.min(0.9999, this.pendingSeekChapterFraction));
+    const targetPageIndex = Math.max(0, Math.min(this.totalPages - 1, Math.floor(this.totalPages * safeFraction)));
+    if (this.isDualPageMode()) {
+      this.dualPageBaseIndex = targetPageIndex - (targetPageIndex % 2);
+      this.currentPageIndex = this.dualPageBaseIndex;
+    } else {
+      this.currentPageIndex = targetPageIndex;
+    }
+    this.lastExternalPageIndex = this.currentPageIndex;
+    this.shouldJumpToLastPage = false;
+    this.pendingAnchorCharIndex = -1;
+    logger.info(
+      TAG,
+      `分页完成，应用跨章节目标页: chapter=${this.currentChapterIndex}, page=${this.currentPageIndex + 1}/${this.totalPages}, fraction=${safeFraction}, reason=${reason}`
+    );
+    return true;
+  }
+
   private applyPostPaginationState(reason: string): void {
-    if (this.shouldJumpToLastPage && this.totalPages > 0) {
+    const appliedPendingSeek = this.tryApplyPendingSeekFraction(reason);
+    if (!appliedPendingSeek && this.shouldJumpToLastPage && this.totalPages > 0) {
       if (this.isDualPageMode()) {
         this.dualPageBaseIndex = this.totalPages - 1 - ((this.totalPages - 1) % 2);
         this.currentPageIndex = this.dualPageBaseIndex;
@@ -2152,13 +2181,13 @@ export struct TextReaderComponent {
     const indentText = isFirstLine && firstLineIndent > 0 ? '　'.repeat(Math.floor(firstLineIndent)) : '';
     let currentText = indentText + text;
     
-    // LOCAL模式：使用0.92的保守系数，适合本地TXT文件
+    // LOCAL模式：使用0.85的保守系数，确保长段落不会超出屏幕边界
     const avgCharWidth = this.getAvgCharWidth();
     
     // 计算每行字符数：考虑字间距
     // 计算每行字符数：考虑字间距
     // 总宽度 = n个字符宽度 + (n-1)个字间距
-    const widthFactor = this.getResolvedPaginationMode() === PaginationMode.ONLINE ? 1.0 : 0.92;
+    const widthFactor = this.getResolvedPaginationMode() === PaginationMode.ONLINE ? 1.0 : 0.85;
     
     // maxWidth + letterSpacing = n * (avgCharWidth + letterSpacing)
     // n = (maxWidth + letterSpacing) / (avgCharWidth + letterSpacing)
@@ -4075,7 +4104,7 @@ export struct TextReaderComponent {
     if (targetPageIndex < 0) {
       // 尝试切换到上一章节的最后一页
       if (this.currentChapterIndex > 0) {
-        logger.info(TAG, `completeSlidePageTurn: 已是第一章第一页，回弹`);
+        logger.info(TAG, `completeSlidePageTurn: 当前章节第一页，切换到上一章最后一页`);
         this.switchToPrevChapter();
       } else {
         logger.info(TAG, `completeSlidePageTurn: 已是第一章第一页，回弹`);
@@ -4087,7 +4116,7 @@ export struct TextReaderComponent {
     if (targetPageIndex >= this.totalPages) {
       // 尝试切换到下一章节的第一页
       if (this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1) {
-        logger.info(TAG, `completeSlidePageTurn: 已是最后一章最后一页，回弹`);
+        logger.info(TAG, `completeSlidePageTurn: 当前章节最后一页，切换到下一章第一页`);
         this.switchToNextChapter();
       } else {
         logger.info(TAG, `completeSlidePageTurn: 已是最后一章最后一页，回弹`);
@@ -4158,10 +4187,11 @@ export struct TextReaderComponent {
       this.transitionChapterName = nextChapter?.title || `Chapter ${nextChapterIndex + 1}`;
       this.isChapterTransition = true;
       this.shouldJumpToLastPage = false;
+      this.lastExternalPageIndex = 0;
       this.slideOffset = 0;
       this.scrollOffset = 0;
       this.resetScrollBoundarySwitchState();
-      this.onChapterChange(nextChapterIndex);
+      this.onChapterChange(nextChapterIndex, TextChapterSwitchIntent.FIRST_PAGE);
       return;
     }
     const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止章节切换期间数据变化
@@ -4199,12 +4229,12 @@ export struct TextReaderComponent {
           return;
         }
         
-        // 切换章节
-        this.currentChapterIndex = nextChapterIndex;
-        this.currentPageIndex = 0;
-        
+        // 通知父页面切章；父页面负责保存旧进度并更新 @Link 状态。
+        this.shouldJumpToLastPage = false;
+        this.lastExternalPageIndex = 0;
+
         // 延迟一帧后滑动出过渡页
-        this.onChapterChange(this.currentChapterIndex);
+        this.onChapterChange(nextChapterIndex, TextChapterSwitchIntent.FIRST_PAGE);
         
           // 检查是否被中断
         setTimeout(() => {
@@ -4259,10 +4289,11 @@ export struct TextReaderComponent {
       this.transitionChapterName = prevChapter?.title || `Chapter ${prevChapterIndex + 1}`;
       this.isChapterTransition = true;
       this.shouldJumpToLastPage = true;
+      this.lastExternalPageIndex = 0;
       this.slideOffset = 0;
       this.scrollOffset = 0;
       this.resetScrollBoundarySwitchState();
-      this.onChapterChange(prevChapterIndex);
+      this.onChapterChange(prevChapterIndex, TextChapterSwitchIntent.LAST_PAGE);
       return;
     }
     const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止章节切换期间数据变化
@@ -4303,11 +4334,11 @@ export struct TextReaderComponent {
           return;
         }
         
-        // 通知章节变化（外部会更新内容，分页完成后会检查 shouldJumpToLastPage）
-        this.currentChapterIndex = prevChapterIndex;
-        
+        // 通知章节变化（外部会更新内容，分页完成后会跳到上一章末页）
+        this.lastExternalPageIndex = 0;
+
         // 延迟一帧后滑动出过渡页
-        this.onChapterChange(this.currentChapterIndex);
+        this.onChapterChange(prevChapterIndex, TextChapterSwitchIntent.LAST_PAGE);
         
           // 检查是否被中断
         setTimeout(() => {
@@ -7104,5 +7135,3 @@ export struct TextReaderComponent {
     }
   }
 }
-
-
