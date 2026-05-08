@@ -27,7 +27,6 @@ import {
   DEFAULT_TEXT_READER_SETTINGS,
   DEFAULT_TEXT_STYLE,
   TextChapter,
-  TextChapterSwitchIntent,
   TextReadingMode,
   TextReadingDirection,
   BackgroundType,
@@ -1995,27 +1994,16 @@ export struct NovelReaderPage {
     this.saveReadProgress();
   }
 
-  onChapterChange(chapterIndex: number, switchIntent: TextChapterSwitchIntent = TextChapterSwitchIntent.DEFAULT): void {
-    logger.info(TAG, `章节切换请求: ${chapterIndex}, intent=${switchIntent}`);
-    void this.handleReaderChapterChange(chapterIndex, switchIntent);
-  }
-
-  private async handleReaderChapterChange(chapterIndex: number, switchIntent: TextChapterSwitchIntent): Promise<void> {
-    const previousChapterIndex = this.currentChapterIndex;
-    await this.saveReadProgress();
-
-    let pendingChapterFraction = -1;
-    if (switchIntent === TextChapterSwitchIntent.LAST_PAGE) {
-      pendingChapterFraction = 0.9999;
-    } else if (switchIntent === TextChapterSwitchIntent.FIRST_PAGE) {
-      pendingChapterFraction = 0;
-    } else if (chapterIndex < previousChapterIndex) {
-      pendingChapterFraction = 0.9999;
-    } else if (chapterIndex > previousChapterIndex) {
-      pendingChapterFraction = 0;
+  onChapterChange(chapterIndex: number): void {
+    logger.info(TAG, `章节切换请求: ${chapterIndex}`);
+    // 保存当前进度后切换章节
+    this.saveReadProgress();
+    // 切换到上一章节时，使用 fraction=0.9999 跳转到最后一页
+    if (chapterIndex < this.currentChapterIndex) {
+      this.switchToChapter(chapterIndex, 0.9999);
+    } else {
+      this.switchToChapter(chapterIndex);
     }
-
-    await this.switchToChapter(chapterIndex, pendingChapterFraction);
   }
 
   /**
@@ -3860,8 +3848,6 @@ export struct NovelReaderPage {
       enableNovelAnnotations: true,
       novelHighlightRanges: this.currentChapterHighlightRanges,
       paginationMode: this.getReaderPaginationMode(),
-      pendingSeekChapterIndex: this.pendingSeekChapterIndex,
-      pendingSeekChapterFraction: this.pendingSeekChapterFraction,
       onPageChange: (pageIndex: number, totalPages: number) => this.onPageChange(pageIndex, totalPages),
       onPageCharRangeChange: (startCharIndex: number, endCharIndex: number) => {
         this.onTextPageCharRangeChange(startCharIndex, endCharIndex);
@@ -3869,8 +3855,7 @@ export struct NovelReaderPage {
       onUserPageTurnStart: () => {
         this.onTextUserPageTurnStart();
       },
-      onChapterChange: (chapterIndex: number, switchIntent?: TextChapterSwitchIntent) =>
-        this.onChapterChange(chapterIndex, switchIntent),
+      onChapterChange: (chapterIndex: number) => this.onChapterChange(chapterIndex),
       onTapCenter: () => this.onTapCenter(),
       onReady: () => {
         // 文本阅读器分页完成，通知过渡动画阅读器就绪

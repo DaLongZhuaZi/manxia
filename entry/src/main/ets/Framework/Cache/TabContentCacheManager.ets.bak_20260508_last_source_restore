@@ -169,7 +169,7 @@ export class TabContentCacheManager {
    * 是否有书源缓存数据
    */
   hasBookSourceCache(): boolean {
-    return this.bookSourceCache !== null;
+    return this.bookSourceCache !== null && this.bookSourceCache.bookSourceBooks.length > 0;
   }
 
   // ==================== Suwayomi缓存 ====================

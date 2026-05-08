@@ -1,0 +1,151 @@
+/**
+ * HDS 风格底栏组件
+ * 基于 HdsTabs 实现，自定义 tabBar Builder 控制选中态样式
+ * HdsTabs 提供浮动胶囊、材质光效、触摸反馈等系统级动效
+ */
+
+import { hdsMaterial, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+import { ThemeType } from '../Managers/ThemeManager';
+
+const TAG = 'HdsStyleBottomBar';
+
+export interface HdsBottomBarTabConfig {
+  title: string;
+  icon: Resource;
+  selectedIcon: Resource;
+  systemIcon?: Resource;
+  useSystemIcon?: boolean;
+  hasMultiColor?: boolean;
+  applyFillColor?: boolean;
+  index: number;
+  required: boolean;
+}
+
+@Component
+export struct HdsStyleBottomBar {
+  @Prop selectedIndex: number = 0;
+  @Prop visibleTabConfigs: HdsBottomBarTabConfig[] = [];
+  @Prop tabBarOpacity: number = 1.0;
+  @Prop themeType: ThemeType = ThemeType.LIGHT;
+  @Prop hasSourceUpdate: boolean = false;
+  @Prop isPrivacyMode: boolean = false;
+  onChangeCallback: (actualIndex: number) => void = (): void => {};
+  longPressCallback: (tabIndex: number) => void = (): void => {};
+  controllerRefCallback: (controller: HdsTabsController) => void = (): void => {};
+  setSyncingCallback: (setter: (syncing: boolean) => void) => void = (): void => {};
+
+  private controller: HdsTabsController = new HdsTabsController();
+  private isSyncingIndex: boolean = false;
+
+  aboutToAppear(): void {
+    this.controllerRefCallback(this.controller);
+    this.setSyncingCallback((syncing: boolean): void => {
+      this.isSyncingIndex = syncing;
+    });
+  }
+
+  private getActiveColor(): string {
+    return this.themeType === ThemeType.DARK ? '#6EC8FF' : '#0A84FF';
+  }
+
+  private getInactiveColor(): string {
+    return this.themeType === ThemeType.DARK ? '#D6DEE8' : '#4B5563';
+  }
+
+  private getNavigationColor(selected: boolean): string {
+    return selected ? this.getActiveColor() : this.getInactiveColor();
+  }
+
+  private getSystemIcon(config: HdsBottomBarTabConfig): Resource {
+    if (this.isPrivacyMode && config.index === 1) {
+      return $r('sys.symbol.lock');
+    }
+    if (config.systemIcon) {
+      return config.systemIcon;
+    }
+    return $r('sys.symbol.books_vertical_fill');
+  }
+
+  build(): void {
+    HdsTabs({ controller: this.controller }) {
+      ForEach(this.visibleTabConfigs, (cfg: HdsBottomBarTabConfig, idx: number): void => {
+        TabContent() {
+        }
+        .backgroundColor(Color.Transparent)
+        .tabBar(this.buildTabBarItem(cfg, this.selectedIndex === idx))
+      }, (cfg: HdsBottomBarTabConfig, _idx: number): string => `hds_tab_${cfg.index}`)
+    }
+    .width('100%')
+    .height(56)
+    .barPosition(BarPosition.End)
+    .barMode(BarMode.Fixed)
+    .barOverlap(true)
+    .barFloatingStyle({
+      adaptToHandedness: true,
+      systemMaterialEffect: {
+        materialType: hdsMaterial.MaterialType.IMMERSIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      },
+      thermoCtrl: true,
+      barOpacity: this.tabBarOpacity
+    })
+    .clip(true)
+    .borderRadius(20)
+    .onChange((index: number): void => {
+      if (!this.isSyncingIndex) {
+        this.onChangeCallback(index);
+      }
+    })
+  }
+
+  @Builder
+  buildTabBarItem(config: HdsBottomBarTabConfig, isSelected: boolean): void {
+    Column({ space: 4 }) {
+      Stack() {
+        if (config.useSystemIcon) {
+          SymbolGlyph(this.getSystemIcon(config))
+            .fontSize(24)
+            .fontColor([this.getNavigationColor(isSelected)])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+        } else if (config.applyFillColor === false) {
+          Image(isSelected ? config.selectedIcon : config.icon)
+            .width(24)
+            .height(24)
+        } else {
+          Image(isSelected ? config.selectedIcon : config.icon)
+            .width(24)
+            .height(24)
+            .fillColor(this.getNavigationColor(isSelected))
+        }
+
+        if (config.index === 3 && this.hasSourceUpdate) {
+          Circle()
+            .width(8)
+            .height(8)
+            .fill('#FF4444')
+            .position({ x: 16, y: 0 })
+        }
+      }
+      .width(24)
+      .height(24)
+      .opacity(isSelected ? 1 : (this.themeType === ThemeType.DARK ? 0.84 : 0.88))
+
+      Text(config.title)
+        .fontSize(12)
+        .fontColor(this.getNavigationColor(isSelected))
+        .fontWeight(isSelected ? FontWeight.Medium : FontWeight.Normal)
+        .maxLines(1)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .height(44)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 4, right: 4 })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction((): void => {
+          this.longPressCallback(config.index);
+        })
+    )
+  }
+}

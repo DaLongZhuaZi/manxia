@@ -355,8 +355,7 @@ export struct MainMenuSettingsSubPage {
     this.tabletTopBarPosition = this.normalizeTabletTopBarPosition(tabletTopBarPosition);
     AppStorage.setOrCreate('main_menu_tablet_top_bar_position', this.tabletTopBarPosition);
     this.mainPageBottomBarAnimationEnabled = this.animationSettingsManager.getSettings().mainPageBottomBarAnimationEnabled;
-    this.bottomBarStyle = this.settingsManager.getBottomBarStyle() === 'hds' ? 'hds' : 'custom';
-    AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', this.bottomBarStyle);
+    this.bottomBarStyle = this.settingsManager.getBottomBarStyle();
 
     logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}, skipPrivacyBiometric=${this.privacyLibrarySkipBiometricAuth}`);
   }
@@ -560,24 +559,29 @@ export struct MainMenuSettingsSubPage {
   }
 
   private async saveBottomBarStyle(style: string): Promise<void> {
-    const nextStyle: string = style === 'hds' ? 'hds' : 'custom';
-    if (nextStyle === this.bottomBarStyle) {
+    if (style === this.bottomBarStyle) {
       return;
     }
-    const previousStyle: string = this.bottomBarStyle;
     try {
-      await this.settingsManager.setBottomBarStyle(nextStyle);
-      this.bottomBarStyle = nextStyle;
-      AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', nextStyle);
-      logger.info(TAG, `底栏样式已切换: ${nextStyle}`);
+      await this.settingsManager.setBottomBarStyle(style);
+      this.bottomBarStyle = style;
+      logger.info(TAG, `底栏样式已切换: ${style}`);
 
-      promptAction.showToast({
-        message: '底栏样式已切换',
-        duration: 1500
+      promptAction.showDialog({
+        title: '配置已保存',
+        message: '底栏样式已切换，需要重启APP才能生效。\n\n是否立即重启？',
+        buttons: [
+          { text: '稍后重启', color: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) },
+          { text: '立即重启', color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) }
+        ]
+      }).then((result: promptAction.ShowDialogSuccessResponse) => {
+        if (result.index === 1) {
+          this.restartApp();
+        }
       });
     } catch (error) {
       logger.error(TAG, '保存底栏样式失败', String(error));
-      this.bottomBarStyle = previousStyle;
+      this.bottomBarStyle = this.bottomBarStyle === 'custom' ? 'hds' : 'custom';
       promptAction.showToast({
         message: '保存失败，请重试',
         duration: 1500
@@ -1068,13 +1072,10 @@ export struct MainMenuSettingsSubPage {
             this.libraryCoverOpenReaderEnabled = true;
             this.privacyLibrarySkipBiometricAuth = false;
             this.mainPageBottomBarAnimationEnabled = DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled;
-            this.bottomBarStyle = 'custom';
             this.suwayomiBrowsePageAsEntryEnabled = false;
             await this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, true);
             await this.settingsManager.setBoolean(SettingKeys.PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH, false);
             await this.saveMainPageBottomBarAnimationSetting(DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled);
-            await this.settingsManager.setBottomBarStyle('custom');
-            AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', 'custom');
             await this.saveSuwayomiBrowseEntrySetting(false);
             this.resetTabsToDefault();
           }
@@ -1706,7 +1707,7 @@ export struct MainMenuSettingsSubPage {
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .padding({ left: 4 })
 
-              Text('切换底栏渲染方式，无需重启，主页面会自动同步')
+              Text('切换底栏渲染方式，需要重启APP生效')
                 .fontSize(13)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1722,7 +1723,7 @@ export struct MainMenuSettingsSubPage {
                     .fontColor(this.bottomBarStyle === 'custom'
                       ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                       : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  Text('自定义指示器、滚动隐藏、跟手拖拽')
+                  Text('自定义动画指示器、跟手拖拽、弹跳反馈')
                     .fontSize(11)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1761,7 +1762,7 @@ export struct MainMenuSettingsSubPage {
                     .fontColor(this.bottomBarStyle === 'hds'
                       ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                       : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  Text('系统级材质、滚动隐藏、原生反馈')
+                  Text('系统级材质效果、原生动画、功耗更优')
                     .fontSize(11)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))

@@ -1,0 +1,202 @@
+/**
+ * HDS 风格底栏组件
+ * 基于 HdsTabs 实现，自定义 tabBar Builder 控制选中态样式
+ * HdsTabs 提供浮动胶囊、材质光效、触摸反馈等系统级动效
+ */
+
+import { hdsMaterial, HdsTabs, HdsTabsController, HdsTabsFloatingStyle, SystemMaterialParams } from '@kit.UIDesignKit';
+import { ThemeType } from '../Managers/ThemeManager';
+
+const HDS_BAR_SIDE_GUARD: number = 8;
+
+export interface HdsBottomBarTabConfig {
+  title: string;
+  icon: Resource;
+  selectedIcon: Resource;
+  systemIcon?: Resource;
+  useSystemIcon?: boolean;
+  hasMultiColor?: boolean;
+  applyFillColor?: boolean;
+  index: number;
+  required: boolean;
+}
+
+@Component
+export struct HdsStyleBottomBar {
+  @Prop @Watch('onSelectedIndexChanged') selectedIndex: number = 0;
+  @Prop @Watch('onVisibleTabConfigsChanged') visibleTabConfigs: HdsBottomBarTabConfig[] = [];
+  @Prop tabBarOpacity: number = 1.0;
+  @Prop themeType: ThemeType = ThemeType.LIGHT;
+  @Prop hasSourceUpdate: boolean = false;
+  @Prop isPrivacyMode: boolean = false;
+  onChangeCallback: (actualIndex: number) => void = (): void => {};
+  longPressCallback: (tabIndex: number) => void = (): void => {};
+  controllerRefCallback: (controller: HdsTabsController) => void = (): void => {};
+  setSyncingCallback: (setter: (syncing: boolean) => void) => void = (): void => {};
+  @State private visualSelectedIndex: number = 0;
+
+  private controller: HdsTabsController = new HdsTabsController();
+  private isSyncingIndex: boolean = false;
+
+  aboutToAppear(): void {
+    this.updateVisualSelectedIndex(this.selectedIndex);
+    this.controllerRefCallback(this.controller);
+    this.setSyncingCallback((syncing: boolean): void => {
+      this.isSyncingIndex = syncing;
+    });
+  }
+
+  onSelectedIndexChanged(): void {
+    this.updateVisualSelectedIndex(this.selectedIndex);
+  }
+
+  onVisibleTabConfigsChanged(): void {
+    this.updateVisualSelectedIndex(this.selectedIndex);
+  }
+
+  private getSafeSelectedIndex(index: number): number {
+    const tabCount: number = this.visibleTabConfigs.length;
+    if (tabCount <= 0) {
+      return 0;
+    }
+    if (index >= 0 && index < tabCount) {
+      return index;
+    }
+    return 0;
+  }
+
+  private updateVisualSelectedIndex(index: number): number {
+    const safeIndex: number = this.getSafeSelectedIndex(index);
+    if (this.visualSelectedIndex !== safeIndex) {
+      this.visualSelectedIndex = safeIndex;
+    }
+    return safeIndex;
+  }
+
+  private isTabSelected(actualIndex: number): boolean {
+    return this.visualSelectedIndex === actualIndex;
+  }
+
+  private getActiveColor(): string {
+    return this.themeType === ThemeType.DARK ? '#6EC8FF' : '#0A84FF';
+  }
+
+  private getInactiveColor(): string {
+    return this.themeType === ThemeType.DARK ? '#D6DEE8' : '#4B5563';
+  }
+
+  private getNavigationColor(selected: boolean): string {
+    return selected ? this.getActiveColor() : this.getInactiveColor();
+  }
+
+  private getSystemIcon(config: HdsBottomBarTabConfig): Resource {
+    if (this.isPrivacyMode && config.index === 1) {
+      return $r('sys.symbol.lock');
+    }
+    if (config.systemIcon) {
+      return config.systemIcon;
+    }
+    return $r('sys.symbol.books_vertical_fill');
+  }
+
+  private buildFloatingStyle(): HdsTabsFloatingStyle {
+    const materialParams: SystemMaterialParams = {
+      materialType: hdsMaterial.MaterialType.IMMERSIVE,
+      materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+    };
+    const style: HdsTabsFloatingStyle = {
+      barSideMargin: HDS_BAR_SIDE_GUARD,
+      adaptToHandedness: true,
+      systemMaterialEffect: materialParams,
+      thermoCtrl: true,
+      barOpacity: this.tabBarOpacity
+    };
+    return style;
+  }
+
+  build(): void {
+    Stack({ alignContent: Alignment.Center }) {
+      HdsTabs({
+        controller: this.controller,
+        index: this.visualSelectedIndex
+      }) {
+        ForEach(this.visibleTabConfigs, (cfg: HdsBottomBarTabConfig, idx: number): void => {
+          TabContent() {
+          }
+          .backgroundColor(Color.Transparent)
+          .tabBar(this.buildTabBarItem(cfg, idx))
+        }, (cfg: HdsBottomBarTabConfig, _idx: number): string => `hds_tab_${cfg.index}`)
+      }
+      .width('100%')
+      .height(56)
+      .barPosition(BarPosition.End)
+      .barMode(BarMode.Fixed)
+      .barOverlap(true)
+      .barFloatingStyle(this.buildFloatingStyle())
+      .onSelected((index: number): void => {
+        this.updateVisualSelectedIndex(index);
+      })
+      .onChange((index: number): void => {
+        const safeIndex: number = this.updateVisualSelectedIndex(index);
+        if (!this.isSyncingIndex && this.selectedIndex !== safeIndex) {
+          this.onChangeCallback(safeIndex);
+        }
+      })
+    }
+    .width('100%')
+    .height(56)
+    .borderRadius(20)
+    .clip(true)
+  }
+
+  @Builder
+  buildTabBarItem(config: HdsBottomBarTabConfig, actualIndex: number): void {
+    Column({ space: 4 }) {
+      Stack() {
+        if (config.useSystemIcon) {
+          SymbolGlyph(this.getSystemIcon(config))
+            .fontSize(24)
+            .fontColor([this.getNavigationColor(this.isTabSelected(actualIndex))])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+        } else if (config.applyFillColor === false) {
+          Image(this.isTabSelected(actualIndex) ? config.selectedIcon : config.icon)
+            .width(24)
+            .height(24)
+        } else {
+          Image(this.isTabSelected(actualIndex) ? config.selectedIcon : config.icon)
+            .width(24)
+            .height(24)
+            .fillColor(this.getNavigationColor(this.isTabSelected(actualIndex)))
+        }
+
+        if (config.index === 3 && this.hasSourceUpdate) {
+          Circle()
+            .width(8)
+            .height(8)
+            .fill('#FF4444')
+            .position({ x: 16, y: 0 })
+        }
+      }
+      .width(24)
+      .height(24)
+      .opacity(this.isTabSelected(actualIndex) ? 1 : (this.themeType === ThemeType.DARK ? 0.84 : 0.88))
+
+      Text(config.title)
+        .fontSize(12)
+        .fontColor(this.getNavigationColor(this.isTabSelected(actualIndex)))
+        .fontWeight(this.isTabSelected(actualIndex) ? FontWeight.Medium : FontWeight.Normal)
+        .maxLines(1)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .height(44)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 4, right: 4 })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction((): void => {
+          this.longPressCallback(config.index);
+        })
+    )
+  }
+}

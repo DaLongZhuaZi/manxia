@@ -23,7 +23,6 @@ import {
   TextReaderCallbacks,
   TextPage,
   TextChapter,
-  TextChapterSwitchIntent,
   PageMargins,
   TextReadingMode,
   TextReadingDirection,
@@ -140,8 +139,6 @@ export struct TextReaderComponent {
   @Prop bottomStatusBarHeight: number = 28;
   /** 分页模式：LOCAL（本地文件）或 ONLINE（在线小说） */
   @Prop paginationMode: PaginationMode = PaginationMode.LOCAL;
-  @Prop pendingSeekChapterIndex: number = -1;
-  @Prop pendingSeekChapterFraction: number = -1;
   @Prop enableNovelAnnotations: boolean = false;
   @Prop @Watch('onNovelHighlightRangesChange') novelHighlightRanges: TextReaderHighlightRange[] = [];
   
@@ -159,7 +156,7 @@ export struct TextReaderComponent {
   onPageChange: (pageIndex: number, totalPages: number) => void = () => {};
   onPageCharRangeChange: (startCharIndex: number, endCharIndex: number) => void = () => {};
   onUserPageTurnStart: () => void = () => {};
-  onChapterChange: (chapterIndex: number, switchIntent?: TextChapterSwitchIntent) => void = () => {};
+  onChapterChange: (chapterIndex: number) => void = () => {};
   onProgressChange: (progress: number) => void = () => {};
   /** 点击中间区域回调（用于显示/隐藏工具栏） */
   onTapCenter: () => void = () => {};
@@ -897,32 +894,8 @@ export struct TextReaderComponent {
     return entry;
   }
 
-  private tryApplyPendingSeekFraction(reason: string): boolean {
-    if (this.pendingSeekChapterIndex !== this.currentChapterIndex || this.pendingSeekChapterFraction < 0 || this.totalPages <= 0) {
-      return false;
-    }
-
-    const safeFraction = Math.max(0, Math.min(0.9999, this.pendingSeekChapterFraction));
-    const targetPageIndex = Math.max(0, Math.min(this.totalPages - 1, Math.floor(this.totalPages * safeFraction)));
-    if (this.isDualPageMode()) {
-      this.dualPageBaseIndex = targetPageIndex - (targetPageIndex % 2);
-      this.currentPageIndex = this.dualPageBaseIndex;
-    } else {
-      this.currentPageIndex = targetPageIndex;
-    }
-    this.lastExternalPageIndex = this.currentPageIndex;
-    this.shouldJumpToLastPage = false;
-    this.pendingAnchorCharIndex = -1;
-    logger.info(
-      TAG,
-      `分页完成，应用跨章节目标页: chapter=${this.currentChapterIndex}, page=${this.currentPageIndex + 1}/${this.totalPages}, fraction=${safeFraction}, reason=${reason}`
-    );
-    return true;
-  }
-
   private applyPostPaginationState(reason: string): void {
-    const appliedPendingSeek = this.tryApplyPendingSeekFraction(reason);
-    if (!appliedPendingSeek && this.shouldJumpToLastPage && this.totalPages > 0) {
+    if (this.shouldJumpToLastPage && this.totalPages > 0) {
       if (this.isDualPageMode()) {
         this.dualPageBaseIndex = this.totalPages - 1 - ((this.totalPages - 1) % 2);
         this.currentPageIndex = this.dualPageBaseIndex;
@@ -4104,7 +4077,7 @@ export struct TextReaderComponent {
     if (targetPageIndex < 0) {
       // 尝试切换到上一章节的最后一页
       if (this.currentChapterIndex > 0) {
-        logger.info(TAG, `completeSlidePageTurn: 当前章节第一页，切换到上一章最后一页`);
+        logger.info(TAG, `completeSlidePageTurn: 已是第一章第一页，回弹`);
         this.switchToPrevChapter();
       } else {
         logger.info(TAG, `completeSlidePageTurn: 已是第一章第一页，回弹`);
@@ -4116,7 +4089,7 @@ export struct TextReaderComponent {
     if (targetPageIndex >= this.totalPages) {
       // 尝试切换到下一章节的第一页
       if (this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1) {
-        logger.info(TAG, `completeSlidePageTurn: 当前章节最后一页，切换到下一章第一页`);
+        logger.info(TAG, `completeSlidePageTurn: 已是最后一章最后一页，回弹`);
         this.switchToNextChapter();
       } else {
         logger.info(TAG, `completeSlidePageTurn: 已是最后一章最后一页，回弹`);
@@ -4187,11 +4160,12 @@ export struct TextReaderComponent {
       this.transitionChapterName = nextChapter?.title || `Chapter ${nextChapterIndex + 1}`;
       this.isChapterTransition = true;
       this.shouldJumpToLastPage = false;
+      this.currentPageIndex = 0;
       this.lastExternalPageIndex = 0;
       this.slideOffset = 0;
       this.scrollOffset = 0;
       this.resetScrollBoundarySwitchState();
-      this.onChapterChange(nextChapterIndex, TextChapterSwitchIntent.FIRST_PAGE);
+      this.onChapterChange(nextChapterIndex);
       return;
     }
     const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止章节切换期间数据变化
@@ -4229,12 +4203,13 @@ export struct TextReaderComponent {
           return;
         }
         
-        // 通知父页面切章；父页面负责保存旧进度并更新 @Link 状态。
-        this.shouldJumpToLastPage = false;
+        // 切换章节
+        this.currentChapterIndex = nextChapterIndex;
+        this.currentPageIndex = 0;
         this.lastExternalPageIndex = 0;
 
         // 延迟一帧后滑动出过渡页
-        this.onChapterChange(nextChapterIndex, TextChapterSwitchIntent.FIRST_PAGE);
+        this.onChapterChange(this.currentChapterIndex);
         
           // 检查是否被中断
         setTimeout(() => {
@@ -4289,11 +4264,12 @@ export struct TextReaderComponent {
       this.transitionChapterName = prevChapter?.title || `Chapter ${prevChapterIndex + 1}`;
       this.isChapterTransition = true;
       this.shouldJumpToLastPage = true;
+      this.currentPageIndex = 0;
       this.lastExternalPageIndex = 0;
       this.slideOffset = 0;
       this.scrollOffset = 0;
       this.resetScrollBoundarySwitchState();
-      this.onChapterChange(prevChapterIndex, TextChapterSwitchIntent.LAST_PAGE);
+      this.onChapterChange(prevChapterIndex);
       return;
     }
     const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止章节切换期间数据变化
@@ -4334,11 +4310,13 @@ export struct TextReaderComponent {
           return;
         }
         
-        // 通知章节变化（外部会更新内容，分页完成后会跳到上一章末页）
+        // 通知章节变化（外部会更新内容，分页完成后会检查 shouldJumpToLastPage）
+        this.currentChapterIndex = prevChapterIndex;
+        this.currentPageIndex = 0;
         this.lastExternalPageIndex = 0;
 
         // 延迟一帧后滑动出过渡页
-        this.onChapterChange(prevChapterIndex, TextChapterSwitchIntent.LAST_PAGE);
+        this.onChapterChange(this.currentChapterIndex);
         
           // 检查是否被中断
         setTimeout(() => {
@@ -7135,3 +7113,5 @@ export struct TextReaderComponent {
     }
   }
 }
+
+

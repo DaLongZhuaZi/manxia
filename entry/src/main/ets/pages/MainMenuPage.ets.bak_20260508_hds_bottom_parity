@@ -63,12 +63,7 @@ import { ErrorManagementSubPage } from './settings/ErrorManagementSubPage';
 import { InteractionSettingsSubPage } from './settings/InteractionSettingsSubPage';
 import { AnimationSettingsSubPage } from './settings/AnimationSettingsSubPage';
 import { VisualEffectsSettingsSubPage } from './settings/VisualEffectsSettingsSubPage';
-import {
-  AnimationSettings,
-  AnimationSettingsListener,
-  getAnimationSettingsManager,
-  isMainPageBottomBarAnimationEnabled
-} from '../Framework/Animation/AnimationSettingsManager';
+import { isMainPageBottomBarAnimationEnabled } from '../Framework/Animation/AnimationSettingsManager';
 import { TrackingSettingsSubPage } from './settings/TrackingSettingsSubPage';
 import { AniListLoginPage } from './settings/AniListLoginPage';
 import { SuwayomiSettingsPage } from './settings/SuwayomiSettingsPage';
@@ -90,6 +85,7 @@ import { SuwayomiTabContent } from '../Framework/Components/SuwayomiTabContent';
 import { BookSourceTabContent, LibraryViewMode } from '../Framework/Components/BookSourceTabContent';
 import { SettingsTabContent } from '../components/SettingsTabContent';
 import { HomeTabContent } from '../components/HomeTabContent';
+import { DiscoverTabContent } from '../components/DiscoverTabContent';
 import { ZLibraryReaderPage } from './ZLibraryReaderPage';
 import { DownloadManagerPage } from './DownloadManagerPage';
 import { AboutPage } from './AboutPage';
@@ -596,10 +592,7 @@ struct MainMenuPage {
   private dataManager: DataManager = DataManager.getInstance();
   private dataService: DataService = DataService.getInstance();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
-  @StorageLink('main_menu_bottom_bar_style') @Watch('onBottomBarStyleStorageChanged') private bottomBarStyle: string = 'custom'; // 'custom' | 'hds'
-  @State private mainPageBottomBarAnimationEnabled: boolean = false;
-  private appliedBottomBarStyle: string = 'custom';
-  private bottomBarAnimationSettingsListener: AnimationSettingsListener | null = null;
+  private bottomBarStyle: string = 'custom'; // 'custom' | 'hds'
   private hdsTabsController: HdsTabsController | null = null;
   private hdsSetSyncing: ((syncing: boolean) => void) | null = null;
   private remoteLibraryBridge: RemoteLibraryMangaBridge = RemoteLibraryMangaBridge.getInstance();
@@ -832,6 +825,7 @@ struct MainMenuPage {
   @State private bookSourceTabRefreshSignal: number = 0;
   @State private bookSourceSfwFilterSignal: number = 0;
   @State private bookSourcePickerCloseSignal: number = 0;
+  @State private discoverRefreshSignal: number = 0;
   @State private homeRefreshSignal: number = 0;
   @StorageLink('home_switch_to_library') @Watch('onHomeSwitchToLibrary') private homeSwitchToLibrary: boolean = false;
   @StorageLink('extracted_tab_scroll_delta') @Watch('onExtractedTabScrollDelta') private extractedTabScrollDelta: number = 0;
@@ -1472,9 +1466,8 @@ struct MainMenuPage {
     // 加载可见标签配置
     this.loadVisibleTabs();
 
-    // 加载底栏样式与动画设置
-    this.loadBottomBarStyle('aboutToAppear');
-    this.loadBottomBarAnimationSetting('aboutToAppear');
+    // 加载底栏样式设置
+    this.bottomBarStyle = this.settingsManager.getBottomBarStyle();
 
     // 处理路由参数
     this.handleRouteParams();
@@ -1593,14 +1586,7 @@ struct MainMenuPage {
       }
     };
     this.contentFilterManager.addListener(this.sfwModeListener);
-
-    if (this.bottomBarAnimationSettingsListener === null) {
-      this.bottomBarAnimationSettingsListener = (settings: AnimationSettings): void => {
-        this.applyBottomBarAnimationEnabled(settings.mainPageBottomBarAnimationEnabled, 'animation_settings_listener');
-      };
-      getAnimationSettingsManager().addListener(this.bottomBarAnimationSettingsListener);
-    }
-
+    
     // 初始化Tab内容缓存管理器，完成后立即恢复缓存数据到@State
     // 确保Tab首次渲染时就能显示缓存内容，而不是"暂无"空状态
     this.tabContentCacheManager.initialize();
@@ -2143,54 +2129,6 @@ struct MainMenuPage {
       logger.error(TAG, '加载用户主题配置失败', String(error));
       // 保持默认值，不影响页面渲染
     }
-  }
-
-  private normalizeBottomBarStyle(style: string): string {
-    return style === 'hds' ? 'hds' : 'custom';
-  }
-
-  onBottomBarStyleStorageChanged(): void {
-    this.applyBottomBarStyle(this.bottomBarStyle, 'app_storage', false);
-  }
-
-  private applyBottomBarStyle(style: string, trigger: string, syncStorage: boolean): void {
-    const nextStyle: string = this.normalizeBottomBarStyle(style);
-    if (syncStorage) {
-      AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', nextStyle);
-    }
-    if (this.appliedBottomBarStyle === nextStyle && this.bottomBarStyle === nextStyle) {
-      return;
-    }
-    const previousStyle: string = this.appliedBottomBarStyle;
-    this.appliedBottomBarStyle = nextStyle;
-    if (this.bottomBarStyle !== nextStyle) {
-      this.bottomBarStyle = nextStyle;
-    }
-    this.resetBottomBarScrollState();
-    this.bottomBarOffsetY = this.isOverlayBottomNavTab(this.currentTabIndex) ? this.getBottomBarTravelDistance() : 0;
-    this.hdsTabsController = null;
-    this.hdsSetSyncing = null;
-    this.barRenderKey++;
-    logger.info(TAG, `底栏样式已同步: ${previousStyle} -> ${nextStyle}, trigger=${trigger}`);
-  }
-
-  private loadBottomBarStyle(trigger: string): void {
-    this.applyBottomBarStyle(this.settingsManager.getBottomBarStyle(), trigger, true);
-  }
-
-  private applyBottomBarAnimationEnabled(enabled: boolean, trigger: string): void {
-    if (this.mainPageBottomBarAnimationEnabled === enabled) {
-      return;
-    }
-    this.mainPageBottomBarAnimationEnabled = enabled;
-    this.resetBottomBarScrollState();
-    this.bottomBarOffsetY = this.isOverlayBottomNavTab(this.currentTabIndex) ? this.getBottomBarTravelDistance() : 0;
-    this.barRenderKey++;
-    logger.info(TAG, `底栏滚动动画设置已同步: enabled=${enabled}, trigger=${trigger}`);
-  }
-
-  private loadBottomBarAnimationSetting(trigger: string): void {
-    this.applyBottomBarAnimationEnabled(isMainPageBottomBarAnimationEnabled(), trigger);
   }
 
   /**
@@ -7546,12 +7484,6 @@ struct MainMenuPage {
       this.deviceChangeListener = null;
     }
 
-    if (this.bottomBarAnimationSettingsListener !== null) {
-      getAnimationSettingsManager().removeListener(this.bottomBarAnimationSettingsListener);
-      this.bottomBarAnimationSettingsListener = null;
-      logger.debug(TAG, '底栏动画设置监听器已清理');
-    }
-
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
 
@@ -7780,8 +7712,6 @@ struct MainMenuPage {
     if (WindowManager.getCurrentMode() !== DisplayMode.DEFAULT || this.mainMenuReentryShieldVisible) {
       this.restoreBottomBarAfterMainMenuReturn();
     }
-    this.loadBottomBarStyle('onPageShow');
-    this.loadBottomBarAnimationSetting('onPageShow');
     void this.loadLibraryViewMode();
     if (this.fromGuide && this.guideTargetPageOpened && this.targetPage.length > 0) {
       try {
@@ -26830,20 +26760,22 @@ struct MainMenuPage {
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.DISCOVER) {
       // 发现标签
-      Refresh({ refreshing: $$this.loadingState.refreshingDiscover }) {
-        Column() {
-          this.buildDiscoverContent()
-        }
-        .width('100%')
-        .height('100%')
-      }
-      .onRefreshing(() => {
-        void this.refreshDiscoverData();
+      DiscoverTabContent({
+        topSpacerHeight: this.getInitialTopOverlaySpacerHeight(),
+        bottomSpacerHeight: 125,
+        refreshSignal: this.discoverRefreshSignal,
+        isLandscape: this.responsive_isLandscape,
+        discoverGridColumns: this.responsive_discoverGridColumns,
+        gridGap: this.responsive_gridGap,
+        allTags: this.allTags,
+        allAuthors: this.allAuthors,
+        filteredMangaCount: this.filteredMangaCount,
+        filteredEBookCount: this.filteredEBookCount,
+        filteredNovelCount: this.filteredNovelCount
       })
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.SOURCE) {
       // 图源标签（高级模式）
       Column() {
@@ -27939,19 +27871,10 @@ struct MainMenuPage {
     if (this.isOverlayBottomNavTab(this.currentTabIndex)) {
       return this.getBottomBarTravelDistance();
     }
-    if (!this.mainPageBottomBarAnimationEnabled) {
+    if (!isMainPageBottomBarAnimationEnabled()) {
       return 0;
     }
     return this.bottomBarOffsetY;
-  }
-
-  private getBottomBarRenderOpacity(): number {
-    const travelDistance: number = this.getBottomBarTravelDistance();
-    if (travelDistance <= 0) {
-      return 1;
-    }
-    const opacity: number = 1 - this.getEffectiveBottomBarOffset() / travelDistance * 0.3;
-    return Math.max(0, Math.min(1, opacity));
   }
 
   private getBottomBarTravelDistance(): number {
@@ -28014,7 +27937,7 @@ struct MainMenuPage {
    * @param deltaY Y轴滚动偏移量变化值（正值=向下滚动，负值=向上滚动）
    */
   private handleScrollForBottomBar(deltaY: number): void {
-    if (!this.mainPageBottomBarAnimationEnabled || this.useTopTabsNavigation || this.isOverlayBottomNavTab(this.currentTabIndex)) {
+    if (!isMainPageBottomBarAnimationEnabled() || this.useTopTabsNavigation || this.isOverlayBottomNavTab(this.currentTabIndex)) {
       return;
     }
     this.clearBottomBarSettleTimer();
@@ -28038,7 +27961,7 @@ struct MainMenuPage {
     this.bottomBarSettleTimer = setTimeout(() => {
       this.bottomBarSettleTimer = -1;
 
-      if (!this.mainPageBottomBarAnimationEnabled) {
+      if (!isMainPageBottomBarAnimationEnabled()) {
         this.resetBottomBarScrollState();
         return;
       }
@@ -28064,7 +27987,7 @@ struct MainMenuPage {
    * 处理滚动结束事件，自动完成底栏的显示/隐藏
    */
   private handleScrollEndForBottomBar(): void {
-    if (!this.mainPageBottomBarAnimationEnabled) {
+    if (!isMainPageBottomBarAnimationEnabled()) {
       this.resetBottomBarScrollState();
       return;
     }
@@ -28125,8 +28048,6 @@ struct MainMenuPage {
     if (previousTabIndex === TabIndex.SETTINGS && tabIndex !== TabIndex.SETTINGS) {
       logger.info(TAG, '从设置页返回，重新加载用户配置');
       this.loadUserThemeConfig();
-      this.loadBottomBarStyle('return_from_settings');
-      this.loadBottomBarAnimationSetting('return_from_settings');
       this.loadVisibleTabs();
       void this.loadLibraryViewMode();
       if (tabIndex === TabIndex.KOMGA) {
@@ -28342,7 +28263,6 @@ struct MainMenuPage {
             themeType: this.themeState.currentTheme,
             hasSourceUpdate: this.hasSourceUpdate,
             isPrivacyMode: this.isPrivacyMode,
-            cornerRadius: this.getGlassRadius(),
             onChangeCallback: (actualIndex: number): void => {
               this.changeMainContentToActualIndex(actualIndex);
             },
@@ -28356,12 +28276,9 @@ struct MainMenuPage {
               this.hdsSetSyncing = setter;
             }
           })
-          .id('guide_main_bottom_bar_horizontal')
           .width(this.getBottomBarWidth())
-          .height(this.BOTTOM_BAR_HEIGHT)
+          .height(56)
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
-          .translate({ y: this.getEffectiveBottomBarOffset() })
-          .opacity(this.getBottomBarRenderOpacity())
           .zIndex(15)
           .key(`hdsBottomBar_${this.barRenderKey}`)
         }
@@ -28403,7 +28320,7 @@ struct MainMenuPage {
           )
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
           .translate({ y: this.getEffectiveBottomBarOffset() })
-          .opacity(this.getBottomBarRenderOpacity())
+          .opacity(1 - this.getEffectiveBottomBarOffset() / this.getBottomBarTravelDistance() * 0.3)
           .key(`bottomBar_${this.barRenderKey}`)
         }
 
@@ -28677,3 +28594,5 @@ struct MainMenuPage {
 }
 
 export { MainMenuPage };
+
+
