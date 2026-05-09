@@ -148,10 +148,108 @@ export function isFileNameSafe(fileName: string): boolean {
 export function generateUniqueFileName(baseName: string, extension?: string): string {
   const safeName = sanitizeFileName(baseName, 'file', 80);
   const timestamp = Date.now();
-  
+
   if (extension) {
     return `${safeName}_${timestamp}.${extension}`;
   }
-  
+
   return `${safeName}_${timestamp}`;
+}
+
+/**
+ * 获取文件扩展名（不含点号，小写）
+ * @param path 文件路径或文件名
+ * @returns 扩展名（不含点号），无扩展名时返回空字符串
+ */
+export function getFileExtension(path: string): string {
+  const lastDot = path.lastIndexOf('.');
+  if (lastDot < 0 || lastDot >= path.length - 1) {
+    return '';
+  }
+  return path.substring(lastDot + 1).toLowerCase();
+}
+
+/**
+ * 获取文件扩展名（含点号，小写）
+ * @param path 文件路径或文件名
+ * @returns 扩展名（含点号，如 ".jpg"），无扩展名时返回空字符串
+ */
+export function getFileExtensionWithDot(path: string): string {
+  const lastDot = path.lastIndexOf('.');
+  if (lastDot < 0 || lastDot >= path.length - 1) {
+    return '';
+  }
+  return path.substring(lastDot).toLowerCase();
+}
+
+/**
+ * 从 URL 中提取文件扩展名（自动去除查询参数和片段）
+ * @param url URL 字符串
+ * @returns 扩展名（不含点号，小写），无扩展名时返回空字符串
+ */
+export function getFileExtensionFromUrl(url: string): string {
+  let pathPart: string = url;
+  const queryIndex = pathPart.indexOf('?');
+  if (queryIndex >= 0) {
+    pathPart = pathPart.substring(0, queryIndex);
+  }
+  const fragmentIndex = pathPart.indexOf('#');
+  if (fragmentIndex >= 0) {
+    pathPart = pathPart.substring(0, fragmentIndex);
+  }
+  return getFileExtension(pathPart);
+}
+
+/**
+ * 移除文件扩展名
+ * @param fileName 文件名
+ * @returns 不含扩展名的文件名
+ */
+export function removeFileExtension(fileName: string): string {
+  const lastDotIndex = fileName.lastIndexOf('.');
+  if (lastDotIndex > 0) {
+    return fileName.substring(0, lastDotIndex);
+  }
+  return fileName;
+}
+
+/**
+ * 根据扩展名获取 MIME 类型
+ * @param extension 扩展名（不含点号，小写）
+ * @returns MIME 类型字符串，未知类型返回 'application/octet-stream'
+ */
+export function getMimeTypeFromExtension(extension: string): string {
+  const mimeMap: Record<string, string> = {
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'webp': 'image/webp',
+    'gif': 'image/gif',
+    'bmp': 'image/bmp',
+    'heic': 'image/heic',
+    'heif': 'image/heif',
+    'svg': 'image/svg+xml',
+    'avif': 'image/avif',
+    'xml': 'application/xml',
+    'json': 'application/json',
+    'txt': 'text/plain',
+    'html': 'text/html',
+    'htm': 'text/html',
+    'css': 'text/css',
+    'js': 'application/javascript',
+    'pdf': 'application/pdf',
+    'zip': 'application/zip',
+    'cbz': 'application/zip',
+    'rar': 'application/vnd.rar',
+    'cbr': 'application/vnd.rar',
+    '7z': 'application/x-7z-compressed',
+    'tar': 'application/x-tar',
+    'gz': 'application/gzip',
+    'epub': 'application/epub+zip',
+    'woff': 'font/woff',
+    'woff2': 'font/woff2',
+    'ttf': 'font/ttf',
+    'otf': 'font/otf'
+  };
+  return mimeMap[extension] || 'application/octet-stream';
 }

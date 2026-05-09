@@ -31,6 +31,7 @@ import {
   NetworkFolderEntry,
   NetworkFolderImportCategory,
   NetworkFolderProtocol,
+  NetworkSMBEnumResult,
   NetworkSMBShare,
   NetworkScanHost,
   NetworkScanProgress,
@@ -946,19 +947,21 @@ export struct NetworkFolderPage {
     }, 200);
   }
 
-  private requestSMBShareEnum(host: NetworkScanHost): void {
+  private async requestSMBShareEnum(host: NetworkScanHost): Promise<void> {
     this.smbEnumLoading = true;
     this.smbEnumHost = host.ip;
     this.smbEnumShares = [];
-    setTimeout(() => {
-      const result = this.scannerAdapter.enumSMBShares(host.ip, 445);
+    try {
+      const result: NetworkSMBEnumResult = await this.scannerAdapter.enumSMBShares(host.ip, 445);
       if (result.success) {
         this.smbEnumShares = result.shares.filter((s: NetworkSMBShare) => s.isDiskShare && !s.isHidden);
       } else {
         this.smbEnumShares = [];
       }
-      this.smbEnumLoading = false;
-    }, 50);
+    } catch (error) {
+      this.smbEnumShares = [];
+    }
+    this.smbEnumLoading = false;
   }
 
   private openSMBConnectionFromShare(host: NetworkScanHost, share: NetworkSMBShare): void {

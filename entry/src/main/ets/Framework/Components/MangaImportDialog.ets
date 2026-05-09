@@ -10,6 +10,7 @@ import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
+import { removeFileExtension } from '../../Utils/FileNameUtils';
 import { promptAction } from '@kit.ArkUI';
 import { AppColors } from '../Theme/AppColors';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
@@ -183,11 +184,11 @@ export struct MangaImportDialog {
         this.initFromPrefilledInfo(this.parsedStructure.prefilledInfo);
       } else {
         // 没有预填充信息，使用文件名作为标题
-        this.title = this.removeFileExtension(this.fileName);
+        this.title = removeFileExtension(this.fileName);
       }
     } else {
       // 没有解析结构，使用文件名作为标题
-      this.title = this.removeFileExtension(this.fileName);
+      this.title = removeFileExtension(this.fileName);
     }
     
     // 从文件名推测章节编号
@@ -204,7 +205,7 @@ export struct MangaImportDialog {
     } else if (info.title) {
       this.title = info.title;
     } else {
-      this.title = this.removeFileExtension(this.fileName);
+      this.title = removeFileExtension(this.fileName);
     }
     
     // 作者
@@ -377,16 +378,6 @@ export struct MangaImportDialog {
     this.chapterTitle = '第1话';
   }
 
-  /**
-   * 移除文件扩展名
-   */
-  private removeFileExtension(fileName: string): string {
-    const lastDotIndex = fileName.lastIndexOf('.');
-    if (lastDotIndex > 0) {
-      return fileName.substring(0, lastDotIndex);
-    }
-    return fileName;
-  }
 
   /**
    * 排序章节

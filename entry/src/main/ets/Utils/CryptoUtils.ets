@@ -146,3 +146,116 @@ export async function md5Hash(data: string): Promise<string> {
     throw new Error(String(error));
   }
 }
+
+/**
+ * 生成加密安全的随机字节
+ * @param length 字节数
+ * @returns 随机字节数组
+ */
+export function generateRandomBytes(length: number): Uint8Array {
+  const rand = cryptoFramework.createRandom();
+  const randomData = rand.generateRandomSync(length);
+  return randomData.data;
+}
+
+/**
+ * 生成 AES-256 对称密钥
+ * @returns SymKey 对象
+ */
+export async function generateAes256Key(): Promise<cryptoFramework.SymKey> {
+  const keyGenerator = cryptoFramework.createSymKeyGenerator('AES256');
+  return await keyGenerator.generateSymKey();
+}
+
+/**
+ * 将 SymKey 导出为 Base64 字符串（用于持久化存储）
+ * @param key 对称密钥
+ * @returns Base64 编码的密钥字符串
+ */
+export function exportSymKeyToBase64(key: cryptoFramework.SymKey): string {
+  const keyBlob = key.getEncoded();
+  const base64Helper = new util.Base64Helper();
+  return base64Helper.encodeToStringSync(keyBlob.data);
+}
+
+/**
+ * 从 Base64 字符串导入 SymKey
+ * @param base64Key Base64 编码的密钥字符串
+ * @returns SymKey 对象
+ */
+export async function importSymKeyFromBase64(base64Key: string): Promise<cryptoFramework.SymKey> {
+  const base64Helper = new util.Base64Helper();
+  const keyBytes: Uint8Array = base64Helper.decodeSync(base64Key);
+  const keyBlob: cryptoFramework.DataBlob = { data: keyBytes };
+  const keyGenerator = cryptoFramework.createSymKeyGenerator('AES256');
+  return await keyGenerator.convertKey(keyBlob);
+}
+
+/**
+ * AES-256-GCM 加密
+ * 输出格式: Base64( IV[12字节] + 密文 + AuthTag[16字节] )
+ * @param plaintext 明文字符串
+ * @param key AES-256 对称密钥
+ * @returns Base64 编码的密文
+ */
+export async function aes256GcmEncrypt(plaintext: string, key: cryptoFramework.SymKey): Promise<string> {
+  try {
+    const ivBytes: Uint8Array = generateRandomBytes(12);
+    const gcmParams: cryptoFramework.GcmParamsSpec = {
+      algName: 'GcmParamsSpec',
+      iv: { data: ivBytes },
+      aad: { data: new Uint8Array(0) },
+      authTag: { data: new Uint8Array(0) }
+    };
+    const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
+    await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, key, gcmParams);
+    const plainData: cryptoFramework.DataBlob = { data: stringToUint8Array(plaintext) };
+    const encryptedResult = await cipher.doFinal(plainData);
+    const cipherBytes: Uint8Array = encryptedResult.data;
+    // 拼接 IV + 密文(含Tag)
+    const combined: Uint8Array = new Uint8Array(ivBytes.length + cipherBytes.length);
+    combined.set(ivBytes, 0);
+    combined.set(cipherBytes, ivBytes.length);
+    const base64Helper = new util.Base64Helper();
+    return base64Helper.encodeToStringSync(combined);
+  } catch (error) {
+    logger.error(TAG, `AES-256-GCM加密失败: ${error}`);
+    throw new Error(String(error));
+  }
+}
+
+/**
+ * AES-256-GCM 解密
+ * 输入格式: Base64( IV[12字节] + 密文 + AuthTag[16字节] )
+ * @param ciphertextBase64 Base64 编码的密文
+ * @param key AES-256 对称密钥
+ * @returns 解密后的明文字符串
+ */
+export async function aes256GcmDecrypt(ciphertextBase64: string, key: cryptoFramework.SymKey): Promise<string> {
+  try {
+    const base64Helper = new util.Base64Helper();
+    const combined: Uint8Array = base64Helper.decodeSync(ciphertextBase64);
+    if (combined.length < 28) {
+      throw new Error('密文数据过短');
+    }
+    const ivBytes: Uint8Array = combined.slice(0, 12);
+    // GCM auth tag 固定 16 字节，位于密文末尾
+    const authTag: Uint8Array = combined.slice(combined.length - 16);
+    const cipherOnly: Uint8Array = combined.slice(12, combined.length - 16);
+    const gcmParams: cryptoFramework.GcmParamsSpec = {
+      algName: 'GcmParamsSpec',
+      iv: { data: ivBytes },
+      aad: { data: new Uint8Array(0) },
+      authTag: { data: authTag }
+    };
+    const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
+    await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, key, gcmParams);
+    const cipherData: cryptoFramework.DataBlob = { data: cipherOnly };
+    const decryptedResult = await cipher.doFinal(cipherData);
+    const textDecoder = new util.TextDecoder('utf-8');
+    return textDecoder.decodeToString(decryptedResult.data);
+  } catch (error) {
+    logger.error(TAG, `AES-256-GCM解密失败: ${error}`);
+    throw new Error(String(error));
+  }
+}

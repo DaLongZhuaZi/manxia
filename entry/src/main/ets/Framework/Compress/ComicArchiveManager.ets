@@ -9,6 +9,7 @@ import { logger } from '../../Utils/Logger';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { TimeUtils } from '../Utils/TimeUtils';
+import { getFileExtension, getMimeTypeFromExtension } from '../../Utils/FileNameUtils';
 
 const TAG = 'ComicArchiveManager';
 
@@ -310,7 +311,7 @@ export class ComicArchiveManager {
         
         // 生成目标文件名（确保按顺序排列）
         const paddedIndex = page.pageIndex.toString().padStart(4, '0');
-        const extension = this.getFileExtension(page.fileName);
+        const extension = getFileExtension(page.fileName);
         const targetFileName = `${paddedIndex}.${extension}`;
         const targetPath = `${tempDir}/${targetFileName}`;
         
@@ -494,7 +495,7 @@ export class ComicArchiveManager {
         const fileInfo = await this.sandboxManager.getFileInfo(filePath);
         
         // 检查是否为图片文件
-        const mimeType = this.getMimeTypeFromExtension(file);
+        const mimeType = getMimeTypeFromExtension(getFileExtension(file));
         if (this.supportedImageFormats.includes(mimeType)) {
           // 从文件名提取页面索引
           const pageIndex = this.extractPageIndexFromFileName(file);
@@ -533,30 +534,6 @@ export class ComicArchiveManager {
     return fileName.replace(/[<>:"/\\|?*]/g, '_').trim();
   }
 
-  /**
-   * 获取文件扩展名
-   */
-  private getFileExtension(fileName: string): string {
-    const lastDot = fileName.lastIndexOf('.');
-    return lastDot > 0 ? fileName.substring(lastDot + 1).toLowerCase() : '';
-  }
-
-  /**
-   * 根据扩展名获取MIME类型
-   */
-  private getMimeTypeFromExtension(fileName: string): string {
-    const extension = this.getFileExtension(fileName);
-    const mimeMap: Record<string, string> = {
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'webp': 'image/webp',
-      'gif': 'image/gif',
-      'bmp': 'image/bmp'
-    };
-    
-    return mimeMap[extension] || 'application/octet-stream';
-  }
 
   /**
    * 从文件名提取页面索引

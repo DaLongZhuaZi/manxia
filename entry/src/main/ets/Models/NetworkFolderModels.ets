@@ -124,35 +124,35 @@ export interface NetworkFolderDownloadResult {
   importCategory: NetworkFolderImportCategory;
 }
 
-const NETWORK_FOLDER_COMIC_EXTENSIONS: string[] = [
+export const NETWORK_FOLDER_COMIC_EXTENSIONS: string[] = [
   'zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'lzma'
 ];
 
-const NETWORK_FOLDER_EBOOK_EXTENSIONS: string[] = [
+export const NETWORK_FOLDER_EBOOK_EXTENSIONS: string[] = [
   'epub', 'mobi', 'azw', 'azw3', 'txt'
 ];
 
-const NETWORK_FOLDER_BACKUP_EXTENSIONS: string[] = [
+export const NETWORK_FOLDER_BACKUP_EXTENSIONS: string[] = [
   'mxbak', 'mxbackup'
 ];
 
-const NETWORK_FOLDER_JSON_EXTENSIONS: string[] = [
+export const NETWORK_FOLDER_JSON_EXTENSIONS: string[] = [
   'json', 'json5'
 ];
 
-const NETWORK_FOLDER_FONT_EXTENSIONS: string[] = [
+export const NETWORK_FOLDER_FONT_EXTENSIONS: string[] = [
   'ttf', 'otf', 'ttc', 'woff', 'woff2'
 ];
 
-const NETWORK_FOLDER_AVIF_EXTENSIONS: string[] = [
+export const NETWORK_FOLDER_AVIF_EXTENSIONS: string[] = [
   'avif'
 ];
 
-const NETWORK_FOLDER_IMAGE_EXTENSIONS: string[] = [
+export const NETWORK_FOLDER_IMAGE_EXTENSIONS: string[] = [
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'svg'
 ];
 
-const NETWORK_FOLDER_CODE_EXTENSIONS: string[] = [
+export const NETWORK_FOLDER_CODE_EXTENSIONS: string[] = [
   'ets', 'ts', 'tsx', 'js', 'jsx',
   'jsonc', 'xml', 'yaml', 'yml', 'md', 'markdown',
   'java', 'kt', 'c', 'cpp', 'h', 'hpp', 'py', 'rs',

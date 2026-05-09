@@ -14,6 +14,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { logger } from './Logger';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { getMimeTypeFromExtension } from './FileNameUtils';
 // commons-compress用于处理tar/gz/bz2/xz等流式格式
 import {
   InputStream,
@@ -1031,7 +1032,7 @@ export class CompressionUtils {
 
         try {
           const fileInfo = await this.sandboxManager.getFileInfo(filePath);
-          const mimeType = this.getMimeTypeFromExtension(fileName);
+          const mimeType = getMimeTypeFromExtension(this.getFileExtension(fileName).substring(1));
           
           const extractedFileInfo: ExtractedFileInfo = {
             fileName: fileName,
@@ -1171,28 +1172,6 @@ export class CompressionUtils {
     return lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
   }
 
-  /**
-   * 根据文件扩展名获取MIME类型
-   * @param fileName 文件名
-   * @returns MIME类型
-   */
-  private getMimeTypeFromExtension(fileName: string): string {
-    const extension = this.getFileExtension(fileName).substring(1); // 去掉点号
-    
-    const mimeMap: Record<string, string> = {
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'webp': 'image/webp',
-      'gif': 'image/gif',
-      'bmp': 'image/bmp',
-      'xml': 'application/xml',
-      'txt': 'text/plain',
-      'json': 'application/json'
-    };
-
-    return mimeMap[extension] || 'application/octet-stream';
-  }
 
   /**
    * 清理解压缩目录

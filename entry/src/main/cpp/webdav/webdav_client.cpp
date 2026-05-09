@@ -15,6 +15,7 @@
 #include <regex>
 #include <iomanip>
 #include <cstdio>
+#include <ctime>
 #include <hilog/log.h>
 
 #undef LOG_DOMAIN
@@ -23,6 +24,35 @@
 #define LOG_TAG "WebDAVClient"
 
 namespace webdav {
+
+// RFC 2822 日期解析为毫秒时间戳
+// 格式: "Tue, 06 May 2025 12:34:56 GMT"
+static int64_t parseRFC2822DateToMillis(const std::string& dateStr) {
+    if (dateStr.empty()) return 0;
+
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+
+    // 尝试完整格式: "Tue, 06 May 2025 12:34:56 GMT"
+    char* result = strptime(dateStr.c_str(), "%a, %d %b %Y %H:%M:%S %Z", &tm);
+    if (result == nullptr) {
+        // 尝试无星期几格式: "06 May 2025 12:34:56 GMT"
+        result = strptime(dateStr.c_str(), "%d %b %Y %H:%M:%S %Z", &tm);
+    }
+    if (result == nullptr) {
+        // 尝试 ISO 8601 格式: "2025-05-06T12:34:56Z"
+        result = strptime(dateStr.c_str(), "%Y-%m-%dT%H:%M:%S", &tm);
+    }
+    if (result == nullptr) {
+        return 0;
+    }
+
+    time_t epoch = timegm(&tm);
+    if (epoch == static_cast<time_t>(-1)) {
+        return 0;
+    }
+    return static_cast<int64_t>(epoch) * 1000;
+}
 
 // Base64编码表
 static const char base64_chars[] = 
@@ -151,45 +181,85 @@ static int progressCallback(void* clientp, curl_off_t dltotal, curl_off_t dlnow,
     return 0;
 }
 
+// 命名空间无关的 XML 标签查找辅助函数
+// 在 xml 中查找 ":tagName>" 开头标签的位置，返回标签内容起始位置，未找到返回 string::npos
+static size_t findXmlOpenTag(const std::string& xml, const std::string& tagName, size_t startPos = 0) {
+    std::string suffix = ":" + tagName + ">";
+    size_t pos = xml.find(suffix, startPos);
+    while (pos != std::string::npos) {
+        // 向前找到 '<'
+        size_t ltPos = xml.rfind('<', pos);
+        if (ltPos != std::string::npos && ltPos < pos) {
+            return pos + suffix.length(); // 返回内容起始位置
+        }
+        pos = xml.find(suffix, pos + 1);
+    }
+    return std::string::npos;
+}
+
+// 在 xml 中查找 "</:tagName>" 闭合标签的位置，返回内容结束位置（即闭合标签的起始位置）
+static size_t findXmlCloseTag(const std::string& xml, const std::string& tagName, size_t startPos = 0) {
+    std::string suffix = ":" + tagName + ">";
+    size_t pos = xml.find(suffix, startPos);
+    while (pos != std::string::npos) {
+        // 向前检查是否为 "</" 开头
+        if (pos >= 2 && xml[pos - 1] == '/' && xml[pos - 2] == '<') {
+            return pos - 2; // 返回闭合标签 '<' 的位置
+        }
+        pos = xml.find(suffix, pos + 1);
+    }
+    return std::string::npos;
+}
+
+// 检查 xml 中是否存在 ":collection" 标签（自闭合标签，无内容无闭合）
+static bool hasCollectionTag(const std::string& xml) {
+    size_t pos = xml.find(":collection");
+    while (pos != std::string::npos) {
+        // 向前找到 '<'
+        if (pos >= 1 && xml[pos - 1] == '<') {
+            return true;
+        }
+        pos = xml.find(":collection", pos + 1);
+    }
+    return false;
+}
+
 // 实现类
 class WebDAVClient::Impl {
 public:
     Config config;
-    
+    CURL* curl = nullptr;
+
     Impl(const Config& cfg) : config(cfg) {
         curl_ref_init();
+        curl = curl_easy_init();
     }
-    
+
     ~Impl() {
+        if (curl) {
+            curl_easy_cleanup(curl);
+            curl = nullptr;
+        }
         curl_ref_cleanup();
     }
-    
-    CURL* createCurl() {
-        CURL* curl = curl_easy_init();
-        if (curl) {
-            // 设置超时
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config.timeoutMs);
-            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, config.timeoutMs);
-            // 禁用信号，避免多线程/超时场景下崩溃风险
-            curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-            
-            // SSL验证
-            if (!config.verifySSL) {
-                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-            }
-            
-            // 跟随重定向
-            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-            
-            // 设置User-Agent
-            curl_easy_setopt(curl, CURLOPT_USERAGENT, "ManXia-WebDAV-Native/1.0");
+
+    void setupCurl(const std::string& url) {
+        if (!curl) { return; }
+        curl_easy_reset(curl);
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config.timeoutMs);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, config.timeoutMs);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        if (!config.verifySSL) {
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
         }
-        return curl;
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "ManXia-WebDAV-Native/1.0");
     }
-    
+
     struct curl_slist* createAuthHeaders(struct curl_slist* headers = nullptr) {
-        std::string auth = "Authorization: Basic " + 
+        std::string auth = "Authorization: Basic " +
             base64_encode(config.username + ":" + config.password);
         return curl_slist_append(headers, auth.c_str());
     }
@@ -239,38 +309,36 @@ std::string WebDAVClient::buildAuthHeader() const {
 
 Result WebDAVClient::testConnection() {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl("");
     if (url.back() != '/') url += '/';
-    
+
     std::string response;
     struct curl_slist* headers = pImpl->createAuthHeaders();
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "OPTIONS");
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_CUSTOMREQUEST, "OPTIONS");
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEFUNCTION, writeCallback);
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode >= 200 && httpCode < 300) {
             result.success = true;
             result.message = "Connection successful";
@@ -282,70 +350,61 @@ Result WebDAVClient::testConnection() {
             result.message = "Server returned " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 Result WebDAVClient::exists(const std::string& remotePath) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     struct curl_slist* headers = pImpl->createAuthHeaders();
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L); // HEAD request
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_NOBODY, 1L); // HEAD request
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
         result.success = (httpCode == 200 || httpCode == 207);
         result.message = result.success ? "Exists" : "Not found";
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 Result WebDAVClient::stat(const std::string& remotePath, FileInfo& outInfo) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     std::string response;
     struct curl_slist* headers = pImpl->createAuthHeaders();
     headers = curl_slist_append(headers, "Depth: 0");
     headers = curl_slist_append(headers, "Content-Type: application/xml");
-    
-    // PROPFIND请求体
-    std::string propfindBody = 
+
+    std::string propfindBody =
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         "<D:propfind xmlns:D=\"DAV:\">"
         "<D:prop>"
@@ -356,85 +415,97 @@ Result WebDAVClient::stat(const std::string& remotePath, FileInfo& outInfo) {
         "<D:resourcetype/>"
         "</D:prop>"
         "</D:propfind>";
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PROPFIND");
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, propfindBody.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_CUSTOMREQUEST, "PROPFIND");
+    curl_easy_setopt(pImpl->curl, CURLOPT_POSTFIELDS, propfindBody.c_str());
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEFUNCTION, writeCallback);
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 207 || httpCode == 200) {
             result.success = true;
             result.data = response;
-            
-            // 解析XML响应
+
             outInfo.path = remotePath;
-            
-            // 提取文件名
             size_t lastSlash = remotePath.rfind('/');
-            outInfo.name = (lastSlash != std::string::npos) ? 
+            outInfo.name = (lastSlash != std::string::npos) ?
                 remotePath.substr(lastSlash + 1) : remotePath;
-            
-            // 解析大小
-            std::regex sizeRegex("<D:getcontentlength>([0-9]+)</D:getcontentlength>", 
-                std::regex::icase);
-            std::smatch sizeMatch;
-            if (std::regex_search(response, sizeMatch, sizeRegex)) {
-                outInfo.size = std::stoll(sizeMatch[1].str());
-            } else {
-                outInfo.size = 0;
+
+            // 解析大小（命名空间无关）
+            {
+                size_t clStart = findXmlOpenTag(response, "getcontentlength");
+                if (clStart != std::string::npos) {
+                    size_t clEnd = findXmlCloseTag(response, "getcontentlength", clStart);
+                    if (clEnd != std::string::npos) {
+                        try {
+                            outInfo.size = std::stoll(response.substr(clStart, clEnd - clStart));
+                        } catch (...) {
+                            outInfo.size = 0;
+                        }
+                    } else {
+                        outInfo.size = 0;
+                    }
+                } else {
+                    outInfo.size = 0;
+                }
             }
-            
+
             // 检查是否是目录
-            outInfo.isDirectory = (response.find("<D:collection") != std::string::npos) ||
-                                  (response.find("<d:collection") != std::string::npos);
-            
+            outInfo.isDirectory = hasCollectionTag(response);
+
+            // 提取lastModified
+            {
+                size_t lmStart = findXmlOpenTag(response, "getlastmodified");
+                if (lmStart != std::string::npos) {
+                    size_t lmEnd = findXmlCloseTag(response, "getlastmodified", lmStart);
+                    if (lmEnd != std::string::npos) {
+                        std::string dateStr = response.substr(lmStart, lmEnd - lmStart);
+                        outInfo.lastModified = parseRFC2822DateToMillis(dateStr);
+                    }
+                }
+            }
+
             result.message = "Success";
         } else {
             result.success = false;
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 ListResult WebDAVClient::list(const std::string& remotePath, int depth) {
     ListResult result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     if (url.back() != '/') url += '/';
-    
+
     std::string response;
     struct curl_slist* headers = pImpl->createAuthHeaders();
     headers = curl_slist_append(headers, ("Depth: " + std::to_string(depth)).c_str());
     headers = curl_slist_append(headers, "Content-Type: application/xml");
-    
-    // PROPFIND请求体
-    std::string propfindBody = 
+
+    std::string propfindBody =
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         "<D:propfind xmlns:D=\"DAV:\">"
         "<D:prop>"
@@ -446,64 +517,65 @@ ListResult WebDAVClient::list(const std::string& remotePath, int depth) {
         "<D:resourcetype/>"
         "</D:prop>"
         "</D:propfind>";
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PROPFIND");
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, propfindBody.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_CUSTOMREQUEST, "PROPFIND");
+    curl_easy_setopt(pImpl->curl, CURLOPT_POSTFIELDS, propfindBody.c_str());
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEFUNCTION, writeCallback);
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 207 || httpCode == 200) {
             result.success = true;
             result.message = "Success";
-            
-            // 使用简单字符串查找解析XML，避免正则表达式栈溢出
+
+            // 命名空间无关的 XML 解析
             size_t pos = 0;
-            while ((pos = response.find("<D:response", pos)) != std::string::npos) {
-                size_t endPos = response.find("</D:response>", pos);
-                if (endPos == std::string::npos) {
-                    // 尝试小写
-                    endPos = response.find("</d:response>", pos);
-                }
+            while ((pos = response.find(":response", pos)) != std::string::npos) {
+                // 验证前面是 '<'
+                if (pos == 0 || response[pos - 1] != '<') { pos += 9; continue; }
+
+                // 查找闭合标签 ":response>"
+                size_t endSearch = pos + 9;
+                size_t endPos = findXmlCloseTag(response, "response", endSearch);
                 if (endPos == std::string::npos) break;
-                
-                std::string responseData = response.substr(pos, endPos - pos + 13);
+
+                // 计算闭合标签结束位置 "</...:response>"
+                size_t closeEnd = response.find('>', endPos);
+                if (closeEnd == std::string::npos) break;
+                closeEnd += 1;
+
+                std::string responseData = response.substr(pos - 1, closeEnd - (pos - 1));
                 FileInfo info;
-                
+
                 // 提取href
-                size_t hrefStart = responseData.find("<D:href>");
-                if (hrefStart == std::string::npos) hrefStart = responseData.find("<d:href>");
-                if (hrefStart != std::string::npos) {
-                    hrefStart += 8; // 跳过标签
-                    size_t hrefEnd = responseData.find("</D:href>", hrefStart);
-                    if (hrefEnd == std::string::npos) hrefEnd = responseData.find("</d:href>", hrefStart);
-                    if (hrefEnd != std::string::npos) {
-                        info.path = responseData.substr(hrefStart, hrefEnd - hrefStart);
-                        // URL解码
-                        CURL* decodeCurl = curl_easy_init();
-                        if (decodeCurl) {
+                size_t hrefContentStart = findXmlOpenTag(responseData, "href");
+                if (hrefContentStart != std::string::npos) {
+                    size_t hrefContentEnd = findXmlCloseTag(responseData, "href", hrefContentStart);
+                    if (hrefContentEnd != std::string::npos) {
+                        info.path = responseData.substr(hrefContentStart, hrefContentEnd - hrefContentStart);
+                        // URL解码（复用 pImpl->curl）
+                        if (pImpl->curl) {
                             int outLen = 0;
-                            char* decoded = curl_easy_unescape(decodeCurl, info.path.c_str(), 
-                                info.path.length(), &outLen);
+                            char* decoded = curl_easy_unescape(pImpl->curl, info.path.c_str(),
+                                static_cast<int>(info.path.length()), &outLen);
                             if (decoded) {
                                 info.path = std::string(decoded, outLen);
                                 curl_free(decoded);
                             }
-                            curl_easy_cleanup(decodeCurl);
                         }
-                        
+
                         // 提取文件名
                         size_t lastSlash = info.path.rfind('/');
                         if (lastSlash != std::string::npos && lastSlash < info.path.length() - 1) {
@@ -511,118 +583,120 @@ ListResult WebDAVClient::list(const std::string& remotePath, int depth) {
                         } else if (lastSlash == info.path.length() - 1 && info.path.length() > 1) {
                             std::string temp = info.path.substr(0, info.path.length() - 1);
                             lastSlash = temp.rfind('/');
-                            info.name = (lastSlash != std::string::npos) ? 
+                            info.name = (lastSlash != std::string::npos) ?
                                 temp.substr(lastSlash + 1) : temp;
                         } else {
                             info.name = info.path;
                         }
                     }
                 }
-                
+
                 // 提取大小
-                size_t sizeStart = responseData.find("<D:getcontentlength>");
-                if (sizeStart == std::string::npos) sizeStart = responseData.find("<d:getcontentlength>");
-                if (sizeStart != std::string::npos) {
-                    sizeStart += 20;
-                    size_t sizeEnd = responseData.find("</D:getcontentlength>", sizeStart);
-                    if (sizeEnd == std::string::npos) sizeEnd = responseData.find("</d:getcontentlength>", sizeStart);
-                    if (sizeEnd != std::string::npos) {
-                        try {
-                            info.size = std::stoll(responseData.substr(sizeStart, sizeEnd - sizeStart));
-                        } catch (...) {
-                            info.size = 0;
+                {
+                    size_t clStart = findXmlOpenTag(responseData, "getcontentlength");
+                    if (clStart != std::string::npos) {
+                        size_t clEnd = findXmlCloseTag(responseData, "getcontentlength", clStart);
+                        if (clEnd != std::string::npos) {
+                            try {
+                                info.size = std::stoll(responseData.substr(clStart, clEnd - clStart));
+                            } catch (...) {
+                                info.size = 0;
+                            }
+                        }
+                    } else {
+                        info.size = 0;
+                    }
+                }
+
+                // 检查是否是目录
+                info.isDirectory = hasCollectionTag(responseData);
+
+                // 提取etag
+                {
+                    size_t etagStart = findXmlOpenTag(responseData, "getetag");
+                    if (etagStart != std::string::npos) {
+                        size_t etagEnd = findXmlCloseTag(responseData, "getetag", etagStart);
+                        if (etagEnd != std::string::npos) {
+                            info.etag = responseData.substr(etagStart, etagEnd - etagStart);
+                            if (!info.etag.empty() && info.etag.front() == '"') info.etag = info.etag.substr(1);
+                            if (!info.etag.empty() && info.etag.back() == '"') info.etag.pop_back();
                         }
                     }
-                } else {
-                    info.size = 0;
                 }
-                
-                // 检查是否是目录
-                info.isDirectory = (responseData.find("<D:collection") != std::string::npos) ||
-                                   (responseData.find("<d:collection") != std::string::npos);
-                
-                // 提取etag
-                size_t etagStart = responseData.find("<D:getetag>");
-                if (etagStart == std::string::npos) etagStart = responseData.find("<d:getetag>");
-                if (etagStart != std::string::npos) {
-                    etagStart += 11;
-                    size_t etagEnd = responseData.find("</D:getetag>", etagStart);
-                    if (etagEnd == std::string::npos) etagEnd = responseData.find("</d:getetag>", etagStart);
-                    if (etagEnd != std::string::npos) {
-                        info.etag = responseData.substr(etagStart, etagEnd - etagStart);
-                        // 去除引号
-                        if (!info.etag.empty() && info.etag.front() == '"') info.etag = info.etag.substr(1);
-                        if (!info.etag.empty() && info.etag.back() == '"') info.etag.pop_back();
-                    }
-                }
-                
+
                 // 提取contentType
-                size_t ctStart = responseData.find("<D:getcontenttype>");
-                if (ctStart == std::string::npos) ctStart = responseData.find("<d:getcontenttype>");
-                if (ctStart != std::string::npos) {
-                    ctStart += 18;
-                    size_t ctEnd = responseData.find("</D:getcontenttype>", ctStart);
-                    if (ctEnd == std::string::npos) ctEnd = responseData.find("</d:getcontenttype>", ctStart);
-                    if (ctEnd != std::string::npos) {
-                        info.contentType = responseData.substr(ctStart, ctEnd - ctStart);
+                {
+                    size_t ctStart = findXmlOpenTag(responseData, "getcontenttype");
+                    if (ctStart != std::string::npos) {
+                        size_t ctEnd = findXmlCloseTag(responseData, "getcontenttype", ctStart);
+                        if (ctEnd != std::string::npos) {
+                            info.contentType = responseData.substr(ctStart, ctEnd - ctStart);
+                        }
                     }
                 }
-                
+
+                // 提取lastModified
+                {
+                    size_t lmStart = findXmlOpenTag(responseData, "getlastmodified");
+                    if (lmStart != std::string::npos) {
+                        size_t lmEnd = findXmlCloseTag(responseData, "getlastmodified", lmStart);
+                        if (lmEnd != std::string::npos) {
+                            std::string dateStr = responseData.substr(lmStart, lmEnd - lmStart);
+                            info.lastModified = parseRFC2822DateToMillis(dateStr);
+                        }
+                    }
+                }
+
                 // 跳过当前目录本身
                 if (!info.name.empty() && info.path != url) {
                     result.files.push_back(info);
                 }
-                
-                pos = endPos + 13;
+
+                pos = closeEnd;
             }
         } else {
             result.success = false;
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 Result WebDAVClient::createDirectory(const std::string& remotePath) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     if (url.back() != '/') url += '/';
-    
+
     struct curl_slist* headers = pImpl->createAuthHeaders();
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "MKCOL");
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_CUSTOMREQUEST, "MKCOL");
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 201 || httpCode == 200 || httpCode == 204) {
             result.success = true;
             result.message = "Directory created";
         } else if (httpCode == 405) {
-            // 目录可能已存在
             result.success = true;
             result.message = "Directory already exists";
         } else {
@@ -630,10 +704,8 @@ Result WebDAVClient::createDirectory(const std::string& remotePath) {
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
@@ -680,33 +752,31 @@ Result WebDAVClient::createDirectoryRecursive(const std::string& remotePath) {
 
 Result WebDAVClient::deleteResource(const std::string& remotePath) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     struct curl_slist* headers = pImpl->createAuthHeaders();
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 200 || httpCode == 204 || httpCode == 404) {
             result.success = true;
             result.message = "Deleted";
@@ -715,10 +785,8 @@ Result WebDAVClient::deleteResource(const std::string& remotePath) {
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
@@ -728,42 +796,40 @@ Result WebDAVClient::putFileContents(const std::string& remotePath, const std::s
 
 Result WebDAVClient::putFileContents(const std::string& remotePath, const char* data, size_t size) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     struct curl_slist* headers = pImpl->createAuthHeaders();
     headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
-    
+
     ReadCallbackData readData;
     readData.data = data;
     readData.size = size;
     readData.pos = 0;
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-    curl_easy_setopt(curl, CURLOPT_READFUNCTION, readCallback);
-    curl_easy_setopt(curl, CURLOPT_READDATA, &readData);
-    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)size);
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_UPLOAD, 1L);
+    curl_easy_setopt(pImpl->curl, CURLOPT_READFUNCTION, readCallback);
+    curl_easy_setopt(pImpl->curl, CURLOPT_READDATA, &readData);
+    curl_easy_setopt(pImpl->curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)size);
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 200 || httpCode == 201 || httpCode == 204) {
             result.success = true;
             result.message = "Uploaded";
@@ -772,10 +838,8 @@ Result WebDAVClient::putFileContents(const std::string& remotePath, const char* 
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
@@ -810,47 +874,46 @@ Result WebDAVClient::uploadFile(const std::string& localPath, const std::string&
     rewind(file);
     
     // 上传
-    CURL* curl = pImpl->createCurl();
-    if (!curl) {
+    if (!pImpl->curl) {
         fclose(file);
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     struct curl_slist* headers = pImpl->createAuthHeaders();
     headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
-    
+
     ProgressData progressData;
     progressData.callback = progressCallback;
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-    curl_easy_setopt(curl, CURLOPT_READFUNCTION, fileReadCallback);
-    curl_easy_setopt(curl, CURLOPT_READDATA, file);
-    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(fileSize));
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_UPLOAD, 1L);
+    curl_easy_setopt(pImpl->curl, CURLOPT_READFUNCTION, fileReadCallback);
+    curl_easy_setopt(pImpl->curl, CURLOPT_READDATA, file);
+    curl_easy_setopt(pImpl->curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(fileSize));
+
     if (progressCallback) {
-        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, webdav::progressCallback);
-        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progressData);
-        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(pImpl->curl, CURLOPT_XFERINFOFUNCTION, webdav::progressCallback);
+        curl_easy_setopt(pImpl->curl, CURLOPT_XFERINFODATA, &progressData);
+        curl_easy_setopt(pImpl->curl, CURLOPT_NOPROGRESS, 0L);
     }
-    
-    CURLcode res = curl_easy_perform(curl);
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
     fclose(file);
-    
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 200 || httpCode == 201 || httpCode == 204) {
             result.success = true;
             result.message = "Uploaded";
@@ -859,43 +922,39 @@ Result WebDAVClient::uploadFile(const std::string& localPath, const std::string&
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 Result WebDAVClient::getFileContents(const std::string& remotePath, std::string& outData) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     struct curl_slist* headers = pImpl->createAuthHeaders();
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &outData);
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEFUNCTION, writeCallback);
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEDATA, &outData);
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 200) {
             result.success = true;
             result.message = "Downloaded";
@@ -905,25 +964,21 @@ Result WebDAVClient::getFileContents(const std::string& remotePath, std::string&
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 Result WebDAVClient::downloadFile(const std::string& remotePath, const std::string& localPath,
                                   ProgressCallback progressCallback) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl(remotePath);
     struct curl_slist* headers = pImpl->createAuthHeaders();
     FILE* file = fopen(localPath.c_str(), "wb");
@@ -932,27 +987,26 @@ Result WebDAVClient::downloadFile(const std::string& remotePath, const std::stri
         result.statusCode = 0;
         result.message = "Failed to open local file for write";
         curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
         return result;
     }
-    
+
     ProgressData progressData;
     progressData.callback = progressCallback;
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fileWriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, file);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEFUNCTION, fileWriteCallback);
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEDATA, file);
+
     if (progressCallback) {
-        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, webdav::progressCallback);
-        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progressData);
-        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(pImpl->curl, CURLOPT_XFERINFOFUNCTION, webdav::progressCallback);
+        curl_easy_setopt(pImpl->curl, CURLOPT_XFERINFODATA, &progressData);
+        curl_easy_setopt(pImpl->curl, CURLOPT_NOPROGRESS, 0L);
     }
-    
-    CURLcode res = curl_easy_perform(curl);
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
     fclose(file);
-    
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
@@ -960,9 +1014,9 @@ Result WebDAVClient::downloadFile(const std::string& remotePath, const std::stri
         std::remove(localPath.c_str());
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 200) {
             result.success = true;
             result.message = "Downloaded";
@@ -972,46 +1026,42 @@ Result WebDAVClient::downloadFile(const std::string& remotePath, const std::stri
             std::remove(localPath.c_str());
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 Result WebDAVClient::copyFile(const std::string& sourcePath, const std::string& destPath, bool overwrite) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string sourceUrl = getFullUrl(sourcePath);
     std::string destUrl = getFullUrl(destPath);
-    
+
     struct curl_slist* headers = pImpl->createAuthHeaders();
     headers = curl_slist_append(headers, ("Destination: " + destUrl).c_str());
     headers = curl_slist_append(headers, overwrite ? "Overwrite: T" : "Overwrite: F");
-    
-    curl_easy_setopt(curl, CURLOPT_URL, sourceUrl.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "COPY");
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(sourceUrl);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_CUSTOMREQUEST, "COPY");
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 201 || httpCode == 204) {
             result.success = true;
             result.message = "Copied";
@@ -1020,46 +1070,42 @@ Result WebDAVClient::copyFile(const std::string& sourcePath, const std::string& 
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 Result WebDAVClient::moveFile(const std::string& sourcePath, const std::string& destPath, bool overwrite) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string sourceUrl = getFullUrl(sourcePath);
     std::string destUrl = getFullUrl(destPath);
-    
+
     struct curl_slist* headers = pImpl->createAuthHeaders();
     headers = curl_slist_append(headers, ("Destination: " + destUrl).c_str());
     headers = curl_slist_append(headers, overwrite ? "Overwrite: T" : "Overwrite: F");
-    
-    curl_easy_setopt(curl, CURLOPT_URL, sourceUrl.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "MOVE");
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(sourceUrl);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_CUSTOMREQUEST, "MOVE");
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 201 || httpCode == 204) {
             result.success = true;
             result.message = "Moved";
@@ -1068,33 +1114,29 @@ Result WebDAVClient::moveFile(const std::string& sourcePath, const std::string& 
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 
 Result WebDAVClient::getQuota(int64_t& usedBytes, int64_t& availableBytes) {
     Result result;
-    CURL* curl = pImpl->createCurl();
-    
-    if (!curl) {
+    if (!pImpl->curl) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
         return result;
     }
-    
+
     std::string url = getFullUrl("");
     if (url.back() != '/') url += '/';
-    
+
     std::string response;
     struct curl_slist* headers = pImpl->createAuthHeaders();
     headers = curl_slist_append(headers, "Depth: 0");
     headers = curl_slist_append(headers, "Content-Type: application/xml");
-    
-    std::string propfindBody = 
+
+    std::string propfindBody =
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         "<D:propfind xmlns:D=\"DAV:\">"
         "<D:prop>"
@@ -1102,57 +1144,73 @@ Result WebDAVClient::getQuota(int64_t& usedBytes, int64_t& availableBytes) {
         "<D:quota-available-bytes/>"
         "</D:prop>"
         "</D:propfind>";
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PROPFIND");
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, propfindBody.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    
-    CURLcode res = curl_easy_perform(curl);
-    
+
+    pImpl->setupCurl(url);
+    curl_easy_setopt(pImpl->curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(pImpl->curl, CURLOPT_CUSTOMREQUEST, "PROPFIND");
+    curl_easy_setopt(pImpl->curl, CURLOPT_POSTFIELDS, propfindBody.c_str());
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEFUNCTION, writeCallback);
+    curl_easy_setopt(pImpl->curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(pImpl->curl);
+
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
     } else {
         long httpCode = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_getinfo(pImpl->curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
-        
+
         if (httpCode == 207 || httpCode == 200) {
             result.success = true;
-            
-            // 解析配额信息
-            std::regex usedRegex("<D:quota-used-bytes>([0-9]+)</D:quota-used-bytes>", 
-                std::regex::icase);
-            std::regex availableRegex("<D:quota-available-bytes>([0-9]+)</D:quota-available-bytes>", 
-                std::regex::icase);
-            
-            std::smatch match;
-            if (std::regex_search(response, match, usedRegex)) {
-                usedBytes = std::stoll(match[1].str());
-            } else {
-                usedBytes = -1;
+
+            // 解析配额信息（命名空间无关）
+            {
+                size_t usedStart = findXmlOpenTag(response, "quota-used-bytes");
+                if (usedStart != std::string::npos) {
+                    size_t usedEnd = findXmlCloseTag(response, "quota-used-bytes", usedStart);
+                    if (usedEnd != std::string::npos) {
+                        try {
+                            usedBytes = std::stoll(response.substr(usedStart, usedEnd - usedStart));
+                        } catch (...) {
+                            usedBytes = -1;
+                        }
+                    } else {
+                        usedBytes = -1;
+                    }
+                } else {
+                    usedBytes = -1;
+                }
             }
-            
-            if (std::regex_search(response, match, availableRegex)) {
-                availableBytes = std::stoll(match[1].str());
-            } else {
-                availableBytes = -1;
+
+            {
+                size_t availStart = findXmlOpenTag(response, "quota-available-bytes");
+                if (availStart != std::string::npos) {
+                    size_t availEnd = findXmlCloseTag(response, "quota-available-bytes", availStart);
+                    if (availEnd != std::string::npos) {
+                        try {
+                            availableBytes = std::stoll(response.substr(availStart, availEnd - availStart));
+                        } catch (...) {
+                            availableBytes = -1;
+                        }
+                    } else {
+                        availableBytes = -1;
+                    }
+                } else {
+                    availableBytes = -1;
+                }
             }
-            
+
             result.message = "Success";
         } else {
             result.success = false;
             result.message = "Failed with status " + std::to_string(httpCode);
         }
     }
-    
+
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    
     return result;
 }
 

@@ -9,6 +9,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
+import { removeFileExtension } from '../Utils/FileNameUtils';
 import { ThemeToggle } from '../Framework/Components/ThemeToggle';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 
@@ -4702,7 +4703,7 @@ struct DataManagementPage {
   private async findExistingMangaCandidates(fileName: string): Promise<void> {
     try {
       // 从文件名提取可能的漫画名称
-      const possibleTitle = this.removeFileExtension(fileName);
+      const possibleTitle = removeFileExtension(fileName);
       
       // 查询数据库中的本地漫画
       const allManga: ComicRecord[] = await this.dataManager.getAllComics();
@@ -4764,16 +4765,6 @@ struct DataManagementPage {
     return matches / longer.length;
   }
 
-  /**
-   * 移除文件扩展名
-   */
-  private removeFileExtension(fileName: string): string {
-    const lastDotIndex = fileName.lastIndexOf('.');
-    if (lastDotIndex > 0) {
-      return fileName.substring(0, lastDotIndex);
-    }
-    return fileName;
-  }
 
   /**
    * 显示漫画导入配置对话框

@@ -568,12 +568,19 @@ export struct MainMenuSettingsSubPage {
     try {
       await this.settingsManager.setBottomBarStyle(nextStyle);
       this.bottomBarStyle = nextStyle;
-      AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', nextStyle);
       logger.info(TAG, `底栏样式已切换: ${nextStyle}`);
 
-      promptAction.showToast({
-        message: '底栏样式已切换',
-        duration: 1500
+      promptAction.showDialog({
+        title: '底栏样式已切换',
+        message: '底栏样式已切换，需要重启APP才能生效。\n\n是否立即重启？',
+        buttons: [
+          { text: '稍后重启', color: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) },
+          { text: '立即重启', color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) }
+        ]
+      }).then((result) => {
+        if (result.index === 1) {
+          void this.restartApp();
+        }
       });
     } catch (error) {
       logger.error(TAG, '保存底栏样式失败', String(error));
@@ -1706,7 +1713,7 @@ export struct MainMenuSettingsSubPage {
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .padding({ left: 4 })
 
-              Text('切换底栏渲染方式，无需重启，主页面会自动同步')
+              Text('切换底栏渲染方式，重启应用后生效')
                 .fontSize(13)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))

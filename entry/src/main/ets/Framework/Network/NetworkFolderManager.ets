@@ -1,9 +1,17 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { fileUri } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
 import { logger } from '../../Utils/Logger';
 import { sanitizeFileName } from '../../Utils/FileNameUtils';
+import {
+  aes256GcmEncrypt,
+  aes256GcmDecrypt,
+  generateAes256Key,
+  exportSymKeyToBase64,
+  importSymKeyFromBase64
+} from '../../Utils/CryptoUtils';
 import { FTPConfig, FTPFileInfo, FTPListResult, FTPNativeClient } from '../FTP/FTPNativeClient';
 import {
   SMBClientAdapter,
@@ -50,6 +58,8 @@ const DIRECTORY_CACHE_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
 const DIRECTORY_CACHE_MAX_ENTRIES = 120;
 const DOWNLOAD_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const DOWNLOAD_CACHE_MAX_BYTES = 1024 * 1024 * 1024;
+const ENCRYPTION_KEY_PREF = '__nf_enc_key_v1';
+const PASSWORD_ENCRYPTED_PREFIX = 'enc_v1:';
 
 interface CachedDirectoryEntry {
   connectionId: string;
@@ -136,6 +146,7 @@ export class NetworkFolderManager {
   private directoryCache: Map<string, CachedDirectoryEntry> = new Map<string, CachedDirectoryEntry>();
   private downloadCache: Map<string, CachedDownloadEntry> = new Map<string, CachedDownloadEntry>();
   private favoritePaths: Map<string, Set<string>> = new Map<string, Set<string>>();
+  private encryptionKey: cryptoFramework.SymKey | null = null;
 
   private rootDir: string = '';
   private downloadsDir: string = '';
@@ -1086,15 +1097,30 @@ export class NetworkFolderManager {
       lastPaths: new Map<string, string>()
     };
 
+    let needsMigration: boolean = false;
     try {
+      await this.ensureEncryptionKey();
+
       const rawConnections = String(await this.pref!.get(CONNECTIONS_KEY, '[]'));
       const rawLastConnectionId = String(await this.pref!.get(LAST_CONNECTION_KEY, ''));
       const rawLastPaths = String(await this.pref!.get(LAST_PATHS_KEY, '[]'));
 
       const connectionArray = this.safeParseJson<NetworkFolderConnection[]>(rawConnections, []);
-      connectionArray.forEach((item: NetworkFolderConnection) => {
+      for (let i = 0; i < connectionArray.length; i++) {
+        const item = connectionArray[i];
+        if (item.password.startsWith(PASSWORD_ENCRYPTED_PREFIX)) {
+          try {
+            const ciphertext = item.password.substring(PASSWORD_ENCRYPTED_PREFIX.length);
+            item.password = await aes256GcmDecrypt(ciphertext, this.encryptionKey!);
+          } catch (decryptError) {
+            logger.error(TAG, `密码解密失败(connection=${item.id})，已置空: ${String(decryptError)}`);
+            item.password = '';
+          }
+        } else if (item.password.length > 0) {
+          needsMigration = true;
+        }
         parsed.connections.push(this.normalizeConnection(item));
-      });
+      }
 
       const rawLastPathItems = this.safeParseJson<PersistedLastPathEntry[]>(rawLastPaths, []);
       if (Array.isArray(rawLastPathItems)) {
@@ -1117,6 +1143,16 @@ export class NetworkFolderManager {
     this.connections = parsed.connections;
     this.lastConnectionId = parsed.lastConnectionId;
     this.lastPaths = parsed.lastPaths;
+
+    // 自动迁移：将旧版明文密码加密存储
+    if (needsMigration && this.connections.length > 0) {
+      try {
+        await this.persistConnections();
+        logger.info(TAG, `已自动迁移 ${this.connections.length} 个连接的密码为加密存储`);
+      } catch (migrationError) {
+        logger.error(TAG, `密码加密迁移失败: ${String(migrationError)}`);
+      }
+    }
 
     try {
       const rawFavorites = String(await this.pref!.get(FAVORITE_PATHS_KEY, '[]'));
@@ -1358,9 +1394,56 @@ export class NetworkFolderManager {
     }
   }
 
+  private async ensureEncryptionKey(): Promise<void> {
+    if (this.encryptionKey !== null) {
+      return;
+    }
+    this.ensurePreferenceStore();
+    const storedKey = String(await this.pref!.get(ENCRYPTION_KEY_PREF, ''));
+    if (storedKey.length > 0) {
+      this.encryptionKey = await importSymKeyFromBase64(storedKey);
+    } else {
+      this.encryptionKey = await generateAes256Key();
+      const exportedKey = exportSymKeyToBase64(this.encryptionKey);
+      await this.pref!.put(ENCRYPTION_KEY_PREF, exportedKey);
+      await this.pref!.flush();
+    }
+  }
+
   private async persistConnections(): Promise<void> {
     this.ensurePreferenceStore();
-    await this.pref!.put(CONNECTIONS_KEY, JSON.stringify(this.connections));
+    await this.ensureEncryptionKey();
+    const encryptedConnections: NetworkFolderConnection[] = [];
+    for (let i = 0; i < this.connections.length; i++) {
+      const conn = this.connections[i];
+      if (conn.password.length > 0) {
+        const encrypted = await aes256GcmEncrypt(conn.password, this.encryptionKey!);
+        const copy: NetworkFolderConnection = {
+          id: conn.id,
+          name: conn.name,
+          protocol: conn.protocol,
+          serverUrl: conn.serverUrl,
+          host: conn.host,
+          shareName: conn.shareName,
+          domain: conn.domain,
+          clientIP: conn.clientIP,
+          port: conn.port,
+          username: conn.username,
+          password: PASSWORD_ENCRYPTED_PREFIX + encrypted,
+          basePath: conn.basePath,
+          passive: conn.passive,
+          verifySSL: conn.verifySSL,
+          verifyHostKey: conn.verifyHostKey,
+          timeoutMs: conn.timeoutMs,
+          createdAt: conn.createdAt,
+          lastUsedAt: conn.lastUsedAt
+        };
+        encryptedConnections.push(copy);
+      } else {
+        encryptedConnections.push(conn);
+      }
+    }
+    await this.pref!.put(CONNECTIONS_KEY, JSON.stringify(encryptedConnections));
     await this.pref!.flush();
   }
 
