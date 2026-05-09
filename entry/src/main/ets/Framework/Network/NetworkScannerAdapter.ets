@@ -4,6 +4,7 @@
  */
 
 import { connection } from '@kit.NetworkKit';
+import { taskpool } from '@kit.ArkTS';
 import { logger } from '../../Utils/Logger';
 import {
   NetworkScanHost,
@@ -91,6 +92,19 @@ function getNativeModule(): ScannerNativeModule | null {
   return nativeModule;
 }
 
+@Concurrent
+function enumSMBSharesTask(config: NativeSMBEnumConfig): NativeSMBEnumResult {
+  try {
+    const mod = webdavNativeModuleImport as ScannerNativeModule;
+    if (!mod || typeof mod.smbEnumShares !== 'function') {
+      return { success: false, message: 'Scanner模块不可用', shares: [] };
+    }
+    return mod.smbEnumShares(config);
+  } catch (error) {
+    return { success: false, message: `枚举共享失败：${String(error)}`, shares: [] };
+  }
+}
+
 export class NetworkScannerAdapter {
   public isAvailable(): boolean {
     return getNativeModule() !== null;
@@ -101,11 +115,15 @@ export class NetworkScannerAdapter {
       const netHandle: connection.NetHandle = connection.getDefaultNetSync();
       const properties: connection.ConnectionProperties = connection.getConnectionPropertiesSync(netHandle);
 
-      // Try to get subnet from default route gateway
+      // Try to get subnet from default route gateway (IPv4)
       const routes: connection.RouteInfo[] = properties.routes;
       for (const route of routes) {
         if (route.isDefaultRoute && route.hasGateway) {
           const gatewayIP: string = route.gateway.address;
+          if (gatewayIP.indexOf(':') >= 0) {
+            logger.info(TAG, `跳过 IPv6 网关: ${gatewayIP}`);
+            continue;
+          }
           const parts: string[] = gatewayIP.split('.');
           if (parts.length >= 3) {
             const subnet: string = `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -115,10 +133,17 @@ export class NetworkScannerAdapter {
         }
       }
 
-      // Fallback: extract from local IP
+      // Fallback: extract from local IP (prefer IPv4)
       const linkAddresses: connection.LinkAddress[] = properties.linkAddresses;
-      if (linkAddresses.length > 0) {
-        const localIP: string = linkAddresses[0].address.address;
+      let ipv6Fallback: string = '';
+      for (let i: number = 0; i < linkAddresses.length; i++) {
+        const localIP: string = linkAddresses[i].address.address;
+        if (localIP.indexOf(':') >= 0) {
+          if (ipv6Fallback.length === 0) {
+            ipv6Fallback = localIP;
+          }
+          continue;
+        }
         const parts: string[] = localIP.split('.');
         if (parts.length >= 3) {
           const subnet: string = `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -126,10 +151,14 @@ export class NetworkScannerAdapter {
           return subnet;
         }
       }
+
+      if (ipv6Fallback.length > 0) {
+        logger.warn(TAG, `检测到 IPv6 地址 (${ipv6Fallback})，网络扫描仅支持 IPv4 子网`);
+      }
     } catch (error) {
       logger.error(TAG, `获取子网失败: ${String(error)}`);
     }
-    logger.warn(TAG, '无法检测子网，使用默认值 192.168.1');
+    logger.warn(TAG, '无法检测 IPv4 子网，使用默认值 192.168.1');
     return '192.168.1';
   }
 
@@ -227,13 +256,13 @@ export class NetworkScannerAdapter {
     }
   }
 
-  public enumSMBShares(
+  public async enumSMBShares(
     host: string,
     port: number = 445,
     username: string = '',
     password: string = '',
     domain: string = ''
-  ): NetworkSMBEnumResult {
+  ): Promise<NetworkSMBEnumResult> {
     const mod = getNativeModule();
     if (!mod) {
       return { success: false, message: 'Scanner模块未加载', shares: [] };
@@ -248,7 +277,8 @@ export class NetworkScannerAdapter {
         domain: domain,
         timeoutMs: 10000
       };
-      const nativeResult = mod.smbEnumShares(config);
+      const task = new taskpool.Task(enumSMBSharesTask, config);
+      const nativeResult = await taskpool.execute(task) as NativeSMBEnumResult;
       const mappedShares: NetworkSMBShare[] = [];
       for (const s of nativeResult.shares) {
         const share: NetworkSMBShare = {

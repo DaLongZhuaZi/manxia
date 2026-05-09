@@ -2150,7 +2150,7 @@ struct MainMenuPage {
   }
 
   onBottomBarStyleStorageChanged(): void {
-    this.applyBottomBarStyle(this.bottomBarStyle, 'app_storage', false);
+    // 底栏样式需要重启生效，不做实时切换
   }
 
   private applyBottomBarStyle(style: string, trigger: string, syncStorage: boolean): void {
@@ -3367,6 +3367,15 @@ struct MainMenuPage {
         }
         if (existing.priority !== newSource.priority) {
           existing.priority = newSource.priority;
+        }
+        if (existing.supportsPopular !== newSource.supportsPopular) {
+          existing.supportsPopular = newSource.supportsPopular;
+        }
+        if (existing.supportsLatest !== newSource.supportsLatest) {
+          existing.supportsLatest = newSource.supportsLatest;
+        }
+        if (existing.supportsFilter !== newSource.supportsFilter) {
+          existing.supportsFilter = newSource.supportsFilter;
         }
         if (existing.iconPath !== newSource.iconPath) {
           existing.iconPath = newSource.iconPath;
@@ -26277,6 +26286,11 @@ struct MainMenuPage {
             .width('100%')
             .justifyContent(FlexAlign.Center)
             .margin({ top: 2 })
+          } else {
+            Blank()
+              .width('100%')
+              .height(14)
+              .margin({ top: 2 })
           }
         }
         .width('100%')
@@ -26284,45 +26298,80 @@ struct MainMenuPage {
           this.openSourceDetail(source);
         })
 
-        // 快捷操作按钮（三行显示）
-        Column({ space: 4 }) {
-          // 热门按钮
-          Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.star'))
-              .fontSize(12)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-            Text('热门')
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor(this.getSettingsAnalyticsCardTitleColor())
-          }
-          .width('100%')
-          .height(24)
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .borderRadius(6)
-          .onClick(() => {
-            this.openSourceDetailWithTab(source, 'popular');
-          })
+          // 快捷操作按钮：按图源实际支持的工作流显示
+          Column({ space: 4 }) {
+            if (source.supportsPopular) {
+              Row({ space: 4 }) {
+                SymbolGlyph($r('sys.symbol.star'))
+                  .fontSize(12)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                Text('热门')
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.getSettingsAnalyticsCardTitleColor())
+              }
+              .width('100%')
+              .height(24)
+              .justifyContent(FlexAlign.Center)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .borderRadius(6)
+              .onClick(() => {
+                this.openSourceDetailWithTab(source, 'popular');
+              })
+            } else {
+              Blank()
+                .width('100%')
+                .height(24)
+            }
 
-          // 最新按钮
-          Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.clock'))
-              .fontSize(12)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-            Text('最新')
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor(this.getSettingsAnalyticsCardTitleColor())
-          }
-          .width('100%')
-          .height(24)
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .borderRadius(6)
-          .onClick(() => {
-            this.openSourceDetailWithTab(source, 'latest');
-          })
+            if (source.supportsLatest) {
+              Row({ space: 4 }) {
+                SymbolGlyph($r('sys.symbol.clock'))
+                  .fontSize(12)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                Text('最新')
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.getSettingsAnalyticsCardTitleColor())
+              }
+              .width('100%')
+              .height(24)
+              .justifyContent(FlexAlign.Center)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .borderRadius(6)
+              .onClick(() => {
+                this.openSourceDetailWithTab(source, 'latest');
+              })
+            } else {
+              Blank()
+                .width('100%')
+                .height(24)
+            }
+
+            if (source.supportsFilter) {
+              Row({ space: 4 }) {
+                Image($r('app.media.ic_filter'))
+                  .width(12)
+                  .height(12)
+                  .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                Text('筛选')
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.getSettingsAnalyticsCardTitleColor())
+              }
+              .width('100%')
+              .height(24)
+              .justifyContent(FlexAlign.Center)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .borderRadius(6)
+              .onClick(() => {
+                this.openSourceDetailWithTab(source, 'filter');
+              })
+            } else {
+              Blank()
+                .width('100%')
+                .height(24)
+            }
 
           // 搜索按钮
           Row({ space: 4 }) {

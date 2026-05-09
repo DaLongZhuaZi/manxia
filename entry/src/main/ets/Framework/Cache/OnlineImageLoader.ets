@@ -211,7 +211,7 @@ export class OnlineImageLoader {
         if (diskCached) {
           logger.info(TAG, `✅ 磁盘缓存命中: ${url.substring(0, 80)}`);
           // 存入内存缓存
-          this.putToCache(cacheKey, diskCached);
+          await this.putToCache(cacheKey, diskCached);
           this.syncCacheStatusToDatabaseAsync(url, diskCacheUrl, diskCache);
           return diskCached;
         }
@@ -307,7 +307,7 @@ export class OnlineImageLoader {
       
       if (pixelMap) {
         // 存入内存缓存
-        this.putToCache(this.generateCacheKey(request.url, request.options), pixelMap);
+        await this.putToCache(this.generateCacheKey(request.url, request.options), pixelMap);
         
         // [新增] 存入磁盘缓存（仅在已初始化时）
         try {
@@ -1457,7 +1457,19 @@ export class OnlineImageLoader {
     if (entry) {
       // 更新时间戳
       entry.timestamp = Date.now();
-      return entry.pixelMap;
+      try {
+        // 缓存只持有自己的 PixelMap，返回给调用方时必须克隆。
+        // 否则 LRU 淘汰释放缓存对象时，会把阅读器正在显示的同一个 PixelMap 释放掉。
+        return entry.pixelMap.cloneSync();
+      } catch (error) {
+        const message: string = error instanceof Error ? error.message : String(error);
+        this.memoryCache.delete(cacheKey);
+        this.memoryCacheSize = Math.max(0, this.memoryCacheSize - entry.size);
+        try {
+          entry.pixelMap.release();
+        } catch (_releaseError) {}
+        logger.warn(TAG, `内存缓存PixelMap克隆失败，已移除缓存: key=${cacheKey}, error=${message}`);
+      }
     }
     return null;
   }
@@ -1467,13 +1479,31 @@ export class OnlineImageLoader {
    */
   private async putToCache(cacheKey: string, pixelMap: image.PixelMap): Promise<void> {
     try {
-      const size = await this.calculatePixelMapSize(pixelMap);
+      let cachePixelMap: image.PixelMap;
+      try {
+        cachePixelMap = pixelMap.cloneSync();
+      } catch (cloneError) {
+        const message: string = cloneError instanceof Error ? cloneError.message : String(cloneError);
+        logger.warn(TAG, `缓存PixelMap克隆失败，跳过内存缓存: key=${cacheKey}, error=${message}`);
+        return;
+      }
+
+      const size = await this.calculatePixelMapSize(cachePixelMap);
       
       // 检查是否需要清理
       this.evictCacheIfNeeded(size);
+
+      const oldEntry = this.memoryCache.get(cacheKey);
+      if (oldEntry) {
+        this.memoryCacheSize = Math.max(0, this.memoryCacheSize - oldEntry.size);
+        this.memoryCache.delete(cacheKey);
+        try {
+          oldEntry.pixelMap.release();
+        } catch (_releaseError) {}
+      }
       
       const entry: CacheEntry = {
-        pixelMap,
+        pixelMap: cachePixelMap,
         size,
         timestamp: Date.now()
       };

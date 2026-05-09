@@ -162,54 +162,57 @@ std::string BuildErrorMessage(
 
 class SMBClient::Impl {
 public:
-    explicit Impl(const Config& cfg) : config(cfg) {}
-
-    struct Session {
-        struct smb2_context* context = nullptr;
-        bool connected = false;
-
-        ~Session()
-        {
-            if (context == nullptr) {
-                return;
-            }
-            if (connected) {
-                smb2_disconnect_share(context);
-            }
-            smb2_destroy_context(context);
-        }
-    };
-
-    std::unique_ptr<Session> OpenSession(Result* errorResult) const
+    explicit Impl(const Config& cfg) : config(cfg)
     {
-        auto session = std::make_unique<Session>();
-        session->context = smb2_init_context();
-        if (session->context == nullptr) {
+        context = smb2_init_context();
+        if (context == nullptr) {
+            return;
+        }
+
+        smb2_set_authentication(context, SMB2_SEC_NTLMSSP);
+        smb2_set_version(context, SMB2_VERSION_ANY);
+        smb2_set_security_mode(context, SMB2_NEGOTIATE_SIGNING_ENABLED);
+        smb2_set_timeout(context, std::max(1, config.timeoutMs / 1000));
+        smb2_set_workstation(context, BuildWorkstation(config.workstation).c_str());
+
+        if (!config.username.empty()) {
+            smb2_set_user(context, config.username.c_str());
+        }
+        if (!config.password.empty()) {
+            smb2_set_password(context, config.password.c_str());
+        }
+        if (!config.domain.empty()) {
+            smb2_set_domain(context, config.domain.c_str());
+        }
+        if (config.enableEncryption) {
+            smb2_set_seal(context, 1);
+        }
+    }
+
+    ~Impl()
+    {
+        Disconnect();
+        if (context != nullptr) {
+            smb2_destroy_context(context);
+            context = nullptr;
+        }
+    }
+
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+
+    bool Connect(Result* errorResult = nullptr)
+    {
+        if (connected) {
+            return true;
+        }
+        if (context == nullptr) {
             if (errorResult != nullptr) {
                 errorResult->success = false;
                 errorResult->statusCode = ENOMEM;
-                errorResult->message = "创建 SMB 上下文失败";
+                errorResult->message = "SMB 上下文未初始化";
             }
-            return nullptr;
-        }
-
-        smb2_set_authentication(session->context, SMB2_SEC_NTLMSSP);
-        smb2_set_version(session->context, SMB2_VERSION_ANY);
-        smb2_set_security_mode(session->context, SMB2_NEGOTIATE_SIGNING_ENABLED);
-        smb2_set_timeout(session->context, std::max(1, config.timeoutMs / 1000));
-        smb2_set_workstation(session->context, BuildWorkstation(config.workstation).c_str());
-
-        if (!config.username.empty()) {
-            smb2_set_user(session->context, config.username.c_str());
-        }
-        if (!config.password.empty()) {
-            smb2_set_password(session->context, config.password.c_str());
-        }
-        if (!config.domain.empty()) {
-            smb2_set_domain(session->context, config.domain.c_str());
-        }
-        if (config.enableEncryption) {
-            smb2_set_seal(session->context, 1);
+            return false;
         }
 
         const std::string serverTarget = BuildServerTarget(config.host, config.port);
@@ -224,14 +227,14 @@ public:
             config.enableEncryption ? 1 : 0
         );
         const int rc = smb2_connect_share(
-            session->context,
+            context,
             serverTarget.c_str(),
             config.shareName.c_str(),
             userValue
         );
         if (rc != 0) {
-            const int statusCode = ConvertStatusCode(session->context, rc);
-            const std::string errorMessage = BuildErrorMessage("连接 SMB 共享失败", session->context, rc);
+            const int statusCode = ConvertStatusCode(context, rc);
+            const std::string errorMessage = BuildErrorMessage("连接 SMB 共享失败", context, rc);
             OH_LOG_ERROR(
                 LOG_APP,
                 "连接 SMB 共享失败: host=%{public}s port=%{public}d share=%{public}s rc=%{public}d ntStatus=%{public}d detail=%{public}s",
@@ -245,16 +248,32 @@ public:
             if (errorResult != nullptr) {
                 errorResult->success = false;
                 errorResult->statusCode = statusCode;
-                errorResult->message = BuildErrorMessage("连接 SMB 共享失败", session->context, rc);
+                errorResult->message = errorMessage;
             }
-            return nullptr;
+            return false;
         }
 
-        session->connected = true;
-        return session;
+        connected = true;
+        return true;
     }
 
-    Result TestConnection(const std::string& remotePath) const
+    void Disconnect()
+    {
+        if (connected && context != nullptr) {
+            smb2_disconnect_share(context);
+            connected = false;
+        }
+    }
+
+    bool EnsureConnected(Result* errorResult = nullptr)
+    {
+        if (connected) {
+            return true;
+        }
+        return Connect(errorResult);
+    }
+
+    Result TestConnection(const std::string& remotePath)
     {
         Result result;
         const std::string normalizedPath = NormalizeRemotePath(remotePath);
@@ -266,20 +285,19 @@ public:
             normalizedPath.c_str()
         );
 
-        auto session = OpenSession(&result);
-        if (session == nullptr) {
+        if (!EnsureConnected(&result)) {
             return result;
         }
 
         if (!normalizedPath.empty()) {
-            struct smb2dir* dir = smb2_opendir(session->context, normalizedPath.c_str());
+            struct smb2dir* dir = smb2_opendir(context, normalizedPath.c_str());
             if (dir == nullptr) {
                 result.success = false;
-                result.statusCode = ConvertStatusCode(session->context, -ENOENT);
-                result.message = BuildErrorMessage("访问 SMB 目录失败", session->context, -ENOENT);
+                result.statusCode = ConvertStatusCode(context, -ENOENT);
+                result.message = BuildErrorMessage("访问 SMB 目录失败", context, -ENOENT);
                 return result;
             }
-            smb2_closedir(session->context, dir);
+            smb2_closedir(context, dir);
         }
 
         result.success = true;
@@ -287,10 +305,10 @@ public:
         return result;
     }
 
-    ListResult List(const std::string& remotePath) const
+    ListResult List(const std::string& remotePath)
     {
         ListResult result;
-        Result openResult;
+        Result connectResult;
         const std::string normalizedPath = NormalizeRemotePath(remotePath);
         OH_LOG_INFO(
             LOG_APP,
@@ -300,27 +318,26 @@ public:
             normalizedPath.c_str()
         );
 
-        auto session = OpenSession(&openResult);
-        if (session == nullptr) {
+        if (!EnsureConnected(&connectResult)) {
             result.success = false;
-            result.statusCode = openResult.statusCode;
-            result.message = openResult.message;
+            result.statusCode = connectResult.statusCode;
+            result.message = connectResult.message;
             return result;
         }
 
         struct smb2dir* dir = smb2_opendir(
-            session->context,
+            context,
             normalizedPath.empty() ? "" : normalizedPath.c_str()
         );
         if (dir == nullptr) {
             result.success = false;
-            result.statusCode = ConvertStatusCode(session->context, -ENOENT);
-            result.message = BuildErrorMessage("读取 SMB 目录失败", session->context, -ENOENT);
+            result.statusCode = ConvertStatusCode(context, -ENOENT);
+            result.message = BuildErrorMessage("读取 SMB 目录失败", context, -ENOENT);
             return result;
         }
 
         struct smb2dirent* entry = nullptr;
-        while ((entry = smb2_readdir(session->context, dir)) != nullptr) {
+        while ((entry = smb2_readdir(context, dir)) != nullptr) {
             if (entry->name == nullptr) {
                 continue;
             }
@@ -338,16 +355,16 @@ public:
             result.files.push_back(fileInfo);
         }
 
-        smb2_closedir(session->context, dir);
+        smb2_closedir(context, dir);
         result.success = true;
         result.message = "SMB 目录读取完成";
         return result;
     }
 
-    Result DownloadFile(const std::string& remotePath, const std::string& localPath) const
+    Result DownloadFile(const std::string& remotePath, const std::string& localPath)
     {
         Result result;
-        Result openResult;
+        Result connectResult;
         const std::string normalizedPath = NormalizeRemotePath(remotePath);
         OH_LOG_INFO(
             LOG_APP,
@@ -357,37 +374,36 @@ public:
             normalizedPath.c_str()
         );
 
-        auto session = OpenSession(&openResult);
-        if (session == nullptr) {
-            return openResult;
+        if (!EnsureConnected(&connectResult)) {
+            return connectResult;
         }
 
-        struct smb2fh* fileHandle = smb2_open(session->context, normalizedPath.c_str(), O_RDONLY);
+        struct smb2fh* fileHandle = smb2_open(context, normalizedPath.c_str(), O_RDONLY);
         if (fileHandle == nullptr) {
             result.success = false;
-            result.statusCode = ConvertStatusCode(session->context, -ENOENT);
-            result.message = BuildErrorMessage("打开 SMB 文件失败", session->context, -ENOENT);
+            result.statusCode = ConvertStatusCode(context, -ENOENT);
+            result.message = BuildErrorMessage("打开 SMB 文件失败", context, -ENOENT);
             return result;
         }
 
         std::FILE* localFile = std::fopen(localPath.c_str(), "wb");
         if (localFile == nullptr) {
             const int fileError = errno;
-            smb2_close(session->context, fileHandle);
+            smb2_close(context, fileHandle);
             result.success = false;
             result.statusCode = fileError;
             result.message = "创建本地缓存文件失败: " + std::string(std::strerror(fileError));
             return result;
         }
 
-        const uint32_t maxReadSize = smb2_get_max_read_size(session->context);
+        const uint32_t maxReadSize = smb2_get_max_read_size(context);
         const uint32_t chunkSize = maxReadSize > 0 ? maxReadSize : DEFAULT_READ_CHUNK;
         std::vector<uint8_t> buffer(chunkSize);
         uint64_t offset = 0;
 
         while (true) {
             const int bytesRead = smb2_pread(
-                session->context,
+                context,
                 fileHandle,
                 buffer.data(),
                 chunkSize,
@@ -398,17 +414,17 @@ public:
             }
             if (bytesRead < 0) {
                 std::fclose(localFile);
-                smb2_close(session->context, fileHandle);
+                smb2_close(context, fileHandle);
                 result.success = false;
-                result.statusCode = ConvertStatusCode(session->context, bytesRead);
-                result.message = BuildErrorMessage("读取 SMB 文件失败", session->context, bytesRead);
+                result.statusCode = ConvertStatusCode(context, bytesRead);
+                result.message = BuildErrorMessage("读取 SMB 文件失败", context, bytesRead);
                 return result;
             }
 
             const size_t written = std::fwrite(buffer.data(), 1, static_cast<size_t>(bytesRead), localFile);
             if (written != static_cast<size_t>(bytesRead)) {
                 std::fclose(localFile);
-                smb2_close(session->context, fileHandle);
+                smb2_close(context, fileHandle);
                 result.success = false;
                 result.statusCode = EIO;
                 result.message = "写入本地缓存文件失败";
@@ -419,13 +435,15 @@ public:
         }
 
         std::fclose(localFile);
-        smb2_close(session->context, fileHandle);
+        smb2_close(context, fileHandle);
         result.success = true;
         result.message = "SMB 文件下载完成";
         return result;
     }
 
     Config config;
+    struct smb2_context* context = nullptr;
+    bool connected = false;
 };
 
 SMBClient::SMBClient(const Config& config) : pImpl(std::make_unique<Impl>(config)) {}

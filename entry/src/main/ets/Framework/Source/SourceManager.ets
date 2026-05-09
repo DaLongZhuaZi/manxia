@@ -41,6 +41,40 @@ export interface SourceInfo {
   requireProxy?: boolean;  // 是否需要代理访问（对应 metadata.Internet）
   isPinned?: boolean;  // 是否置顶
   isNSFW?: boolean;    // 是否为NSFW图源
+  supportsPopular: boolean;  // 是否支持热门工作流
+  supportsLatest: boolean;   // 是否支持最新工作流
+  supportsFilter: boolean;   // 是否支持筛选工作流
+}
+
+type SourceFeatureKey = 'popular' | 'latest' | 'filter';
+
+interface SourceFeatureSupport {
+  supportsPopular: boolean;
+  supportsLatest: boolean;
+  supportsFilter: boolean;
+}
+
+interface SourceWorkflowSupportEntry {
+  description?: string;
+  supportsPagination?: boolean;
+}
+
+interface SourceWorkflowSupportMap {
+  popular?: SourceWorkflowSupportEntry;
+  latest?: SourceWorkflowSupportEntry;
+  filter?: SourceWorkflowSupportEntry;
+}
+
+interface SourceTabSupportConfig {
+  id?: string;
+  type?: string;
+  enabled?: boolean;
+  workflowName?: string;
+}
+
+interface SourceSupportConfig {
+  workflows?: SourceWorkflowSupportMap;
+  tabs?: SourceTabSupportConfig[];
 }
 
 /**
@@ -614,6 +648,9 @@ export class SourceManager {
     // 获取图源类型，默认为manga
     const sourceType = (source.type as SourceType) || 'manga';
     logger.debug(TAG, `图源 ${source.name} 类型: ${source.type} -> ${sourceType}`);
+
+    const configJson: string = typeof source.configJson === 'string' ? source.configJson as string : '';
+    const featureSupport: SourceFeatureSupport = this.detectSourceFeatureSupport(configJson);
     
     return {
       id: source.id as number,
@@ -630,8 +667,73 @@ export class SourceManager {
       lastUpdateTime: source.lastUpdateTime as number,
       iconPath: iconPath,
       requireProxy: Boolean(source.requireProxy),
-      isNSFW: Boolean(source.isNSFW)
+      isNSFW: Boolean(source.isNSFW),
+      supportsPopular: featureSupport.supportsPopular,
+      supportsLatest: featureSupport.supportsLatest,
+      supportsFilter: featureSupport.supportsFilter
     };
+  }
+
+  private createEmptyFeatureSupport(): SourceFeatureSupport {
+    return {
+      supportsPopular: false,
+      supportsLatest: false,
+      supportsFilter: false
+    };
+  }
+
+  private detectSourceFeatureSupport(configJson: string): SourceFeatureSupport {
+    const emptySupport: SourceFeatureSupport = this.createEmptyFeatureSupport();
+    if (configJson.trim().length <= 0) {
+      return emptySupport;
+    }
+
+    try {
+      const config: SourceSupportConfig = JSON.parse(configJson) as SourceSupportConfig;
+      const workflows: SourceWorkflowSupportMap | undefined = config.workflows;
+      if (!workflows) {
+        return emptySupport;
+      }
+
+      const hasPopularWorkflow: boolean = workflows.popular !== undefined && workflows.popular !== null;
+      const hasLatestWorkflow: boolean = workflows.latest !== undefined && workflows.latest !== null;
+      const hasFilterWorkflow: boolean = workflows.filter !== undefined && workflows.filter !== null;
+      const tabs: SourceTabSupportConfig[] | undefined = config.tabs;
+
+      if (tabs && Array.isArray(tabs) && tabs.length > 0) {
+        return {
+          supportsPopular: hasPopularWorkflow && this.hasEnabledFeatureTab(tabs, 'popular'),
+          supportsLatest: hasLatestWorkflow && this.hasEnabledFeatureTab(tabs, 'latest'),
+          supportsFilter: hasFilterWorkflow && this.hasEnabledFeatureTab(tabs, 'filter')
+        };
+      }
+
+      return {
+        supportsPopular: hasPopularWorkflow,
+        supportsLatest: hasLatestWorkflow,
+        supportsFilter: hasFilterWorkflow
+      };
+    } catch (error) {
+      logger.warn(TAG, `解析图源功能支持失败: ${String(error)}`);
+      return emptySupport;
+    }
+  }
+
+  private hasEnabledFeatureTab(tabs: SourceTabSupportConfig[], feature: SourceFeatureKey): boolean {
+    for (let i = 0; i < tabs.length; i++) {
+      const tab: SourceTabSupportConfig = tabs[i];
+      if (!tab || tab.enabled === false) {
+        continue;
+      }
+
+      const id: string = tab.id ? String(tab.id).toLowerCase() : '';
+      const type: string = tab.type ? String(tab.type).toLowerCase() : '';
+      const workflowName: string = tab.workflowName ? String(tab.workflowName).toLowerCase() : '';
+      if (id === feature || type === feature || workflowName === feature) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
