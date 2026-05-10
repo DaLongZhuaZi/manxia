@@ -6,7 +6,8 @@ import { logger } from '../../Utils/Logger';
 import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { DataManager } from '../Data/DataManager';
-import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Cache/ImageCacheManager';
+import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
+import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } from '../Cache/ImageCacheManager';
 import { PageInfo } from '../WebView/MangaSourceTypes';
 
 const TAG = 'ChapterPreloadManager';
@@ -45,6 +46,60 @@ export interface PreloadConfig {
   enabled: boolean;            // 是否启用预加载
 }
 
+interface SourcePreloadHeaderMap {
+  Referer?: string;
+  referer?: string;
+  Origin?: string;
+  origin?: string;
+  Accept?: string;
+  accept?: string;
+  Cookie?: string;
+  cookie?: string;
+  Authorization?: string;
+  authorization?: string;
+  UserAgent?: string;
+  userAgent?: string;
+  AcceptLanguage?: string;
+  acceptLanguage?: string;
+  CacheControl?: string;
+  cacheControl?: string;
+  Pragma?: string;
+  pragma?: string;
+  SecFetchDest?: string;
+  secFetchDest?: string;
+  SecFetchMode?: string;
+  secFetchMode?: string;
+  SecFetchSite?: string;
+  secFetchSite?: string;
+  CachePartition?: string;
+  cachePartition?: string;
+}
+
+class SourcePreloadNormalizedHeaders {
+  userAgent: string = '';
+  referer: string = '';
+  origin: string = '';
+  accept: string = '';
+  cookie: string = '';
+  authorization: string = '';
+  acceptLanguage: string = '';
+  cacheControl: string = '';
+  pragma: string = '';
+  secFetchDest: string = '';
+  secFetchMode: string = '';
+  secFetchSite: string = '';
+  cachePartition: string = '';
+}
+
+interface SourcePreloadNetworkConfig {
+  headers?: SourcePreloadHeaderMap;
+}
+
+interface SourcePreloadConfig {
+  network?: SourcePreloadNetworkConfig;
+  imageHeaders?: SourcePreloadHeaderMap;
+}
+
 /**
  * 章节信息
  */
@@ -72,7 +127,7 @@ export class ChapterPreloadManager {
   private currentMangaId: string = '';      // 当前漫画ID
   private currentSourceId: number = 0;      // 当前图源ID
   private currentSourceName: string = '';   // 当前图源名称（【关键】用于确保图源正确）
-  private currentSourceHeaders: Record<string, string> = {}; // 当前图源的network headers（如Referer）
+  private currentSourceHeaders: RequestHeaders = {} as RequestHeaders; // 当前图源的图片请求头
   
   private constructor() {}
   
@@ -126,7 +181,7 @@ export class ChapterPreloadManager {
     this.currentMangaId = '';
     this.currentSourceId = 0;
     this.currentSourceName = '';
-    this.currentSourceHeaders = {};
+    this.currentSourceHeaders = {} as RequestHeaders;
   }
   
   /**
@@ -153,7 +208,7 @@ export class ChapterPreloadManager {
     this.currentSourceId = sourceId;
     this.currentSourceName = sourceName;
     
-    // 获取图源的network headers（如Referer）
+    // 获取图源的图片请求头，优先使用 imageHeaders，兼容 network.headers
     await this.loadSourceHeaders(sourceId);
     
     logger.info(TAG, `🔄 开始预加载 ${chapters.length} 个章节: sourceName="${sourceName}", sourceId=${sourceId}, headers=${JSON.stringify(this.currentSourceHeaders)}`);
@@ -363,33 +418,181 @@ export class ChapterPreloadManager {
     }
   }
   
+  private normalizeConfiguredHeaderValue(value?: string): string {
+    if (!value) {
+      return '';
+    }
+    return value.trim();
+  }
+
+  private readHeaderAlias(headers: SourcePreloadHeaderMap, fieldName: string): string {
+    try {
+      const value = Reflect.get(headers, fieldName) as string | undefined;
+      return this.normalizeConfiguredHeaderValue(value);
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  private chooseHeaderValue(first: string, second: string, third: string): string {
+    if (first.length > 0) {
+      return first;
+    }
+    if (second.length > 0) {
+      return second;
+    }
+    return third;
+  }
+
+  private normalizeSourceHeaderMap(headers: SourcePreloadHeaderMap): SourcePreloadNormalizedHeaders {
+    const normalized = new SourcePreloadNormalizedHeaders();
+    normalized.userAgent = this.chooseHeaderValue(this.readHeaderAlias(headers, 'User-Agent'), this.readHeaderAlias(headers, 'UserAgent'), this.readHeaderAlias(headers, 'userAgent'));
+    normalized.referer = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Referer'), this.readHeaderAlias(headers, 'referer'), '');
+    normalized.origin = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Origin'), this.readHeaderAlias(headers, 'origin'), '');
+    normalized.accept = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Accept'), this.readHeaderAlias(headers, 'accept'), '');
+    normalized.cookie = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Cookie'), this.readHeaderAlias(headers, 'cookie'), '');
+    normalized.authorization = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Authorization'), this.readHeaderAlias(headers, 'authorization'), '');
+    normalized.acceptLanguage = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Accept-Language'), this.readHeaderAlias(headers, 'AcceptLanguage'), this.readHeaderAlias(headers, 'acceptLanguage'));
+    normalized.cacheControl = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Cache-Control'), this.readHeaderAlias(headers, 'CacheControl'), this.readHeaderAlias(headers, 'cacheControl'));
+    normalized.pragma = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Pragma'), this.readHeaderAlias(headers, 'pragma'), '');
+    normalized.secFetchDest = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Sec-Fetch-Dest'), this.readHeaderAlias(headers, 'SecFetchDest'), this.readHeaderAlias(headers, 'secFetchDest'));
+    normalized.secFetchMode = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Sec-Fetch-Mode'), this.readHeaderAlias(headers, 'SecFetchMode'), this.readHeaderAlias(headers, 'secFetchMode'));
+    normalized.secFetchSite = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Sec-Fetch-Site'), this.readHeaderAlias(headers, 'SecFetchSite'), this.readHeaderAlias(headers, 'secFetchSite'));
+    normalized.cachePartition = this.chooseHeaderValue(this.readHeaderAlias(headers, 'Cache-Partition'), this.readHeaderAlias(headers, 'CachePartition'), this.readHeaderAlias(headers, 'cachePartition'));
+    return normalized;
+  }
+
+  private appendExtraRequestHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
+    const normalizedName = headerName.trim();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    if (!target.extraHeaders) {
+      target.extraHeaders = [];
+    }
+    let index = 0;
+    while (index < target.extraHeaders.length) {
+      const entry = target.extraHeaders[index];
+      if (entry.name.toLowerCase() === normalizedName.toLowerCase()) {
+        entry.value = normalizedValue;
+        return;
+      }
+      index = index + 1;
+    }
+    target.extraHeaders.push({
+      name: normalizedName,
+      value: normalizedValue
+    } as RequestHeaderEntry);
+  }
+
+  private applyConfiguredRequestHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
+    const normalizedName = headerName.trim().toLowerCase();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    switch (normalizedName) {
+      case 'user-agent':
+      case 'useragent':
+        target.userAgent = normalizedValue;
+        return;
+      case 'referer':
+        target.referer = normalizedValue;
+        return;
+      case 'origin':
+        target.origin = normalizedValue;
+        return;
+      case 'accept':
+        target.accept = normalizedValue;
+        return;
+      case 'cookie':
+        target.cookie = normalizedValue;
+        return;
+      case 'authorization':
+        target.authorization = normalizedValue;
+        return;
+      case 'accept-language':
+      case 'acceptlanguage':
+        target.acceptLanguage = normalizedValue;
+        return;
+      case 'cache-control':
+      case 'cachecontrol':
+        target.cacheControl = normalizedValue;
+        return;
+      case 'pragma':
+        target.pragma = normalizedValue;
+        return;
+      case 'sec-fetch-dest':
+      case 'secfetchdest':
+        target.secFetchDest = normalizedValue;
+        return;
+      case 'sec-fetch-mode':
+      case 'secfetchmode':
+        target.secFetchMode = normalizedValue;
+        return;
+      case 'sec-fetch-site':
+      case 'secfetchsite':
+        target.secFetchSite = normalizedValue;
+        return;
+      case 'cache-partition':
+      case 'cachepartition':
+        target.cachePartition = normalizedValue;
+        return;
+      default:
+        this.appendExtraRequestHeader(target, headerName, normalizedValue);
+        return;
+    }
+  }
+
+  private applyHeaderCandidate(headerName: string, headerValue?: string): void {
+    const normalizedValue = this.normalizeConfiguredHeaderValue(headerValue);
+    if (normalizedValue.length > 0) {
+      this.applyConfiguredRequestHeader(this.currentSourceHeaders, headerName, normalizedValue);
+    }
+  }
+
+  private applySourceHeaderMap(headers?: SourcePreloadHeaderMap): void {
+    if (!headers) {
+      return;
+    }
+    const normalized = this.normalizeSourceHeaderMap(headers);
+    this.applyHeaderCandidate('User-Agent', normalized.userAgent);
+    this.applyHeaderCandidate('Referer', normalized.referer);
+    this.applyHeaderCandidate('Origin', normalized.origin);
+    this.applyHeaderCandidate('Accept', normalized.accept);
+    this.applyHeaderCandidate('Cookie', normalized.cookie);
+    this.applyHeaderCandidate('Authorization', normalized.authorization);
+    this.applyHeaderCandidate('Accept-Language', normalized.acceptLanguage);
+    this.applyHeaderCandidate('Cache-Control', normalized.cacheControl);
+    this.applyHeaderCandidate('Pragma', normalized.pragma);
+    this.applyHeaderCandidate('Sec-Fetch-Dest', normalized.secFetchDest);
+    this.applyHeaderCandidate('Sec-Fetch-Mode', normalized.secFetchMode);
+    this.applyHeaderCandidate('Sec-Fetch-Site', normalized.secFetchSite);
+    this.applyHeaderCandidate('Cache-Partition', normalized.cachePartition);
+  }
+
   /**
-   * 从图源配置中加载network headers
+   * 从图源配置中加载图片请求头
    */
   private async loadSourceHeaders(sourceId: number): Promise<void> {
     try {
-      this.currentSourceHeaders = {};
+      this.currentSourceHeaders = {} as RequestHeaders;
       const sources = await DataManager.getInstance().getAllComicSources();
       
       for (let i = 0; i < sources.length; i++) {
-        const s = sources[i] as Record<string, Object>;
+        const s = sources[i] as ComicSourceDatabaseRecord;
         if (Number(s.id) === sourceId) {
           const configJson = s.configJson as string;
           if (configJson) {
-            const config: Record<string, Object> = JSON.parse(configJson) as Record<string, Object>;
-            const network: Record<string, Object> | undefined = config.network as Record<string, Object> | undefined;
-            if (network && network.headers) {
-              const headers: Record<string, Object> = network.headers as Record<string, Object>;
-              // 提取Referer
-              if (headers.Referer) {
-                this.currentSourceHeaders['Referer'] = String(headers.Referer);
-              }
-              // 提取Accept-Language
-              if (headers['Accept-Language']) {
-                this.currentSourceHeaders['Accept-Language'] = String(headers['Accept-Language']);
-              }
-              logger.info(TAG, `图源headers已加载: ${JSON.stringify(this.currentSourceHeaders)}`);
+            const config: SourcePreloadConfig = JSON.parse(configJson) as SourcePreloadConfig;
+            if (config.network && config.network.headers) {
+              this.applySourceHeaderMap(config.network.headers);
             }
+            if (config.imageHeaders) {
+              this.applySourceHeaderMap(config.imageHeaders);
+            }
+            logger.info(TAG, `图源图片headers已加载: ${JSON.stringify(this.currentSourceHeaders)}`);
           }
           break;
         }
@@ -403,19 +606,59 @@ export class ChapterPreloadManager {
    * 构建预加载选项（包含headers）
    */
   private buildPreloadOptions(): LoadOptions | undefined {
-    if (Object.keys(this.currentSourceHeaders).length === 0) {
+    if (!this.hasConfiguredSourceHeaders(this.currentSourceHeaders)) {
       return undefined;
     }
     
     const headers: RequestHeaders = {} as RequestHeaders;
-    headers.referer = this.currentSourceHeaders['Referer'] || '';
-    headers.origin = this.currentSourceHeaders['Origin'] || '';
-    headers.acceptLanguage = this.currentSourceHeaders['Accept-Language'] || 'zh-CN,zh;q=0.9,en;q=0.8';
+    this.copyConfiguredSourceHeaders(headers, this.currentSourceHeaders);
 
     
     const options: LoadOptions = {} as LoadOptions;
     options.headers = headers;
     options.sourceId = this.currentSourceId;
     return options;
+  }
+
+  private hasConfiguredSourceHeaders(headers: RequestHeaders): boolean {
+    if (headers.userAgent && headers.userAgent.length > 0) { return true; }
+    if (headers.accept && headers.accept.length > 0) { return true; }
+    if (headers.referer && headers.referer.length > 0) { return true; }
+    if (headers.origin && headers.origin.length > 0) { return true; }
+    if (headers.cookie && headers.cookie.length > 0) { return true; }
+    if (headers.authorization && headers.authorization.length > 0) { return true; }
+    if (headers.acceptLanguage && headers.acceptLanguage.length > 0) { return true; }
+    if (headers.cacheControl && headers.cacheControl.length > 0) { return true; }
+    if (headers.pragma && headers.pragma.length > 0) { return true; }
+    if (headers.secFetchDest && headers.secFetchDest.length > 0) { return true; }
+    if (headers.secFetchMode && headers.secFetchMode.length > 0) { return true; }
+    if (headers.secFetchSite && headers.secFetchSite.length > 0) { return true; }
+    if (headers.cachePartition && headers.cachePartition.length > 0) { return true; }
+    if (headers.extraHeaders && headers.extraHeaders.length > 0) { return true; }
+    return false;
+  }
+
+  private copyConfiguredSourceHeaders(target: RequestHeaders, source: RequestHeaders): void {
+    if (source.userAgent && source.userAgent.length > 0) { target.userAgent = source.userAgent; }
+    if (source.accept && source.accept.length > 0) { target.accept = source.accept; }
+    if (source.referer && source.referer.length > 0) { target.referer = source.referer; }
+    if (source.origin && source.origin.length > 0) { target.origin = source.origin; }
+    if (source.cookie && source.cookie.length > 0) { target.cookie = source.cookie; }
+    if (source.authorization && source.authorization.length > 0) { target.authorization = source.authorization; }
+    if (source.acceptLanguage && source.acceptLanguage.length > 0) { target.acceptLanguage = source.acceptLanguage; }
+    if (source.cacheControl && source.cacheControl.length > 0) { target.cacheControl = source.cacheControl; }
+    if (source.pragma && source.pragma.length > 0) { target.pragma = source.pragma; }
+    if (source.secFetchDest && source.secFetchDest.length > 0) { target.secFetchDest = source.secFetchDest; }
+    if (source.secFetchMode && source.secFetchMode.length > 0) { target.secFetchMode = source.secFetchMode; }
+    if (source.secFetchSite && source.secFetchSite.length > 0) { target.secFetchSite = source.secFetchSite; }
+    if (source.cachePartition && source.cachePartition.length > 0) { target.cachePartition = source.cachePartition; }
+    if (source.extraHeaders && source.extraHeaders.length > 0) {
+      let index = 0;
+      while (index < source.extraHeaders.length) {
+        const entry = source.extraHeaders[index];
+        this.appendExtraRequestHeader(target, entry.name, entry.value);
+        index = index + 1;
+      }
+    }
   }
 }

@@ -547,11 +547,22 @@ export class CoverCacheManager {
         finalHeaders['Referer'] = 'https://b.amh1234.com/';
         finalHeaders['Origin'] = 'https://b.amh1234.com';
       }
+
+      // Pixiv CDN防盗链
+      if (coverUrl.includes('i.pximg.net') || coverUrl.includes('.pximg.net')) {
+        if (!finalHeaders['Referer']) {
+          finalHeaders['Referer'] = 'https://www.pixiv.net/';
+        }
+        if (!finalHeaders['Origin']) {
+          finalHeaders['Origin'] = 'https://www.pixiv.net';
+        }
+      }
       
       // 尝试下载，如果SSL错误则降级为HTTP
       // result: [success, sslError]
       let downloadUrl = coverUrl;
       let result = await this.tryDownloadCover(downloadUrl, finalHeaders, localPath);
+
       if (!result[0] && isPhotos18) {
         logger.warn(TAG, `Photos18封面下载失败，允许后续重新尝试: ${coverUrl}`);
       }
@@ -571,7 +582,21 @@ export class CoverCacheManager {
         return null;
       }
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
+      let errMsg: string = '';
+      if (error instanceof Error) {
+        errMsg = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        const msg = (error as Record<string, Object>)['message'];
+        if (typeof msg === 'string') {
+          errMsg = msg;
+        } else if (msg !== undefined && msg !== null) {
+          try { errMsg = JSON.stringify(msg); } catch (_e) { errMsg = String(msg); }
+        } else {
+          try { errMsg = JSON.stringify(error); } catch (_e2) { errMsg = String(error); }
+        }
+      } else {
+        errMsg = String(error);
+      }
       const errCode = (error as Record<string, Object>)['code'];
       logger.error(TAG, `下载封面异常: message=${errMsg}, code=${errCode}, url=${coverUrl}`);
       return null;
@@ -618,20 +643,35 @@ export class CoverCacheManager {
     } catch (error) {
       const errObj = error as Object;
       const errCode = (errObj as Record<string, Object>)['code'];
-      const errMsg = error instanceof Error ? error.message : String(error);
-      
+      let errMsg: string = '';
+      if (error instanceof Error) {
+        errMsg = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        const msg = (errObj as Record<string, Object>)['message'];
+        if (typeof msg === 'string') {
+          errMsg = msg;
+        } else if (msg !== undefined && msg !== null) {
+          try { errMsg = JSON.stringify(msg); } catch (_e) { errMsg = String(msg); }
+        } else {
+          try { errMsg = JSON.stringify(error); } catch (_e2) { errMsg = String(error); }
+        }
+      } else {
+        errMsg = String(error);
+      }
+
       // 检查是否是SSL错误 (code=2300060)
       const isSslError = errCode === 2300060;
-      
+
       if (isSslError) {
         logger.warn(TAG, `封面下载SSL错误: ${url}`);
       } else {
         logger.error(TAG, `封面下载异常: message=${errMsg}, code=${errCode}, url=${url}`);
       }
-      
+
       return [false, isSslError];  // success=false, sslError=isSslError
     }
   }
+
 
   /**
    * 更新本地封面路径

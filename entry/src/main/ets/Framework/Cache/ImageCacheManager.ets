@@ -942,6 +942,14 @@ export class ImageCacheManager {
       return await onlineLoader.load(url, onlineOptions);
     }
 
+    // Pixiv CDN图片通过OnlineImageLoader加载（支持WebView降级）
+    if (this.isPixivCdnUrl(url)) {
+      logger.info(TAG, `Pixiv CDN图片转入OnlineImageLoader: ${url.substring(0, 80)}`);
+      const onlineLoader = OnlineImageLoader.getInstance();
+      const onlineOptions: OnlineLoadOptions = this.buildOnlineLoadOptions(options);
+      return await onlineLoader.load(url, onlineOptions);
+    }
+
     let retryCount = 0;
     const maxRetries = this.config.network.retryCount;
     
@@ -963,6 +971,16 @@ export class ImageCacheManager {
         if (refererHdr.length === 0 && (url.includes('amh1234.wszwhg.net') || url.includes('gmh1234.wszwhg.net'))) {
           refererHdr = 'https://b.amh1234.com/';
           originHdr = 'https://b.amh1234.com';
+        }
+
+        // Pixiv CDN防盗链：i.pximg.net 必须携带 Referer
+        if (url.includes('i.pximg.net') || url.includes('.pximg.net')) {
+          if (refererHdr.length === 0) {
+            refererHdr = 'https://www.pixiv.net/';
+          }
+          if (originHdr.length === 0) {
+            originHdr = 'https://www.pixiv.net';
+          }
         }
         
         // 优化：使用内存缓存获取Cookie，避免每次都查询数据库
@@ -1098,7 +1116,29 @@ export class ImageCacheManager {
         
       } catch (error) {
         const errCode = (error as Record<string, Object>)['code'];
-        const errMsg: string = error instanceof Error ? error.message : String(error);
+        let errMsg: string = '';
+        if (error instanceof Error) {
+          errMsg = error.message;
+        } else if (typeof error === 'object' && error !== null) {
+          const msg = (error as Record<string, Object>)['message'];
+          if (typeof msg === 'string') {
+            errMsg = msg;
+          } else if (msg !== undefined && msg !== null) {
+            try {
+              errMsg = JSON.stringify(msg);
+            } catch (_e) {
+              errMsg = String(msg);
+            }
+          } else {
+            try {
+              errMsg = JSON.stringify(error);
+            } catch (_e2) {
+              errMsg = String(error);
+            }
+          }
+        } else {
+          errMsg = String(error);
+        }
         
         // 如果是SSL错误(2300060)且URL是HTTPS，尝试降级为HTTP
         if (errCode === 2300060 && url.startsWith('https://')) {
@@ -1115,7 +1155,8 @@ export class ImageCacheManager {
         }
         
         retryCount++;
-        logger.warn(TAG, `网络加载失败 (${retryCount}/${maxRetries + 1}): url=${url}, msg=${errMsg}`);
+        const errData = (error as Record<string, Object>)['data'];
+        logger.warn(TAG, `网络加载失败 (${retryCount}/${maxRetries + 1}): url=${url}, msg=${errMsg}, code=${errCode}, data=${errData}`);
         
         if (retryCount <= maxRetries) {
           // 等待重试延迟
@@ -1569,6 +1610,10 @@ export class ImageCacheManager {
    */
   private isPhotos18Url(url: string): boolean {
     return url.includes('photos18.com');
+  }
+
+  private isPixivCdnUrl(url: string): boolean {
+    return url.includes('i.pximg.net') || url.includes('.pximg.net');
   }
 
   private async getCachedCookie(sourceId: number, url?: string): Promise<string> {

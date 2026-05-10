@@ -2744,7 +2744,9 @@ export struct UnifiedDetailPage {
     const checkResult = await detectionService.checkDuplicates({
       title: this.content.title,
       author: this.content.author,
-      contentType: contentType
+      contentType: contentType,
+      sourceId: this.content.sourceId,
+      externalId: this.content.id
     });
 
     logger.info(TAG, `重复检测结果: hasDuplicates=${checkResult.hasDuplicates}, matches=${checkResult.matches.length}, checkedCount=${checkResult.checkedCount}`);
@@ -8629,6 +8631,7 @@ export struct UnifiedDetailPage {
         },
         onCancel: () => {
           this.pendingFavoriteAction = null;
+          this.isShelfActionPending = false;
         }
       })
     }
@@ -8863,6 +8866,7 @@ export struct UnifiedDetailPage {
     if (!shouldStop) {
       await doAdd();
     }
+    // shouldStop=true 时：弹窗已显示，isShelfActionPending 的重置由弹窗回调处理
   }
 
   /**

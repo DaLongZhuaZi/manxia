@@ -2577,6 +2577,50 @@ export struct MangaReaderPage {
     await this.waitForHiddenWebViewUrl(normalizedBaseUrl);
     logger.info(TAG, `隐藏WebView图源上下文已就绪: ${normalizedBaseUrl}`);
   }
+
+  /**
+   * 通过隐藏WebView加载Pixiv CDN图片（HTTP模块无法直接连接i.pximg.net）
+   * 使用同步XHR在WebView的浏览器上下文中加载图片，利用Pixiv的cookies/session
+   */
+  public async loadPixivImage(imageUrl: string): Promise<ArrayBuffer | null> {
+    try {
+      // 使用同步XHR加载图片（在WebView上下文中，有正确的cookies和浏览器环境）
+      const script = `(() => {
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', ${JSON.stringify(imageUrl)}, false);
+          xhr.responseType = 'arraybuffer';
+          xhr.send(null);
+          if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
+            return xhr.response;
+          }
+          return 'XHR_STATUS:' + xhr.status;
+        } catch(e) {
+          return 'XHR_ERROR:' + e.message;
+        }
+      })()`;
+      const jsResult = await this.webviewController.runJavaScriptExt(script);
+      const resultType = jsResult.getType();
+      if (resultType === webview.JsMessageType.ARRAY_BUFFER) {
+        const buffer = jsResult.getArrayBuffer();
+        if (buffer && buffer.byteLength > 0) {
+          logger.info(TAG, `Pixiv WebView图片加载成功: ${imageUrl.substring(0, 60)}, bytes=${buffer.byteLength}`);
+          return buffer;
+        }
+      }
+      if (resultType === webview.JsMessageType.STRING) {
+        const errStr = jsResult.getString();
+        logger.warn(TAG, `Pixiv WebView图片加载失败: ${errStr}, url=${imageUrl.substring(0, 60)}`);
+      } else {
+        logger.warn(TAG, `Pixiv WebView图片加载无数据: type=${resultType}, url=${imageUrl.substring(0, 60)}`);
+      }
+      return null;
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `Pixiv WebView图片加载异常: ${errMsg}, url=${imageUrl.substring(0, 60)}`);
+      return null;
+    }
+  }
   
   private async initializeMangaReader(params: MangaReaderPageParams): Promise<void> {
     this.pageParams = params;
@@ -8021,6 +8065,9 @@ export struct MangaReaderPage {
           isLastChapter: this.isLastChapterState,
           onRequestAdjacentChapter: (direction: 'prev' | 'next') => {
             this.handleWebtoonAdjacentChapterRequest(direction);
+          },
+          loadPixivImageCallback: async (imageUrl: string): Promise<ArrayBuffer | null> => {
+            return await this.loadPixivImage(imageUrl);
           },
           callbacks: {
             onPageChange: (pageIndex: number) => {

@@ -48,7 +48,7 @@ import { common } from '@kit.AbilityKit';
 import webview from '@ohos.web.webview';
 import { DatabaseRecord, ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
-import { OnlineImageLoader, RequestHeaders as OnlineRequestHeaders } from '../Framework/Cache/OnlineImageLoader';
+import { OnlineImageLoader, RequestHeaderEntry as OnlineRequestHeaderEntry, RequestHeaders as OnlineRequestHeaders } from '../Framework/Cache/OnlineImageLoader';
 import { promptAction } from '@kit.ArkUI';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { AvifImage } from '../components/AvifImage';
@@ -106,6 +106,61 @@ export interface NavigationPathParam {
 export interface NavigationPath {
   name: string;
   param: NavigationPathParam;
+}
+
+interface MangaDetailSourceHeaderMap {
+  Referer?: string;
+  referer?: string;
+  Origin?: string;
+  origin?: string;
+  Accept?: string;
+  accept?: string;
+  Cookie?: string;
+  cookie?: string;
+  Authorization?: string;
+  authorization?: string;
+  UserAgent?: string;
+  userAgent?: string;
+  AcceptLanguage?: string;
+  acceptLanguage?: string;
+  CacheControl?: string;
+  cacheControl?: string;
+  Pragma?: string;
+  pragma?: string;
+  SecFetchDest?: string;
+  secFetchDest?: string;
+  SecFetchMode?: string;
+  secFetchMode?: string;
+  SecFetchSite?: string;
+  secFetchSite?: string;
+  CachePartition?: string;
+  cachePartition?: string;
+}
+
+class MangaDetailNormalizedHeaders {
+  userAgent: string = '';
+  referer: string = '';
+  origin: string = '';
+  accept: string = '';
+  cookie: string = '';
+  authorization: string = '';
+  acceptLanguage: string = '';
+  cacheControl: string = '';
+  pragma: string = '';
+  secFetchDest: string = '';
+  secFetchMode: string = '';
+  secFetchSite: string = '';
+  cachePartition: string = '';
+}
+
+interface MangaDetailSourceNetworkConfig {
+  headers?: MangaDetailSourceHeaderMap;
+}
+
+interface MangaDetailSourceHeaderConfig {
+  network?: MangaDetailSourceNetworkConfig;
+  imageHeaders?: MangaDetailSourceHeaderMap;
+  coverHeaders?: MangaDetailSourceHeaderMap;
 }
 
 /**
@@ -285,7 +340,7 @@ struct MangaDetailPage {
   @State private sourceId: number = 0;
   @State private sourceName: string = '';
   @State private accessDenied: boolean = false;
-  @State private coverHttpHeaders: Record<string, string> = {}; // 封面图片加载的HTTP headers
+  @State private coverHttpHeaders: OnlineRequestHeaders = {} as OnlineRequestHeaders; // 封面图片加载的HTTP headers
   private sourcePkg: string = '';
   private photos18CoverPartition: string = 'photos18_detail_cover';
 
@@ -1673,6 +1728,210 @@ struct MangaDetailPage {
       logger.error(TAG, `手动重试加载失败: ${error.message}`);
     });
   }
+
+  private normalizeConfiguredCoverHeaderValue(value?: string): string {
+    if (!value) {
+      return '';
+    }
+    return value.trim();
+  }
+
+  private readCoverHeaderAlias(headers: MangaDetailSourceHeaderMap, fieldName: string): string {
+    try {
+      const value = Reflect.get(headers, fieldName) as string | undefined;
+      return this.normalizeConfiguredCoverHeaderValue(value);
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  private chooseCoverHeaderValue(first: string, second: string, third: string): string {
+    if (first.length > 0) {
+      return first;
+    }
+    if (second.length > 0) {
+      return second;
+    }
+    return third;
+  }
+
+  private normalizeCoverHeaderMap(headers: MangaDetailSourceHeaderMap): MangaDetailNormalizedHeaders {
+    const normalized = new MangaDetailNormalizedHeaders();
+    normalized.userAgent = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'User-Agent'), this.readCoverHeaderAlias(headers, 'UserAgent'), this.readCoverHeaderAlias(headers, 'userAgent'));
+    normalized.referer = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Referer'), this.readCoverHeaderAlias(headers, 'referer'), '');
+    normalized.origin = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Origin'), this.readCoverHeaderAlias(headers, 'origin'), '');
+    normalized.accept = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Accept'), this.readCoverHeaderAlias(headers, 'accept'), '');
+    normalized.cookie = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Cookie'), this.readCoverHeaderAlias(headers, 'cookie'), '');
+    normalized.authorization = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Authorization'), this.readCoverHeaderAlias(headers, 'authorization'), '');
+    normalized.acceptLanguage = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Accept-Language'), this.readCoverHeaderAlias(headers, 'AcceptLanguage'), this.readCoverHeaderAlias(headers, 'acceptLanguage'));
+    normalized.cacheControl = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Cache-Control'), this.readCoverHeaderAlias(headers, 'CacheControl'), this.readCoverHeaderAlias(headers, 'cacheControl'));
+    normalized.pragma = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Pragma'), this.readCoverHeaderAlias(headers, 'pragma'), '');
+    normalized.secFetchDest = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Sec-Fetch-Dest'), this.readCoverHeaderAlias(headers, 'SecFetchDest'), this.readCoverHeaderAlias(headers, 'secFetchDest'));
+    normalized.secFetchMode = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Sec-Fetch-Mode'), this.readCoverHeaderAlias(headers, 'SecFetchMode'), this.readCoverHeaderAlias(headers, 'secFetchMode'));
+    normalized.secFetchSite = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Sec-Fetch-Site'), this.readCoverHeaderAlias(headers, 'SecFetchSite'), this.readCoverHeaderAlias(headers, 'secFetchSite'));
+    normalized.cachePartition = this.chooseCoverHeaderValue(this.readCoverHeaderAlias(headers, 'Cache-Partition'), this.readCoverHeaderAlias(headers, 'CachePartition'), this.readCoverHeaderAlias(headers, 'cachePartition'));
+    return normalized;
+  }
+
+  private appendCoverExtraHeader(target: OnlineRequestHeaders, headerName: string, headerValue: string): void {
+    const normalizedName = headerName.trim();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    if (!target.extraHeaders) {
+      target.extraHeaders = [];
+    }
+    let index = 0;
+    while (index < target.extraHeaders.length) {
+      const entry = target.extraHeaders[index];
+      if (entry.name.toLowerCase() === normalizedName.toLowerCase()) {
+        entry.value = normalizedValue;
+        return;
+      }
+      index = index + 1;
+    }
+    target.extraHeaders.push({
+      name: normalizedName,
+      value: normalizedValue
+    } as OnlineRequestHeaderEntry);
+  }
+
+  private applyConfiguredCoverHeader(target: OnlineRequestHeaders, headerName: string, headerValue: string): void {
+    const normalizedName = headerName.trim().toLowerCase();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    switch (normalizedName) {
+      case 'user-agent':
+      case 'useragent':
+        target.userAgent = normalizedValue;
+        return;
+      case 'referer':
+        target.referer = normalizedValue;
+        return;
+      case 'origin':
+        target.origin = normalizedValue;
+        return;
+      case 'accept':
+        target.accept = normalizedValue;
+        return;
+      case 'cookie':
+        target.cookie = normalizedValue;
+        return;
+      case 'authorization':
+        target.authorization = normalizedValue;
+        return;
+      case 'accept-language':
+      case 'acceptlanguage':
+        target.acceptLanguage = normalizedValue;
+        return;
+      case 'cache-control':
+      case 'cachecontrol':
+        target.cacheControl = normalizedValue;
+        return;
+      case 'pragma':
+        target.pragma = normalizedValue;
+        return;
+      case 'sec-fetch-dest':
+      case 'secfetchdest':
+        target.secFetchDest = normalizedValue;
+        return;
+      case 'sec-fetch-mode':
+      case 'secfetchmode':
+        target.secFetchMode = normalizedValue;
+        return;
+      case 'sec-fetch-site':
+      case 'secfetchsite':
+        target.secFetchSite = normalizedValue;
+        return;
+      case 'cache-partition':
+      case 'cachepartition':
+        target.cachePartition = normalizedValue;
+        return;
+      default:
+        this.appendCoverExtraHeader(target, headerName, normalizedValue);
+        return;
+    }
+  }
+
+  private applyCoverHeaderCandidate(target: OnlineRequestHeaders, headerName: string, headerValue?: string): void {
+    const normalizedValue = this.normalizeConfiguredCoverHeaderValue(headerValue);
+    if (normalizedValue.length > 0) {
+      this.applyConfiguredCoverHeader(target, headerName, normalizedValue);
+    }
+  }
+
+  private applyConfiguredCoverHeaderMap(target: OnlineRequestHeaders, headerMap?: MangaDetailSourceHeaderMap): void {
+    if (!headerMap) {
+      return;
+    }
+    const normalized = this.normalizeCoverHeaderMap(headerMap);
+    this.applyCoverHeaderCandidate(target, 'User-Agent', normalized.userAgent);
+    this.applyCoverHeaderCandidate(target, 'Referer', normalized.referer);
+    this.applyCoverHeaderCandidate(target, 'Origin', normalized.origin);
+    this.applyCoverHeaderCandidate(target, 'Accept', normalized.accept);
+    this.applyCoverHeaderCandidate(target, 'Cookie', normalized.cookie);
+    this.applyCoverHeaderCandidate(target, 'Authorization', normalized.authorization);
+    this.applyCoverHeaderCandidate(target, 'Accept-Language', normalized.acceptLanguage);
+    this.applyCoverHeaderCandidate(target, 'Cache-Control', normalized.cacheControl);
+    this.applyCoverHeaderCandidate(target, 'Pragma', normalized.pragma);
+    this.applyCoverHeaderCandidate(target, 'Sec-Fetch-Dest', normalized.secFetchDest);
+    this.applyCoverHeaderCandidate(target, 'Sec-Fetch-Mode', normalized.secFetchMode);
+    this.applyCoverHeaderCandidate(target, 'Sec-Fetch-Site', normalized.secFetchSite);
+    this.applyCoverHeaderCandidate(target, 'Cache-Partition', normalized.cachePartition);
+  }
+
+  private hasConfiguredCoverHeaders(headers: OnlineRequestHeaders): boolean {
+    if (headers.userAgent && headers.userAgent.length > 0) { return true; }
+    if (headers.accept && headers.accept.length > 0) { return true; }
+    if (headers.referer && headers.referer.length > 0) { return true; }
+    if (headers.origin && headers.origin.length > 0) { return true; }
+    if (headers.cookie && headers.cookie.length > 0) { return true; }
+    if (headers.authorization && headers.authorization.length > 0) { return true; }
+    if (headers.acceptLanguage && headers.acceptLanguage.length > 0) { return true; }
+    if (headers.cacheControl && headers.cacheControl.length > 0) { return true; }
+    if (headers.pragma && headers.pragma.length > 0) { return true; }
+    if (headers.secFetchDest && headers.secFetchDest.length > 0) { return true; }
+    if (headers.secFetchMode && headers.secFetchMode.length > 0) { return true; }
+    if (headers.secFetchSite && headers.secFetchSite.length > 0) { return true; }
+    if (headers.cachePartition && headers.cachePartition.length > 0) { return true; }
+    if (headers.extraHeaders && headers.extraHeaders.length > 0) { return true; }
+    return false;
+  }
+
+  private updateCoverPartitionFromHeaders(headers: OnlineRequestHeaders): void {
+    if (headers.referer && headers.referer.length > 0) {
+      let hash = 0;
+      const referer = headers.referer;
+      for (let i = 0; i < referer.length; i++) {
+        const char = referer.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+      }
+      this.photos18CoverPartition = `photos18_detail_${Math.abs(hash).toString(36)}`;
+    }
+  }
+
+  private initCoverHeadersFromSourceConfig(sourceConfig: MangaDetailSourceHeaderConfig): void {
+    const headers: OnlineRequestHeaders = {} as OnlineRequestHeaders;
+    if (sourceConfig.network && sourceConfig.network.headers) {
+      this.applyConfiguredCoverHeaderMap(headers, sourceConfig.network.headers);
+    }
+    if (sourceConfig.imageHeaders) {
+      this.applyConfiguredCoverHeaderMap(headers, sourceConfig.imageHeaders);
+    }
+    if (sourceConfig.coverHeaders) {
+      this.applyConfiguredCoverHeaderMap(headers, sourceConfig.coverHeaders);
+    }
+
+    if (this.hasConfiguredCoverHeaders(headers)) {
+      this.coverHttpHeaders = headers;
+      this.updateCoverPartitionFromHeaders(headers);
+      logger.info(TAG, `封面HTTP headers已设置: ${JSON.stringify(headers)}`);
+    }
+  }
   
   /**
    * 使用WebView加载漫画数据
@@ -1694,43 +1953,11 @@ struct MangaDetailPage {
             }
             logger.info(TAG, `图源名称: ${this.sourceName}`);
             
-            // 提取网络headers用于封面加载
-
             try {
               const configJson = s.configJson as string;
               if (configJson) {
-                const config: Record<string, Object> = JSON.parse(configJson) as Record<string, Object>;
-                const network: Record<string, Object> | undefined = config.network as Record<string, Object> | undefined;
-                if (network && network.headers) {
-                  const headers: Record<string, Object> = network.headers as Record<string, Object>;
-                  const newHeaders: Record<string, string> = {};
-                  // 提取Referer
-                  if (headers.Referer) {
-                    newHeaders['Referer'] = String(headers.Referer);
-                  }
-                  if (headers.Origin) {
-                    newHeaders['Origin'] = String(headers.Origin);
-                  }
-                  // 提取其他可能的headers
-                  if (headers['Accept-Language']) {
-                    newHeaders['Accept-Language'] = String(headers['Accept-Language']);
-                  }
-
-                  if (Object.keys(newHeaders).length > 0) {
-                    this.coverHttpHeaders = newHeaders;
-                    if (newHeaders['Referer'] && newHeaders['Referer'].length > 0) {
-                      let hash = 0;
-                      const referer = newHeaders['Referer'];
-                      for (let i = 0; i < referer.length; i++) {
-                        const char = referer.charCodeAt(i);
-                        hash = ((hash << 5) - hash) + char;
-                        hash = hash & hash;
-                      }
-                      this.photos18CoverPartition = `photos18_detail_${Math.abs(hash).toString(36)}`;
-                    }
-                    logger.info(TAG, `封面HTTP headers已设置: ${JSON.stringify(newHeaders)}`);
-                  }
-                }
+                const config: MangaDetailSourceHeaderConfig = JSON.parse(configJson) as MangaDetailSourceHeaderConfig;
+                this.initCoverHeadersFromSourceConfig(config);
               }
             } catch (parseErr) {
               logger.warn(TAG, `解析图源配置失败: ${String(parseErr)}`);
@@ -3450,14 +3677,52 @@ struct MangaDetailPage {
 
   private buildPhotos18CoverHeaders(_coverUrl: string): OnlineRequestHeaders {
     const siteOrigin = this.getPhotos18SiteOrigin();
-    const fallbackReferer = this.coverHttpHeaders['Referer'] || siteOrigin;
+    const fallbackReferer = this.coverHttpHeaders.referer || siteOrigin;
     const headers: OnlineRequestHeaders = {
       referer: fallbackReferer,
       origin: siteOrigin,
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
-      acceptLanguage: this.coverHttpHeaders['Accept-Language'] || 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      userAgent: this.coverHttpHeaders.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      accept: this.coverHttpHeaders.accept || 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
+      acceptLanguage: this.coverHttpHeaders.acceptLanguage || 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
       cachePartition: this.photos18CoverPartition
+    };
+    return headers;
+  }
+
+  private cloneCoverExtraHeaders(entries?: OnlineRequestHeaderEntry[]): OnlineRequestHeaderEntry[] | undefined {
+    if (!entries || entries.length === 0) {
+      return undefined;
+    }
+    const cloned: OnlineRequestHeaderEntry[] = [];
+    let index = 0;
+    while (index < entries.length) {
+      const entry = entries[index];
+      cloned.push({
+        name: entry.name,
+        value: entry.value
+      } as OnlineRequestHeaderEntry);
+      index = index + 1;
+    }
+    return cloned;
+  }
+
+  private buildGenericCoverHeaders(coverUrl: string): OnlineRequestHeaders {
+    const fallbackReferer = coverUrl.split('/').slice(0, 3).join('/') + '/';
+    const headers: OnlineRequestHeaders = {
+      referer: this.coverHttpHeaders.referer || fallbackReferer,
+      userAgent: this.coverHttpHeaders.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      accept: this.coverHttpHeaders.accept,
+      origin: this.coverHttpHeaders.origin,
+      cookie: this.coverHttpHeaders.cookie,
+      authorization: this.coverHttpHeaders.authorization,
+      acceptLanguage: this.coverHttpHeaders.acceptLanguage,
+      cacheControl: this.coverHttpHeaders.cacheControl,
+      pragma: this.coverHttpHeaders.pragma,
+      secFetchDest: this.coverHttpHeaders.secFetchDest,
+      secFetchMode: this.coverHttpHeaders.secFetchMode,
+      secFetchSite: this.coverHttpHeaders.secFetchSite,
+      cachePartition: this.coverHttpHeaders.cachePartition,
+      extraHeaders: this.cloneCoverExtraHeaders(this.coverHttpHeaders.extraHeaders)
     };
     return headers;
   }
@@ -3472,14 +3737,8 @@ struct MangaDetailPage {
     try {
       logger.info(TAG, `使用OnlineImageLoader加载封面: ${coverUrl}`);
       
-      // 构建请求headers - 从coverHttpHeaders获取或使用默认值
-      let headers: OnlineRequestHeaders = {
-        referer: this.coverHttpHeaders['Referer'] || coverUrl.split('/').slice(0, 3).join('/') + '/',
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      };
-      if (this.coverHttpHeaders['Accept-Language']) {
-        headers.acceptLanguage = this.coverHttpHeaders['Accept-Language'];
-      }
+      // 构建请求headers - 从图源配置中继承 imageHeaders/coverHeaders，缺省再使用站点来源
+      let headers: OnlineRequestHeaders = this.buildGenericCoverHeaders(coverUrl);
       if (this.isPhotos18Source()) {
         headers = this.buildPhotos18CoverHeaders(coverUrl);
       }
