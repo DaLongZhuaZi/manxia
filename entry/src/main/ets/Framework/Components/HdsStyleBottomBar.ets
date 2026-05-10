@@ -30,6 +30,7 @@ export struct HdsStyleBottomBar {
   @Prop hasSourceUpdate: boolean = false;
   @Prop isPrivacyMode: boolean = false;
   @Prop cornerRadius: number = 20;
+  @StorageProp('visual_effects_effective_material_level') effectiveMaterialLevel: number = 10;
   onChangeCallback: (actualIndex: number) => void = (): void => {};
   longPressCallback: (tabIndex: number) => void = (): void => {};
   controllerRefCallback: (controller: HdsTabsController) => void = (): void => {};
@@ -105,9 +106,10 @@ export struct HdsStyleBottomBar {
   }
 
   private buildFloatingStyle(): HdsTabsFloatingStyle {
+    const materialLevel: hdsMaterial.MaterialLevel = this.effectiveMaterialLevel as hdsMaterial.MaterialLevel;
     const materialParams: SystemMaterialParams = {
       materialType: hdsMaterial.MaterialType.IMMERSIVE,
-      materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      materialLevel: materialLevel
     };
     const style: HdsTabsFloatingStyle = {
       barSideMargin: HDS_BAR_SIDE_GUARD,

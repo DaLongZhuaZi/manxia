@@ -53,14 +53,31 @@ export class DuplicateDetectionService {
     }
 
     const candidates = await this.getCandidates(input, config);
-    logger.debug(TAG, `检查重复: "${input.title}" by "${input.author}", 候选数=${candidates.length}, 阈值=${config.threshold}`);
+    // 排除自身：如果候选的ID与输入的externalId匹配，跳过
+    const filteredCandidates = candidates.filter((candidate: DuplicateCandidateItem) => {
+      if (input.externalId && candidate.id === input.externalId) {
+        logger.debug(TAG, `排除自身候选: id=${candidate.id}, title="${candidate.title}"`);
+        return false;
+      }
+      if (input.sourceId && candidate.sourceName === input.sourceId) {
+        // 同源且标题完全相同的也排除（可能是同一内容的不同缓存记录）
+        const normalizedInputTitle = normalizeText(input.title);
+        const normalizedCandidateTitle = normalizeText(candidate.title);
+        if (normalizedInputTitle === normalizedCandidateTitle && normalizedInputTitle.length > 0) {
+          logger.debug(TAG, `排除同源同标题候选: sourceName=${candidate.sourceName}, title="${candidate.title}"`);
+          return false;
+        }
+      }
+      return true;
+    });
+    logger.debug(TAG, `检查重复: "${input.title}" by "${input.author}", 候选数=${filteredCandidates.length}(过滤前${candidates.length}), 阈值=${config.threshold}`);
 
     const matches: DuplicateMatchItem[] = [];
     const normalizedInputTitle = normalizeText(input.title);
     const normalizedInputAuthor = normalizeText(input.author);
 
-    for (let i = 0; i < candidates.length; i++) {
-      const candidate = candidates[i];
+    for (let i = 0; i < filteredCandidates.length; i++) {
+      const candidate = filteredCandidates[i];
       const match = this.calculateMatch(normalizedInputTitle, normalizedInputAuthor, candidate, config);
       if (match.overallSimilarity >= config.threshold) {
         matches.push(match);

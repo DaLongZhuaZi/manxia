@@ -519,7 +519,7 @@ export class OnlineImageLoader {
       if (errCode === 2300060 && url.startsWith('https://')) {
         const httpUrl = url.replace('https://', 'http://');
         logger.info(TAG, `SSL错误，尝试HTTP降级: ${httpUrl.substring(0, 80)}`);
-        
+
         try {
           return await this.doHttpRequest(httpUrl, options);
         } catch (retryError) {
@@ -528,7 +528,16 @@ export class OnlineImageLoader {
           throw error as Error;
         }
       }
-      
+
+      // Pixiv CDN HTTP模块无法连接，使用WebView降级加载
+      if (this.isPixivCdnUrl(url)) {
+        logger.warn(TAG, `Pixiv CDN HTTP加载失败(code=${errCode})，尝试WebView降级: ${url.substring(0, 80)}`);
+        const recovered = await this.retryPixivWithWebView(url, options);
+        if (recovered) {
+          return recovered;
+        }
+      }
+
       throw error as Error;
     }
   }
@@ -546,6 +555,120 @@ export class OnlineImageLoader {
       return true;
     }
     return false;
+  }
+
+  private isPixivCdnUrl(url: string): boolean {
+    return url.includes('i.pximg.net') || url.includes('.pximg.net');
+  }
+
+  private async retryPixivWithWebView(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
+    const controller = new webview.WebviewController();
+    const headers = await this.buildHeaders(url, options);
+    const userAgent = headers.userAgent ? headers.userAgent : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+    const sourceId = `pixiv_cdn_${Date.now()}`;
+    const config: WebViewSourceConfig = {
+      sourceId: sourceId,
+      userAgent: userAgent,
+      enableJavaScript: true,
+      enableImages: true,
+      cookiePolicy: 'accept_all',
+      timeout: this.TIMEOUT
+    };
+
+    let resolveImage: (buffer: ArrayBuffer) => void = (): void => {};
+    let rejectImage: (error: Error) => void = (): void => {};
+
+    const imageLoadPromise = new Promise<ArrayBuffer>((resolve, reject) => {
+      resolveImage = resolve;
+      rejectImage = reject;
+    });
+
+    const extractScript = `(() => {
+      const img = document.querySelector('img');
+      if (!img) { return 'NO_IMG'; }
+      if (!img.complete || img.naturalWidth === 0) { return 'NOT_READY'; }
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        const base64 = dataUrl.split(',')[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+        return bytes.buffer;
+      } catch (e) { return 'ERROR:' + e.message; }
+    })();`;
+
+    const callbacks: WebViewEventCallbacks = {
+      onPageEnd: async (_loadedUrl: string) => {
+        let attempts = 0;
+        const maxAttempts = 5;
+        while (attempts < maxAttempts) {
+          try {
+            await this.delay(attempts === 0 ? 300 : 500);
+            const jsResult = await controller.runJavaScriptExt(extractScript);
+            const resultType = jsResult.getType();
+            if (resultType === webview.JsMessageType.ARRAY_BUFFER) {
+              resolveImage(jsResult.getArrayBuffer());
+              return;
+            } else if (resultType === webview.JsMessageType.STRING) {
+              const str = jsResult.getString();
+              if (str === 'NO_IMG') {
+                rejectImage(new Error('Pixiv WebView: no img element found'));
+                return;
+              }
+              if (str === 'NOT_READY') {
+                attempts++;
+                continue;
+              }
+              if (str && str.startsWith('ERROR:')) {
+                rejectImage(new Error(`Pixiv WebView canvas error: ${str}`));
+                return;
+              }
+              rejectImage(new Error(`Pixiv WebView unexpected: ${str}`));
+              return;
+            }
+          } catch (e) {
+            rejectImage(e instanceof Error ? e : new Error(String(e)));
+            return;
+          }
+          attempts++;
+        }
+        rejectImage(new Error('Pixiv WebView: image not ready after retries'));
+      },
+      onError: (error: string) => {
+        rejectImage(new Error(error));
+      }
+    };
+
+    GlobalWebViewContainer.addWebView(sourceId, controller, config, callbacks, 'about:blank');
+
+    try {
+      await this.loadWebViewUrlWithRetry(controller, url, headers, userAgent);
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('Pixiv WebView load timeout')), this.WEBVIEW_FALLBACK_LOAD_TIMEOUT);
+      });
+      const imageBuffer = await Promise.race([imageLoadPromise, timeoutPromise]);
+      if (!imageBuffer || imageBuffer.byteLength === 0) {
+        throw new Error('Pixiv WebView returned empty buffer');
+      }
+      const pixelMap = await this.createPixelMapFromBuffer(imageBuffer, options);
+      logger.info(TAG, `Pixiv WebView降级加载成功: bytes=${imageBuffer.byteLength}`);
+      return pixelMap;
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `Pixiv WebView降级加载失败: ${errMsg}`);
+      return null;
+    } finally {
+      try {
+        controller.loadUrl('about:blank');
+      } catch (_loadBlankError) {
+      }
+      GlobalWebViewContainer.removeWebView(sourceId);
+    }
   }
 
   private async retryPhotos18WithFreshCookie(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
@@ -1223,6 +1346,16 @@ export class OnlineImageLoader {
     if (!referer && (url.includes('amh1234.wszwhg.net') || url.includes('gmh1234.wszwhg.net'))) {
       referer = 'https://b.amh1234.com/';
       origin = 'https://b.amh1234.com';
+    }
+
+    // Pixiv CDN防盗链：i.pximg.net 必须携带 Referer
+    if (url.includes('i.pximg.net') || url.includes('.pximg.net')) {
+      if (!referer) {
+        referer = 'https://www.pixiv.net/';
+      }
+      if (!origin) {
+        origin = 'https://www.pixiv.net';
+      }
     }
     const normalizedOrigin = this.normalizeOriginValue(origin, referer);
     

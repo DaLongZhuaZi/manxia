@@ -30,7 +30,7 @@ import { SearchIntent, SearchIntentType } from '../Framework/Search/SearchIntent
 import CookieManager from '../Framework/Managers/CookieManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { image } from '@kit.ImageKit';
-import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
+import { ImageCacheManager, LoadOptions, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
@@ -171,15 +171,108 @@ interface FilterHistoryItem {
   timestamp: number;        // 创建时间
 }
 
-interface AdaptiveCoverRowItem {
-  comic: ComicInfo;
-  span: number;
+interface SourceImageHeaderMap {
+  Referer?: string;
+  referer?: string;
+  Origin?: string;
+  origin?: string;
+  Accept?: string;
+  accept?: string;
+  Cookie?: string;
+  cookie?: string;
+  Authorization?: string;
+  authorization?: string;
+  UserAgent?: string;
+  userAgent?: string;
+  AcceptLanguage?: string;
+  acceptLanguage?: string;
+  CacheControl?: string;
+  cacheControl?: string;
+  Pragma?: string;
+  pragma?: string;
+  SecFetchDest?: string;
+  secFetchDest?: string;
+  SecFetchMode?: string;
+  secFetchMode?: string;
+  SecFetchSite?: string;
+  secFetchSite?: string;
+  CachePartition?: string;
+  cachePartition?: string;
 }
 
-interface AdaptiveCoverRow {
-  key: string;
-  usedSpan: number;
-  items: AdaptiveCoverRowItem[];
+class SourceNormalizedImageHeaders {
+  userAgent: string = '';
+  referer: string = '';
+  origin: string = '';
+  accept: string = '';
+  cookie: string = '';
+  authorization: string = '';
+  acceptLanguage: string = '';
+  cacheControl: string = '';
+  pragma: string = '';
+  secFetchDest: string = '';
+  secFetchMode: string = '';
+  secFetchSite: string = '';
+  cachePartition: string = '';
+}
+
+interface SourceImageHeaderConfig {
+  imageHeaders?: SourceImageHeaderMap;
+  coverHeaders?: SourceImageHeaderMap;
+}
+
+interface SourceCapabilitiesConfig {
+  credentialLogin?: boolean;
+}
+
+interface SourceAuthConfig {
+  type?: string;
+}
+
+interface SourceLoginConfig {
+  url?: string;
+}
+
+interface SourceNetworkUserAgentConfig {
+  userAgent?: string;
+}
+
+interface SourceFilterOptionConfig {
+  value?: Object;
+  label?: Object;
+}
+
+interface SourceFilterDefinitionConfig {
+  type?: string;
+  options?: SourceFilterOptionConfig[];
+  name?: Object;
+  placeholder?: string;
+  description?: string;
+  default?: string;
+  required?: boolean;
+}
+
+interface SourceFilterConfigMap {
+  filterOrdering?: SourceFilterDefinitionConfig;
+  filterRegion?: SourceFilterDefinitionConfig;
+  filterTheme?: SourceFilterDefinitionConfig;
+  sort?: SourceFilterDefinitionConfig;
+  category?: SourceFilterDefinitionConfig;
+  region?: SourceFilterDefinitionConfig;
+  type?: SourceFilterDefinitionConfig;
+}
+
+interface SourceSettingsConfig extends SourceFilterConfigMap {
+  userAgent?: string;
+}
+
+interface SourceDetailJsonConfig {
+  capabilities?: SourceCapabilitiesConfig;
+  authentication?: SourceAuthConfig;
+  login?: SourceLoginConfig;
+  network?: SourceNetworkUserAgentConfig;
+  filters?: SourceFilterConfigMap;
+  settings?: SourceSettingsConfig;
 }
 
 @Component
@@ -281,6 +374,7 @@ export struct SourceDetailPage {
   private loginUrl: string = '';
   private photos18CoverBootstrapPromise: Promise<void> | null = null;
   private photos18CurrentReferer: string = '';
+  private configuredCoverHeaders: RequestHeaders = {} as RequestHeaders;
 
 
   aboutToAppear(): void {
@@ -818,6 +912,8 @@ export struct SourceDetailPage {
           'User-Agent': networkHeaders.userAgent || '',
           'Accept': networkHeaders.accept || '',
           'Referer': networkHeaders.referer || '',
+          'Origin': networkHeaders.origin || '',
+          'Cookie': cookieString,
           'Accept-Language': networkHeaders.acceptLanguage || '',
           'Sec-Fetch-Dest': networkHeaders.secFetchDest || '',
           'Sec-Fetch-Mode': networkHeaders.secFetchMode || '',
@@ -825,12 +921,6 @@ export struct SourceDetailPage {
           'X-Cache-Referer': networkHeaders.referer || '',
           'X-Cache-Partition': networkHeaders.cachePartition || ''
         };
-        if (networkHeaders.origin) {
-          headers['Origin'] = networkHeaders.origin;
-        }
-        if (cookieString.length > 0) {
-          headers['Cookie'] = cookieString;
-        }
         
         // 控制并发：每10个一批
         if (i > 0 && i % MAX_CONCURRENT === 0) {
@@ -922,6 +1012,7 @@ export struct SourceDetailPage {
       }
 
       const hasWorkflows: boolean = !!config.workflows;
+      this.initCoverHeadersFromConfig(config as SourceImageHeaderConfig);
       
       if (hasWorkflows) {
         logger.info(TAG, '检测到WebView类型图源（包含workflows字段），初始化WebView系统');
@@ -950,8 +1041,9 @@ export struct SourceDetailPage {
       }
 
       // 检查capabilities中是否声明了credentialLogin
-      const capabilities: ESObject = config.capabilities as ESObject || {};
-      this.requiresCredentialLogin = capabilities['credentialLogin'] === true;
+      const sourceConfig: SourceDetailJsonConfig = config as SourceDetailJsonConfig;
+      const capabilities: SourceCapabilitiesConfig | undefined = sourceConfig.capabilities;
+      this.requiresCredentialLogin = capabilities !== undefined && capabilities.credentialLogin === true;
       
       if (!this.requiresCredentialLogin) {
         logger.info(TAG, '图源不需要凭据登录');
@@ -971,9 +1063,10 @@ export struct SourceDetailPage {
         // 如果没有Token，需要执行登录工作流获取Token
         if (this.useWebView && this.mangaSourceEngine) {
           const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
-          const authentication: ESObject | undefined = config?.authentication as ESObject | undefined;
+          const authSourceConfig: SourceDetailJsonConfig | null = config ? config as SourceDetailJsonConfig : null;
+          const authentication: SourceAuthConfig | undefined = authSourceConfig ? authSourceConfig.authentication : undefined;
           
-          if (authentication && authentication['type'] === 'jwt') {
+          if (authentication && authentication.type === 'jwt') {
             logger.info(TAG, '图源使用JWT认证，检查是否需要执行登录获取Token');
             
             // 尝试执行登录工作流获取Token
@@ -1145,9 +1238,10 @@ export struct SourceDetailPage {
   private initUserAgentFromConfig(config: ESObject): void {
     // 默认移动端UA
     const defaultMobileUA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+    const sourceConfig: SourceDetailJsonConfig = config as SourceDetailJsonConfig;
     
     // 尝试从 network.userAgent 读取
-    const network = config.network as Record<string, string> | undefined;
+    const network: SourceNetworkUserAgentConfig | undefined = sourceConfig.network;
     if (network && network.userAgent && network.userAgent.length > 0) {
       this.sourceUserAgent = network.userAgent;
       logger.info(TAG, `使用图源配置的UserAgent: ${this.sourceUserAgent.substring(0, 50)}...`);
@@ -1155,7 +1249,7 @@ export struct SourceDetailPage {
     }
     
     // 尝试从 settings.userAgent 读取（兼容旧格式）
-    const settings = config.settings as Record<string, string> | undefined;
+    const settings: SourceSettingsConfig | undefined = sourceConfig.settings;
     if (settings && settings.userAgent && settings.userAgent.length > 0) {
       this.sourceUserAgent = settings.userAgent;
       logger.info(TAG, `使用图源settings的UserAgent: ${this.sourceUserAgent.substring(0, 50)}...`);
@@ -1165,6 +1259,196 @@ export struct SourceDetailPage {
     // 使用默认UA
     this.sourceUserAgent = defaultMobileUA;
     logger.info(TAG, '使用默认移动端UserAgent');
+  }
+
+  private normalizeConfiguredHeaderValue(value?: string): string {
+    if (!value) {
+      return '';
+    }
+    return value.trim();
+  }
+
+  private readImageHeaderAlias(headers: SourceImageHeaderMap, fieldName: string): string {
+    try {
+      const value = Reflect.get(headers, fieldName) as string | undefined;
+      return this.normalizeConfiguredHeaderValue(value);
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  private chooseImageHeaderValue(first: string, second: string, third: string): string {
+    if (first.length > 0) {
+      return first;
+    }
+    if (second.length > 0) {
+      return second;
+    }
+    return third;
+  }
+
+  private normalizeImageHeaderMap(headers: SourceImageHeaderMap): SourceNormalizedImageHeaders {
+    const normalized = new SourceNormalizedImageHeaders();
+    normalized.userAgent = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'User-Agent'), this.readImageHeaderAlias(headers, 'UserAgent'), this.readImageHeaderAlias(headers, 'userAgent'));
+    normalized.referer = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Referer'), this.readImageHeaderAlias(headers, 'referer'), '');
+    normalized.origin = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Origin'), this.readImageHeaderAlias(headers, 'origin'), '');
+    normalized.accept = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Accept'), this.readImageHeaderAlias(headers, 'accept'), '');
+    normalized.cookie = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Cookie'), this.readImageHeaderAlias(headers, 'cookie'), '');
+    normalized.authorization = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Authorization'), this.readImageHeaderAlias(headers, 'authorization'), '');
+    normalized.acceptLanguage = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Accept-Language'), this.readImageHeaderAlias(headers, 'AcceptLanguage'), this.readImageHeaderAlias(headers, 'acceptLanguage'));
+    normalized.cacheControl = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Cache-Control'), this.readImageHeaderAlias(headers, 'CacheControl'), this.readImageHeaderAlias(headers, 'cacheControl'));
+    normalized.pragma = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Pragma'), this.readImageHeaderAlias(headers, 'pragma'), '');
+    normalized.secFetchDest = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Sec-Fetch-Dest'), this.readImageHeaderAlias(headers, 'SecFetchDest'), this.readImageHeaderAlias(headers, 'secFetchDest'));
+    normalized.secFetchMode = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Sec-Fetch-Mode'), this.readImageHeaderAlias(headers, 'SecFetchMode'), this.readImageHeaderAlias(headers, 'secFetchMode'));
+    normalized.secFetchSite = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Sec-Fetch-Site'), this.readImageHeaderAlias(headers, 'SecFetchSite'), this.readImageHeaderAlias(headers, 'secFetchSite'));
+    normalized.cachePartition = this.chooseImageHeaderValue(this.readImageHeaderAlias(headers, 'Cache-Partition'), this.readImageHeaderAlias(headers, 'CachePartition'), this.readImageHeaderAlias(headers, 'cachePartition'));
+    return normalized;
+  }
+
+  private applyImageHeaderCandidate(target: RequestHeaders, headerName: string, headerValue?: string): void {
+    const normalizedValue = this.normalizeConfiguredHeaderValue(headerValue);
+    if (normalizedValue.length > 0) {
+      this.applyConfiguredImageHeader(target, headerName, normalizedValue);
+    }
+  }
+
+  private applyConfiguredImageHeaderMap(target: RequestHeaders, headerMap?: SourceImageHeaderMap): void {
+    if (!headerMap) {
+      return;
+    }
+    const normalized = this.normalizeImageHeaderMap(headerMap);
+    this.applyImageHeaderCandidate(target, 'User-Agent', normalized.userAgent);
+    this.applyImageHeaderCandidate(target, 'Referer', normalized.referer);
+    this.applyImageHeaderCandidate(target, 'Origin', normalized.origin);
+    this.applyImageHeaderCandidate(target, 'Accept', normalized.accept);
+    this.applyImageHeaderCandidate(target, 'Cookie', normalized.cookie);
+    this.applyImageHeaderCandidate(target, 'Authorization', normalized.authorization);
+    this.applyImageHeaderCandidate(target, 'Accept-Language', normalized.acceptLanguage);
+    this.applyImageHeaderCandidate(target, 'Cache-Control', normalized.cacheControl);
+    this.applyImageHeaderCandidate(target, 'Pragma', normalized.pragma);
+    this.applyImageHeaderCandidate(target, 'Sec-Fetch-Dest', normalized.secFetchDest);
+    this.applyImageHeaderCandidate(target, 'Sec-Fetch-Mode', normalized.secFetchMode);
+    this.applyImageHeaderCandidate(target, 'Sec-Fetch-Site', normalized.secFetchSite);
+    this.applyImageHeaderCandidate(target, 'Cache-Partition', normalized.cachePartition);
+  }
+
+  private appendConfiguredExtraHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
+    const normalizedName = headerName.trim();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    if (!target.extraHeaders) {
+      target.extraHeaders = [];
+    }
+    let index = 0;
+    while (index < target.extraHeaders.length) {
+      const entry = target.extraHeaders[index];
+      if (entry.name.toLowerCase() === normalizedName.toLowerCase()) {
+        entry.value = normalizedValue;
+        return;
+      }
+      index = index + 1;
+    }
+    target.extraHeaders.push({
+      name: normalizedName,
+      value: normalizedValue
+    } as RequestHeaderEntry);
+  }
+
+  private applyConfiguredImageHeader(target: RequestHeaders, headerName: string, headerValue: string): void {
+    const normalizedName = headerName.trim().toLowerCase();
+    const normalizedValue = headerValue.trim();
+    if (normalizedName.length === 0 || normalizedValue.length === 0) {
+      return;
+    }
+    switch (normalizedName) {
+      case 'user-agent':
+      case 'useragent':
+        target.userAgent = normalizedValue;
+        return;
+      case 'referer':
+        target.referer = normalizedValue;
+        return;
+      case 'origin':
+        target.origin = normalizedValue;
+        return;
+      case 'accept':
+        target.accept = normalizedValue;
+        return;
+      case 'cookie':
+        target.cookie = normalizedValue;
+        return;
+      case 'authorization':
+        target.authorization = normalizedValue;
+        return;
+      case 'accept-language':
+      case 'acceptlanguage':
+        target.acceptLanguage = normalizedValue;
+        return;
+      case 'cache-control':
+      case 'cachecontrol':
+        target.cacheControl = normalizedValue;
+        return;
+      case 'pragma':
+        target.pragma = normalizedValue;
+        return;
+      case 'sec-fetch-dest':
+      case 'secfetchdest':
+        target.secFetchDest = normalizedValue;
+        return;
+      case 'sec-fetch-mode':
+      case 'secfetchmode':
+        target.secFetchMode = normalizedValue;
+        return;
+      case 'sec-fetch-site':
+      case 'secfetchsite':
+        target.secFetchSite = normalizedValue;
+        return;
+      case 'cache-partition':
+      case 'cachepartition':
+        target.cachePartition = normalizedValue;
+        return;
+      default:
+        this.appendConfiguredExtraHeader(target, headerName, normalizedValue);
+        return;
+    }
+  }
+
+  private initCoverHeadersFromConfig(sourceConfig: SourceImageHeaderConfig): void {
+    const headers: RequestHeaders = {} as RequestHeaders;
+    if (sourceConfig.imageHeaders) {
+      this.applyConfiguredImageHeaderMap(headers, sourceConfig.imageHeaders);
+    }
+    if (sourceConfig.coverHeaders) {
+      this.applyConfiguredImageHeaderMap(headers, sourceConfig.coverHeaders);
+    }
+    this.configuredCoverHeaders = headers;
+  }
+
+  private applyConfiguredCoverHeaders(target: RequestHeaders): void {
+    const configured = this.configuredCoverHeaders;
+    if (configured.userAgent && configured.userAgent.length > 0) { target.userAgent = configured.userAgent; }
+    if (configured.accept && configured.accept.length > 0) { target.accept = configured.accept; }
+    if (configured.referer && configured.referer.length > 0) { target.referer = configured.referer; }
+    if (configured.origin && configured.origin.length > 0) { target.origin = configured.origin; }
+    if (configured.cookie && configured.cookie.length > 0) { target.cookie = configured.cookie; }
+    if (configured.authorization && configured.authorization.length > 0) { target.authorization = configured.authorization; }
+    if (configured.acceptLanguage && configured.acceptLanguage.length > 0) { target.acceptLanguage = configured.acceptLanguage; }
+    if (configured.cacheControl && configured.cacheControl.length > 0) { target.cacheControl = configured.cacheControl; }
+    if (configured.pragma && configured.pragma.length > 0) { target.pragma = configured.pragma; }
+    if (configured.secFetchDest && configured.secFetchDest.length > 0) { target.secFetchDest = configured.secFetchDest; }
+    if (configured.secFetchMode && configured.secFetchMode.length > 0) { target.secFetchMode = configured.secFetchMode; }
+    if (configured.secFetchSite && configured.secFetchSite.length > 0) { target.secFetchSite = configured.secFetchSite; }
+    if (configured.cachePartition && configured.cachePartition.length > 0) { target.cachePartition = configured.cachePartition; }
+    if (configured.extraHeaders && configured.extraHeaders.length > 0) {
+      let index = 0;
+      while (index < configured.extraHeaders.length) {
+        const entry = configured.extraHeaders[index];
+        this.appendConfiguredExtraHeader(target, entry.name, entry.value);
+        index = index + 1;
+      }
+    }
   }
 
   /**
@@ -1349,6 +1633,7 @@ export struct SourceDetailPage {
     base.secFetchDest = 'image';
     base.secFetchMode = 'no-cors';
     base.secFetchSite = 'same-origin';
+    this.applyConfiguredCoverHeaders(base);
     return base;
   }
 
@@ -1357,13 +1642,19 @@ export struct SourceDetailPage {
     if (width <= 0 || height <= 0) {
       return;
     }
-    const ratio = width / height;
+    const ratio = this.normalizeCoverAspectRatio(width / height);
     if (!Number.isFinite(ratio) || ratio <= 0) {
       return;
     }
+    const previousRatio = this.coverAspectRatios.get(comicId);
+    const previousWide = previousRatio !== undefined && previousRatio > 0 && this.normalizeCoverAspectRatio(previousRatio) >= 1.12;
+    const nextWide = ratio >= 1.12;
     const newMap: Map<string, number> = new Map(this.coverAspectRatios);
     newMap.set(comicId, ratio);
     this.coverAspectRatios = newMap;
+    if (previousWide !== nextWide) {
+      this.touchComicContentRender();
+    }
   }
 
   private async updateCoverAspectRatioFromImageSource(comicId: string, imageSource: image.ImageSource): Promise<void> {
@@ -1402,59 +1693,50 @@ export struct SourceDetailPage {
 
   private getComicCoverAspectRatio(comic: ComicInfo): number {
     const ratio = this.coverAspectRatios.get(comic.id);
-    if (ratio && Number.isFinite(ratio) && ratio > 0) {
-      return ratio;
+    if (ratio !== undefined && Number.isFinite(ratio) && ratio > 0) {
+      return this.normalizeCoverAspectRatio(ratio);
     }
     return 0.7;
   }
 
-  private isLandscapeCover(comic: ComicInfo): boolean {
-    return this.getComicCoverAspectRatio(comic) > 1.02;
-  }
-
-  private getAdaptiveGridColumnCount(): number {
-    return this.isLandscape ? 5 : 3;
-  }
-
-  private getComicGridSpan(comic: ComicInfo, columnCount: number): number {
-    const desiredSpan = this.isLandscapeCover(comic) ? 2 : 1;
-    return Math.max(1, Math.min(desiredSpan, columnCount));
-  }
-
-  private buildAdaptiveCoverRows(comics: ComicInfo[], keyPrefix: string): AdaptiveCoverRow[] {
-    const rows: AdaptiveCoverRow[] = [];
-    const columnCount = this.getAdaptiveGridColumnCount();
-
-    let rowItems: AdaptiveCoverRowItem[] = [];
-    let usedSpan = 0;
-    let rowIndex = 0;
-
-    comics.forEach((comic: ComicInfo) => {
-      const span = this.getComicGridSpan(comic, columnCount);
-      if (rowItems.length > 0 && usedSpan + span > columnCount) {
-        rows.push({
-          key: `${keyPrefix}_row_${rowIndex}`,
-          usedSpan: usedSpan,
-          items: rowItems
-        });
-        rowItems = [];
-        usedSpan = 0;
-        rowIndex++;
-      }
-
-      rowItems.push({ comic: comic, span: span });
-      usedSpan += span;
-    });
-
-    if (rowItems.length > 0) {
-      rows.push({
-        key: `${keyPrefix}_row_${rowIndex}`,
-        usedSpan: usedSpan,
-        items: rowItems
-      });
+  private normalizeCoverAspectRatio(ratio: number): number {
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      return 0.7;
     }
+    return Math.max(0.45, Math.min(2.8, ratio));
+  }
 
-    return rows;
+  private shouldUseWideCoverLayout(comic: ComicInfo): boolean {
+    return this.getComicCoverAspectRatio(comic) >= 1.12;
+  }
+
+  private shouldAutoUseLargeCoverMode(comics: ComicInfo[]): boolean {
+    if (this.displayMode !== DisplayMode.GRID) {
+      return false;
+    }
+    let index = 0;
+    while (index < comics.length) {
+      if (this.shouldUseWideCoverLayout(comics[index])) {
+        return true;
+      }
+      index = index + 1;
+    }
+    return false;
+  }
+
+  private shouldRenderLargeCoverGrid(comics: ComicInfo[]): boolean {
+    return this.displayMode === DisplayMode.LARGE_COVER || this.shouldAutoUseLargeCoverMode(comics);
+  }
+
+  private getListCoverWidth(comic: ComicInfo): number {
+    const ratio = this.getComicCoverAspectRatio(comic);
+    if (ratio >= 1.45) {
+      return 112;
+    }
+    if (ratio >= 1.02) {
+      return 92;
+    }
+    return 72;
   }
 
   private getReadingStyleCoverSurface() {
@@ -1713,8 +1995,6 @@ export struct SourceDetailPage {
       const headers: RequestHeaders = await cookieMgr.buildHeadersWithCookie(baseHeaders, this.sourceId);
       const opts: LoadOptions = {
         headers: headers,
-        width: 160,
-        height: 220,
         sourceId: this.sourceId,
         loadingMethod: 0,
         partitionKey: headers.cachePartition || 'covers'
@@ -2058,18 +2338,18 @@ export struct SourceDetailPage {
       let config: SourceTabsConfig;
 
       // 首先尝试从图源配置中解析标签
-      const sourceConfig: Record<string, Object> | null = await this.dataManager.getSourceConfig(this.sourceId) as Record<string, Object> | null;
+      const sourceConfig: SourceDetailJsonConfig | null = await this.dataManager.getSourceConfig(this.sourceId) as SourceDetailJsonConfig | null;
       if (sourceConfig) {
-        config = parseTabsFromSourceConfig(this.sourceId, sourceConfig);
+        config = parseTabsFromSourceConfig(this.sourceId, sourceConfig as Record<string, Object>);
         logger.info(TAG, `从图源配置解析标签: ${config.tabs.length}个标签`);
         
         // 如果图源配置中有 filters 定义，为筛选标签添加 filterConfig
-        if (sourceConfig['filters']) {
-          this.enrichFilterTabsWithConfig(config.tabs, sourceConfig['filters'] as Record<string, Object>);
+        if (sourceConfig.filters) {
+          this.enrichFilterTabsWithConfig(config.tabs, sourceConfig.filters);
         }
         // 同时从 settings 中加载筛选配置（兼容旧格式）
-        if (sourceConfig['settings']) {
-          this.loadFilterConfigFromSettings(sourceConfig['settings'] as Record<string, Object>);
+        if (sourceConfig.settings) {
+          this.loadFilterConfigFromSettings(sourceConfig.settings);
         }
       } else {
         // 尝试加载用户自定义的标签配置
@@ -2121,7 +2401,7 @@ export struct SourceDetailPage {
    * 为筛选标签添加筛选配置
    * 注意：只有当标签本身没有定义 filterConfig 时，才从顶级 filters 配置中添加
    */
-  private enrichFilterTabsWithConfig(tabs: TabConfig[], filtersConfig: Record<string, Object>): void {
+  private enrichFilterTabsWithConfig(tabs: TabConfig[], filtersConfig: SourceFilterConfigMap): void {
     const filterTab = tabs.find(t => t.type === TabType.FILTER);
     if (!filterTab) {
       return;
@@ -2135,41 +2415,13 @@ export struct SourceDetailPage {
 
     // 将 filters 配置转换为 FilterConfig
     const groups: FilterGroup[] = [];
-    const filterKeys = Object.keys(filtersConfig);
     let order = 0;
+    const filterKeys: string[] = Object.keys(filtersConfig);
 
     for (let i = 0; i < filterKeys.length; i++) {
       const key = filterKeys[i];
-      const filterDef = filtersConfig[key] as Record<string, Object>;
-      if (!filterDef || typeof filterDef !== 'object') {
-        continue;
-      }
-
-      const options = filterDef['options'] as Record<string, Object>[] | undefined;
-      if (!options || !Array.isArray(options)) {
-        continue;
-      }
-
-      // 转换选项列表
-      const filterOptions: FilterOption[] = [];
-      for (let j = 0; j < options.length; j++) {
-        const opt: Record<string, Object> = options[j];
-        const optItem: FilterOption = {
-          value: String(opt['value'] || ''),
-          label: String(opt['label'] || opt['value'] || '')
-        };
-        filterOptions.push(optItem);
-      }
-
-      groups.push({
-        id: key,
-        title: String(filterDef['name'] || key),
-        placeholder: filterDef['placeholder'] as string | undefined,
-        options: filterOptions,
-        defaultValue: filterDef['default'] as string | undefined,
-        required: filterDef['required'] === true,
-        order: order++
-      });
+      const filterDef = this.readFilterDefinition(filtersConfig, key);
+      order = this.appendFilterGroupFromDefinition(groups, key, filterDef, order);
     }
 
     if (groups.length > 0) {
@@ -2182,46 +2434,66 @@ export struct SourceDetailPage {
     }
   }
 
+  private readFilterDefinition(filtersConfig: SourceFilterConfigMap, key: string): SourceFilterDefinitionConfig | undefined {
+    try {
+      return Reflect.get(filtersConfig, key) as SourceFilterDefinitionConfig | undefined;
+    } catch (_error) {
+      return undefined;
+    }
+  }
+
+  private appendFilterGroupFromDefinition(
+    groups: FilterGroup[],
+    key: string,
+    filterDef: SourceFilterDefinitionConfig | undefined,
+    order: number
+  ): number {
+    if (!filterDef || typeof filterDef !== 'object') {
+      return order;
+    }
+
+    const options = filterDef.options;
+    if (!options || !Array.isArray(options)) {
+      return order;
+    }
+
+    const filterOptions: FilterOption[] = [];
+    for (let j = 0; j < options.length; j++) {
+      const opt: SourceFilterOptionConfig = options[j];
+      const optionValue = opt.value;
+      const optionLabel = opt.label;
+      const optItem: FilterOption = {
+        value: String(optionValue || ''),
+        label: String(optionLabel || optionValue || '')
+      };
+      filterOptions.push(optItem);
+    }
+
+    groups.push({
+      id: key,
+      title: String(filterDef.name || key),
+      placeholder: filterDef.placeholder,
+      options: filterOptions,
+      defaultValue: filterDef.default,
+      required: filterDef.required === true,
+      order: order
+    });
+    return order + 1;
+  }
+
   /**
    * 从settings配置中加载筛选选项
    */
-  private loadFilterConfigFromSettings(settings: Record<string, Object>): void {
+  private loadFilterConfigFromSettings(settings: SourceFilterConfigMap): void {
     const groups: FilterGroup[] = [];
     let order = 0;
 
     // 检查筛选相关的设置项
-    const filterKeys = ['filterOrdering', 'filterRegion', 'filterTheme', 'sort', 'category'];
-    
-    for (const key of filterKeys) {
-      const setting = settings[key] as Record<string, Object> | undefined;
-      if (!setting || setting['type'] !== 'select') {
-        continue;
-      }
-
-      const options = setting['options'] as Record<string, Object>[] | undefined;
-      if (!options || !Array.isArray(options)) {
-        continue;
-      }
-
-      const filterOptions: FilterOption[] = [];
-      for (const opt of options) {
-        const item: FilterOption = {
-          value: String(opt['value'] || ''),
-          label: String(opt['label'] || opt['value'] || '')
-        };
-        filterOptions.push(item);
-      }
-
-      groups.push({
-        id: key,
-        title: String(setting['name'] || key),
-        placeholder: setting['description'] as string | undefined,
-        options: filterOptions,
-        defaultValue: setting['default'] as string | undefined,
-        required: false,
-        order: order++
-      });
-    }
+    order = this.appendSettingsFilterGroup(groups, 'filterOrdering', settings.filterOrdering, order);
+    order = this.appendSettingsFilterGroup(groups, 'filterRegion', settings.filterRegion, order);
+    order = this.appendSettingsFilterGroup(groups, 'filterTheme', settings.filterTheme, order);
+    order = this.appendSettingsFilterGroup(groups, 'sort', settings.sort, order);
+    this.appendSettingsFilterGroup(groups, 'category', settings.category, order);
 
     if (groups.length > 0) {
       this.sourceFilterConfig = {
@@ -2231,6 +2503,44 @@ export struct SourceDetailPage {
       };
       logger.info(TAG, `从settings加载了 ${groups.length} 个筛选组`);
     }
+  }
+
+  private appendSettingsFilterGroup(
+    groups: FilterGroup[],
+    key: string,
+    setting: SourceFilterDefinitionConfig | undefined,
+    order: number
+  ): number {
+    if (!setting || setting.type !== 'select') {
+      return order;
+    }
+
+    const options = setting.options;
+    if (!options || !Array.isArray(options)) {
+      return order;
+    }
+
+    const filterOptions: FilterOption[] = [];
+    for (const opt of options) {
+      const optionValue = opt.value;
+      const optionLabel = opt.label;
+      const item: FilterOption = {
+        value: String(optionValue || ''),
+        label: String(optionLabel || optionValue || '')
+      };
+      filterOptions.push(item);
+    }
+
+    groups.push({
+      id: key,
+      title: String(setting.name || key),
+      placeholder: setting.description,
+      options: filterOptions,
+      defaultValue: setting.default,
+      required: false,
+      order: order
+    });
+    return order + 1;
   }
 
   /**
@@ -2244,8 +2554,9 @@ export struct SourceDetailPage {
       const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
       logger.info(TAG, `获取到配置: ${config ? 'yes' : 'no'}`);
       
-      if (config && config['login'] && config['login']['url']) {
-        this.loginUrl = String(config['login']['url']);
+      const sourceConfig: SourceDetailJsonConfig | null = config ? config as SourceDetailJsonConfig : null;
+      if (sourceConfig && sourceConfig.login && sourceConfig.login.url) {
+        this.loginUrl = String(sourceConfig.login.url);
         logger.info(TAG, `设置loginUrl: ${this.loginUrl}`);
         this.showLoginDialog = true;
         logger.info(TAG, `已设置showLoginDialog=true, 打开登录页面: ${this.loginUrl}`);
@@ -4924,27 +5235,23 @@ export struct SourceDetailPage {
               this.buildComicListItem(comic)
             }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
           } else {
-            // 网格模式
-            if (this.displayMode === DisplayMode.GRID) {
-              Column() {
-                this.buildAdaptiveCoverGrid(historyItem.results, `history_${historyItem.id}`)
-              }
-              .padding(this.isLandscape ? { left: 8, right: 8, top: 12, bottom: 12 } : { left: 4, right: 4, top: 8, bottom: 8 })
-            } else {
-              Grid() {
-                ForEach(historyItem.results, (comic: ComicInfo) => {
-                  GridItem() {
+            Grid() {
+              ForEach(historyItem.results, (comic: ComicInfo) => {
+                GridItem() {
+                  if (this.shouldRenderLargeCoverGrid(historyItem.results)) {
                     this.buildComicLargeCoverCard(comic)
+                  } else {
+                    this.buildComicCard(comic)
                   }
-                }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
-              }
-              .columnsTemplate(this.getGridColumnsTemplate())
-              .columnsGap(this.isLandscape ? 16 : 12)
-              .rowsGap(this.isLandscape ? 16 : 12)
-              .width('100%')
-              .layoutDirection(GridDirection.Row)
-              .padding(this.isLandscape ? { left: 8, right: 8, top: 12, bottom: 12 } : { left: 4, right: 4, top: 8, bottom: 8 })
+                }
+              }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
             }
+            .columnsTemplate(this.getContentGridColumnsTemplate(historyItem.results))
+            .columnsGap(this.isLandscape ? 16 : 12)
+            .rowsGap(this.isLandscape ? 16 : 12)
+            .width('100%')
+            .layoutDirection(GridDirection.Row)
+            .padding(this.isLandscape ? { left: 8, right: 8, top: 12, bottom: 12 } : { left: 4, right: 4, top: 8, bottom: 8 })
           }
         }
         .width('100%')
@@ -5095,36 +5402,23 @@ export struct SourceDetailPage {
             .width('100%')
             .padding(this.isLandscape ? { left: 24, right: 24, top: 12, bottom: 12 } : { left: 12, right: 12, top: 8, bottom: 8 })
           } else {
-            // 网格模式和大封面模式
-            if (this.displayMode === DisplayMode.GRID) {
-              Grid() {
-                ForEach(this.comicList, (comic: ComicInfo) => {
-                  GridItem() {
+            Grid() {
+              ForEach(this.comicList, (comic: ComicInfo) => {
+                GridItem() {
+                  if (this.shouldRenderLargeCoverGrid(this.comicList)) {
+                    this.buildComicLargeCoverCard(comic)
+                  } else {
                     this.buildComicCard(comic)
                   }
-                }, (comic: ComicInfo) => `${renderVersion}_${comic.id}`)
-              }
-              .columnsTemplate(this.getGridColumnsTemplate())
-              .columnsGap(this.isLandscape ? 16 : 12)
-              .rowsGap(this.isLandscape ? 16 : 12)
-              .width('100%')
-              .layoutDirection(GridDirection.Row)
-              .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
-            } else {
-              Grid() {
-                ForEach(this.comicList, (comic: ComicInfo) => {
-                GridItem() {
-                    this.buildComicLargeCoverCard(comic)
                 }
-                }, (comic: ComicInfo) => `${renderVersion}_${comic.id}`)
-              }
-              .columnsTemplate(this.getGridColumnsTemplate())
-              .columnsGap(this.isLandscape ? 16 : 12)
-              .rowsGap(this.isLandscape ? 16 : 12)
-              .width('100%')
-              .layoutDirection(GridDirection.Row)
-              .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
+              }, (comic: ComicInfo) => `${renderVersion}_${comic.id}`)
             }
+            .columnsTemplate(this.getContentGridColumnsTemplate(this.comicList))
+            .columnsGap(this.isLandscape ? 16 : 12)
+            .rowsGap(this.isLandscape ? 16 : 12)
+            .width('100%')
+            .layoutDirection(GridDirection.Row)
+            .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
           }
 
           if (this.isLoading && this.currentPage > 1) {
@@ -5242,36 +5536,6 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 构建漫画卡片
-   */
-  /**
-   * Adaptive cover grid in normal grid mode.
-   */
-  @Builder
-  private buildAdaptiveCoverGrid(comics: ComicInfo[], keyPrefix: string) {
-    Column({ space: this.isLandscape ? 16 : 12 }) {
-      ForEach(this.buildAdaptiveCoverRows(comics, keyPrefix), (row: AdaptiveCoverRow) => {
-        Row({ space: this.isLandscape ? 16 : 12 }) {
-          ForEach(row.items, (item: AdaptiveCoverRowItem) => {
-            Column() {
-              this.buildComicCard(item.comic)
-            }
-            .layoutWeight(item.span)
-          }, (item: AdaptiveCoverRowItem) => `${row.key}_${item.comic.id}`)
-
-          if (row.usedSpan < this.getAdaptiveGridColumnCount()) {
-            Blank()
-              .layoutWeight(this.getAdaptiveGridColumnCount() - row.usedSpan)
-          }
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-      }, (row: AdaptiveCoverRow) => row.key)
-    }
-    .width('100%')
-  }
-
-  /**
    * Build a standard comic card.
    */
   @Builder
@@ -5364,8 +5628,8 @@ export struct SourceDetailPage {
         Stack() {
           this.buildReadingStyleComicCover(comic)
         }
-        .width(72)
-        .aspectRatio(0.72)
+        .width(this.getListCoverWidth(comic))
+        .aspectRatio(this.getComicCoverAspectRatio(comic))
         .padding(3)
 
         // 信息区域
@@ -5556,5 +5820,16 @@ export struct SourceDetailPage {
       // 网格模式 - 竖屏：3列
       return '1fr 1fr 1fr';
     }
+  }
+
+  private getLargeCoverColumnsTemplate(): string {
+    return '1fr 1fr';
+  }
+
+  private getContentGridColumnsTemplate(comics: ComicInfo[]): string {
+    if (this.shouldRenderLargeCoverGrid(comics)) {
+      return this.getLargeCoverColumnsTemplate();
+    }
+    return this.getGridColumnsTemplate();
   }
 }

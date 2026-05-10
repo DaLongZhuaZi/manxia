@@ -364,6 +364,7 @@ export struct MangaViewer {
   @Prop isLastChapter: boolean = false;  // 是否是最后一章（没有下一章）
   // 注意：回调函数不能使用@Prop装饰器，直接作为普通属性传递
   onRequestAdjacentChapter?: (direction: 'prev' | 'next') => void; // 请求加载相邻章节
+  loadPixivImageCallback?: (imageUrl: string) => Promise<ArrayBuffer | null>; // Pixiv WebView图片加载回调
 
   // [新增] 条漫多章节状态
   @State private webtoonDataItems: WebtoonDataItem[] = []; // 合并的多章节数据项
@@ -7629,27 +7630,47 @@ export struct MangaViewer {
       }
       this.networkLoadInProgress++;
       try {
-        const cacheManager: ImageCacheManager = ImageCacheManager.getInstance();
-        const pageNetworkHeaders: RequestHeaders | undefined = this.buildPageNetworkHeaders(page);
-        const opts: LoadOptions = {
-          width: page.width,
-          height: page.height,
-          headers: pageNetworkHeaders,
-          sourceId: this.sourceId,
-          mangaId: this.mangaId,
-          chapterId: this.chapter.id,
-          pageIndex: page.index,
-          priority: page.priority || 1,
-          contentType: this.contentType,
-          partitionKey: pageNetworkHeaders?.cachePartition
-        } as LoadOptions;
-        const cookieStr: string = (pageNetworkHeaders && pageNetworkHeaders.cookie) ? String(pageNetworkHeaders.cookie) : '';
-        const refererStr: string = (pageNetworkHeaders && pageNetworkHeaders.referer) ? String(pageNetworkHeaders.referer) : '';
-        const uaStr: string = (pageNetworkHeaders && pageNetworkHeaders.userAgent) ? String(pageNetworkHeaders.userAgent) : '';
-        const langStr: string = (pageNetworkHeaders && pageNetworkHeaders.acceptLanguage) ? String(pageNetworkHeaders.acceptLanguage) : '';
-        const uaLog: string = uaStr.substring(0, Math.min(64, uaStr.length));
-        logger.debug('MangaViewer', `开始网络加载: url=${page.imageUrl}, ua=${uaLog}, langLen=${langStr.length}, cookieLen=${cookieStr.length}, referer=${refererStr}`);
-        const pm: image.PixelMap | null = await cacheManager.loadImage(page.imageUrl, opts);
+        const isPixivCdn = page.imageUrl.includes('i.pximg.net') || page.imageUrl.includes('.pximg.net');
+        let pm: image.PixelMap | null = null;
+
+        // Pixiv CDN: HTTP模块无法直接连接，通过WebView回调加载
+        if (isPixivCdn && this.loadPixivImageCallback) {
+          logger.debug(TAG, `Pixiv CDN图片使用WebView加载: ${page.imageUrl.substring(0, 60)}`);
+          const buffer = await this.loadPixivImageCallback(page.imageUrl);
+          if (buffer && buffer.byteLength > 0) {
+            const imageSource = image.createImageSource(buffer);
+            const decodingOptions: image.DecodingOptions = {
+              desiredSize: page.width && page.height ?
+                { width: page.width, height: page.height } : undefined,
+              desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+            };
+            pm = await imageSource.createPixelMap(decodingOptions);
+          }
+        }
+
+        if (!pm) {
+          const cacheManager: ImageCacheManager = ImageCacheManager.getInstance();
+          const pageNetworkHeaders: RequestHeaders | undefined = this.buildPageNetworkHeaders(page);
+          const opts: LoadOptions = {
+            width: page.width,
+            height: page.height,
+            headers: pageNetworkHeaders,
+            sourceId: this.sourceId,
+            mangaId: this.mangaId,
+            chapterId: this.chapter.id,
+            pageIndex: page.index,
+            priority: page.priority || 1,
+            contentType: this.contentType,
+            partitionKey: pageNetworkHeaders?.cachePartition
+          } as LoadOptions;
+          const cookieStr: string = (pageNetworkHeaders && pageNetworkHeaders.cookie) ? String(pageNetworkHeaders.cookie) : '';
+          const refererStr: string = (pageNetworkHeaders && pageNetworkHeaders.referer) ? String(pageNetworkHeaders.referer) : '';
+          const uaStr: string = (pageNetworkHeaders && pageNetworkHeaders.userAgent) ? String(pageNetworkHeaders.userAgent) : '';
+          const langStr: string = (pageNetworkHeaders && pageNetworkHeaders.acceptLanguage) ? String(pageNetworkHeaders.acceptLanguage) : '';
+          const uaLog: string = uaStr.substring(0, Math.min(64, uaStr.length));
+          logger.debug('MangaViewer', `开始网络加载: url=${page.imageUrl}, ua=${uaLog}, langLen=${langStr.length}, cookieLen=${cookieStr.length}, referer=${refererStr}`);
+          pm = await cacheManager.loadImage(page.imageUrl, opts);
+        }
         if (pm) {
           this.commitPagePixelMap(page.id, pm);
           this.incrementPixelMapEpoch(page.id);
@@ -9317,8 +9338,28 @@ export struct MangaViewer {
       }
 
       // 2. 【核心】从统一缓存系统加载PixelMap
-      const cacheManager = ImageCacheManager.getInstance();
-      let cachedPixelMap = await cacheManager.loadImage(requestUrl, loadOptions);
+      let cachedPixelMap: image.PixelMap | null = null;
+
+      // Pixiv CDN: HTTP模块无法直接连接，通过WebView回调加载
+      const isPixivCdn = requestUrl.includes('i.pximg.net') || requestUrl.includes('.pximg.net');
+      if (isPixivCdn && this.loadPixivImageCallback) {
+        logger.debug(TAG, `Pixiv CDN图片使用WebView加载(条漫): ${requestUrl.substring(0, 60)}`);
+        const buffer = await this.loadPixivImageCallback(requestUrl);
+        if (buffer && buffer.byteLength > 0) {
+          const imageSource = image.createImageSource(buffer);
+          const decodingOptions: image.DecodingOptions = {
+            desiredSize: page.width && page.height ?
+              { width: page.width, height: page.height } : undefined,
+            desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+          };
+          cachedPixelMap = await imageSource.createPixelMap(decodingOptions);
+        }
+      }
+
+      if (!cachedPixelMap) {
+        const cacheManager = ImageCacheManager.getInstance();
+        cachedPixelMap = await cacheManager.loadImage(requestUrl, loadOptions);
+      }
 
       if (!cachedPixelMap && page.sourceType === ImageSourceType.LOCAL) {
         const fsPath = this.getFsPathFromPage(page);
