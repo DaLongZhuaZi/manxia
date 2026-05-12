@@ -8,6 +8,7 @@ import { UIAbility, AbilityConstant, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { setContext } from './GlobalContext';
+import { DeepLinkRouter } from './Framework/Utils/DeepLinkRouter';
 import { logger } from './Utils/Logger';
 import { WindowManager, DisplayMode } from './Utils/WindowManager';
 import { DataInitializer } from './Framework/Initialization/DataInitializer';
@@ -61,10 +62,11 @@ export default class EntryAbility extends UIAbility {
     if (want.parameters && want.parameters['share_import_files']) {
       this.handleShareImport(want);
     }
-    // 检查是否通过 Deep Link 打开应用
-    else if (want.uri && want.uri.startsWith('manxia://')) {
-      logger.info('EntryAbility', `🔗 通过 Deep Link 打开应用: ${want.uri}`);
-      this.handleDeepLink(want.uri);
+    // 检查是否通过 Deep Link 打开应用（manxia:// 或 https://manxia.top/）
+    else if (this.isDeepLinkUri(want.uri || '')) {
+      const uri: string = want.uri || '';
+      logger.info('EntryAbility', `🔗 通过 Deep Link 打开应用: ${uri}`);
+      this.handleDeepLink(uri);
     }
     // 检查是否通过文件打开应用
     else if (want.uri) {
@@ -937,7 +939,16 @@ export default class EntryAbility extends UIAbility {
       this.notifyFileOpenToUI();
       return;
     }
-    
+
+    // 检查是否通过 Deep Link 打开应用（manxia:// 或 https://manxia.top/）
+    const deepLinkUri: string = want.uri || '';
+    if (this.isDeepLinkUri(deepLinkUri)) {
+      logger.info('EntryAbility', `🔗 通过 Deep Link 打开应用（onNewWant）: ${deepLinkUri}`);
+      this.handleDeepLink(deepLinkUri);
+      this.notifyDeepLinkToUI();
+      return;
+    }
+
     // 检查是否通过文件URI打开应用
     if (want.uri) {
       logger.info('EntryAbility', `📁 通过文件打开应用（onNewWant）: ${want.uri}`);
@@ -982,6 +993,21 @@ export default class EntryAbility extends UIAbility {
     const current = AppStorage.get<number>('fileOpenNewWantTrigger') || 0;
     AppStorage.setOrCreate('fileOpenNewWantTrigger', current + 1);
     logger.info('EntryAbility', `📣 通知UI处理新文件 (trigger: ${current + 1})`);
+  }
+
+  /**
+   * 通知UI层有新的Deep Link需要处理（仅用于onNewWant场景）
+   */
+  private notifyDeepLinkToUI(): void {
+    const current = AppStorage.get<number>('deepLinkTrigger') || 0;
+    AppStorage.setOrCreate('deepLinkTrigger', current + 1);
+    logger.info('EntryAbility', `📣 通知UI处理Deep Link (trigger: ${current + 1})`);
+  }
+
+  private isDeepLinkUri(uri: string): boolean {
+    return uri.startsWith('manxia://') ||
+      uri.startsWith('https://manxia.top/') ||
+      uri.startsWith('https://www.manxia.top/');
   }
 
   /**
@@ -1059,62 +1085,27 @@ export default class EntryAbility extends UIAbility {
 
   /**
    * 处理 Deep Link URI
-   * 格式: manxia://search/{source}?type={searchType}&query={query}
+   * 存储解析结果 + 原始URI，由 MainMenuPage 处理导航；无法解析的复杂链接再弹出兜底对话框。
    */
   private handleDeepLink(uri: string): void {
     try {
       logger.info('EntryAbility', `🔗 开始解析 Deep Link: ${uri}`);
-      
-      // 手动解析 URI: manxia://search/pixiv?type=id&query=139692726
-      // 1. 提取 host 和 path
-      const schemeEnd = uri.indexOf('://');
-      if (schemeEnd === -1) {
-        logger.warn('EntryAbility', `🔗 无效的 URI 格式: ${uri}`);
+      if (uri === 'manxia://open' || uri === 'https://manxia.top/' || uri === 'https://www.manxia.top/') {
+        AppStorage.setOrCreate('hasDeepLink', false);
+        AppStorage.setOrCreate('deepLinkShowDialog', false);
+        logger.info('EntryAbility', `🔗 基础打开链接，无需额外跳转: ${uri}`);
         return;
       }
-      
-      const afterScheme = uri.substring(schemeEnd + 3); // 去掉 "manxia://"
-      const queryStart = afterScheme.indexOf('?');
-      const pathPart = queryStart === -1 ? afterScheme : afterScheme.substring(0, queryStart);
-      const queryPart = queryStart === -1 ? '' : afterScheme.substring(queryStart + 1);
-      
-      // 2. 解析 path: search/pixiv
-      const pathSegments = pathPart.split('/');
-      if (pathSegments.length < 2 || pathSegments[0] !== 'search') {
-        logger.warn('EntryAbility', `🔗 不支持的 Deep Link 格式: ${uri}`);
-        return;
-      }
-      
-      const source: string = pathSegments[1];
-      
-      // 3. 解析 query 参数
-      let type: string = 'id';
-      let query: string = '';
-      
-      if (queryPart) {
-        const params = queryPart.split('&');
-        for (const param of params) {
-          const parts = param.split('=');
-          const key = parts[0];
-          const value = parts.length > 1 ? parts[1] : '';
-          if (key === 'type' && value) {
-            type = decodeURIComponent(value);
-          } else if (key === 'query' && value) {
-            query = decodeURIComponent(value);
-          }
-        }
-      }
-      
-      if (source && query) {
-        logger.info('EntryAbility', `🔗 Deep Link 解析成功: source=${source}, type=${type}, query=${query}`);
-        
-        // 保存到 AppStorage，在 MainMenuPage 中处理
-        AppStorage.setOrCreate('deepLinkSource', source);
-        AppStorage.setOrCreate('deepLinkType', type);
-        AppStorage.setOrCreate('deepLinkQuery', query);
-        AppStorage.setOrCreate('hasDeepLink', true);
+      const router: DeepLinkRouter = DeepLinkRouter.getInstance();
+      const stored: boolean = router.storeForLater(uri);
+      // 有效深度链接先交给主页面自动导航；无具体路由时再弹出兜底对话框。
+      if (stored) {
+        AppStorage.setOrCreate('deepLinkDialogUri', uri);
+        logger.info('EntryAbility', `🔗 Deep Link 已存储: ${uri}`);
       } else {
-        logger.warn('EntryAbility', `🔗 Deep Link 参数不完整: source=${source}, query=${query}`);
+        logger.info('EntryAbility', `🔗 Deep Link 无具体路由，仅弹出对话框`);
+        AppStorage.setOrCreate('deepLinkDialogUri', uri);
+        AppStorage.setOrCreate('deepLinkShowDialog', true);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

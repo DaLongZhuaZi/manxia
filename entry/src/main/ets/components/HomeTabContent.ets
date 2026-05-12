@@ -157,6 +157,9 @@ export struct HomeTabContent {
         const unifiedParams: UnifiedDetailPageParams = {
           contentType: UnifiedContentType.MANGA,
           contentId: manga.id,
+          sourceId: manga.sourceInfo?.sourceId,
+          sourceName: manga.sourceInfo?.sourceName,
+          sourcePkg: manga.sourceInfo?.sourcePkg,
           cachedTitle: manga.title,
           cachedCover: manga.coverImagePath
         };

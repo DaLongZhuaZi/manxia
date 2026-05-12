@@ -145,8 +145,62 @@
                 "scheme": "manxia",
                 "host": "open",
                 "path": ""
+              },
+              {
+                "scheme": "manxia",
+                "host": "detail",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
+                "host": "search",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
+                "host": "source",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
+                "host": "novel",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
+                "host": "page",
+                "pathRegex": ".*"
               }
             ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "https",
+                "host": "manxia.top",
+                "pathStartWith": "d/",
+                "linkFeature": "AppLinkOpening"
+              },
+              {
+                "scheme": "https",
+                "host": "manxia.top",
+                "path": "n",
+                "linkFeature": "AppLinkOpening"
+              },
+              {
+                "scheme": "https",
+                "host": "manxia.top",
+                "pathStartWith": "s/",
+                "linkFeature": "AppLinkOpening"
+              }
+            ],
+            "domainVerify": true
           },
           {
             "entities": [

@@ -42,6 +42,7 @@ export interface MangaDetailLoadParams {
   mangaId: string;
   sourceId?: number;
   sourceName?: string;
+  sourcePkg?: string;
   cachedTitle?: string;
   cachedCover?: string;
   cachedCoverPath?: string;
@@ -128,6 +129,7 @@ export class MangaDetailLoader {
   // 当前加载状态
   private currentSourceId: number = 0;
   private currentSourceName: string = '';
+  private currentSourcePkg: string = '';
   private coverHttpHeaders: Record<string, string> = {};
   
   private constructor() {
@@ -177,6 +179,7 @@ export class MangaDetailLoader {
       // 初始化图源信息
       this.currentSourceId = params.sourceId || 0;
       this.currentSourceName = params.sourceName || '';
+      this.currentSourcePkg = params.sourcePkg || '';
       this.coverHttpHeaders = {};
       
       // 第一阶段：获取基本信息
@@ -808,6 +811,7 @@ export class MangaDetailLoader {
       // 初始化图源信息
       this.currentSourceId = params.sourceId || 0;
       this.currentSourceName = params.sourceName || '';
+      this.currentSourcePkg = params.sourcePkg || '';
       this.coverHttpHeaders = {};
       
       // 判断是本地漫画还是网络漫画
@@ -964,6 +968,7 @@ export class MangaDetailLoader {
         result.manga.sourceInfo = {
           sourceId: String(result.sourceId),
           sourceName: result.sourceName,
+          sourcePkg: this.currentSourcePkg || undefined,
           sourceUrl: comicInfo.externalId || '',
           sourceLanguage: 'zh',
           requiresLogin: false
@@ -1587,6 +1592,7 @@ export class MangaDetailLoader {
       lastUpdatedAt: onlineComic.lastUpdateTime || Date.now(),
       sourceInfo: {
         sourceName: displaySourceName,
+        sourcePkg: this.currentSourcePkg || undefined,
         sourceUrl: onlineComic.externalId || '',
         sourceId: sourceIdStr,
         sourceLanguage: 'zh',
@@ -1631,6 +1637,7 @@ export class MangaDetailLoader {
       lastUpdatedAt: Date.now(),
       sourceInfo: {
         sourceName: this.currentSourceName,
+        sourcePkg: this.currentSourcePkg || undefined,
         sourceUrl: externalId,
         sourceId: String(this.currentSourceId),
         sourceLanguage: 'zh',

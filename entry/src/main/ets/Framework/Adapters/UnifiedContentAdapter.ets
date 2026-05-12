@@ -36,7 +36,8 @@ export class MangaAdapter {
     bookmarkedChapterIds: Set<string> = new Set(),
     lastReadChapterIndex: number = -1,
     sourceId?: string,
-    sourceName?: string
+    sourceName?: string,
+    sourcePkg?: string
   ): UnifiedContent {
     logger.debug(TAG, `[toUnifiedContent-1] 开始, chapters.length=${chapters?.length}, lastReadChapterIndex=${lastReadChapterIndex}`);
     
@@ -139,10 +140,14 @@ export class MangaAdapter {
     
     // 安全提取图源信息
     let safeSourceName = sourceName || '';
+    let safeSourcePkg = sourcePkg || '';
     let safeSourceUrl = '';
     try {
       if (!safeSourceName && manga && manga.sourceInfo && manga.sourceInfo.sourceName) {
         safeSourceName = manga.sourceInfo.sourceName;
+      }
+      if (!safeSourcePkg && manga && manga.sourceInfo && manga.sourceInfo.sourcePkg) {
+        safeSourcePkg = manga.sourceInfo.sourcePkg;
       }
       if (manga && manga.sourceInfo && manga.sourceInfo.sourceUrl) {
         safeSourceUrl = manga.sourceInfo.sourceUrl;
@@ -178,6 +183,7 @@ export class MangaAdapter {
       
       sourceId: sourceId,
       sourceName: safeSourceName,
+      sourcePkg: safeSourcePkg,
       sourceUrl: safeSourceUrl,
       isLocal: !sourceId,
       

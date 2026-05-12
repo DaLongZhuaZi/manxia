@@ -331,6 +331,8 @@ export interface MangaSourceInfo {
   sourceUrl: string;
   /** 源ID */
   sourceId: string;
+  /** 源包名（稳定标识，不随重新导入变化） */
+  sourcePkg?: string;
   /** 外部ID，用于源站的真实ID */
   externalId?: string;
   /** 源语言 */

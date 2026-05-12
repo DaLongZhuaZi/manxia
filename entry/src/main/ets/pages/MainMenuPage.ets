@@ -21,6 +21,7 @@ import { MoveState } from '../Utils/MoveState';
 // 主题相关导入
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { DeepLinkRouter, DeepLinkResult, DeepLinkSearchResult, DeepLinkSourceResult, DeepLinkNovelSearchResult, DeepLinkNovelSourceResult, DeepLinkNovelDetailResult } from '../Framework/Utils/DeepLinkRouter';
 import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
@@ -773,6 +774,17 @@ struct MainMenuPage {
   private sourceRepoDialogController: CustomDialogController | undefined = undefined;
   private repositoryManager: SourceRepositoryManager = SourceRepositoryManager.getInstance();
 
+  // 深度链接跳转对话框状态
+  @State deepLinkDialogInput: string = '';
+  @State deepLinkDialogParseResult: string = '';
+  @State deepLinkDialogIsValid: boolean = false;
+  @State deepLinkDialogIsNavigating: boolean = false;
+  @State deepLinkDialogSourceMissing: boolean = false;
+  @State deepLinkDialogSourceName: string = '';
+  @State deepLinkDialogSourceIsNovel: boolean = false;
+  private deepLinkDialogController: CustomDialogController | undefined = undefined;
+  private deepLinkRouter: DeepLinkRouter = DeepLinkRouter.getInstance();
+
   // 最近阅读相关状态
   @State recentReadingList: Manga[] = [];
   @State recentEBookList: EBook[] = [];
@@ -1333,6 +1345,12 @@ struct MainMenuPage {
   private startupRouteHandling: boolean = false;
   // Bug 1 fix: onNewWant通知机制——解决app在前台时onPageShow不触发的问题
   @StorageProp('fileOpenNewWantTrigger') @Watch('onFileOpenNewWantTrigger') private fileOpenTrigger: number = 0;
+  // 深度链接对话框触发器——响应 DeepLinkDialogManager 设置的跳转请求
+  @StorageProp('deepLinkTrigger') @Watch('onDeepLinkTriggerChanged') private deepLinkTrigger: number = 0;
+  private deepLinkHandling: boolean = false;
+  private deepLinkRetryTimer: number = -1;
+  private deepLinkRetryCount: number = 0;
+  private readonly maxDeepLinkRetryCount: number = 3;
   // Bug 3 fix: 防止aboutToAppear/onPageShow/@Watch三路同时触发重复导入调度
   private fileImportScheduled: boolean = false;
   private readonly startupTraceBeforeTabConfigs: boolean = this.logStartupTrace('startup_trace_before_tab_configs');
@@ -2052,39 +2070,283 @@ struct MainMenuPage {
 
   /**
    * 处理 Deep Link（如果存在）
+   * 支持路由类型: search, source, detail, novelSearch, novelSource, novelDetail
    */
   private async handleDeepLinkIfPresent(): Promise<void> {
+    if (this.deepLinkHandling) {
+      logger.info(TAG, '🔗 Deep Link 正在处理中，跳过重复触发');
+      return;
+    }
+
+    this.deepLinkHandling = true;
     try {
       const hasDeepLink = AppStorage.get<boolean>('hasDeepLink');
       if (!hasDeepLink) {
         return;
       }
 
-      const source = AppStorage.get<string>('deepLinkSource');
-      const type = AppStorage.get<string>('deepLinkType');
-      const query = AppStorage.get<string>('deepLinkQuery');
+      const route: string = AppStorage.get<string>('deepLinkRoute') || 'search';
+      logger.info(TAG, `🔗 处理 Deep Link: route=${route}`);
 
-      if (source && query) {
-        logger.info(TAG, `🔗 处理 Deep Link: source=${source}, type=${type}, query=${query}`);
+      let handled: boolean = false;
 
-        // 清除 Deep Link 标记
+      if (route === 'page') {
+        handled = this.handleDeepLinkPageRoute();
+      } else if (route === 'source') {
+        handled = await this.handleDeepLinkSourceRoute();
+      } else if (route === 'detail') {
+        handled = await this.handleDeepLinkDetailRoute();
+      } else if (route === 'novelSearch') {
+        handled = await this.handleDeepLinkNovelSearchRoute();
+      } else if (route === 'novelSource') {
+        handled = await this.handleDeepLinkNovelSourceRoute();
+      } else if (route === 'novelDetail') {
+        handled = await this.handleDeepLinkNovelDetailRoute();
+      } else {
+        handled = await this.handleDeepLinkSearchRoute();
+      }
+
+      if (handled) {
         AppStorage.setOrCreate('hasDeepLink', false);
-
-        // 等待图源列表加载完成
-        await this.waitForSourceListLoaded();
-
-        // 构造前缀格式并执行全局搜索
-        const searchInput = `${source}//${type}//${query}`;
-        const handled = await this.executeGlobalSourceSearch(searchInput);
-
-        if (handled) {
-          logger.info(TAG, `🔗 Deep Link 处理成功`);
-        } else {
-          logger.warn(TAG, `🔗 Deep Link 处理失败: 未找到匹配的图源或搜索类型`);
-        }
+        this.deepLinkRetryCount = 0;
+        this.clearDeepLinkRetryTimer();
+        this.deepLinkDialogIsNavigating = false;
+      } else {
+        this.scheduleDeepLinkRetry(route);
       }
     } catch (error) {
       logger.error(TAG, `🔗 处理 Deep Link 失败: ${error}`);
+      this.scheduleDeepLinkRetry('error');
+    } finally {
+      this.deepLinkHandling = false;
+    }
+  }
+
+  private handleDeepLinkPageRoute(): boolean {
+    const pageName: string = AppStorage.get<string>('deepLinkPageName') || '';
+    if (!pageName) {
+      logger.warn(TAG, '🔗 页面路由参数不完整');
+      return false;
+    }
+    this.pathStack.pushPathByName(pageName, undefined);
+    logger.info(TAG, `🔗 页面路由跳转: ${pageName}`);
+    return true;
+  }
+
+  /**
+   * 处理搜索路由: manxia://search/{source}?type=...&query=...
+   */
+  private async handleDeepLinkSearchRoute(): Promise<boolean> {
+    const source: string = AppStorage.get<string>('deepLinkSource') || '';
+    const type: string = AppStorage.get<string>('deepLinkType') || 'search';
+    const query: string = AppStorage.get<string>('deepLinkQuery') || '';
+
+    if (!source || !query) {
+      logger.warn(TAG, `🔗 搜索路由参数不完整`);
+      return false;
+    }
+
+    logger.info(TAG, `🔗 搜索路由: source=${source}, type=${type}, query=${query}`);
+    await this.waitForSourceListLoaded();
+
+    const searchInput = `${source}//${type}//${query}`;
+    const handled: boolean = await this.executeGlobalSourceSearch(searchInput);
+
+    if (handled) {
+      logger.info(TAG, `🔗 搜索路由处理成功`);
+    } else {
+      logger.warn(TAG, `🔗 搜索路由处理失败: 未找到匹配的图源`);
+    }
+    return handled;
+  }
+
+  /**
+   * 解析漫画源 ID（优先用已解析的 deepLinkSourceId，否则从 deepLinkSource 查找）
+   */
+  private async resolveDeepLinkSourceId(): Promise<number | undefined> {
+    const resolved: number | undefined = AppStorage.get<number>('deepLinkSourceId');
+    if (resolved) {
+      return resolved;
+    }
+    await this.waitForSourceListLoaded();
+    // 冷启动时 navigate() 可能未完成源查找，手动解析
+    const sourceKey: string = AppStorage.get<string>('deepLinkSource') || '';
+    if (!sourceKey) {
+      return undefined;
+    }
+    const source: SourceInfo | null = await this.deepLinkRouter.resolveSource(sourceKey);
+    if (source) {
+      AppStorage.setOrCreate('deepLinkSourceId', source.id);
+      logger.info(TAG, `🔗 延迟解析图源: ${sourceKey} → ${source.name} (ID: ${source.id})`);
+      return source.id;
+    }
+    logger.warn(TAG, `🔗 图源未找到: ${sourceKey}`);
+    return undefined;
+  }
+
+  /**
+   * 解析小说源 ID（优先用已解析的 deepLinkNovelSourceId，否则从 deepLinkSource 查找）
+   */
+  private async resolveDeepLinkNovelSourceId(): Promise<string> {
+    const resolved: string = AppStorage.get<string>('deepLinkNovelSourceId') || '';
+    if (resolved) {
+      return resolved;
+    }
+    await this.waitForNovelSourcesReady();
+    const sourceKey: string = AppStorage.get<string>('deepLinkSource') || '';
+    if (!sourceKey) {
+      return '';
+    }
+    const source: NovelSourceInfo | null = await this.deepLinkRouter.resolveNovelSource(sourceKey);
+    if (source) {
+      AppStorage.setOrCreate('deepLinkNovelSourceId', source.id);
+      AppStorage.setOrCreate('deepLinkNovelSourceName', source.name);
+      logger.info(TAG, `🔗 延迟解析小说源: ${sourceKey} → ${source.name}`);
+      return source.id;
+    }
+    logger.warn(TAG, `🔗 小说源未找到: ${sourceKey}`);
+    return '';
+  }
+
+  /**
+   * 处理图源首页路由: manxia://source/{source}?tab=...&q=...
+   */
+  private async handleDeepLinkSourceRoute(): Promise<boolean> {
+    const sourceId: number | undefined = await this.resolveDeepLinkSourceId();
+    const tab: string = AppStorage.get<string>('deepLinkTab') || '';
+    const keyword: string = AppStorage.get<string>('deepLinkKeyword') || '';
+
+    if (!sourceId) {
+      logger.warn(TAG, `🔗 图源路由缺少 sourceId`);
+      return false;
+    }
+
+    logger.info(TAG, `🔗 图源路由: sourceId=${sourceId}, tab=${tab}, keyword=${keyword}`);
+
+    const params: SourceDetailPageParams = {
+      sourceId: sourceId,
+      initialTab: tab || undefined,
+      searchKeyword: keyword || undefined
+    };
+    this.pathStack.pushPathByName('SourceDetailPage', params);
+    logger.info(TAG, `🔗 图源路由跳转成功`);
+    return true;
+  }
+
+  /**
+   * 处理内容直达路由: manxia://detail/{source}/{contentId}
+   * 利用 SourceDetailPage 的 searchById 能力直达内容详情
+   */
+  private async handleDeepLinkDetailRoute(): Promise<boolean> {
+    const sourceId: number | undefined = await this.resolveDeepLinkSourceId();
+    const contentId: string = AppStorage.get<string>('deepLinkContentId') || '';
+
+    if (!sourceId || !contentId) {
+      logger.warn(TAG, `🔗 内容直达参数不完整: sourceId=${sourceId}, contentId=${contentId}`);
+      return false;
+    }
+
+    logger.info(TAG, `🔗 内容直达: sourceId=${sourceId}, contentId=${contentId}`);
+
+    // 跳转到 SourceDetailPage，以 searchById 方式执行
+    const params: SourceDetailPageParams = {
+      sourceId: sourceId,
+      initialTab: 'search',
+      searchKeyword: contentId,
+      searchType: 'searchById'
+    };
+    this.pathStack.pushPathByName('SourceDetailPage', params);
+    logger.info(TAG, `🔗 内容直达跳转成功`);
+    return true;
+  }
+
+  /**
+   * 处理小说搜索路由: manxia://novel/search/{source}?q={keyword}
+   */
+  private async handleDeepLinkNovelSearchRoute(): Promise<boolean> {
+    const sourceId: string = await this.resolveDeepLinkNovelSourceId();
+    const sourceName: string = AppStorage.get<string>('deepLinkNovelSourceName') || '';
+    const query: string = AppStorage.get<string>('deepLinkQuery') || '';
+
+    if (!sourceId || !query) {
+      logger.warn(TAG, `🔗 小说搜索参数不完整: sourceId=${sourceId}, query=${query}`);
+      return false;
+    }
+
+    logger.info(TAG, `🔗 小说搜索: source=${sourceName} (${sourceId}), query=${query}`);
+
+    const params: NovelSearchPageParams = {
+      keyword: query,
+      sourceId: sourceId,
+      sourceName: sourceName
+    };
+    this.pathStack.pushPathByName('NovelSearchPage', params);
+    logger.info(TAG, `🔗 小说搜索跳转成功`);
+    return true;
+  }
+
+  /**
+   * 处理小说源首页路由: manxia://novel/source/{source}
+   * 跳转到小说搜索页（以该书源为范围），用户可在此搜索和浏览
+   */
+  private async handleDeepLinkNovelSourceRoute(): Promise<boolean> {
+    const sourceId: string = await this.resolveDeepLinkNovelSourceId();
+    const sourceName: string = AppStorage.get<string>('deepLinkNovelSourceName') || '';
+
+    if (!sourceId) {
+      logger.warn(TAG, `🔗 小说源路由参数不完整`);
+      return false;
+    }
+
+    logger.info(TAG, `🔗 小说源首页: ${sourceName} (${sourceId})`);
+
+    // 跳转到小说搜索页（不带关键词，用户可在该源内搜索和浏览）
+    const params: NovelSearchPageParams = {
+      sourceId: sourceId,
+      sourceName: sourceName
+    };
+    this.pathStack.pushPathByName('NovelSearchPage', params);
+    logger.info(TAG, `🔗 小说源首页跳转成功`);
+    return true;
+  }
+
+  /**
+   * 处理小说内容直达路由: manxia://novel/detail?s={sourceId}&b={bookUrl}
+   * 根据用户设置跳转到统一详情页或小说详情页
+   */
+  private async handleDeepLinkNovelDetailRoute(): Promise<boolean> {
+    const sourceId: string = await this.resolveDeepLinkNovelSourceId();
+    const sourceName: string = AppStorage.get<string>('deepLinkNovelSourceName') || '';
+    const bookUrl: string = AppStorage.get<string>('deepLinkNovelBookUrl') || '';
+
+    if (!sourceId || !bookUrl) {
+      logger.warn(TAG, `🔗 小说直达参数不完整: sourceId=${sourceId}, bookUrl=${bookUrl}`);
+      return false;
+    }
+
+    logger.info(TAG, `🔗 小说内容直达: ${sourceName} (${sourceId}), bookUrl=${bookUrl}`);
+
+    const pageType: DetailPageType = PageSettingsHelper.getNovelDetailPageType();
+    if (pageType === DetailPageType.UNIFIED) {
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.NOVEL,
+        contentId: bookUrl,
+        sourceId: sourceId,
+        sourceName: sourceName,
+        cachedAuthor: ''
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+      logger.info(TAG, `🔗 小说直达 → 统一详情页`);
+      return true;
+    } else {
+      const params: NovelDetailPageParams = {
+        sourceId: sourceId,
+        bookUrl: bookUrl,
+        sourceName: sourceName
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+      logger.info(TAG, `🔗 小说直达 → 小说详情页`);
+      return true;
     }
   }
 
@@ -2105,6 +2367,57 @@ struct MainMenuPage {
       logger.warn(TAG, '等待图源列表加载超时');
     } else {
       logger.info(TAG, `图源列表已加载，共 ${this.sourceList.length} 个图源`);
+    }
+  }
+
+  private async waitForNovelSourcesReady(): Promise<void> {
+    const maxWaitTime: number = 5000;
+    const checkInterval: number = 100;
+    let waitedTime: number = 0;
+    let sourceCount: number = this.getNovelDeepLinkSourceCount();
+
+    while (sourceCount === 0 && waitedTime < maxWaitTime) {
+      await new Promise<void>((resolve: () => void) => setTimeout(resolve, checkInterval));
+      waitedTime += checkInterval;
+      sourceCount = this.getNovelDeepLinkSourceCount();
+    }
+
+    if (sourceCount === 0) {
+      logger.warn(TAG, '等待小说源列表加载超时');
+    } else {
+      logger.info(TAG, `小说源列表已就绪，共 ${sourceCount} 个书源`);
+    }
+  }
+
+  private getNovelDeepLinkSourceCount(): number {
+    const novelSourceManager: NovelSourceManager = getNovelSourceManager();
+    return novelSourceManager.getAllSources().length;
+  }
+
+  private scheduleDeepLinkRetry(route: string): void {
+    const hasDeepLink: boolean = AppStorage.get<boolean>('hasDeepLink') || false;
+    if (!hasDeepLink) {
+      return;
+    }
+
+    if (this.deepLinkRetryCount >= this.maxDeepLinkRetryCount) {
+      logger.warn(TAG, `🔗 Deep Link 重试次数已达上限，保留待处理状态: route=${route}`);
+      this.deepLinkDialogIsNavigating = false;
+      return;
+    }
+
+    this.deepLinkRetryCount++;
+    this.clearDeepLinkRetryTimer();
+    this.deepLinkRetryTimer = setTimeout((): void => {
+      logger.info(TAG, `🔗 Deep Link 延迟重试: route=${route}, attempt=${this.deepLinkRetryCount}`);
+      void this.handleDeepLinkIfPresent();
+    }, 300);
+  }
+
+  private clearDeepLinkRetryTimer(): void {
+    if (this.deepLinkRetryTimer > 0) {
+      clearTimeout(this.deepLinkRetryTimer);
+      this.deepLinkRetryTimer = -1;
     }
   }
 
@@ -3408,6 +3721,10 @@ struct MainMenuPage {
       this.incrementalUpdateSourceList(newSourceList);
       this.applySourceFilters();
       logger.debug(TAG, `静默刷新图源完成: ${this.sourceList.length} 个图源`);
+      if (AppStorage.get<boolean>('hasDeepLink')) {
+        logger.info(TAG, '🔗 图源列表刷新完成，继续处理待跳转 Deep Link');
+        void this.handleDeepLinkIfPresent();
+      }
     } catch (error) {
       logger.warn(TAG, `静默刷新图源列表失败: ${String(error)}`);
     }
@@ -3794,6 +4111,49 @@ struct MainMenuPage {
       logger.info(TAG, '图源仓库弹窗已打开');
     } catch (error) {
       logger.error(TAG, '打开图源仓库弹窗失败', String(error));
+      this.showToast('打开弹窗失败，请重试');
+    }
+  }
+
+  /**
+   * 打开深度链接跳转对话框
+   */
+  /**
+   * 打开预填充URI的深度链接对话框（外部链接拉起APP时调用）
+   */
+  private openDeepLinkDialogWithUri(uri: string): void {
+    this.openDeepLinkDialog();
+    if (uri) {
+      // 预填充并触发解析
+      this.deepLinkDialogInput = uri;
+      this.handleDeepLinkDialogInputChange(uri);
+    }
+  }
+
+  private openDeepLinkDialog(): void {
+    try {
+      this.deepLinkDialogInput = '';
+      this.deepLinkDialogParseResult = '';
+      this.deepLinkDialogIsValid = false;
+      this.deepLinkDialogIsNavigating = false;
+      this.deepLinkDialogSourceMissing = false;
+      this.deepLinkDialogSourceName = '';
+      this.deepLinkDialogSourceIsNovel = false;
+
+      this.deepLinkDialogController = new CustomDialogController({
+        builder: () => {
+          this.buildDeepLinkDialog();
+        },
+        alignment: DialogAlignment.Center,
+        autoCancel: true,
+        cornerRadius: this.getSettingsAnalyticsCardRadius(),
+        customStyle: true
+      });
+
+      this.deepLinkDialogController.open();
+      logger.info(TAG, '深度链接跳转弹窗已打开');
+    } catch (error) {
+      logger.error(TAG, '打开深度链接弹窗失败', String(error));
       this.showToast('打开弹窗失败，请重试');
     }
   }
@@ -6423,6 +6783,23 @@ struct MainMenuPage {
   }
 
   /**
+   * @Watch回调：响应深度链接触发器
+   * 有效外部链接直接处理导航；无具体路由时弹出预填充对话框兜底。
+   */
+  private onDeepLinkTriggerChanged(): void {
+    const showDialog: boolean = AppStorage.get<boolean>('deepLinkShowDialog') || false;
+    if (showDialog) {
+      AppStorage.setOrCreate('deepLinkShowDialog', false);
+      const uri: string = AppStorage.get<string>('deepLinkDialogUri') || '';
+      logger.info(TAG, `🔗 收到外部链接，弹出对话框: ${uri}`);
+      this.openDeepLinkDialogWithUri(uri);
+    } else {
+      logger.info(TAG, `🔗 收到Deep Link跳转通知`);
+      void this.handleDeepLinkIfPresent();
+    }
+  }
+
+  /**
    * 检查并处理待导入的文件
    */
   private checkPendingFileImport(): void {
@@ -7524,6 +7901,11 @@ struct MainMenuPage {
     this.stopNavStackReturnWatch();
     logger.lifecycle(TAG, '应用主页面即将销毁');
     this.bookSourcePickerCloseSignal++;
+    this.clearDeepLinkRetryTimer();
+    if (this.deepLinkSourceCheckTimer >= 0) {
+      clearTimeout(this.deepLinkSourceCheckTimer);
+      this.deepLinkSourceCheckTimer = -1;
+    }
 
     if (this.sideTabCenterTimer >= 0) {
       clearTimeout(this.sideTabCenterTimer);
@@ -7806,7 +8188,7 @@ struct MainMenuPage {
 
     // 检查是否有待处理的文件打开请求（来自onNewWant）
     this.checkPendingFileImport();
-    
+
     // 检查是否有卡片跳转请求（来自onNewWant或onCreate）
     void this.handleWidgetNavigationIfPresent(this.startupRoutePending);
 
@@ -10969,30 +11351,67 @@ struct MainMenuPage {
    */
   @Builder
   buildFloatingSearchButton() {
-    Button() {
-      SymbolGlyph($r('sys.symbol.magnifyingglass'))
-        .fontSize(30)
-        .fontColor([this.getSettingsAnalyticsCardIconColor()])
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
+        .linearGradient(this.getFloatingSearchButtonGlassGradient())
+
+      Column()
+        .width(34)
+        .height(13)
+        .borderRadius(999)
+        .backgroundColor(this.getFloatingSearchButtonHighlightColor())
+        .position({ x: 7, y: 5 })
+
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor(this.getFloatingSearchButtonTopEdgeColor())
+
+      Column()
+        .width(30)
+        .height(1)
+        .backgroundColor(this.getFloatingSearchButtonBottomEdgeColor())
+        .position({ x: 9, y: 42 })
+
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(27)
+          .fontColor([this.getFloatingSearchButtonIconColor()])
+          .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+      }
+      .width('100%')
+      .height('100%')
     }
-    .type(ButtonType.Circle)
     .width(this.FLOAT_SEARCH_BUTTON_SIZE)
     .height(this.FLOAT_SEARCH_BUTTON_SIZE)
-    .padding(0)
-    .backgroundColor(this.getSettingsAnalyticsCardBackground())
-    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .backgroundColor(this.getFloatingSearchButtonBackground())
+    .backgroundBlurStyle(this.getBottomBarContainerBlurStyle(), this.getBottomBarContainerBlurOptions())
+    .backgroundEffect(this.getBottomBarContainerBackgroundEffect())
     .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
     .clip(true)
     .border({
-      width: this.getSettingsAnalyticsCardBorderWidth(),
-      color: this.getSettingsAnalyticsCardBorderColor()
+      width: 1,
+      color: this.getFloatingSearchButtonBorderColor()
     })
     .shadow({
-      radius: this.getSettingsAnalyticsCardRadius() + 4,
-      color: this.getSettingsAnalyticsCardShadowColor(),
+      radius: this.getFloatingSearchButtonShadowRadius(),
+      color: this.getFloatingSearchButtonShadowColor(),
       offsetX: 0,
-      offsetY: 8
+      offsetY: 5
     })
+    .stateStyles({
+      pressed: {
+        .scale({ x: 0.94, y: 0.94 })
+        .opacity(0.86)
+      }
+    })
+    .animation({ duration: 160, curve: Curve.EaseOut })
+    .hitTestBehavior(HitTestMode.Default)
+    .accessibilityText('搜索')
+    .accessibilityDescription('打开全局搜索页面')
     .onClick(() => {
       try {
         this.pathStack.pushPath({ name: 'GlobalSearchPage' });
@@ -24622,7 +25041,7 @@ struct MainMenuPage {
   @Builder
   buildSourceRepoDialog() {
     Column({ space: 20 }) {
-      Text('图源导入')
+      Text('导入')
         .fontSize(20)
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
@@ -24852,6 +25271,266 @@ struct MainMenuPage {
       offsetX: 0,
       offsetY: 8
     })
+  }
+
+  /**
+   * 构建深度链接跳转对话框
+   * 样式与图源导入对话框完全一致
+   */
+  @Builder
+  buildDeepLinkDialog() {
+    Column({ space: 20 }) {
+      Text('链接跳转')
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      Text('输入链接，快速跳转到指定内容')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+
+      TextInput({ placeholder: 'manxia:// 或 https://manxia.top/ 链接', text: this.deepLinkDialogInput })
+        .width('100%')
+        .onChange((value: string) => {
+          this.handleDeepLinkDialogInputChange(value);
+        })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .borderRadius(8)
+
+      if (this.deepLinkDialogInput.length > 0) {
+        Column({ space: 4 }) {
+          Row({ space: 8 }) {
+            Text(this.deepLinkDialogIsValid ? '✓' : '✗')
+              .fontSize(14)
+              .fontColor(this.deepLinkDialogIsValid ? '#98FB98' : '#FF6B6B')
+
+            Text(this.deepLinkDialogIsValid ? '链接格式正确' : '链接格式错误')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.deepLinkDialogIsValid ?
+                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) :
+                '#FF6B6B')
+          }
+          .width('100%')
+
+          if (this.deepLinkDialogParseResult.length > 0) {
+            Text(this.deepLinkDialogParseResult)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .width('100%')
+          }
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(this.deepLinkDialogIsValid ?
+          ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme) :
+          'rgba(255, 107, 107, 0.08)')
+        .borderRadius(8)
+      }
+
+      // 图源/书源缺失提示
+      if (this.deepLinkDialogSourceMissing && this.deepLinkDialogIsValid) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+            .fontSize(16)
+            .fontColor(['#FF9800'])
+
+          Column({ space: 2 }) {
+            Text(this.deepLinkDialogSourceIsNovel ? '小说书源未导入' : '图源未导入')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor('#FF9800')
+
+            Text(`"${this.deepLinkDialogSourceName}" 不存在，请先在${this.deepLinkDialogSourceIsNovel ? '书源管理' : '图源管理'}中导入`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor('rgba(255, 152, 0, 0.08)')
+        .borderRadius(8)
+        .border({ width: 1, color: 'rgba(255, 152, 0, 0.2)' })
+      }
+
+      Column({ space: 4 }) {
+        Text('支持的链接格式:')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .width('100%')
+
+        Text('manxia://detail/{源}/{ID}  或  https://manxia.top/d/{源}/{ID}')
+          .fontSize(11)
+          .fontFamily('monospace')
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .width('100%')
+      }
+      .width('100%')
+
+      Row({ space: 12 }) {
+        Button('取消')
+          .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.deepLinkDialogController?.close();
+          })
+
+        Button(this.deepLinkDialogSourceMissing ? '请先导入源' : '跳转')
+          .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(this.deepLinkDialogSourceMissing ?
+            ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .fontColor(this.deepLinkDialogSourceMissing ?
+            ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
+            Color.White)
+          .enabled(this.deepLinkDialogIsValid && !this.deepLinkDialogIsNavigating && !this.deepLinkDialogSourceMissing)
+          .opacity(this.deepLinkDialogIsValid && !this.deepLinkDialogIsNavigating && !this.deepLinkDialogSourceMissing ? 1.0 : 0.5)
+          .onClick(() => {
+            void this.handleDeepLinkDialogNavigate();
+          })
+      }
+      .width('100%')
+    }
+    .width('90%')
+    .padding(24)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
+    })
+  }
+
+  /**
+   * 深度链接对话框输入变更处理
+   */
+  private deepLinkSourceCheckTimer: number = -1;
+
+  private handleDeepLinkDialogInputChange(value: string): void {
+    this.deepLinkDialogInput = value.trim();
+    this.deepLinkDialogSourceMissing = false;
+    this.deepLinkDialogSourceName = '';
+    this.deepLinkDialogSourceIsNovel = false;
+
+    if (this.deepLinkDialogInput.length === 0) {
+      this.deepLinkDialogParseResult = '';
+      this.deepLinkDialogIsValid = false;
+      return;
+    }
+
+    if (!this.deepLinkRouter.isManxiaUri(this.deepLinkDialogInput)) {
+      this.deepLinkDialogParseResult = '请输入 manxia:// 或 https://manxia.top/ 链接';
+      this.deepLinkDialogIsValid = false;
+      return;
+    }
+
+    const result: DeepLinkResult | null = this.deepLinkRouter.parse(this.deepLinkDialogInput);
+    if (result) {
+      this.deepLinkDialogParseResult = this.deepLinkRouter.formatResult(result);
+      this.deepLinkDialogIsValid = true;
+      // 异步检查图源/书源是否存在（防抖 300ms）
+      this.debounceCheckSourceExists(result);
+    } else {
+      this.deepLinkDialogParseResult = '无法解析此链接，请检查格式';
+      this.deepLinkDialogIsValid = false;
+    }
+  }
+
+  private debounceCheckSourceExists(result: DeepLinkResult): void {
+    if (this.deepLinkSourceCheckTimer > 0) {
+      clearTimeout(this.deepLinkSourceCheckTimer);
+    }
+    this.deepLinkSourceCheckTimer = setTimeout((): void => {
+      void this.checkSourceExists(result);
+    }, 300);
+  }
+
+  private async checkSourceExists(result: DeepLinkResult): Promise<void> {
+    try {
+      const isNovelRoute = result.route === 'novelSearch' || result.route === 'novelSource' || result.route === 'novelDetail';
+      let sourceKey: string = '';
+
+      if (result.route === 'search' || result.route === 'source' || result.route === 'detail') {
+        sourceKey = (result as DeepLinkSearchResult).sourceKey || (result as DeepLinkSourceResult).sourceKey || '';
+      } else if (isNovelRoute) {
+        if (result.route === 'novelDetail') {
+          sourceKey = (result as DeepLinkNovelDetailResult).sourceKey;
+        } else if (result.route === 'novelSearch') {
+          sourceKey = (result as DeepLinkNovelSearchResult).sourceKey;
+        } else if (result.route === 'novelSource') {
+          sourceKey = (result as DeepLinkNovelSourceResult).sourceKey;
+        }
+      }
+
+      if (!sourceKey) {
+        return;
+      }
+
+      if (isNovelRoute) {
+        const novelSource: NovelSourceInfo | null = await this.deepLinkRouter.resolveNovelSource(sourceKey);
+        if (!novelSource) {
+          this.deepLinkDialogSourceMissing = true;
+          this.deepLinkDialogSourceName = sourceKey;
+          this.deepLinkDialogSourceIsNovel = true;
+        } else {
+          this.deepLinkDialogSourceMissing = false;
+        }
+      } else {
+        const mangaSource: SourceInfo | null = await this.deepLinkRouter.resolveSource(sourceKey);
+        if (!mangaSource) {
+          this.deepLinkDialogSourceMissing = true;
+          this.deepLinkDialogSourceName = sourceKey;
+          this.deepLinkDialogSourceIsNovel = false;
+        } else {
+          this.deepLinkDialogSourceMissing = false;
+        }
+      }
+    } catch (err) {
+      logger.warn(TAG, `检查图源存在性失败: ${String(err)}`);
+    }
+  }
+
+  /**
+   * 深度链接对话框跳转处理
+   */
+  private async handleDeepLinkDialogNavigate(): Promise<void> {
+    if (!this.deepLinkDialogIsValid || !this.deepLinkDialogInput) {
+      this.showToast('请输入有效的链接');
+      return;
+    }
+
+    this.deepLinkDialogIsNavigating = true;
+    const success: boolean = await this.deepLinkRouter.navigate(this.deepLinkDialogInput);
+
+    if (success) {
+      this.deepLinkDialogController?.close();
+      // navigate() 已设置 deepLinkTrigger，@Watch 会自动调用 handleDeepLinkIfPresent
+    } else {
+      this.showToast('跳转失败，请检查链接或图源是否存在');
+      this.deepLinkDialogIsNavigating = false;
+    }
   }
 
   /**
@@ -25096,7 +25775,7 @@ struct MainMenuPage {
         // 图源管理按钮（带升级图标）
         Row({ space: 6 }) {
           // 图源管理入口按钮
-          Button('图源管理')
+          Button('管理')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -25140,6 +25819,29 @@ struct MainMenuPage {
             .clip(true)
             .onClick(() => {
               this.openSourceRepoDialog();
+            })
+
+          Button('链接跳转')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .backgroundColor(this.getSettingsAnalyticsCardBackground())
+            .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+            .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+            .border({
+              width: this.getSettingsAnalyticsCardBorderWidth(),
+              color: this.getSettingsAnalyticsCardBorderColor()
+            })
+            .borderRadius(16)
+            .shadow({
+              radius: this.getSettingsAnalyticsCardRadius(),
+              color: this.getSettingsAnalyticsCardShadowColor(),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .clip(true)
+            .onClick(() => {
+              this.openDeepLinkDialog();
             })
           
           // 有更新时显示升级图标
@@ -26520,6 +27222,84 @@ struct MainMenuPage {
 
   private getSettingsAnalyticsCardIconColor(): ResourceColor {
     return SettingsPageSurfaceManager.getFeaturedCardStyle(this.themeState.currentTheme).row.iconColor;
+  }
+
+  private getFloatingSearchButtonBackground(): ResourceColor {
+    if (!this.userThemeBlurEnabled) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(16, 22, 34, 0.54)'
+        : 'rgba(245, 249, 255, 0.66)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(8, 14, 24, 0.08)'
+      : 'rgba(255, 255, 255, 0.12)';
+  }
+
+  private getFloatingSearchButtonIconColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK ? '#EEF7FF' : '#1F2937';
+  }
+
+  private getFloatingSearchButtonBorderColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.20)'
+      : 'rgba(255, 255, 255, 0.52)';
+  }
+
+  private getFloatingSearchButtonTopEdgeColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.30)'
+      : 'rgba(255, 255, 255, 0.78)';
+  }
+
+  private getFloatingSearchButtonBottomEdgeColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.10)'
+      : 'rgba(120, 140, 170, 0.14)';
+  }
+
+  private getFloatingSearchButtonHighlightColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.18)'
+      : 'rgba(255, 255, 255, 0.42)';
+  }
+
+  private getFloatingSearchButtonShadowColor(): string {
+    if (!this.userThemeShadowEnabled) {
+      return 'rgba(0, 0, 0, 0)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(0, 0, 0, 0.16)'
+      : 'rgba(84, 99, 126, 0.08)';
+  }
+
+  private getFloatingSearchButtonShadowRadius(): number {
+    if (!this.userThemeShadowEnabled) {
+      return 0;
+    }
+    return this.themeState.currentTheme === ThemeType.DARK ? 18 : 16;
+  }
+
+  private getFloatingSearchButtonGlassGradient(): LinearGradient {
+    if (this.themeState.currentTheme === ThemeType.DARK) {
+      return {
+        angle: 180,
+        colors: [
+          ['rgba(255, 255, 255, 0.11)', 0],
+          ['rgba(255, 255, 255, 0.04)', 0.32],
+          ['rgba(12, 18, 28, 0.02)', 0.72],
+          ['rgba(255, 255, 255, 0.04)', 1]
+        ]
+      };
+    }
+    return {
+      angle: 180,
+      colors: [
+        ['rgba(255, 255, 255, 0.32)', 0],
+        ['rgba(255, 255, 255, 0.12)', 0.30],
+        ['rgba(176, 208, 244, 0.04)', 0.72],
+        ['rgba(255, 255, 255, 0.12)', 1]
+      ]
+    };
   }
 
   private getSettingsAnalyticsCardTitleColor(): ResourceColor {
@@ -28391,7 +29171,6 @@ struct MainMenuPage {
             themeType: this.themeState.currentTheme,
             hasSourceUpdate: this.hasSourceUpdate,
             isPrivacyMode: this.isPrivacyMode,
-            cornerRadius: this.getGlassRadius(),
             onChangeCallback: (actualIndex: number): void => {
               this.changeMainContentToActualIndex(actualIndex);
             },

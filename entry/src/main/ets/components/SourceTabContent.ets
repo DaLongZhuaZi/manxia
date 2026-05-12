@@ -427,6 +427,29 @@ export struct SourceTabContent {
           // 导入逻辑由父组件处理
         })
 
+      Button('链接跳转')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(16)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
+        .onClick(() => {
+          // 链接跳转逻辑由父组件处理
+        })
+
       // 有更新时显示升级图标
       if (this.hasSourceUpdate) {
         Image($r('app.media.ic_upgrade'))

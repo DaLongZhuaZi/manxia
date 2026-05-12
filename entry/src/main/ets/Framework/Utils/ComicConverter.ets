@@ -565,27 +565,30 @@ export class ComicConverter {
     const isNSFWBoolean = onlineComic.isNSFW === 1;
     logger.debug(TAG, `[NSFW调试] convertOnlineComicInfoToMangaAsync: title="${onlineComic.title}", OnlineComicInfo.isNSFW=${onlineComic.isNSFW}, Manga.isNSFW=${isNSFWBoolean}`);
 
-    // [修复] 解析sourceName：如果数据库记录为空，则从comic_source表按sourceId查询并回填
+    // [修复] 解析sourceName和sourcePkg：如果数据库记录为空，则从comic_source表按sourceId查询并回填
     let resolvedSourceName: string = onlineComic.sourceName || '';
-    if (!resolvedSourceName) {
-      try {
-        const sourceIdNum = Number(onlineComic.sourceId);
-        if (!isNaN(sourceIdNum)) {
-          const dmResolve: DataManager = DataManager.getInstance();
-          const sourceRecord: ComicSourceDatabaseRecord | null = await dmResolve.getComicSourceById(sourceIdNum);
-          if (sourceRecord && sourceRecord.name) {
+    let resolvedSourcePkg: string = '';
+    try {
+      const sourceIdNum = Number(onlineComic.sourceId);
+      if (!isNaN(sourceIdNum)) {
+        const dmResolve: DataManager = DataManager.getInstance();
+        const sourceRecord: ComicSourceDatabaseRecord | null = await dmResolve.getComicSourceById(sourceIdNum);
+        if (sourceRecord) {
+          if (!resolvedSourceName && sourceRecord.name) {
             resolvedSourceName = sourceRecord.name;
             logger.info(TAG, `[修复] 从comic_source表获取sourceName: sourceId=${sourceIdNum}, name="${resolvedSourceName}"`);
-            // 回填到online_comic_info表，后续不再需要查询
             await dmResolve.updateOnlineComicSourceNameById(onlineComic.id, resolvedSourceName);
           }
+          if (sourceRecord.pkg) {
+            resolvedSourcePkg = sourceRecord.pkg;
+          }
         }
-      } catch (e) {
-        logger.warn(TAG, `解析sourceName失败: ${String(e)}`);
       }
-      if (!resolvedSourceName) {
-        resolvedSourceName = 'WebView Source';
-      }
+    } catch (e) {
+      logger.warn(TAG, `解析sourceName/sourcePkg失败: ${String(e)}`);
+    }
+    if (!resolvedSourceName) {
+      resolvedSourceName = 'WebView Source';
     }
     
     return {
@@ -607,6 +610,7 @@ export class ComicConverter {
       sourceInfo: {
         sourceId: onlineComic.sourceId,
         sourceName: resolvedSourceName,
+        sourcePkg: resolvedSourcePkg || undefined,
         sourceUrl: '',
         sourceLanguage: 'zh-CN',
         requiresLogin: false
