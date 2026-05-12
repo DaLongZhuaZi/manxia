@@ -7,7 +7,7 @@ import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONF
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { UserThemeConfigManager, TransparencyConfig, EffectsConfig } from '../Framework/Theme/UserThemeConfig';
+import { UserThemeConfigManager, TransparencyConfig, EffectsConfig, HdsTabEffectsConfig } from '../Framework/Theme/UserThemeConfig';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
@@ -20,7 +20,7 @@ import effectKit from '@ohos.effectKit';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint, DeviceType as AdaptDeviceType } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { hdsMaterial, HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
@@ -29,6 +29,12 @@ import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from '.
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'ThemeSettingsPage';
+const HDS_TAB_MATERIAL_FOLLOW_GLOBAL: number = -1;
+const DEFAULT_HDS_TAB_OPACITY_RATIO: number = 0.72;
+const DEFAULT_HDS_TAB_MIN_OPACITY: number = 0.56;
+const DEFAULT_HDS_TAB_MAX_OPACITY: number = 0.82;
+const DEFAULT_HDS_TAB_LIGHT_HIGHLIGHT_OPACITY: number = 0.42;
+const DEFAULT_HDS_TAB_DARK_HIGHLIGHT_OPACITY: number = 0.22;
 
 /**
  * 自定义主题数据接口（本地定义，与ThemeManager中的CustomThemeData保持一致）
@@ -261,6 +267,17 @@ export struct ThemeSettingsPage {
   @StorageLink('userTheme_glassmorphismEnabled') glassmorphismEnabled: boolean = true;
   @StorageLink('userTheme_componentCornerRadius') componentCornerRadius: number = 12;
   @StorageLink('userTheme_coverCornerRadius') coverCornerRadius: number = 12;
+
+  // HdsTab 特效设置状态（使用StorageLink实现声明式绑定）
+  @StorageLink('userTheme_hdsTabOpacityRatio') hdsTabOpacityRatio: number = DEFAULT_HDS_TAB_OPACITY_RATIO;
+  @StorageLink('userTheme_hdsTabMinOpacity') hdsTabMinOpacity: number = DEFAULT_HDS_TAB_MIN_OPACITY;
+  @StorageLink('userTheme_hdsTabMaxOpacity') hdsTabMaxOpacity: number = DEFAULT_HDS_TAB_MAX_OPACITY;
+  @StorageLink('userTheme_hdsTabLightHighlightOpacity') hdsTabLightHighlightOpacity: number = DEFAULT_HDS_TAB_LIGHT_HIGHLIGHT_OPACITY;
+  @StorageLink('userTheme_hdsTabDarkHighlightOpacity') hdsTabDarkHighlightOpacity: number = DEFAULT_HDS_TAB_DARK_HIGHLIGHT_OPACITY;
+  @StorageLink('userTheme_hdsTabMaterialLevel') hdsTabMaterialLevel: number = HDS_TAB_MATERIAL_FOLLOW_GLOBAL;
+  @StorageLink('userTheme_hdsTabBlurEnabled') hdsTabBlurEnabled: boolean = true;
+  @StorageLink('userTheme_hdsTabSideMargin') hdsTabSideMargin: number = 8;
+  @StorageLink('userTheme_hdsTabBottomMargin') hdsTabBottomMargin: number = 0;
   
   // 本地状态（用于滑块显示，百分比形式）
   @State navBarTransparency: number = 100;
@@ -271,6 +288,13 @@ export struct ThemeSettingsPage {
   @State effectAnimationSpeed: number = 100;
   @State effectComponentCornerRadius: number = 12;
   @State effectCoverCornerRadius: number = 12;
+  @State hdsTabOpacityRatioPercent: number = 72;
+  @State hdsTabMinOpacityPercent: number = 56;
+  @State hdsTabMaxOpacityPercent: number = 82;
+  @State hdsTabLightHighlightPercent: number = 42;
+  @State hdsTabDarkHighlightPercent: number = 22;
+  @State hdsTabSideMarginValue: number = 8;
+  @State hdsTabBottomMarginValue: number = 0;
 
   // 默认自定义主题常量
   private DEFAULT_THEME_ID: string = 'default_custom_theme';
@@ -1495,6 +1519,13 @@ export struct ThemeSettingsPage {
       this.effectAnimationSpeed = Math.round(profile.effects.animationSpeed * 100);
       this.effectComponentCornerRadius = profile.effects.componentCornerRadius;
       this.effectCoverCornerRadius = profile.effects.coverCornerRadius;
+      this.hdsTabOpacityRatioPercent = Math.round(profile.hdsTabEffects.opacityRatio * 100);
+      this.hdsTabMinOpacityPercent = Math.round(profile.hdsTabEffects.minOpacity * 100);
+      this.hdsTabMaxOpacityPercent = Math.round(profile.hdsTabEffects.maxOpacity * 100);
+      this.hdsTabLightHighlightPercent = Math.round(profile.hdsTabEffects.lightHighlightOpacity * 100);
+      this.hdsTabDarkHighlightPercent = Math.round(profile.hdsTabEffects.darkHighlightOpacity * 100);
+      this.hdsTabSideMarginValue = profile.hdsTabEffects.sideMargin;
+      this.hdsTabBottomMarginValue = profile.hdsTabEffects.bottomMargin;
       
       // StorageLink绑定的值会自动从AppStorage同步，无需手动设置
       logger.info(TAG, '用户主题配置加载完成');
@@ -3370,6 +3401,96 @@ export struct ThemeSettingsPage {
       logger.error(TAG, '更新特效设置失败', error);
     }
   }
+
+  /**
+   * 更新 HdsTab 特效设置
+   */
+  private async updateHdsTabEffect(key: keyof HdsTabEffectsConfig, value: boolean | number): Promise<void> {
+    try {
+      let update: Partial<HdsTabEffectsConfig> = {};
+      if (key === 'opacityRatio') {
+        update = { opacityRatio: value as number };
+      } else if (key === 'minOpacity') {
+        update = { minOpacity: value as number };
+      } else if (key === 'maxOpacity') {
+        update = { maxOpacity: value as number };
+      } else if (key === 'lightHighlightOpacity') {
+        update = { lightHighlightOpacity: value as number };
+      } else if (key === 'darkHighlightOpacity') {
+        update = { darkHighlightOpacity: value as number };
+      } else if (key === 'materialLevel') {
+        update = { materialLevel: value as number };
+      } else if (key === 'blurEnabled') {
+        update = { blurEnabled: value as boolean };
+      } else if (key === 'sideMargin') {
+        update = { sideMargin: value as number };
+      } else if (key === 'bottomMargin') {
+        update = { bottomMargin: value as number };
+      }
+      await this.userThemeConfigManager.setHdsTabEffects(update);
+      logger.debug(TAG, `HdsTab特效更新: ${key} = ${value}`);
+    } catch (error) {
+      logger.error(TAG, '更新HdsTab特效失败', error);
+    }
+  }
+
+  private async updateHdsTabOpacityRange(minPercent: number, maxPercent: number): Promise<void> {
+    try {
+      const safeMinPercent: number = this.clampPercent(minPercent);
+      const safeMaxPercent: number = Math.max(safeMinPercent, this.clampPercent(maxPercent));
+      this.hdsTabMinOpacityPercent = safeMinPercent;
+      this.hdsTabMaxOpacityPercent = safeMaxPercent;
+      this.hdsTabMinOpacity = safeMinPercent / 100;
+      this.hdsTabMaxOpacity = safeMaxPercent / 100;
+      const update: Partial<HdsTabEffectsConfig> = {
+        minOpacity: safeMinPercent / 100,
+        maxOpacity: safeMaxPercent / 100
+      };
+      await this.userThemeConfigManager.setHdsTabEffects(update);
+      logger.debug(TAG, `HdsTab可见度范围更新: min=${safeMinPercent}, max=${safeMaxPercent}`);
+    } catch (error) {
+      logger.error(TAG, '更新HdsTab可见度范围失败', error);
+    }
+  }
+
+  /**
+   * 重置 HdsTab 特效为默认值
+   */
+  private async resetHdsTabEffectsToDefault(): Promise<void> {
+    try {
+      const defaults: HdsTabEffectsConfig = {
+        opacityRatio: DEFAULT_HDS_TAB_OPACITY_RATIO,
+        minOpacity: DEFAULT_HDS_TAB_MIN_OPACITY,
+        maxOpacity: DEFAULT_HDS_TAB_MAX_OPACITY,
+        lightHighlightOpacity: DEFAULT_HDS_TAB_LIGHT_HIGHLIGHT_OPACITY,
+        darkHighlightOpacity: DEFAULT_HDS_TAB_DARK_HIGHLIGHT_OPACITY,
+        materialLevel: HDS_TAB_MATERIAL_FOLLOW_GLOBAL,
+        blurEnabled: true,
+        sideMargin: 8,
+        bottomMargin: 0
+      };
+      await this.userThemeConfigManager.setHdsTabEffects(defaults);
+      this.hdsTabOpacityRatioPercent = Math.round(defaults.opacityRatio * 100);
+      this.hdsTabMinOpacityPercent = Math.round(defaults.minOpacity * 100);
+      this.hdsTabMaxOpacityPercent = Math.round(defaults.maxOpacity * 100);
+      this.hdsTabLightHighlightPercent = Math.round(defaults.lightHighlightOpacity * 100);
+      this.hdsTabDarkHighlightPercent = Math.round(defaults.darkHighlightOpacity * 100);
+      this.hdsTabSideMarginValue = defaults.sideMargin;
+      this.hdsTabBottomMarginValue = defaults.bottomMargin;
+      this.hdsTabOpacityRatio = defaults.opacityRatio;
+      this.hdsTabMinOpacity = defaults.minOpacity;
+      this.hdsTabMaxOpacity = defaults.maxOpacity;
+      this.hdsTabLightHighlightOpacity = defaults.lightHighlightOpacity;
+      this.hdsTabDarkHighlightOpacity = defaults.darkHighlightOpacity;
+      this.hdsTabMaterialLevel = defaults.materialLevel;
+      this.hdsTabBlurEnabled = defaults.blurEnabled;
+      this.hdsTabSideMargin = defaults.sideMargin;
+      this.hdsTabBottomMargin = defaults.bottomMargin;
+      logger.info(TAG, '已重置HdsTab特效设置为默认值');
+    } catch (error) {
+      logger.error(TAG, '重置HdsTab特效失败', error);
+    }
+  }
   
   /**
    * 重置透明度和特效为默认值
@@ -3596,6 +3717,450 @@ export struct ThemeSettingsPage {
     })
     .borderRadius(999)
     .clip(true)
+  }
+
+  private clampPercent(value: number): number {
+    return Math.max(0, Math.min(100, value));
+  }
+
+  private getHdsTabPreviewOpacity(): number {
+    const ratio: number = Math.max(0, Math.min(1, this.hdsTabOpacityRatio));
+    const minOpacity: number = Math.max(0, Math.min(1, this.hdsTabMinOpacity));
+    const maxOpacity: number = Math.max(minOpacity, Math.min(1, this.hdsTabMaxOpacity));
+    return Math.min(maxOpacity, Math.max(minOpacity, ratio));
+  }
+
+  private getHdsTabPreviewHighlightOpacity(): number {
+    const rawOpacity: number = this.themeState.currentTheme === ThemeType.DARK
+      ? this.hdsTabDarkHighlightOpacity
+      : this.hdsTabLightHighlightOpacity;
+    return Math.max(0, Math.min(1, rawOpacity));
+  }
+
+  private getHdsTabPreviewHighlightColor(): ResourceColor {
+    return `rgba(255, 255, 255, ${this.getHdsTabPreviewHighlightOpacity()})`;
+  }
+
+  private getHdsTabPreviewBlurStyle(): BlurStyle {
+    if (!this.hdsTabBlurEnabled) {
+      return BlurStyle.NONE;
+    }
+    const style: BlurStyle | undefined = SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme);
+    if (style === undefined) {
+      return BlurStyle.NONE;
+    }
+    return style;
+  }
+
+  private isHdsTabMaterialSelected(level: number): boolean {
+    return this.hdsTabMaterialLevel === level;
+  }
+
+  private getHdsTabMaterialLabel(): string {
+    if (this.hdsTabMaterialLevel === HDS_TAB_MATERIAL_FOLLOW_GLOBAL) {
+      return '跟随全局';
+    }
+    if (this.hdsTabMaterialLevel === hdsMaterial.MaterialLevel.EXQUISITE) {
+      return '精致';
+    }
+    if (this.hdsTabMaterialLevel === hdsMaterial.MaterialLevel.GENTLE) {
+      return '柔和';
+    }
+    if (this.hdsTabMaterialLevel === hdsMaterial.MaterialLevel.SMOOTH) {
+      return '平滑';
+    }
+    return '精致';
+  }
+
+  @Builder
+  private buildHdsTabMaterialButton(label: string, level: number) {
+    Button(label)
+      .height(34)
+      .fontSize(12)
+      .fontFamily(this.appFontFamily)
+      .fontColor(this.isHdsTabMaterialSelected(level)
+        ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      .backgroundColor(this.isHdsTabMaterialSelected(level)
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(17)
+      .onClick(() => {
+        this.hdsTabMaterialLevel = level;
+        this.updateHdsTabEffect('materialLevel', level);
+      })
+      .margin({ right: 8, bottom: 8 })
+  }
+
+  @Builder
+  private buildHdsTabOpacityRatioSlider() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('透明度倍率')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.hdsTabOpacityRatioPercent}%`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({ value: $$this.hdsTabOpacityRatioPercent, min: 0, max: 100, step: 1 })
+        .width('100%')
+        .selectedColor($r('app.color.accent_primary'))
+        .trackColor($r('app.color.divider_primary'))
+        .onChange((sliderValue: number) => {
+          const normalizedValue: number = this.clampPercent(Math.round(sliderValue));
+          this.hdsTabOpacityRatioPercent = normalizedValue;
+          this.hdsTabOpacityRatio = normalizedValue / 100;
+          this.updateHdsTabEffect('opacityRatio', normalizedValue / 100);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildHdsTabMinOpacitySlider() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('最小可见度')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.hdsTabMinOpacityPercent}%`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({ value: $$this.hdsTabMinOpacityPercent, min: 0, max: 100, step: 1 })
+        .width('100%')
+        .selectedColor($r('app.color.accent_primary'))
+        .trackColor($r('app.color.divider_primary'))
+        .onChange((sliderValue: number) => {
+          const normalizedValue: number = this.clampPercent(Math.round(sliderValue));
+          this.updateHdsTabOpacityRange(normalizedValue, this.hdsTabMaxOpacityPercent);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildHdsTabMaxOpacitySlider() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('最大可见度')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.hdsTabMaxOpacityPercent}%`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({ value: $$this.hdsTabMaxOpacityPercent, min: 0, max: 100, step: 1 })
+        .width('100%')
+        .selectedColor($r('app.color.accent_primary'))
+        .trackColor($r('app.color.divider_primary'))
+        .onChange((sliderValue: number) => {
+          const normalizedValue: number = this.clampPercent(Math.round(sliderValue));
+          this.updateHdsTabOpacityRange(this.hdsTabMinOpacityPercent, normalizedValue);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildHdsTabLightHighlightSlider() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('浅色高光')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.hdsTabLightHighlightPercent}%`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({ value: $$this.hdsTabLightHighlightPercent, min: 0, max: 100, step: 1 })
+        .width('100%')
+        .selectedColor($r('app.color.accent_primary'))
+        .trackColor($r('app.color.divider_primary'))
+        .onChange((sliderValue: number) => {
+          const normalizedValue: number = this.clampPercent(Math.round(sliderValue));
+          this.hdsTabLightHighlightPercent = normalizedValue;
+          this.hdsTabLightHighlightOpacity = normalizedValue / 100;
+          this.updateHdsTabEffect('lightHighlightOpacity', normalizedValue / 100);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildHdsTabDarkHighlightSlider() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('深色高光')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.hdsTabDarkHighlightPercent}%`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({ value: $$this.hdsTabDarkHighlightPercent, min: 0, max: 100, step: 1 })
+        .width('100%')
+        .selectedColor($r('app.color.accent_primary'))
+        .trackColor($r('app.color.divider_primary'))
+        .onChange((sliderValue: number) => {
+          const normalizedValue: number = this.clampPercent(Math.round(sliderValue));
+          this.hdsTabDarkHighlightPercent = normalizedValue;
+          this.hdsTabDarkHighlightOpacity = normalizedValue / 100;
+          this.updateHdsTabEffect('darkHighlightOpacity', normalizedValue / 100);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildHdsTabSideMarginSlider() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('侧边留白')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.hdsTabSideMarginValue}vp`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({ value: $$this.hdsTabSideMarginValue, min: 0, max: 24, step: 1 })
+        .width('100%')
+        .selectedColor($r('app.color.accent_primary'))
+        .trackColor($r('app.color.divider_primary'))
+        .onChange((sliderValue: number) => {
+          const normalizedValue: number = Math.round(sliderValue);
+          this.hdsTabSideMarginValue = normalizedValue;
+          this.hdsTabSideMargin = normalizedValue;
+          this.updateHdsTabEffect('sideMargin', normalizedValue);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildHdsTabBottomMarginSlider() {
+    Column({ space: 4 }) {
+      Row() {
+        Text('底部偏移')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Text(`${this.hdsTabBottomMarginValue}vp`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      Slider({ value: $$this.hdsTabBottomMarginValue, min: -8, max: 16, step: 1 })
+        .width('100%')
+        .selectedColor($r('app.color.accent_primary'))
+        .trackColor($r('app.color.divider_primary'))
+        .onChange((sliderValue: number) => {
+          const normalizedValue: number = Math.round(sliderValue);
+          this.hdsTabBottomMarginValue = normalizedValue;
+          this.hdsTabBottomMargin = normalizedValue;
+          this.updateHdsTabEffect('bottomMargin', normalizedValue);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildHdsTabEffectsPanel() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('HdsTab特效')
+          .fontSize(16)
+          .fontFamily(this.appFontFamily)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Text(this.getHdsTabMaterialLabel())
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .id('theme_hds_tab_effects')
+
+      Row({ space: 8 }) {
+        Column() {
+          Text('首页')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.accent_primary'))
+        }
+        .layoutWeight(1)
+        .height(38)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.getHdsTabPreviewHighlightColor())
+        .borderRadius(19)
+
+        Column() {
+          Text('书库')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .height(38)
+        .justifyContent(FlexAlign.Center)
+
+        Column() {
+          Text('设置')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .height(38)
+        .justifyContent(FlexAlign.Center)
+      }
+      .width('100%')
+      .height(52)
+      .padding({ left: 8, right: 8, top: 7, bottom: 7 })
+      .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+      .backgroundBlurStyle(
+        this.getHdsTabPreviewBlurStyle(),
+        SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+      )
+      .borderRadius(26)
+      .opacity(this.getHdsTabPreviewOpacity())
+      .border({
+        width: 1,
+        color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+      })
+
+      this.buildHdsTabOpacityRatioSlider()
+      this.buildHdsTabMinOpacitySlider()
+      this.buildHdsTabMaxOpacitySlider()
+      this.buildHdsTabLightHighlightSlider()
+      this.buildHdsTabDarkHighlightSlider()
+      this.buildHdsTabSideMarginSlider()
+      this.buildHdsTabBottomMarginSlider()
+
+      Row() {
+        Text('HDS模糊策略')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.hdsTabBlurEnabled })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.hdsTabBlurEnabled = isOn;
+            this.updateHdsTabEffect('blurEnabled', isOn);
+          })
+      }
+      .width('100%')
+      .height(48)
+
+      Column({ space: 8 }) {
+        Row() {
+          Text('材质档位')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(this.getHdsTabMaterialLabel())
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          this.buildHdsTabMaterialButton('跟随全局', HDS_TAB_MATERIAL_FOLLOW_GLOBAL)
+          this.buildHdsTabMaterialButton('精致', hdsMaterial.MaterialLevel.EXQUISITE)
+          this.buildHdsTabMaterialButton('柔和', hdsMaterial.MaterialLevel.GENTLE)
+          this.buildHdsTabMaterialButton('平滑', hdsMaterial.MaterialLevel.SMOOTH)
+        }
+        .width('100%')
+      }
+      .width('100%')
+
+      Button('重置 HdsTab 特效')
+        .width('100%')
+        .height(40)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.color_error'))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .onClick(() => {
+          this.resetHdsTabEffectsToDefault();
+        })
+    }
+    .width(this.responsive_isLandscape ? '48%' : '100%')
+    .padding(16)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_hds_tab_effects')
+        ? 2
+        : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_hds_tab_effects')
+        ? SettingsSearchSupport.getHighlightOverlayBorder(
+          this.themeState.currentTheme,
+          this.activeSearchAnchorId,
+          'theme_hds_tab_effects'
+        )
+        : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .scale({
+      x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_hds_tab_effects', this.searchHighlightPulse),
+      y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_hds_tab_effects', this.searchHighlightPulse)
+    })
+    .shadow(
+      SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_hds_tab_effects')
+        ? SettingsSearchSupport.getHighlightOverlayShadow(
+          this.themeState.currentTheme,
+          this.activeSearchAnchorId,
+          'theme_hds_tab_effects',
+          this.searchHighlightPulse
+        )
+        : {
+          radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+          color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+          offsetX: 0,
+          offsetY: 8
+        }
+    )
+    .animation({ duration: 260, curve: Curve.EaseOut })
+    .margin({ bottom: 16 })
   }
 
   build() {
@@ -4322,6 +4887,7 @@ export struct ThemeSettingsPage {
                 )
                 .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
+
               }
 
               // 选择图片按钮（背景）仅创建模式
@@ -5495,6 +6061,8 @@ export struct ThemeSettingsPage {
                 .alignItems(HorizontalAlign.Center)
                 .margin({ bottom: 16 })
               }
+
+              this.buildHdsTabEffectsPanel()
             }
             .enabled(this.settingsTapEnabled)
             .width('100%')

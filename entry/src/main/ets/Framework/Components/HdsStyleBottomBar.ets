@@ -4,10 +4,26 @@
  * HdsTabs 提供浮动胶囊、材质光效、触摸反馈等系统级动效
  */
 
-import { hdsMaterial, HdsTabs, HdsTabsController, HdsTabsFloatingStyle, SystemMaterialParams } from '@kit.UIDesignKit';
+import {
+  BlurStrategy,
+  DividerMode,
+  hdsMaterial,
+  HdsDividerStyle,
+  HdsTabs,
+  HdsTabsBackgroundStyle,
+  HdsTabsController,
+  HdsTabsFloatingStyle,
+  SystemMaterialParams
+} from '@kit.UIDesignKit';
 import { ThemeType } from '../Managers/ThemeManager';
 
 const HDS_BAR_SIDE_GUARD: number = 8;
+const HDS_GLASS_BAR_OPACITY_RATIO: number = 0.72;
+const HDS_GLASS_BAR_MAX_OPACITY: number = 0.82;
+const HDS_GLASS_BAR_MIN_OPACITY: number = 0.56;
+const HDS_GLASS_LIGHT_HIGHLIGHT_OPACITY: number = 0.42;
+const HDS_GLASS_DARK_HIGHLIGHT_OPACITY: number = 0.22;
+const HDS_GLOBAL_MATERIAL_LEVEL: number = -1;
 
 export interface HdsBottomBarTabConfig {
   title: string;
@@ -29,8 +45,16 @@ export struct HdsStyleBottomBar {
   @Prop themeType: ThemeType = ThemeType.LIGHT;
   @Prop hasSourceUpdate: boolean = false;
   @Prop isPrivacyMode: boolean = false;
-  @Prop cornerRadius: number = 20;
   @StorageProp('visual_effects_effective_material_level') effectiveMaterialLevel: number = 10;
+  @StorageProp('userTheme_hdsTabOpacityRatio') hdsTabOpacityRatio: number = HDS_GLASS_BAR_OPACITY_RATIO;
+  @StorageProp('userTheme_hdsTabMinOpacity') hdsTabMinOpacity: number = HDS_GLASS_BAR_MIN_OPACITY;
+  @StorageProp('userTheme_hdsTabMaxOpacity') hdsTabMaxOpacity: number = HDS_GLASS_BAR_MAX_OPACITY;
+  @StorageProp('userTheme_hdsTabLightHighlightOpacity') hdsTabLightHighlightOpacity: number = HDS_GLASS_LIGHT_HIGHLIGHT_OPACITY;
+  @StorageProp('userTheme_hdsTabDarkHighlightOpacity') hdsTabDarkHighlightOpacity: number = HDS_GLASS_DARK_HIGHLIGHT_OPACITY;
+  @StorageProp('userTheme_hdsTabMaterialLevel') hdsTabMaterialLevel: number = HDS_GLOBAL_MATERIAL_LEVEL;
+  @StorageProp('userTheme_hdsTabBlurEnabled') hdsTabBlurEnabled: boolean = true;
+  @StorageProp('userTheme_hdsTabSideMargin') hdsTabSideMargin: number = HDS_BAR_SIDE_GUARD;
+  @StorageProp('userTheme_hdsTabBottomMargin') hdsTabBottomMargin: number = 0;
   onChangeCallback: (actualIndex: number) => void = (): void => {};
   longPressCallback: (tabIndex: number) => void = (): void => {};
   controllerRefCallback: (controller: HdsTabsController) => void = (): void => {};
@@ -101,22 +125,91 @@ export struct HdsStyleBottomBar {
     return $r('sys.symbol.books_vertical_fill');
   }
 
-  private getSafeCornerRadius(): number {
-    return Math.max(0, this.cornerRadius);
+  private getGlassBarOpacity(): number {
+    const baseOpacity: number = Math.max(0, Math.min(1, this.tabBarOpacity));
+    if (baseOpacity <= 0) {
+      return 0;
+    }
+    const ratio: number = Math.max(0, Math.min(1, this.hdsTabOpacityRatio));
+    const minOpacity: number = Math.max(0, Math.min(1, this.hdsTabMinOpacity));
+    const maxOpacity: number = Math.max(minOpacity, Math.min(1, this.hdsTabMaxOpacity));
+    const glassOpacity: number = baseOpacity * ratio;
+    return Math.min(maxOpacity, Math.max(minOpacity, glassOpacity));
+  }
+
+  private getGlassMaterialLevel(): hdsMaterial.MaterialLevel {
+    const configuredLevel: number = this.hdsTabMaterialLevel;
+    const rawLevel: number = configuredLevel === HDS_GLOBAL_MATERIAL_LEVEL
+      ? this.effectiveMaterialLevel
+      : configuredLevel;
+    if (rawLevel === hdsMaterial.MaterialLevel.ADAPTIVE) {
+      return hdsMaterial.MaterialLevel.EXQUISITE;
+    }
+    if (rawLevel === hdsMaterial.MaterialLevel.EXQUISITE ||
+      rawLevel === hdsMaterial.MaterialLevel.GENTLE ||
+      rawLevel === hdsMaterial.MaterialLevel.SMOOTH) {
+      return rawLevel as hdsMaterial.MaterialLevel;
+    }
+    return hdsMaterial.MaterialLevel.EXQUISITE;
+  }
+
+  private getGlassHighlightOpacity(): number {
+    const rawOpacity: number = this.themeType === ThemeType.DARK
+      ? this.hdsTabDarkHighlightOpacity
+      : this.hdsTabLightHighlightOpacity;
+    return Math.max(0, Math.min(1, rawOpacity));
+  }
+
+  private getGlassLightColor(): ResourceColor {
+    return `rgba(255, 255, 255, ${this.getGlassHighlightOpacity()})`;
+  }
+
+  private getBlurStrategy(): BlurStrategy {
+    return this.hdsTabBlurEnabled ? BlurStrategy.ENABLE : BlurStrategy.DISABLE;
+  }
+
+  private getBarSideMargin(): number {
+    return Math.max(0, Math.min(24, this.hdsTabSideMargin));
+  }
+
+  private getBarBottomMargin(): number {
+    return Math.max(-8, Math.min(16, this.hdsTabBottomMargin));
   }
 
   private buildFloatingStyle(): HdsTabsFloatingStyle {
-    const materialLevel: hdsMaterial.MaterialLevel = this.effectiveMaterialLevel as hdsMaterial.MaterialLevel;
+    const materialLevel: hdsMaterial.MaterialLevel = this.getGlassMaterialLevel();
     const materialParams: SystemMaterialParams = {
       materialType: hdsMaterial.MaterialType.IMMERSIVE,
       materialLevel: materialLevel
     };
+    const gradientMask: HdsTabsBackgroundStyle = {
+      maskColor: Color.Transparent,
+      maskHeight: 0
+    };
     const style: HdsTabsFloatingStyle = {
-      barSideMargin: HDS_BAR_SIDE_GUARD,
+      barSideMargin: this.getBarSideMargin(),
+      barBottomMargin: this.getBarBottomMargin(),
+      gradientMask: gradientMask,
       adaptToHandedness: true,
+      lightColor: this.getGlassLightColor(),
       systemMaterialEffect: materialParams,
       thermoCtrl: true,
-      barOpacity: this.tabBarOpacity
+      barOpacity: this.getGlassBarOpacity()
+    };
+    return style;
+  }
+
+  private buildDividerStyle(): HdsDividerStyle {
+    const style: HdsDividerStyle = {
+      mode: DividerMode.NONE
+    };
+    return style;
+  }
+
+  private buildTransparentTabsBackgroundStyle(): HdsTabsBackgroundStyle {
+    const style: HdsTabsBackgroundStyle = {
+      maskColor: Color.Transparent,
+      maskHeight: 0
     };
     return style;
   }
@@ -139,6 +232,11 @@ export struct HdsStyleBottomBar {
       .barPosition(BarPosition.End)
       .barMode(BarMode.Fixed)
       .barOverlap(true)
+      .divider(this.buildDividerStyle())
+      .barBackgroundColor(Color.Transparent)
+      .barBackgroundBlurStyle(BlurStyle.NONE)
+      .barBackgroundStyle(this.buildTransparentTabsBackgroundStyle())
+      .blurStrategy(this.getBlurStrategy())
       .barFloatingStyle(this.buildFloatingStyle())
       .onSelected((index: number): void => {
         this.updateVisualSelectedIndex(index);
@@ -152,8 +250,7 @@ export struct HdsStyleBottomBar {
     }
     .width('100%')
     .height(56)
-    .borderRadius(this.getSafeCornerRadius())
-    .clip(true)
+    .backgroundColor(Color.Transparent)
   }
 
   @Builder

@@ -31,6 +31,15 @@ export class USER_THEME_KEYS {
   static readonly SHADOW_ENABLED: string = 'userTheme_shadowEnabled';
   static readonly ANIMATION_ENABLED: string = 'userTheme_animationEnabled';
   static readonly GLASSMORPHISM_ENABLED: string = 'userTheme_glassmorphismEnabled';
+  static readonly HDS_TAB_OPACITY_RATIO: string = 'userTheme_hdsTabOpacityRatio';
+  static readonly HDS_TAB_MIN_OPACITY: string = 'userTheme_hdsTabMinOpacity';
+  static readonly HDS_TAB_MAX_OPACITY: string = 'userTheme_hdsTabMaxOpacity';
+  static readonly HDS_TAB_LIGHT_HIGHLIGHT_OPACITY: string = 'userTheme_hdsTabLightHighlightOpacity';
+  static readonly HDS_TAB_DARK_HIGHLIGHT_OPACITY: string = 'userTheme_hdsTabDarkHighlightOpacity';
+  static readonly HDS_TAB_MATERIAL_LEVEL: string = 'userTheme_hdsTabMaterialLevel';
+  static readonly HDS_TAB_BLUR_ENABLED: string = 'userTheme_hdsTabBlurEnabled';
+  static readonly HDS_TAB_SIDE_MARGIN: string = 'userTheme_hdsTabSideMargin';
+  static readonly HDS_TAB_BOTTOM_MARGIN: string = 'userTheme_hdsTabBottomMargin';
 }
 
 // 保留旧的key以兼容
@@ -84,6 +93,30 @@ export interface EffectsConfig {
   enableGlassmorphism: boolean;
 }
 
+/**
+ * HdsTab 特效配置 - 主页面 HDS 底栏专用
+ */
+export interface HdsTabEffectsConfig {
+  /** 透明度倍率 (0-1)，叠加主标签栏透明度 */
+  opacityRatio: number;
+  /** 最小可见不透明度 (0-1) */
+  minOpacity: number;
+  /** 最大可见不透明度 (0-1) */
+  maxOpacity: number;
+  /** 浅色模式高光强度 (0-1) */
+  lightHighlightOpacity: number;
+  /** 深色模式高光强度 (0-1) */
+  darkHighlightOpacity: number;
+  /** 材质档位，-1 表示跟随全局视觉效果设置 */
+  materialLevel: number;
+  /** 启用 HDS 自身模糊策略 */
+  blurEnabled: boolean;
+  /** 浮动条侧边留白 */
+  sideMargin: number;
+  /** 浮动条底部偏移 */
+  bottomMargin: number;
+}
+
 interface StoredEffectsConfig extends Partial<EffectsConfig> {
   cornerRadius?: number;
 }
@@ -94,6 +127,7 @@ interface StoredUserThemeProfile {
   lastModified?: number;
   transparency?: Partial<TransparencyConfig>;
   effects?: StoredEffectsConfig;
+  hdsTabEffects?: Partial<HdsTabEffectsConfig>;
 }
 
 /**
@@ -110,6 +144,8 @@ export interface UserThemeProfile {
   transparency: TransparencyConfig;
   /** 特效配置 */
   effects: EffectsConfig;
+  /** HdsTab 特效配置 */
+  hdsTabEffects: HdsTabEffectsConfig;
 }
 
 // ==================== 默认配置 ====================
@@ -144,6 +180,40 @@ const DEFAULT_EFFECTS: EffectsConfig = {
 };
 
 /**
+ * 默认 HdsTab 特效配置
+ */
+const DEFAULT_HDS_TAB_EFFECTS: HdsTabEffectsConfig = {
+  opacityRatio: 0.72,
+  minOpacity: 0.56,
+  maxOpacity: 0.82,
+  lightHighlightOpacity: 0.42,
+  darkHighlightOpacity: 0.22,
+  materialLevel: -1,
+  blurEnabled: true,
+  sideMargin: 8,
+  bottomMargin: 0
+};
+
+function clampHdsTabUnitValue(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function clampHdsTabSideMargin(value: number): number {
+  return Math.max(0, Math.min(24, value));
+}
+
+function clampHdsTabBottomMargin(value: number): number {
+  return Math.max(-8, Math.min(16, value));
+}
+
+function normalizeHdsTabMaterialLevel(value: number): number {
+  if (value === -1 || value === 0 || value === 1 || value === 2) {
+    return value;
+  }
+  return DEFAULT_HDS_TAB_EFFECTS.materialLevel;
+}
+
+/**
  * 复制透明度配置
  */
 function copyTransparency(source: TransparencyConfig): TransparencyConfig {
@@ -173,6 +243,23 @@ function copyEffects(source: EffectsConfig): EffectsConfig {
     componentCornerRadius: source.componentCornerRadius,
     coverCornerRadius: source.coverCornerRadius,
     enableGlassmorphism: source.enableGlassmorphism
+  };
+}
+
+/**
+ * 复制 HdsTab 特效配置
+ */
+function copyHdsTabEffects(source: HdsTabEffectsConfig): HdsTabEffectsConfig {
+  return {
+    opacityRatio: source.opacityRatio,
+    minOpacity: source.minOpacity,
+    maxOpacity: source.maxOpacity,
+    lightHighlightOpacity: source.lightHighlightOpacity,
+    darkHighlightOpacity: source.darkHighlightOpacity,
+    materialLevel: source.materialLevel,
+    blurEnabled: source.blurEnabled,
+    sideMargin: source.sideMargin,
+    bottomMargin: source.bottomMargin
   };
 }
 
@@ -210,6 +297,39 @@ function mergeEffects(base: EffectsConfig, partial: Partial<EffectsConfig>): Eff
 }
 
 /**
+ * 合并 HdsTab 特效配置（用partial覆盖base）
+ */
+function mergeHdsTabEffects(base: HdsTabEffectsConfig, partial: Partial<HdsTabEffectsConfig>): HdsTabEffectsConfig {
+  const minOpacity: number = clampHdsTabUnitValue(
+    partial.minOpacity !== undefined ? partial.minOpacity : base.minOpacity
+  );
+  const rawMaxOpacity: number = clampHdsTabUnitValue(
+    partial.maxOpacity !== undefined ? partial.maxOpacity : base.maxOpacity
+  );
+  return {
+    opacityRatio: clampHdsTabUnitValue(
+      partial.opacityRatio !== undefined ? partial.opacityRatio : base.opacityRatio
+    ),
+    minOpacity: minOpacity,
+    maxOpacity: Math.max(minOpacity, rawMaxOpacity),
+    lightHighlightOpacity: partial.lightHighlightOpacity !== undefined
+      ? clampHdsTabUnitValue(partial.lightHighlightOpacity)
+      : clampHdsTabUnitValue(base.lightHighlightOpacity),
+    darkHighlightOpacity: partial.darkHighlightOpacity !== undefined
+      ? clampHdsTabUnitValue(partial.darkHighlightOpacity)
+      : clampHdsTabUnitValue(base.darkHighlightOpacity),
+    materialLevel: normalizeHdsTabMaterialLevel(
+      partial.materialLevel !== undefined ? partial.materialLevel : base.materialLevel
+    ),
+    blurEnabled: partial.blurEnabled !== undefined ? partial.blurEnabled : base.blurEnabled,
+    sideMargin: clampHdsTabSideMargin(partial.sideMargin !== undefined ? partial.sideMargin : base.sideMargin),
+    bottomMargin: clampHdsTabBottomMargin(
+      partial.bottomMargin !== undefined ? partial.bottomMargin : base.bottomMargin
+    )
+  };
+}
+
+/**
  * 创建默认主题配置
  */
 function createDefaultProfile(): UserThemeProfile {
@@ -218,7 +338,8 @@ function createDefaultProfile(): UserThemeProfile {
     name: '默认配置',
     lastModified: Date.now(),
     transparency: copyTransparency(DEFAULT_TRANSPARENCY),
-    effects: copyEffects(DEFAULT_EFFECTS)
+    effects: copyEffects(DEFAULT_EFFECTS),
+    hdsTabEffects: copyHdsTabEffects(DEFAULT_HDS_TAB_EFFECTS)
   };
 }
 
@@ -319,7 +440,11 @@ export class UserThemeConfigManager {
           name: loaded.name ? loaded.name : defaultProfile.name,
           lastModified: loaded.lastModified ? loaded.lastModified : defaultProfile.lastModified,
           transparency: mergeTransparency(DEFAULT_TRANSPARENCY, loaded.transparency ? loaded.transparency : {}),
-          effects: mergeEffects(DEFAULT_EFFECTS, normalizedEffects)
+          effects: mergeEffects(DEFAULT_EFFECTS, normalizedEffects),
+          hdsTabEffects: mergeHdsTabEffects(
+            DEFAULT_HDS_TAB_EFFECTS,
+            loaded.hdsTabEffects ? loaded.hdsTabEffects : {}
+          )
         };
         logger.info(TAG, `加载当前配置: ${this.currentProfile.name}`);
       }
@@ -357,7 +482,8 @@ export class UserThemeConfigManager {
       name: this.currentProfile.name,
       lastModified: this.currentProfile.lastModified,
       transparency: copyTransparency(this.currentProfile.transparency),
-      effects: copyEffects(this.currentProfile.effects)
+      effects: copyEffects(this.currentProfile.effects),
+      hdsTabEffects: copyHdsTabEffects(this.currentProfile.hdsTabEffects)
     };
   }
   
@@ -375,6 +501,15 @@ export class UserThemeConfigManager {
    */
   public async setEffects(effects: Partial<EffectsConfig>): Promise<void> {
     this.currentProfile.effects = mergeEffects(this.currentProfile.effects, effects);
+    await this.saveCurrentProfile();
+    this.notifyChange();
+  }
+
+  /**
+   * 设置 HdsTab 特效配置
+   */
+  public async setHdsTabEffects(hdsTabEffects: Partial<HdsTabEffectsConfig>): Promise<void> {
+    this.currentProfile.hdsTabEffects = mergeHdsTabEffects(this.currentProfile.hdsTabEffects, hdsTabEffects);
     await this.saveCurrentProfile();
     this.notifyChange();
   }
@@ -442,6 +577,22 @@ export class UserThemeConfigManager {
       AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.SHADOW_ENABLED, profile.effects.enableShadow);
       AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.ANIMATION_ENABLED, profile.effects.enableAnimation);
       AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.GLASSMORPHISM_ENABLED, profile.effects.enableGlassmorphism);
+      // HdsTab 特效配置
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.HDS_TAB_OPACITY_RATIO, profile.hdsTabEffects.opacityRatio);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.HDS_TAB_MIN_OPACITY, profile.hdsTabEffects.minOpacity);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.HDS_TAB_MAX_OPACITY, profile.hdsTabEffects.maxOpacity);
+      AppStorage.setOrCreate<number>(
+        USER_THEME_KEYS.HDS_TAB_LIGHT_HIGHLIGHT_OPACITY,
+        profile.hdsTabEffects.lightHighlightOpacity
+      );
+      AppStorage.setOrCreate<number>(
+        USER_THEME_KEYS.HDS_TAB_DARK_HIGHLIGHT_OPACITY,
+        profile.hdsTabEffects.darkHighlightOpacity
+      );
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.HDS_TAB_MATERIAL_LEVEL, profile.hdsTabEffects.materialLevel);
+      AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.HDS_TAB_BLUR_ENABLED, profile.hdsTabEffects.blurEnabled);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.HDS_TAB_SIDE_MARGIN, profile.hdsTabEffects.sideMargin);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.HDS_TAB_BOTTOM_MARGIN, profile.hdsTabEffects.bottomMargin);
       logger.debug(TAG, '配置已同步到AppStorage');
     } catch (error) {
       logger.error(TAG, '同步配置到AppStorage失败', error);
@@ -493,6 +644,11 @@ export class UserThemeConfigManager {
   /** 是否启用玻璃拟态 */
   public get glassmorphismEnabled(): boolean {
     return this.currentProfile.effects.enableGlassmorphism;
+  }
+
+  /** 获取 HdsTab 特效配置 */
+  public get hdsTabEffects(): HdsTabEffectsConfig {
+    return copyHdsTabEffects(this.currentProfile.hdsTabEffects);
   }
   
   /** 获取导航栏透明度 */

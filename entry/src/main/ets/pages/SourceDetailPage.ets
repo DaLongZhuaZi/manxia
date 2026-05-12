@@ -2808,9 +2808,24 @@ export struct SourceDetailPage {
               message: result.error || '搜索失败'
             });
           }
+        } else if (searchType === 'searchById' && this.mangaSourceEngine.supportsCapability('searchById')) {
+          // 不支持directSearch但支持searchById：使用searchById方法
+          logger.info(TAG, `使用searchById工作流: query=${query}`);
+          const result = await this.mangaSourceEngine.searchById(query);
+          if (result.success && result.data && result.data.mangas.length > 0) {
+            const manga = result.data.mangas[0];
+            logger.info(TAG, `searchById找到作品: ${manga.title}`);
+            this.isLoading = false;
+            this.navigateToMangaDetail(manga);
+            return;
+          } else {
+            this.getUIContext().getPromptAction().showToast({
+              message: result.error || '未找到该ID对应的作品'
+            });
+          }
         } else {
-          // 不支持directSearch，降级为关键词搜索
-          logger.warn(TAG, '图源不支持directSearch工作流，降级为关键词搜索');
+          // 不支持directSearch和searchById，降级为关键词搜索
+          logger.warn(TAG, '图源不支持directSearch/searchById工作流，降级为关键词搜索');
           await this.executeKeywordSearch(query);
           return;
         }

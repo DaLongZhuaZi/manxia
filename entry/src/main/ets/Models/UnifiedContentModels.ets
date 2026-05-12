@@ -73,6 +73,7 @@ export interface UnifiedContent {
   // 来源信息
   sourceId?: string;
   sourceName?: string;
+  sourcePkg?: string;    // 图源包名（稳定标识，不随重新导入变化）
   sourceUrl?: string;
   isLocal: boolean;
   
@@ -118,6 +119,8 @@ export interface UnifiedDetailPageParams {
   contentType: UnifiedContentType;
   contentId: string;
   sourceId?: string;
+  sourceName?: string;   // 图源显示名称（如 "禁漫天堂"）
+  sourcePkg?: string;    // 图源包名（如 "com.manxia.extension.zh.jinmantiantang"，稳定标识）
   // 缓存的基础信息（从列表页传递，用于快速显示）
   cachedTitle?: string;
   cachedCoverPath?: string;

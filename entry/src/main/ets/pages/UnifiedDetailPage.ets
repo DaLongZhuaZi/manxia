@@ -61,7 +61,7 @@ import {
   inspectEBookImagePageSignals,
   resolveEBookReaderRouteName
 } from '../Framework/Adapters/EBookImageReaderAdapter';
-import { buildLocalTextNovelBookId, buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
+import { LOCAL_TXT_NOVEL_SOURCE_ID, buildLocalTextNovelBookId, buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 
 // 重复检测导入
 import { DuplicateDetectionService } from '../Framework/DuplicateDetection/DuplicateDetectionService';
@@ -69,7 +69,7 @@ import { DuplicateCheckContentType, DuplicateMatchItem } from '../Framework/Dupl
 import { DuplicateDetectionDialog } from '../Framework/Components/DuplicateDetectionDialog';
 
 // 数据管理器导入
-import { DataManager, ChapterInfo, OnlineChapterInfo } from '../Framework/Data/DataManager';
+import { DataManager, ChapterInfo, PageInfo, OnlineChapterInfo } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
 import { MangaDetailLoader, MangaDetailLoadParams, MangaDetailLoadResult, MangaLoadProgressCallback, ChapterProgressInfo } from '../Framework/Loaders/MangaDetailLoader';
 import webview from '@ohos.web.webview';
@@ -142,7 +142,7 @@ import {
 } from '../Models/TextReaderModels';
 
 // 模型导入
-import { Manga, MangaChapter, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
+import { Manga, MangaChapter, MangaPage, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
 import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from '../Models/EBookModels';
 import { LegadoBook, LegadoChapter, LegadoBookSource, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
@@ -166,6 +166,7 @@ import { ReadAloudCacheDialogComponent } from '../Framework/Components/ReadAloud
 import { TrackingSettingsDialogComponent, UnifiedDetailTrackingTargetInfo } from '../Framework/Components/TrackingSettingsDialogComponent';
 import { NovelSettingsDialogComponent } from '../Framework/Components/NovelSettingsDialogComponent';
 import { DownloadDialogComponent } from '../Framework/Components/DownloadDialogComponent';
+import { ShareLinkDialogComponent } from '../Framework/Components/ShareLinkDialogComponent';
 import { ChangeSourceDialogComponent } from '../Framework/Components/ChangeSourceDialogComponent';
 import { CacheConfirmDialogComponent, CacheConfirmConfig } from '../Framework/Components/CacheConfirmDialogComponent';
 import { GenerateCoverDialogComponent } from '../Framework/Components/GenerateCoverDialogComponent';
@@ -349,6 +350,9 @@ export struct UnifiedDetailPage {
   // 下载对话框状态（已提取至 DownloadDialogComponent）
   @State downloadDialogLoadSignal: number = 0;
 
+  // 分享链接对话框状态
+  @State shareDialogLoadSignal: number = 0;
+
   // 小说设置对话框状态（已提取至 NovelSettingsDialogComponent）
   @State novelSettingsLoadSignal: number = 0;
   
@@ -432,6 +436,9 @@ export struct UnifiedDetailPage {
   
   // 漫画详情加载器
   private mangaDetailLoader: MangaDetailLoader = MangaDetailLoader.getInstance();
+  // 已解析的图源信息（从 SourceManager 查找，用于生成稳定链接等）
+  private resolvedSourceName: string = '';
+  private resolvedSourcePkg: string = '';
   private webViewController: webview.WebviewController = new webview.WebviewController();
   private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   @State private webViewControllerAttached: boolean = false;
@@ -701,6 +708,473 @@ export struct UnifiedDetailPage {
     }
     logger.info(TAG, `打开通用缓存对话框: 触发源=${trigger}, 内容类型=${this.content.contentType}`);
     this.downloadDialogLoadSignal++;
+  }
+
+  /**
+   * 打开分享链接对话框
+   */
+  private openShareDialogFromDetail(): void {
+    if (!this.content) {
+      return;
+    }
+    if (this.shouldShareAsLocalFile()) {
+      void this.shareLocalContentFile();
+      return;
+    }
+    logger.info(TAG, `打开分享链接对话框: 内容类型=${this.content.contentType}, source=${this.content.sourceName}`);
+    this.shareDialogLoadSignal++;
+  }
+
+  private shouldShareAsLocalFile(): boolean {
+    if (!this.content) {
+      return false;
+    }
+    if (this.content.contentType === UnifiedContentType.MANGA) {
+      return this.shouldShareMangaAsLocalFile();
+    }
+    if (this.content.contentType === UnifiedContentType.EBOOK) {
+      return !this.isOnlineEBookContentForShare();
+    }
+    if (this.content.contentType === UnifiedContentType.NOVEL) {
+      return !this.isOnlineNovelContentForShare();
+    }
+    return false;
+  }
+
+  private shouldShareMangaAsLocalFile(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.MANGA) {
+      return false;
+    }
+    const pageSourceId: string = this.normalizeTrackingText(this.pageParams?.sourceId);
+    const contentSourceId: string = this.normalizeTrackingText(this.content.sourceId);
+    const sourceId: string = contentSourceId.length > 0 ? contentSourceId : pageSourceId;
+    const pageSourcePkg: string = this.normalizeTrackingText(this.pageParams?.sourcePkg);
+    const contentSourcePkg: string = this.normalizeTrackingText(this.content.sourcePkg);
+    const sourcePkg: string = contentSourcePkg.length > 0 ? contentSourcePkg : pageSourcePkg;
+    if (sourceId.length <= 0) {
+      if (sourcePkg.length > 0 || this.content.isLocal === false) {
+        return false;
+      }
+      return true;
+    }
+    if (!this.isLocalMangaShareSourceId(sourceId)) {
+      return false;
+    }
+    return true;
+  }
+
+  private isOnlineEBookContentForShare(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.EBOOK) {
+      return false;
+    }
+    const contentSourceId: string = this.normalizeTrackingText(this.content.sourceId);
+    const pageSourceId: string = this.normalizeTrackingText(this.pageParams?.sourceId);
+    if (contentSourceId.length > 0 || pageSourceId.length > 0) {
+      return true;
+    }
+    if (this.isHttpUrl(this.content.id)) {
+      return true;
+    }
+    if (this.normalizeTrackingText(this.onlineReaderUrl).length > 0) {
+      return true;
+    }
+    if (this.hasOnlineEBookExtendedData(this.content.filePath)) {
+      return true;
+    }
+    const ebook: EBook | null = EBookAdapter.getOriginalEBook(this.content);
+    if (!ebook) {
+      return false;
+    }
+    if (this.isHttpUrl(ebook.id)) {
+      return true;
+    }
+    return this.hasOnlineEBookExtendedData(ebook.filePath);
+  }
+
+  private isOnlineNovelContentForShare(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return false;
+    }
+    const sourceId: string = this.getCurrentNovelSourceId();
+    if (sourceId.length <= 0 || sourceId === 'local' || sourceId === LOCAL_TXT_NOVEL_SOURCE_ID) {
+      return false;
+    }
+    return true;
+  }
+
+  private isLocalMangaShareSourceId(sourceId: string): boolean {
+    const normalized: string = sourceId.trim();
+    return normalized.length <= 0 ||
+      normalized === '0' ||
+      normalized === 'local' ||
+      normalized === 'local_import' ||
+      normalized === 'local_pdf' ||
+      normalized === 'download_import';
+  }
+
+  private isHttpUrl(value: string | undefined | null): boolean {
+    const text: string = this.normalizeTrackingText(value);
+    return text.startsWith('http://') || text.startsWith('https://');
+  }
+
+  private hasOnlineEBookExtendedData(filePath: string | undefined | null): boolean {
+    const text: string = this.normalizeTrackingText(filePath);
+    if (text.length <= 0) {
+      return false;
+    }
+    return text.startsWith('{') &&
+      (text.includes('"sourceId"') || text.includes('"onlineReaderUrl"'));
+  }
+
+  private async shareLocalContentFile(): Promise<void> {
+    if (!this.content) {
+      return;
+    }
+    try {
+      const context: common.UIAbilityContext | null = this.getShareAbilityContext();
+      if (!context) {
+        throw new Error('hostContext is null');
+      }
+
+      const sharePath: string = await this.resolveLocalContentSharePath();
+      if (sharePath.length <= 0) {
+        promptAction.showToast({ message: '未找到可分享的本地文件', duration: 1800 });
+        return;
+      }
+
+      const normalizedPath: string = this.normalizeShareFilePath(sharePath);
+      if (!this.isExistingSharePath(normalizedPath)) {
+        promptAction.showToast({ message: '本地文件不存在，无法分享', duration: 1800 });
+        logger.warn(TAG, `本地分享失败，文件不存在: ${normalizedPath}`);
+        return;
+      }
+
+      const shareUri: string = fileUri.getUriFromPath(normalizedPath);
+      const shareData: systemShare.SharedData = new systemShare.SharedData({
+        utd: this.getLocalContentShareUtd(normalizedPath),
+        uri: shareUri,
+        title: this.getLocalContentShareTitle(),
+        description: this.getLocalContentShareDescription()
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(shareData);
+      await controller.show(context, {
+        previewMode: systemShare.SharePreviewMode.DETAIL,
+        selectionMode: systemShare.SelectionMode.SINGLE
+      });
+      logger.info(TAG, `本地文件分享面板已打开: ${normalizedPath}`);
+    } catch (error) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `本地文件分享失败: ${errorMessage}`);
+      promptAction.showToast({ message: `分享失败: ${errorMessage}`, duration: 2000 });
+    }
+  }
+
+  private async resolveLocalContentSharePath(): Promise<string> {
+    if (!this.content) {
+      return '';
+    }
+    const contentPath: string = this.getExistingSharePath(this.content.filePath);
+    if (contentPath.length > 0) {
+      return contentPath;
+    }
+    if (this.content.contentType === UnifiedContentType.EBOOK) {
+      return this.getLocalEBookSharePath();
+    }
+    if (this.content.contentType === UnifiedContentType.MANGA) {
+      return await this.getLocalMangaSharePath();
+    }
+    if (this.content.contentType === UnifiedContentType.NOVEL) {
+      return this.getLocalNovelSharePath();
+    }
+    return '';
+  }
+
+  private getLocalEBookSharePath(): string {
+    if (!this.content) {
+      return '';
+    }
+    const ebook: EBook | null = EBookAdapter.getOriginalEBook(this.content);
+    if (!ebook) {
+      return '';
+    }
+    return this.getExistingSharePath(ebook.filePath);
+  }
+
+  private getLocalNovelSharePath(): string {
+    if (!this.content) {
+      return '';
+    }
+    return this.getExistingSharePath(this.content.filePath);
+  }
+
+  private async getLocalMangaSharePath(): Promise<string> {
+    if (!this.content) {
+      return '';
+    }
+    const originalManga: Manga | null = MangaAdapter.getOriginalManga(this.content);
+    if (originalManga) {
+      const originalChapterPath: string = this.getExistingMangaChapterSharePath(originalManga.chapters);
+      if (originalChapterPath.length > 0) {
+        return originalChapterPath;
+      }
+    }
+
+    try {
+      const chapters: ChapterInfo[] = await this.dataManager.getComicChapters(this.content.id);
+      const chapterPath: string = this.getExistingDataChapterSharePath(chapters);
+      if (chapterPath.length > 0) {
+        return chapterPath;
+      }
+
+      for (let i = 0; i < chapters.length; i++) {
+        const pages: PageInfo[] = await this.dataManager.getChapterPages(chapters[i].id);
+        const pagePath: string = this.getExistingPageSharePath(pages);
+        if (pagePath.length > 0) {
+          return pagePath;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `解析本地漫画分享路径失败: ${String(error)}`);
+    }
+
+    return '';
+  }
+
+  private getExistingMangaChapterSharePath(chapters: MangaChapter[]): string {
+    for (let i = 0; i < chapters.length; i++) {
+      const chapter = chapters[i];
+      const chapterPath: string = this.getMangaChapterContainerSharePath(chapter.localPath);
+      if (chapterPath.length > 0) {
+        return chapterPath;
+      }
+      const pagePath: string = this.getExistingMangaPageSharePath(chapter.pages);
+      if (pagePath.length > 0) {
+        return pagePath;
+      }
+    }
+    return '';
+  }
+
+  private getExistingMangaPageSharePath(pages: MangaPage[]): string {
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const localPath: string = this.getMangaPageContainerSharePath(page.localPath);
+      if (localPath.length > 0) {
+        return localPath;
+      }
+      const imagePath: string = this.isHttpUrl(page.imagePath) ? '' : this.getMangaPageContainerSharePath(page.imagePath);
+      if (imagePath.length > 0) {
+        return imagePath;
+      }
+    }
+    return '';
+  }
+
+  private getExistingDataChapterSharePath(chapters: ChapterInfo[]): string {
+    for (let i = 0; i < chapters.length; i++) {
+      const chapterPath: string = this.getMangaChapterContainerSharePath(chapters[i].downloadPath);
+      if (chapterPath.length > 0) {
+        return chapterPath;
+      }
+    }
+    return '';
+  }
+
+  private getExistingPageSharePath(pages: PageInfo[]): string {
+    for (let i = 0; i < pages.length; i++) {
+      const localPath: string = this.getMangaPageContainerSharePath(pages[i].localPath);
+      if (localPath.length > 0) {
+        return localPath;
+      }
+      const imageUrl: string = this.isHttpUrl(pages[i].imageUrl) ? '' : this.getMangaPageContainerSharePath(pages[i].imageUrl);
+      if (imageUrl.length > 0) {
+        return imageUrl;
+      }
+    }
+    return '';
+  }
+
+  private getMangaChapterContainerSharePath(path: string | undefined | null): string {
+    const existingPath: string = this.getExistingSharePath(path);
+    if (existingPath.length <= 0) {
+      return '';
+    }
+    if (!this.isDirectorySharePath(existingPath)) {
+      return existingPath;
+    }
+    const parentPath: string = this.getExistingParentSharePath(existingPath);
+    return parentPath.length > 0 ? parentPath : existingPath;
+  }
+
+  private getMangaPageContainerSharePath(path: string | undefined | null): string {
+    const existingPath: string = this.getExistingSharePath(path);
+    if (existingPath.length <= 0) {
+      return '';
+    }
+    const parentPath: string = this.getExistingParentSharePath(existingPath);
+    return parentPath.length > 0 ? parentPath : existingPath;
+  }
+
+  private getExistingParentSharePath(path: string): string {
+    const parentPath: string = this.getParentSharePath(path);
+    if (parentPath.length > 0 && this.isExistingSharePath(parentPath)) {
+      return parentPath;
+    }
+    return '';
+  }
+
+  private getParentSharePath(path: string): string {
+    const normalizedPath: string = this.normalizeShareFilePath(path);
+    const separatorIndex: number = normalizedPath.lastIndexOf('/');
+    if (separatorIndex <= 0) {
+      return '';
+    }
+    return normalizedPath.substring(0, separatorIndex);
+  }
+
+  private getExistingSharePath(path: string | undefined | null): string {
+    const normalizedPath: string = this.normalizeShareFilePath(path);
+    if (normalizedPath.length > 0 && this.isExistingSharePath(normalizedPath)) {
+      return normalizedPath;
+    }
+    return '';
+  }
+
+  private normalizeShareFilePath(path: string | undefined | null): string {
+    const rawPath: string = this.normalizeTrackingText(path);
+    if (rawPath.length <= 0) {
+      return '';
+    }
+    if (rawPath.startsWith('file://')) {
+      try {
+        const uriObj: fileUri.FileUri = new fileUri.FileUri(rawPath);
+        return uriObj.path;
+      } catch (error) {
+        logger.debug(TAG, `fileUri 路径解析失败，使用 file:// 截断路径: ${String(error)}`);
+        return rawPath.substring('file://'.length);
+      }
+    }
+    return rawPath;
+  }
+
+  private isExistingSharePath(path: string): boolean {
+    const normalizedPath: string = this.normalizeShareFilePath(path);
+    if (normalizedPath.length <= 0) {
+      return false;
+    }
+    try {
+      return fs.accessSync(normalizedPath);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  private isDirectorySharePath(path: string): boolean {
+    const normalizedPath: string = this.normalizeShareFilePath(path);
+    if (normalizedPath.length <= 0) {
+      return false;
+    }
+    try {
+      const stat: fs.Stat = fs.statSync(normalizedPath);
+      return stat.isDirectory();
+    } catch (error) {
+      return false;
+    }
+  }
+
+  private getLocalContentShareUtd(path: string): string {
+    if (this.isDirectorySharePath(path)) {
+      return utd.UniformDataType.FOLDER;
+    }
+    const extension: string = this.getFileExtensionForShare(path);
+    if (extension === 'txt' || extension === 'log' || extension === 'md') {
+      return utd.UniformDataType.PLAIN_TEXT;
+    }
+    if (extension === 'epub') {
+      return utd.UniformDataType.EPUB;
+    }
+    if (extension === 'mobi') {
+      return utd.UniformDataType.MOBI;
+    }
+    if (extension === 'azw') {
+      return utd.UniformDataType.AZW;
+    }
+    if (extension === 'azw3') {
+      return utd.UniformDataType.AZW3;
+    }
+    if (extension === 'pdf') {
+      return utd.UniformDataType.PDF;
+    }
+    if (extension === 'jpg' || extension === 'jpeg') {
+      return utd.UniformDataType.JPEG;
+    }
+    if (extension === 'png') {
+      return utd.UniformDataType.PNG;
+    }
+    if (extension === 'gif') {
+      return utd.UniformDataType.GIF;
+    }
+    if (extension === 'tif' || extension === 'tiff') {
+      return utd.UniformDataType.TIFF;
+    }
+    if (extension === 'bmp') {
+      return utd.UniformDataType.BMP;
+    }
+    if (extension === 'webp' || extension === 'avif' || extension === 'heic' || extension === 'heif') {
+      return utd.UniformDataType.IMAGE;
+    }
+    if (extension === 'zip' || extension === 'cbz') {
+      return utd.UniformDataType.ZIP_ARCHIVE;
+    }
+    if (extension === 'rar' || extension === 'cbr') {
+      return utd.UniformDataType.RAR_ARCHIVE;
+    }
+    if (extension === '7z') {
+      return utd.UniformDataType.SEVEN_ZIP_ARCHIVE;
+    }
+    if (extension === 'tar' || extension === 'gz' || extension === 'tgz' ||
+      extension === 'bz2' || extension === 'xz' || extension === 'lzma') {
+      return utd.UniformDataType.ARCHIVE;
+    }
+    return utd.UniformDataType.FILE;
+  }
+
+  private getFileExtensionForShare(path: string): string {
+    const normalizedPath: string = this.normalizeShareFilePath(path);
+    const separatorIndex: number = normalizedPath.lastIndexOf('/');
+    const fileName: string = separatorIndex >= 0 ? normalizedPath.substring(separatorIndex + 1) : normalizedPath;
+    const dotIndex: number = fileName.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex >= fileName.length - 1) {
+      return '';
+    }
+    return fileName.substring(dotIndex + 1).toLowerCase();
+  }
+
+  private getLocalContentShareTitle(): string {
+    if (!this.content) {
+      return '本地文件';
+    }
+    return this.content.title.length > 0 ? this.content.title : '本地文件';
+  }
+
+  private getLocalContentShareDescription(): string {
+    if (!this.content) {
+      return '来自漫匣的本地文件';
+    }
+    const author: string = this.normalizeTrackingText(this.content.author);
+    if (author.length > 0) {
+      return `${this.content.title} - ${author}`;
+    }
+    return `${this.getContentTypeName()} - 本地文件`;
+  }
+
+  private getShareAbilityContext(): common.UIAbilityContext | null {
+    const uiContext = this.getUIContext();
+    const hostContext = uiContext ? uiContext.getHostContext() : null;
+    if (!hostContext) {
+      return null;
+    }
+    return hostContext as common.UIAbilityContext;
   }
   
   /**
@@ -1018,6 +1492,25 @@ export struct UnifiedDetailPage {
     const sourceId = this.pageParams.sourceId;
     logger.info(TAG, `加载漫画内容: mangaId=${mangaId}, sourceId=${sourceId}`);
 
+    // 解析图源名称和包名（优先用 pageParams，fallback 到 SourceManager 查找）
+    this.resolvedSourceName = this.pageParams.sourceName || '';
+    this.resolvedSourcePkg = this.pageParams.sourcePkg || '';
+    if (sourceId && (!this.resolvedSourceName || !this.resolvedSourcePkg)) {
+      try {
+        const sm: SourceManager = SourceManager.getInstance();
+        const allSources: SourceInfo[] = await sm.getAllSources();
+        const numericId: number = Number(sourceId);
+        const found: SourceInfo | undefined = allSources.find((s: SourceInfo) => s.id === numericId);
+        if (found) {
+          if (!this.resolvedSourceName) this.resolvedSourceName = found.name;
+          if (!this.resolvedSourcePkg && found.pkg) this.resolvedSourcePkg = found.pkg;
+          logger.info(TAG, `图源信息已解析: name=${this.resolvedSourceName}, pkg=${this.resolvedSourcePkg}`);
+        }
+      } catch (err) {
+        logger.warn(TAG, `解析图源信息失败: ${String(err)}`);
+      }
+    }
+
     // 重置加载状态
     this.isBasicInfoLoaded = false;
     this.isCoverLoading = true;
@@ -1032,6 +1525,8 @@ export struct UnifiedDetailPage {
     const loadParams: MangaDetailLoadParams = {
       mangaId: mangaId,
       sourceId: sourceId ? Number(sourceId) : undefined,
+      sourceName: this.resolvedSourceName || undefined,
+      sourcePkg: this.resolvedSourcePkg || undefined,
       cachedTitle: this.pageParams.cachedTitle,
       cachedCoverPath: this.pageParams.cachedCoverPath,
       cachedCover: this.pageParams.cachedCover,
@@ -1061,9 +1556,11 @@ export struct UnifiedDetailPage {
           downloadedChapterIds,
           bookmarkedChapterIds,
           lastReadChapterIndex,
-          sourceId
+          sourceId,
+          this.resolvedSourceName,
+          this.resolvedSourcePkg
         );
-        
+
         // 封面加载完成
         this.isCoverLoading = false;
         
@@ -1190,7 +1687,9 @@ export struct UnifiedDetailPage {
             downloadedChapterIds,
             bookmarkedChapterIds,
             lastReadChapterIndex,
-            sourceId
+            sourceId,
+            this.resolvedSourceName,
+            this.resolvedSourcePkg
           );
           logger.debug(TAG, `[DEBUG-19] toUnifiedContent 调用完成`);
           
@@ -1372,7 +1871,9 @@ export struct UnifiedDetailPage {
                 downloadedChapterIds,
                 bookmarkedChapterIds,
                 safeLastReadIndex,
-                this.pageParams?.sourceId
+                this.pageParams?.sourceId,
+                this.resolvedSourceName,
+                this.resolvedSourcePkg
               );
             }
           }
@@ -2071,6 +2572,7 @@ export struct UnifiedDetailPage {
       readProgress: currentContent.readProgress,
       sourceId: currentContent.sourceId,
       sourceName: currentContent.sourceName,
+      sourcePkg: currentContent.sourcePkg,
       sourceUrl: currentContent.sourceUrl,
       isLocal: currentContent.isLocal,
       publisher: currentContent.publisher,
@@ -2168,6 +2670,7 @@ export struct UnifiedDetailPage {
       readProgress: currentContent.readProgress,
       sourceId: currentContent.sourceId,
       sourceName: currentContent.sourceName,
+      sourcePkg: currentContent.sourcePkg,
       sourceUrl: currentContent.sourceUrl,
       isLocal: currentContent.isLocal,
       publisher: currentContent.publisher,
@@ -2250,6 +2753,7 @@ export struct UnifiedDetailPage {
       readProgress: currentContent.readProgress,
       sourceId: currentContent.sourceId,
       sourceName: currentContent.sourceName,
+      sourcePkg: currentContent.sourcePkg,
       sourceUrl: currentContent.sourceUrl,
       isLocal: currentContent.isLocal,
       publisher: currentContent.publisher,
@@ -5094,6 +5598,24 @@ export struct UnifiedDetailPage {
           .onClick(() => this.openCacheDialogFromDetail('action_bar'))
         }
 
+        // 分享按钮
+        Button() {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+            Text('分享')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          }
+        }
+        .height(36)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .onClick(() => this.openShareDialogFromDetail())
+
         Button() {
           Row({ space: 6 }) {
             SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
@@ -6056,7 +6578,9 @@ export struct UnifiedDetailPage {
                 currentDownloadedChapterIds,
                 currentBookmarkedChapterIds,
                 currentLastReadChapterIndex,
-                sourceId
+                sourceId,
+                this.resolvedSourceName,
+                this.resolvedSourcePkg
               );
             }
           }
@@ -7812,6 +8336,13 @@ export struct UnifiedDetailPage {
           getNovelDownloadedTagLabel: () => this.getNovelDownloadedTagLabel(),
           getNovelCacheCountActionLabel: (count: number) => this.getNovelCacheCountActionLabel(count),
           isCurrentNovelAudioSource: () => this.isCurrentNovelAudioSource()
+        })
+
+        // 分享链接对话框
+        ShareLinkDialogComponent({
+          content: this.content,
+          themeState: this.themeState,
+          loadSignal: this.shareDialogLoadSignal
         })
 
         // 小说设置对话框

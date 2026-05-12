@@ -64,6 +64,12 @@ struct DeveloperAppsPage {
       appGalleryUrl: 'https://appgallery.huawei.com/app/detail?id=com.dlzz.lumabloom&channelId=SHARE&source=appshare'
     },
     {
+      name: '书脉',
+      icon: $r('app.media.shumai_icon'),
+      description: '支持多种格式的元数据编辑与封面管理',
+      appGalleryUrl: 'https://appgallery.huawei.com/app/detail?id=com.dlzz.ebookparser&channelId=SHARE&source=appshare'
+    },
+    {
       name: '神秘APP',
       description: '敬请期待'
     }
