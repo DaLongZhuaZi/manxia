@@ -149,13 +149,6 @@ export class SettingKeys {
   static readonly DOWNLOAD_SYNC_DIR_PATH = 'download_sync_dir_path';
   static readonly DOWNLOAD_SYNC_DIR_URI = 'download_sync_dir_uri';
   
-  // 局域网传书设置
-  static readonly LAN_TRANSFER_PORT = 'lan_transfer_port';
-  static readonly LAN_TRANSFER_AUTO_STOP_MINUTES = 'lan_transfer_auto_stop_minutes';
-  static readonly LAN_TRANSFER_MAX_FILE_SIZE_MB = 'lan_transfer_max_file_size_mb';
-  static readonly LAN_TRANSFER_ALLOW_BACKGROUND_TRANSFER = 'lan_transfer_allow_background_transfer';
-  static readonly LAN_TRANSFER_WS_ENABLED = 'lan_transfer_ws_enabled';
-   
   // 小说阅读器设置（使用TextReaderSettings）
   static readonly NOVEL_READER_SETTINGS = 'novel_reader_settings';
   // 小说搜索设置

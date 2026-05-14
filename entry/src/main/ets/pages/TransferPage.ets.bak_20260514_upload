@@ -1,0 +1,408 @@
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { common } from '@kit.AbilityKit';
+import { logger } from '../Utils/Logger';
+import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { getTransferConfigManager, TransferConfigManager } from '../Framework/Managers/TransferConfigManager';
+import { getLocalTransferServerService, LocalTransferServerService } from '../Framework/Services/LocalTransferServerService';
+import {
+  TransferConfig,
+  TransferLocalAddress,
+  TransferServerRuntime,
+  createDefaultTransferConfig,
+  createEmptyTransferServerRuntime
+} from '../Models/TransferModels';
+
+const TAG = 'TransferPage';
+
+@Component
+export struct TransferPage {
+  private readonly componentId: string = TAG;
+  private readonly transferService: LocalTransferServerService = getLocalTransferServerService();
+  private readonly configManager: TransferConfigManager = getTransferConfigManager();
+  private refreshTimer: number = -1;
+
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @State private runtime: TransferServerRuntime = createEmptyTransferServerRuntime();
+  @State private config: TransferConfig = createDefaultTransferConfig();
+  @State private isBusy: boolean = false;
+
+  aboutToAppear(): void {
+    void ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, undefined, (newState: ThemeAwareState) => {
+      this.themeState = newState;
+    });
+    this.refreshSnapshot();
+    this.startRefreshTimer();
+  }
+
+  aboutToDisappear(): void {
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    this.stopRefreshTimer();
+  }
+
+  private color(type: 'background' | 'panel_background' | 'comp_background_tertiary' | 'comp_background_secondary' |
+    'text_primary' | 'text_secondary' | 'text_muted' | 'text_white' | 'text_black' | 'button_secondary' |
+    'button_text_secondary' | 'icon_primary' | 'accent_primary'): Resource {
+    return ThemeAwareHelper.getTestManagementThemedColor(type, this.themeState.currentTheme);
+  }
+
+  private refreshSnapshot(): void {
+    this.runtime = this.transferService.getRuntimeState();
+    this.config = this.configManager.getConfig();
+  }
+
+  private startRefreshTimer(): void {
+    this.stopRefreshTimer();
+    this.refreshTimer = setInterval(() => {
+      this.refreshSnapshot();
+    }, 1500);
+  }
+
+  private stopRefreshTimer(): void {
+    if (this.refreshTimer >= 0) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = -1;
+    }
+  }
+
+  private showToast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 1800 });
+    } catch (error) {
+      logger.warn(TAG, `Toast显示失败: ${message}, ${String(error)}`);
+    }
+  }
+
+  private resolveAbilityContext(): common.UIAbilityContext | null {
+    try {
+      const hostContext = this.getUIContext().getHostContext();
+      if (hostContext) {
+        return hostContext as common.UIAbilityContext;
+      }
+    } catch (error) {
+      logger.warn(TAG, `获取UIAbilityContext失败: ${String(error)}`);
+    }
+    return null;
+  }
+
+  private async handleStartService(): Promise<void> {
+    if (this.isBusy) {
+      return;
+    }
+    const abilityContext = this.resolveAbilityContext();
+    if (abilityContext === null) {
+      this.showToast('当前无法获取页面上下文，暂时不能启动服务');
+      return;
+    }
+    this.isBusy = true;
+    try {
+      await this.transferService.start(abilityContext);
+      this.refreshSnapshot();
+      this.showToast('局域网传书服务已启动');
+    } catch (error) {
+      logger.error(TAG, `启动服务失败: ${String(error)}`);
+      this.showToast(`启动失败: ${String(error)}`);
+    } finally {
+      this.isBusy = false;
+    }
+  }
+
+  private async handleStopService(): Promise<void> {
+    if (this.isBusy) {
+      return;
+    }
+    this.isBusy = true;
+    try {
+      await this.transferService.stop('服务已手动停止。');
+      this.refreshSnapshot();
+      this.showToast('局域网传书服务已停止');
+    } catch (error) {
+      logger.error(TAG, `停止服务失败: ${String(error)}`);
+      this.showToast(`停止失败: ${String(error)}`);
+    } finally {
+      this.isBusy = false;
+    }
+  }
+
+  private handleRefreshSession(): void {
+    this.transferService.refreshSession();
+    this.refreshSnapshot();
+    this.showToast('已生成新的配对码');
+  }
+
+  private getPrimaryAddressText(): string {
+    if (this.runtime.localAddresses.length <= 0) {
+      return '服务启动后会显示局域网访问地址';
+    }
+    return this.runtime.localAddresses[0].url;
+  }
+
+  private getPairCodeText(): string {
+    if (this.runtime.session === null) {
+      return '------';
+    }
+    return this.runtime.session.pairCode;
+  }
+
+  @Builder
+  private buildCardHeader(title: string, subtitle: string) {
+    Column({ space: 4 }) {
+      Text(title)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.color('text_primary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+
+      Text(subtitle)
+        .fontSize(13)
+        .fontColor(this.color('text_secondary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+  }
+
+  @Builder
+  private buildInfoRow(label: string, value: string) {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontColor(this.color('text_secondary'))
+
+      Blank()
+
+      Text(value)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.color('text_primary'))
+        .maxLines(3)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.End)
+    }
+    .width('100%')
+    .padding({ top: 8, bottom: 8 })
+  }
+
+  @Builder
+  private buildStatusCard() {
+    Column({ space: 16 }) {
+      this.buildCardHeader(
+        '服务状态',
+        '先打通本地服务、状态页和 JSON 信息接口，上传链路下一阶段接入。'
+      )
+
+      this.buildInfoRow('当前状态', this.runtime.status)
+      this.buildInfoRow('运行阶段', this.runtime.phase)
+      this.buildInfoRow('状态说明', this.runtime.infoMessage)
+      this.buildInfoRow('后台运行', this.runtime.backgroundRunning ? '已申请' : '未申请')
+
+      if (this.runtime.lastError.length > 0) {
+        this.buildInfoRow('最近错误', this.runtime.lastError)
+      }
+
+      Row({ space: 12 }) {
+        Button(this.runtime.status === 'running' ? '停止服务' : '启动服务')
+          .type(ButtonType.Capsule)
+          .buttonStyle(ButtonStyleMode.NORMAL)
+          .layoutWeight(1)
+          .enabled(!this.isBusy)
+          .onClick(() => {
+            if (this.runtime.status === 'running') {
+              void this.handleStopService();
+            } else {
+              void this.handleStartService();
+            }
+          })
+
+        Button('刷新配对码')
+          .type(ButtonType.Capsule)
+          .buttonStyle(ButtonStyleMode.NORMAL)
+          .layoutWeight(1)
+          .enabled(!this.isBusy && this.runtime.status === 'running')
+          .onClick(() => {
+            this.handleRefreshSession();
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(20)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(24)
+    .border({
+      width: 0.5,
+      color: this.color('text_muted')
+    })
+  }
+
+  @Builder
+  private buildAddressItem(address: TransferLocalAddress) {
+    Column({ space: 6 }) {
+      Row() {
+        Text(address.label)
+          .fontSize(13)
+          .fontColor(this.color('text_secondary'))
+
+        Blank()
+
+        Text(address.isPrimary ? '推荐' : '备用')
+          .fontSize(12)
+          .fontColor(this.color('text_secondary'))
+      }
+      .width('100%')
+
+      Text(address.url)
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.color('text_primary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+    }
+    .width('100%')
+    .padding({ top: 10, bottom: 10 })
+  }
+
+  @Builder
+  private buildAddressCard() {
+    Column({ space: 14 }) {
+      this.buildCardHeader(
+        '访问地址与配对码',
+        '第一阶段优先采用 APP 本地服务 + 浏览器直连局域网地址。'
+      )
+
+      this.buildInfoRow('主地址', this.getPrimaryAddressText())
+      this.buildInfoRow('配对码', this.getPairCodeText())
+      this.buildInfoRow('HTTP端口', this.runtime.activePort > 0 ? String(this.runtime.activePort) : '未启动')
+      this.buildInfoRow('WebSocket端口', this.runtime.webSocketPort > 0 ? String(this.runtime.webSocketPort) : '未启用')
+
+      if (this.runtime.localAddresses.length > 0) {
+        Column({ space: 0 }) {
+          ForEach(this.runtime.localAddresses, (address: TransferLocalAddress) => {
+            this.buildAddressItem(address)
+          }, (address: TransferLocalAddress) => address.url)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(20)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(24)
+    .border({
+      width: 0.5,
+      color: this.color('text_muted')
+    })
+  }
+
+  @Builder
+  private buildConfigCard() {
+    const wsText = this.config.wsEnabled ? '开启' : '关闭';
+    const backgroundText = this.config.allowBackgroundTransfer ? '允许' : '关闭';
+    Column({ space: 14 }) {
+      this.buildCardHeader(
+        '配置摘要',
+        '这一版先展示配置摘要，后续再补完整设置编辑项。'
+      )
+
+      this.buildInfoRow('监听端口', String(this.config.port))
+      this.buildInfoRow('自动停服', `${this.config.autoStopMinutes} 分钟`)
+      this.buildInfoRow('单文件上限', `${this.config.maxFileSizeMb} MB`)
+      this.buildInfoRow('后台运行', backgroundText)
+      this.buildInfoRow('状态通道', wsText)
+    }
+    .width('100%')
+    .padding(20)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(24)
+    .border({
+      width: 0.5,
+      color: this.color('text_muted')
+    })
+  }
+
+  @Builder
+  private buildScopeCard() {
+    Column({ space: 10 }) {
+      this.buildCardHeader(
+        '当前实现范围',
+        '这一步先把主链路骨架立住，避免一开始就把复杂度推到上传解析和导入编排。'
+      )
+
+      Text('已落地：任务清单、设置项、配置管理、配对会话、本地状态页、/api/info 接口、设置页入口。')
+        .fontSize(14)
+        .lineHeight(22)
+        .fontColor(this.color('text_primary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+
+      Text('后续接入：POST 上传、临时落盘、导入编排、二维码、Cloudflare 控制面入口。')
+        .fontSize(14)
+        .lineHeight(22)
+        .fontColor(this.color('text_secondary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+    }
+    .width('100%')
+    .padding(20)
+    .backgroundColor(this.color('panel_background'))
+    .borderRadius(24)
+    .border({
+      width: 0.5,
+      color: this.color('text_muted')
+    })
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: this.color('background'),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
+          .width('100%')
+          .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        Column({ space: 0 }) {
+          Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
+          Scroll() {
+            Column({ space: 16 }) {
+              this.buildStatusCard()
+              this.buildAddressCard()
+              this.buildConfigCard()
+              this.buildScopeCard()
+              Blank().height(this.navigationBarHeight + 32)
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 8, bottom: 0 })
+          }
+          .scrollBar(BarState.Off)
+          .width('100%')
+          .layoutWeight(1)
+        }
+        .width('100%')
+        .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: '局域网传书',
+          appFontFamily: this.appFontFamily,
+          backAction: (): boolean => false
+        })
+      }
+    }
+      .hideTitleBar(true)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
+      .backgroundColor(Color.Transparent)
+  }
+}

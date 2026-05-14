@@ -9,6 +9,8 @@ import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 
 const TAG = 'NotificationManager';
+const TASK_NOTIFICATION_ID_BASE = 100000;
+const TASK_NOTIFICATION_ID_RANGE = 900000;
 
 /**
  * 通知类型
@@ -24,7 +26,11 @@ export enum NotificationType {
   VALIDATION_CANCELLED = 'validation_cancelled', // 校验已取消
   PDF_IMPORT_PROGRESS = 'pdf_import_progress', // PDF 导入进度
   PDF_IMPORT_COMPLETE = 'pdf_import_complete', // PDF 导入完成
-  PDF_IMPORT_FAILED = 'pdf_import_failed' // PDF 导入失败
+  PDF_IMPORT_FAILED = 'pdf_import_failed', // PDF 导入失败
+  TRANSFER_SERVICE_RUNNING = 'transfer_service_running', // 局域网传书服务运行中
+  TRANSFER_UPLOAD_PROGRESS = 'transfer_upload_progress', // 局域网传书上传中
+  TRANSFER_UPLOAD_COMPLETE = 'transfer_upload_complete', // 局域网传书上传完成
+  TRANSFER_UPLOAD_FAILED = 'transfer_upload_failed' // 局域网传书上传失败
 }
 
 /**
@@ -109,7 +115,7 @@ export class AppNotificationManager {
       // 请求通知权限
       logger.info(TAG, '请求通知权限');
       await notificationManager.requestEnableNotification(context);
-      
+
       // 再次检查权限状态
       const newStatus = await this.checkPermission();
       logger.info(TAG, `通知权限请求结果: ${newStatus ? '成功' : '失败'}`);
@@ -176,7 +182,8 @@ export class AppNotificationManager {
         if (
           config.type === NotificationType.DOWNLOAD_PROGRESS ||
           config.type === NotificationType.VALIDATION_PROGRESS ||
-          config.type === NotificationType.PDF_IMPORT_PROGRESS
+          config.type === NotificationType.PDF_IMPORT_PROGRESS ||
+          config.type === NotificationType.TRANSFER_UPLOAD_PROGRESS
         ) {
           notificationRequest.isOngoing = true;
           notificationRequest.isAlertOnce = true;
@@ -185,13 +192,20 @@ export class AppNotificationManager {
         notificationRequest.isOngoing = false;
       }
 
+      if (config.type === NotificationType.TRANSFER_SERVICE_RUNNING) {
+        notificationRequest.isOngoing = true;
+        notificationRequest.isAlertOnce = true;
+      }
+
       if (
         config.type === NotificationType.DOWNLOAD_COMPLETE ||
         config.type === NotificationType.DOWNLOAD_FAILED ||
         config.type === NotificationType.VALIDATION_COMPLETE ||
         config.type === NotificationType.VALIDATION_CANCELLED ||
         config.type === NotificationType.PDF_IMPORT_COMPLETE ||
-        config.type === NotificationType.PDF_IMPORT_FAILED
+        config.type === NotificationType.PDF_IMPORT_FAILED ||
+        config.type === NotificationType.TRANSFER_UPLOAD_COMPLETE ||
+        config.type === NotificationType.TRANSFER_UPLOAD_FAILED
       ) {
         notificationRequest.isOngoing = false;
       }
@@ -266,7 +280,7 @@ export class AppNotificationManager {
     };
     return this.sendNotification(config);
   }
-  
+
   /**
    * 发送详细的下载完成通知
    * 显示缓存内容的详细信息，包括书名、章节范围、成功/失败数量
@@ -282,7 +296,7 @@ export class AppNotificationManager {
   ): Promise<boolean> {
     const totalCount = successCount + failCount;
     const typeName = contentType === 'novel' ? '小说' : '漫画';
-    
+
     // 构建标题
     let title: string;
     if (failCount === 0) {
@@ -292,7 +306,7 @@ export class AppNotificationManager {
     } else {
       title = `${typeName}缓存完成(部分失败)`;
     }
-    
+
     // 构建正文
     let text = contentTitle;
     if (startChapter !== undefined && endChapter !== undefined) {
@@ -302,7 +316,7 @@ export class AppNotificationManager {
         text += ` 第${startChapter + 1}-${endChapter + 1}章`;
       }
     }
-    
+
     // 构建附加文本
     let additionalText: string;
     if (failCount === 0) {
@@ -312,7 +326,7 @@ export class AppNotificationManager {
     } else {
       additionalText = `成功${successCount}章，失败${failCount}章`;
     }
-    
+
     const config: NotificationConfig = {
       id: this.getNotificationId(taskId),
       title: title,
@@ -458,6 +472,80 @@ export class AppNotificationManager {
   }
 
   /**
+   * 发送局域网传书服务运行通知
+   */
+  public async sendTransferServiceRunningNotification(
+    taskId: string,
+    addressText: string,
+    pairCode: string
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '局域网传书运行中',
+      text: addressText,
+      additionalText: pairCode.length > 0 ? `配对码 ${pairCode}` : '等待生成配对码',
+      type: NotificationType.TRANSFER_SERVICE_RUNNING
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送局域网传书上传进度通知
+   */
+  public async sendTransferUploadProgressNotification(
+    taskId: string,
+    fileName: string,
+    current: number,
+    total: number
+  ): Promise<boolean> {
+    const progress = this.calculateProgressPercent(current, total);
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '正在接收传书文件',
+      text: fileName,
+      additionalText: `${progress}%`,
+      progress: { current: current, max: total },
+      type: NotificationType.TRANSFER_UPLOAD_PROGRESS
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送局域网传书上传完成通知
+   */
+  public async sendTransferUploadCompleteNotification(
+    taskId: string,
+    fileName: string
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '传书文件已保存',
+      text: fileName,
+      additionalText: '文件已在设备上，可到收件箱继续导入',
+      type: NotificationType.TRANSFER_UPLOAD_COMPLETE
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送局域网传书上传失败通知
+   */
+  public async sendTransferUploadFailedNotification(
+    taskId: string,
+    fileName: string,
+    reason: string
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '传书失败',
+      text: fileName.length > 0 ? fileName : '未命名文件',
+      additionalText: reason,
+      type: NotificationType.TRANSFER_UPLOAD_FAILED
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
    * 取消通知
    */
   public async cancelNotification(notificationId: number): Promise<void> {
@@ -494,14 +582,14 @@ export class AppNotificationManager {
    * 根据任务ID生成通知ID
    */
   private getNotificationId(taskId: string): number {
-    // 使用简单的哈希算法生成唯一ID
+    // 同一任务必须稳定映射到同一通知 ID，才能用完成/失败通知覆盖进度通知。
     let hash = 0;
     for (let i = 0; i < taskId.length; i++) {
       const char = taskId.charCodeAt(i);
       hash = ((hash << 5) - hash) + char;
       hash = hash & hash; // Convert to 32bit integer
     }
-    return Math.abs(hash) % 100000 + this.notificationIdCounter;
+    return TASK_NOTIFICATION_ID_BASE + (Math.abs(hash) % TASK_NOTIFICATION_ID_RANGE);
   }
 
   /**

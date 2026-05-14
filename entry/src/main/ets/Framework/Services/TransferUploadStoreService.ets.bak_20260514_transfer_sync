@@ -1,0 +1,396 @@
+/**
+ * 局域网传书上传收件箱服务
+ *
+ * 负责：
+ * 1. 将浏览器上传文件保存到应用沙箱
+ * 2. 维护最近上传记录
+ * 3. 将记录转交给 DataManagementPage 继续导入
+ */
+
+import { fileIo, fileUri } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
+import { logger } from '../../Utils/Logger';
+import { getContext } from '../../GlobalContext';
+import {
+  TransferUploadRecord,
+  cloneTransferUploadRecord,
+  cloneTransferUploadRecords,
+  isTransferAcceptedImportCategory
+} from '../../Models/TransferModels';
+import {
+  inferNetworkFolderImportCategory,
+  NetworkFolderImportCategory
+} from '../../Models/NetworkFolderModels';
+
+const TAG = 'TransferUploadStore';
+const INDEX_VERSION = 1;
+const MAX_RECORD_COUNT = 40;
+
+interface TransferUploadIndexData {
+  version: number;
+  records: TransferUploadRecord[];
+}
+
+export interface TransferStagedUploadSession {
+  uploadId: string;
+  normalizedFileName: string;
+  contentType: string;
+  clientName: string;
+  clientIp: string;
+  importCategory: NetworkFolderImportCategory;
+  tempFilePath: string;
+  expectedBytes: number;
+  receivedBytes: number;
+  fileDescriptor: number;
+  createdAt: number;
+}
+
+export class TransferUploadStoreService {
+  private static instance: TransferUploadStoreService;
+
+  private initialized: boolean = false;
+  private baseDir: string = '';
+  private filesDir: string = '';
+  private indexFilePath: string = '';
+  private records: TransferUploadRecord[] = [];
+  private readonly encoder: util.TextEncoder = new util.TextEncoder();
+  private readonly decoder: util.TextDecoder = new util.TextDecoder('utf-8');
+
+  private constructor() {}
+
+  public static getInstance(): TransferUploadStoreService {
+    if (!TransferUploadStoreService.instance) {
+      TransferUploadStoreService.instance = new TransferUploadStoreService();
+    }
+    return TransferUploadStoreService.instance;
+  }
+
+  public async initialize(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    const context = getContext();
+    this.baseDir = `${context.filesDir}/transfer_uploads`;
+    this.filesDir = `${this.baseDir}/files`;
+    this.indexFilePath = `${this.baseDir}/index.json`;
+
+    await fileIo.mkdir(this.baseDir, true);
+    await fileIo.mkdir(this.filesDir, true);
+    await this.loadIndex();
+
+    this.initialized = true;
+    logger.info(TAG, `局域网传书上传收件箱初始化完成: ${this.baseDir}`);
+  }
+
+  public getCachedRecords(limit: number = 8): TransferUploadRecord[] {
+    const boundedLimit = limit > 0 ? limit : 8;
+    const selected: TransferUploadRecord[] = [];
+    for (let index = 0; index < this.records.length && index < boundedLimit; index++) {
+      selected.push(this.records[index]);
+    }
+    return cloneTransferUploadRecords(selected);
+  }
+
+  public async getRecentUploads(limit: number = 20): Promise<TransferUploadRecord[]> {
+    await this.initialize();
+    return this.getCachedRecords(limit);
+  }
+
+  public async beginUpload(
+    originalFileName: string,
+    contentType: string,
+    clientName: string,
+    clientIp: string,
+    expectedBytes: number
+  ): Promise<TransferStagedUploadSession> {
+    await this.initialize();
+
+    const normalizedFileName = this.normalizeUploadFileName(originalFileName);
+    const importCategory = inferNetworkFolderImportCategory(normalizedFileName);
+    if (!isTransferAcceptedImportCategory(importCategory)) {
+      throw new Error(`暂不支持当前文件类型: ${normalizedFileName}`);
+    }
+
+    const uploadId = this.buildRecordId();
+    const tempFilePath = `${this.filesDir}/${Date.now()}_${uploadId}.part`;
+    const file = await fileIo.open(
+      tempFilePath,
+      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC
+    );
+
+    const session: TransferStagedUploadSession = {
+      uploadId: uploadId,
+      normalizedFileName: normalizedFileName,
+      contentType: contentType.trim(),
+      clientName: clientName.trim(),
+      clientIp: clientIp.trim(),
+      importCategory: importCategory,
+      tempFilePath: tempFilePath,
+      expectedBytes: expectedBytes,
+      receivedBytes: 0,
+      fileDescriptor: file.fd,
+      createdAt: Date.now()
+    };
+    return session;
+  }
+
+  public async appendUploadChunk(session: TransferStagedUploadSession, chunk: Uint8Array): Promise<void> {
+    if (chunk.byteLength <= 0) {
+      return;
+    }
+    const writeBuffer = this.copyUint8ArrayToBuffer(chunk);
+    await fileIo.write(session.fileDescriptor, writeBuffer);
+    session.receivedBytes += chunk.byteLength;
+  }
+
+  public async finalizeUpload(session: TransferStagedUploadSession): Promise<TransferUploadRecord> {
+    try {
+      if (session.receivedBytes !== session.expectedBytes) {
+        throw new Error(`上传大小不匹配: expected=${session.expectedBytes}, actual=${session.receivedBytes}`);
+      }
+      await fileIo.close(session.fileDescriptor);
+    } catch (error) {
+      await this.tryDeleteFile(session.tempFilePath);
+      throw error;
+    }
+
+    const storedFileName = `${Date.now()}_${session.uploadId}_${session.normalizedFileName}`;
+    const localPath = `${this.filesDir}/${storedFileName}`;
+    await fileIo.rename(session.tempFilePath, localPath);
+
+    const record: TransferUploadRecord = {
+      id: session.uploadId,
+      fileName: session.normalizedFileName,
+      localPath: localPath,
+      localUri: fileUri.getUriFromPath(localPath),
+      fileSizeBytes: session.receivedBytes,
+      contentType: session.contentType,
+      importCategory: session.importCategory,
+      clientName: session.clientName,
+      clientIp: session.clientIp,
+      source: 'lan_transfer',
+      receivedAt: session.createdAt,
+      status: 'received'
+    };
+
+    this.records.unshift(record);
+    this.trimRecords();
+    await this.saveIndex();
+
+    logger.info(
+      TAG,
+      `已完成局域网传书文件落盘: ${record.fileName}, 分类=${record.importCategory}, 大小=${record.fileSizeBytes} 字节`
+    );
+    return cloneTransferUploadRecord(record);
+  }
+
+  public async abortUpload(session: TransferStagedUploadSession): Promise<void> {
+    try {
+      await fileIo.close(session.fileDescriptor);
+    } catch (_error) {
+    }
+    await this.tryDeleteFile(session.tempFilePath);
+  }
+
+  public async saveUpload(
+    originalFileName: string,
+    contentType: string,
+    clientName: string,
+    clientIp: string,
+    body: ArrayBuffer
+  ): Promise<TransferUploadRecord> {
+    const session = await this.beginUpload(
+      originalFileName,
+      contentType,
+      clientName,
+      clientIp,
+      body.byteLength
+    );
+    try {
+      await this.appendUploadChunk(session, new Uint8Array(body));
+      return await this.finalizeUpload(session);
+    } catch (error) {
+      await this.abortUpload(session);
+      throw error;
+    }
+  }
+
+  public async prepareRecordForDataManagement(recordId: string): Promise<TransferUploadRecord | null> {
+    await this.initialize();
+
+    const record = this.findRecordById(recordId);
+    if (record === null) {
+      return null;
+    }
+    if (!isTransferAcceptedImportCategory(record.importCategory)) {
+      return null;
+    }
+
+    this.clearPendingImportMarkers();
+    AppStorage.setOrCreate('pendingFileUri', record.localUri);
+    AppStorage.setOrCreate('pendingFileType', record.fileName);
+    AppStorage.setOrCreate('pendingFileCategory', record.importCategory);
+    AppStorage.setOrCreate('pendingFileSource', 'lan_transfer');
+    AppStorage.setOrCreate('pendingFileTarget', 'inbox');
+    AppStorage.setOrCreate('pendingFileDisplayName', record.fileName);
+    AppStorage.setOrCreate('fileImportPending', true);
+
+    record.status = 'handoff_sent';
+    await this.saveIndex();
+    logger.info(TAG, `已将上传文件转交给 DataManagementPage: ${record.fileName}`);
+    return cloneTransferUploadRecord(record);
+  }
+
+  public getImportCategoryLabel(category: NetworkFolderImportCategory): string {
+    if (category === 'comic') {
+      return '漫画';
+    }
+    if (category === 'ebook') {
+      return '电子书';
+    }
+    if (category === 'pdf') {
+      return 'PDF';
+    }
+    return '其他';
+  }
+
+  private async loadIndex(): Promise<void> {
+    try {
+      const exists = await this.fileExists(this.indexFilePath);
+      if (!exists) {
+        this.records = [];
+        await this.saveIndex();
+        return;
+      }
+
+      const file = await fileIo.open(this.indexFilePath, fileIo.OpenMode.READ_ONLY);
+      try {
+        const stat = await fileIo.stat(this.indexFilePath);
+        const buffer = new ArrayBuffer(stat.size);
+        await fileIo.read(file.fd, buffer);
+        const text = this.decoder.decodeToString(new Uint8Array(buffer));
+        const parsed = JSON.parse(text) as TransferUploadIndexData;
+        if (parsed.version === INDEX_VERSION && Array.isArray(parsed.records)) {
+          this.records = cloneTransferUploadRecords(parsed.records);
+        } else {
+          this.records = [];
+        }
+      } finally {
+        await fileIo.close(file);
+      }
+    } catch (error) {
+      this.records = [];
+      logger.warn(TAG, `读取上传收件箱索引失败，将回退为空索引: ${String(error)}`);
+      await this.saveIndex();
+    }
+  }
+
+  private async saveIndex(): Promise<void> {
+    const payload: TransferUploadIndexData = {
+      version: INDEX_VERSION,
+      records: cloneTransferUploadRecords(this.records)
+    };
+    const text = JSON.stringify(payload);
+    const buffer = this.encoder.encodeInto(text).buffer;
+    await this.writeArrayBuffer(this.indexFilePath, buffer);
+  }
+
+  private async writeArrayBuffer(path: string, buffer: ArrayBuffer): Promise<void> {
+    const file = await fileIo.open(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    try {
+      await fileIo.write(file.fd, buffer);
+    } finally {
+      await fileIo.close(file);
+    }
+  }
+
+  private async fileExists(path: string): Promise<boolean> {
+    try {
+      await fileIo.stat(path);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private async tryDeleteFile(path: string): Promise<void> {
+    try {
+      const exists = await this.fileExists(path);
+      if (exists) {
+        await fileIo.unlink(path);
+      }
+    } catch (_error) {
+    }
+  }
+
+  private findRecordById(recordId: string): TransferUploadRecord | null {
+    for (const record of this.records) {
+      if (record.id === recordId) {
+        return record;
+      }
+    }
+    return null;
+  }
+
+  private trimRecords(): void {
+    if (this.records.length <= MAX_RECORD_COUNT) {
+      return;
+    }
+    this.records = this.records.slice(0, MAX_RECORD_COUNT);
+  }
+
+  private normalizeUploadFileName(originalFileName: string): string {
+    let normalized = originalFileName.trim();
+    if (normalized.length <= 0) {
+      normalized = 'upload.bin';
+    }
+    try {
+      normalized = decodeURIComponent(normalized);
+    } catch (_error) {
+    }
+
+    normalized = normalized.replace(/[\\/:*?"<>|]/g, '_');
+    normalized = normalized.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= 0) {
+      normalized = 'upload.bin';
+    }
+    if (normalized.length > 120) {
+      normalized = normalized.substring(normalized.length - 120);
+    }
+    return normalized;
+  }
+
+  private buildRecordId(): string {
+    const randomPart = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+    return `tx_${Date.now()}_${randomPart}`;
+  }
+
+  private copyUint8ArrayToBuffer(source: Uint8Array): ArrayBuffer {
+    const copy = new Uint8Array(source.byteLength);
+    copy.set(source);
+    return copy.buffer;
+  }
+
+  private clearPendingImportMarkers(): void {
+    AppStorage.delete('pendingFileUri');
+    AppStorage.delete('pendingFileType');
+    AppStorage.delete('pendingFileCategory');
+    AppStorage.delete('pendingFileSource');
+    AppStorage.delete('pendingFileTarget');
+    AppStorage.delete('pendingFileDisplayName');
+    AppStorage.delete('fileImportPending');
+
+    AppStorage.delete('pendingBackupUri');
+    AppStorage.delete('backupImportPending');
+    AppStorage.delete('pendingJsonUri');
+    AppStorage.delete('pendingFontUri');
+    AppStorage.delete('pendingCodeUri');
+    AppStorage.delete('pendingCodeLanguage');
+    AppStorage.delete('pendingAvifUri');
+  }
+}
+
+export function getTransferUploadStoreService(): TransferUploadStoreService {
+  return TransferUploadStoreService.getInstance();
+}

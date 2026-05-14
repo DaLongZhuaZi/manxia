@@ -477,7 +477,7 @@ export class NovelAdapter {
       readProgress: totalCount > 0 ? Math.round((readCount / totalCount) * 100) : 0,
       
       sourceId: sourceId,
-      sourceName: book.origin,
+      sourceName: book.originName || book.origin,
       sourceUrl: book.bookUrl,
       isLocal: !sourceId || sourceId === 'local',
       

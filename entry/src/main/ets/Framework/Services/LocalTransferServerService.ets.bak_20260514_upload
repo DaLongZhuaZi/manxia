@@ -1,0 +1,733 @@
+/**
+ * 局域网传书本地服务骨架
+ *
+ * 当前阶段能力：
+ * 1. 启动 / 停止本地 TCP 服务
+ * 2. 提供 GET /、GET /api/info、GET /health
+ * 3. 提供配对码会话、自动停服、后台运行申请骨架
+ *
+ * 暂未实现：
+ * 1. 文件上传接收
+ * 2. multipart/form-data 解析
+ * 3. 上传后导入编排
+ */
+
+import socket from '@ohos.net.socket';
+import webSocket from '@ohos.net.webSocket';
+import { util } from '@kit.ArkTS';
+import { common } from '@kit.AbilityKit';
+import { connection } from '@kit.NetworkKit';
+import { logger } from '../../Utils/Logger';
+import {
+  TransferConfig,
+  TransferInfoResponse,
+  TransferLocalAddress,
+  TransferServerRuntime,
+  TransferSessionInfo,
+  buildTransferInfoResponse,
+  cloneTransferLocalAddress,
+  cloneTransferServerRuntime,
+  createEmptyTransferServerRuntime
+} from '../../Models/TransferModels';
+import { getTransferConfigManager, TransferConfigManager } from '../Managers/TransferConfigManager';
+import { getTransferSessionManager, TransferSessionManager } from '../Managers/TransferSessionManager';
+import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
+
+const TAG = 'LocalTransferServer';
+const BACKGROUND_OWNER = 'local_transfer_server';
+const DEFAULT_SESSION_TTL_MINUTES = 10;
+
+export class LocalTransferServerService {
+  private static instance: LocalTransferServerService;
+
+  private tcpServer: socket.TCPSocketServer | null = null;
+  private wsServer: webSocket.WebSocketServer | null = null;
+  private runtime: TransferServerRuntime = createEmptyTransferServerRuntime();
+  private readonly decoder: util.TextDecoder = new util.TextDecoder('utf-8');
+  private readonly encoder: util.TextEncoder = new util.TextEncoder();
+  private readonly requestBuffers: Map<number, string> = new Map<number, string>();
+  private readonly tcpConnections: Map<number, socket.TCPSocketConnection> = new Map<number, socket.TCPSocketConnection>();
+  private readonly configManager: TransferConfigManager = getTransferConfigManager();
+  private readonly sessionManager: TransferSessionManager = getTransferSessionManager();
+  private lastAbilityContext: common.UIAbilityContext | null = null;
+  private autoStopTimer: number = -1;
+
+  private constructor() {}
+
+  public static getInstance(): LocalTransferServerService {
+    if (!LocalTransferServerService.instance) {
+      LocalTransferServerService.instance = new LocalTransferServerService();
+    }
+    return LocalTransferServerService.instance;
+  }
+
+  public getRuntimeState(): TransferServerRuntime {
+    this.refreshRuntimePresentation();
+    return cloneTransferServerRuntime(this.runtime);
+  }
+
+  public isRunning(): boolean {
+    return this.runtime.status === 'running';
+  }
+
+  public refreshSession(): TransferServerRuntime {
+    if (this.runtime.status === 'running') {
+      this.sessionManager.refreshSession(DEFAULT_SESSION_TTL_MINUTES);
+      this.refreshRuntimePresentation();
+      this.markActivity();
+    }
+    return this.getRuntimeState();
+  }
+
+  public async start(context: common.UIAbilityContext): Promise<TransferServerRuntime> {
+    if (this.runtime.status === 'running') {
+      this.lastAbilityContext = context;
+      this.refreshRuntimePresentation();
+      return this.getRuntimeState();
+    }
+    if (this.runtime.status === 'starting') {
+      return this.getRuntimeState();
+    }
+
+    this.runtime.status = 'starting';
+    this.runtime.infoMessage = '正在启动本地传书服务...';
+    this.runtime.lastError = '';
+    this.lastAbilityContext = context;
+
+    const config = this.configManager.getConfig();
+    const session = this.sessionManager.createOrRefreshSession(DEFAULT_SESSION_TTL_MINUTES);
+    logger.info(TAG, `准备启动局域网传书服务: 端口=${config.port}, 配对码=${session.pairCode}`);
+
+    try {
+      await this.startTcpServer(config);
+
+      const activePort = this.runtime.activePort;
+      let wsPort = 0;
+      if (config.wsEnabled) {
+        wsPort = await this.startOptionalWebSocketServer(activePort + 1);
+      }
+
+      if (config.allowBackgroundTransfer) {
+        await BackgroundTaskHelper.startDataTransferTask(context, BACKGROUND_OWNER);
+      }
+
+      const addresses = this.resolveLocalAddresses(activePort);
+      this.runtime.status = 'running';
+      this.runtime.phase = 'scaffold';
+      this.runtime.webSocketPort = wsPort;
+      this.runtime.startedAt = Date.now();
+      this.runtime.lastError = '';
+      this.runtime.infoMessage = '服务已启动。当前为开发骨架版本，已开放状态页和 /api/info 接口。';
+      this.runtime.backgroundRunning = BackgroundTaskHelper.isRunning();
+      this.runtime.localAddresses = addresses;
+      this.runtime.session = session;
+
+      this.armAutoStopTimer(config);
+      logger.info(TAG, `局域网传书服务已启动: 端口=${activePort}, 地址数=${addresses.length}`);
+      return this.getRuntimeState();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `启动局域网传书服务失败: ${errorMessage}`);
+      await this.stopInternal('启动失败，服务未运行。');
+      this.runtime.status = 'error';
+      this.runtime.lastError = errorMessage;
+      this.runtime.infoMessage = `启动失败: ${errorMessage}`;
+      return this.getRuntimeState();
+    }
+  }
+
+  public async stop(reason: string = '服务已停止。'): Promise<TransferServerRuntime> {
+    await this.stopInternal(reason);
+    return this.getRuntimeState();
+  }
+
+  private async stopInternal(reason: string): Promise<void> {
+    if (this.runtime.status === 'stopping') {
+      return;
+    }
+    this.runtime.status = 'stopping';
+    this.clearAutoStopTimer();
+
+    await this.stopWebSocketServer();
+    await this.closeAllTcpConnections();
+    await this.stopTcpServer();
+
+    if (this.lastAbilityContext !== null && BackgroundTaskHelper.getOwnerCount() > 0) {
+      try {
+        await BackgroundTaskHelper.stopDataTransferTask(this.lastAbilityContext, BACKGROUND_OWNER);
+      } catch (error) {
+        logger.warn(TAG, `停止后台长时任务失败: ${String(error)}`);
+      }
+    }
+
+    this.sessionManager.clearSession();
+    this.requestBuffers.clear();
+    this.tcpConnections.clear();
+
+    this.runtime = createEmptyTransferServerRuntime();
+    this.runtime.infoMessage = reason;
+  }
+
+  private async startTcpServer(config: TransferConfig): Promise<void> {
+    const server = socket.constructTCPSocketServerInstance();
+    server.on('connect', (clientConnection: socket.TCPSocketConnection) => {
+      this.handleTcpConnect(clientConnection);
+    });
+    server.on('error', (error: Error) => {
+      logger.error(TAG, `TCP服务异常: ${String(error)}`);
+      this.runtime.lastError = String(error);
+    });
+
+    const listenAddress: connection.NetAddress = {
+      address: '0.0.0.0',
+      family: 1,
+      port: config.port
+    };
+    await server.listen(listenAddress);
+    const localAddress = await server.getLocalAddress();
+
+    this.tcpServer = server;
+    this.runtime.activePort = localAddress.port !== undefined ? localAddress.port : config.port;
+    logger.info(TAG, `TCP服务监听成功: 0.0.0.0:${this.runtime.activePort}`);
+  }
+
+  private async stopTcpServer(): Promise<void> {
+    if (this.tcpServer === null) {
+      return;
+    }
+    try {
+      this.tcpServer.off('connect');
+      this.tcpServer.off('error');
+      await this.tcpServer.close();
+      logger.info(TAG, 'TCP服务已关闭');
+    } catch (error) {
+      logger.warn(TAG, `关闭TCP服务失败: ${String(error)}`);
+    } finally {
+      this.tcpServer = null;
+    }
+  }
+
+  private async startOptionalWebSocketServer(targetPort: number): Promise<number> {
+    try {
+      const server = webSocket.createWebSocketServer();
+      server.on('connect', (clientConnection: webSocket.WebSocketConnection) => {
+        logger.info(TAG, `WebSocket客户端已连接: ${clientConnection.clientIP}:${clientConnection.clientPort}`);
+        void this.sendWebSocketInfo(clientConnection);
+      });
+      server.on('messageReceive', (message: webSocket.WebSocketMessage) => {
+        void this.handleWebSocketMessage(message);
+      });
+      server.on('close', (clientConnection: webSocket.WebSocketConnection) => {
+        logger.info(TAG, `WebSocket客户端已断开: ${clientConnection.clientIP}:${clientConnection.clientPort}`);
+      });
+      server.on('error', (error: Error) => {
+        logger.warn(TAG, `WebSocket状态通道异常: ${String(error)}`);
+      });
+
+      const started = await server.start({
+        serverIP: '0.0.0.0',
+        serverPort: targetPort
+      });
+      if (!started) {
+        logger.warn(TAG, 'WebSocket状态通道启动返回 false，将忽略该通道');
+        return 0;
+      }
+
+      this.wsServer = server;
+      logger.info(TAG, `WebSocket状态通道已启动: 0.0.0.0:${targetPort}`);
+      return targetPort;
+    } catch (error) {
+      logger.warn(TAG, `WebSocket状态通道启动失败，将继续使用纯HTTP骨架: ${String(error)}`);
+      return 0;
+    }
+  }
+
+  private async stopWebSocketServer(): Promise<void> {
+    if (this.wsServer === null) {
+      return;
+    }
+    try {
+      this.wsServer.off('connect');
+      this.wsServer.off('messageReceive');
+      this.wsServer.off('close');
+      this.wsServer.off('error');
+      await this.wsServer.stop();
+      logger.info(TAG, 'WebSocket状态通道已关闭');
+    } catch (error) {
+      logger.warn(TAG, `关闭WebSocket状态通道失败: ${String(error)}`);
+    } finally {
+      this.wsServer = null;
+    }
+  }
+
+  private handleTcpConnect(clientConnection: socket.TCPSocketConnection): void {
+    logger.info(TAG, `收到TCP连接: clientId=${clientConnection.clientId}`);
+    this.tcpConnections.set(clientConnection.clientId, clientConnection);
+    this.requestBuffers.set(clientConnection.clientId, '');
+    this.markActivity();
+
+    clientConnection.on('message', (messageInfo: socket.SocketMessageInfo) => {
+      void this.handleTcpMessage(clientConnection, messageInfo);
+    });
+    clientConnection.on('close', () => {
+      this.cleanupTcpConnection(clientConnection.clientId);
+      logger.info(TAG, `TCP连接已关闭: clientId=${clientConnection.clientId}`);
+    });
+    clientConnection.on('error', (error: Error) => {
+      logger.warn(TAG, `TCP连接异常: clientId=${clientConnection.clientId}, ${String(error)}`);
+      this.cleanupTcpConnection(clientConnection.clientId);
+    });
+  }
+
+  private async handleTcpMessage(
+    clientConnection: socket.TCPSocketConnection,
+    messageInfo: socket.SocketMessageInfo
+  ): Promise<void> {
+    const chunk = this.decoder.decodeToString(new Uint8Array(messageInfo.message));
+    const currentBuffer = this.requestBuffers.get(clientConnection.clientId) ?? '';
+    const nextBuffer = `${currentBuffer}${chunk}`;
+    this.requestBuffers.set(clientConnection.clientId, nextBuffer);
+
+    if (nextBuffer.indexOf('\r\n\r\n') < 0) {
+      return;
+    }
+
+    this.requestBuffers.delete(clientConnection.clientId);
+    this.markActivity();
+    await this.processHttpRequest(clientConnection, nextBuffer);
+  }
+
+  private async processHttpRequest(
+    clientConnection: socket.TCPSocketConnection,
+    rawRequest: string
+  ): Promise<void> {
+    const headerEndIndex = rawRequest.indexOf('\r\n\r\n');
+    const requestText = headerEndIndex >= 0 ? rawRequest.substring(0, headerEndIndex) : rawRequest;
+    const lines = requestText.split('\r\n');
+    if (lines.length <= 0 || lines[0].trim().length <= 0) {
+      await this.sendHttpResponse(clientConnection, 400, 'text/plain; charset=utf-8', 'Bad Request');
+      return;
+    }
+
+    const requestLine = lines[0].trim();
+    const requestLineParts = requestLine.split(' ');
+    if (requestLineParts.length < 2) {
+      await this.sendHttpResponse(clientConnection, 400, 'text/plain; charset=utf-8', 'Bad Request');
+      return;
+    }
+
+    const method = requestLineParts[0].toUpperCase();
+    const requestPath = this.normalizeHttpPath(requestLineParts[1]);
+
+    if (method !== 'GET') {
+      await this.sendHttpResponse(
+        clientConnection,
+        405,
+        'application/json; charset=utf-8',
+        '{"ok":false,"message":"当前骨架仅支持 GET 接口"}'
+      );
+      return;
+    }
+
+    if (requestPath === '/') {
+      await this.sendHttpResponse(
+        clientConnection,
+        200,
+        'text/html; charset=utf-8',
+        this.buildLandingHtml()
+      );
+      return;
+    }
+
+    if (requestPath === '/api/info') {
+      const payload = this.buildInfoJsonPayload();
+      await this.sendHttpResponse(clientConnection, 200, 'application/json; charset=utf-8', payload);
+      return;
+    }
+
+    if (requestPath === '/health') {
+      await this.sendHttpResponse(clientConnection, 200, 'text/plain; charset=utf-8', 'ok');
+      return;
+    }
+
+    await this.sendHttpResponse(
+      clientConnection,
+      404,
+      'application/json; charset=utf-8',
+      '{"ok":false,"message":"Not Found"}'
+    );
+  }
+
+  private async sendHttpResponse(
+    clientConnection: socket.TCPSocketConnection,
+    statusCode: number,
+    contentType: string,
+    body: string
+  ): Promise<void> {
+    const bodyBuffer = this.encoder.encodeInto(body);
+    const reason = this.getHttpStatusReason(statusCode);
+    const headers = [
+      `HTTP/1.1 ${statusCode} ${reason}`,
+      `Content-Type: ${contentType}`,
+      `Content-Length: ${bodyBuffer.byteLength}`,
+      'Connection: close',
+      'Cache-Control: no-store',
+      'Access-Control-Allow-Origin: *',
+      '',
+      ''
+    ].join('\r\n');
+    const responseText = `${headers}${body}`;
+
+    try {
+      await clientConnection.send({
+        data: responseText,
+        encoding: 'UTF-8'
+      });
+    } catch (error) {
+      logger.warn(TAG, `发送HTTP响应失败: ${String(error)}`);
+    }
+
+    try {
+      await clientConnection.close();
+    } catch (error) {
+      logger.warn(TAG, `关闭TCP连接失败: ${String(error)}`);
+    }
+  }
+
+  private buildInfoJsonPayload(): string {
+    const runtime = this.getRuntimeState();
+    const config = this.configManager.getConfig();
+    const response: TransferInfoResponse = buildTransferInfoResponse(runtime, config);
+    return JSON.stringify(response);
+  }
+
+  private buildLandingHtml(): string {
+    const runtime = this.getRuntimeState();
+    const config = this.configManager.getConfig();
+    const pairCode = runtime.session !== null ? runtime.session.pairCode : '------';
+    const address = runtime.localAddresses.length > 0 ? runtime.localAddresses[0].url : '未检测到可用地址';
+    const wsText = runtime.webSocketPort > 0 ? `已启用（端口 ${runtime.webSocketPort}）` : '未启用';
+    const safeMessage = this.escapeHtml(runtime.infoMessage);
+    const safeAddress = this.escapeHtml(address);
+    const safePairCode = this.escapeHtml(pairCode);
+    const safeMaxFileSize = this.escapeHtml(config.maxFileSizeMb.toString());
+    return `
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>漫匣局域网传书</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #10151a;
+      --card: rgba(255, 255, 255, 0.08);
+      --text: #f4f7fb;
+      --muted: rgba(244, 247, 251, 0.72);
+      --line: rgba(244, 247, 251, 0.12);
+      --accent: #52c2a1;
+      --accent-2: #8fd3ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "HarmonyOS Sans", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(82, 194, 161, 0.26), transparent 35%),
+        radial-gradient(circle at bottom right, rgba(143, 211, 255, 0.20), transparent 36%),
+        var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .shell {
+      width: min(760px, 100%);
+      border: 1px solid var(--line);
+      background: var(--card);
+      border-radius: 28px;
+      backdrop-filter: blur(18px);
+      padding: 28px;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.28);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+    p {
+      margin: 0 0 12px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(82, 194, 161, 0.18);
+      color: var(--text);
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+    .panel {
+      margin-top: 18px;
+      padding: 18px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .row:last-child {
+      border-bottom: none;
+    }
+    .key {
+      color: var(--muted);
+    }
+    .value {
+      text-align: right;
+      color: var(--text);
+      word-break: break-all;
+    }
+    code {
+      color: var(--accent-2);
+      font-family: "Cascadia Code", "Consolas", monospace;
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="badge">漫匣局域网传书 · 开发骨架</div>
+    <h1>本地状态页已启动</h1>
+    <p>${safeMessage}</p>
+
+    <section class="panel">
+      <div class="row">
+        <div class="key">访问地址</div>
+        <div class="value"><code>${safeAddress}</code></div>
+      </div>
+      <div class="row">
+        <div class="key">配对码</div>
+        <div class="value"><code>${safePairCode}</code></div>
+      </div>
+      <div class="row">
+        <div class="key">状态通道</div>
+        <div class="value">${this.escapeHtml(wsText)}</div>
+      </div>
+      <div class="row">
+        <div class="key">文件上限</div>
+        <div class="value">${safeMaxFileSize} MB</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <p>当前已开放接口：</p>
+      <p><code>GET /</code></p>
+      <p><code>GET /api/info</code></p>
+      <p><code>GET /health</code></p>
+      <p>上传接口和导入链路将在后续阶段接入。</p>
+    </section>
+  </main>
+</body>
+</html>`.trim();
+  }
+
+  private async sendWebSocketInfo(clientConnection: webSocket.WebSocketConnection): Promise<void> {
+    if (this.wsServer === null) {
+      return;
+    }
+    const payload = this.buildInfoJsonPayload();
+    try {
+      await this.wsServer.send(payload, clientConnection);
+    } catch (error) {
+      logger.warn(TAG, `发送WebSocket状态失败: ${String(error)}`);
+    }
+  }
+
+  private async handleWebSocketMessage(message: webSocket.WebSocketMessage): Promise<void> {
+    if (this.wsServer === null) {
+      return;
+    }
+    this.markActivity();
+    let messageText = '';
+    if (typeof message.data === 'string') {
+      messageText = message.data;
+    } else {
+      messageText = this.decoder.decodeToString(new Uint8Array(message.data));
+    }
+    const normalizedMessage = messageText.trim().toLowerCase();
+    if (normalizedMessage === 'info' || normalizedMessage.length <= 0) {
+      await this.sendWebSocketInfo(message.clientConnection);
+      return;
+    }
+    const fallbackPayload = JSON.stringify({
+      ok: true,
+      message: '当前版本仅开放状态查询骨架，请使用 info 获取最新状态。'
+    });
+    try {
+      await this.wsServer.send(fallbackPayload, message.clientConnection);
+    } catch (error) {
+      logger.warn(TAG, `发送WebSocket回退消息失败: ${String(error)}`);
+    }
+  }
+
+  private resolveLocalAddresses(port: number): TransferLocalAddress[] {
+    const addresses: TransferLocalAddress[] = [];
+    try {
+      const netHandle = connection.getDefaultNetSync();
+      const properties = connection.getConnectionPropertiesSync(netHandle);
+      for (const linkAddress of properties.linkAddresses) {
+        const host = linkAddress.address.address;
+        if (host.indexOf(':') >= 0) {
+          continue;
+        }
+        this.pushAddressIfMissing(addresses, host, port);
+      }
+    } catch (error) {
+      logger.warn(TAG, `获取本地网络地址失败: ${String(error)}`);
+    }
+
+    if (addresses.length <= 0) {
+      this.pushAddressIfMissing(addresses, '127.0.0.1', port);
+    }
+
+    for (let index = 0; index < addresses.length; index++) {
+      addresses[index].label = index === 0 ? '主地址' : `备用地址 ${index}`;
+      addresses[index].isPrimary = index === 0;
+    }
+    return addresses;
+  }
+
+  private pushAddressIfMissing(addresses: TransferLocalAddress[], host: string, port: number): void {
+    const normalizedHost = host.trim();
+    if (normalizedHost.length <= 0) {
+      return;
+    }
+    for (const item of addresses) {
+      if (item.host === normalizedHost) {
+        return;
+      }
+    }
+    const address: TransferLocalAddress = {
+      label: '地址',
+      host: normalizedHost,
+      port: port,
+      url: `http://${normalizedHost}:${port}`,
+      isPrimary: false
+    };
+    addresses.push(address);
+  }
+
+  private refreshRuntimePresentation(): void {
+    if (this.runtime.status !== 'running') {
+      return;
+    }
+
+    const session = this.sessionManager.getSessionSnapshot();
+    let effectiveSession: TransferSessionInfo | null = session;
+    if (effectiveSession === null || effectiveSession.status === 'expired') {
+      effectiveSession = this.sessionManager.createOrRefreshSession(DEFAULT_SESSION_TTL_MINUTES);
+    }
+
+    const localAddresses: TransferLocalAddress[] = this.resolveLocalAddresses(this.runtime.activePort);
+    const clonedAddresses: TransferLocalAddress[] = [];
+    for (const address of localAddresses) {
+      clonedAddresses.push(cloneTransferLocalAddress(address));
+    }
+    this.runtime.localAddresses = clonedAddresses;
+    this.runtime.session = effectiveSession;
+    this.runtime.backgroundRunning = BackgroundTaskHelper.isRunning();
+  }
+
+  private markActivity(): void {
+    this.sessionManager.touchSession();
+    if (this.runtime.status === 'running') {
+      this.armAutoStopTimer(this.configManager.getConfig());
+    }
+  }
+
+  private armAutoStopTimer(config: TransferConfig): void {
+    this.clearAutoStopTimer();
+    const delayMs = config.autoStopMinutes * 60 * 1000;
+    if (delayMs <= 0) {
+      return;
+    }
+    this.autoStopTimer = setTimeout(() => {
+      logger.info(TAG, `触发自动停服，空闲时长达到 ${config.autoStopMinutes} 分钟`);
+      void this.stop('空闲超时，服务已自动停止。');
+    }, delayMs);
+  }
+
+  private clearAutoStopTimer(): void {
+    if (this.autoStopTimer >= 0) {
+      clearTimeout(this.autoStopTimer);
+      this.autoStopTimer = -1;
+    }
+  }
+
+  private cleanupTcpConnection(clientId: number): void {
+    this.requestBuffers.delete(clientId);
+    this.tcpConnections.delete(clientId);
+  }
+
+  private async closeAllTcpConnections(): Promise<void> {
+    const connections: socket.TCPSocketConnection[] = [];
+    for (const connectionItem of this.tcpConnections.values()) {
+      connections.push(connectionItem);
+    }
+    for (const connectionItem of connections) {
+      try {
+        await connectionItem.close();
+      } catch (error) {
+        logger.warn(TAG, `关闭TCP客户端连接失败: ${String(error)}`);
+      }
+    }
+  }
+
+  private normalizeHttpPath(path: string): string {
+    const trimmedPath = path.trim();
+    const queryIndex = trimmedPath.indexOf('?');
+    if (queryIndex >= 0) {
+      return trimmedPath.substring(0, queryIndex);
+    }
+    return trimmedPath;
+  }
+
+  private getHttpStatusReason(statusCode: number): string {
+    if (statusCode === 200) {
+      return 'OK';
+    }
+    if (statusCode === 400) {
+      return 'Bad Request';
+    }
+    if (statusCode === 404) {
+      return 'Not Found';
+    }
+    if (statusCode === 405) {
+      return 'Method Not Allowed';
+    }
+    return 'OK';
+  }
+
+  private escapeHtml(value: string): string {
+    let result = value;
+    result = result.replace(/&/g, '&amp;');
+    result = result.replace(/</g, '&lt;');
+    result = result.replace(/>/g, '&gt;');
+    result = result.replace(/"/g, '&quot;');
+    result = result.replace(/'/g, '&#39;');
+    return result;
+  }
+}
+
+export function getLocalTransferServerService(): LocalTransferServerService {
+  return LocalTransferServerService.getInstance();
+}

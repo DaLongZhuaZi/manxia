@@ -9,11 +9,13 @@ export class MultiSelectState {
   isDeleting: boolean = false;
 
   toggle(id: string): void {
-    if (this.selectedIds.has(id)) {
-      this.selectedIds.delete(id);
+    const nextSelectedIds: Set<string> = new Set(this.selectedIds);
+    if (nextSelectedIds.has(id)) {
+      nextSelectedIds.delete(id);
     } else {
-      this.selectedIds.add(id);
+      nextSelectedIds.add(id);
     }
+    this.selectedIds = nextSelectedIds;
     this.isActive = this.selectedIds.size > 0;
   }
 

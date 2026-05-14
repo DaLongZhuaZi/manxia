@@ -1,25 +1,17 @@
-// 文件路径: src/main/ets/pages/StorageManagementPage.ets
-/**
- * 存储管理页面
- * 统一管理和可视化展示应用的所有存储使用情况
- */
-
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { HdsNavDestination } from '@kit.UIDesignKit';
+import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
-import { StorageAnalyzer, StorageStatistics, StorageItem, StorageType, ClearOptions } from '../Framework/Storage/StorageAnalyzer';
-import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { LengthMetrics } from '@kit.ArkUI';
-import { PermanentImageCacheManager, MangaCacheStats } from '../Framework/Cache/PermanentImageCacheManager';
-import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
-import { DataManager } from '../Framework/Data/DataManager';
-import { ImageCacheManager } from '../Framework/Cache/ImageCacheManager';
-import { CacheConfigManager, CacheConfig } from '../Framework/Cache/CacheConfigManager';
-import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPreloadStrategy';
-import { DiskCacheManager } from '../Framework/Cache/DiskCacheManager';
-import { CacheManagementPanel } from '../components/CacheManagementPanel';
+import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import {
+  StorageBucketId,
+  StorageBucketSummary,
+  StorageClearResult,
+  StorageDashboardService,
+  StorageDashboardSnapshot,
+  StorageSectionId,
+  StorageSectionSummary
+} from '../Framework/Storage/StorageDashboardService';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
@@ -28,62 +20,74 @@ import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBac
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'StorageManagementPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
+const STORAGE_AUTO_REFRESH_INTERVAL_MS: number = 3500;
 
-interface ThemeState {
-  currentTheme: ThemeType;
-}
-
-interface SourceCoverInfo {
-  sourceId: number;
-  sourceName: string;
-  coverCount: number;
-  totalSize: number;
-}
-
-interface CacheDetailInfo {
-  memoryCacheSize: number;
-  diskCacheSize: number;
-  permanentCacheSize: number;
-  mangaCacheList: MangaCacheStats[];
-  coverCacheList: SourceCoverInfo[];
-}
-
-interface DiskCacheStatsInfo {
-  count: number;
-  totalSize: number;
-  usagePercent: number;
-}
-
-@ComponentV2
+@Component
 export struct StorageManagementPage {
-  @Local themeState: ThemeState = { currentTheme: ThemeType.DARK };
-  @Local fontState: FontAwareState = new FontAwareState();
-  @Local appFontFamily: string = 'HarmonyOS Sans';
-  @Local isLoading: boolean = true;
-  @Local statistics: StorageStatistics | null = null;
-  @Local selectedItems: Set<StorageType> = new Set();
-  @Local selectedCount: number = 0; // 用于触发UI更新
-  @Local isClearing: boolean = false;
-  @Local cacheDetails: CacheDetailInfo | null = null;
-  @Local showCacheDetails: boolean = false;
-  @Local showCacheConfig: boolean = false;
-  @Local showPreloadStats: boolean = false;
-  @Local cacheConfig: CacheConfig | null = null;
-  @Local preloadStats: PreloadStats | null = null;
-  @Local diskCacheStats: DiskCacheStatsInfo | null = null;
-  private storageAnalyzer: StorageAnalyzer = StorageAnalyzer.getInstance();
-  private themeManager: ThemeManager = ThemeManager.getInstance();
-  private cacheConfigManager: CacheConfigManager = CacheConfigManager.getInstance();
-  private smartPreloadStrategy: SmartPreloadStrategy = SmartPreloadStrategy.getInstance();
-  private diskCacheManager: DiskCacheManager = DiskCacheManager.getInstance();
-  private lifecycle = new PageLifecycleManager('StorageManagementPage', { enableDebug: true });
-  private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
-  pathStack: NavPathStack = new NavPathStack();
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
-  private getTitleBarSpacerHeight(): number {
-    const statusBarHeight = AppStorage.get<number>('statusBarHeight');
-    return SettingsPageTitleBarManager.getContentTopPadding(statusBarHeight ?? 0);
+  @State private snapshot: StorageDashboardSnapshot | null = null;
+  @State private selectedBucketIds: StorageBucketId[] = [];
+  @State private isLoading: boolean = true;
+  @State private isRefreshing: boolean = false;
+  @State private isClearing: boolean = false;
+  @State private hasLoaded: boolean = false;
+  @State private errorMessage: string = '';
+  @State private snapshotRenderVersion: number = 0;
+  @State private isCleanableSectionExpanded: boolean = true;
+  @State private isRemoteCacheSectionExpanded: boolean = true;
+  @State private isMemorySectionExpanded: boolean = true;
+  @State private isProtectedSectionExpanded: boolean = true;
+
+  private readonly storageService: StorageDashboardService = StorageDashboardService.getInstance();
+  private readonly componentId: string = TAG;
+  private silentRefreshSequenceToken: number = 0;
+  private pendingSilentRefreshTimers: number[] = [];
+  private pendingOptimisticBucketIds: StorageBucketId[] = [];
+  private refreshTimer: number = -1;
+  private isSnapshotRefreshRunning: boolean = false;
+  private snapshotRefreshGeneration: number = 0;
+
+  aboutToAppear(): void {
+    logger.lifecycle(TAG, 'aboutToAppear');
+    ThemeAwareHelper.initializeThemeAware(
+      this.componentId,
+      this.themeState,
+      undefined,
+      (newState: ThemeAwareState) => {
+        this.themeState = newState;
+      }
+    );
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
+    void this.loadSnapshot(true, false);
+    this.startRefreshTimer();
+  }
+
+  aboutToDisappear(): void {
+    logger.lifecycle(TAG, 'aboutToDisappear');
+    this.stopRefreshTimer();
+    this.invalidateSilentRefreshSequence();
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
+  }
+
+  private getAbilityContext(): common.UIAbilityContext | null {
+    try {
+      return this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+    } catch (error) {
+      logger.error(TAG, `读取Ability上下文失败: ${String(error)}`);
+      return null;
+    }
   }
 
   private getTitleBarActions(): SettingsImmersiveTitleActionItem[] {
@@ -97,425 +101,994 @@ export struct StorageManagementPage {
     }];
   }
 
-  aboutToAppear(): void {
-    logger.info(TAG, '存储管理页面初始化');
-
-    // 初始化主题并监听变化（使用getActualTheme获取实际显示的主题）
-    this.themeManager.getActualTheme().then((theme: ThemeType) => {
-      this.themeState = { currentTheme: theme };
-    });
-    this.themeChangeCallback = (newTheme: ThemeType) => {
-      logger.info(TAG, `主题切换到: ${newTheme}`);
-      this.themeState = { currentTheme: newTheme };
-    };
-    this.themeManager.onThemeChange(this.themeChangeCallback);
-
-    // 加载存储统计
-    this.loadStorageStatistics();
-    
-    // 初始化字体管理
-    FontAwareHelper.initializeFontAware('StorageManagementPage', this.fontState, (newState: FontAwareState) => {
-      this.fontState = newState;
-      this.appFontFamily = newState.appFontFamily;
-    });
+  private commitSnapshot(snapshot: StorageDashboardSnapshot): void {
+    this.snapshot = snapshot;
+    this.snapshotRenderVersion += 1;
+    logger.debug(
+      TAG,
+      `提交存储快照: version=${this.snapshotRenderVersion}, scanned=${snapshot.overview.scannedTotalSizeBytes}, cleanable=${snapshot.overview.cleanableTotalSizeBytes}, selected=${this.selectedBucketIds.length}, updatedAt=${snapshot.overview.updatedAt}`
+    );
   }
 
-  aboutToDisappear(): void {
-    logger.info(TAG, '存储管理页面销毁');
-    // 移除主题监听器
-    if (this.themeChangeCallback) {
-      this.themeManager.offThemeChange(this.themeChangeCallback);
-    }
-    this.lifecycle.destroy();
-    FontAwareHelper.cleanupFontAware('StorageManagementPage');
-  }
-
-  /**
-   * 加载存储统计信息
-   */
-  private async loadStorageStatistics(): Promise<void> {
-    try {
-      this.isLoading = true;
-      this.statistics = await this.storageAnalyzer.analyzeStorage(true);
-      logger.info(TAG, `存储统计加载完成，总使用: ${this.storageAnalyzer.formatSize(this.statistics.usedSize)}`);
-    } catch (error) {
-      logger.error(TAG, `加载存储统计失败: ${error}`);
-      this.getUIContext().getPromptAction().showToast({ message: '加载失败' });
-    } finally {
-      this.isLoading = false;
-    }
-  }
-
-  /**
-   * 刷新统计信息
-   */
-  private async refreshStatistics(): Promise<void> {
-    await this.loadStorageStatistics();
-    if (this.showCacheDetails) {
-      await this.loadCacheDetails();
-    }
-    this.getUIContext().getPromptAction().showToast({ message: '已刷新' });
-  }
-
-  /**
-   * 加载缓存详情
-   */
-  private async loadCacheDetails(): Promise<void> {
-    try {
-      const imageCacheManager = ImageCacheManager.getInstance();
-      const permanentCacheManager = PermanentImageCacheManager.getInstance();
-      const coverCacheManager = CoverCacheManager.getInstance();
-      const dataManager = DataManager.getInstance();
-
-      // 获取内存缓存统计
-      const cacheStats = await imageCacheManager.getCacheStats();
-      const memoryCacheSize = cacheStats.memoryCache.size;
-      const diskCacheSize = cacheStats.diskCache.size;
-
-      // 获取永久缓存统计（按漫画分类）
-      const sources = await dataManager.getAllComicSources();
-      const mangaCacheList: MangaCacheStats[] = [];
-      let permanentCacheSize = 0;
-
-      for (const source of sources) {
-        if (source.id && typeof source.id === 'number') {
-          const stats = await permanentCacheManager.getSourceMangaCacheStats(source.id as number);
-          mangaCacheList.push(...stats);
-          for (let i = 0; i < stats.length; i++) {
-            permanentCacheSize += stats[i].totalSize;
-          }
-        }
+  private async loadSnapshot(forceRefresh: boolean, showRefreshToast: boolean): Promise<void> {
+    if (this.isSnapshotRefreshRunning) {
+      if (showRefreshToast) {
+        this.showToast('正在刷新存储信息');
       }
-
-      // 获取封面缓存统计（按图源分类）
-      const coverCacheList: SourceCoverInfo[] = [];
-      const allCoverStats = await coverCacheManager.getAllSourceCoverStats();
-
-      const entries = Array.from(allCoverStats.entries());
-      for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
-        const sourceId = entry[0];
-        const stat = entry[1];
-        const source = await dataManager.getComicSourceById(sourceId);
-        coverCacheList.push({
-          sourceId: sourceId,
-          sourceName: source?.name || `图源${sourceId}`,
-          coverCount: stat.count,
-          totalSize: stat.size
-        });
-      }
-
-      this.cacheDetails = {
-        memoryCacheSize,
-        diskCacheSize,
-        permanentCacheSize,
-        mangaCacheList,
-        coverCacheList
-      };
-
-      logger.info(TAG, '缓存详情加载完成');
-    } catch (error) {
-      logger.error(TAG, `加载缓存详情失败: ${error}`);
-    }
-  }
-
-  /**
-   * 切换缓存详情显示
-   */
-  private async toggleCacheDetails(): Promise<void> {
-    this.showCacheDetails = !this.showCacheDetails;
-    if (this.showCacheDetails && !this.cacheDetails) {
-      await this.loadCacheDetails();
-    }
-  }
-
-  /**
-   * 删除漫画缓存
-   */
-  private async deleteMangaCache(sourceId: number, mangaId: string): Promise<void> {
-    try {
-      const permanentCacheManager = PermanentImageCacheManager.getInstance();
-      await permanentCacheManager.cleanMangaCache(sourceId, mangaId);
-      this.getUIContext().getPromptAction().showToast({ message: '删除成功' });
-      await this.loadCacheDetails();
-      await this.loadStorageStatistics();
-    } catch (error) {
-      logger.error(TAG, `删除漫画缓存失败: ${error}`);
-      this.getUIContext().getPromptAction().showToast({ message: '删除失败' });
-    }
-  }
-
-  /**
-   * 删除图源封面缓存
-   */
-  private async deleteSourceCovers(sourceId: number): Promise<void> {
-    try {
-      const coverCacheManager = CoverCacheManager.getInstance();
-      await coverCacheManager.cleanSourceCovers(sourceId);
-      this.getUIContext().getPromptAction().showToast({ message: '删除成功' });
-      await this.loadCacheDetails();
-      await this.loadStorageStatistics();
-    } catch (error) {
-      logger.error(TAG, `删除封面缓存失败: ${error}`);
-      this.getUIContext().getPromptAction().showToast({ message: '删除失败' });
-    }
-  }
-
-  /**
-   * 显示清理确认对话框
-   * 显示即将清理的详细文件夹路径
-   */
-  private showClearConfirmDialog(): void {
-    if (this.selectedItems.size === 0) {
       return;
     }
 
-    // 构建详细的清理信息，包含文件夹路径
-    const detailLines: string[] = [];
-    let totalSize = 0;
-    let totalFiles = 0;
+    const abilityContext = this.getAbilityContext();
+    if (!abilityContext) {
+      this.errorMessage = '无法读取应用上下文，暂时不能扫描存储信息';
+      this.isLoading = false;
+      this.isRefreshing = false;
+      this.hasLoaded = true;
+      return;
+    }
 
-    Array.from(this.selectedItems).forEach(type => {
-      const item = this.statistics?.items.find(i => i.type === type);
-      if (item) {
-        const sizeFmt = this.storageAnalyzer.formatSize(item.size);
-        const pathInfo = item.path ? `\n   路径: ${item.path}` : '';
-        detailLines.push(`• ${item.name}\n   大小: ${sizeFmt}, ${item.fileCount} 个文件${pathInfo}`);
-        totalSize += item.size;
-        totalFiles += item.fileCount;
+    this.isSnapshotRefreshRunning = true;
+    const refreshGeneration = this.snapshotRefreshGeneration;
+    if (!this.hasLoaded) {
+      this.isLoading = true;
+    } else {
+      this.isRefreshing = true;
+    }
+
+    this.errorMessage = '';
+    try {
+      const snapshot = await this.storageService.inspect(abilityContext, forceRefresh);
+      if (refreshGeneration !== this.snapshotRefreshGeneration) {
+        logger.debug(TAG, `存储快照刷新结果已过期，跳过提交: generation=${refreshGeneration}`);
+        return;
       }
-    });
+      if (this.shouldSkipSilentRefreshSnapshot(snapshot)) {
+        logger.debug(TAG, `存储快照刷新结果已跳过，等待清理后复扫稳定: generation=${refreshGeneration}`);
+        return;
+      }
+      this.commitSnapshot(snapshot);
+      this.trimSelection();
+      if (showRefreshToast) {
+        this.showToast('存储信息已刷新');
+      }
+    } catch (error) {
+      const message = `读取存储信息失败: ${String(error)}`;
+      logger.error(TAG, message);
+      this.errorMessage = message;
+      if (showRefreshToast) {
+        this.showToast('刷新失败');
+      }
+    } finally {
+      this.isLoading = false;
+      this.isRefreshing = false;
+      this.hasLoaded = true;
+      this.isSnapshotRefreshRunning = false;
+    }
+  }
 
-    const totalSizeFmt = this.storageAnalyzer.formatSize(totalSize);
-    const summary = `\n\n【总计】${totalSizeFmt}, ${totalFiles} 个文件`;
+  private async refreshSnapshot(): Promise<void> {
+    if (this.isSnapshotRefreshRunning) {
+      this.showToast('正在刷新存储信息');
+      return;
+    }
+    this.invalidateSilentRefreshSequence();
+    await this.loadSnapshot(true, true);
+  }
+
+  private startRefreshTimer(): void {
+    this.stopRefreshTimer();
+    this.refreshTimer = setInterval(() => {
+      this.runPeriodicRefresh();
+    }, STORAGE_AUTO_REFRESH_INTERVAL_MS) as number;
+  }
+
+  private stopRefreshTimer(): void {
+    if (this.refreshTimer >= 0) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = -1;
+    }
+  }
+
+  private runPeriodicRefresh(): void {
+    if (!this.hasLoaded || this.isLoading || this.isClearing || this.isSnapshotRefreshRunning) {
+      return;
+    }
+    void this.loadSnapshot(true, false);
+  }
+
+  private invalidateSilentRefreshSequence(): void {
+    this.silentRefreshSequenceToken += 1;
+    this.snapshotRefreshGeneration += 1;
+    for (let index = 0; index < this.pendingSilentRefreshTimers.length; index++) {
+      clearTimeout(this.pendingSilentRefreshTimers[index]);
+    }
+    this.pendingSilentRefreshTimers = [];
+    this.pendingOptimisticBucketIds = [];
+  }
+
+  private scheduleSilentRefreshSequence(clearedBucketIds: StorageBucketId[]): void {
+    const abilityContext = this.getAbilityContext();
+    if (!abilityContext) {
+      return;
+    }
+
+    this.invalidateSilentRefreshSequence();
+    for (let index = 0; index < clearedBucketIds.length; index++) {
+      this.pendingOptimisticBucketIds.push(clearedBucketIds[index]);
+    }
+    const refreshToken = this.silentRefreshSequenceToken;
+    this.enqueueSilentRefresh(abilityContext, refreshToken, 260);
+    this.enqueueSilentRefresh(abilityContext, refreshToken, 820);
+    this.enqueueSilentRefresh(abilityContext, refreshToken, 1680);
+    this.enqueueSilentRefresh(abilityContext, refreshToken, 3200);
+    this.enqueueSilentRefresh(abilityContext, refreshToken, 5200);
+  }
+
+  private enqueueSilentRefresh(
+    abilityContext: common.UIAbilityContext,
+    refreshToken: number,
+    delayMs: number
+  ): void {
+    const timerId: number = setTimeout(() => {
+      this.removeSilentRefreshTimer(timerId);
+      if (refreshToken !== this.silentRefreshSequenceToken) {
+        return;
+      }
+      void this.runSilentRefresh(abilityContext, refreshToken);
+    }, delayMs) as number;
+    this.pendingSilentRefreshTimers.push(timerId);
+  }
+
+  private removeSilentRefreshTimer(timerId: number): void {
+    const nextTimers: number[] = [];
+    for (let index = 0; index < this.pendingSilentRefreshTimers.length; index++) {
+      const currentTimerId = this.pendingSilentRefreshTimers[index];
+      if (currentTimerId !== timerId) {
+        nextTimers.push(currentTimerId);
+      }
+    }
+    this.pendingSilentRefreshTimers = nextTimers;
+  }
+
+  private async runSilentRefresh(
+    abilityContext: common.UIAbilityContext,
+    refreshToken: number
+  ): Promise<void> {
+    try {
+      const snapshot = await this.storageService.inspect(abilityContext, true);
+      if (refreshToken !== this.silentRefreshSequenceToken) {
+        return;
+      }
+      if (this.shouldSkipSilentRefreshSnapshot(snapshot)) {
+        logger.debug(TAG, `静默刷新结果已跳过: token=${refreshToken}, version=${this.snapshotRenderVersion}`);
+        return;
+      }
+      this.commitSnapshot(snapshot);
+      this.errorMessage = '';
+      this.hasLoaded = true;
+      this.trimSelection();
+    } catch (error) {
+      if (refreshToken !== this.silentRefreshSequenceToken) {
+        return;
+      }
+      logger.debug(TAG, `静默刷新存储信息失败: ${String(error)}`);
+    } finally {
+      this.completeSilentRefreshAttempt(refreshToken);
+    }
+  }
+
+  private completeSilentRefreshAttempt(refreshToken: number): void {
+    if (refreshToken !== this.silentRefreshSequenceToken) {
+      return;
+    }
+    if (this.pendingSilentRefreshTimers.length > 0) {
+      return;
+    }
+    this.pendingOptimisticBucketIds = [];
+  }
+
+  private shouldSkipSilentRefreshSnapshot(nextSnapshot: StorageDashboardSnapshot): boolean {
+    const currentSnapshot = this.snapshot;
+    if (!currentSnapshot || this.pendingOptimisticBucketIds.length <= 0) {
+      return false;
+    }
+
+    for (let index = 0; index < this.pendingOptimisticBucketIds.length; index++) {
+      const bucketId = this.pendingOptimisticBucketIds[index];
+      const currentBucket = this.findBucketInSnapshot(currentSnapshot, bucketId);
+      const nextBucket = this.findBucketInSnapshot(nextSnapshot, bucketId);
+      if (!currentBucket || !nextBucket) {
+        continue;
+      }
+      if (nextBucket.sizeBytes > currentBucket.sizeBytes || nextBucket.itemCount > currentBucket.itemCount) {
+        logger.debug(
+          TAG,
+          `检测到回退快照，跳过覆盖: bucket=${bucketId}, current=${currentBucket.sizeBytes}/${currentBucket.itemCount}, next=${nextBucket.sizeBytes}/${nextBucket.itemCount}`
+        );
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private trimSelection(): void {
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      this.selectedBucketIds = [];
+      return;
+    }
+
+    const nextSelected: StorageBucketId[] = [];
+    for (let index = 0; index < this.selectedBucketIds.length; index++) {
+      const bucketId = this.selectedBucketIds[index];
+      const bucket = this.findBucketById(bucketId);
+      if (bucket && this.isBucketActionable(bucket)) {
+        nextSelected.push(bucketId);
+      }
+    }
+    this.selectedBucketIds = nextSelected;
+  }
+
+  private getSuccessfulBucketIds(result: StorageClearResult): StorageBucketId[] {
+    const bucketIds: StorageBucketId[] = [];
+    for (let index = 0; index < result.results.length; index++) {
+      const item = result.results[index];
+      if (item.success) {
+        bucketIds.push(item.id);
+      }
+    }
+    return bucketIds;
+  }
+
+  private applyOptimisticSnapshot(clearedBucketIds: StorageBucketId[]): void {
+    const snapshot = this.snapshot;
+    if (!snapshot || clearedBucketIds.length <= 0) {
+      return;
+    }
+
+    this.commitSnapshot(this.storageService.createOptimisticSnapshot(snapshot, clearedBucketIds));
+    this.errorMessage = '';
+    this.hasLoaded = true;
+    this.trimSelection();
+  }
+
+  private showToast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message });
+  }
+
+  private findBucketById(bucketId: StorageBucketId): StorageBucketSummary | null {
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      return null;
+    }
+
+    return this.findBucketInSnapshot(snapshot, bucketId);
+  }
+
+  private findBucketInSnapshot(snapshot: StorageDashboardSnapshot, bucketId: StorageBucketId): StorageBucketSummary | null {
+    for (let index = 0; index < snapshot.buckets.length; index++) {
+      const bucket = snapshot.buckets[index];
+      if (bucket.id === bucketId) {
+        return bucket;
+      }
+    }
+    return null;
+  }
+
+  private isBucketSelected(bucketId: StorageBucketId): boolean {
+    for (let index = 0; index < this.selectedBucketIds.length; index++) {
+      if (this.selectedBucketIds[index] === bucketId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isBucketActionable(bucket: StorageBucketSummary): boolean {
+    if (!bucket.isClearable) {
+      return false;
+    }
+    return bucket.sizeBytes > 0 || bucket.itemCount > 0;
+  }
+
+  private toggleBucketSelection(bucket: StorageBucketSummary): void {
+    if (!bucket.isClearable) {
+      this.showToast('该项属于受保护数据，只做展示');
+      return;
+    }
+    if (!this.isBucketActionable(bucket)) {
+      this.showToast('当前没有可清理内容');
+      return;
+    }
+
+    const nextSelected: StorageBucketId[] = [];
+    let removed = false;
+    for (let index = 0; index < this.selectedBucketIds.length; index++) {
+      const selectedId = this.selectedBucketIds[index];
+      if (selectedId === bucket.id) {
+        removed = true;
+        continue;
+      }
+      nextSelected.push(selectedId);
+    }
+    if (!removed) {
+      nextSelected.push(bucket.id);
+    }
+    this.selectedBucketIds = nextSelected;
+  }
+
+  private getSelectedBuckets(): StorageBucketSummary[] {
+    const selectedBuckets: StorageBucketSummary[] = [];
+    for (let index = 0; index < this.selectedBucketIds.length; index++) {
+      const bucket = this.findBucketById(this.selectedBucketIds[index]);
+      if (bucket) {
+        selectedBuckets.push(bucket);
+      }
+    }
+    return selectedBuckets;
+  }
+
+  private getSelectedSizeBytes(): number {
+    let totalSizeBytes = 0;
+    const selectedBuckets = this.getSelectedBuckets();
+    for (let index = 0; index < selectedBuckets.length; index++) {
+      totalSizeBytes += selectedBuckets[index].sizeBytes;
+    }
+    return totalSizeBytes;
+  }
+
+  private getClearableBuckets(): StorageBucketSummary[] {
+    const buckets: StorageBucketSummary[] = [];
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      return buckets;
+    }
+
+    for (let index = 0; index < snapshot.buckets.length; index++) {
+      const bucket = snapshot.buckets[index];
+      if (this.isBucketActionable(bucket)) {
+        buckets.push(bucket);
+      }
+    }
+    return buckets;
+  }
+
+  private areAllClearableBucketsSelected(): boolean {
+    const clearableBuckets = this.getClearableBuckets();
+    if (clearableBuckets.length <= 0) {
+      return false;
+    }
+
+    for (let index = 0; index < clearableBuckets.length; index++) {
+      if (!this.isBucketSelected(clearableBuckets[index].id)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private toggleSelectAllClearable(): void {
+    if (this.areAllClearableBucketsSelected()) {
+      this.selectedBucketIds = [];
+      return;
+    }
+
+    const nextSelected: StorageBucketId[] = [];
+    const clearableBuckets = this.getClearableBuckets();
+    for (let index = 0; index < clearableBuckets.length; index++) {
+      nextSelected.push(clearableBuckets[index].id);
+    }
+    this.selectedBucketIds = nextSelected;
+  }
+
+  private getSectionBuckets(sectionId: StorageSectionId): StorageBucketSummary[] {
+    const buckets: StorageBucketSummary[] = [];
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      return buckets;
+    }
+
+    for (let index = 0; index < snapshot.buckets.length; index++) {
+      const bucket = snapshot.buckets[index];
+      if (bucket.section === sectionId) {
+        buckets.push(bucket);
+      }
+    }
+    return buckets;
+  }
+
+  private isSectionExpanded(sectionId: StorageSectionId): boolean {
+    switch (sectionId) {
+      case StorageSectionId.CLEANABLE:
+        return this.isCleanableSectionExpanded;
+      case StorageSectionId.REMOTE_CACHE:
+        return this.isRemoteCacheSectionExpanded;
+      case StorageSectionId.MEMORY:
+        return this.isMemorySectionExpanded;
+      case StorageSectionId.PROTECTED:
+        return this.isProtectedSectionExpanded;
+      default:
+        return true;
+    }
+  }
+
+  private setSectionExpanded(sectionId: StorageSectionId, expanded: boolean): void {
+    switch (sectionId) {
+      case StorageSectionId.CLEANABLE:
+        this.isCleanableSectionExpanded = expanded;
+        break;
+      case StorageSectionId.REMOTE_CACHE:
+        this.isRemoteCacheSectionExpanded = expanded;
+        break;
+      case StorageSectionId.MEMORY:
+        this.isMemorySectionExpanded = expanded;
+        break;
+      case StorageSectionId.PROTECTED:
+        this.isProtectedSectionExpanded = expanded;
+        break;
+      default:
+        break;
+    }
+  }
+
+  private toggleSectionExpanded(sectionId: StorageSectionId): void {
+    const nextExpanded = !this.isSectionExpanded(sectionId);
+    const uiContext = this.getUIContext();
+    if (uiContext) {
+      uiContext.animateTo({
+        duration: 220,
+        curve: Curve.EaseInOut
+      }, () => {
+        this.setSectionExpanded(sectionId, nextExpanded);
+      });
+      return;
+    }
+    this.setSectionExpanded(sectionId, nextExpanded);
+  }
+
+  private hasSectionSelectableBuckets(sectionId: StorageSectionId): boolean {
+    const buckets = this.getSectionBuckets(sectionId);
+    for (let index = 0; index < buckets.length; index++) {
+      if (this.isBucketActionable(buckets[index])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private areAllSectionBucketsSelected(sectionId: StorageSectionId): boolean {
+    const buckets = this.getSectionBuckets(sectionId);
+    let selectableCount = 0;
+
+    for (let index = 0; index < buckets.length; index++) {
+      const bucket = buckets[index];
+      if (!this.isBucketActionable(bucket)) {
+        continue;
+      }
+      selectableCount += 1;
+      if (!this.isBucketSelected(bucket.id)) {
+        return false;
+      }
+    }
+
+    return selectableCount > 0;
+  }
+
+  private toggleSectionSelection(sectionId: StorageSectionId): void {
+    const buckets = this.getSectionBuckets(sectionId);
+    if (!this.hasSectionSelectableBuckets(sectionId)) {
+      this.showToast('这一组当前没有可清理内容');
+      return;
+    }
+
+    const selectAll = !this.areAllSectionBucketsSelected(sectionId);
+    const nextSelected: StorageBucketId[] = [];
+
+    for (let index = 0; index < this.selectedBucketIds.length; index++) {
+      const selectedId = this.selectedBucketIds[index];
+      const bucket = this.findBucketById(selectedId);
+      if (bucket && bucket.section === sectionId && this.isBucketActionable(bucket)) {
+        continue;
+      }
+      nextSelected.push(selectedId);
+    }
+
+    if (selectAll) {
+      for (let index = 0; index < buckets.length; index++) {
+        const bucket = buckets[index];
+        if (this.isBucketActionable(bucket)) {
+          nextSelected.push(bucket.id);
+        }
+      }
+    }
+
+    this.selectedBucketIds = nextSelected;
+  }
+
+  private showClearConfirmDialog(bucketIds: StorageBucketId[]): void {
+    const clearTargets: StorageBucketSummary[] = [];
+    let totalSizeBytes = 0;
+    let totalItems = 0;
+
+    for (let index = 0; index < bucketIds.length; index++) {
+      const bucket = this.findBucketById(bucketIds[index]);
+      if (bucket && this.isBucketActionable(bucket)) {
+        clearTargets.push(bucket);
+        totalSizeBytes += bucket.sizeBytes;
+        totalItems += bucket.itemCount;
+      }
+    }
+
+    if (clearTargets.length <= 0) {
+      this.showToast('没有可清理的项目');
+      return;
+    }
+
+    const previewLines: string[] = [];
+    const previewLimit = 10;
+    for (let index = 0; index < clearTargets.length && index < previewLimit; index++) {
+      const bucket = clearTargets[index];
+      const locationText = this.getBucketLocationText(bucket);
+      previewLines.push(
+        `• ${bucket.title}\n   ${this.storageService.formatSize(bucket.sizeBytes)} · ${bucket.itemCount} ${bucket.itemLabel}\n   ${locationText}`
+      );
+    }
+    if (clearTargets.length > previewLimit) {
+      previewLines.push(`• 以及另外 ${clearTargets.length - previewLimit} 项`);
+    }
 
     AlertDialog.show({
       title: '确认清理',
-      message: `确定要清理以下项目吗？\n\n${detailLines.join('\n\n')}${summary}\n\n⚠️ 此操作不可撤销！`,
+      message: `${previewLines.join('\n\n')}\n\n总计 ${this.storageService.formatSize(totalSizeBytes)} · ${totalItems} 项\n此操作会直接删除对应缓存文件，部分离线内容稍后需要重新拉取。`,
       autoCancel: true,
       alignment: DialogAlignment.Center,
       primaryButton: {
         value: '取消',
         action: () => {
-          logger.info(TAG, '用户取消清理操作');
         }
       },
       secondaryButton: {
-        value: '确认清理',
-        fontColor: Color.Red,
+        value: '开始清理',
         action: () => {
-          this.clearSelectedItems();
+          void this.performClear(bucketIds);
         }
       }
     });
   }
 
-  /**
-   * 清理选中的存储项
-   */
-  private async clearSelectedItems(): Promise<void> {
-    if (this.selectedItems.size === 0) {
-      this.getUIContext().getPromptAction().showToast({ message: '请选择要清理的项' });
+  private async performClear(bucketIds: StorageBucketId[]): Promise<void> {
+    const abilityContext = this.getAbilityContext();
+    if (!abilityContext) {
+      this.showToast('当前无法执行清理');
       return;
     }
 
+    this.invalidateSilentRefreshSequence();
+    this.isClearing = true;
     try {
-      this.isClearing = true;
-      const options: ClearOptions = {
-        types: Array.from(this.selectedItems)
-      };
-
-      const result = await this.storageAnalyzer.clearStorage(options);
-
-      if (result.success) {
-        this.getUIContext().getPromptAction().showToast({
-          message: `清理完成: ${this.storageAnalyzer.formatSize(result.clearedSize)}`
-        });
-        this.selectedItems.clear();
-        this.selectedCount = 0;
-        await this.loadStorageStatistics();
-      } else {
-        this.getUIContext().getPromptAction().showToast({ message: `清理失败: ${result.errors.join(', ')}` });
+      const result = await this.storageService.clearBuckets(abilityContext, bucketIds);
+      const successfulBucketIds = this.getSuccessfulBucketIds(result);
+      this.removeSelectedBucketIds(successfulBucketIds);
+      this.applyOptimisticSnapshot(successfulBucketIds);
+      if (successfulBucketIds.length > 0) {
+        this.scheduleSilentRefreshSequence(successfulBucketIds);
       }
+      this.showClearResult(result);
     } catch (error) {
-      logger.error(TAG, `清理失败: ${error}`);
-      this.getUIContext().getPromptAction().showToast({ message: '清理失败' });
+      logger.error(TAG, `执行清理失败: ${String(error)}`);
+      this.showToast('清理失败');
     } finally {
       this.isClearing = false;
     }
   }
 
-  /**
-   * 检查项目是否被选中（使用selectedCount触发UI更新）
-   */
-  private isItemSelected(type: StorageType): boolean {
-    // 引用selectedCount确保UI更新
-    const _ = this.selectedCount;
-    return this.selectedItems.has(type);
+  private removeSelectedBucketIds(bucketIds: StorageBucketId[]): void {
+    const nextSelected: StorageBucketId[] = [];
+    for (let index = 0; index < this.selectedBucketIds.length; index++) {
+      const selectedId = this.selectedBucketIds[index];
+      let shouldRemove = false;
+      for (let removeIndex = 0; removeIndex < bucketIds.length; removeIndex++) {
+        if (bucketIds[removeIndex] === selectedId) {
+          shouldRemove = true;
+          break;
+        }
+      }
+      if (!shouldRemove) {
+        nextSelected.push(selectedId);
+      }
+    }
+    this.selectedBucketIds = nextSelected;
   }
 
-  /**
-   * 切换选中状态
-   */
-  private toggleSelection(type: StorageType, canClear: boolean): void {
-    if (!canClear) {
-      this.getUIContext().getPromptAction().showToast({ message: '该项不可清理' });
+  private showClearResult(result: StorageClearResult): void {
+    if (result.success) {
+      this.showToast(`已清理 ${this.storageService.formatSize(result.clearedSizeBytes)}`);
       return;
     }
 
-    if (this.selectedItems.has(type)) {
-      this.selectedItems.delete(type);
-    } else {
-      this.selectedItems.add(type);
+    if (result.clearedSizeBytes > 0) {
+      this.showToast(`已清理 ${this.storageService.formatSize(result.clearedSizeBytes)}，部分项目失败`);
+      return;
     }
-    // 更新计数以触发UI刷新
-    this.selectedCount = this.selectedItems.size;
+
+    this.showToast('没有完成任何清理，请稍后重试');
   }
 
-  /**
-   * 构建总览卡片
-   */
+  private getBucketLocationText(bucket: StorageBucketSummary): string {
+    if (bucket.path.length > 0) {
+      return bucket.path;
+    }
+
+    switch (bucket.pathKind) {
+      case 'memory':
+        return '内存缓存';
+      case 'preferences':
+        return 'Preferences';
+      case 'database':
+        return '数据库目录';
+      case 'download':
+        return 'Download 同步目录';
+      case 'system':
+        return '系统缓存目录';
+      default:
+        return '应用沙箱目录';
+    }
+  }
+
+  private getPathKindLabel(bucket: StorageBucketSummary): string {
+    switch (bucket.pathKind) {
+      case 'memory':
+        return '内存';
+      case 'preferences':
+        return '偏好';
+      case 'database':
+        return '数据库';
+      case 'download':
+        return 'Download';
+      case 'system':
+        return '系统';
+      default:
+        return '沙箱';
+    }
+  }
+
+  private getBucketSymbol(bucket: StorageBucketSummary): Resource {
+    switch (bucket.pathKind) {
+      case 'memory':
+        return $r('sys.symbol.memory_module');
+      case 'database':
+        return $r('sys.symbol.externaldrive');
+      case 'preferences':
+        return $r('sys.symbol.gearshape');
+      case 'download':
+        return $r('sys.symbol.folder');
+      case 'system':
+        return $r('sys.symbol.externaldrive');
+      default:
+        return $r('sys.symbol.folder');
+    }
+  }
+
+  private getSelectionSymbol(bucket: StorageBucketSummary): Resource {
+    if (!bucket.isClearable) {
+      return $r('sys.symbol.lock');
+    }
+    return this.isBucketSelected(bucket.id)
+      ? $r('sys.symbol.checkmark_circle_fill')
+      : $r('sys.symbol.circle');
+  }
+
+  private getSelectionColor(bucket: StorageBucketSummary): Resource {
+    if (!bucket.isClearable) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+    }
+    if (!this.isBucketActionable(bucket)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+    }
+    return this.isBucketSelected(bucket.id)
+      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+      : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+  }
+
+  private getRiskBadgeBackground(bucket: StorageBucketSummary): Resource {
+    switch (bucket.risk) {
+      case 'caution':
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
+      case 'protected':
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+      default:
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme);
+    }
+  }
+
+  private getRiskBadgeText(bucket: StorageBucketSummary): string {
+    switch (bucket.risk) {
+      case 'caution':
+        return '需重拉';
+      case 'protected':
+        return '受保护';
+      default:
+        return '可回收';
+    }
+  }
+
+  private getBucketRowBackground(bucket: StorageBucketSummary): ResourceColor {
+    if (this.isBucketSelected(bucket.id)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme);
+    }
+    return Color.Transparent;
+  }
+
+  private formatUpdatedAt(timestamp: number): string {
+    const date = new Date(timestamp);
+    const hours = `${date.getHours()}`.padStart(2, '0');
+    const minutes = `${date.getMinutes()}`.padStart(2, '0');
+    const seconds = `${date.getSeconds()}`.padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+  }
+
+  private formatRatioText(part: number, total: number): string {
+    if (total <= 0) {
+      return '0%';
+    }
+    const ratio = Math.round((part / total) * 100);
+    return `${ratio}%`;
+  }
+
+  private getSelectedActionLabel(): string {
+    if (this.selectedBucketIds.length <= 0) {
+      return '清理已选';
+    }
+    return `清理已选 ${this.selectedBucketIds.length} 项`;
+  }
+
+  private getSectionSelectedSizeBytes(sectionId: StorageSectionId): number {
+    let totalSizeBytes = 0;
+    const selectedBuckets = this.getSelectedBuckets();
+    for (let index = 0; index < selectedBuckets.length; index++) {
+      const bucket = selectedBuckets[index];
+      if (bucket.section === sectionId) {
+        totalSizeBytes += bucket.sizeBytes;
+      }
+    }
+    return totalSizeBytes;
+  }
+
+  private getSectionSelectedCount(sectionId: StorageSectionId): number {
+    let selectedCount = 0;
+    const selectedBuckets = this.getSelectedBuckets();
+    for (let index = 0; index < selectedBuckets.length; index++) {
+      if (selectedBuckets[index].section === sectionId) {
+        selectedCount += 1;
+      }
+    }
+    return selectedCount;
+  }
+
+  private isSectionCollapsedSelected(sectionId: StorageSectionId): boolean {
+    return !this.isSectionExpanded(sectionId) && this.getSectionSelectedCount(sectionId) > 0;
+  }
+
+  private getSectionSummaryDetailText(section: StorageSectionSummary): string {
+    if (this.isSectionExpanded(section.id)) {
+      return section.subtitle;
+    }
+
+    if (section.id === StorageSectionId.PROTECTED) {
+      return `展示 ${this.storageService.formatSize(section.totalSizeBytes)} · ${section.bucketCount} 项受保护数据`;
+    }
+
+    const selectedCount = this.getSectionSelectedCount(section.id);
+    const selectedSizeBytes = this.getSectionSelectedSizeBytes(section.id);
+    if (selectedCount > 0) {
+      const selectedLabel = section.id === StorageSectionId.MEMORY ? '已选释放' : '已选清理';
+      const baseLabel = section.id === StorageSectionId.MEMORY ? '当前占用' : '可回收';
+      return `${selectedLabel} ${this.storageService.formatSize(selectedSizeBytes)} · ${baseLabel} ${this.storageService.formatSize(section.clearableSizeBytes)} · ${selectedCount} 项`;
+    }
+
+    if (section.id === StorageSectionId.MEMORY) {
+      return `当前占用 ${this.storageService.formatSize(section.totalSizeBytes)} · ${section.bucketCount} 项`;
+    }
+
+    return `可回收 ${this.storageService.formatSize(section.clearableSizeBytes)} · ${section.bucketCount} 项`;
+  }
+
+  private getSectionSummaryMetaText(section: StorageSectionSummary): string {
+    if (this.isSectionExpanded(section.id)) {
+      return `${section.bucketCount} 项`;
+    }
+
+    if (section.id === StorageSectionId.PROTECTED) {
+      return `${section.bucketCount} 项`;
+    }
+
+    const selectedCount = this.getSectionSelectedCount(section.id);
+    if (selectedCount > 0) {
+      return `已选 ${selectedCount} 项`;
+    }
+    return `${section.bucketCount} 项`;
+  }
+
+  private getSectionHeaderBackground(sectionId: StorageSectionId): Resource {
+    if (this.isSectionExpanded(sectionId)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme);
+    }
+    if (this.isSectionCollapsedSelected(sectionId)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme);
+  }
+
+  private getSectionHeaderBorderColor(sectionId: StorageSectionId): Resource {
+    if (this.isSectionCollapsedSelected(sectionId)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('border_active', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme);
+  }
+
+  private getSectionHeaderDetailColor(sectionId: StorageSectionId): Resource {
+    if (this.isSectionCollapsedSelected(sectionId)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme);
+  }
+
+  private getSectionHeaderMetaColor(sectionId: StorageSectionId): Resource {
+    if (this.isSectionCollapsedSelected(sectionId)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+  }
+
+  private getOverviewProgressTotal(snapshot: StorageDashboardSnapshot): number {
+    return snapshot.overview.bundleTotalSizeBytes > 0 ? snapshot.overview.bundleTotalSizeBytes : 1;
+  }
+
+  private getSectionLastIndex(sectionId: StorageSectionId): number {
+    return this.getSectionBuckets(sectionId).length - 1;
+  }
+
+  private showStorageHelp(): void {
+    const helpContent = `# 存储管理帮助
+
+## 这个页面会展示什么
+
+- **应用总占用**：系统统计口径下的应用整体空间
+- **已扫描目录**：当前已经接入扫描的缓存目录、偏好缓存和受保护目录
+- **可直接清理**：清掉后不会影响核心数据的缓存项
+- **离线与远端缓存**：清掉后会影响离线阅读、听书或远端浏览，需要后续重新拉取
+- **受保护数据**：数据库、导入文件、插件等，仅展示，不在这里直接删除
+
+## 清理逻辑
+
+- 页面会递归扫描目录，而不是只看顶层文件
+- 对图源内容缓存、Tab 持久缓存会读取 Preferences 中的实际内容
+- 对封面缓存和永久图片缓存，清理时会同步重置对应数据库状态，避免“文件删了但记录还在”
+
+## 使用建议
+
+- 想要快速瘦身，先看“可直接清理”
+- 想要腾出更多空间，再看“离线与远端缓存”
+- 如果你依赖小说离线、Komga 或 Suwayomi，本页会明确标出风险提示
+
+## 注意
+
+- 本页不会删除书架、阅读记录、插件和数据库
+- Download 同步目录未连接时，相关条目会显示但不会误删外部内容`;
+
+    getHelpPanelManagerV2().showInlineHelp('存储管理帮助', helpContent);
+  }
+
   @Builder
-  buildOverviewCard() {
-    Column({ space: 16 }) {
-      Text('存储总览')
-        .fontSize(18)
+  private buildMetricCell(label: string, value: string, note: string) {
+    Column({ space: 4 }) {
+      Text(label)
+        .fontSize(12)
         .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+      Text(value)
+        .fontSize(22)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-      if (this.statistics) {
-        Column({ space: 12 }) {
-          Row() {
-            Text('总使用空间')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            Blank()
-            Text(this.storageAnalyzer.formatSize(this.statistics.usedSize))
-              .fontSize(16)
-              .fontFamily(this.appFontFamily)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          }
-          .width('100%')
+      Text(note)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Start)
+  }
 
-          Progress({
-            value: this.statistics.usedSize,
-            total: this.statistics.usedSize * 1.2,
-            type: ProgressType.Linear
-          })
-            .width('100%')
-            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .height(8)
-            .borderRadius(4)
+  @Builder
+  private buildOverviewPanel(snapshot: StorageDashboardSnapshot) {
+    Column({ space: 16 }) {
+      Row({ space: 12 }) {
+        SymbolGlyph($r('sys.symbol.externaldrive'))
+          .fontSize(22)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
 
-          Text(`共 ${this.statistics.items.length} 个存储项`)
+        Column({ space: 4 }) {
+          Text('存储总览')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          Text('把系统统计、目录扫描和可清理缓存放到同一张视图里')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      Row({ space: 16 }) {
+        this.buildMetricCell('应用总占用', this.storageService.formatSize(snapshot.overview.bundleTotalSizeBytes), '系统统计口径')
+        this.buildMetricCell('已扫描目录', this.storageService.formatSize(snapshot.overview.scannedTotalSizeBytes), `${snapshot.overview.bucketCount} 个存储项`)
+      }
+      .width('100%')
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      Row({ space: 16 }) {
+        this.buildMetricCell('可回收空间', this.storageService.formatSize(snapshot.overview.cleanableTotalSizeBytes), `${this.getClearableBuckets().length} 项当前可清理`)
+        this.buildMetricCell('设备剩余', this.storageService.formatSize(snapshot.overview.deviceFreeSizeBytes), '当前设备可用空间')
+      }
+      .width('100%')
+
+      Column({ space: 8 }) {
+        Row() {
+          Text('可回收占应用总占用')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        }
-      }
-    }
-    .width('100%')
-    .padding(16)
-    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
-    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
-    .backgroundBlurStyle(
-      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
-      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
-    )
-    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-    .borderRadius(12)
-  }
-
-  /**
-   * 构建存储项卡片
-   */
-  @Builder
-  buildStorageItemCard(item: StorageItem) {
-    Row({ space: 12 }) {
-      // 选择图标 - 使用SymbolGlyph组件显示Symbol图标
-      SymbolGlyph(this.isItemSelected(item.type) ? $r('sys.symbol.checkmark_square_fill') : $r('sys.symbol.square'))
-        .fontSize(24)
-        .fontColor([item.canClear 
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-        .onClick(() => {
-          if (item.canClear) {
-            this.toggleSelection(item.type, item.canClear);
-          }
-        })
-
-      // 信息区域
-      Column({ space: 4 }) {
-        Row({ space: 8 }) {
-          Text(item.name)
-            .fontSize(16)
-            .fontFamily(this.appFontFamily)
+          Blank()
+          Text(this.formatRatioText(snapshot.overview.cleanableTotalSizeBytes, this.getOverviewProgressTotal(snapshot)))
+            .fontSize(12)
             .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-          if (!item.canClear) {
-            Text('不可清理')
-              .fontSize(10)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .padding({
-                left: 6,
-                right: 6,
-                top: 2,
-                bottom: 2
-              })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border',
-                this.themeState.currentTheme))
-              .borderRadius(4)
-          }
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         }
+        .width('100%')
 
-        Text(item.description)
+        Progress({
+          value: snapshot.overview.cleanableTotalSizeBytes,
+          total: this.getOverviewProgressTotal(snapshot),
+          type: ProgressType.Linear
+        })
+          .width('100%')
+          .height(8)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(999)
+      }
+      .width('100%')
+
+      Row() {
+        Text(`已更新 ${this.formatUpdatedAt(snapshot.overview.updatedAt)}`)
           .fontSize(12)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        // 显示文件夹路径（如果有）
-        if (item.path && item.path.length > 0) {
-          Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.folder'))
-              .fontSize(12)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-            Text(item.path)
-              .fontSize(10)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-          }
-        }
-
-        Row({ space: 8 }) {
-          Text(this.storageAnalyzer.formatSize(item.size))
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-
-          if (item.fileCount > 0) {
-            Text(`${item.fileCount} 个文件`)
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          }
-        }
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        Blank()
+        Text(`内存缓存 ${this.storageService.formatSize(snapshot.overview.memorySizeBytes)}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
+      .width('100%')
     }
     .width('100%')
-    .padding(16)
+    .padding(18)
     .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
     .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
     .backgroundBlurStyle(
@@ -523,105 +1096,461 @@ export struct StorageManagementPage {
       SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
     )
     .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-    .borderRadius(12)
-    .onClick(() => {
-      this.toggleSelection(item.type, item.canClear);
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
     })
-    .animation({ duration: 200, curve: Curve.EaseOut })
-    .scale({ x: 1, y: 1 })
-    .stateStyles({
-      pressed: {
-        .scale({ x: 0.98, y: 0.98 })
-        .opacity(0.9)
-      }
-    })
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .key(`storage_overview_${this.snapshotRenderVersion}`)
   }
 
-  /**
-   * 构建操作按钮区域
-   */
   @Builder
-  buildActionButtons() {
-    Row({ space: 12 }) {
-      Button() {
-        Row({ space: 6 }) {
-          SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+  private buildActionPanel() {
+    Column({ space: 14 }) {
+      Row({ space: 10 }) {
+        SymbolGlyph($r('sys.symbol.checkmark_circle'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+
+        Column({ space: 4 }) {
+          Text(this.selectedBucketIds.length > 0 ? `已选择 ${this.selectedBucketIds.length} 项` : '还没有选择清理项')
             .fontSize(16)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-          Text('刷新')
-            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        }
-      }
-        .type(ButtonType.Normal)
-        .height(40)
-        .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
-        .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
-        .backgroundBlurStyle(
-          SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
-          SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
-        )
-        .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-        .borderRadius(8)
-        .layoutWeight(1)
-        .enabled(!this.isLoading && !this.isClearing)
-        .onClick(() => {
-          this.refreshStatistics();
-        })
-        .stateStyles({
-          pressed: {
-            .scale({ x: 0.96, y: 0.96 })
-            .opacity(0.8)
-          }
-        })
-        .animation({ duration: 150, curve: Curve.EaseOut })
 
-      Button() {
-        Row({ space: 6 }) {
+          Text(this.selectedBucketIds.length > 0
+            ? `预计释放 ${this.storageService.formatSize(this.getSelectedSizeBytes())}`
+            : `当前共 ${this.getClearableBuckets().length} 项可直接清理`)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      Row({ space: 12 }) {
+        Button({ type: ButtonType.Normal, stateEffect: true }) {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+              .fontSize(15)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme)])
+            Text(this.isRefreshing ? '刷新中' : '刷新')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          }
+        }
+          .layoutWeight(1)
+          .height(42)
+          .enabled(!this.isLoading && !this.isClearing)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onClick(() => {
+            void this.refreshSnapshot();
+          })
+
+        Button({ type: ButtonType.Normal, stateEffect: true }) {
+          Row({ space: 6 }) {
+            SymbolGlyph(this.areAllClearableBucketsSelected()
+              ? $r('sys.symbol.minus_circle_fill')
+              : $r('sys.symbol.checkmark_circle'))
+              .fontSize(15)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme)])
+            Text(this.areAllClearableBucketsSelected() ? '取消全选' : '全选可清理')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          }
+        }
+          .layoutWeight(1)
+          .height(42)
+          .enabled(!this.isLoading && !this.isClearing && this.getClearableBuckets().length > 0)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onClick(() => {
+            this.toggleSelectAllClearable();
+          })
+      }
+      .width('100%')
+
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        Row({ space: 8 }) {
           SymbolGlyph($r('sys.symbol.trash'))
             .fontSize(16)
-            .fontColor([Color.White])
-          Text(`清理选中 (${this.selectedCount})`)
-            .fontSize(14)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+          Text(this.isClearing ? '清理中...' : this.getSelectedActionLabel())
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
-            .fontColor(Color.White)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         }
       }
-        .type(ButtonType.Normal)
-        .height(40)
-        .backgroundColor(this.selectedCount > 0
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-        .borderRadius(8)
-        .layoutWeight(1)
-        .enabled(this.selectedCount > 0 && !this.isClearing)
+        .width('100%')
+        .height(46)
+        .enabled(this.selectedBucketIds.length > 0 && !this.isClearing)
+        .backgroundColor(this.selectedBucketIds.length > 0
+          ? ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+        .borderRadius(14)
         .onClick(() => {
-          this.showClearConfirmDialog();
+          this.showClearConfirmDialog(this.selectedBucketIds);
         })
-        .stateStyles({
-          pressed: {
-            .scale({ x: 0.96, y: 0.96 })
-            .opacity(0.8)
-          }
-        })
-        .animation({ duration: 150, curve: Curve.EaseOut })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundBlurStyle(BlurStyle.Thin)
-    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK 
-      ? 'rgba(30, 30, 30, 0.85)' 
-      : 'rgba(245, 245, 245, 0.85)')
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .padding(18)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .key(
+      `storage_action_${this.snapshotRenderVersion}_${this.selectedBucketIds.length}_` +
+      `${this.isRefreshing ? 'refreshing' : 'idle'}_${this.isClearing ? 'clearing' : 'ready'}`
+    )
+  }
+
+  @Builder
+  private buildBucketRow(bucket: StorageBucketSummary, isLast: boolean) {
+    Column({ space: 10 }) {
+      Row({ space: 12 }) {
+        SymbolGlyph(this.getSelectionSymbol(bucket))
+          .fontSize(22)
+          .fontColor([this.getSelectionColor(bucket)])
+          .margin({ top: 2 })
+
+        Column({ space: 8 }) {
+          Row({ space: 8 }) {
+            Text(bucket.title)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Text(this.getRiskBadgeText(bucket))
+              .fontSize(10)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .backgroundColor(this.getRiskBadgeBackground(bucket))
+              .borderRadius(999)
+          }
+          .width('100%')
+
+          Text(bucket.subtitle)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Row({ space: 8 }) {
+            Text(this.storageService.formatSize(bucket.sizeBytes))
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+            Text(`${bucket.itemCount} ${bucket.itemLabel}`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+            Text(this.getPathKindLabel(bucket))
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .borderRadius(999)
+          }
+          .width('100%')
+
+          Row({ space: 6 }) {
+            SymbolGlyph(this.getBucketSymbol(bucket))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            Text(this.getBucketLocationText(bucket))
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .layoutWeight(1)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
+
+          if (bucket.note.length > 0) {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.info_circle'))
+                .fontSize(12)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+              Text(bucket.note)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .layoutWeight(1)
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Top)
+          }
+
+          Progress({
+            value: bucket.progressRatio > 0 ? bucket.progressRatio : 0,
+            total: 1,
+            type: ProgressType.Linear
+          })
+            .width('100%')
+            .height(6)
+            .color(bucket.risk === 'caution'
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(999)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 14, bottom: 14 })
+    .backgroundColor(this.getBucketRowBackground(bucket))
+    .borderRadius(14)
+    .key(
+      `storage_bucket_${bucket.id}_${this.snapshotRenderVersion}_${bucket.sizeBytes}_${bucket.itemCount}_` +
+      `${this.isBucketSelected(bucket.id) ? 'selected' : 'idle'}`
+    )
+    .onClick(() => {
+      this.toggleBucketSelection(bucket);
+    })
+
+    if (!isLast) {
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+    }
+  }
+
+  @Builder
+  private buildSectionPanel(section: StorageSectionSummary) {
+    Column({ space: 16 }) {
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        Row({ space: 12 }) {
+          Column({ space: 4 }) {
+            Text(section.title)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Text(this.getSectionSummaryDetailText(section))
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSectionHeaderDetailColor(section.id))
+              .maxLines(this.isSectionExpanded(section.id) ? 2 : 1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Column({ space: 6 }) {
+            Text(this.storageService.formatSize(section.totalSizeBytes))
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Text(this.getSectionSummaryMetaText(section))
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.getSectionHeaderMetaColor(section.id))
+          }
+          .alignItems(HorizontalAlign.End)
+
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(16)
+            .fontColor([this.getSectionHeaderMetaColor(section.id)])
+            .rotate({ angle: this.isSectionExpanded(section.id) ? 0 : -90 })
+            .animation({ duration: 220, curve: Curve.EaseInOut })
+        }
+        .width('100%')
+      }
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+        .backgroundColor(this.getSectionHeaderBackground(section.id))
+        .border({
+          width: 1,
+          color: this.getSectionHeaderBorderColor(section.id)
+        })
+        .borderRadius(16)
+        .animation({ duration: 220, curve: Curve.EaseInOut })
+        .onClick(() => {
+          this.toggleSectionExpanded(section.id);
+        })
+
+      if (this.isSectionExpanded(section.id)) {
+        Column({ space: 14 }) {
+          if (this.hasSectionSelectableBuckets(section.id)) {
+            Button({ type: ButtonType.Normal, stateEffect: true }) {
+              Row({ space: 6 }) {
+                SymbolGlyph(this.areAllSectionBucketsSelected(section.id)
+                  ? $r('sys.symbol.minus_circle_fill')
+                  : $r('sys.symbol.checkmark_circle'))
+                  .fontSize(14)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme)])
+                Text(this.areAllSectionBucketsSelected(section.id) ? '取消本组选择' : '选中本组')
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+              }
+            }
+              .height(36)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+              .borderRadius(10)
+              .onClick(() => {
+                this.toggleSectionSelection(section.id);
+              })
+          }
+
+          Column({ space: 0 }) {
+            ForEach(this.getSectionBuckets(section.id), (bucket: StorageBucketSummary, index: number) => {
+              this.buildBucketRow(bucket, index === this.getSectionLastIndex(section.id))
+            }, (bucket: StorageBucketSummary) => `${bucket.id}_${this.snapshotRenderVersion}_${this.isBucketSelected(bucket.id) ? 'selected' : 'idle'}`)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .transition(
+          TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+            .combine(TransitionEffect.translate({ y: -10 }).animation({ duration: 220, curve: Curve.EaseOut }))
+        )
+      }
+    }
+    .width('100%')
+    .padding(18)
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .key(
+      `storage_section_${section.id}_${this.snapshotRenderVersion}_${section.totalSizeBytes}_${section.clearableSizeBytes}_` +
+      `${this.isSectionExpanded(section.id) ? 'expanded' : 'collapsed'}_${this.getSectionSelectedCount(section.id)}`
+    )
+  }
+
+  @Builder
+  private buildLoadingState() {
+    Column({ space: 18 }) {
+      LoadingProgress()
+        .width(38)
+        .height(38)
+        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+      Text('正在扫描存储目录...')
+        .fontSize(15)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private buildErrorState() {
+    Column({ space: 16 }) {
+      SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+        .fontSize(28)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)])
+
+      Text(this.errorMessage.length > 0 ? this.errorMessage : '存储信息加载失败')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .textAlign(TextAlign.Center)
+
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+            .fontSize(15)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+          Text('重新扫描')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        }
+      }
+        .height(42)
+        .padding({ left: 18, right: 18 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
+        .borderRadius(12)
+        .onClick(() => {
+          this.invalidateSilentRefreshSequence();
+          void this.loadSnapshot(true, false);
+        })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private buildContent(snapshot: StorageDashboardSnapshot) {
+    Scroll() {
+      Column({ space: 16 }) {
+        Blank()
+          .height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
+        this.buildOverviewPanel(snapshot)
+        this.buildActionPanel()
+
+        ForEach(snapshot.sections, (section: StorageSectionSummary) => {
+          this.buildSectionPanel(section)
+        }, (section: StorageSectionSummary) => `${section.id}_${this.snapshotRenderVersion}_${this.isSectionExpanded(section.id) ? 'expanded' : 'collapsed'}_${this.getSectionSelectedCount(section.id)}`)
+
+        Blank()
+          .height(24 + this.navigationBarHeight)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8 })
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .key(`storage_content_${this.snapshotRenderVersion}_${this.isRefreshing ? 'refreshing' : 'idle'}`)
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   build() {
     HdsNavDestination() {
       Stack() {
         SharedPageBackgroundLayer({
-          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark',
-            this.themeState.currentTheme),
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
           mode: GlobalBackgroundLayerMode.IMMERSIVE
         })
           .width('100%')
@@ -629,218 +1558,22 @@ export struct StorageManagementPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column() {
-          // 空白区域
-          Blank()
-            .width('100%')
-            .height(this.getTitleBarSpacerHeight())
-
-          if (this.isLoading) {
-            // 加载中
-            Column({ space: 20 }) {
-              LoadingProgress()
-                .width(40)
-                .height(40)
-                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              Text('加载中...')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                  this.themeState.currentTheme))
-            }
-            .width('100%')
-            .layoutWeight(1)
-            .justifyContent(FlexAlign.Center)
-          } else if (this.statistics) {
-            // 有数据时显示
-            Column({ space: 12 }) {
-              this.buildOverviewCard()
-
-              // 缓存管理按钮组
-              Row({ space: 8 }) {
-                Button() {
-                  Row({ space: 6 }) {
-                    SymbolGlyph($r('sys.symbol.externaldrive'))
-                      .fontSize(16)
-                      .fontColor([Color.White])
-                    Text('缓存管理')
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(Color.White)
-                  }
-                }
-                  .type(ButtonType.Normal)
-                  .height(40)
-                  .layoutWeight(1)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue',
-                    this.themeState.currentTheme))
-                  .borderRadius(8)
-                  .onClick(() => {
-                    this.showCacheConfig = true;
-                  })
-                  .stateStyles({
-                    pressed: {
-                      .scale({ x: 0.96, y: 0.96 })
-                      .opacity(0.8)
-                    }
-                  })
-                  .animation({ duration: 150, curve: Curve.EaseOut })
-
-                Button() {
-                  Row({ space: 6 }) {
-                    SymbolGlyph(this.showCacheDetails ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
-                      .fontSize(16)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-                    Text(this.showCacheDetails ? '收起详情' : '查看详情')
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-                  }
-                }
-                  .type(ButtonType.Normal)
-                  .height(40)
-                  .layoutWeight(1)
-                  .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
-                  .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
-                  .backgroundBlurStyle(
-                    SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
-                    SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
-                  )
-                  .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-                  .borderRadius(8)
-                  .onClick(() => {
-                    this.toggleCacheDetails();
-                  })
-                  .stateStyles({
-                    pressed: {
-                      .scale({ x: 0.96, y: 0.96 })
-                      .opacity(0.8)
-                    }
-                  })
-                  .animation({ duration: 150, curve: Curve.EaseOut })
-              }
-              .width('100%')
-
-              // 缓存详情内容
-              if (this.showCacheDetails && this.cacheDetails) {
-                Column({ space: 8 }) {
-                  Row({ space: 6 }) {
-                    SymbolGlyph($r('sys.symbol.info_circle'))
-                      .fontSize(18)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-                    Text('缓存详情')
-                      .fontSize(16)
-                      .fontFamily(this.appFontFamily)
-                      .fontWeight(FontWeight.Bold)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                        this.themeState.currentTheme))
-                  }
-
-                  Row({ space: 6 }) {
-                    SymbolGlyph($r('sys.symbol.memory_module'))
-                      .fontSize(14)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-                    Text(`内存缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.memoryCacheSize)}`)
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                        this.themeState.currentTheme))
-                  }
-
-                  Row({ space: 6 }) {
-                    SymbolGlyph($r('sys.symbol.externaldrive'))
-                      .fontSize(14)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-                    Text(`磁盘缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.diskCacheSize)}`)
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                        this.themeState.currentTheme))
-                  }
-
-                  Row({ space: 6 }) {
-                    SymbolGlyph($r('sys.symbol.arrow_down_circle'))
-                      .fontSize(14)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-                    Text(`永久缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.permanentCacheSize)}`)
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                        this.themeState.currentTheme))
-                  }
-                }
-                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-                .width('100%')
-                .padding(16)
-                .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
-                .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
-                .backgroundBlurStyle(
-                  SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
-                  SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
-                )
-                .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-                .borderRadius(12)
-                .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.translate({ y: -10 })))
-              }
-
-              // 存储项列表
-              Column({ space: 8 }) {
-                Text('存储项目')
-                  .fontSize(16)
-                  .fontFamily(this.appFontFamily)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                    this.themeState.currentTheme))
-                  .margin({ bottom: 4 })
-
-                List({ space: 12 }) {
-                  ForEach(this.statistics.items, (item: StorageItem, index: number) => {
-                    ListItem() {
-                      this.buildStorageItemCard(item)
-                    }
-                    .transition(TransitionEffect.asymmetric(
-                      TransitionEffect.OPACITY.animation({ duration: 200, delay: index * 50 }),
-                      TransitionEffect.OPACITY.animation({ duration: 150 })
-                    ))
-                  }, (item: StorageItem) => item.type)
-                }
-                .layoutWeight(1)
-                .scrollBar(BarState.Auto)
-                .edgeEffect(EdgeEffect.Spring)
-              }
-              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-              .layoutWeight(1)
-              .width('100%')
-            }
-            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-            .layoutWeight(1)
-            .padding({ left: 16, right: 16, top: 8 })
-
-            // 操作按钮
-            this.buildActionButtons()
+          if (this.isLoading && !this.hasLoaded) {
+            Blank()
+              .height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+            this.buildLoadingState()
+          } else if (this.snapshot) {
+            this.buildContent(this.snapshot as StorageDashboardSnapshot)
           } else {
-            // 错误状态
-            Column({ space: 20 }) {
-              Text('加载失败')
-                .fontSize(16)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                  this.themeState.currentTheme))
-              Button('重试')
-                .fontFamily(this.appFontFamily)
-                .onClick(() => {
-                  this.loadStorageStatistics();
-                })
-            }
-            .width('100%')
-            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-            .layoutWeight(1)
-            .justifyContent(FlexAlign.Center)
+            Blank()
+              .height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+            this.buildErrorState()
           }
         }
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .key(`storage_page_root_${this.snapshotRenderVersion}_${this.hasLoaded ? 'loaded' : 'loading'}`)
 
         SettingsImmersiveTitleBar({
           themeState: this.themeState,
@@ -848,113 +1581,10 @@ export struct StorageManagementPage {
           appFontFamily: this.appFontFamily,
           actions: this.getTitleBarActions()
         })
-
-        // 缓存管理面板弹窗
-        if (this.showCacheConfig) {
-          Column() {
-            CacheManagementPanel({
-              onClose: () => {
-                this.showCacheConfig = false;
-                this.refreshStatistics();
-              }
-            })
-          }
-          .width('90%')
-          .height('80%')
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
-          .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
-          .backgroundBlurStyle(
-            SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
-            SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
-          )
-          .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
-          .borderRadius(16)
-          .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)' })
-          .position({ x: '5%', y: '10%' })
-          .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.scale({ x: 0.9, y: 0.9 })))
-        }
       }
     }
     .hideTitleBar(true)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
-    .mode(NavDestinationMode.STANDARD)
-    /*
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(16),
-        end: LengthMetrics.vp(16)
-      },
-      style: {
-        originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        }
-      },
-      content: {
-        title: { mainTitle: '存储管理' },
-        menu: {
-          value: [{
-            content: {
-              label: '帮助',
-              icon: $r('sys.symbol.questionmark_circle'),
-              isEnabled: true,
-              action: () => {
-                this.showStorageHelp();
-              }
-            }
-          }]
-        }
-      }
-    })
-    */
     .backgroundColor(Color.Transparent)
-  }
-
-  private showStorageHelp(): void {
-    const helpContent = `# 存储管理帮助
-
-## 功能介绍
-
-存储管理页面帮助您了解和管理应用占用的存储空间。
-
-## 存储类型说明
-
-### 缓存数据
-- **内存缓存**: 临时存储在内存中的图片，应用关闭后自动清除
-- **磁盘缓存**: 存储在本地的图片缓存，加快重复访问速度
-- **永久缓存**: 已下载的漫画章节图片，不会自动清除
-
-### 应用数据
-- **漫画数据**: 漫画信息、阅读进度、收藏等
-- **电子书数据**: 电子书文件和阅读记录
-- **小说数据**: 小说内容和阅读进度
-- **封面图片**: 漫画和电子书的封面缓存
-
-## 清理操作
-
-### 清理缓存
-点击"清理缓存"可以释放临时缓存空间，不会影响已下载的内容。
-
-### 清理特定类型
-点击各存储项的清理按钮，可以单独清理该类型的数据。
-
-## 缓存配置
-
-点击"缓存配置"可以设置：
-- 内存缓存大小限制
-- 磁盘缓存大小限制
-- 自动清理策略
-
-## 注意事项
-
-- 清理永久缓存会删除已下载的漫画章节
-- 清理应用数据会删除阅读进度和收藏
-- 建议定期清理临时缓存以释放空间`;
-
-    getHelpPanelManagerV2().showInlineHelp('存储管理帮助', helpContent);
   }
 }

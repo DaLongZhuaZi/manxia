@@ -25,7 +25,6 @@
 # Logs
 *.log
 docs/logs/*.txt
-docs/cloudflare-worker.md
 
 # Temporary files
 /tmp/

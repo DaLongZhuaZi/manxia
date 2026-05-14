@@ -14,6 +14,7 @@ import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd, preferences } from '@kit.ArkData';
+import { util } from '@kit.ArkTS';
 import { logger } from '../Utils/Logger';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
@@ -259,6 +260,13 @@ interface OnlineEBookDetailRecord {
   readerUrl?: string;
 }
 
+interface OnlineEBookExtendedData {
+  sourceId?: string;
+  sourceName?: string;
+  sourcePkg?: string;
+  onlineReaderUrl?: string;
+}
+
 interface DialogResult {
   index: number;
 }
@@ -288,6 +296,7 @@ export struct UnifiedDetailPage {
 
   // 统一内容数据
   @State content: UnifiedContent | null = null;
+  @State resolvedDisplaySourceName: string = '';
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
   
@@ -458,6 +467,351 @@ export struct UnifiedDetailPage {
       return '';
     }
     return value.trim();
+  }
+
+  private normalizeDisplaySourceText(value: string | undefined | null): string {
+    const rawText: string = this.normalizeTrackingText(value);
+    if (rawText.length <= 0) {
+      return '';
+    }
+    let normalized: string = this.stripHtmlTags(rawText).trim();
+    if (normalized.length >= 2 &&
+      ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+        (normalized.startsWith("'") && normalized.endsWith("'")))) {
+      normalized = normalized.substring(1, normalized.length - 1).trim();
+    }
+    normalized = this.decodeEscapedUnicodeText(normalized);
+    normalized = this.decodePercentEncodedText(normalized);
+    normalized = this.decodeMojibakeSourceText(normalized);
+    return normalized.trim();
+  }
+
+  private decodeEscapedUnicodeText(value: string): string {
+    if (value.indexOf('\\u') < 0 && value.indexOf('\\x') < 0) {
+      return value;
+    }
+    try {
+      return value
+        .replace(/\\u([0-9a-fA-F]{4})/g, (_match: string, hex: string): string => {
+          const parsed: number = parseInt(hex, 16);
+          return Number.isFinite(parsed) && parsed > 0 ? String.fromCharCode(parsed) : '';
+        })
+        .replace(/\\x([0-9a-fA-F]{2})/g, (_match: string, hex: string): string => {
+          const parsed: number = parseInt(hex, 16);
+          return Number.isFinite(parsed) && parsed > 0 ? String.fromCharCode(parsed) : '';
+        });
+    } catch (error) {
+      logger.debug(TAG, `解码来源Unicode转义失败: ${String(error)}`);
+      return value;
+    }
+  }
+
+  private decodePercentEncodedText(value: string): string {
+    if (value.indexOf('%') < 0) {
+      return value;
+    }
+    try {
+      return decodeURIComponent(value.replace(/\+/g, '%20'));
+    } catch (error) {
+      logger.debug(TAG, `解码来源URL编码失败: ${String(error)}`);
+      return value;
+    }
+  }
+
+  private containsMojibakeMarker(value: string): boolean {
+    const markers: string[] = ['Ã', 'Â', 'Ä', 'Å', 'æ', 'è', 'ç', 'å', 'ä', 'é', 'ï¿½'];
+    for (let i = 0; i < markers.length; i++) {
+      if (value.indexOf(markers[i]) >= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private countCjkCharacters(value: string): number {
+    let count: number = 0;
+    for (let i = 0; i < value.length; i++) {
+      const code: number = value.charCodeAt(i);
+      if ((code >= 0x3400 && code <= 0x9FFF) || (code >= 0xF900 && code <= 0xFAFF)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private decodeMojibakeSourceText(value: string): string {
+    if (!this.containsMojibakeMarker(value)) {
+      return value;
+    }
+    try {
+      const bytes: Uint8Array = new Uint8Array(value.length);
+      for (let i = 0; i < value.length; i++) {
+        const code: number = value.charCodeAt(i);
+        if (code > 255) {
+          return value;
+        }
+        bytes[i] = code;
+      }
+      const decoder: util.TextDecoder = util.TextDecoder.create('utf-8');
+      const decoded: string = decoder.decodeToString(bytes).trim();
+      if (decoded.length > 0 && this.countCjkCharacters(decoded) > this.countCjkCharacters(value)) {
+        return decoded;
+      }
+      return value;
+    } catch (error) {
+      logger.debug(TAG, `修复来源乱码失败: ${String(error)}`);
+      return value;
+    }
+  }
+
+  private isLikelySourceIdentifier(value: string): boolean {
+    const normalized: string = value.trim();
+    if (normalized.length <= 0) {
+      return false;
+    }
+    const lower: string = normalized.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://') || lower.indexOf('://') >= 0) {
+      return true;
+    }
+    if (lower.startsWith('id_')) {
+      return true;
+    }
+    if (lower.startsWith('com.') && lower.indexOf('.extension.') >= 0) {
+      return true;
+    }
+    return /^[a-z0-9_-]+(\.[a-z0-9_-]+){2,}$/i.test(normalized);
+  }
+
+  private findSourceInfoByIdentity(
+    sources: SourceInfo[],
+    sourceId: string,
+    sourcePkg: string,
+    sourceName: string
+  ): SourceInfo | null {
+    const numericSourceId: number = Number(sourceId);
+    if (Number.isFinite(numericSourceId) && numericSourceId > 0) {
+      for (let i = 0; i < sources.length; i++) {
+        if (sources[i].id === numericSourceId) {
+          return sources[i];
+        }
+      }
+    }
+
+    const normalizedSourceId: string = sourceId.trim();
+    if (normalizedSourceId.length > 0 && !Number.isFinite(numericSourceId)) {
+      for (let i = 0; i < sources.length; i++) {
+        const pkg: string = sources[i].pkg || '';
+        if (pkg === normalizedSourceId || sources[i].name === normalizedSourceId) {
+          return sources[i];
+        }
+      }
+    }
+
+    const normalizedPkg: string = sourcePkg.trim();
+    if (normalizedPkg.length > 0) {
+      for (let i = 0; i < sources.length; i++) {
+        const pkg: string = sources[i].pkg || '';
+        if (pkg === normalizedPkg) {
+          return sources[i];
+        }
+      }
+    }
+
+    const normalizedName: string = this.normalizeDisplaySourceText(sourceName);
+    if (normalizedName.length > 0) {
+      for (let i = 0; i < sources.length; i++) {
+        if (sources[i].name === normalizedName || sources[i].pkg === normalizedName) {
+          return sources[i];
+        }
+      }
+    }
+    return null;
+  }
+
+  private async resolveMangaSourceDisplayName(
+    sourceId: string | undefined | null,
+    sourcePkg: string | undefined | null,
+    sourceName: string | undefined | null
+  ): Promise<string> {
+    const normalizedSourceId: string = this.normalizeTrackingText(sourceId);
+    const normalizedSourcePkg: string = this.normalizeTrackingText(sourcePkg);
+    const normalizedSourceName: string = this.normalizeDisplaySourceText(sourceName);
+    try {
+      const sources: SourceInfo[] = await this.sourceManager.getAllSources();
+      const sourceInfo: SourceInfo | null = this.findSourceInfoByIdentity(
+        sources,
+        normalizedSourceId,
+        normalizedSourcePkg,
+        normalizedSourceName
+      );
+      if (sourceInfo !== null) {
+        this.resolvedSourceName = this.normalizeDisplaySourceText(sourceInfo.name);
+        this.resolvedSourcePkg = sourceInfo.pkg || this.resolvedSourcePkg;
+        return this.resolvedSourceName;
+      }
+    } catch (error) {
+      logger.warn(TAG, `解析图源显示名称失败: ${String(error)}`);
+    }
+    return this.isLikelySourceIdentifier(normalizedSourceName) ? '' : normalizedSourceName;
+  }
+
+  private shouldMatchNovelSourceHost(bookUrl: string): boolean {
+    const normalizedBookUrl: string = bookUrl.trim().toLowerCase();
+    return normalizedBookUrl.startsWith('http://') || normalizedBookUrl.startsWith('https://');
+  }
+
+  private resolveNovelSourceById(
+    sourceId: string | undefined | null,
+    bookUrl: string | undefined | null
+  ): LegadoBookSource | null {
+    const normalizedSourceId: string = this.normalizeTrackingText(sourceId);
+    if (normalizedSourceId.length <= 0) {
+      return null;
+    }
+    const normalizedBookUrl: string = this.normalizeTrackingText(bookUrl);
+    const shouldMatchHost: boolean = this.shouldMatchNovelSourceHost(normalizedBookUrl);
+    const lookupCandidates: string[] = this.buildNovelSourceLookupCandidates(normalizedSourceId);
+    for (let i = 0; i < lookupCandidates.length; i++) {
+      const source: LegadoBookSource | null = this.novelSourceManager.getSource(lookupCandidates[i]);
+      if (source === null) {
+        continue;
+      }
+      if (shouldMatchHost) {
+        const sourceUrl: string = this.normalizeTrackingText(source.bookSourceUrl);
+        if (!this.areNovelSourceHostsCompatible(sourceUrl, normalizedBookUrl)) {
+          continue;
+        }
+      }
+      return source;
+    }
+    return null;
+  }
+
+  private getNovelSourceTypeById(
+    sourceId: string | undefined | null,
+    bookUrl: string | undefined | null
+  ): LegadoBookSourceType {
+    const source: LegadoBookSource | null = this.resolveNovelSourceById(sourceId, bookUrl);
+    if (source === null) {
+      return LegadoBookSourceType.TEXT;
+    }
+    return source.bookSourceType;
+  }
+
+  private resolveNovelSourceDisplayName(
+    sourceId: string | undefined | null,
+    sourceName: string | undefined | null,
+    bookUrl: string | undefined | null
+  ): string {
+    const source: LegadoBookSource | null = this.resolveNovelSourceById(sourceId, bookUrl);
+    if (source !== null) {
+      const sourceBookName: string = this.normalizeDisplaySourceText(source.bookSourceName);
+      if (sourceBookName.length > 0) {
+        return sourceBookName;
+      }
+    }
+
+    const normalizedSourceName: string = this.normalizeDisplaySourceText(sourceName);
+    return this.isLikelySourceIdentifier(normalizedSourceName) ? '' : normalizedSourceName;
+  }
+
+  private async syncCurrentSourceDisplayName(): Promise<void> {
+    if (!this.content) {
+      this.resolvedDisplaySourceName = '';
+      return;
+    }
+
+    let displayName: string = '';
+    if (this.content.contentType === UnifiedContentType.MANGA) {
+      displayName = await this.resolveMangaSourceDisplayName(
+        this.content.sourceId || this.pageParams?.sourceId,
+        this.content.sourcePkg || this.pageParams?.sourcePkg,
+        this.content.sourceName || this.pageParams?.sourceName
+      );
+    } else if (this.content.contentType === UnifiedContentType.EBOOK) {
+      if (!this.content.isLocal || this.hasOnlineEBookExtendedData(this.content.filePath)) {
+        const extendedData: OnlineEBookExtendedData | null = this.getOnlineEBookExtendedData(this.content.filePath);
+        displayName = await this.resolveMangaSourceDisplayName(
+          this.content.sourceId || extendedData?.sourceId || this.pageParams?.sourceId,
+          this.content.sourcePkg || extendedData?.sourcePkg || this.pageParams?.sourcePkg,
+          this.content.sourceName || extendedData?.sourceName || this.pageParams?.sourceName
+        );
+      }
+    } else if (this.content.contentType === UnifiedContentType.NOVEL) {
+      displayName = this.resolveNovelSourceDisplayName(
+        this.content.sourceId || this.pageParams?.sourceId,
+        this.content.sourceName || this.pageParams?.sourceName,
+        this.content.id || this.pageParams?.contentId
+      );
+    }
+
+    this.resolvedDisplaySourceName = displayName;
+    if (displayName.length > 0 && this.content.sourceName !== displayName) {
+      this.updateCurrentContentSourceDisplayName(displayName);
+    }
+  }
+
+  private updateCurrentContentSourceDisplayName(sourceName: string): void {
+    if (!this.content) {
+      return;
+    }
+    const currentContent: UnifiedContent = this.content;
+    this.content = {
+      id: currentContent.id,
+      title: currentContent.title,
+      coverUrl: currentContent.coverUrl,
+      author: currentContent.author,
+      description: currentContent.description,
+      contentType: currentContent.contentType,
+      genres: currentContent.genres,
+      tags: currentContent.tags,
+      readStatus: currentContent.readStatus,
+      isFavorite: currentContent.isFavorite,
+      isNSFW: currentContent.isNSFW,
+      totalChapters: currentContent.totalChapters,
+      readChapters: currentContent.readChapters,
+      lastReadChapterIndex: currentContent.lastReadChapterIndex,
+      lastReadChapterTitle: currentContent.lastReadChapterTitle,
+      lastReadTime: currentContent.lastReadTime,
+      readProgress: currentContent.readProgress,
+      sourceId: currentContent.sourceId,
+      sourceName: sourceName,
+      sourcePkg: currentContent.sourcePkg,
+      sourceUrl: currentContent.sourceUrl,
+      isLocal: currentContent.isLocal,
+      publisher: currentContent.publisher,
+      publishDate: currentContent.publishDate,
+      isbn: currentContent.isbn,
+      fileSize: currentContent.fileSize,
+      filePath: currentContent.filePath,
+      format: currentContent.format,
+      chapters: currentContent.chapters,
+      originalData: currentContent.originalData,
+      originalType: currentContent.originalType
+    };
+  }
+
+  private getDisplaySourceName(): string {
+    const resolvedName: string = this.normalizeDisplaySourceText(this.resolvedDisplaySourceName);
+    if (resolvedName.length > 0) {
+      return resolvedName;
+    }
+    const sourceName: string = this.normalizeDisplaySourceText(this.content?.sourceName);
+    return this.isLikelySourceIdentifier(sourceName) ? '' : sourceName;
+  }
+
+  private getOnlineEBookExtendedData(filePath: string | undefined | null): OnlineEBookExtendedData | null {
+    const text: string = this.normalizeTrackingText(filePath);
+    if (text.length <= 0 || !text.startsWith('{') ||
+      (text.indexOf('"sourceId"') < 0 && text.indexOf('"onlineReaderUrl"') < 0)) {
+      return null;
+    }
+    try {
+      return JSON.parse(text) as OnlineEBookExtendedData;
+    } catch (error) {
+      logger.warn(TAG, `解析在线电子书扩展数据失败: ${String(error)}`);
+      return null;
+    }
   }
 
   private getCurrentNovelSourceId(): string {
@@ -1419,6 +1773,7 @@ export struct UnifiedDetailPage {
       this.isLoading = true;
       this.errorMessage = '';
       this.expandedTagChipIds = [];
+      this.resolvedDisplaySourceName = '';
 
       switch (this.pageParams.contentType) {
         case UnifiedContentType.MANGA:
@@ -1436,6 +1791,7 @@ export struct UnifiedDetailPage {
 
       if (this.content) {
         this.normalizeCurrentContentReadProgress();
+        await this.syncCurrentSourceDisplayName();
       }
 
       // 检查SFW模式
@@ -1493,22 +1849,17 @@ export struct UnifiedDetailPage {
     logger.info(TAG, `加载漫画内容: mangaId=${mangaId}, sourceId=${sourceId}`);
 
     // 解析图源名称和包名（优先用 pageParams，fallback 到 SourceManager 查找）
-    this.resolvedSourceName = this.pageParams.sourceName || '';
+    this.resolvedSourceName = this.normalizeDisplaySourceText(this.pageParams.sourceName);
     this.resolvedSourcePkg = this.pageParams.sourcePkg || '';
-    if (sourceId && (!this.resolvedSourceName || !this.resolvedSourcePkg)) {
-      try {
-        const sm: SourceManager = SourceManager.getInstance();
-        const allSources: SourceInfo[] = await sm.getAllSources();
-        const numericId: number = Number(sourceId);
-        const found: SourceInfo | undefined = allSources.find((s: SourceInfo) => s.id === numericId);
-        if (found) {
-          if (!this.resolvedSourceName) this.resolvedSourceName = found.name;
-          if (!this.resolvedSourcePkg && found.pkg) this.resolvedSourcePkg = found.pkg;
-          logger.info(TAG, `图源信息已解析: name=${this.resolvedSourceName}, pkg=${this.resolvedSourcePkg}`);
-        }
-      } catch (err) {
-        logger.warn(TAG, `解析图源信息失败: ${String(err)}`);
-      }
+    const resolvedMangaSourceName: string = await this.resolveMangaSourceDisplayName(
+      sourceId,
+      this.resolvedSourcePkg,
+      this.resolvedSourceName
+    );
+    if (resolvedMangaSourceName.length > 0) {
+      this.resolvedSourceName = resolvedMangaSourceName;
+      this.resolvedDisplaySourceName = resolvedMangaSourceName;
+      logger.info(TAG, `图源信息已解析: name=${this.resolvedSourceName}, pkg=${this.resolvedSourcePkg}`);
     }
 
     // 重置加载状态
@@ -2014,9 +2365,21 @@ export struct UnifiedDetailPage {
     if (isOnlineEbook && ebook.filePath) {
       try {
         // 尝试从filePath解析扩展数据
-        const extendedData = JSON.parse(ebook.filePath) as Record<string, string>;
-        const sourceId = extendedData['sourceId'] || '';
-        const onlineReaderUrl = extendedData['onlineReaderUrl'] || '';
+        const extendedData: OnlineEBookExtendedData | null = this.getOnlineEBookExtendedData(ebook.filePath);
+        const sourceId: string = extendedData?.sourceId || '';
+        const onlineReaderUrl: string = extendedData?.onlineReaderUrl || '';
+        const sourceName: string = await this.resolveMangaSourceDisplayName(
+          sourceId,
+          extendedData?.sourcePkg,
+          extendedData?.sourceName
+        );
+        if (sourceId.length > 0) {
+          this.content.sourceId = sourceId;
+        }
+        if (sourceName.length > 0) {
+          this.resolvedDisplaySourceName = sourceName;
+          this.content.sourceName = sourceName;
+        }
         
         logger.info(TAG, `检测到在线电子书，sourceId=${sourceId}, onlineReaderUrl=${onlineReaderUrl.substring(0, 50)}...`);
         
@@ -2087,6 +2450,7 @@ export struct UnifiedDetailPage {
         readProgress: 0,
         sourceId: sourceId,
         sourceName: this.ebookSourceInfo.name,
+        sourcePkg: this.ebookSourceInfo.pkg,
         isLocal: false,
         chapters: emptyChapters,
         originalData: emptyOriginalData,
@@ -2302,6 +2666,9 @@ export struct UnifiedDetailPage {
       
       // 使用缓存的书籍信息构建LegadoBook
       book = {
+        id: bookInDb.id,
+        origin: actualSourceId,
+        originName: this.resolveNovelSourceDisplayName(actualSourceId, bookInDb.sourceName, actualBookUrl) || bookInDb.sourceName,
         bookUrl: bookInDb.bookUrl,
         name: bookInDb.name,
         author: bookInDb.author,
@@ -2310,7 +2677,8 @@ export struct UnifiedDetailPage {
         coverUrl: bookInDb.coverLocalPath || bookInDb.coverUrl,
         tocUrl: bookInDb.tocUrl,
         latestChapterTitle: bookInDb.latestChapterTitle,
-        wordCount: bookInDb.wordCount
+        wordCount: bookInDb.wordCount,
+        type: this.getNovelSourceTypeById(actualSourceId, actualBookUrl)
       } as LegadoBook;
 
       // 优先从缓存获取章节列表（缓存时效由小说设置控制）
@@ -3065,9 +3433,7 @@ export struct UnifiedDetailPage {
     const originalChapter = NovelAdapter.getOriginalChapter(chapter);
     const originalBook = NovelAdapter.getOriginalNovel(this.content);
     const sourceId = this.content.sourceId || '';
-    const sourceType = sourceId.length > 0
-      ? (this.novelSourceManager.getSource(sourceId)?.bookSourceType ?? LegadoBookSourceType.TEXT)
-      : LegadoBookSourceType.TEXT;
+    const sourceType: LegadoBookSourceType = this.getNovelSourceTypeById(sourceId, this.content.id);
 
     if (sourceType === LegadoBookSourceType.AUDIO) {
       logger.info(TAG, `听书内容跳过翻书动画，直接打开播放器页: 章节索引=${chapterIndex}, 图源=${sourceId}`);
@@ -3172,9 +3538,7 @@ export struct UnifiedDetailPage {
     const originalChapter = NovelAdapter.getOriginalChapter(chapter);
     const originalBook = NovelAdapter.getOriginalNovel(this.content);
     const sourceId = this.content.sourceId || '';
-    const sourceType = sourceId.length > 0
-      ? (this.novelSourceManager.getSource(sourceId)?.bookSourceType ?? LegadoBookSourceType.TEXT)
-      : LegadoBookSourceType.TEXT;
+    const sourceType: LegadoBookSourceType = this.getNovelSourceTypeById(sourceId, this.content.id);
     const shouldDisableTransition = sourceType === LegadoBookSourceType.AUDIO;
     const readAloudCoverComponentId = shouldDisableTransition ? undefined : `cover_${this.componentId}`;
 
@@ -4438,7 +4802,7 @@ export struct UnifiedDetailPage {
           isFavorited: true,
           isLocal: false,
           sourceId: String(sourceIdNum),
-          sourceName: this.content.sourceName,
+          sourceName: this.getDisplaySourceName(),
           score: 0,
           navContentId: comicId,
           navSourceId: String(sourceIdNum)
@@ -4838,8 +5202,8 @@ export struct UnifiedDetailPage {
         }
         .width('100%')
 
-        if (this.content?.sourceName) {
-          Text(`来源: ${this.content.sourceName}`)
+        if (this.getDisplaySourceName().length > 0) {
+          Text(`来源: ${this.getDisplaySourceName()}`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -7867,8 +8231,8 @@ export struct UnifiedDetailPage {
           }
           .width('100%')
 
-          if (this.content?.sourceName) {
-            Text(`来源: ${this.content.sourceName}`)
+          if (this.getDisplaySourceName().length > 0) {
+            Text(`来源: ${this.getDisplaySourceName()}`)
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -8341,6 +8705,7 @@ export struct UnifiedDetailPage {
         // 分享链接对话框
         ShareLinkDialogComponent({
           content: this.content,
+          displaySourceName: this.getDisplaySourceName(),
           themeState: this.themeState,
           loadSignal: this.shareDialogLoadSignal
         })
@@ -8814,7 +9179,7 @@ export struct UnifiedDetailPage {
         bookId: bookInDb?.id || '',
         bookUrl: this.content.id,
         sourceId: sourceId,
-        sourceName: this.content.sourceName || '',
+        sourceName: this.getDisplaySourceName(),
         name: this.content.title,
         author: this.content.author,
         coverUrl: this.content.coverUrl,
@@ -8985,7 +9350,7 @@ export struct UnifiedDetailPage {
         const newBook: NovelBook = {
           id: `${newSourceId}_${newBookUrl}`,
           sourceId: newSourceId,
-          sourceName: this.content.sourceName || '',
+          sourceName: this.getDisplaySourceName(),
           bookUrl: newBookUrl,
           name: this.content.title,
           author: this.content.author,
@@ -9130,7 +9495,7 @@ export struct UnifiedDetailPage {
         themeState: this.themeState,
         loadSignal: this.replaceBookDialogLoadSignal,
         originalBookInfo: this.originalBookInfo,
-        newSourceName: this.content.sourceName || '',
+        newSourceName: this.getDisplaySourceName(),
         newChapterCount: this.content.totalChapters,
         matchedChapterIndex: this.matchedChapterIndex,
         onConfirm: () => {
@@ -9557,7 +9922,7 @@ export struct UnifiedDetailPage {
           const newBook: NovelBook = {
             id: '',
             sourceId: this.content.sourceId || '',
-            sourceName: this.content.sourceName || '',
+            sourceName: this.getDisplaySourceName(),
             bookUrl: this.content.id,
             name: this.content.title,
             author: this.content.author,

@@ -198,12 +198,6 @@
                 "host": "manxia.top",
                 "pathStartWith": "s/",
                 "linkFeature": "AppLinkOpening"
-              },
-              {
-                "scheme": "https",
-                "host": "manxia.top",
-                "path": "transfer",
-                "linkFeature": "AppLinkOpening"
               }
             ],
             "domainVerify": true
