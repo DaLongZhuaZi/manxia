@@ -769,6 +769,7 @@ export class DeepLinkRouter {
    * /d/{source}/{contentId}  → detail/{source}/{contentId}
    * /n                       → novel/detail
    * /s/{source}              → search/{source}
+   * /transfer                → page/TransferPage
    */
   private mapWebPathToRoute(webPath: string): string {
     const segments: string[] = webPath.split('/').filter((s: string) => s.length > 0);
@@ -791,6 +792,10 @@ export class DeepLinkRouter {
     // /s/{source} → search/{source}
     if (prefix === 's' && segments.length >= 2) {
       return `search/${segments[1]}`;
+    }
+
+    if (prefix === 'transfer') {
+      return 'page/TransferPage';
     }
 
     return webPath;

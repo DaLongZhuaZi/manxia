@@ -8,7 +8,7 @@ import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
 import { CommonModifier, LengthMetrics, promptAction, router, curves } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
-import { picker } from '@kit.CoreFileKit';
+import { picker, fileUri as coreFileUri } from '@kit.CoreFileKit';
 import { hdsEffect } from '@kit.UIDesignKit';
 import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
 import { BasicDataSource } from '../Utils/BasicDataSource';
@@ -41,6 +41,7 @@ import {
 import { DataManagementPage } from './DataManagementPage';
 import { DownloadSyncPage } from './DownloadSyncPage';
 import { NetworkFolderPage } from './NetworkFolderPage';
+import { TransferPage } from './TransferPage';
 import { MangaReaderPage } from './MangaReaderPage';
 import { MangaDetailPage, MangaDetailPageParams } from './MangaDetailPage';
 import { WebViewConfigurableSystemTestPage } from './WebViewConfigurableSystemTestPage';
@@ -256,6 +257,9 @@ import { util } from '@kit.ArkTS';
 const TAG = 'MainMenuPage';
 const MAIN_MENU_GUIDE_ROOT_ID = 'guide_main_root';
 const MAIN_MENU_GUIDE_HIGHLIGHT_Y_COMPENSATION_VP = 6;
+const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
+const APP_STORAGE_TRANSFER_RESULT = 'pendingTransferImportResult';
+const APP_STORAGE_TRANSFER_TRACKING_ACTIVE = 'pendingTransferTrackingActive';
 
 /**
  * 代理测试网站接口
@@ -5726,12 +5730,12 @@ struct MainMenuPage {
     switch (contentType) {
       case 'manga':
       case 'pdfebook':
-        return `m_${this.mangaMultiSelect.isActive ? 1 : 0}_${this.mangaMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
+        return `m_${this.isMangaLibrarySelectionActive() ? 1 : 0}_${this.mangaMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
       case 'ebook':
-        return `e_${this.ebookMultiSelect.isActive ? 1 : 0}_${this.ebookMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
+        return `e_${this.isEBookLibrarySelectionActive() ? 1 : 0}_${this.ebookMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
       case 'novel':
       default:
-        return `n_${this.novelMultiSelect.isActive ? 1 : 0}_${this.novelMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
+        return `n_${this.isNovelLibrarySelectionActive() ? 1 : 0}_${this.novelMultiSelect.selectedIds.has(contentId) ? 1 : 0}`;
     }
   }
 
@@ -5740,7 +5744,7 @@ struct MainMenuPage {
     contentType: 'manga' | 'ebook' | 'pdfebook' | 'novel',
     contentId: string
   ): string {
-    return `${prefix}_${contentType}_${contentId}`;
+    return `${prefix}_${contentType}_${contentId}_${this.getLibraryContentSelectionRenderToken(contentType, contentId)}`;
   }
 
   private getLibraryCollectionLayoutAnimationOptions(): AnimateParam {
@@ -5767,15 +5771,15 @@ struct MainMenuPage {
   }
 
   private getMangaSelectionHitTestMode(): HitTestMode {
-    return this.mangaMultiSelect.isActive ? HitTestMode.None : HitTestMode.Default;
+    return this.isMangaLibrarySelectionActive() ? HitTestMode.None : HitTestMode.Default;
   }
 
   private getEBookSelectionHitTestMode(): HitTestMode {
-    return this.ebookMultiSelect.isActive ? HitTestMode.None : HitTestMode.Default;
+    return this.isEBookLibrarySelectionActive() ? HitTestMode.None : HitTestMode.Default;
   }
 
   private getNovelSelectionHitTestMode(): HitTestMode {
-    return this.novelMultiSelect.isActive ? HitTestMode.None : HitTestMode.Default;
+    return this.isNovelLibrarySelectionActive() ? HitTestMode.None : HitTestMode.Default;
   }
 
   private applyLibraryFilterSelection(filterType: LibraryFilterType): void {
@@ -6799,6 +6803,39 @@ struct MainMenuPage {
     }
   }
 
+  private finalizeTrackedTransferImport(
+    status: 'imported' | 'import_failed' | 'import_cancelled'
+  ): void {
+    try {
+      const recordId = AppStorage.get<string>(APP_STORAGE_TRANSFER_RECORD_ID);
+      const trackingActive = AppStorage.get<boolean>(APP_STORAGE_TRANSFER_TRACKING_ACTIVE);
+      if (!trackingActive || !recordId || recordId.trim().length <= 0) {
+        return;
+      }
+
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_RESULT, status);
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_TRACKING_ACTIVE, false);
+      logger.info(TAG, `已回写局域网传书首页导入结果: recordId=${recordId}, status=${status}`);
+    } catch (error) {
+      logger.warn(TAG, `回写局域网传书首页导入结果失败: ${String(error)}`);
+    }
+  }
+
+  private resolveReadableImportPath(sourceUri: string): string {
+    const trimmedUri = sourceUri.trim();
+    try {
+      return new coreFileUri.FileUri(trimmedUri).path;
+    } catch (_error) {
+    }
+    if (trimmedUri.startsWith('file://docs')) {
+      return trimmedUri.replace('file://docs', '');
+    }
+    if (trimmedUri.startsWith('file://')) {
+      return trimmedUri.replace('file://', '');
+    }
+    return trimmedUri;
+  }
+
   /**
    * 检查并处理待导入的文件
    */
@@ -6813,7 +6850,13 @@ struct MainMenuPage {
         // 导航到AVIF查看器
         const avifParams: AvifTestPageParams = { fileUri: pendingAvifUri };
         setTimeout(() => {
-          this.pathStack.pushPathByName('AvifTestPage', avifParams);
+          try {
+            this.pathStack.pushPathByName('AvifTestPage', avifParams);
+            this.finalizeTrackedTransferImport('imported');
+          } catch (error) {
+            logger.error(TAG, `打开AVIF文件失败: ${String(error)}`);
+            this.finalizeTrackedTransferImport('import_failed');
+          }
         }, 500);
         return;
       }
@@ -6947,11 +6990,14 @@ struct MainMenuPage {
       // 从URI中提取文件名
       const decodedUri = decodeURIComponent(jsonUri);
       const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
+      const lowerFileName = fileName.toLowerCase();
+      const isStrictJsonFile = lowerFileName.endsWith('.json');
+      const fileTypeLabel = lowerFileName.endsWith('.json5') ? 'JSON5' : 'JSON';
       
       logger.info(TAG, `显示JSON导入对话框: ${fileName}`);
-      if (this.sourceFeaturesEnabled) {
+      if (this.sourceFeaturesEnabled && isStrictJsonFile) {
         promptAction.showActionMenu({
-          title: `导入JSON文件\n${fileName}`,
+          title: `导入${fileTypeLabel}文件\n${fileName}`,
           buttons: [
             { text: '导入为书源', color: $r('sys.color.ohos_id_color_text_primary') },
             { text: '导入为图源', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -6959,31 +7005,34 @@ struct MainMenuPage {
           ]
         }).then((result: promptAction.ActionMenuSuccessResponse) => {
           if (result.index === 0) {
-            this.importJsonAsNovelSource(jsonUri);
+            void this.importJsonAsNovelSource(jsonUri);
           } else if (result.index === 1) {
-            this.importJsonAsMangaSource(jsonUri);
+            void this.importJsonAsMangaSource(jsonUri);
           } else {
-            this.openJsonInEditor(jsonUri);
+            void this.openJsonInEditor(jsonUri);
           }
         }).catch(() => {
           logger.info(TAG, '用户取消JSON导入选择');
+          this.finalizeTrackedTransferImport('import_cancelled');
         });
         return;
       }
 
       promptAction.showActionMenu({
-        title: `导入JSON文件\n${fileName}`,
+        title: `${isStrictJsonFile ? '导入' : '打开'}${fileTypeLabel}文件\n${fileName}`,
         buttons: [
           { text: '使用文件编辑器打开', color: $r('sys.color.ohos_id_color_text_primary') }
         ]
       }).then(() => {
-        this.openJsonInEditor(jsonUri);
+        void this.openJsonInEditor(jsonUri);
       }).catch(() => {
         logger.info(TAG, '用户取消JSON导入选择');
+        this.finalizeTrackedTransferImport('import_cancelled');
       });
     } catch (error) {
       logger.error(TAG, '显示JSON导入对话框失败', String(error));
       this.showToast('显示导入选项失败');
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -6993,9 +7042,10 @@ struct MainMenuPage {
   private async importJsonAsNovelSource(jsonUri: string): Promise<void> {
     try {
       logger.info(TAG, `导入JSON为书源: ${jsonUri}`);
+      const readablePath = this.resolveReadableImportPath(jsonUri);
       
       // 读取JSON文件内容
-      const file = fs.openSync(jsonUri, fs.OpenMode.READ_ONLY);
+      const file = fs.openSync(readablePath, fs.OpenMode.READ_ONLY);
       const stat = fs.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
       fs.readSync(file.fd, buffer);
@@ -7015,6 +7065,7 @@ struct MainMenuPage {
       if (successCount > 0) {
         this.showToast(`成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}`);
         logger.info(TAG, `书源导入完成: 成功=${successCount}, 失败=${failCount}`);
+        this.finalizeTrackedTransferImport('imported');
         // 跳转到书源管理页面
         setTimeout(() => {
           this.pathStack.pushPathByName('NovelSourceManagementPage', null);
@@ -7022,10 +7073,12 @@ struct MainMenuPage {
       } else {
         this.showToast('导入失败：没有有效的书源数据');
         logger.warn(TAG, '书源导入失败：没有有效的书源数据');
+        this.finalizeTrackedTransferImport('import_failed');
       }
     } catch (error) {
       logger.error(TAG, `导入书源失败: ${String(error)}`);
       this.showToast(`导入失败: ${String(error)}`);
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -7035,9 +7088,10 @@ struct MainMenuPage {
   private async importJsonAsMangaSource(jsonUri: string): Promise<void> {
     try {
       logger.info(TAG, `导入JSON为图源: ${jsonUri}`);
+      const readablePath = this.resolveReadableImportPath(jsonUri);
       
       // 读取JSON文件内容
-      const file = fs.openSync(jsonUri, fs.OpenMode.READ_ONLY);
+      const file = fs.openSync(readablePath, fs.OpenMode.READ_ONLY);
       const stat = fs.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
       fs.readSync(file.fd, buffer);
@@ -7054,6 +7108,7 @@ struct MainMenuPage {
       if (result.success) {
         this.showToast(`成功导入图源: ${result.sourceName || '未知'}`);
         logger.info(TAG, `图源导入成功: ${result.sourceName}`);
+        this.finalizeTrackedTransferImport('imported');
         // 跳转到图源管理页面
         setTimeout(() => {
           this.pathStack.pushPathByName('SourceManagementPage', null);
@@ -7061,10 +7116,12 @@ struct MainMenuPage {
       } else {
         this.showToast(`导入失败: ${result.error || '未知错误'}`);
         logger.warn(TAG, `图源导入失败: ${result.error}`);
+        this.finalizeTrackedTransferImport('import_failed');
       }
     } catch (error) {
       logger.error(TAG, `导入图源失败: ${String(error)}`);
       this.showToast(`导入失败: ${String(error)}`);
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -7074,13 +7131,14 @@ struct MainMenuPage {
   private async openJsonInEditor(jsonUri: string): Promise<void> {
     try {
       logger.info(TAG, `使用文件编辑器打开: ${jsonUri}`);
+      const readablePath = this.resolveReadableImportPath(jsonUri);
       
       // 从URI中提取文件名
       const decodedUri = decodeURIComponent(jsonUri);
       const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
       
       // 读取文件内容（外部URI无法直接被编辑器访问）
-      const file = fs.openSync(jsonUri, fs.OpenMode.READ_ONLY);
+      const file = fs.openSync(readablePath, fs.OpenMode.READ_ONLY);
       const stat = fs.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
       fs.readSync(file.fd, buffer);
@@ -7099,9 +7157,11 @@ struct MainMenuPage {
       };
       
       this.pathStack.pushPathByName('FileEditorPage', params);
+      this.finalizeTrackedTransferImport('imported');
     } catch (error) {
       logger.error(TAG, `打开文件编辑器失败: ${String(error)}`);
       this.showToast('打开文件编辑器失败');
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -7115,7 +7175,7 @@ struct MainMenuPage {
       // 从URI中提取文件名
       const decodedUri = decodeURIComponent(fontUri);
       const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
-      const fontName = fileName.replace(/\.(ttf|otf|ttc)$/i, '');
+      const fontName = fileName.replace(/\.(ttf|otf|ttc|woff|woff2)$/i, '');
       
       // 显示确认对话框
       AlertDialog.show({
@@ -7127,6 +7187,7 @@ struct MainMenuPage {
           value: '取消',
           action: () => {
             logger.info(TAG, '用户取消导入字体');
+            this.finalizeTrackedTransferImport('import_cancelled');
           }
         },
         secondaryButton: {
@@ -7139,6 +7200,7 @@ struct MainMenuPage {
     } catch (error) {
       logger.error(TAG, `导入字体文件失败: ${String(error)}`);
       this.showToast(`导入失败: ${String(error)}`);
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -7148,13 +7210,15 @@ struct MainMenuPage {
   private async executeImportFont(fontUri: string, displayName: string): Promise<void> {
     try {
       logger.info(TAG, `执行字体导入: ${fontUri}, 名称: ${displayName}`);
+      const readablePath = this.resolveReadableImportPath(fontUri);
       
       // 使用FontManager导入字体
       const fontManager = FontManager.getInstance();
-      const customFont = await fontManager.addCustomFont(displayName, fontUri);
+      const customFont = await fontManager.addCustomFont(displayName, readablePath);
       
       this.showToast(`成功导入字体: ${customFont.displayName}`);
       logger.info(TAG, `字体导入成功: ${customFont.displayName}, familyName=${customFont.familyName}`);
+      this.finalizeTrackedTransferImport('imported');
       
       // 跳转到字体设置页面
       setTimeout(() => {
@@ -7163,6 +7227,7 @@ struct MainMenuPage {
     } catch (error) {
       logger.error(TAG, `执行字体导入失败: ${String(error)}`);
       this.showToast(`导入失败: ${String(error)}`);
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -7172,13 +7237,14 @@ struct MainMenuPage {
   private async openCodeFileInEditor(codeUri: string, language: string): Promise<void> {
     try {
       logger.info(TAG, `使用文件编辑器打开代码文件: ${codeUri}, 语言: ${language}`);
+      const readablePath = this.resolveReadableImportPath(codeUri);
       
       // 从URI中提取文件名
       const decodedUri = decodeURIComponent(codeUri);
       const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
       
       // 读取文件内容（外部URI无法直接被编辑器访问）
-      const file = fs.openSync(codeUri, fs.OpenMode.READ_ONLY);
+      const file = fs.openSync(readablePath, fs.OpenMode.READ_ONLY);
       const stat = fs.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
       fs.readSync(file.fd, buffer);
@@ -7197,9 +7263,11 @@ struct MainMenuPage {
       };
       
       this.pathStack.pushPathByName('FileEditorPage', params);
+      this.finalizeTrackedTransferImport('imported');
     } catch (error) {
       logger.error(TAG, `打开代码文件失败: ${String(error)}`);
       this.showToast(`打开失败: ${String(error)}`);
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -8882,15 +8950,25 @@ struct MainMenuPage {
 
   private shouldUseUnifiedLibraryMixedMultiSelect(): boolean {
     return this.currentTabIndex === TabIndex.LIBRARY
-      && this.libraryViewMode !== LibraryViewMode.CATEGORY
+      && this.libraryViewMode === LibraryViewMode.GRID
       && !this.showCategoryDetail;
   }
 
   private isUnifiedLibraryMixedMultiSelectActive(): boolean {
     return this.shouldUseUnifiedLibraryMixedMultiSelect()
-      && this.mangaMultiSelect.isActive
-      && this.ebookMultiSelect.isActive
-      && this.novelMultiSelect.isActive;
+      && this.hasActiveLibraryMultiSelectMode();
+  }
+
+  private isMangaLibrarySelectionActive(): boolean {
+    return this.mangaMultiSelect.isActive || this.isUnifiedLibraryMixedMultiSelectActive();
+  }
+
+  private isEBookLibrarySelectionActive(): boolean {
+    return this.ebookMultiSelect.isActive || this.isUnifiedLibraryMixedMultiSelectActive();
+  }
+
+  private isNovelLibrarySelectionActive(): boolean {
+    return this.novelMultiSelect.isActive || this.isUnifiedLibraryMixedMultiSelectActive();
   }
 
   private getLibraryTotalSelectedCount(): number {
@@ -9114,7 +9192,16 @@ struct MainMenuPage {
   }
 
   private isAllLibraryMixedItemsSelected(): boolean {
-    return this.isAllMangaSelected() && this.isAllEBooksSelected() && this.isAllNovelsSelected();
+    const mangaItems = this.getVisibleMangaMultiSelectItems();
+    const ebookItems = this.getVisibleEBookMultiSelectItems();
+    const novelItems = this.getVisibleNovelMultiSelectItems();
+    const totalCount = mangaItems.length + ebookItems.length + novelItems.length;
+    if (totalCount <= 0) {
+      return false;
+    }
+    return mangaItems.every((m: Manga) => this.mangaMultiSelect.selectedIds.has(m.id))
+      && ebookItems.every((e: EBook) => this.ebookMultiSelect.selectedIds.has(e.id))
+      && novelItems.every((n: NovelBook) => this.novelMultiSelect.selectedIds.has(n.id));
   }
 
   private toggleSelectAllManga(): void {
@@ -13509,7 +13596,7 @@ struct MainMenuPage {
   @StorageProp('library_shelf_grid_columns')
   private shelfGridColumnsSetting: number = 3;
   @StorageProp('library_hide_wood_shelf_texture')
-  private hideWoodShelfTexture: boolean = false;
+  private hideWoodShelfTexture: boolean = true;
   @StorageProp('library_shelf_toolbar_placement')
   private shelfToolbarPlacementSetting: string = 'top';
   @StorageProp('library_grid_author_display_mode')
@@ -13734,7 +13821,7 @@ struct MainMenuPage {
       AppStorage.get(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE) as boolean | number | string | null | undefined
     );
 
-    const finalHideWood = settingsHideWood ?? appStorageHideWood ?? false;
+    const finalHideWood = settingsHideWood ?? appStorageHideWood ?? true;
     this.hideWoodShelfTexture = finalHideWood;
     AppStorage.setOrCreate(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, finalHideWood);
 
@@ -19902,8 +19989,8 @@ struct MainMenuPage {
         this.buildLibraryDirectCoverSurface(
           this.resolveMangaCoverAsset(manga),
           this.mangaMultiSelect.selectedIds.has(manga.id),
-          this.mangaMultiSelect.isActive,
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.mangaMultiSelect.isActive ? '漫画' : '',
+          this.isMangaLibrarySelectionActive(),
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMangaLibrarySelectionActive() ? '漫画' : '',
           manga
         )
       }
@@ -19945,13 +20032,14 @@ struct MainMenuPage {
       }
       .width('100%')
       .padding({ left: 2, right: 2 })
+      .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .alignItems(HorizontalAlign.Start)
     }
     .key(this.getLibraryContentRenderKey(`${anchorScope}_manga_direct_card`, 'manga', manga.id))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
-      width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      width: this.isMangaLibrarySelectionActive() ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
       color: this.mangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
@@ -19959,7 +20047,7 @@ struct MainMenuPage {
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.mangaMultiSelect.isActive) {
+      if (this.isMangaLibrarySelectionActive()) {
         this.toggleMangaSelection(manga.id);
       } else {
         this.handleLibraryMangaCoverClick(manga, `library_manga_${manga.id}`);
@@ -19968,7 +20056,7 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.mangaMultiSelect.isActive) {
+          if (!this.isMangaLibrarySelectionActive()) {
             this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
           }
         })
@@ -19996,8 +20084,8 @@ struct MainMenuPage {
         this.buildLibraryDirectCoverSurface(
           this.resolveEBookCoverAsset(ebook),
           this.ebookMultiSelect.selectedIds.has(ebook.id),
-          this.ebookMultiSelect.isActive,
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.ebookMultiSelect.isActive ? '电子书' : ''
+          this.isEBookLibrarySelectionActive(),
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isEBookLibrarySelectionActive() ? '电子书' : ''
         )
       }
       .width('100%')
@@ -20038,13 +20126,14 @@ struct MainMenuPage {
       }
       .width('100%')
       .padding({ left: 2, right: 2 })
+      .hitTestBehavior(this.getEBookSelectionHitTestMode())
       .alignItems(HorizontalAlign.Start)
     }
     .key(this.getLibraryContentRenderKey(`${anchorScope}_ebook_direct_card`, 'ebook', ebook.id))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
-      width: this.ebookMultiSelect.isActive ? (this.ebookMultiSelect.selectedIds.has(ebook.id) ? 2 : 1) : 0,
+      width: this.isEBookLibrarySelectionActive() ? (this.ebookMultiSelect.selectedIds.has(ebook.id) ? 2 : 1) : 0,
       color: this.ebookMultiSelect.selectedIds.has(ebook.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
@@ -20052,7 +20141,7 @@ struct MainMenuPage {
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.ebookMultiSelect.isActive) {
+      if (this.isEBookLibrarySelectionActive()) {
         this.toggleEBookSelection(ebook.id);
       } else {
         this.handleLibraryEBookCoverClick(ebook, `cover_ebook_grid_${ebook.id}`);
@@ -20061,7 +20150,7 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.ebookMultiSelect.isActive) {
+          if (!this.isEBookLibrarySelectionActive()) {
             this.showEBookActionMenu(ebook, this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id));
           }
         })
@@ -20089,8 +20178,8 @@ struct MainMenuPage {
         this.buildLibraryDirectCoverSurface(
           this.resolveNovelCoverAsset(novel),
           this.novelMultiSelect.selectedIds.has(novel.id),
-          this.novelMultiSelect.isActive,
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.novelMultiSelect.isActive
+          this.isNovelLibrarySelectionActive(),
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isNovelLibrarySelectionActive()
             ? this.getNovelCoverTypeMarker(novel)
             : ''
         )
@@ -20133,13 +20222,14 @@ struct MainMenuPage {
       }
       .width('100%')
       .padding({ left: 2, right: 2 })
+      .hitTestBehavior(this.getNovelSelectionHitTestMode())
       .alignItems(HorizontalAlign.Start)
     }
     .key(this.getLibraryContentRenderKey(`${anchorScope}_novel_direct_card`, 'novel', novel.id))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
-      width: this.novelMultiSelect.isActive ? (this.novelMultiSelect.selectedIds.has(novel.id) ? 2 : 1) : 0,
+      width: this.isNovelLibrarySelectionActive() ? (this.novelMultiSelect.selectedIds.has(novel.id) ? 2 : 1) : 0,
       color: this.novelMultiSelect.selectedIds.has(novel.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
@@ -20147,7 +20237,7 @@ struct MainMenuPage {
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.novelMultiSelect.isActive) {
+      if (this.isNovelLibrarySelectionActive()) {
         this.toggleNovelSelection(novel.id);
       } else {
         this.handleLibraryNovelCoverClick(novel, `library_novel_${novel.id}`);
@@ -20156,7 +20246,7 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.novelMultiSelect.isActive) {
+          if (!this.isNovelLibrarySelectionActive()) {
             this.showNovelActionMenu(novel, this.getPopupAnchorKey(anchorScope, 'novel', novel.id));
           }
         })
@@ -20184,8 +20274,8 @@ struct MainMenuPage {
         this.buildLibraryDirectCoverSurface(
           this.resolvePdfEBookCoverAsset(manga),
           this.mangaMultiSelect.selectedIds.has(manga.id),
-          this.mangaMultiSelect.isActive,
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.mangaMultiSelect.isActive ? '电子书' : ''
+          this.isMangaLibrarySelectionActive(),
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMangaLibrarySelectionActive() ? '电子书' : ''
         )
       }
       .width('100%')
@@ -20223,13 +20313,14 @@ struct MainMenuPage {
       }
       .width('100%')
       .padding({ left: 2, right: 2 })
+      .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .alignItems(HorizontalAlign.Start)
     }
     .key(this.getLibraryContentRenderKey(`${anchorScope}_pdfebook_direct_card`, 'pdfebook', manga.id))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .border({
-      width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      width: this.isMangaLibrarySelectionActive() ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
       color: this.mangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
@@ -20237,7 +20328,7 @@ struct MainMenuPage {
     .borderRadius(12)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.mangaMultiSelect.isActive) {
+      if (this.isMangaLibrarySelectionActive()) {
         this.toggleMangaSelection(manga.id);
       } else {
         this.handleLibraryMangaCoverClick(manga, `cover_pdf_ebook_grid_${manga.id}`);
@@ -20246,7 +20337,7 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.mangaMultiSelect.isActive) {
+          if (!this.isMangaLibrarySelectionActive()) {
             this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
           }
         })
@@ -20324,12 +20415,12 @@ struct MainMenuPage {
             .id(`library_manga_${manga.id}`)
         }
 
-        if (!this.mangaMultiSelect.isActive && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+        if (!this.isMangaLibrarySelectionActive() && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
           this.buildLibraryCoverTypeMarkerOverlay('漫画')
         }
 
         // 多选模式蒙版层
-        if (this.mangaMultiSelect.isActive) {
+        if (this.isMangaLibrarySelectionActive()) {
           // 半透明蒙版（未选中时较浅，选中时较深）
           Column()
             .width('100%')
@@ -20438,21 +20529,21 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .border({
-      width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      width: this.isMangaLibrarySelectionActive() ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
       color: this.mangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.mangaMultiSelect.isActive) {
+      if (this.isMangaLibrarySelectionActive()) {
         this.toggleMangaSelection(manga.id);
       }
     })
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.mangaMultiSelect.isActive) {
+          if (!this.isMangaLibrarySelectionActive()) {
             this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
           }
         })
@@ -23136,12 +23227,12 @@ struct MainMenuPage {
               offsetY: 4
             })
 
-          if (!this.ebookMultiSelect.isActive && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+          if (!this.isEBookLibrarySelectionActive() && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
             this.buildLibraryCoverTypeMarkerOverlay('电子书')
           }
 
           // 多选模式蒙版层
-          if (this.ebookMultiSelect.isActive) {
+          if (this.isEBookLibrarySelectionActive()) {
             // 半透明蒙版（未选中时较浅，选中时较深）
             Column()
               .width('100%')
@@ -23253,7 +23344,7 @@ struct MainMenuPage {
     }
     .key(this.getLibraryContentRenderKey(`${anchorScope}_ebook_grid_card`, 'ebook', ebook.id))
     .border({
-      width: this.ebookMultiSelect.isActive ? (this.ebookMultiSelect.selectedIds.has(ebook.id) ? 2 : 1) : 0,
+      width: this.isEBookLibrarySelectionActive() ? (this.ebookMultiSelect.selectedIds.has(ebook.id) ? 2 : 1) : 0,
       color: this.ebookMultiSelect.selectedIds.has(ebook.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
@@ -23261,10 +23352,10 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (!this.ebookMultiSelect.isActive) {
+      if (!this.isEBookLibrarySelectionActive()) {
         return;
       }
-      if (this.ebookMultiSelect.isActive) {
+      if (this.isEBookLibrarySelectionActive()) {
         // 多选模式：切换选中状态
         this.toggleEBookSelection(ebook.id);
       } else {
@@ -23275,7 +23366,7 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.ebookMultiSelect.isActive) {
+          if (!this.isEBookLibrarySelectionActive()) {
             this.showEBookActionMenu(ebook, this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id));
           }
         })
@@ -23489,7 +23580,7 @@ struct MainMenuPage {
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
 
         // 阅读状态标签（非多选模式时显示）
-        if (!this.novelMultiSelect.isActive) {
+        if (!this.isNovelLibrarySelectionActive()) {
           Text(this.getNovelReadStatusText(novel.readStatus))
             .fontSize(10)
             .fontFamily(this.appFontFamily)
@@ -23501,12 +23592,12 @@ struct MainMenuPage {
             .hitTestBehavior(HitTestMode.None)
         }
 
-        if (!this.novelMultiSelect.isActive && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+        if (!this.isNovelLibrarySelectionActive() && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
           this.buildLibraryCoverTypeMarkerOverlay(this.getNovelCoverTypeMarker(novel))
         }
 
         // 多选模式蒙版层
-        if (this.novelMultiSelect.isActive) {
+        if (this.isNovelLibrarySelectionActive()) {
           // 半透明蒙版（未选中时较浅，选中时较深）
           Column()
             .width('100%')
@@ -23615,21 +23706,21 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .border({
-      width: this.novelMultiSelect.isActive ? (this.novelMultiSelect.selectedIds.has(novel.id) ? 2 : 1) : 0,
+      width: this.isNovelLibrarySelectionActive() ? (this.novelMultiSelect.selectedIds.has(novel.id) ? 2 : 1) : 0,
       color: this.novelMultiSelect.selectedIds.has(novel.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
     })
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
-      if (this.novelMultiSelect.isActive) {
+      if (this.isNovelLibrarySelectionActive()) {
         this.toggleNovelSelection(novel.id);
       }
     })
     .gesture(
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
-          if (!this.novelMultiSelect.isActive) {
+          if (!this.isNovelLibrarySelectionActive()) {
             this.showNovelActionMenu(novel, this.getPopupAnchorKey(anchorScope, 'novel', novel.id));
           }
         })
@@ -23918,11 +24009,11 @@ struct MainMenuPage {
             offsetY: 4
           })
 
-          if (!this.mangaMultiSelect.isActive && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
+          if (!this.isMangaLibrarySelectionActive() && this.shouldShowLibraryCoverTypeMarker(anchorScope)) {
             this.buildLibraryCoverTypeMarkerOverlay('电子书')
           }
 
-          if (this.mangaMultiSelect.isActive) {
+          if (this.isMangaLibrarySelectionActive()) {
             Column()
               .width('100%')
               .height('100%')
@@ -24006,7 +24097,7 @@ struct MainMenuPage {
     }
     .key(this.getLibraryContentRenderKey(`${anchorScope}_pdfebook_grid_card`, 'pdfebook', manga.id))
     .border({
-      width: this.mangaMultiSelect.isActive ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
+      width: this.isMangaLibrarySelectionActive() ? (this.mangaMultiSelect.selectedIds.has(manga.id) ? 2 : 1) : 0,
       color: this.mangaMultiSelect.selectedIds.has(manga.id)
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
@@ -24015,7 +24106,7 @@ struct MainMenuPage {
     .animation({ duration: 200, curve: Curve.EaseOut })
     .onClick(() => {
       // 点击打开漫画详情页
-      if (!this.mangaMultiSelect.isActive) {
+      if (!this.isMangaLibrarySelectionActive()) {
         return;
       }
       this.toggleMangaSelection(manga.id);
@@ -27356,6 +27447,8 @@ struct MainMenuPage {
         DataManagementPage()
       } else if (name === 'NetworkFolderPage') {
         NetworkFolderPage()
+      } else if (name === 'TransferPage') {
+        TransferPage()
       } else if (name === 'DownloadSyncPage') {
         DownloadSyncPage()
       } else if (name === 'MangaReaderPage') {

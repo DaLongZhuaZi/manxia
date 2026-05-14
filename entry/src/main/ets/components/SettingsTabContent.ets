@@ -472,6 +472,23 @@ export struct SettingsTabContent {
             }
           }, 'guide_main_setting_network_folder')
 
+          this.buildSettingItem('局域网传书', '在同一局域网内通过浏览器直连漫匣并传输文件', $r('sys.symbol.wifi'), () => {
+            try {
+              const navigationPath: NavigationPath = {
+                name: 'TransferPage',
+                param: {
+                  fromPage: 'MainMenuPage',
+                  timestamp: Date.now()
+                }
+              };
+              this.pathStack.pushPath(navigationPath);
+              logger.info(TAG, '导航到局域网传书页面');
+            } catch (error) {
+              logger.error(TAG, '导航到局域网传书页面失败', String(error));
+              this.showToast('打开局域网传书页面失败');
+            }
+          }, 'guide_main_setting_transfer')
+
           this.buildSettingItem('Download导入', '从Download目录扫描并导入文件', $r('sys.symbol.square_and_arrow_down'), () => {
             try {
               const navigationPath: NavigationPath = {

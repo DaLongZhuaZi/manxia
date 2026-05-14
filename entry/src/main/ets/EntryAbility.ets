@@ -35,6 +35,15 @@ import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
 import { getHoldingAwarenessManager } from './Framework/Managers/HoldingAwarenessManager';
 import { initializeReaderKitRuntimeGate } from './Framework/Initialization/ReaderKitFeatureGate';
 import {
+  NETWORK_FOLDER_AVIF_EXTENSIONS,
+  NETWORK_FOLDER_BACKUP_EXTENSIONS,
+  NETWORK_FOLDER_CODE_EXTENSIONS,
+  NETWORK_FOLDER_COMIC_EXTENSIONS,
+  NETWORK_FOLDER_EBOOK_EXTENSIONS,
+  NETWORK_FOLDER_FONT_EXTENSIONS,
+  NETWORK_FOLDER_JSON_EXTENSIONS
+} from './Models/NetworkFolderModels';
+import {
   ngfContentSourceIntegrationFacade,
   ngfContentWorkflowIntegrationFacade,
   ngfCoreEventBridge,
@@ -602,6 +611,7 @@ export default class EntryAbility extends UIAbility {
     ['.js', 'javascript'],
     ['.jsx', 'javascript'],
     ['.tsx', 'typescript'],
+    ['.jsonc', 'json'],
     ['.py', 'python'],
     ['.java', 'java'],
     ['.cpp', 'cpp'],
@@ -649,69 +659,101 @@ export default class EntryAbility extends UIAbility {
    * 获取文件扩展名（包含点号）
    */
   private getFileExtension(uri: string): string {
-    const lastDotIndex = uri.lastIndexOf('.');
-    if (lastDotIndex === -1) return '';
-    return uri.substring(lastDotIndex).toLowerCase();
+    const normalizedUri = this.normalizeUriForFileTypeDetect(uri);
+    const lastDotIndex = normalizedUri.lastIndexOf('.');
+    if (lastDotIndex === -1 || lastDotIndex >= normalizedUri.length - 1) {
+      return '';
+    }
+    return normalizedUri.substring(lastDotIndex).toLowerCase();
+  }
+
+  private getFileExtensionWithoutDot(uri: string): string {
+    const extension = this.getFileExtension(uri);
+    if (extension.startsWith('.')) {
+      return extension.substring(1);
+    }
+    return extension;
+  }
+
+  private normalizeUriForFileTypeDetect(uri: string): string {
+    const trimmed = uri.trim();
+    if (trimmed.length <= 0) {
+      return '';
+    }
+
+    const queryIndex = trimmed.indexOf('?');
+    const hashIndex = trimmed.indexOf('#');
+    let endIndex = trimmed.length;
+    if (queryIndex >= 0 && hashIndex >= 0) {
+      endIndex = Math.min(queryIndex, hashIndex);
+    } else if (queryIndex >= 0) {
+      endIndex = queryIndex;
+    } else if (hashIndex >= 0) {
+      endIndex = hashIndex;
+    }
+
+    const pathPart = trimmed.substring(0, endIndex);
+    try {
+      return decodeURIComponent(pathPart).trim().toLowerCase();
+    } catch (_error) {
+      return pathPart.trim().toLowerCase();
+    }
+  }
+
+  private isExtensionIn(extension: string, supportedExtensions: string[]): boolean {
+    if (extension.length <= 0) {
+      return false;
+    }
+    return supportedExtensions.includes(extension);
   }
 
   /**
    * 根据文件URI获取文件类型
    */
   private getFileTypeFromUri(uri: string): string {
-    const lowerUri = uri.toLowerCase();
+    const extension = this.getFileExtensionWithoutDot(uri);
     
     // AVIF图片
-    if (lowerUri.endsWith('.avif')) {
+    if (this.isExtensionIn(extension, NETWORK_FOLDER_AVIF_EXTENSIONS)) {
       return EntryAbility.FILE_TYPE_AVIF;
     }
     
     // 备份文件
-    if (lowerUri.endsWith('.mxbak') || lowerUri.endsWith('.mxbackup')) {
+    if (this.isExtensionIn(extension, NETWORK_FOLDER_BACKUP_EXTENSIONS)) {
       return EntryAbility.FILE_TYPE_BACKUP;
     }
     
     // 漫画压缩包
-    if (lowerUri.endsWith('.cbz') || lowerUri.endsWith('.cbr') ||
-      lowerUri.endsWith('.zip') || lowerUri.endsWith('.rar') ||
-      lowerUri.endsWith('.7z') || lowerUri.endsWith('.tar') ||
-      lowerUri.endsWith('.gz') || lowerUri.endsWith('.tgz') ||
-      lowerUri.endsWith('.bz2') || lowerUri.endsWith('.xz') ||
-      lowerUri.endsWith('.lzma') ||
-      lowerUri.includes('.cbz?') || lowerUri.includes('.cbr?') ||
-      lowerUri.includes('.zip?') || lowerUri.includes('.rar?') ||
-      lowerUri.includes('.7z?') || lowerUri.includes('.tar?') ||
-      lowerUri.includes('.gz?') || lowerUri.includes('.tgz?') ||
-      lowerUri.includes('.bz2?') || lowerUri.includes('.xz?') ||
-      lowerUri.includes('.lzma?')) {
+    if (this.isExtensionIn(extension, NETWORK_FOLDER_COMIC_EXTENSIONS)) {
       return EntryAbility.FILE_TYPE_COMIC;
     }
     
     // 电子书
-    if (lowerUri.endsWith('.epub') || lowerUri.endsWith('.mobi') ||
-      lowerUri.endsWith('.azw') || lowerUri.endsWith('.azw3') ||
-      lowerUri.includes('.epub?') || lowerUri.includes('.mobi?') ||
-      lowerUri.includes('.azw?') || lowerUri.includes('.azw3?')) {
+    if (this.isExtensionIn(extension, NETWORK_FOLDER_EBOOK_EXTENSIONS)) {
       return EntryAbility.FILE_TYPE_EBOOK;
     }
     
     // PDF
-    if (lowerUri.endsWith('.pdf')) {
+    if (extension === 'pdf') {
       return EntryAbility.FILE_TYPE_PDF;
     }
     
     // JSON文件
-    if (lowerUri.endsWith('.json')) {
+    if (this.isExtensionIn(extension, NETWORK_FOLDER_JSON_EXTENSIONS)) {
       return EntryAbility.FILE_TYPE_JSON;
     }
     
     // 字体文件
-    if (lowerUri.endsWith('.ttf') || lowerUri.endsWith('.otf') || lowerUri.endsWith('.ttc')) {
+    if (this.isExtensionIn(extension, NETWORK_FOLDER_FONT_EXTENSIONS)) {
       return EntryAbility.FILE_TYPE_FONT;
     }
     
     // 代码文件（检查扩展名是否在映射表中）
-    const ext = this.getFileExtension(lowerUri);
-    if (ext && EntryAbility.CODE_EXTENSIONS.has(ext)) {
+    const ext = this.getFileExtension(uri);
+    if (ext.length > 0 && EntryAbility.CODE_EXTENSIONS.has(ext)) {
+      return EntryAbility.FILE_TYPE_CODE;
+    }
+    if (this.isExtensionIn(extension, NETWORK_FOLDER_CODE_EXTENSIONS)) {
       return EntryAbility.FILE_TYPE_CODE;
     }
     

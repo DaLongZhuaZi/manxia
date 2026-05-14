@@ -26,6 +26,7 @@ interface ShareOnlineEBookExtendedData {
 @Component
 export struct ShareLinkDialogComponent {
   @Prop content: UnifiedContent | null = null;
+  @Prop displaySourceName: string = '';
   @Prop themeState: ThemeAwareState = new ThemeAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @Prop @Watch('onLoadSignalChanged') loadSignal: number = 0;
@@ -236,6 +237,66 @@ export struct ShareLinkDialogComponent {
     return String(value).trim();
   }
 
+  private isLikelySourceIdentifier(value: string): boolean {
+    const normalized: string = this.normalizeLinkText(value).toLowerCase();
+    if (normalized.length <= 0) {
+      return false;
+    }
+    if (normalized.startsWith('http://') || normalized.startsWith('https://') || normalized.indexOf('://') >= 0) {
+      return true;
+    }
+    if (normalized.startsWith('id_')) {
+      return true;
+    }
+    if (normalized.startsWith('com.') && normalized.indexOf('.extension.') >= 0) {
+      return true;
+    }
+    return /^[a-z0-9_-]+(\.[a-z0-9_-]+){2,}$/i.test(normalized);
+  }
+
+  private getDisplaySourceName(): string {
+    const explicitDisplayName: string = this.normalizeLinkText(this.displaySourceName);
+    if (explicitDisplayName.length > 0) {
+      return explicitDisplayName;
+    }
+    const contentSourceName: string = this.normalizeLinkText(this.content?.sourceName);
+    if (contentSourceName.length > 0 && !this.isLikelySourceIdentifier(contentSourceName)) {
+      return contentSourceName;
+    }
+    const extendedData: ShareOnlineEBookExtendedData | null = this.getOnlineEBookExtendedData();
+    if (!extendedData) {
+      return '';
+    }
+    const extendedSourceName: string = this.normalizeLinkText(extendedData.sourceName);
+    return this.isLikelySourceIdentifier(extendedSourceName) ? '' : extendedSourceName;
+  }
+
+  private getSourceLabel(): string {
+    if (!this.content) {
+      return '来源';
+    }
+    return this.content.contentType === UnifiedContentType.NOVEL ? '书源' : '图源';
+  }
+
+  private shouldShowDisplaySourceName(): boolean {
+    if (!this.content) {
+      return false;
+    }
+    if (this.getDisplaySourceName().length <= 0) {
+      return false;
+    }
+    if (this.content.contentType === UnifiedContentType.NOVEL) {
+      return true;
+    }
+    if (this.content.contentType === UnifiedContentType.MANGA) {
+      return !this.content.isLocal;
+    }
+    if (this.content.contentType === UnifiedContentType.EBOOK) {
+      return this.isOnlineEBookForShare();
+    }
+    return false;
+  }
+
   // ── 操作 ──
 
   private copyLinkToClipboard(): void {
@@ -394,6 +455,24 @@ export struct ShareLinkDialogComponent {
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%')
+              }
+
+              if (this.shouldShowDisplaySourceName()) {
+                Row({ space: 6 }) {
+                  Text(`${this.getSourceLabel()}：`)
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+                  Text(this.getDisplaySourceName())
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .layoutWeight(1)
+                }
+                .width('100%')
               }
             }
             .width('100%')

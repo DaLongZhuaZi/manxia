@@ -58,6 +58,9 @@ import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBac
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG = 'DataManagementPage';
+const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
+const APP_STORAGE_TRANSFER_RESULT = 'pendingTransferImportResult';
+const APP_STORAGE_TRANSFER_TRACKING_ACTIVE = 'pendingTransferTrackingActive';
 // 定义标题栏最小高度，用于内容占位
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 
@@ -2224,6 +2227,24 @@ struct DataManagementPage {
     }
   }
 
+  private finalizeTrackedTransferImport(
+    status: 'imported' | 'import_failed' | 'import_cancelled'
+  ): void {
+    try {
+      const recordId = AppStorage.get<string>(APP_STORAGE_TRANSFER_RECORD_ID);
+      const trackingActive = AppStorage.get<boolean>(APP_STORAGE_TRANSFER_TRACKING_ACTIVE);
+      if (!trackingActive || !recordId || recordId.trim().length <= 0) {
+        return;
+      }
+
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_RESULT, status);
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_TRACKING_ACTIVE, false);
+      logger.info(TAG, `已回写局域网传书导入结果: recordId=${recordId}, status=${status}`);
+    } catch (error) {
+      logger.warn(TAG, `回写局域网传书导入结果失败: ${String(error)}`);
+    }
+  }
+
   /**
    * 根据文件分类处理待导入的文件
    */
@@ -2266,6 +2287,7 @@ struct DataManagementPage {
       }
     } catch (error) {
       logger.error(TAG, '根据分类处理文件失败', String(error));
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -2406,6 +2428,8 @@ struct DataManagementPage {
         return 'scss';
       case 'less':
         return 'less';
+      case 'jsonc':
+        return 'json';
       case 'xml':
         return 'xml';
       case 'yaml':
@@ -2618,6 +2642,7 @@ struct DataManagementPage {
     } catch (error) {
       logger.error(TAG, '处理外部漫画文件导入失败', String(error instanceof Error ? error.message : error));
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${error}`, 0);
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -2632,6 +2657,7 @@ struct DataManagementPage {
       await this.importEBook(fileUri);
     } catch (error) {
       logger.error(TAG, '处理外部电子书文件导入失败', String(error instanceof Error ? error.message : error));
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -2655,6 +2681,7 @@ struct DataManagementPage {
         logger.info(TAG, 'PDF导入已取消');
         // [修复] 清除进度提示信息
         this.updateProgress(ImportStatus.IDLE, '', 0);
+        this.finalizeTrackedTransferImport('import_cancelled');
         return;
       }
       
@@ -2666,6 +2693,7 @@ struct DataManagementPage {
     } catch (error) {
       logger.error(TAG, '处理PDF文件导入失败', String(error instanceof Error ? error.message : error));
       this.showToast('PDF导入失败: ' + String(error instanceof Error ? error.message : error));
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -2744,12 +2772,14 @@ struct DataManagementPage {
     taskManager.startTask(taskId).then(() => {
       logger.info(TAG, `PDF导入任务完成: ${taskId}`);
       this.showToast(`导入成功: ${dialogResult.title}`);
+      this.finalizeTrackedTransferImport('imported');
       // 发送导入完成事件
       const payload = new MangaImportCompletedPayload(1, 1);
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, payload);
     }).catch((error: Error) => {
       logger.error(TAG, `PDF导入任务失败: ${taskId}`, error.message);
       this.showToast(`导入失败: ${error.message}`);
+      this.finalizeTrackedTransferImport('import_failed');
     });
     
     // 显示提示，任务已在后台运行
@@ -3460,6 +3490,7 @@ struct DataManagementPage {
       logger.error(TAG, '导入电子书失败', errorMsg);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${errorMsg}`, 0);
       this.showToast('导入失败: ' + errorMsg);
+      this.finalizeTrackedTransferImport('import_failed');
       return false;
     }
   }
@@ -3773,6 +3804,7 @@ struct DataManagementPage {
       logger.error(TAG, '导入电子书失败', errorMsg);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${errorMsg}`, 0);
       this.showToast(`电子书导入失败: ${errorMsg}`);
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
 
@@ -3962,6 +3994,7 @@ struct DataManagementPage {
             // 显示成功提示
             this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${ebook.metadata.title}`, 100);
             this.showToast(`导入成功: ${ebook.metadata.title}`);
+            this.finalizeTrackedTransferImport('imported');
             resolve(true);
           },
           onCancel: async () => {
@@ -3976,8 +4009,9 @@ struct DataManagementPage {
                 logger.warn(TAG, `删除封面图片失败: ${String(e)}`);
               }
             }
-            
+
             this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
+            this.finalizeTrackedTransferImport('import_cancelled');
             resolve(false);
           },
           onRegenerateCover: async (title: string, oldCoverPath: string): Promise<string> => {
@@ -4787,6 +4821,7 @@ struct DataManagementPage {
           this.currentParsedStructure = null;
           this.currentFileUri = '';
           this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
+          this.finalizeTrackedTransferImport('import_cancelled');
         }
       }),
       autoCancel: false,
@@ -4823,6 +4858,7 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.COMPLETED, '导入完成', 100);
       this.showResults = true;
       this.showToast('漫画导入成功');
+      this.finalizeTrackedTransferImport('imported');
       
       // 导入成功后清除选择的文件
       this.selectedFiles = [];
@@ -4834,6 +4870,7 @@ struct DataManagementPage {
       logger.error(TAG, '导入漫画失败', String(error));
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${error}`, 0);
       this.showToast(`漫画导入失败: ${error instanceof Error ? error.message : String(error)}`);
+      this.finalizeTrackedTransferImport('import_failed');
     } finally {
       // 清理临时文件
       if (this.currentParsedStructure) {

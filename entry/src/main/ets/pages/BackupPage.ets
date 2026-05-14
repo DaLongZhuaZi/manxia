@@ -16,8 +16,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
-import { picker } from '@kit.CoreFileKit';
-import { fileIo } from '@kit.CoreFileKit';
+import { picker, fileIo, fileUri as coreFileUri } from '@kit.CoreFileKit';
 import { BackupOptionsDialog } from '../components/backup/BackupOptionsDialog';
 import { RestoreOptionsDialog } from '../components/backup/RestoreOptionsDialog';
 import { WebDAVConfigDialog } from '../components/backup/WebDAVConfigDialog';
@@ -47,6 +46,9 @@ import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelpe
 
 const TAG = 'BackupPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
+const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
+const APP_STORAGE_TRANSFER_RESULT = 'pendingTransferImportResult';
+const APP_STORAGE_TRANSFER_TRACKING_ACTIVE = 'pendingTransferTrackingActive';
 
 interface ThemeState {
   currentTheme: ThemeType;
@@ -463,6 +465,39 @@ struct BackupPage {
       }
     }];
   }
+
+  private finalizeTrackedTransferImport(
+    status: 'imported' | 'import_failed' | 'import_cancelled'
+  ): void {
+    try {
+      const recordId = AppStorage.get<string>(APP_STORAGE_TRANSFER_RECORD_ID);
+      const trackingActive = AppStorage.get<boolean>(APP_STORAGE_TRANSFER_TRACKING_ACTIVE);
+      if (!trackingActive || !recordId || recordId.trim().length <= 0) {
+        return;
+      }
+
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_RESULT, status);
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_TRACKING_ACTIVE, false);
+      logger.info(TAG, `已回写局域网传书备份导入结果: recordId=${recordId}, status=${status}`);
+    } catch (error) {
+      logger.warn(TAG, `回写局域网传书备份导入结果失败: ${String(error)}`);
+    }
+  }
+
+  private resolveReadableImportPath(sourceUri: string): string {
+    const trimmedUri = sourceUri.trim();
+    try {
+      return new coreFileUri.FileUri(trimmedUri).path;
+    } catch (_error) {
+    }
+    if (trimmedUri.startsWith('file://docs')) {
+      return trimmedUri.replace('file://docs', '');
+    }
+    if (trimmedUri.startsWith('file://')) {
+      return trimmedUri.replace('file://', '');
+    }
+    return trimmedUri;
+  }
   
   /**
    * 检查并处理外部导入的备份文件
@@ -512,6 +547,7 @@ struct BackupPage {
           value: '取消',
           action: () => {
             logger.info(TAG, '用户取消导入备份');
+            this.finalizeTrackedTransferImport('import_cancelled');
           }
         },
         secondaryButton: {
@@ -526,6 +562,7 @@ struct BackupPage {
     } catch (error) {
       logger.error(TAG, `从URI导入备份失败: ${error}`);
       promptAction.showToast({ message: `导入失败: ${error}` });
+      this.finalizeTrackedTransferImport('import_failed');
     }
   }
   
@@ -536,13 +573,14 @@ struct BackupPage {
     try {
       this.isRestoringBackup = true;
       logger.info(TAG, `开始执行备份恢复: ${uri}`);
+      const readablePath = this.resolveReadableImportPath(uri);
       
       // 将外部文件复制到沙箱临时目录
       const sandboxManager = SandboxManager.getInstance();
       const tempPath = sandboxManager.getDirectory('temp') + '/temp_restore_' + Date.now() + '.mxbak';
       
       // 复制文件
-      const srcFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      const srcFile = fileIo.openSync(readablePath, fileIo.OpenMode.READ_ONLY);
       const stat = fileIo.statSync(srcFile.fd);
       const buffer = new ArrayBuffer(stat.size);
       fileIo.readSync(srcFile.fd, buffer);
@@ -566,6 +604,7 @@ struct BackupPage {
       
       promptAction.showToast({ message: '备份恢复成功！' });
       logger.info(TAG, '备份恢复成功');
+      this.finalizeTrackedTransferImport('imported');
       
       // 刷新备份列表
       this.loadBackupFiles();
@@ -573,6 +612,7 @@ struct BackupPage {
     } catch (error) {
       logger.error(TAG, `执行恢复失败: ${error}`);
       promptAction.showToast({ message: `恢复失败: ${error}` });
+      this.finalizeTrackedTransferImport('import_failed');
     } finally {
       this.isRestoringBackup = false;
     }
