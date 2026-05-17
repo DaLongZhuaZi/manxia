@@ -20,10 +20,13 @@ import {
   TransferLocalAddress,
   TransferServerRuntime,
   TransferSessionInfo,
+  TransferUploadProgressStatus,
+  TransferUploadProgressSnapshot,
   TransferUploadRecord,
   buildTransferInfoResponse,
   cloneTransferLocalAddress,
   cloneTransferServerRuntime,
+  createEmptyTransferUploadProgressSnapshot,
   createEmptyTransferServerRuntime
 } from '../../Models/TransferModels';
 import { getTransferConfigManager, TransferConfigManager } from '../Managers/TransferConfigManager';
@@ -44,6 +47,8 @@ const MAX_RECENT_UPLOADS_RESPONSE = 12;
 const TRANSFER_SERVICE_NOTIFICATION_TASK_ID = 'lan_transfer_service';
 const TRANSFER_UPLOAD_NOTIFICATION_PREFIX = 'lan_transfer_upload_';
 const UPLOAD_NOTIFICATION_MIN_INTERVAL_MS = 1200;
+const UPLOAD_PROGRESS_BROADCAST_MIN_INTERVAL_MS = 500;
+const UPLOAD_PROGRESS_BROADCAST_MIN_PERCENT_DELTA = 1;
 
 type TransferHttpRoute = 'landing' | 'info' | 'health' | 'pair_verify' | 'upload' | 'uploads' | 'unknown';
 
@@ -64,6 +69,7 @@ interface TransferParsedHttpRequest {
 
 interface TransferConnectionState {
   pendingChunks: Uint8Array[];
+  pendingChunkReadIndex: number;
   messagePumpActive: boolean;
   bufferChunks: Uint8Array[];
   bufferedBytes: number;
@@ -72,13 +78,18 @@ interface TransferConnectionState {
   uploadBodyReceivedBytes: number;
   uploadNotificationTaskId: string;
   uploadNotificationChain: Promise<void>;
+  uploadStartedAt: number;
   lastUploadNotifyAt: number;
   lastUploadNotifyPercent: number;
+  lastUploadProgressBroadcastAt: number;
+  lastUploadProgressBroadcastPercent: number;
   uploadNotificationTerminal: boolean;
   uploadFailureNotified: boolean;
   remoteAddress: string;
   requestHandled: boolean;
   closeScheduled: boolean;
+  connectionClosed: boolean;
+  cleanupStarted: boolean;
 }
 
 interface TransferUploadResultResponse {
@@ -213,6 +224,7 @@ export class LocalTransferServerService {
       this.runtime.backgroundRunning = BackgroundTaskHelper.isRunning();
       this.runtime.localAddresses = addresses;
       this.runtime.session = session;
+      this.runtime.uploadProgress = createEmptyTransferUploadProgressSnapshot();
 
       this.armAutoStopTimer(config);
       await this.ensureNotificationPermission(context);
@@ -435,7 +447,7 @@ export class LocalTransferServerService {
     if (state.requestHandled) {
       return;
     }
-    const chunk = this.copyArrayBufferToUint8Array(messageInfo.message);
+    const chunk = this.wrapArrayBufferAsUint8Array(messageInfo.message);
     state.pendingChunks.push(chunk);
 
     await this.drainConnectionMessages(clientConnection, state);
@@ -451,24 +463,37 @@ export class LocalTransferServerService {
 
     state.messagePumpActive = true;
     try {
-      while (state.pendingChunks.length > 0 && !state.requestHandled) {
+      while (
+        state.pendingChunkReadIndex < state.pendingChunks.length &&
+        !state.requestHandled &&
+        !state.connectionClosed
+      ) {
         const currentState = this.connectionStates.get(clientConnection.clientId);
         if (currentState !== state) {
           state.pendingChunks = [];
+          state.pendingChunkReadIndex = 0;
           return;
         }
-        const chunk = state.pendingChunks[0];
-        state.pendingChunks.splice(0, 1);
+        const chunk = state.pendingChunks[state.pendingChunkReadIndex];
+        state.pendingChunkReadIndex += 1;
         await this.processIncomingChunk(clientConnection, state, chunk);
       }
       if (state.requestHandled) {
         state.pendingChunks = [];
+        state.pendingChunkReadIndex = 0;
+      } else {
+        this.compactPendingChunksIfNeeded(state);
       }
     } finally {
       state.messagePumpActive = false;
     }
 
-    if (!state.requestHandled && state.pendingChunks.length > 0) {
+    if (state.connectionClosed) {
+      await this.finishClosedTcpConnectionCleanup(clientConnection.clientId, state);
+      return;
+    }
+
+    if (!state.requestHandled && state.pendingChunkReadIndex < state.pendingChunks.length) {
       await this.drainConnectionMessages(clientConnection, state);
     }
   }
@@ -478,7 +503,7 @@ export class LocalTransferServerService {
     state: TransferConnectionState,
     chunk: Uint8Array
   ): Promise<void> {
-    if (chunk.byteLength <= 0 || state.requestHandled) {
+    if (chunk.byteLength <= 0 || state.requestHandled || state.connectionClosed) {
       return;
     }
 
@@ -606,8 +631,11 @@ export class LocalTransferServerService {
       state.uploadBodyReceivedBytes = 0;
       state.uploadNotificationTaskId = this.buildUploadNotificationTaskId(uploadSession.uploadId);
       state.uploadNotificationChain = Promise.resolve<void>(undefined);
+      state.uploadStartedAt = Date.now();
       state.lastUploadNotifyAt = 0;
       state.lastUploadNotifyPercent = -1;
+      state.lastUploadProgressBroadcastAt = 0;
+      state.lastUploadProgressBroadcastPercent = -1;
       state.uploadNotificationTerminal = false;
       state.uploadFailureNotified = false;
       await this.notifyUploadProgress(state, true);
@@ -636,6 +664,9 @@ export class LocalTransferServerService {
         await this.completeUploadRequest(clientConnection, state);
       }
     } catch (error) {
+      const errorMessage = this.stringifyError(error);
+      logger.warn(TAG, `初始化上传会话失败: ${errorMessage}`);
+      await this.notifyUploadFailure(state, errorMessage);
       if (state.uploadSession !== null) {
         try {
           await this.uploadStoreService.abortUpload(state.uploadSession);
@@ -643,9 +674,8 @@ export class LocalTransferServerService {
         }
         state.uploadSession = null;
         state.uploadBodyReceivedBytes = 0;
+        state.uploadStartedAt = 0;
       }
-      const errorMessage = this.stringifyError(error);
-      logger.warn(TAG, `初始化上传会话失败: ${errorMessage}`);
       await this.rejectUploadRequest(clientConnection, state, 400, errorMessage);
     }
   }
@@ -665,7 +695,9 @@ export class LocalTransferServerService {
     }
     state.uploadSession = null;
     state.uploadBodyReceivedBytes = 0;
+    state.uploadStartedAt = 0;
     state.pendingChunks = [];
+    state.pendingChunkReadIndex = 0;
     state.bufferChunks = [];
     state.bufferedBytes = 0;
     state.requestHandled = true;
@@ -691,9 +723,12 @@ export class LocalTransferServerService {
 
     const writeLength = Math.min(chunk.byteLength, remainingBytes);
     if (writeLength > 0) {
-      const bodyChunk = this.sliceUint8Array(chunk, 0, writeLength);
+      const bodyChunk = writeLength === chunk.byteLength ? chunk : this.sliceUint8Array(chunk, 0, writeLength);
       try {
         await this.uploadStoreService.appendUploadChunk(uploadSession, bodyChunk);
+        if (state.connectionClosed) {
+          return;
+        }
       } catch (error) {
         logger.warn(TAG, `写入上传数据失败: ${this.stringifyError(error)}`);
         await this.abortUploadConnection(clientConnection, state, '写入上传数据失败');
@@ -720,19 +755,23 @@ export class LocalTransferServerService {
 
     try {
       const record = await this.uploadStoreService.finalizeUpload(uploadSession);
+      const elapsedMs = state.uploadStartedAt > 0 ? Date.now() - state.uploadStartedAt : 0;
+      const averageSpeedMbps = this.calculateAverageSpeedMbps(record.fileSizeBytes, elapsedMs);
       logger.info(
         TAG,
-        `上传完成并已写入收件箱: client=${record.clientIp}, file=${record.fileName}, record=${record.id}`
+        `上传完成并已写入收件箱: client=${record.clientIp}, file=${record.fileName}, record=${record.id}, 耗时=${elapsedMs}ms, 平均速度=${averageSpeedMbps}MB/s`
       );
       const notificationTaskId = state.uploadNotificationTaskId.length > 0
         ? state.uploadNotificationTaskId
         : this.buildUploadNotificationTaskId(record.id);
       await this.notifyUploadComplete(state, notificationTaskId, record.fileName);
-      state.uploadSession = null;
-      state.uploadBodyReceivedBytes = 0;
       this.runtime.phase = 'upload_pending';
       this.runtime.infoMessage = `已接收文件：${record.fileName}，可在应用内继续导入。`;
       this.runtime.lastError = '';
+      await this.updateUploadProgressSnapshot(state, 'completed', '文件已保存到设备收件箱。', true);
+      state.uploadSession = null;
+      state.uploadBodyReceivedBytes = 0;
+      state.uploadStartedAt = 0;
       this.refreshRuntimePresentation();
       await this.broadcastRuntimeUpdate();
       await this.broadcastUploadsUpdate();
@@ -744,6 +783,7 @@ export class LocalTransferServerService {
       await this.notifyUploadFailure(state, errorMessage);
       state.uploadSession = null;
       state.uploadBodyReceivedBytes = 0;
+      state.uploadStartedAt = 0;
       state.requestHandled = true;
       this.runtime.lastError = errorMessage;
       await this.sendJsonError(clientConnection, 500, `完成上传失败: ${errorMessage}`);
@@ -760,9 +800,74 @@ export class LocalTransferServerService {
       await this.uploadStoreService.abortUpload(state.uploadSession);
       state.uploadSession = null;
       state.uploadBodyReceivedBytes = 0;
+      state.uploadStartedAt = 0;
     }
     state.requestHandled = true;
     await this.sendJsonError(clientConnection, 500, message);
+  }
+
+  private async updateUploadProgressSnapshot(
+    state: TransferConnectionState,
+    status: TransferUploadProgressStatus,
+    message: string,
+    forceBroadcast: boolean
+  ): Promise<void> {
+    const uploadSession = state.uploadSession;
+    if (uploadSession === null) {
+      return;
+    }
+
+    const receivedBytes = status === 'completed'
+      ? uploadSession.expectedBytes
+      : Math.max(0, Math.min(state.uploadBodyReceivedBytes, uploadSession.expectedBytes));
+    const progressPercent = status === 'completed'
+      ? 100
+      : this.calculateUploadProgressPercent(receivedBytes, uploadSession.expectedBytes);
+    const now = Date.now();
+    const snapshot: TransferUploadProgressSnapshot = {
+      status: status,
+      uploadId: uploadSession.uploadId,
+      fileName: uploadSession.normalizedFileName,
+      clientName: uploadSession.clientName,
+      clientIp: uploadSession.clientIp,
+      receivedBytes: receivedBytes,
+      expectedBytes: uploadSession.expectedBytes,
+      progressPercent: progressPercent,
+      message: message,
+      updatedAt: now
+    };
+    this.runtime.uploadProgress = snapshot;
+    this.runtime.infoMessage = message;
+
+    const shouldBroadcast = this.shouldBroadcastUploadProgress(state, status, progressPercent, now, forceBroadcast);
+    if (shouldBroadcast) {
+      state.lastUploadProgressBroadcastAt = now;
+      state.lastUploadProgressBroadcastPercent = progressPercent;
+      const broadcastTask = this.broadcastRuntimeUpdate();
+      if (forceBroadcast || status === 'completed' || status === 'failed') {
+        await broadcastTask;
+      } else {
+        void broadcastTask;
+      }
+    }
+  }
+
+  private shouldBroadcastUploadProgress(
+    state: TransferConnectionState,
+    status: TransferUploadProgressStatus,
+    progressPercent: number,
+    now: number,
+    forceBroadcast: boolean
+  ): boolean {
+    if (forceBroadcast || status === 'completed' || status === 'failed') {
+      return true;
+    }
+    const percentDelta = progressPercent - state.lastUploadProgressBroadcastPercent;
+    if (percentDelta >= UPLOAD_PROGRESS_BROADCAST_MIN_PERCENT_DELTA) {
+      return true;
+    }
+    const timeDelta = now - state.lastUploadProgressBroadcastAt;
+    return timeDelta >= UPLOAD_PROGRESS_BROADCAST_MIN_INTERVAL_MS;
   }
 
   private async notifyUploadProgress(state: TransferConnectionState, force: boolean): Promise<void> {
@@ -770,40 +875,47 @@ export class LocalTransferServerService {
       return;
     }
 
-    await this.enqueueUploadNotification(state, async (): Promise<void> => {
-      const uploadSession = state.uploadSession;
-      if (uploadSession === null || state.uploadNotificationTerminal) {
+    await this.updateUploadProgressSnapshot(state, 'receiving', 'APP 正在接收并写入文件。', force);
+
+    const uploadSession = state.uploadSession;
+    if (uploadSession === null || state.uploadNotificationTerminal) {
+      return;
+    }
+    const receivedBytes = state.uploadBodyReceivedBytes;
+    const expectedBytes = uploadSession.expectedBytes;
+    const progressPercent = this.calculateUploadProgressPercent(receivedBytes, expectedBytes);
+    const now = Date.now();
+    if (!force) {
+      if (progressPercent >= 100) {
         return;
       }
-      const progressPercent = this.calculateUploadProgressPercent(
-        state.uploadBodyReceivedBytes,
-        uploadSession.expectedBytes
-      );
-      const now = Date.now();
-      if (!force) {
-        if (progressPercent >= 100) {
-          return;
-        }
-        const percentDelta = progressPercent - state.lastUploadNotifyPercent;
-        const timeDelta = now - state.lastUploadNotifyAt;
-        if (percentDelta < 10 && timeDelta < UPLOAD_NOTIFICATION_MIN_INTERVAL_MS) {
-          return;
-        }
+      const percentDelta = progressPercent - state.lastUploadNotifyPercent;
+      const timeDelta = now - state.lastUploadNotifyAt;
+      if (percentDelta < 10 && timeDelta < UPLOAD_NOTIFICATION_MIN_INTERVAL_MS) {
+        return;
       }
+    }
 
-      state.lastUploadNotifyAt = now;
-      state.lastUploadNotifyPercent = progressPercent;
-      const taskId = this.resolveUploadNotificationTaskId(state, uploadSession);
+    state.lastUploadNotifyAt = now;
+    state.lastUploadNotifyPercent = progressPercent;
+    const taskId = this.resolveUploadNotificationTaskId(state, uploadSession);
+    const fileName = uploadSession.normalizedFileName;
+    const notificationTask = this.enqueueUploadNotification(state, async (): Promise<void> => {
       if (state.uploadNotificationTerminal) {
         return;
       }
       await this.notificationManager.sendTransferUploadProgressNotification(
         taskId,
-        uploadSession.normalizedFileName,
-        state.uploadBodyReceivedBytes,
-        uploadSession.expectedBytes
+        fileName,
+        receivedBytes,
+        expectedBytes
       );
     });
+    if (force) {
+      await notificationTask;
+    } else {
+      void notificationTask;
+    }
   }
 
   private async notifyUploadComplete(
@@ -822,6 +934,7 @@ export class LocalTransferServerService {
   }
 
   private async notifyUploadFailure(state: TransferConnectionState, reason: string): Promise<void> {
+    await this.updateUploadProgressSnapshot(state, 'failed', reason, true);
     if (state.uploadNotificationTerminal || state.uploadFailureNotified) {
       return;
     }
@@ -902,6 +1015,15 @@ export class LocalTransferServerService {
     }
     const progress = Math.floor((current / total) * 100);
     return Math.max(0, Math.min(100, progress));
+  }
+
+  private calculateAverageSpeedMbps(bytes: number, elapsedMs: number): string {
+    if (bytes <= 0 || elapsedMs <= 0) {
+      return '0.00';
+    }
+    const megabytes = bytes / 1024 / 1024;
+    const seconds = elapsedMs / 1000;
+    return (megabytes / seconds).toFixed(2);
   }
 
   private async dispatchHttpRequest(
@@ -1653,6 +1775,9 @@ export class LocalTransferServerService {
       let currentPairCode = String(pairInput.value || '').trim();
       let selectedFiles = [];
       let isUploadReady = false;
+      let isUploadInProgress = false;
+      let hasServerUploadProgress = false;
+      let uploadProgressPollTimer = 0;
 
       function escapeHtml(text) {
         return String(text || '').replace(/[&<>"]/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[s]));
@@ -1733,6 +1858,70 @@ export class LocalTransferServerService {
           index += 1;
         }
         return value.toFixed(index === 0 ? 0 : 1) + ' ' + units[index];
+      }
+
+      function buildUploadProgressLabel(progress) {
+        const percent = Math.max(0, Math.min(100, Number(progress.progressPercent || 0)));
+        const receivedBytes = Number(progress.receivedBytes || 0);
+        const expectedBytes = Number(progress.expectedBytes || 0);
+        const fileName = String(progress.fileName || '').trim();
+        const sizeText = expectedBytes > 0
+          ? (formatFileSize(receivedBytes) + ' / ' + formatFileSize(expectedBytes))
+          : formatFileSize(receivedBytes);
+        const prefix = fileName.length > 0 ? (fileName + ' · ') : '';
+        return prefix + sizeText + ' · ' + percent.toFixed(0) + '%';
+      }
+
+      function applyUploadProgress(progress) {
+        if (!progress || typeof progress !== 'object') {
+          return;
+        }
+        const status = String(progress.status || 'idle');
+        if (status === 'idle') {
+          if (!isUploadInProgress) {
+            setProgress(0, '0%');
+          }
+          return;
+        }
+        hasServerUploadProgress = true;
+        const percent = Math.max(0, Math.min(100, Number(progress.progressPercent || 0)));
+        const message = String(progress.message || '').trim();
+        const label = buildUploadProgressLabel(progress);
+        if (status === 'receiving') {
+          setProgress(percent, 'APP 已接收：' + label);
+          if (message.length > 0) {
+            setStatus(message + '\\n' + label, false);
+          }
+          return;
+        }
+        if (status === 'completed') {
+          setProgress(100, 'APP 已保存：' + label);
+          if (message.length > 0 && isUploadInProgress) {
+            setStatus(message + '\\n' + label, false);
+          }
+          void refreshUploads();
+          return;
+        }
+        if (status === 'failed') {
+          setProgress(percent, 'APP 接收失败：' + label);
+          setStatus(message.length > 0 ? message : 'APP 接收失败，请重试。', true);
+        }
+      }
+
+      function startUploadProgressPolling() {
+        if (uploadProgressPollTimer > 0) {
+          return;
+        }
+        uploadProgressPollTimer = window.setInterval(() => {
+          void refreshInfo();
+        }, 1000);
+      }
+
+      function stopUploadProgressPolling() {
+        if (uploadProgressPollTimer > 0) {
+          window.clearInterval(uploadProgressPollTimer);
+          uploadProgressPollTimer = 0;
+        }
       }
 
       function updateSelectedFileText() {
@@ -1844,6 +2033,7 @@ export class LocalTransferServerService {
         if (serviceMessageText) {
           serviceMessageText.textContent = String(payload.message || '');
         }
+        applyUploadProgress(payload.uploadProgress);
         if (pairInput && typeof payload.pairCode === 'string' && payload.pairCode.length > 0) {
           if (sessionToken && currentPairCode.length > 0 && currentPairCode !== payload.pairCode) {
             sessionToken = '';
@@ -2076,9 +2266,9 @@ export class LocalTransferServerService {
 
           xhr.upload.onprogress = (event) => {
             if (event.lengthComputable) {
-              const currentPercent = event.total > 0 ? (event.loaded / event.total) * 100 : 0;
-              const totalPercent = ((safeIndex + currentPercent / 100) / safeTotal) * 100;
-              setProgress(totalPercent, '第 ' + (safeIndex + 1).toString() + '/' + safeTotal.toString() + ' 个：' + currentPercent.toFixed(1) + '%');
+              if (!hasServerUploadProgress) {
+                setProgress(0, '第 ' + (safeIndex + 1).toString() + '/' + safeTotal.toString() + ' 个：等待 APP 接收进度...');
+              }
             }
           };
 
@@ -2098,7 +2288,7 @@ export class LocalTransferServerService {
           xhr.onerror = () => {
             reject(new Error('网络异常，上传失败'));
           };
-          xhr.timeout = 30000;
+          xhr.timeout = 0;
           xhr.ontimeout = () => {
             reject(new Error('上传请求超时，请检查 APP 是否仍在前台运行'));
           };
@@ -2120,7 +2310,10 @@ export class LocalTransferServerService {
         }
         setStatus('准备上传 ' + files.length.toString() + ' 个文件，请不要关闭当前页面...', false);
         setPairState('ok', '已配对');
-        setProgress(0, '0%');
+        setProgress(0, '等待 APP 接收进度...');
+        isUploadInProgress = true;
+        hasServerUploadProgress = false;
+        startUploadProgressPolling();
         uploadButton.disabled = true;
         const failedFiles = [];
         const failedMessages = [];
@@ -2155,9 +2348,12 @@ export class LocalTransferServerService {
           }
           updateSelectedFileText();
           await refreshUploads();
+          await refreshInfo();
         } catch (error) {
           setStatus(String(error && error.message ? error.message : error), true);
         } finally {
+          isUploadInProgress = false;
+          stopUploadProgressPolling();
           setUploadReady(sessionToken.length > 0);
         }
       });
@@ -2407,9 +2603,33 @@ export class LocalTransferServerService {
 
   private async cleanupTcpConnection(clientId: number): Promise<void> {
     const state = this.connectionStates.get(clientId);
-    if (state !== null && state !== undefined && state.uploadSession !== null) {
+    if (state !== null && state !== undefined) {
+      state.connectionClosed = true;
+      state.requestHandled = true;
+      state.pendingChunks = [];
+      state.pendingChunkReadIndex = 0;
+      state.bufferChunks = [];
+      state.bufferedBytes = 0;
+      if (state.messagePumpActive) {
+        return;
+      }
+      await this.finishClosedTcpConnectionCleanup(clientId, state);
+      return;
+    }
+    this.tcpConnections.delete(clientId);
+  }
+
+  private async finishClosedTcpConnectionCleanup(clientId: number, state: TransferConnectionState): Promise<void> {
+    if (state.cleanupStarted) {
+      return;
+    }
+    state.cleanupStarted = true;
+    if (state.uploadSession !== null) {
       await this.notifyUploadFailure(state, '连接已断开，上传已中断');
       await this.uploadStoreService.abortUpload(state.uploadSession);
+      state.uploadSession = null;
+      state.uploadBodyReceivedBytes = 0;
+      state.uploadStartedAt = 0;
     }
     this.connectionStates.delete(clientId);
     this.tcpConnections.delete(clientId);
@@ -2432,6 +2652,7 @@ export class LocalTransferServerService {
   private createConnectionState(): TransferConnectionState {
     const state: TransferConnectionState = {
       pendingChunks: [],
+      pendingChunkReadIndex: 0,
       messagePumpActive: false,
       bufferChunks: [],
       bufferedBytes: 0,
@@ -2440,13 +2661,18 @@ export class LocalTransferServerService {
       uploadBodyReceivedBytes: 0,
       uploadNotificationTaskId: '',
       uploadNotificationChain: Promise.resolve<void>(undefined),
+      uploadStartedAt: 0,
       lastUploadNotifyAt: 0,
       lastUploadNotifyPercent: -1,
+      lastUploadProgressBroadcastAt: 0,
+      lastUploadProgressBroadcastPercent: -1,
       uploadNotificationTerminal: false,
       uploadFailureNotified: false,
       remoteAddress: '',
       requestHandled: false,
-      closeScheduled: false
+      closeScheduled: false,
+      connectionClosed: false,
+      cleanupStarted: false
     };
     return state;
   }
@@ -2457,6 +2683,22 @@ export class LocalTransferServerService {
     }
     state.bufferChunks.push(chunk);
     state.bufferedBytes += chunk.byteLength;
+  }
+
+  private compactPendingChunksIfNeeded(state: TransferConnectionState): void {
+    if (state.pendingChunkReadIndex <= 0) {
+      return;
+    }
+    if (state.pendingChunkReadIndex >= state.pendingChunks.length) {
+      state.pendingChunks = [];
+      state.pendingChunkReadIndex = 0;
+      return;
+    }
+    if (state.pendingChunkReadIndex < 64) {
+      return;
+    }
+    state.pendingChunks = state.pendingChunks.slice(state.pendingChunkReadIndex);
+    state.pendingChunkReadIndex = 0;
   }
 
   private tryParseHttpRequest(state: TransferConnectionState): TransferParsedHttpRequest | null {
@@ -2676,11 +2918,8 @@ export class LocalTransferServerService {
     return result;
   }
 
-  private copyArrayBufferToUint8Array(buffer: ArrayBuffer): Uint8Array {
-    const source = new Uint8Array(buffer);
-    const copy = new Uint8Array(source.byteLength);
-    copy.set(source);
-    return copy;
+  private wrapArrayBufferAsUint8Array(buffer: ArrayBuffer): Uint8Array {
+    return new Uint8Array(buffer);
   }
 
   private concatUint8Arrays(parts: Uint8Array[]): Uint8Array {

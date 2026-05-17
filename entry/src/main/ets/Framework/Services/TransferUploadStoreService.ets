@@ -27,6 +27,7 @@ const TAG = 'TransferUploadStore';
 const INDEX_VERSION = 1;
 const MAX_RECORD_COUNT = 40;
 const STALE_PART_FILE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const UPLOAD_WRITE_BUFFER_FLUSH_BYTES = 1024 * 1024;
 const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
 const APP_STORAGE_TRANSFER_RESULT = 'pendingTransferImportResult';
 const APP_STORAGE_TRANSFER_TRACKING_ACTIVE = 'pendingTransferTrackingActive';
@@ -46,6 +47,9 @@ export interface TransferStagedUploadSession {
   tempFilePath: string;
   expectedBytes: number;
   receivedBytes: number;
+  flushedBytes: number;
+  pendingWriteChunks: Uint8Array[];
+  pendingWriteBytes: number;
   fileDescriptor: number;
   createdAt: number;
 }
@@ -156,6 +160,9 @@ export class TransferUploadStoreService {
       tempFilePath: tempFilePath,
       expectedBytes: expectedBytes,
       receivedBytes: 0,
+      flushedBytes: 0,
+      pendingWriteChunks: [],
+      pendingWriteBytes: 0,
       fileDescriptor: file.fd,
       createdAt: Date.now()
     };
@@ -166,18 +173,21 @@ export class TransferUploadStoreService {
     if (chunk.byteLength <= 0) {
       return;
     }
-    const writeBuffer = this.copyUint8ArrayToBuffer(chunk);
-    await fileIo.write(session.fileDescriptor, writeBuffer);
+    session.pendingWriteChunks.push(chunk);
+    session.pendingWriteBytes += chunk.byteLength;
     session.receivedBytes += chunk.byteLength;
+    if (session.pendingWriteBytes >= UPLOAD_WRITE_BUFFER_FLUSH_BYTES) {
+      await this.flushPendingUploadChunks(session);
+    }
   }
 
   public async finalizeUpload(session: TransferStagedUploadSession): Promise<TransferUploadRecord> {
     try {
-      if (session.receivedBytes !== session.expectedBytes) {
-        throw new Error(`上传大小不匹配: expected=${session.expectedBytes}, actual=${session.receivedBytes}`);
-      }
+      await this.flushPendingUploadChunks(session);
+      this.assertUploadSizeMatches(session);
       await fileIo.close(session.fileDescriptor);
     } catch (error) {
+      await this.tryCloseUploadFile(session);
       await this.tryDeleteFile(session.tempFilePath);
       throw new Error(this.stringifyError(error));
     }
@@ -214,6 +224,8 @@ export class TransferUploadStoreService {
   }
 
   public async abortUpload(session: TransferStagedUploadSession): Promise<void> {
+    session.pendingWriteChunks = [];
+    session.pendingWriteBytes = 0;
     try {
       await fileIo.close(session.fileDescriptor);
     } catch (_error) {
@@ -559,6 +571,85 @@ export class TransferUploadStoreService {
     const copy = new Uint8Array(source.byteLength);
     copy.set(source);
     return copy.buffer;
+  }
+
+  private async flushPendingUploadChunks(session: TransferStagedUploadSession): Promise<void> {
+    if (session.pendingWriteBytes <= 0) {
+      return;
+    }
+
+    const writeBytes = session.pendingWriteBytes;
+    const writeBuffer = this.createUploadWriteBuffer(session.pendingWriteChunks, writeBytes);
+    await this.writeArrayBufferFully(session.fileDescriptor, writeBuffer);
+    session.flushedBytes += writeBytes;
+    session.pendingWriteChunks = [];
+    session.pendingWriteBytes = 0;
+  }
+
+  private async writeArrayBufferFully(fileDescriptor: number, buffer: ArrayBuffer): Promise<void> {
+    const totalBytes = buffer.byteLength;
+    if (totalBytes <= 0) {
+      return;
+    }
+
+    let writtenTotal = 0;
+    const sourceBytes = new Uint8Array(buffer);
+    while (writtenTotal < totalBytes) {
+      const remainingBuffer = writtenTotal === 0
+        ? buffer
+        : this.copyUint8ArrayToBuffer(sourceBytes.subarray(writtenTotal));
+      const writtenBytes = await fileIo.write(fileDescriptor, remainingBuffer);
+      if (writtenBytes <= 0 || writtenBytes > totalBytes - writtenTotal) {
+        throw new Error(`上传文件写入不完整: expected=${totalBytes}, actual=${writtenTotal + writtenBytes}`);
+      }
+      writtenTotal += writtenBytes;
+    }
+  }
+
+  private createUploadWriteBuffer(chunks: Uint8Array[], totalBytes: number): ArrayBuffer {
+    if (chunks.length === 1) {
+      const source = chunks[0];
+      const directBuffer = this.tryGetWholeArrayBuffer(source);
+      if (directBuffer !== null) {
+        return directBuffer;
+      }
+    }
+
+    const merged = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      if (offset >= totalBytes) {
+        break;
+      }
+      const writeLength = Math.min(chunk.byteLength, totalBytes - offset);
+      merged.set(chunk.subarray(0, writeLength), offset);
+      offset += writeLength;
+    }
+    return merged.buffer;
+  }
+
+  private tryGetWholeArrayBuffer(source: Uint8Array): ArrayBuffer | null {
+    const sourceBuffer = source.buffer;
+    if (source.byteOffset === 0 && source.byteLength === sourceBuffer.byteLength) {
+      return sourceBuffer;
+    }
+    return null;
+  }
+
+  private assertUploadSizeMatches(session: TransferStagedUploadSession): void {
+    if (session.receivedBytes !== session.expectedBytes) {
+      throw new Error(`上传大小不匹配: expected=${session.expectedBytes}, actual=${session.receivedBytes}`);
+    }
+    if (session.flushedBytes !== session.expectedBytes) {
+      throw new Error(`上传落盘大小不匹配: expected=${session.expectedBytes}, actual=${session.flushedBytes}`);
+    }
+  }
+
+  private async tryCloseUploadFile(session: TransferStagedUploadSession): Promise<void> {
+    try {
+      await fileIo.close(session.fileDescriptor);
+    } catch (_error) {
+    }
   }
 
   private clearPendingImportMarkers(): void {

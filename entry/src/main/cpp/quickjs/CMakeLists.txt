@@ -48,6 +48,13 @@ add_library(quickjs_engine SHARED
     ${QUICKJS_SOURCES}
 )
 
+set(QUICKJS_ENGINE_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/quickjs_engine_output)
+set_target_properties(quickjs_engine PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${QUICKJS_ENGINE_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${QUICKJS_ENGINE_OUTPUT_DIR}
+    ARCHIVE_OUTPUT_DIRECTORY ${QUICKJS_ENGINE_OUTPUT_DIR}
+)
+
 # 链接库
 target_link_libraries(quickjs_engine PUBLIC 
     libace_napi.z.so 

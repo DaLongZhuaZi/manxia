@@ -1,0 +1,5 @@
+# ninja log v6
+5723	6279	8006163008537916	transfer_rtc/libtransfer_rtc_native.so	fc5cba5fb690f4a6
+15	5715	8006162951471918	transfer_rtc/CMakeFiles/transfer_rtc_native.dir/transfer_rtc_native.cpp.o	abfb8c5753a144e8
+12	479	8006196229301901	build.ninja	7bb844dbbfe34788
+27	3492	8006196229961241	transfer_rtc/transfer_rtc_native_output/libtransfer_rtc_native.so	f8fb84e211612ce1

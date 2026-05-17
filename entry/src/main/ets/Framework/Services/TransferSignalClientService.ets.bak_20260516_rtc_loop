@@ -1,0 +1,634 @@
+/**
+ * Worker 公网信令客户端服务
+ *
+ * 该服务只负责房间码与 WebSocket 信令控制面，不承担文件数据传输。
+ */
+
+import { BusinessError } from '@kit.BasicServicesKit';
+import { http, webSocket } from '@kit.NetworkKit';
+import { util } from '@kit.ArkTS';
+import { logger } from '../../Utils/Logger';
+import {
+  TransferSignalClientMessage,
+  TransferSignalCloseRoomResponse,
+  TransferSignalConnectionStatus,
+  TransferSignalCreateRoomRequest,
+  TransferSignalErrorResponse,
+  TransferSignalIncomingBaseMessage,
+  TransferSignalOutboundMessageType,
+  TransferSignalRole,
+  TransferSignalRoomCreateResponse,
+  TransferSignalRoomStateMessage,
+  TransferSignalRoomStatusResponse,
+  TransferSignalServerMessage,
+  TransferSignalRuntime,
+  buildTransferSignalPublicPageUrl,
+  cloneTransferSignalRoomCreateResponse,
+  cloneTransferSignalRuntime,
+  createEmptyTransferSignalRuntime,
+  normalizeTransferSignalOrigin
+} from '../../Models/TransferModels';
+import { generateSimpleId } from '../Utils/UUIDGenerator';
+
+const TAG = 'TransferSignalClient';
+const DEFAULT_SIGNAL_ORIGIN: string = 'https://manxia.top';
+const DEFAULT_ROOM_TTL_SECONDS: number = 15 * 60;
+const HTTP_TIMEOUT_MS: number = 12000;
+const SIGNAL_HEARTBEAT_MS: number = 25000;
+
+interface TransferSignalJsonHeader {
+  'Content-Type': string;
+}
+
+interface TransferSignalCloseHeader {
+  'X-Host-Token': string;
+}
+
+export class TransferSignalClientService {
+  private static instance: TransferSignalClientService;
+
+  private readonly decoder: util.TextDecoder = new util.TextDecoder('utf-8');
+  private readonly signalOrigin: string = normalizeTransferSignalOrigin(DEFAULT_SIGNAL_ORIGIN);
+  private currentRoom: TransferSignalRoomCreateResponse | null = null;
+  private socketClient: webSocket.WebSocket | null = null;
+  private runtime: TransferSignalRuntime = createEmptyTransferSignalRuntime();
+  private heartbeatTimer: number = -1;
+
+  private constructor() {}
+
+  public static getInstance(): TransferSignalClientService {
+    if (!TransferSignalClientService.instance) {
+      TransferSignalClientService.instance = new TransferSignalClientService();
+    }
+    return TransferSignalClientService.instance;
+  }
+
+  public getRuntimeState(): TransferSignalRuntime {
+    return cloneTransferSignalRuntime(this.runtime);
+  }
+
+  public getSignalOrigin(): string {
+    return this.signalOrigin;
+  }
+
+  public hasActiveRoom(): boolean {
+    return this.currentRoom !== null &&
+      this.runtime.roomCode.length > 0 &&
+      this.runtime.status !== 'closed' &&
+      this.runtime.status !== 'idle';
+  }
+
+  public async createHostRoom(clientName: string): Promise<TransferSignalRuntime> {
+    if (this.runtime.status === 'creating' || this.runtime.status === 'connecting' || this.runtime.status === 'closing') {
+      return this.getRuntimeState();
+    }
+
+    if (this.currentRoom !== null) {
+      try {
+        await this.closeRoom();
+      } catch (error) {
+        logger.warn(TAG, `重建公网信令房间前关闭旧房间失败，将继续创建新房间: ${this.stringifyError(error)}`);
+        await this.closeSocketOnly();
+        this.currentRoom = null;
+        this.runtime = createEmptyTransferSignalRuntime();
+      }
+    }
+
+    this.updateRuntimeStatus('creating', '正在创建公网信令房间。', '');
+    try {
+      const requestPayload: TransferSignalCreateRoomRequest = {
+        ttlSeconds: DEFAULT_ROOM_TTL_SECONDS,
+        clientName: clientName.trim().length > 0 ? clientName.trim() : '漫匣 APP'
+      };
+      const responseText = await this.postCreateRoom(JSON.stringify(requestPayload));
+      const room = this.parseCreateRoomResponse(responseText);
+      this.currentRoom = cloneTransferSignalRoomCreateResponse(room);
+      this.runtime = this.buildRuntimeFromRoom(room, 'created', '信令房间已创建，正在连接 Worker。', '');
+      await this.connectHostSocket(room);
+      return this.getRuntimeState();
+    } catch (error) {
+      const message = this.stringifyError(error);
+      logger.error(TAG, `创建公网信令房间失败: ${message}`);
+      await this.closeSocketOnly();
+      this.currentRoom = null;
+      this.updateRuntimeStatus('error', '公网信令房间创建失败。', message);
+      throw new Error(message);
+    }
+  }
+
+  public async refreshRoomStatus(): Promise<TransferSignalRuntime> {
+    const room = this.currentRoom;
+    if (room === null) {
+      this.updateRuntimeStatus('idle', '尚未创建公网信令房间。', '');
+      return this.getRuntimeState();
+    }
+
+    try {
+      const responseText = await this.getRoomStatus(room.roomCode);
+      const status = this.parseRoomStatusResponse(responseText);
+      this.applyRoomStatus(status);
+      return this.getRuntimeState();
+    } catch (error) {
+      const message = this.stringifyError(error);
+      logger.warn(TAG, `刷新公网信令房间状态失败: ${message}`);
+      this.updateRuntimeStatus('error', '公网信令房间状态刷新失败。', message);
+      throw new Error(message);
+    }
+  }
+
+  public async reconnectHostSocket(): Promise<TransferSignalRuntime> {
+    const room = this.currentRoom;
+    if (room === null) {
+      this.updateRuntimeStatus('idle', '尚未创建公网信令房间。', '');
+      return this.getRuntimeState();
+    }
+
+    try {
+      await this.connectHostSocket(room);
+      return this.getRuntimeState();
+    } catch (error) {
+      const message = this.stringifyError(error);
+      logger.warn(TAG, `重连公网信令房间失败: ${message}`);
+      this.updateRuntimeStatus('error', '公网信令通道重连失败。', message);
+      throw new Error(message);
+    }
+  }
+
+  public async closeRoom(): Promise<TransferSignalRuntime> {
+    const room = this.currentRoom;
+    if (room === null) {
+      await this.closeSocketOnly();
+      this.runtime = this.buildClosedRuntime('公网信令房间已关闭。', '');
+      return this.getRuntimeState();
+    }
+
+    this.updateRuntimeStatus('closing', '正在关闭公网信令房间。', '');
+    try {
+      await this.closeSocketOnly();
+      const responseText = await this.deleteRoom(room.roomCode, room.hostToken);
+      const closeResponse = this.parseCloseRoomResponse(responseText);
+      this.currentRoom = null;
+      this.runtime = this.buildClosedRuntime(closeResponse.message, '');
+      return this.getRuntimeState();
+    } catch (error) {
+      const message = this.stringifyError(error);
+      logger.warn(TAG, `关闭公网信令房间失败: ${message}`);
+      this.updateRuntimeStatus('error', '公网信令房间关闭失败。', message);
+      throw new Error(message);
+    }
+  }
+
+  public async sendPing(): Promise<TransferSignalRuntime> {
+    await this.sendSignalMessage('ping', '', 'peer', '');
+    return this.getRuntimeState();
+  }
+
+  public async sendSignalMessage(
+    type: TransferSignalOutboundMessageType,
+    payload: string,
+    targetRole: TransferSignalRole,
+    targetClientId: string
+  ): Promise<void> {
+    if (this.socketClient === null || this.runtime.status !== 'connected') {
+      throw new Error('公网信令通道尚未连接');
+    }
+
+    const message: TransferSignalClientMessage = {
+      type: type,
+      targetRole: targetRole,
+      targetClientId: targetClientId.trim(),
+      payload: payload,
+      requestId: this.buildRequestId(type)
+    };
+    await this.socketClient.send(JSON.stringify(message));
+    this.setLastMessage(`已发送 ${type} 信令消息。`);
+  }
+
+  private async connectHostSocket(room: TransferSignalRoomCreateResponse): Promise<void> {
+    await this.closeSocketOnly();
+    this.updateRuntimeStatus('connecting', '正在连接 Worker 信令通道。', '');
+
+    const socketClient = webSocket.createWebSocket();
+    this.socketClient = socketClient;
+    this.bindSocketEvents(socketClient);
+
+    const options: webSocket.WebSocketRequestOptions = {
+      pingInterval: 30,
+      pongTimeout: 20
+    };
+    const connected = await socketClient.connect(room.hostWebSocketUrl, options);
+    if (!connected) {
+      throw new Error('Worker WebSocket 连接返回 false');
+    }
+    this.markSocketConnected('Worker 信令通道已连接。');
+  }
+
+  private bindSocketEvents(socketClient: webSocket.WebSocket): void {
+    socketClient.on('open', (error: BusinessError, _data: Object) => {
+      if (this.isCallbackError(error)) {
+        this.markSocketError(`Worker 信令通道打开失败: ${error.message}`);
+        return;
+      }
+      this.markSocketConnected('Worker 信令通道已打开。');
+    });
+
+    socketClient.on('message', (error: BusinessError, data: string | ArrayBuffer) => {
+      if (this.isCallbackError(error)) {
+        this.markSocketError(`Worker 信令消息接收失败: ${error.message}`);
+        return;
+      }
+      this.handleSocketMessageData(data);
+    });
+
+    socketClient.on('close', (error: BusinessError, result: webSocket.CloseResult) => {
+      this.stopHeartbeat();
+      if (this.isCallbackError(error)) {
+        this.markSocketError(`Worker 信令通道关闭异常: ${error.message}`);
+        return;
+      }
+      const message = `Worker 信令通道已关闭: ${result.code} ${result.reason}`;
+      this.setRuntimeSocketClosed(message);
+    });
+
+    socketClient.on('error', (error: BusinessError) => {
+      this.markSocketError(`Worker 信令通道异常: ${error.message}`);
+    });
+  }
+
+  private async closeSocketOnly(): Promise<void> {
+    this.stopHeartbeat();
+    if (this.socketClient === null) {
+      return;
+    }
+
+    const socketClient = this.socketClient;
+    this.socketClient = null;
+    try {
+      socketClient.off('open');
+      socketClient.off('message');
+      socketClient.off('close');
+      socketClient.off('error');
+      const closeOptions: webSocket.WebSocketCloseOptions = {
+        code: 1000,
+        reason: 'client closed'
+      };
+      await socketClient.close(closeOptions);
+    } catch (error) {
+      logger.debug(TAG, `关闭公网信令 WebSocket 时忽略异常: ${this.stringifyError(error)}`);
+    }
+  }
+
+  private handleSocketMessageData(data: string | ArrayBuffer): void {
+    const text = typeof data === 'string' ? data : this.decoder.decodeToString(new Uint8Array(data));
+    if (text.trim().length <= 0) {
+      return;
+    }
+
+    try {
+      const baseMessage = JSON.parse(text) as TransferSignalIncomingBaseMessage;
+      if (baseMessage.type === 'room_state') {
+        const roomStateMessage = JSON.parse(text) as TransferSignalRoomStateMessage;
+        this.applyRoomStateMessage(roomStateMessage);
+        return;
+      }
+      this.applyServerMessage(text);
+    } catch (error) {
+      logger.warn(TAG, `解析公网信令消息失败: ${this.stringifyError(error)}, message=${text}`);
+      this.setLastError('公网信令消息格式无法解析');
+    }
+  }
+
+  private applyServerMessage(text: string): void {
+    const message = JSON.parse(text) as TransferSignalServerMessage;
+    const messageType = typeof message.type === 'string' ? message.type : '';
+    const fromClientId = typeof message.fromClientId === 'string' ? message.fromClientId : '';
+    const fromRole = typeof message.fromRole === 'string' ? message.fromRole : 'host';
+    const payloadText = typeof message.payload === 'string' ? message.payload : '';
+    if (messageType === 'joined') {
+      const nextRuntime = cloneTransferSignalRuntime(this.runtime);
+      nextRuntime.connectedClientId = fromClientId;
+      nextRuntime.hostConnected = true;
+      nextRuntime.lastMessage = 'Worker 已确认 host 加入房间。';
+      nextRuntime.updatedAt = Date.now();
+      this.runtime = nextRuntime;
+      return;
+    }
+
+    if (messageType === 'pong') {
+      this.setLastMessage('Worker 信令通道心跳正常。');
+      return;
+    }
+
+    if (messageType === 'error') {
+      this.setLastError(payloadText.length > 0 ? payloadText : 'Worker 返回信令错误');
+      return;
+    }
+
+    this.setLastMessage(`收到 ${messageType} 信令消息，来自 ${fromRole}:${fromClientId}`);
+  }
+
+  private applyRoomStateMessage(message: TransferSignalRoomStateMessage): void {
+    const nextRuntime = cloneTransferSignalRuntime(this.runtime);
+    const roomCode = typeof message.roomCode === 'string' ? message.roomCode : '';
+    const hostConnected = message.hostConnected === true;
+    const peerCount = typeof message.peerCount === 'number' && Number.isFinite(message.peerCount) ? message.peerCount : 0;
+    const expiresAt = typeof message.expiresAt === 'number' && Number.isFinite(message.expiresAt) ? message.expiresAt : 0;
+    const active = message.active === true;
+    nextRuntime.roomCode = roomCode;
+    nextRuntime.hostConnected = hostConnected;
+    nextRuntime.peerCount = peerCount;
+    nextRuntime.expiresAt = expiresAt;
+    nextRuntime.updatedAt = Date.now();
+    nextRuntime.lastMessage = active ? '房间状态已同步。' : '房间已过期或已关闭。';
+    if (!active) {
+      nextRuntime.status = 'closed';
+    }
+    this.runtime = nextRuntime;
+  }
+
+  private applyRoomStatus(status: TransferSignalRoomStatusResponse): void {
+    const nextRuntime = cloneTransferSignalRuntime(this.runtime);
+    nextRuntime.roomCode = status.roomCode;
+    nextRuntime.protocolVersion = status.protocolVersion;
+    nextRuntime.expiresAt = status.expiresAt;
+    nextRuntime.hostConnected = status.hostConnected;
+    nextRuntime.peerCount = status.peerCount;
+    nextRuntime.updatedAt = Date.now();
+    nextRuntime.lastMessage = status.active ? '房间状态已刷新。' : '房间已过期或已关闭。';
+    if (!status.active) {
+      nextRuntime.status = 'closed';
+    } else if (nextRuntime.status !== 'connected') {
+      nextRuntime.status = 'created';
+    }
+    this.runtime = nextRuntime;
+  }
+
+  private markSocketConnected(message: string): void {
+    const nextRuntime = cloneTransferSignalRuntime(this.runtime);
+    nextRuntime.status = 'connected';
+    nextRuntime.hostConnected = true;
+    nextRuntime.lastMessage = message;
+    nextRuntime.lastError = '';
+    nextRuntime.updatedAt = Date.now();
+    this.runtime = nextRuntime;
+    this.startHeartbeat();
+  }
+
+  private markSocketError(message: string): void {
+    logger.warn(TAG, message);
+    this.stopHeartbeat();
+    this.updateRuntimeStatus('error', '公网信令通道异常。', message);
+  }
+
+  private setRuntimeSocketClosed(message: string): void {
+    const nextRuntime = cloneTransferSignalRuntime(this.runtime);
+    if (nextRuntime.status !== 'closing') {
+      nextRuntime.status = 'closed';
+    }
+    nextRuntime.hostConnected = false;
+    nextRuntime.lastMessage = message;
+    nextRuntime.updatedAt = Date.now();
+    this.runtime = nextRuntime;
+  }
+
+  private setLastMessage(message: string): void {
+    const nextRuntime = cloneTransferSignalRuntime(this.runtime);
+    nextRuntime.lastMessage = message;
+    nextRuntime.lastError = '';
+    nextRuntime.updatedAt = Date.now();
+    this.runtime = nextRuntime;
+  }
+
+  private setLastError(message: string): void {
+    const nextRuntime = cloneTransferSignalRuntime(this.runtime);
+    nextRuntime.lastError = message;
+    nextRuntime.updatedAt = Date.now();
+    this.runtime = nextRuntime;
+  }
+
+  private updateRuntimeStatus(status: TransferSignalConnectionStatus, message: string, errorMessage: string): void {
+    const nextRuntime = cloneTransferSignalRuntime(this.runtime);
+    nextRuntime.status = status;
+    nextRuntime.lastMessage = message;
+    nextRuntime.lastError = errorMessage;
+    nextRuntime.updatedAt = Date.now();
+    this.runtime = nextRuntime;
+  }
+
+  private buildRuntimeFromRoom(
+    room: TransferSignalRoomCreateResponse,
+    status: TransferSignalConnectionStatus,
+    message: string,
+    errorMessage: string
+  ): TransferSignalRuntime {
+    const runtime: TransferSignalRuntime = {
+      status: status,
+      roomCode: room.roomCode,
+      protocolVersion: room.protocolVersion,
+      expiresAt: room.expiresAt,
+      publicPageUrl: buildTransferSignalPublicPageUrl(this.signalOrigin, room.roomCode),
+      hostWebSocketUrl: room.hostWebSocketUrl,
+      peerWebSocketUrl: room.peerWebSocketUrl,
+      hostConnected: false,
+      peerCount: 0,
+      connectedClientId: '',
+      lastMessage: message,
+      lastError: errorMessage,
+      updatedAt: Date.now()
+    };
+    return runtime;
+  }
+
+  private buildClosedRuntime(message: string, errorMessage: string): TransferSignalRuntime {
+    const runtime = createEmptyTransferSignalRuntime();
+    runtime.status = 'closed';
+    runtime.lastMessage = message;
+    runtime.lastError = errorMessage;
+    runtime.updatedAt = Date.now();
+    return runtime;
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.socketClient === null || this.runtime.status !== 'connected') {
+        return;
+      }
+      void this.sendSignalMessage('ping', '', 'peer', '');
+    }, SIGNAL_HEARTBEAT_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer >= 0) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = -1;
+    }
+  }
+
+  private async postCreateRoom(body: string): Promise<string> {
+    const httpRequest = http.createHttp();
+    try {
+      const headers: TransferSignalJsonHeader = {
+        'Content-Type': 'application/json; charset=utf-8'
+      };
+      const options: http.HttpRequestOptions = {
+        method: http.RequestMethod.POST,
+        header: headers,
+        extraData: body,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: HTTP_TIMEOUT_MS,
+        readTimeout: HTTP_TIMEOUT_MS,
+        usingCache: false
+      };
+      const response = await httpRequest.request(`${this.signalOrigin}/api/transfer/rooms`, options);
+      return this.requireSuccessText(response, '创建信令房间失败');
+    } finally {
+      httpRequest.destroy();
+    }
+  }
+
+  private async getRoomStatus(roomCode: string): Promise<string> {
+    const httpRequest = http.createHttp();
+    try {
+      const options: http.HttpRequestOptions = {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: HTTP_TIMEOUT_MS,
+        readTimeout: HTTP_TIMEOUT_MS,
+        usingCache: false
+      };
+      const response = await httpRequest.request(`${this.signalOrigin}/api/transfer/rooms/${roomCode}`, options);
+      return this.requireSuccessText(response, '查询信令房间失败');
+    } finally {
+      httpRequest.destroy();
+    }
+  }
+
+  private async deleteRoom(roomCode: string, hostToken: string): Promise<string> {
+    const httpRequest = http.createHttp();
+    try {
+      const headers: TransferSignalCloseHeader = {
+        'X-Host-Token': hostToken
+      };
+      const options: http.HttpRequestOptions = {
+        method: http.RequestMethod.DELETE,
+        header: headers,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: HTTP_TIMEOUT_MS,
+        readTimeout: HTTP_TIMEOUT_MS,
+        usingCache: false
+      };
+      const response = await httpRequest.request(`${this.signalOrigin}/api/transfer/rooms/${roomCode}`, options);
+      return this.requireSuccessText(response, '关闭信令房间失败');
+    } finally {
+      httpRequest.destroy();
+    }
+  }
+
+  private requireSuccessText(response: http.HttpResponse, fallbackMessage: string): string {
+    const text = this.httpResponseToText(response);
+    const code = Number(response.responseCode);
+    if (code >= 200 && code < 300) {
+      return text;
+    }
+    throw new Error(`${fallbackMessage}: HTTP ${code}, ${this.parseErrorMessage(text, fallbackMessage)}`);
+  }
+
+  private httpResponseToText(response: http.HttpResponse): string {
+    if (typeof response.result === 'string') {
+      return response.result;
+    }
+    if (response.result instanceof ArrayBuffer) {
+      return this.decoder.decodeToString(new Uint8Array(response.result));
+    }
+    try {
+      return JSON.stringify(response.result);
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  private parseCreateRoomResponse(text: string): TransferSignalRoomCreateResponse {
+    const parsed = JSON.parse(text) as TransferSignalRoomCreateResponse;
+    const response: TransferSignalRoomCreateResponse = {
+      ok: parsed.ok === true,
+      roomCode: typeof parsed.roomCode === 'string' ? parsed.roomCode : '',
+      protocolVersion: typeof parsed.protocolVersion === 'string' ? parsed.protocolVersion : '',
+      hostToken: typeof parsed.hostToken === 'string' ? parsed.hostToken : '',
+      expiresAt: typeof parsed.expiresAt === 'number' && Number.isFinite(parsed.expiresAt) ? parsed.expiresAt : 0,
+      hostWebSocketUrl: typeof parsed.hostWebSocketUrl === 'string' ? parsed.hostWebSocketUrl : '',
+      peerWebSocketUrl: typeof parsed.peerWebSocketUrl === 'string' ? parsed.peerWebSocketUrl : ''
+    };
+    if (!response.ok || response.roomCode.length <= 0 || response.hostToken.length <= 0 ||
+      response.hostWebSocketUrl.length <= 0 || response.peerWebSocketUrl.length <= 0) {
+      throw new Error(this.parseErrorMessage(text, '创建信令房间响应无效'));
+    }
+    return response;
+  }
+
+  private parseRoomStatusResponse(text: string): TransferSignalRoomStatusResponse {
+    const parsed = JSON.parse(text) as TransferSignalRoomStatusResponse;
+    const response: TransferSignalRoomStatusResponse = {
+      ok: parsed.ok === true,
+      roomCode: typeof parsed.roomCode === 'string' ? parsed.roomCode : '',
+      protocolVersion: typeof parsed.protocolVersion === 'string' ? parsed.protocolVersion : '',
+      active: parsed.active === true,
+      createdAt: typeof parsed.createdAt === 'number' && Number.isFinite(parsed.createdAt) ? parsed.createdAt : 0,
+      expiresAt: typeof parsed.expiresAt === 'number' && Number.isFinite(parsed.expiresAt) ? parsed.expiresAt : 0,
+      hostConnected: parsed.hostConnected === true,
+      peerCount: typeof parsed.peerCount === 'number' && Number.isFinite(parsed.peerCount) ? parsed.peerCount : 0
+    };
+    if (!response.ok || response.roomCode.length <= 0) {
+      throw new Error(this.parseErrorMessage(text, '查询信令房间响应无效'));
+    }
+    return response;
+  }
+
+  private parseCloseRoomResponse(text: string): TransferSignalCloseRoomResponse {
+    const parsed = JSON.parse(text) as TransferSignalCloseRoomResponse;
+    const response: TransferSignalCloseRoomResponse = {
+      ok: parsed.ok === true,
+      roomCode: typeof parsed.roomCode === 'string' ? parsed.roomCode : '',
+      message: typeof parsed.message === 'string' ? parsed.message : '信令房间已关闭'
+    };
+    if (!response.ok) {
+      throw new Error(this.parseErrorMessage(text, '关闭信令房间响应无效'));
+    }
+    return response;
+  }
+
+  private parseErrorMessage(text: string, fallbackMessage: string): string {
+    try {
+      const parsed = JSON.parse(text) as TransferSignalErrorResponse;
+      if (typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
+        return parsed.message.trim();
+      }
+    } catch (_error) {
+      return fallbackMessage;
+    }
+    return fallbackMessage;
+  }
+
+  private isCallbackError(error: BusinessError | null | undefined): boolean {
+    return error !== null && error !== undefined && error.message !== undefined && error.message.length > 0;
+  }
+
+  private buildRequestId(type: TransferSignalOutboundMessageType): string {
+    return `${type}_${generateSimpleId()}`;
+  }
+
+  private stringifyError(error: Object): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch (_jsonError) {
+      return String(error);
+    }
+  }
+}
+
+export function getTransferSignalClientService(): TransferSignalClientService {
+  return TransferSignalClientService.getInstance();
+}

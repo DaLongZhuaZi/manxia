@@ -1,0 +1,831 @@
+/**
+ * 局域网传书功能模型定义
+ */
+
+import {
+  NETWORK_FOLDER_AVIF_EXTENSIONS,
+  NETWORK_FOLDER_BACKUP_EXTENSIONS,
+  NETWORK_FOLDER_CODE_EXTENSIONS,
+  NETWORK_FOLDER_COMIC_EXTENSIONS,
+  NETWORK_FOLDER_EBOOK_EXTENSIONS,
+  NETWORK_FOLDER_FONT_EXTENSIONS,
+  NETWORK_FOLDER_JSON_EXTENSIONS
+} from './NetworkFolderModels';
+import type { NetworkFolderImportCategory } from './NetworkFolderModels';
+
+export type TransferServerStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
+export type TransferSessionStatus = 'idle' | 'ready' | 'paired' | 'expired';
+export type TransferRuntimePhase = 'scaffold' | 'upload_pending' | 'active';
+export type TransferUploadStatus = 'received' | 'handoff_sent' | 'imported' | 'import_failed' | 'import_cancelled';
+export type TransferSignalRole = 'host' | 'peer';
+export type TransferSignalOutboundMessageType = 'offer' | 'answer' | 'candidate' | 'bye' | 'ping' | 'lan_url';
+export type TransferSignalConnectionStatus =
+  'idle' | 'creating' | 'created' | 'connecting' | 'connected' | 'closing' | 'closed' | 'error';
+export type TransferNativeRtcBackend = 'none' | 'stub' | 'libdatachannel';
+export type TransferNativeRtcStatus =
+  'unavailable' | 'idle' | 'probing' | 'ready' | 'creating_peer' | 'signaling' | 'connected' | 'failed' | 'closed';
+
+export interface TransferConfig {
+  port: number;
+  autoStopMinutes: number;
+  maxFileSizeMb: number;
+  allowBackgroundTransfer: boolean;
+  wsEnabled: boolean;
+}
+
+export interface TransferLocalAddress {
+  label: string;
+  host: string;
+  port: number;
+  url: string;
+  isPrimary: boolean;
+}
+
+export interface TransferSessionInfo {
+  sessionId: string;
+  pairCode: string;
+  token: string;
+  status: TransferSessionStatus;
+  createdAt: number;
+  expiresAt: number;
+  lastAccessAt: number;
+  clientName: string;
+  clientIp: string;
+}
+
+export interface TransferServerRuntime {
+  status: TransferServerStatus;
+  phase: TransferRuntimePhase;
+  activePort: number;
+  webSocketPort: number;
+  startedAt: number;
+  lastError: string;
+  infoMessage: string;
+  backgroundRunning: boolean;
+  localAddresses: TransferLocalAddress[];
+  session: TransferSessionInfo | null;
+}
+
+export interface TransferInfoResponse {
+  ok: boolean;
+  phase: TransferRuntimePhase;
+  serviceStatus: TransferServerStatus;
+  appName: string;
+  protocolVersion: string;
+  message: string;
+  pairCode: string;
+  sessionStatus: TransferSessionStatus;
+  sessionExpiresAt: number;
+  sessionClientName: string;
+  sessionClientIp: string;
+  port: number;
+  webSocketPort: number;
+  backgroundRunning: boolean;
+  uploadEnabled: boolean;
+  maxFileSizeMb: number;
+  addressList: TransferLocalAddress[];
+  supportedFileTypes: string[];
+}
+
+export interface TransferUploadRecord {
+  id: string;
+  fileName: string;
+  localPath: string;
+  localUri: string;
+  fileSizeBytes: number;
+  contentType: string;
+  importCategory: NetworkFolderImportCategory;
+  clientName: string;
+  clientIp: string;
+  source: string;
+  receivedAt: number;
+  status: TransferUploadStatus;
+}
+
+export interface TransferSignalCreateRoomRequest {
+  ttlSeconds: number;
+  clientName: string;
+}
+
+export interface TransferSignalRoomCreateResponse {
+  ok: boolean;
+  roomCode: string;
+  protocolVersion: string;
+  hostToken: string;
+  expiresAt: number;
+  hostWebSocketUrl: string;
+  peerWebSocketUrl: string;
+}
+
+export interface TransferSignalRoomStatusResponse {
+  ok: boolean;
+  roomCode: string;
+  protocolVersion: string;
+  active: boolean;
+  createdAt: number;
+  expiresAt: number;
+  hostConnected: boolean;
+  peerCount: number;
+}
+
+export interface TransferSignalCloseRoomResponse {
+  ok: boolean;
+  roomCode: string;
+  message: string;
+}
+
+export interface TransferSignalErrorResponse {
+  ok: boolean;
+  message: string;
+}
+
+export interface TransferSignalClientMessage {
+  type: TransferSignalOutboundMessageType;
+  targetRole: TransferSignalRole;
+  targetClientId: string;
+  payload: string;
+  requestId: string;
+}
+
+export interface TransferSignalIncomingBaseMessage {
+  type: string;
+  roomCode: string;
+  sentAt: number;
+}
+
+export interface TransferSignalServerMessage {
+  type: string;
+  roomCode: string;
+  fromRole: string;
+  fromClientId: string;
+  targetRole: string;
+  targetClientId: string;
+  payload: string;
+  requestId: string;
+  sentAt: number;
+}
+
+export interface TransferSignalRoomStateMessage {
+  type: string;
+  roomCode: string;
+  active: boolean;
+  hostConnected: boolean;
+  peerCount: number;
+  expiresAt: number;
+  sentAt: number;
+}
+
+export interface TransferSignalRuntime {
+  status: TransferSignalConnectionStatus;
+  roomCode: string;
+  protocolVersion: string;
+  expiresAt: number;
+  publicPageUrl: string;
+  hostWebSocketUrl: string;
+  peerWebSocketUrl: string;
+  hostConnected: boolean;
+  peerCount: number;
+  connectedClientId: string;
+  lastMessage: string;
+  lastError: string;
+  updatedAt: number;
+}
+
+export interface TransferNativeRtcCapabilities {
+  nativeModuleLoaded: boolean;
+  backend: TransferNativeRtcBackend;
+  backendVersion: string;
+  apiVersion: string;
+  dataChannelSupported: boolean;
+  message: string;
+}
+
+export interface TransferNativeRtcRuntime {
+  status: TransferNativeRtcStatus;
+  peerId: string;
+  sessionId: string;
+  role: TransferSignalRole;
+  capabilities: TransferNativeRtcCapabilities;
+  lastMessage: string;
+  lastError: string;
+  updatedAt: number;
+}
+
+export interface TransferNativeRtcResult {
+  success: boolean;
+  peerId: string;
+  operation: string;
+  message: string;
+  errorCode: string;
+  backend: string;
+}
+
+export interface TransferNativeRtcSdpResult {
+  success: boolean;
+  peerId: string;
+  sdpType: string;
+  sdp: string;
+  message: string;
+  errorCode: string;
+  backend: string;
+}
+
+export interface TransferNativeRtcCandidate {
+  peerId: string;
+  candidate: string;
+  sdpMid: string;
+  sdpMLineIndex: number;
+}
+
+export interface TransferNativeRtcEvent {
+  type: string;
+  peerId: string;
+  payload: string;
+  sdpType: string;
+  sdp: string;
+  candidate: string;
+  sdpMid: string;
+  sdpMLineIndex: number;
+  message: string;
+  state: string;
+  timestamp: number;
+}
+
+export interface TransferNativeRtcEventList {
+  success: boolean;
+  peerId: string;
+  message: string;
+  errorCode: string;
+  backend: string;
+  events: TransferNativeRtcEvent[];
+}
+
+export interface TransferNativeRtcSdpSignalPayload {
+  sdpType: string;
+  sdp: string;
+}
+
+export interface TransferNativeRtcCandidateSignalPayload {
+  candidate: string;
+  sdpMid: string;
+  sdpMLineIndex: number;
+}
+
+export interface TransferLanAccessSignalPayload {
+  url: string;
+  pairCode: string;
+  serviceStatus: TransferServerStatus;
+  roomCode: string;
+  sentAt: number;
+}
+
+export interface TransferLanAccessDataChannelMessage {
+  type: string;
+  payload: TransferLanAccessSignalPayload;
+}
+
+export const TRANSFER_PROTOCOL_VERSION: string = 'mx-transfer/0.1';
+export const TRANSFER_SIGNAL_PROTOCOL_VERSION: string = 'mx-transfer-signal/0.1';
+export const TRANSFER_NATIVE_RTC_API_VERSION: string = 'mx-transfer-rtc-native/0.2';
+
+export const TRANSFER_SUPPORTED_FILE_TYPES: string[] = [
+  ...NETWORK_FOLDER_COMIC_EXTENSIONS,
+  ...NETWORK_FOLDER_EBOOK_EXTENSIONS,
+  'pdf',
+  ...NETWORK_FOLDER_BACKUP_EXTENSIONS,
+  ...NETWORK_FOLDER_JSON_EXTENSIONS,
+  ...NETWORK_FOLDER_FONT_EXTENSIONS,
+  ...NETWORK_FOLDER_CODE_EXTENSIONS,
+  ...NETWORK_FOLDER_AVIF_EXTENSIONS
+];
+
+export function createDefaultTransferConfig(): TransferConfig {
+  const config: TransferConfig = {
+    port: 15124,
+    autoStopMinutes: 15,
+    maxFileSizeMb: 2048,
+    allowBackgroundTransfer: true,
+    wsEnabled: true
+  };
+  return config;
+}
+
+export function createEmptyTransferServerRuntime(): TransferServerRuntime {
+  const runtime: TransferServerRuntime = {
+    status: 'stopped',
+    phase: 'scaffold',
+    activePort: 0,
+    webSocketPort: 0,
+    startedAt: 0,
+    lastError: '',
+    infoMessage: '服务未启动。',
+    backgroundRunning: false,
+    localAddresses: [],
+    session: null
+  };
+  return runtime;
+}
+
+export function createEmptyTransferSignalRuntime(): TransferSignalRuntime {
+  const runtime: TransferSignalRuntime = {
+    status: 'idle',
+    roomCode: '',
+    protocolVersion: TRANSFER_SIGNAL_PROTOCOL_VERSION,
+    expiresAt: 0,
+    publicPageUrl: '',
+    hostWebSocketUrl: '',
+    peerWebSocketUrl: '',
+    hostConnected: false,
+    peerCount: 0,
+    connectedClientId: '',
+    lastMessage: '尚未创建公网信令房间。',
+    lastError: '',
+    updatedAt: 0
+  };
+  return runtime;
+}
+
+export function createEmptyTransferNativeRtcCapabilities(): TransferNativeRtcCapabilities {
+  const capabilities: TransferNativeRtcCapabilities = {
+    nativeModuleLoaded: false,
+    backend: 'none',
+    backendVersion: '',
+    apiVersion: TRANSFER_NATIVE_RTC_API_VERSION,
+    dataChannelSupported: false,
+    message: '尚未检测 Native RTC 模块。'
+  };
+  return capabilities;
+}
+
+export function createEmptyTransferNativeRtcRuntime(): TransferNativeRtcRuntime {
+  const runtime: TransferNativeRtcRuntime = {
+    status: 'idle',
+    peerId: '',
+    sessionId: '',
+    role: 'host',
+    capabilities: createEmptyTransferNativeRtcCapabilities(),
+    lastMessage: 'Native RTC 尚未检测。',
+    lastError: '',
+    updatedAt: 0
+  };
+  return runtime;
+}
+
+export function cloneTransferConfig(config: TransferConfig): TransferConfig {
+  const cloned: TransferConfig = {
+    port: config.port,
+    autoStopMinutes: config.autoStopMinutes,
+    maxFileSizeMb: config.maxFileSizeMb,
+    allowBackgroundTransfer: config.allowBackgroundTransfer,
+    wsEnabled: config.wsEnabled
+  };
+  return cloned;
+}
+
+export function cloneTransferLocalAddress(address: TransferLocalAddress): TransferLocalAddress {
+  const cloned: TransferLocalAddress = {
+    label: address.label,
+    host: address.host,
+    port: address.port,
+    url: address.url,
+    isPrimary: address.isPrimary
+  };
+  return cloned;
+}
+
+export function cloneTransferSessionInfo(session: TransferSessionInfo | null): TransferSessionInfo | null {
+  if (session === null) {
+    return null;
+  }
+  const cloned: TransferSessionInfo = {
+    sessionId: session.sessionId,
+    pairCode: session.pairCode,
+    token: session.token,
+    status: session.status,
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
+    lastAccessAt: session.lastAccessAt,
+    clientName: session.clientName,
+    clientIp: session.clientIp
+  };
+  return cloned;
+}
+
+export function cloneTransferServerRuntime(runtime: TransferServerRuntime): TransferServerRuntime {
+  const addresses: TransferLocalAddress[] = [];
+  for (const address of runtime.localAddresses) {
+    addresses.push(cloneTransferLocalAddress(address));
+  }
+  const cloned: TransferServerRuntime = {
+    status: runtime.status,
+    phase: runtime.phase,
+    activePort: runtime.activePort,
+    webSocketPort: runtime.webSocketPort,
+    startedAt: runtime.startedAt,
+    lastError: runtime.lastError,
+    infoMessage: runtime.infoMessage,
+    backgroundRunning: runtime.backgroundRunning,
+    localAddresses: addresses,
+    session: cloneTransferSessionInfo(runtime.session)
+  };
+  return cloned;
+}
+
+export function cloneTransferUploadRecord(record: TransferUploadRecord): TransferUploadRecord {
+  const cloned: TransferUploadRecord = {
+    id: record.id,
+    fileName: record.fileName,
+    localPath: record.localPath,
+    localUri: record.localUri,
+    fileSizeBytes: record.fileSizeBytes,
+    contentType: record.contentType,
+    importCategory: record.importCategory,
+    clientName: record.clientName,
+    clientIp: record.clientIp,
+    source: record.source,
+    receivedAt: record.receivedAt,
+    status: record.status
+  };
+  return cloned;
+}
+
+export function cloneTransferUploadRecords(records: TransferUploadRecord[]): TransferUploadRecord[] {
+  const result: TransferUploadRecord[] = [];
+  for (const record of records) {
+    result.push(cloneTransferUploadRecord(record));
+  }
+  return result;
+}
+
+export function cloneTransferSignalRoomCreateResponse(
+  room: TransferSignalRoomCreateResponse
+): TransferSignalRoomCreateResponse {
+  const cloned: TransferSignalRoomCreateResponse = {
+    ok: room.ok,
+    roomCode: room.roomCode,
+    protocolVersion: room.protocolVersion,
+    hostToken: room.hostToken,
+    expiresAt: room.expiresAt,
+    hostWebSocketUrl: room.hostWebSocketUrl,
+    peerWebSocketUrl: room.peerWebSocketUrl
+  };
+  return cloned;
+}
+
+export function cloneTransferSignalRuntime(runtime: TransferSignalRuntime): TransferSignalRuntime {
+  const cloned: TransferSignalRuntime = {
+    status: runtime.status,
+    roomCode: runtime.roomCode,
+    protocolVersion: runtime.protocolVersion,
+    expiresAt: runtime.expiresAt,
+    publicPageUrl: runtime.publicPageUrl,
+    hostWebSocketUrl: runtime.hostWebSocketUrl,
+    peerWebSocketUrl: runtime.peerWebSocketUrl,
+    hostConnected: runtime.hostConnected,
+    peerCount: runtime.peerCount,
+    connectedClientId: runtime.connectedClientId,
+    lastMessage: runtime.lastMessage,
+    lastError: runtime.lastError,
+    updatedAt: runtime.updatedAt
+  };
+  return cloned;
+}
+
+export function cloneTransferNativeRtcCapabilities(
+  capabilities: TransferNativeRtcCapabilities
+): TransferNativeRtcCapabilities {
+  const cloned: TransferNativeRtcCapabilities = {
+    nativeModuleLoaded: capabilities.nativeModuleLoaded,
+    backend: capabilities.backend,
+    backendVersion: capabilities.backendVersion,
+    apiVersion: capabilities.apiVersion,
+    dataChannelSupported: capabilities.dataChannelSupported,
+    message: capabilities.message
+  };
+  return cloned;
+}
+
+export function cloneTransferNativeRtcRuntime(runtime: TransferNativeRtcRuntime): TransferNativeRtcRuntime {
+  const cloned: TransferNativeRtcRuntime = {
+    status: runtime.status,
+    peerId: runtime.peerId,
+    sessionId: runtime.sessionId,
+    role: runtime.role,
+    capabilities: cloneTransferNativeRtcCapabilities(runtime.capabilities),
+    lastMessage: runtime.lastMessage,
+    lastError: runtime.lastError,
+    updatedAt: runtime.updatedAt
+  };
+  return cloned;
+}
+
+export function cloneTransferNativeRtcEvent(event: TransferNativeRtcEvent): TransferNativeRtcEvent {
+  const cloned: TransferNativeRtcEvent = {
+    type: event.type,
+    peerId: event.peerId,
+    payload: event.payload,
+    sdpType: event.sdpType,
+    sdp: event.sdp,
+    candidate: event.candidate,
+    sdpMid: event.sdpMid,
+    sdpMLineIndex: event.sdpMLineIndex,
+    message: event.message,
+    state: event.state,
+    timestamp: event.timestamp
+  };
+  return cloned;
+}
+
+export function cloneTransferNativeRtcEvents(events: TransferNativeRtcEvent[]): TransferNativeRtcEvent[] {
+  const clonedEvents: TransferNativeRtcEvent[] = [];
+  for (let index = 0; index < events.length; index++) {
+    clonedEvents.push(cloneTransferNativeRtcEvent(events[index]));
+  }
+  return clonedEvents;
+}
+
+export function buildTransferNativeRtcSdpSignalPayload(sdpType: string, sdp: string): string {
+  const payload: TransferNativeRtcSdpSignalPayload = {
+    sdpType: sdpType,
+    sdp: sdp
+  };
+  return JSON.stringify(payload);
+}
+
+export function buildTransferNativeRtcCandidateSignalPayload(
+  candidate: string,
+  sdpMid: string,
+  sdpMLineIndex: number
+): string {
+  const payload: TransferNativeRtcCandidateSignalPayload = {
+    candidate: candidate,
+    sdpMid: sdpMid,
+    sdpMLineIndex: sdpMLineIndex
+  };
+  return JSON.stringify(payload);
+}
+
+export function parseTransferNativeRtcSdpSignalPayload(text: string): TransferNativeRtcSdpSignalPayload | null {
+  try {
+    const parsed = JSON.parse(text) as TransferNativeRtcSdpSignalPayload;
+    const sdpType = typeof parsed.sdpType === 'string' ? parsed.sdpType : '';
+    const sdp = typeof parsed.sdp === 'string' ? parsed.sdp : '';
+    if (sdp.length <= 0) {
+      return null;
+    }
+    const payload: TransferNativeRtcSdpSignalPayload = {
+      sdpType: sdpType,
+      sdp: sdp
+    };
+    return payload;
+  } catch (_error) {
+    return null;
+  }
+}
+
+export function parseTransferNativeRtcCandidateSignalPayload(
+  text: string
+): TransferNativeRtcCandidateSignalPayload | null {
+  try {
+    const parsed = JSON.parse(text) as TransferNativeRtcCandidateSignalPayload;
+    const candidate = typeof parsed.candidate === 'string' ? parsed.candidate : '';
+    const sdpMid = typeof parsed.sdpMid === 'string' ? parsed.sdpMid : '';
+    const sdpMLineIndex = typeof parsed.sdpMLineIndex === 'number' && Number.isFinite(parsed.sdpMLineIndex) ?
+      parsed.sdpMLineIndex : 0;
+    if (candidate.length <= 0 || sdpMid.length <= 0) {
+      return null;
+    }
+    const payload: TransferNativeRtcCandidateSignalPayload = {
+      candidate: candidate,
+      sdpMid: sdpMid,
+      sdpMLineIndex: sdpMLineIndex
+    };
+    return payload;
+  } catch (_error) {
+    return null;
+  }
+}
+
+export function buildTransferLanAccessSignalPayload(
+  url: string,
+  pairCode: string,
+  serviceStatus: TransferServerStatus,
+  roomCode: string
+): string {
+  const payload: TransferLanAccessSignalPayload = {
+    url: url,
+    pairCode: pairCode,
+    serviceStatus: serviceStatus,
+    roomCode: roomCode,
+    sentAt: Date.now()
+  };
+  return JSON.stringify(payload);
+}
+
+export function buildTransferLanAccessDataChannelMessage(payloadText: string): string {
+  const payload = parseTransferLanAccessSignalPayload(payloadText);
+  if (payload === null) {
+    return payloadText;
+  }
+  const message: TransferLanAccessDataChannelMessage = {
+    type: 'lan_url',
+    payload: payload
+  };
+  return JSON.stringify(message);
+}
+
+export function parseTransferLanAccessSignalPayload(text: string): TransferLanAccessSignalPayload | null {
+  try {
+    const parsed = JSON.parse(text) as TransferLanAccessSignalPayload;
+    const url = typeof parsed.url === 'string' ? parsed.url.trim() : '';
+    const pairCode = typeof parsed.pairCode === 'string' ? parsed.pairCode.trim() : '';
+    const serviceStatus = normalizeTransferServerStatus(
+      typeof parsed.serviceStatus === 'string' ? parsed.serviceStatus : ''
+    );
+    const roomCode = typeof parsed.roomCode === 'string' ? parsed.roomCode.trim().toUpperCase() : '';
+    const sentAt = typeof parsed.sentAt === 'number' && Number.isFinite(parsed.sentAt) ? parsed.sentAt : 0;
+    if (url.length <= 0 || pairCode.length <= 0) {
+      return null;
+    }
+    const payload: TransferLanAccessSignalPayload = {
+      url: url,
+      pairCode: pairCode,
+      serviceStatus: serviceStatus,
+      roomCode: roomCode,
+      sentAt: sentAt
+    };
+    return payload;
+  } catch (_error) {
+    return null;
+  }
+}
+
+export function normalizeTransferNativeRtcBackend(backend: string): TransferNativeRtcBackend {
+  if (backend === 'stub') {
+    return 'stub';
+  }
+  if (backend === 'libdatachannel') {
+    return 'libdatachannel';
+  }
+  return 'none';
+}
+
+export function normalizeTransferServerStatus(status: string): TransferServerStatus {
+  if (status === 'starting') {
+    return 'starting';
+  }
+  if (status === 'running') {
+    return 'running';
+  }
+  if (status === 'stopping') {
+    return 'stopping';
+  }
+  if (status === 'error') {
+    return 'error';
+  }
+  return 'stopped';
+}
+
+export function buildTransferSignalPublicPageUrl(origin: string, roomCode: string): string {
+  const normalizedOrigin = normalizeTransferSignalOrigin(origin);
+  if (roomCode.trim().length <= 0) {
+    return `${normalizedOrigin}/transfer`;
+  }
+  return `${normalizedOrigin}/transfer?room=${encodeURIComponent(roomCode.trim().toUpperCase())}`;
+}
+
+export function normalizeTransferSignalOrigin(origin: string): string {
+  let normalizedOrigin = origin.trim();
+  while (normalizedOrigin.endsWith('/')) {
+    normalizedOrigin = normalizedOrigin.substring(0, normalizedOrigin.length - 1);
+  }
+  if (normalizedOrigin.length <= 0) {
+    return 'https://manxia.top';
+  }
+  return normalizedOrigin;
+}
+
+export function sanitizeTransferConfig(source: TransferConfig): TransferConfig {
+  const sanitized: TransferConfig = {
+    port: sanitizeTransferPort(source.port),
+    autoStopMinutes: sanitizeTransferAutoStopMinutes(source.autoStopMinutes),
+    maxFileSizeMb: sanitizeTransferMaxFileSizeMb(source.maxFileSizeMb),
+    allowBackgroundTransfer: source.allowBackgroundTransfer,
+    wsEnabled: source.wsEnabled
+  };
+  return sanitized;
+}
+
+export function buildTransferInfoResponse(
+  runtime: TransferServerRuntime,
+  config: TransferConfig
+): TransferInfoResponse {
+  const addressList: TransferLocalAddress[] = [];
+  for (const address of runtime.localAddresses) {
+    addressList.push(cloneTransferLocalAddress(address));
+  }
+  const response: TransferInfoResponse = {
+    ok: runtime.status === 'running',
+    phase: runtime.phase,
+    serviceStatus: runtime.status,
+    appName: '漫匣',
+    protocolVersion: TRANSFER_PROTOCOL_VERSION,
+    message: runtime.infoMessage,
+    pairCode: runtime.session !== null ? runtime.session.pairCode : '',
+    sessionStatus: runtime.session !== null ? runtime.session.status : 'idle',
+    sessionExpiresAt: runtime.session !== null ? runtime.session.expiresAt : 0,
+    sessionClientName: runtime.session !== null ? runtime.session.clientName : '',
+    sessionClientIp: runtime.session !== null ? runtime.session.clientIp : '',
+    port: runtime.activePort,
+    webSocketPort: runtime.webSocketPort,
+    backgroundRunning: runtime.backgroundRunning,
+    uploadEnabled: true,
+    maxFileSizeMb: config.maxFileSizeMb,
+    addressList: addressList,
+    supportedFileTypes: cloneTransferSupportedFileTypes()
+  };
+  return response;
+}
+
+export function cloneTransferSupportedFileTypes(): string[] {
+  const result: string[] = [];
+  for (const fileType of TRANSFER_SUPPORTED_FILE_TYPES) {
+    result.push(fileType);
+  }
+  return result;
+}
+
+export function isSupportedTransferFileName(fileName: string): boolean {
+  const extension = getTransferFileExtension(fileName);
+  if (extension.length <= 0) {
+    return false;
+  }
+  for (const fileType of TRANSFER_SUPPORTED_FILE_TYPES) {
+    if (fileType === extension) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function getTransferFileExtension(fileName: string): string {
+  const normalizedName = fileName.trim().toLowerCase();
+  const lastDot = normalizedName.lastIndexOf('.');
+  if (lastDot < 0 || lastDot >= normalizedName.length - 1) {
+    return '';
+  }
+  return normalizedName.substring(lastDot + 1);
+}
+
+export function isTransferAcceptedImportCategory(category: NetworkFolderImportCategory): boolean {
+  return category === 'comic' ||
+    category === 'ebook' ||
+    category === 'pdf' ||
+    category === 'backup' ||
+    category === 'json' ||
+    category === 'font' ||
+    category === 'code' ||
+    category === 'avif';
+}
+
+export function sanitizeTransferPort(port: number): number {
+  if (!Number.isFinite(port)) {
+    return 15124;
+  }
+  const normalized = Math.floor(port);
+  if (normalized < 1024) {
+    return 1024;
+  }
+  if (normalized > 65535) {
+    return 65535;
+  }
+  return normalized;
+}
+
+export function sanitizeTransferAutoStopMinutes(minutes: number): number {
+  if (!Number.isFinite(minutes)) {
+    return 15;
+  }
+  const normalized = Math.floor(minutes);
+  if (normalized < 1) {
+    return 1;
+  }
+  if (normalized > 180) {
+    return 180;
+  }
+  return normalized;
+}
+
+export function sanitizeTransferMaxFileSizeMb(sizeMb: number): number {
+  if (!Number.isFinite(sizeMb)) {
+    return 2048;
+  }
+  const normalized = Math.floor(sizeMb);
+  if (normalized < 50) {
+    return 50;
+  }
+  if (normalized > 10240) {
+    return 10240;
+  }
+  return normalized;
+}

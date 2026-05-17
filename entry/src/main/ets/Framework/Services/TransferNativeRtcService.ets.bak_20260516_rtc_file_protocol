@@ -1,0 +1,516 @@
+/**
+ * 局域网传书 Native RTC 数据通道服务。
+ *
+ * 该服务只封装 App 侧 Native DataChannel 能力；房间、WebSocket 与 SDP/ICE 转发仍由
+ * TransferSignalClientService 和 Worker Durable Object 负责。
+ */
+
+import { logger } from '../../Utils/Logger';
+import transferRtcNativeModuleImport from 'libtransfer_rtc_native.so';
+import {
+  TransferNativeRtcBackend,
+  TransferNativeRtcCapabilities,
+  TransferNativeRtcCandidate,
+  TransferNativeRtcEvent,
+  TransferNativeRtcEventList,
+  TransferNativeRtcResult,
+  TransferNativeRtcRuntime,
+  TransferNativeRtcSdpResult,
+  TransferNativeRtcStatus,
+  TransferSignalRole,
+  cloneTransferNativeRtcCapabilities,
+  cloneTransferNativeRtcRuntime,
+  createEmptyTransferNativeRtcCapabilities,
+  createEmptyTransferNativeRtcRuntime,
+  normalizeTransferNativeRtcBackend
+} from '../../Models/TransferModels';
+import { generateSimpleId } from '../Utils/UUIDGenerator';
+
+const TAG = 'TransferNativeRtc';
+const STUB_UNAVAILABLE_MESSAGE: string = 'Native RTC 外壳已接入，真实 DataChannel 后端尚未接入 libdatachannel。';
+
+interface TransferRtcNativeCapabilitiesImport {
+  nativeModuleLoaded: boolean;
+  backend: string;
+  backendVersion: string;
+  apiVersion: string;
+  dataChannelSupported: boolean;
+  message: string;
+}
+
+interface TransferRtcNativeResultImport {
+  success: boolean;
+  peerId: string;
+  operation: string;
+  message: string;
+  errorCode: string;
+  backend: string;
+}
+
+interface TransferRtcNativeSdpResultImport {
+  success: boolean;
+  peerId: string;
+  sdpType: string;
+  sdp: string;
+  message: string;
+  errorCode: string;
+  backend: string;
+}
+
+interface TransferRtcNativeModule {
+  getCapabilities(): TransferRtcNativeCapabilitiesImport;
+  createPeer(sessionId: string, role: string): TransferRtcNativeResultImport;
+  closePeer(peerId: string): TransferRtcNativeResultImport;
+  createOffer(peerId: string): TransferRtcNativeSdpResultImport;
+  createAnswer(peerId: string): TransferRtcNativeSdpResultImport;
+  setRemoteDescription(peerId: string, type: string, sdp: string): TransferRtcNativeResultImport;
+  addIceCandidate(peerId: string, candidate: string, sdpMid: string, sdpMLineIndex: number): TransferRtcNativeResultImport;
+  sendText(peerId: string, text: string): TransferRtcNativeResultImport;
+  pollEvents(peerId: string): TransferRtcNativeEventListImport;
+}
+
+interface TransferRtcNativeEventImport {
+  type: string;
+  peerId: string;
+  payload: string;
+  sdpType: string;
+  sdp: string;
+  candidate: string;
+  sdpMid: string;
+  sdpMLineIndex: number;
+  message: string;
+  state: string;
+  timestamp: number;
+}
+
+interface TransferRtcNativeEventListImport {
+  success: boolean;
+  peerId: string;
+  message: string;
+  errorCode: string;
+  backend: string;
+  events: TransferRtcNativeEventImport[];
+}
+
+let nativeModule: TransferRtcNativeModule | null = null;
+let nativeModuleChecked: boolean = false;
+let nativeModuleLoadError: string = '';
+
+function checkNativeModule(): void {
+  if (nativeModuleChecked) {
+    return;
+  }
+  nativeModuleChecked = true;
+
+  try {
+    logger.info(TAG, `Native模块类型: ${typeof transferRtcNativeModuleImport}`);
+    if (transferRtcNativeModuleImport) {
+      const moduleObject = transferRtcNativeModuleImport as TransferRtcNativeModule;
+      const keys = Object.keys(transferRtcNativeModuleImport);
+      logger.info(TAG, `Native模块导出的属性: ${keys.join(', ')}`);
+      logger.info(TAG, `getCapabilities类型: ${typeof moduleObject.getCapabilities}`);
+    }
+
+    if (transferRtcNativeModuleImport &&
+      typeof (transferRtcNativeModuleImport as TransferRtcNativeModule).getCapabilities === 'function') {
+      nativeModule = transferRtcNativeModuleImport as TransferRtcNativeModule;
+      logger.info(TAG, 'Transfer RTC Native模块加载成功');
+      return;
+    }
+
+    const moduleObject = transferRtcNativeModuleImport as TransferRtcNativeModule;
+    nativeModuleLoadError = `Native模块加载成功但接口不完整, getCapabilities类型=${typeof moduleObject.getCapabilities}`;
+    logger.warn(TAG, nativeModuleLoadError);
+  } catch (error) {
+    nativeModuleLoadError = `Native RTC模块检查失败: ${String(error)}`;
+    logger.warn(TAG, nativeModuleLoadError);
+  }
+}
+
+function getNativeModule(): TransferRtcNativeModule | null {
+  checkNativeModule();
+  return nativeModule;
+}
+
+export class TransferNativeRtcService {
+  private static instance: TransferNativeRtcService | null = null;
+  private runtime: TransferNativeRtcRuntime = createEmptyTransferNativeRtcRuntime();
+
+  private constructor() {}
+
+  public static getInstance(): TransferNativeRtcService {
+    const existingInstance = TransferNativeRtcService.instance;
+    if (existingInstance !== null) {
+      return existingInstance;
+    }
+    const createdInstance = new TransferNativeRtcService();
+    TransferNativeRtcService.instance = createdInstance;
+    return createdInstance;
+  }
+
+  public getRuntimeState(): TransferNativeRtcRuntime {
+    return cloneTransferNativeRtcRuntime(this.runtime);
+  }
+
+  public probeCapabilities(): TransferNativeRtcRuntime {
+    this.setProbing();
+    const moduleObject = getNativeModule();
+    if (moduleObject === null) {
+      const capabilities = createEmptyTransferNativeRtcCapabilities();
+      capabilities.message = nativeModuleLoadError.length > 0 ? nativeModuleLoadError : 'Native RTC 模块未加载。';
+      this.runtime = this.buildRuntime('unavailable', '', '', 'host', capabilities, capabilities.message, capabilities.message);
+      return this.getRuntimeState();
+    }
+
+    try {
+      const imported = moduleObject.getCapabilities();
+      const capabilities = this.normalizeCapabilities(imported);
+      const ready = capabilities.nativeModuleLoaded && capabilities.dataChannelSupported;
+      const status: TransferNativeRtcStatus = ready ? 'ready' : 'unavailable';
+      const message = ready ? 'Native RTC DataChannel 后端可用。' : capabilities.message;
+      const errorMessage = ready ? '' : capabilities.message;
+      this.runtime = this.buildRuntime(status, this.runtime.peerId, this.runtime.sessionId, this.runtime.role,
+        capabilities, message, errorMessage);
+      return this.getRuntimeState();
+    } catch (error) {
+      const capabilities = createEmptyTransferNativeRtcCapabilities();
+      capabilities.nativeModuleLoaded = true;
+      capabilities.backend = 'stub';
+      capabilities.message = `Native RTC能力检测失败: ${String(error)}`;
+      this.runtime = this.buildRuntime('failed', '', '', 'host', capabilities, capabilities.message, capabilities.message);
+      return this.getRuntimeState();
+    }
+  }
+
+  public createHostPeer(roomCode: string): TransferNativeRtcRuntime {
+    const capabilities = this.ensureCapabilities();
+    if (!capabilities.dataChannelSupported) {
+      const sessionId = this.buildSessionId(roomCode);
+      this.runtime = this.buildRuntime('unavailable', '', sessionId, 'host', capabilities,
+        STUB_UNAVAILABLE_MESSAGE, STUB_UNAVAILABLE_MESSAGE);
+      return this.getRuntimeState();
+    }
+
+    const moduleObject = getNativeModule();
+    if (moduleObject === null) {
+      return this.probeCapabilities();
+    }
+
+    const sessionId = this.buildSessionId(roomCode);
+    this.runtime = this.buildRuntime('creating_peer', '', sessionId, 'host', capabilities, '正在创建 Native Host Peer。', '');
+    const result = this.normalizeResult(moduleObject.createPeer(sessionId, 'host'));
+    this.applyOperationResult(result, capabilities, sessionId, 'host');
+    return this.getRuntimeState();
+  }
+
+  public closePeer(): TransferNativeRtcRuntime {
+    const moduleObject = getNativeModule();
+    const peerId = this.runtime.peerId;
+    if (moduleObject === null || peerId.length <= 0) {
+      this.runtime = this.buildRuntime('closed', '', this.runtime.sessionId, this.runtime.role, this.runtime.capabilities,
+        'Native Peer 已关闭。', '');
+      return this.getRuntimeState();
+    }
+
+    const result = this.normalizeResult(moduleObject.closePeer(peerId));
+    if (result.success) {
+      this.runtime = this.buildRuntime('closed', '', this.runtime.sessionId, this.runtime.role, this.runtime.capabilities,
+        'Native Peer 已关闭。', '');
+    } else {
+      this.applyOperationResult(result, this.runtime.capabilities, this.runtime.sessionId, this.runtime.role);
+    }
+    return this.getRuntimeState();
+  }
+
+  public createOffer(): TransferNativeRtcSdpResult {
+    const moduleObject = getNativeModule();
+    const peerId = this.runtime.peerId;
+    if (moduleObject === null || peerId.length <= 0) {
+      return this.createEmptySdpResult(peerId, 'offer', 'Native Peer 尚未创建。');
+    }
+    const result = this.normalizeSdpResult(moduleObject.createOffer(peerId));
+    if (!result.success) {
+      this.applySdpFailure(result);
+    }
+    return result;
+  }
+
+  public createAnswer(): TransferNativeRtcSdpResult {
+    const moduleObject = getNativeModule();
+    const peerId = this.runtime.peerId;
+    if (moduleObject === null || peerId.length <= 0) {
+      return this.createEmptySdpResult(peerId, 'answer', 'Native Peer 尚未创建。');
+    }
+    const result = this.normalizeSdpResult(moduleObject.createAnswer(peerId));
+    if (!result.success) {
+      this.applySdpFailure(result);
+    }
+    return result;
+  }
+
+  public setRemoteDescription(type: string, sdp: string): TransferNativeRtcRuntime {
+    const moduleObject = getNativeModule();
+    const peerId = this.runtime.peerId;
+    if (moduleObject === null || peerId.length <= 0) {
+      this.runtime = this.buildRuntime('failed', peerId, this.runtime.sessionId, this.runtime.role, this.runtime.capabilities,
+        'Native Peer 尚未创建。', 'Native Peer 尚未创建。');
+      return this.getRuntimeState();
+    }
+
+    const result = this.normalizeResult(moduleObject.setRemoteDescription(peerId, type, sdp));
+    this.applyOperationResult(result, this.runtime.capabilities, this.runtime.sessionId, this.runtime.role);
+    return this.getRuntimeState();
+  }
+
+  public addIceCandidate(candidate: TransferNativeRtcCandidate): TransferNativeRtcRuntime {
+    const moduleObject = getNativeModule();
+    if (moduleObject === null || candidate.peerId.length <= 0) {
+      this.runtime = this.buildRuntime('failed', candidate.peerId, this.runtime.sessionId, this.runtime.role,
+        this.runtime.capabilities, 'Native Peer 尚未创建。', 'Native Peer 尚未创建。');
+      return this.getRuntimeState();
+    }
+
+    const result = this.normalizeResult(moduleObject.addIceCandidate(
+      candidate.peerId,
+      candidate.candidate,
+      candidate.sdpMid,
+      candidate.sdpMLineIndex
+    ));
+    this.applyOperationResult(result, this.runtime.capabilities, this.runtime.sessionId, this.runtime.role);
+    return this.getRuntimeState();
+  }
+
+  public sendText(text: string): TransferNativeRtcRuntime {
+    const moduleObject = getNativeModule();
+    const peerId = this.runtime.peerId;
+    if (moduleObject === null || peerId.length <= 0) {
+      this.runtime = this.buildRuntime('failed', peerId, this.runtime.sessionId, this.runtime.role, this.runtime.capabilities,
+        'Native Peer 尚未创建。', 'Native Peer 尚未创建。');
+      return this.getRuntimeState();
+    }
+
+    const result = this.normalizeResult(moduleObject.sendText(peerId, text));
+    this.applyOperationResult(result, this.runtime.capabilities, this.runtime.sessionId, this.runtime.role);
+    return this.getRuntimeState();
+  }
+
+  public pollEvents(): TransferNativeRtcEventList {
+    const moduleObject = getNativeModule();
+    const peerId = this.runtime.peerId;
+    if (moduleObject === null || peerId.length <= 0) {
+      const eventList: TransferNativeRtcEventList = {
+        success: false,
+        peerId: peerId,
+        message: 'Native Peer 尚未创建。',
+        errorCode: 'PEER_UNAVAILABLE',
+        backend: this.runtime.capabilities.backend,
+        events: []
+      };
+      return eventList;
+    }
+
+    const eventList = this.normalizeEventList(moduleObject.pollEvents(peerId));
+    this.applyPolledEvents(eventList);
+    return eventList;
+  }
+
+  private setProbing(): void {
+    const nextRuntime = cloneTransferNativeRtcRuntime(this.runtime);
+    nextRuntime.status = 'probing';
+    nextRuntime.lastMessage = '正在检测 Native RTC 能力。';
+    nextRuntime.lastError = '';
+    nextRuntime.updatedAt = Date.now();
+    this.runtime = nextRuntime;
+  }
+
+  private ensureCapabilities(): TransferNativeRtcCapabilities {
+    if (this.runtime.capabilities.nativeModuleLoaded) {
+      return this.runtime.capabilities;
+    }
+    const runtime = this.probeCapabilities();
+    return runtime.capabilities;
+  }
+
+  private normalizeCapabilities(imported: TransferRtcNativeCapabilitiesImport): TransferNativeRtcCapabilities {
+    const backend: TransferNativeRtcBackend = normalizeTransferNativeRtcBackend(
+      typeof imported.backend === 'string' ? imported.backend : ''
+    );
+    const message = typeof imported.message === 'string' && imported.message.length > 0 ?
+      imported.message : STUB_UNAVAILABLE_MESSAGE;
+    const capabilities: TransferNativeRtcCapabilities = {
+      nativeModuleLoaded: imported.nativeModuleLoaded === true,
+      backend: backend,
+      backendVersion: typeof imported.backendVersion === 'string' ? imported.backendVersion : '',
+      apiVersion: typeof imported.apiVersion === 'string' ? imported.apiVersion : '',
+      dataChannelSupported: imported.dataChannelSupported === true,
+      message: message
+    };
+    return capabilities;
+  }
+
+  private normalizeResult(imported: TransferRtcNativeResultImport): TransferNativeRtcResult {
+    const result: TransferNativeRtcResult = {
+      success: imported.success === true,
+      peerId: typeof imported.peerId === 'string' ? imported.peerId : '',
+      operation: typeof imported.operation === 'string' ? imported.operation : '',
+      message: typeof imported.message === 'string' ? imported.message : STUB_UNAVAILABLE_MESSAGE,
+      errorCode: typeof imported.errorCode === 'string' ? imported.errorCode : '',
+      backend: typeof imported.backend === 'string' ? imported.backend : ''
+    };
+    return result;
+  }
+
+  private normalizeSdpResult(imported: TransferRtcNativeSdpResultImport): TransferNativeRtcSdpResult {
+    const result: TransferNativeRtcSdpResult = {
+      success: imported.success === true,
+      peerId: typeof imported.peerId === 'string' ? imported.peerId : '',
+      sdpType: typeof imported.sdpType === 'string' ? imported.sdpType : '',
+      sdp: typeof imported.sdp === 'string' ? imported.sdp : '',
+      message: typeof imported.message === 'string' ? imported.message : STUB_UNAVAILABLE_MESSAGE,
+      errorCode: typeof imported.errorCode === 'string' ? imported.errorCode : '',
+      backend: typeof imported.backend === 'string' ? imported.backend : ''
+    };
+    return result;
+  }
+
+  private normalizeEventList(imported: TransferRtcNativeEventListImport): TransferNativeRtcEventList {
+    const events: TransferNativeRtcEvent[] = [];
+    const importedEvents = Array.isArray(imported.events) ? imported.events : [];
+    for (let index = 0; index < importedEvents.length; index++) {
+      const importedEvent = importedEvents[index];
+      const event: TransferNativeRtcEvent = {
+        type: typeof importedEvent.type === 'string' ? importedEvent.type : '',
+        peerId: typeof importedEvent.peerId === 'string' ? importedEvent.peerId : '',
+        payload: typeof importedEvent.payload === 'string' ? importedEvent.payload : '',
+        sdpType: typeof importedEvent.sdpType === 'string' ? importedEvent.sdpType : '',
+        sdp: typeof importedEvent.sdp === 'string' ? importedEvent.sdp : '',
+        candidate: typeof importedEvent.candidate === 'string' ? importedEvent.candidate : '',
+        sdpMid: typeof importedEvent.sdpMid === 'string' ? importedEvent.sdpMid : '',
+        sdpMLineIndex: typeof importedEvent.sdpMLineIndex === 'number' &&
+          Number.isFinite(importedEvent.sdpMLineIndex) ? importedEvent.sdpMLineIndex : 0,
+        message: typeof importedEvent.message === 'string' ? importedEvent.message : '',
+        state: typeof importedEvent.state === 'string' ? importedEvent.state : '',
+        timestamp: typeof importedEvent.timestamp === 'number' && Number.isFinite(importedEvent.timestamp) ?
+          importedEvent.timestamp : 0
+      };
+      events.push(event);
+    }
+
+    const result: TransferNativeRtcEventList = {
+      success: imported.success === true,
+      peerId: typeof imported.peerId === 'string' ? imported.peerId : '',
+      message: typeof imported.message === 'string' ? imported.message : '',
+      errorCode: typeof imported.errorCode === 'string' ? imported.errorCode : '',
+      backend: typeof imported.backend === 'string' ? imported.backend : '',
+      events: events
+    };
+    return result;
+  }
+
+  private applyOperationResult(
+    result: TransferNativeRtcResult,
+    capabilities: TransferNativeRtcCapabilities,
+    sessionId: string,
+    role: TransferSignalRole
+  ): void {
+    const nextPeerId = result.peerId.length > 0 ? result.peerId : this.runtime.peerId;
+    const status: TransferNativeRtcStatus = result.success ? 'signaling' : 'failed';
+    const errorMessage = result.success ? '' : result.message;
+    this.runtime = this.buildRuntime(status, nextPeerId, sessionId, role, capabilities, result.message, errorMessage);
+  }
+
+  private applySdpFailure(result: TransferNativeRtcSdpResult): void {
+    if (result.errorCode === 'SDP_PENDING') {
+      const nextRuntime = cloneTransferNativeRtcRuntime(this.runtime);
+      nextRuntime.status = 'signaling';
+      nextRuntime.lastMessage = result.message;
+      nextRuntime.lastError = '';
+      nextRuntime.updatedAt = Date.now();
+      this.runtime = nextRuntime;
+      return;
+    }
+    this.runtime = this.buildRuntime('failed', result.peerId, this.runtime.sessionId, this.runtime.role,
+      this.runtime.capabilities, result.message, result.message);
+  }
+
+  private applyPolledEvents(eventList: TransferNativeRtcEventList): void {
+    if (!eventList.success) {
+      const nextRuntime = cloneTransferNativeRtcRuntime(this.runtime);
+      nextRuntime.lastError = eventList.message;
+      nextRuntime.updatedAt = Date.now();
+      this.runtime = nextRuntime;
+      return;
+    }
+
+    if (eventList.events.length <= 0) {
+      return;
+    }
+
+    const nextRuntime = cloneTransferNativeRtcRuntime(this.runtime);
+    for (let index = 0; index < eventList.events.length; index++) {
+      const event = eventList.events[index];
+      if (event.type === 'data_channel_open') {
+        nextRuntime.status = 'connected';
+      } else if (event.type === 'peer_state' && event.state === 'connected') {
+        nextRuntime.status = 'connected';
+      } else if (event.type === 'peer_state' && event.state === 'failed') {
+        nextRuntime.status = 'failed';
+        nextRuntime.lastError = event.message.length > 0 ? event.message : 'Native PeerConnection 连接失败。';
+      } else if (event.type === 'data_channel_error') {
+        nextRuntime.lastError = event.message;
+      }
+      if (event.message.length > 0) {
+        nextRuntime.lastMessage = event.message;
+      }
+    }
+    nextRuntime.updatedAt = Date.now();
+    this.runtime = nextRuntime;
+  }
+
+  private createEmptySdpResult(peerId: string, sdpType: string, message: string): TransferNativeRtcSdpResult {
+    const result: TransferNativeRtcSdpResult = {
+      success: false,
+      peerId: peerId,
+      sdpType: sdpType,
+      sdp: '',
+      message: message,
+      errorCode: 'PEER_UNAVAILABLE',
+      backend: this.runtime.capabilities.backend
+    };
+    return result;
+  }
+
+  private buildSessionId(roomCode: string): string {
+    const normalizedRoomCode = roomCode.trim().toUpperCase();
+    if (normalizedRoomCode.length > 0) {
+      return `rtc_${normalizedRoomCode}`;
+    }
+    return `rtc_${generateSimpleId()}`;
+  }
+
+  private buildRuntime(
+    status: TransferNativeRtcStatus,
+    peerId: string,
+    sessionId: string,
+    role: TransferSignalRole,
+    capabilities: TransferNativeRtcCapabilities,
+    message: string,
+    errorMessage: string
+  ): TransferNativeRtcRuntime {
+    const runtime: TransferNativeRtcRuntime = {
+      status: status,
+      peerId: peerId,
+      sessionId: sessionId,
+      role: role,
+      capabilities: cloneTransferNativeRtcCapabilities(capabilities),
+      lastMessage: message,
+      lastError: errorMessage,
+      updatedAt: Date.now()
+    };
+    return runtime;
+  }
+}
+
+export function getTransferNativeRtcService(): TransferNativeRtcService {
+  return TransferNativeRtcService.getInstance();
+}
