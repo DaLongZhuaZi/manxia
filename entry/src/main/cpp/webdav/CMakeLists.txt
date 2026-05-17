@@ -113,6 +113,13 @@ add_library(webdav_native SHARED
     ${LIBSMB2_SOURCES}
 )
 
+set(WEBDAV_NATIVE_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/webdav_native_output)
+set_target_properties(webdav_native PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${WEBDAV_NATIVE_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${WEBDAV_NATIVE_OUTPUT_DIR}
+    ARCHIVE_OUTPUT_DIRECTORY ${WEBDAV_NATIVE_OUTPUT_DIR}
+)
+
 # libsmb2 编译配置
 target_compile_definitions(webdav_native PRIVATE HAVE_CONFIG_H)
 target_compile_definitions(webdav_native PRIVATE _GNU_SOURCE)

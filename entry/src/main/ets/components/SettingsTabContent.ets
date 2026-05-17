@@ -472,7 +472,7 @@ export struct SettingsTabContent {
             }
           }, 'guide_main_setting_network_folder')
 
-          this.buildSettingItem('局域网传书', '在同一局域网内通过浏览器直连漫匣并传输文件', $r('sys.symbol.wifi'), () => {
+          this.buildSettingItem('局域网传书', '在同一局域网内通过浏览器直连漫匣并传输文件', $r('sys.symbol.computer_host_fill'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'TransferPage',

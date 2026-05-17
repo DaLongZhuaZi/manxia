@@ -36,6 +36,16 @@ add_library(avif_decoder SHARED
     avif_napi.cpp
 )
 
+# Hvigor 会把 native 产物同步到 CMAKE_LIBRARY_OUTPUT_DIRECTORY。若目标本身也直接输出到
+# 该目录，Windows 上的同路径 hardlink/copy 判定可能误删源文件；先输出到子目录再交给
+# Hvigor 同步，避免 libavif_decoder.so -> libavif_decoder.so 的同路径复制。
+set(AVIF_DECODER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/avif_decoder_output)
+set_target_properties(avif_decoder PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${AVIF_DECODER_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${AVIF_DECODER_OUTPUT_DIR}
+    ARCHIVE_OUTPUT_DIRECTORY ${AVIF_DECODER_OUTPUT_DIR}
+)
+
 # 设置头文件目录
 target_include_directories(avif_decoder PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libavif/include

@@ -26,6 +26,14 @@ add_library(jsvm_engine SHARED
     jsvm_engine.cpp
 )
 
+# 避免 Hvigor/Windows 在同路径同步 native 产物时误删源文件。
+set(JSVM_ENGINE_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/jsvm_engine_output)
+set_target_properties(jsvm_engine PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${JSVM_ENGINE_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${JSVM_ENGINE_OUTPUT_DIR}
+    ARCHIVE_OUTPUT_DIRECTORY ${JSVM_ENGINE_OUTPUT_DIR}
+)
+
 # 构建此可执行文件需要链接的库
 target_link_libraries(jsvm_engine PUBLIC 
     libace_napi.z.so 
@@ -47,3 +55,6 @@ add_subdirectory(webdav)
 
 # AVIF图片解码模块（使用libavif实现AVIF格式支持）
 add_subdirectory(avif)
+
+# 局域网传书 Native RTC 数据通道外壳
+add_subdirectory(transfer_rtc)

@@ -86,6 +86,14 @@ response.json
 /entry/src/main/cpp/webdav/build-libssh2-arm64/
 /entry/src/main/cpp/webdav/build-mbedtls-arm64/
 
+# Transfer RTC third-party sources and native build outputs
+/entry/src/main/cpp/transfer_rtc/third_party/libdatachannel/
+/entry/src/main/cpp/transfer_rtc/third_party/mbedtls-3.5.1/
+/entry/src/main/cpp/transfer_rtc/build-libdatachannel-arm64*/
+/entry/src/main/cpp/transfer_rtc/build-mbedtls-rtc-arm64/
+/entry/src/main/cpp/transfer_rtc/install-libdatachannel-arm64/
+/entry/src/main/cpp/transfer_rtc/install-mbedtls-rtc-arm64/
+
 # Compiled native libraries (keep source, ignore build outputs)
 # Note: libs/ contains pre-compiled dependencies, should be tracked
 # /entry/libs/ - tracked for libcurl, mbedtls
