@@ -108,6 +108,7 @@ export interface BookTransitionParams {
   onReaderReady?: () => void;              // 阅读器就绪回调
   onAnimationComplete?: () => void;        // 动画完成回调
   onPhaseChange?: (phase: TransitionPhase) => void;  // 阶段变化回调
+  resolveCloseCoverPosition?: () => CoverPosition | null;  // 关闭动画回封面前复测位置，用于修正窗口模式切换后的坐标基准
 }
 
 @Component
@@ -130,6 +131,7 @@ export struct BookOpenTransition {
   // 回调函数
   onAnimationComplete: () => void = () => {};
   onPhaseChange: (phase: TransitionPhase) => void = () => {};
+  resolveCloseCoverPosition: () => CoverPosition | null = () => null;
   
   // ========== 内部状态 ==========
   @State private currentPhase: TransitionPhase = TransitionPhase.IDLE;
@@ -999,6 +1001,43 @@ export struct BookOpenTransition {
     this.animationTimer = setInterval(animate, 16);
   }
 
+  private getCloseFadeTargetCoverPosition(): CoverPosition {
+    const targetCoverPosition: CoverPosition = {
+      x: this.coverPosition.x,
+      y: this.coverPosition.y,
+      width: this.coverPosition.width,
+      height: this.coverPosition.height
+    };
+    const resolvedCloseCoverPosition = this.resolveCloseCoverPosition();
+    if (resolvedCloseCoverPosition === null) {
+      return targetCoverPosition;
+    }
+
+    const deltaX = resolvedCloseCoverPosition.x - this.coverPosition.x;
+    const deltaY = resolvedCloseCoverPosition.y - this.coverPosition.y;
+    const statusBarHeight = AppStorage.get<number>('statusBarHeight') ?? 0;
+    const halfStatusBarHeight = statusBarHeight / 2;
+    const isSystemBarRebaseDelta = halfStatusBarHeight > 0
+      && Math.abs(deltaX) <= 1
+      && Math.abs(Math.abs(deltaY) - halfStatusBarHeight) <= 2.5;
+
+    if (isSystemBarRebaseDelta) {
+      targetCoverPosition.x = this.coverPosition.x - deltaX;
+      targetCoverPosition.y = this.coverPosition.y - deltaY;
+      logger.info(
+        TAG,
+        `close fade: 检测到系统栏坐标基准差，反向补偿目标位置, initial=(${this.coverPosition.x}, ${this.coverPosition.y}, ${this.coverPosition.width}x${this.coverPosition.height}), resolved=(${resolvedCloseCoverPosition.x}, ${resolvedCloseCoverPosition.y}, ${resolvedCloseCoverPosition.width}x${resolvedCloseCoverPosition.height}), delta=(${deltaX}, ${deltaY}), statusBar=${statusBarHeight}, target=(${targetCoverPosition.x}, ${targetCoverPosition.y}, ${targetCoverPosition.width}x${targetCoverPosition.height})`
+      );
+      return targetCoverPosition;
+    }
+
+    logger.info(
+      TAG,
+      `close fade: 保持初始目标位置，复测位置仅诊断, initial=(${targetCoverPosition.x}, ${targetCoverPosition.y}, ${targetCoverPosition.width}x${targetCoverPosition.height}), resolved=(${resolvedCloseCoverPosition.x}, ${resolvedCloseCoverPosition.y}, ${resolvedCloseCoverPosition.width}x${resolvedCloseCoverPosition.height}), delta=(${deltaX}, ${deltaY})`
+    );
+    return targetCoverPosition;
+  }
+
   
   /**
    * 阶段3：淡出消失
@@ -1008,6 +1047,8 @@ export struct BookOpenTransition {
     this.setPhase(TransitionPhase.FADING);
     this.animationStartTime = Date.now();
     const duration = Math.max(this.config.fadeDuration + 120, 320);
+
+    const targetCoverPosition: CoverPosition = this.getCloseFadeTargetCoverPosition();
 
     const startX = this.currentX;
     const startY = this.currentY;
@@ -1023,10 +1064,10 @@ export struct BookOpenTransition {
       const easedShadow = this.easeOutCubic(progress);
 
       // Stage-3 moves the closed 3D book back to detail-page cover slot.
-      this.currentX = startX + (this.coverPosition.x - startX) * easedMove;
-      this.currentY = startY + (this.coverPosition.y - startY) * easedMove;
-      this.currentWidth = startWidth + (this.coverPosition.width - startWidth) * easedMove;
-      this.currentHeight = startHeight + (this.coverPosition.height - startHeight) * easedMove;
+      this.currentX = startX + (targetCoverPosition.x - startX) * easedMove;
+      this.currentY = startY + (targetCoverPosition.y - startY) * easedMove;
+      this.currentWidth = startWidth + (targetCoverPosition.width - startWidth) * easedMove;
+      this.currentHeight = startHeight + (targetCoverPosition.height - startHeight) * easedMove;
       this.currentOpacity = 1;
       this.closeReaderOpacity = 0;
       this.closeBookOpacity = 1;
@@ -1039,10 +1080,10 @@ export struct BookOpenTransition {
 
       if (progress >= 1) {
         this.stopAnimation();
-        this.currentX = this.coverPosition.x;
-        this.currentY = this.coverPosition.y;
-        this.currentWidth = this.coverPosition.width;
-        this.currentHeight = this.coverPosition.height;
+        this.currentX = targetCoverPosition.x;
+        this.currentY = targetCoverPosition.y;
+        this.currentWidth = targetCoverPosition.width;
+        this.currentHeight = targetCoverPosition.height;
         this.currentOpacity = 1;
         this.closeReaderOpacity = 0;
         this.closeBookOpacity = 1;

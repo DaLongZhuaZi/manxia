@@ -3921,6 +3921,11 @@ struct TransferPageContent {
         label: '单文件上限',
         value: `${this.viewState.config.maxFileSizeMb} MB`
       })
+      TransferInfoRowView({
+        themeState: this.themeState,
+        label: '收件箱总量上限',
+        value: `${this.viewState.config.maxTotalSizeMb} MB`
+      })
       TransferInfoRowView({ themeState: this.themeState, label: '后台运行', value: this.viewState.backgroundTransferText })
       TransferInfoRowView({ themeState: this.themeState, label: '状态通道', value: this.viewState.wsEnabledText })
     }
@@ -3948,7 +3953,8 @@ struct TransferPageContent {
     .key(
       `transfer_config_${this.viewState.renderVersion}_${this.viewState.config.port}_` +
         `${this.viewState.config.autoStopMinutes}_${this.viewState.config.maxFileSizeMb}_` +
-        `${this.viewState.config.allowBackgroundTransfer ? 'bg1' : 'bg0'}_${this.viewState.config.wsEnabled ? 'ws1' : 'ws0'}`
+        `${this.viewState.config.maxTotalSizeMb}_${this.viewState.config.allowBackgroundTransfer ? 'bg1' : 'bg0'}_` +
+        `${this.viewState.config.wsEnabled ? 'ws1' : 'ws0'}`
     )
   }
 

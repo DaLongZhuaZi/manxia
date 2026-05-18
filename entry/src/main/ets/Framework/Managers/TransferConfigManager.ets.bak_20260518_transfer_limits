@@ -28,7 +28,7 @@ export class TransferConfigManager {
 
   public getConfig(): TransferConfig {
     const defaults = createDefaultTransferConfig();
-    const persistedConfig: TransferConfig = {
+    const config: TransferConfig = {
       port: this.settingsManager.getNumber(SettingKeys.LAN_TRANSFER_PORT, defaults.port),
       autoStopMinutes: this.settingsManager.getNumber(
         SettingKeys.LAN_TRANSFER_AUTO_STOP_MINUTES,
@@ -37,10 +37,6 @@ export class TransferConfigManager {
       maxFileSizeMb: this.settingsManager.getNumber(
         SettingKeys.LAN_TRANSFER_MAX_FILE_SIZE_MB,
         defaults.maxFileSizeMb
-      ),
-      maxTotalSizeMb: this.settingsManager.getNumber(
-        SettingKeys.LAN_TRANSFER_MAX_TOTAL_SIZE_MB,
-        defaults.maxTotalSizeMb
       ),
       allowBackgroundTransfer: this.settingsManager.getBoolean(
         SettingKeys.LAN_TRANSFER_ALLOW_BACKGROUND_TRANSFER,
@@ -51,8 +47,7 @@ export class TransferConfigManager {
         defaults.wsEnabled
       )
     };
-    const upgradedConfig = this.upgradeLegacyCapacityDefaults(persistedConfig, defaults);
-    return sanitizeTransferConfig(upgradedConfig);
+    return sanitizeTransferConfig(config);
   }
 
   public async saveConfig(config: TransferConfig): Promise<void> {
@@ -66,10 +61,6 @@ export class TransferConfigManager {
       SettingKeys.LAN_TRANSFER_MAX_FILE_SIZE_MB,
       normalized.maxFileSizeMb
     );
-    await this.settingsManager.setNumber(
-      SettingKeys.LAN_TRANSFER_MAX_TOTAL_SIZE_MB,
-      normalized.maxTotalSizeMb
-    );
     await this.settingsManager.setBoolean(
       SettingKeys.LAN_TRANSFER_ALLOW_BACKGROUND_TRANSFER,
       normalized.allowBackgroundTransfer
@@ -80,7 +71,7 @@ export class TransferConfigManager {
     );
     logger.info(
       TAG,
-      `局域网传书配置已保存: 端口=${normalized.port}, 自动停止=${normalized.autoStopMinutes}分钟, 单文件上限=${normalized.maxFileSizeMb}MB, 总量上限=${normalized.maxTotalSizeMb}MB`
+      `局域网传书配置已保存: 端口=${normalized.port}, 自动停止=${normalized.autoStopMinutes}分钟, 文件上限=${normalized.maxFileSizeMb}MB`
     );
   }
 
@@ -92,27 +83,7 @@ export class TransferConfigManager {
     const targetConfig = config ? cloneTransferConfig(config) : this.getConfig();
     const wsStatus = targetConfig.wsEnabled ? '开启' : '关闭';
     const backgroundStatus = targetConfig.allowBackgroundTransfer ? '允许' : '关闭';
-    return `HTTP ${targetConfig.port} / 自动停止 ${targetConfig.autoStopMinutes} 分钟 / 单文件 ${targetConfig.maxFileSizeMb} MB / 总量 ${targetConfig.maxTotalSizeMb} MB / 后台 ${backgroundStatus} / WS ${wsStatus}`;
-  }
-
-  private upgradeLegacyCapacityDefaults(config: TransferConfig, defaults: TransferConfig): TransferConfig {
-    let maxFileSizeMb = config.maxFileSizeMb;
-    let maxTotalSizeMb = config.maxTotalSizeMb;
-    if (maxFileSizeMb === 2048 || maxFileSizeMb === 5120) {
-      maxFileSizeMb = defaults.maxFileSizeMb;
-    }
-    if (maxTotalSizeMb === 20480) {
-      maxTotalSizeMb = defaults.maxTotalSizeMb;
-    }
-    const upgradedConfig: TransferConfig = {
-      port: config.port,
-      autoStopMinutes: config.autoStopMinutes,
-      maxFileSizeMb: maxFileSizeMb,
-      maxTotalSizeMb: maxTotalSizeMb,
-      allowBackgroundTransfer: config.allowBackgroundTransfer,
-      wsEnabled: config.wsEnabled
-    };
-    return upgradedConfig;
+    return `HTTP ${targetConfig.port} / 自动停止 ${targetConfig.autoStopMinutes} 分钟 / 文件上限 ${targetConfig.maxFileSizeMb} MB / 后台 ${backgroundStatus} / WS ${wsStatus}`;
   }
 }
 

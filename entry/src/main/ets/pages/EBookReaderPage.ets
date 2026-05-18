@@ -59,6 +59,9 @@ import {
   ReadAloudSettings,
   mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings,
+  TEXT_READER_FONT_SIZE_MIN,
+  TEXT_READER_FONT_SIZE_MAX,
+  clampTextReaderFontSize,
   isTextFile,
   TextAlignment,
   SavedBackgroundImage,
@@ -112,6 +115,7 @@ interface ReaderKitPositionSnapshot {
 struct EBookReaderPage {
   private static readonly TOOLBAR_AUTO_HIDE_DELAY_MS: number = 2200;
   private static readonly GUIDE_LAYOUT_STABILIZE_DELAY_MS: number = 140;
+  private static readonly INTERACTION_HINT_READER_SCOPE: string = 'ebook';
   private static hasShownInteractionHint: boolean = false;
   private static lastShownInteractionHintKey: string = '';
   @State pathStack: NavPathStack = new NavPathStack();
@@ -479,12 +483,43 @@ struct EBookReaderPage {
   }
 
   private getInteractionHintKey(settings: TextReaderSettings = this.textReaderSettings): string {
-    return `${settings.readingMode}`;
+    const tapToTurnFlag = settings.tapToTurn ? '1' : '0';
+    return `mode=${settings.readingMode}|direction=${settings.readingDirection}|tap=${tapToTurnFlag}`;
+  }
+
+  private getInteractionHintSeenSettingKey(hintKey: string): string {
+    const encodedKey = encodeURIComponent(hintKey);
+    return `${SettingKeys.TEXT_READER_INTERACTION_HINT_SEEN_PREFIX}${EBookReaderPage.INTERACTION_HINT_READER_SCOPE}_${encodedKey}`;
+  }
+
+  private hasSeenInteractionHint(hintKey: string): boolean {
+    if (EBookReaderPage.hasShownInteractionHint && EBookReaderPage.lastShownInteractionHintKey === hintKey) {
+      return true;
+    }
+    return this.settingsManager.getBoolean(this.getInteractionHintSeenSettingKey(hintKey), false);
+  }
+
+  private markInteractionHintSeen(hintKey: string): void {
+    EBookReaderPage.lastShownInteractionHintKey = hintKey;
+    EBookReaderPage.hasShownInteractionHint = true;
+    if (this.settingsManager.getBoolean(this.getInteractionHintSeenSettingKey(hintKey), false)) {
+      return;
+    }
+    void this.persistInteractionHintSeen(hintKey);
+  }
+
+  private async persistInteractionHintSeen(hintKey: string): Promise<void> {
+    try {
+      await this.settingsManager.setBoolean(this.getInteractionHintSeenSettingKey(hintKey), true);
+      logger.debug(TAG, `已持久化文本阅读交互提示标记: key=${hintKey}`);
+    } catch (error) {
+      logger.warn(TAG, `保存文本阅读交互提示标记失败: ${String(error)}`);
+    }
   }
 
   private queueInteractionHintIfNeeded(settings: TextReaderSettings = this.textReaderSettings): void {
     const nextKey = this.getInteractionHintKey(settings);
-    if (!EBookReaderPage.hasShownInteractionHint || EBookReaderPage.lastShownInteractionHintKey !== nextKey) {
+    if (!this.hasSeenInteractionHint(nextKey)) {
       this.pendingInteractionHintKey = nextKey;
       return;
     }
@@ -519,15 +554,15 @@ struct EBookReaderPage {
       if (!this.pendingInteractionHintKey || !this.canShowInteractionOverlay()) {
         return;
       }
+      const shownHintKey = this.pendingInteractionHintKey;
       this.showTextInteractionOverlay = true;
-      EBookReaderPage.lastShownInteractionHintKey = this.pendingInteractionHintKey;
+      this.markInteractionHintSeen(shownHintKey);
       this.pendingInteractionHintKey = '';
-      EBookReaderPage.hasShownInteractionHint = true;
       this.clearInteractionOverlayTimer();
       this.interactionOverlayDismissTimer = setTimeout(() => {
         this.hideInteractionOverlay();
       }, 6000);
-      logger.info(TAG, `显示交互引导遮罩: 原因=${reason}, 标识=${EBookReaderPage.lastShownInteractionHintKey}`);
+      logger.info(TAG, `显示交互引导遮罩: 原因=${reason}, 标识=${shownHintKey}`);
     };
 
     if (delayMs > 0) {
@@ -1349,7 +1384,7 @@ struct EBookReaderPage {
     const settingsManager = SettingsManager.getInstance();
     
     // 获取全局纯文本阅读器设置
-    const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize);
+    const globalFontSize = clampTextReaderFontSize(settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize));
     const globalFontFamily = settingsManager.getString(SettingKeys.GLOBAL_TEXT_FONT_FAMILY, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontFamily);
     const globalFontWeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_WEIGHT, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontWeight);
     const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, DEFAULT_TEXT_READER_SETTINGS.textStyle.lineHeight);
@@ -1424,7 +1459,7 @@ struct EBookReaderPage {
       },
       savedBackgroundImages: savedImages,
       textStyle: {
-        fontSize: fontSize,
+        fontSize: clampTextReaderFontSize(fontSize),
         lineHeight: lineHeight,
         paragraphSpacing: paragraphSpacing,
         firstLineIndent: firstLineIndent,
@@ -1454,7 +1489,7 @@ struct EBookReaderPage {
     };
     
     // 同步背景图片设置
-    this.fontSize = fontSize;
+    this.fontSize = clampTextReaderFontSize(fontSize);
     this.lineHeight = lineHeight;
     this.bgColor = bgPreset.backgroundColor;
     this.textColor = bgPreset.textColor;
@@ -1492,7 +1527,7 @@ struct EBookReaderPage {
       },
       savedBackgroundImages: savedImages,
       textStyle: {
-        fontSize: settings.fontSize,
+        fontSize: clampTextReaderFontSize(settings.fontSize),
         lineHeight: settings.lineHeight,
         paragraphSpacing: settings.paragraphSpacing ?? 16,
         firstLineIndent: settings.firstLineIndent ?? 2,
@@ -2413,7 +2448,7 @@ struct EBookReaderPage {
   * 实时更新UI、应用到阅读器并保存到数据库
   */
   private adjustFontSize(delta: number): void {
-    const newSize = Math.max(12, Math.min(32, this.fontSize + delta));
+    const newSize = clampTextReaderFontSize(this.fontSize + delta);
     if (newSize === this.fontSize) {
       return;// 没有变化，不需要更新
     }
@@ -4732,8 +4767,8 @@ struct EBookReaderPage {
                 .fontFamily(this.appFontFamily)
               
               Text('这是预览文本，用于观察字体大小、行高与页边距效果。')
-                .fontSize(this.fontSize)
-                .lineHeight(this.fontSize * this.lineHeight)
+                .fontSize(clampTextReaderFontSize(this.fontSize))
+                .lineHeight(clampTextReaderFontSize(this.fontSize) * this.lineHeight)
                 .fontColor(this.textColor)
                 .width('100%')
                 .padding(12)
@@ -4750,7 +4785,7 @@ struct EBookReaderPage {
                 .fontColor($r('app.color.text_primary'))
                 .fontFamily(this.appFontFamily)
               Blank()
-              Text(`${this.fontSize}`)
+              Text(`${clampTextReaderFontSize(this.fontSize)}`)
                 .fontSize(14)
                 .fontColor($r('app.color.accent_primary'))
                 .fontFamily(this.appFontFamily)
@@ -4770,14 +4805,14 @@ struct EBookReaderPage {
                 })
 
               Slider({
-                value: this.fontSize,
-                min: 12,
-                max: 32,
+                value: clampTextReaderFontSize(this.fontSize),
+                min: TEXT_READER_FONT_SIZE_MIN,
+                max: TEXT_READER_FONT_SIZE_MAX,
                 step: 1
               })
                 .layoutWeight(1)
                 .onChange((value: number) => {
-                  this.fontSize = Math.round(value);
+                  this.fontSize = clampTextReaderFontSize(value);
                   this.saveSettings();
                 })
 

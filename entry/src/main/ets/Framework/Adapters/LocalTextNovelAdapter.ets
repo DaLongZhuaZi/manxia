@@ -6,7 +6,8 @@ import {
   TextPageTurnAnimation,
   BackgroundType,
   TextAlignment,
-  SavedBackgroundImage
+  SavedBackgroundImage,
+  clampTextReaderFontSize
 } from '../../Models/TextReaderModels';
 import { NovelReaderPageParams } from '../../pages/NovelBookshelfPage';
 
@@ -102,7 +103,7 @@ function resolveOptionalBoolean(value: boolean | undefined, fallback: boolean): 
 
 function buildComparableEBookReadingSettings(settings: EBookReadingSettings): EBookReadingSettings {
   return {
-    fontSize: settings.fontSize,
+    fontSize: clampTextReaderFontSize(settings.fontSize),
     fontFamily: settings.fontFamily,
     fontPath: settings.fontPath,
     fontWeight: settings.fontWeight,
@@ -231,7 +232,7 @@ export function buildTextReaderSettingsFromEBookSettings(
     return base;
   }
 
-  base.textStyle.fontSize = ebookSettings.fontSize || base.textStyle.fontSize;
+  base.textStyle.fontSize = clampTextReaderFontSize(ebookSettings.fontSize ?? base.textStyle.fontSize);
   base.textStyle.lineHeight = ebookSettings.lineHeight || base.textStyle.lineHeight;
   base.textStyle.fontWeight = ebookSettings.fontWeight || base.textStyle.fontWeight;
   base.textStyle.letterSpacing = ebookSettings.letterSpacing ?? base.textStyle.letterSpacing;
@@ -319,7 +320,7 @@ export function syncTextReaderSettingsToEBookSettings(
     backgroundImageOpacity: source.backgroundImageOpacity
   };
 
-  next.fontSize = settings.textStyle.fontSize;
+  next.fontSize = clampTextReaderFontSize(settings.textStyle.fontSize);
   next.fontFamily = settings.textStyle.fontFamily;
   next.fontPath = settings.textStyle.fontPath || '';
   next.fontWeight = settings.textStyle.fontWeight;
