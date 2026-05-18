@@ -27,6 +27,9 @@ import {
   TextPageTurnAnimation,
   BackgroundType,
   DEFAULT_TEXT_READER_SETTINGS,
+  TEXT_READER_FONT_SIZE_MIN,
+  TEXT_READER_FONT_SIZE_MAX,
+  clampTextReaderFontSize,
   isTextFile,
   TextAlignment,
   SavedBackgroundImage,
@@ -579,7 +582,7 @@ struct EBookReaderPage {
     const settingsManager = SettingsManager.getInstance();
     
     // 获取全局纯文本阅读器设置
-    const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize);
+    const globalFontSize = clampTextReaderFontSize(settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize));
     const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, DEFAULT_TEXT_READER_SETTINGS.textStyle.lineHeight);
     const globalParagraphSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, DEFAULT_TEXT_READER_SETTINGS.textStyle.paragraphSpacing);
     const globalFirstLineIndent = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, DEFAULT_TEXT_READER_SETTINGS.textStyle.firstLineIndent);
@@ -652,7 +655,7 @@ struct EBookReaderPage {
       },
       savedBackgroundImages: savedImages,
       textStyle: {
-        fontSize: fontSize,
+        fontSize: clampTextReaderFontSize(fontSize),
         lineHeight: lineHeight,
         paragraphSpacing: paragraphSpacing,
         firstLineIndent: firstLineIndent,
@@ -715,7 +718,7 @@ struct EBookReaderPage {
       },
       savedBackgroundImages: savedImages,
       textStyle: {
-        fontSize: settings.fontSize,
+        fontSize: clampTextReaderFontSize(settings.fontSize),
         lineHeight: settings.lineHeight,
         paragraphSpacing: settings.paragraphSpacing ?? 16,
         firstLineIndent: settings.firstLineIndent ?? 2,
@@ -851,7 +854,7 @@ struct EBookReaderPage {
 
     try {
       // 更新本地状态
-      this.fontSize = settings.fontSize;
+      this.fontSize = clampTextReaderFontSize(settings.fontSize);
       this.lineHeight = settings.lineHeight;
       this.bgColor = settings.backgroundColor;
       this.textColor = settings.textColor;
@@ -1034,7 +1037,7 @@ struct EBookReaderPage {
    * 实时更新UI、应用到阅读器并保存到数据库
    */
   private adjustFontSize(delta: number): void {
-    const newSize = Math.max(12, Math.min(32, this.fontSize + delta));
+    const newSize = clampTextReaderFontSize(this.fontSize + delta);
     if (newSize === this.fontSize) {
       return; // 没有变化，不需要更新
     }
@@ -1873,7 +1876,7 @@ struct EBookReaderPage {
       const settings = this.ebook.readingSettings;
       
       // 字体设置
-      settings.fontSize = this.textReaderSettings.textStyle.fontSize;
+      settings.fontSize = clampTextReaderFontSize(this.textReaderSettings.textStyle.fontSize);
       settings.lineHeight = this.textReaderSettings.textStyle.lineHeight;
       settings.fontWeight = this.textReaderSettings.textStyle.fontWeight;
       settings.letterSpacing = this.textReaderSettings.textStyle.letterSpacing;
@@ -2405,14 +2408,14 @@ struct EBookReaderPage {
                 })
 
               Slider({
-                value: this.fontSize,
-                min: 12,
-                max: 32,
+                value: clampTextReaderFontSize(this.fontSize),
+                min: TEXT_READER_FONT_SIZE_MIN,
+                max: TEXT_READER_FONT_SIZE_MAX,
                 step: 1
               })
                 .layoutWeight(1)
                 .onChange((value: number) => {
-                  this.fontSize = Math.round(value);
+                  this.fontSize = clampTextReaderFontSize(value);
                   this.saveSettings();
                 })
 

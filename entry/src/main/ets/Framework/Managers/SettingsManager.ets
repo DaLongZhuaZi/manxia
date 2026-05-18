@@ -86,6 +86,7 @@ export class SettingKeys {
   static readonly GLOBAL_TEXT_KEEP_SCREEN_ON = 'global_text_keep_screen_on';
   static readonly GLOBAL_TEXT_VOLUME_KEY_NAV = 'global_text_volume_key_nav';
   static readonly GLOBAL_TEXT_TAP_TO_TURN = 'global_text_tap_to_turn';
+  static readonly TEXT_READER_INTERACTION_HINT_SEEN_PREFIX = 'text_reader_interaction_hint_seen_';
   static readonly GLOBAL_TEXT_BG_IMAGE_PATH = 'global_text_bg_image_path';
   static readonly GLOBAL_TEXT_BG_IMAGE_OPACITY = 'global_text_bg_image_opacity';
   static readonly GLOBAL_TEXT_USE_BG_IMAGE = 'global_text_use_bg_image';
@@ -153,6 +154,7 @@ export class SettingKeys {
   static readonly LAN_TRANSFER_PORT = 'lan_transfer_port';
   static readonly LAN_TRANSFER_AUTO_STOP_MINUTES = 'lan_transfer_auto_stop_minutes';
   static readonly LAN_TRANSFER_MAX_FILE_SIZE_MB = 'lan_transfer_max_file_size_mb';
+  static readonly LAN_TRANSFER_MAX_TOTAL_SIZE_MB = 'lan_transfer_max_total_size_mb';
   static readonly LAN_TRANSFER_ALLOW_BACKGROUND_TRANSFER = 'lan_transfer_allow_background_transfer';
   static readonly LAN_TRANSFER_WS_ENABLED = 'lan_transfer_ws_enabled';
    

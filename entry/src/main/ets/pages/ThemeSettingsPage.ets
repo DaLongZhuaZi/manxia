@@ -30,11 +30,12 @@ import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelpe
 
 const TAG = 'ThemeSettingsPage';
 const HDS_TAB_MATERIAL_FOLLOW_GLOBAL: number = -1;
-const DEFAULT_HDS_TAB_OPACITY_RATIO: number = 0.72;
-const DEFAULT_HDS_TAB_MIN_OPACITY: number = 0.56;
-const DEFAULT_HDS_TAB_MAX_OPACITY: number = 0.82;
-const DEFAULT_HDS_TAB_LIGHT_HIGHLIGHT_OPACITY: number = 0.42;
-const DEFAULT_HDS_TAB_DARK_HIGHLIGHT_OPACITY: number = 0.22;
+const DEFAULT_HDS_TAB_MATERIAL_LEVEL: number = hdsMaterial.MaterialLevel.EXQUISITE;
+const DEFAULT_HDS_TAB_OPACITY_RATIO: number = 0.82;
+const DEFAULT_HDS_TAB_MIN_OPACITY: number = 0.68;
+const DEFAULT_HDS_TAB_MAX_OPACITY: number = 0.90;
+const DEFAULT_HDS_TAB_LIGHT_HIGHLIGHT_OPACITY: number = 0.50;
+const DEFAULT_HDS_TAB_DARK_HIGHLIGHT_OPACITY: number = 0.34;
 
 /**
  * 自定义主题数据接口（本地定义，与ThemeManager中的CustomThemeData保持一致）
@@ -274,7 +275,7 @@ export struct ThemeSettingsPage {
   @StorageLink('userTheme_hdsTabMaxOpacity') hdsTabMaxOpacity: number = DEFAULT_HDS_TAB_MAX_OPACITY;
   @StorageLink('userTheme_hdsTabLightHighlightOpacity') hdsTabLightHighlightOpacity: number = DEFAULT_HDS_TAB_LIGHT_HIGHLIGHT_OPACITY;
   @StorageLink('userTheme_hdsTabDarkHighlightOpacity') hdsTabDarkHighlightOpacity: number = DEFAULT_HDS_TAB_DARK_HIGHLIGHT_OPACITY;
-  @StorageLink('userTheme_hdsTabMaterialLevel') hdsTabMaterialLevel: number = HDS_TAB_MATERIAL_FOLLOW_GLOBAL;
+  @StorageLink('userTheme_hdsTabMaterialLevel') hdsTabMaterialLevel: number = DEFAULT_HDS_TAB_MATERIAL_LEVEL;
   @StorageLink('userTheme_hdsTabBlurEnabled') hdsTabBlurEnabled: boolean = true;
   @StorageLink('userTheme_hdsTabSideMargin') hdsTabSideMargin: number = 8;
   @StorageLink('userTheme_hdsTabBottomMargin') hdsTabBottomMargin: number = 0;
@@ -3464,7 +3465,7 @@ export struct ThemeSettingsPage {
         maxOpacity: DEFAULT_HDS_TAB_MAX_OPACITY,
         lightHighlightOpacity: DEFAULT_HDS_TAB_LIGHT_HIGHLIGHT_OPACITY,
         darkHighlightOpacity: DEFAULT_HDS_TAB_DARK_HIGHLIGHT_OPACITY,
-        materialLevel: HDS_TAB_MATERIAL_FOLLOW_GLOBAL,
+        materialLevel: DEFAULT_HDS_TAB_MATERIAL_LEVEL,
         blurEnabled: true,
         sideMargin: 8,
         bottomMargin: 0

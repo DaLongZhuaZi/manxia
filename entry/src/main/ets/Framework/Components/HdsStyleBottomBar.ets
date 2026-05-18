@@ -18,11 +18,11 @@ import {
 import { ThemeType } from '../Managers/ThemeManager';
 
 const HDS_BAR_SIDE_GUARD: number = 8;
-const HDS_GLASS_BAR_OPACITY_RATIO: number = 0.72;
-const HDS_GLASS_BAR_MAX_OPACITY: number = 0.82;
-const HDS_GLASS_BAR_MIN_OPACITY: number = 0.56;
-const HDS_GLASS_LIGHT_HIGHLIGHT_OPACITY: number = 0.42;
-const HDS_GLASS_DARK_HIGHLIGHT_OPACITY: number = 0.22;
+const HDS_GLASS_BAR_OPACITY_RATIO: number = 0.82;
+const HDS_GLASS_BAR_MAX_OPACITY: number = 0.90;
+const HDS_GLASS_BAR_MIN_OPACITY: number = 0.68;
+const HDS_GLASS_LIGHT_HIGHLIGHT_OPACITY: number = 0.50;
+const HDS_GLASS_DARK_HIGHLIGHT_OPACITY: number = 0.34;
 const HDS_GLOBAL_MATERIAL_LEVEL: number = -1;
 
 export interface HdsBottomBarTabConfig {
@@ -51,7 +51,7 @@ export struct HdsStyleBottomBar {
   @StorageProp('userTheme_hdsTabMaxOpacity') hdsTabMaxOpacity: number = HDS_GLASS_BAR_MAX_OPACITY;
   @StorageProp('userTheme_hdsTabLightHighlightOpacity') hdsTabLightHighlightOpacity: number = HDS_GLASS_LIGHT_HIGHLIGHT_OPACITY;
   @StorageProp('userTheme_hdsTabDarkHighlightOpacity') hdsTabDarkHighlightOpacity: number = HDS_GLASS_DARK_HIGHLIGHT_OPACITY;
-  @StorageProp('userTheme_hdsTabMaterialLevel') hdsTabMaterialLevel: number = HDS_GLOBAL_MATERIAL_LEVEL;
+  @StorageProp('userTheme_hdsTabMaterialLevel') hdsTabMaterialLevel: number = hdsMaterial.MaterialLevel.EXQUISITE;
   @StorageProp('userTheme_hdsTabBlurEnabled') hdsTabBlurEnabled: boolean = true;
   @StorageProp('userTheme_hdsTabSideMargin') hdsTabSideMargin: number = HDS_BAR_SIDE_GUARD;
   @StorageProp('userTheme_hdsTabBottomMargin') hdsTabBottomMargin: number = 0;
@@ -104,11 +104,11 @@ export struct HdsStyleBottomBar {
   }
 
   private getActiveColor(): string {
-    return this.themeType === ThemeType.DARK ? '#6EC8FF' : '#0A84FF';
+    return this.themeType === ThemeType.DARK ? '#8BD8FF' : '#006EDC';
   }
 
   private getInactiveColor(): string {
-    return this.themeType === ThemeType.DARK ? '#D6DEE8' : '#4B5563';
+    return this.themeType === ThemeType.DARK ? '#EDF6FF' : '#111827';
   }
 
   private getNavigationColor(selected: boolean): string {
@@ -164,8 +164,19 @@ export struct HdsStyleBottomBar {
     return `rgba(255, 255, 255, ${this.getGlassHighlightOpacity()})`;
   }
 
+  private getItemTextShadowColor(selected: boolean): ResourceColor {
+    if (this.themeType === ThemeType.DARK) {
+      return selected ? 'rgba(0, 0, 0, 0.46)' : 'rgba(0, 0, 0, 0.58)';
+    }
+    return selected ? 'rgba(255, 255, 255, 0.60)' : 'rgba(255, 255, 255, 0.78)';
+  }
+
   private getBlurStrategy(): BlurStrategy {
     return this.hdsTabBlurEnabled ? BlurStrategy.ENABLE : BlurStrategy.DISABLE;
+  }
+
+  private getBarBackgroundBlurStyle(): BlurStyle {
+    return this.hdsTabBlurEnabled ? BlurStyle.COMPONENT_THICK : BlurStyle.NONE;
   }
 
   private getBarSideMargin(): number {
@@ -234,7 +245,7 @@ export struct HdsStyleBottomBar {
       .barOverlap(true)
       .divider(this.buildDividerStyle())
       .barBackgroundColor(Color.Transparent)
-      .barBackgroundBlurStyle(BlurStyle.NONE)
+      .barBackgroundBlurStyle(this.getBarBackgroundBlurStyle())
       .barBackgroundStyle(this.buildTransparentTabsBackgroundStyle())
       .blurStrategy(this.getBlurStrategy())
       .barFloatingStyle(this.buildFloatingStyle())
@@ -283,7 +294,7 @@ export struct HdsStyleBottomBar {
       }
       .width(24)
       .height(24)
-      .opacity(this.isTabSelected(actualIndex) ? 1 : (this.themeType === ThemeType.DARK ? 0.84 : 0.88))
+      .opacity(this.isTabSelected(actualIndex) ? 1 : (this.themeType === ThemeType.DARK ? 0.92 : 0.94))
 
       Text(config.title)
         .fontSize(12)
@@ -291,6 +302,12 @@ export struct HdsStyleBottomBar {
         .fontWeight(this.isTabSelected(actualIndex) ? FontWeight.Medium : FontWeight.Normal)
         .maxLines(1)
         .textAlign(TextAlign.Center)
+        .textShadow({
+          radius: this.isTabSelected(actualIndex) ? 3 : 2,
+          color: this.getItemTextShadowColor(this.isTabSelected(actualIndex)),
+          offsetX: 0,
+          offsetY: 1
+        })
     }
     .width('100%')
     .height(44)

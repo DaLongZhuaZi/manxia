@@ -33,6 +33,7 @@ export interface TransferConfig {
   port: number;
   autoStopMinutes: number;
   maxFileSizeMb: number;
+  maxTotalSizeMb: number;
   allowBackgroundTransfer: boolean;
   wsEnabled: boolean;
 }
@@ -88,6 +89,9 @@ export interface TransferInfoResponse {
   backgroundRunning: boolean;
   uploadEnabled: boolean;
   maxFileSizeMb: number;
+  maxTotalSizeMb: number;
+  inboxUsedBytes: number;
+  inboxReservedBytes: number;
   addressList: TransferLocalAddress[];
   supportedFileTypes: string[];
   uploadProgress: TransferUploadProgressSnapshot;
@@ -358,8 +362,9 @@ export const TRANSFER_SUPPORTED_FILE_TYPES: string[] = [
 export function createDefaultTransferConfig(): TransferConfig {
   const config: TransferConfig = {
     port: 15124,
-    autoStopMinutes: 15,
-    maxFileSizeMb: 2048,
+    autoStopMinutes: 180,
+    maxFileSizeMb: 10240,
+    maxTotalSizeMb: 51200,
     allowBackgroundTransfer: true,
     wsEnabled: true
   };
@@ -466,6 +471,7 @@ export function cloneTransferConfig(config: TransferConfig): TransferConfig {
     port: config.port,
     autoStopMinutes: config.autoStopMinutes,
     maxFileSizeMb: config.maxFileSizeMb,
+    maxTotalSizeMb: config.maxTotalSizeMb,
     allowBackgroundTransfer: config.allowBackgroundTransfer,
     wsEnabled: config.wsEnabled
   };
@@ -968,6 +974,7 @@ export function sanitizeTransferConfig(source: TransferConfig): TransferConfig {
     port: sanitizeTransferPort(source.port),
     autoStopMinutes: sanitizeTransferAutoStopMinutes(source.autoStopMinutes),
     maxFileSizeMb: sanitizeTransferMaxFileSizeMb(source.maxFileSizeMb),
+    maxTotalSizeMb: sanitizeTransferMaxTotalSizeMb(source.maxTotalSizeMb, source.maxFileSizeMb),
     allowBackgroundTransfer: source.allowBackgroundTransfer,
     wsEnabled: source.wsEnabled
   };
@@ -999,6 +1006,9 @@ export function buildTransferInfoResponse(
     backgroundRunning: runtime.backgroundRunning,
     uploadEnabled: true,
     maxFileSizeMb: config.maxFileSizeMb,
+    maxTotalSizeMb: config.maxTotalSizeMb,
+    inboxUsedBytes: 0,
+    inboxReservedBytes: 0,
     addressList: addressList,
     supportedFileTypes: cloneTransferSupportedFileTypes(),
     uploadProgress: cloneTransferUploadProgressSnapshot(runtime.uploadProgress)
@@ -1063,7 +1073,7 @@ export function sanitizeTransferPort(port: number): number {
 
 export function sanitizeTransferAutoStopMinutes(minutes: number): number {
   if (!Number.isFinite(minutes)) {
-    return 15;
+    return 180;
   }
   const normalized = Math.floor(minutes);
   if (normalized < 1) {
@@ -1077,14 +1087,29 @@ export function sanitizeTransferAutoStopMinutes(minutes: number): number {
 
 export function sanitizeTransferMaxFileSizeMb(sizeMb: number): number {
   if (!Number.isFinite(sizeMb)) {
-    return 2048;
+    return 10240;
   }
   const normalized = Math.floor(sizeMb);
   if (normalized < 50) {
     return 50;
   }
-  if (normalized > 10240) {
-    return 10240;
+  if (normalized > 51200) {
+    return 51200;
+  }
+  return normalized;
+}
+
+export function sanitizeTransferMaxTotalSizeMb(totalSizeMb: number, fallbackFileSizeMb: number): number {
+  const fileSizeMb = sanitizeTransferMaxFileSizeMb(fallbackFileSizeMb);
+  if (!Number.isFinite(totalSizeMb)) {
+    return Math.max(51200, fileSizeMb);
+  }
+  const normalized = Math.floor(totalSizeMb);
+  if (normalized < fileSizeMb) {
+    return fileSizeMb;
+  }
+  if (normalized > 204800) {
+    return 204800;
   }
   return normalized;
 }

@@ -371,6 +371,21 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+export const TEXT_READER_FONT_SIZE_MIN: number = 2;
+export const TEXT_READER_FONT_SIZE_MAX: number = 50;
+export const TEXT_READER_FONT_SIZE_DEFAULT: number = 18;
+
+export function clampTextReaderFontSize(value: number): number {
+  if (!Number.isFinite(value)) {
+    return TEXT_READER_FONT_SIZE_DEFAULT;
+  }
+  return clampNumber(
+    Math.round(value),
+    TEXT_READER_FONT_SIZE_MIN,
+    TEXT_READER_FONT_SIZE_MAX
+  );
+}
+
 export function normalizeRemoteReadAloudStylePrompt(stylePrompt?: string | null): string {
   const raw = typeof stylePrompt === 'string' ? stylePrompt.trim() : '';
   if (raw.length <= 0) {
@@ -743,7 +758,7 @@ export interface TextReaderSettings {
  * 默认文字样式
  */
 export const DEFAULT_TEXT_STYLE: TextStyleSettings = {
-  fontSize: 18,
+  fontSize: TEXT_READER_FONT_SIZE_DEFAULT,
   lineHeight: 1.8,
   paragraphSpacing: 16,
   firstLineIndent: 2,

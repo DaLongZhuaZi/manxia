@@ -129,12 +129,15 @@ export class TransferRtcFileReceiverService {
 
     const clientName = message.clientName.length > 0 ? message.clientName : 'RTC 浏览器';
     const contentType = message.contentType.length > 0 ? message.contentType : 'application/octet-stream';
+    const config = this.configManager.getConfig();
+    const maxTotalSizeBytes = config.maxTotalSizeMb * 1024 * 1024;
     const uploadSession = await this.uploadStoreService.beginUpload(
       message.fileName,
       contentType,
       clientName,
       'rtc-datachannel',
-      message.size
+      message.size,
+      maxTotalSizeBytes
     );
     const receiveSession: TransferRtcActiveReceiveSession = {
       transferId: message.transferId,

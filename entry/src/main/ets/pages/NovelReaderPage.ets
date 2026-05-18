@@ -34,7 +34,8 @@ import {
   PageMargins,
   TextAlignment,
   SavedBackgroundImage,
-  normalizeReadAloudSettings
+  normalizeReadAloudSettings,
+  clampTextReaderFontSize
 } from '../Models/TextReaderModels';
 import { NovelReadProgress } from '../Models/NovelModels';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
@@ -107,6 +108,7 @@ export struct NovelReaderPage {
   private static readonly READ_ALOUD_RESUME_KEY_PREFIX: string = 'novel_read_aloud_resume_char_';
   private static readonly TOOLBAR_AUTO_HIDE_DELAY_MS: number = 2200;
   private static readonly GUIDE_LAYOUT_STABILIZE_DELAY_MS: number = 140;
+  private static readonly INTERACTION_HINT_READER_SCOPE: string = 'novel';
   private static hasShownInteractionHint: boolean = false;
   private static lastShownInteractionHintKey: string = '';
 
@@ -348,12 +350,43 @@ export struct NovelReaderPage {
   }
 
   private getInteractionHintKey(settings: TextReaderSettings = this.settings): string {
-    return `${settings.readingMode}`;
+    const tapToTurnFlag = settings.tapToTurn ? '1' : '0';
+    return `mode=${settings.readingMode}|direction=${settings.readingDirection}|tap=${tapToTurnFlag}`;
+  }
+
+  private getInteractionHintSeenSettingKey(hintKey: string): string {
+    const encodedKey = encodeURIComponent(hintKey);
+    return `${SettingKeys.TEXT_READER_INTERACTION_HINT_SEEN_PREFIX}${NovelReaderPage.INTERACTION_HINT_READER_SCOPE}_${encodedKey}`;
+  }
+
+  private hasSeenInteractionHint(hintKey: string): boolean {
+    if (NovelReaderPage.hasShownInteractionHint && NovelReaderPage.lastShownInteractionHintKey === hintKey) {
+      return true;
+    }
+    return this.settingsManager.getBoolean(this.getInteractionHintSeenSettingKey(hintKey), false);
+  }
+
+  private markInteractionHintSeen(hintKey: string): void {
+    NovelReaderPage.lastShownInteractionHintKey = hintKey;
+    NovelReaderPage.hasShownInteractionHint = true;
+    if (this.settingsManager.getBoolean(this.getInteractionHintSeenSettingKey(hintKey), false)) {
+      return;
+    }
+    void this.persistInteractionHintSeen(hintKey);
+  }
+
+  private async persistInteractionHintSeen(hintKey: string): Promise<void> {
+    try {
+      await this.settingsManager.setBoolean(this.getInteractionHintSeenSettingKey(hintKey), true);
+      logger.debug(TAG, `已持久化文本阅读交互提示标记: key=${hintKey}`);
+    } catch (error) {
+      logger.warn(TAG, `保存文本阅读交互提示标记失败: ${String(error)}`);
+    }
   }
 
   private queueInteractionHintIfNeeded(settings: TextReaderSettings = this.settings): void {
     const nextKey = this.getInteractionHintKey(settings);
-    if (!NovelReaderPage.hasShownInteractionHint || NovelReaderPage.lastShownInteractionHintKey !== nextKey) {
+    if (!this.hasSeenInteractionHint(nextKey)) {
       this.pendingInteractionHintKey = nextKey;
       return;
     }
@@ -386,15 +419,15 @@ export struct NovelReaderPage {
       if (!this.pendingInteractionHintKey || !this.canShowInteractionOverlay()) {
         return;
       }
+      const shownHintKey = this.pendingInteractionHintKey;
       this.showInteractionOverlay = true;
-      NovelReaderPage.lastShownInteractionHintKey = this.pendingInteractionHintKey;
+      this.markInteractionHintSeen(shownHintKey);
       this.pendingInteractionHintKey = '';
-      NovelReaderPage.hasShownInteractionHint = true;
       this.clearInteractionOverlayTimer();
       this.interactionOverlayDismissTimer = setTimeout(() => {
         this.hideInteractionOverlay();
       }, 6000);
-      logger.info(TAG, `show interaction overlay: reason=${reason}, key=${NovelReaderPage.lastShownInteractionHintKey}`);
+      logger.info(TAG, `show interaction overlay: reason=${reason}, key=${shownHintKey}`);
     };
 
     if (delayMs > 0) {
@@ -874,10 +907,24 @@ export struct NovelReaderPage {
     
       // 确保textStyle的所有属性都有默认值
     if (!settings.textStyle) {
-      settings.textStyle = DEFAULT_TEXT_STYLE;
+      settings.textStyle = {
+        fontSize: clampTextReaderFontSize(DEFAULT_TEXT_STYLE.fontSize),
+        lineHeight: DEFAULT_TEXT_STYLE.lineHeight,
+        paragraphSpacing: DEFAULT_TEXT_STYLE.paragraphSpacing,
+        firstLineIndent: DEFAULT_TEXT_STYLE.firstLineIndent,
+        letterSpacing: DEFAULT_TEXT_STYLE.letterSpacing,
+        textColor: DEFAULT_TEXT_STYLE.textColor,
+        fontWeight: DEFAULT_TEXT_STYLE.fontWeight,
+        fontFamily: DEFAULT_TEXT_STYLE.fontFamily,
+        textAlignment: DEFAULT_TEXT_STYLE.textAlignment
+      };
     } else {
       // 确保textStyle的所有属性都有默认值
-      if (settings.textStyle.fontSize === undefined) settings.textStyle.fontSize = 18;
+      if (settings.textStyle.fontSize === undefined) {
+        settings.textStyle.fontSize = DEFAULT_TEXT_STYLE.fontSize;
+      } else {
+        settings.textStyle.fontSize = clampTextReaderFontSize(settings.textStyle.fontSize);
+      }
       if (settings.textStyle.lineHeight === undefined) settings.textStyle.lineHeight = 1.8;
       if (settings.textStyle.paragraphSpacing === undefined) settings.textStyle.paragraphSpacing = 16;
       if (settings.textStyle.firstLineIndent === undefined) settings.textStyle.firstLineIndent = 2;
@@ -1842,7 +1889,7 @@ export struct NovelReaderPage {
       },
       savedBackgroundImages: savedBackgroundImages,
       textStyle: {
-        fontSize: sourceTextStyle.fontSize,
+        fontSize: clampTextReaderFontSize(sourceTextStyle.fontSize),
         lineHeight: sourceTextStyle.lineHeight,
         paragraphSpacing: sourceTextStyle.paragraphSpacing,
         firstLineIndent: sourceTextStyle.firstLineIndent,

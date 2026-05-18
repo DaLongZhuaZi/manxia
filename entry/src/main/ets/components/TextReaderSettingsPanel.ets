@@ -23,7 +23,10 @@ import {
   mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings,
   DEFAULT_TEXT_STYLE,
-  DEFAULT_PAGE_MARGINS
+  DEFAULT_PAGE_MARGINS,
+  TEXT_READER_FONT_SIZE_MIN,
+  TEXT_READER_FONT_SIZE_MAX,
+  clampTextReaderFontSize
 } from '../Models/TextReaderModels';
 import { picker } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
@@ -182,7 +185,7 @@ export struct TextReaderSettingsPanel {
       },
       savedBackgroundImages: this.settings.savedBackgroundImages ? this.settings.savedBackgroundImages.slice() : [],
       textStyle: {
-        fontSize: this.settings.textStyle.fontSize,
+        fontSize: clampTextReaderFontSize(this.settings.textStyle.fontSize),
         lineHeight: this.settings.textStyle.lineHeight,
         paragraphSpacing: this.settings.textStyle.paragraphSpacing,
         firstLineIndent: this.settings.textStyle.firstLineIndent,
@@ -484,8 +487,8 @@ export struct TextReaderSettingsPanel {
           .margin({ bottom: 8 })
         
         Text(this.previewText)
-          .fontSize(this.settings.textStyle.fontSize)
-          .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+          .fontSize(clampTextReaderFontSize(this.settings.textStyle.fontSize))
+          .lineHeight(clampTextReaderFontSize(this.settings.textStyle.fontSize) * this.settings.textStyle.lineHeight)
           .fontColor(this.settings.textStyle.textColor)
           .letterSpacing(this.settings.textStyle.letterSpacing)
           .fontWeight(this.settings.textStyle.fontWeight)
@@ -506,7 +509,7 @@ export struct TextReaderSettingsPanel {
             .fontSize(14)
             .fontColor($r('app.color.text_primary'))
           Blank()
-          Text(`${this.settings.textStyle.fontSize}`)
+          Text(`${clampTextReaderFontSize(this.settings.textStyle.fontSize)}`)
             .fontSize(14)
             .fontColor($r('app.color.accent_primary'))
         }
@@ -520,21 +523,22 @@ export struct TextReaderSettingsPanel {
             .backgroundColor($r('app.color.background_secondary'))
             .fontColor($r('app.color.text_primary'))
             .onClick(() => {
-              if (this.settings.textStyle.fontSize > 12) {
-                this.settings.textStyle.fontSize -= 1;
+              const nextFontSize = clampTextReaderFontSize(this.settings.textStyle.fontSize - 1);
+              if (nextFontSize !== this.settings.textStyle.fontSize) {
+                this.settings.textStyle.fontSize = nextFontSize;
                 this.updateAndNotify();
               }
             })
           
           Slider({
-            value: this.settings.textStyle.fontSize,
-            min: 12,
-            max: 32,
+            value: clampTextReaderFontSize(this.settings.textStyle.fontSize),
+            min: TEXT_READER_FONT_SIZE_MIN,
+            max: TEXT_READER_FONT_SIZE_MAX,
             step: 1
           })
             .layoutWeight(1)
             .onChange((value: number) => {
-              this.settings.textStyle.fontSize = Math.round(value);
+              this.settings.textStyle.fontSize = clampTextReaderFontSize(value);
               this.updateAndNotify();
             })
           
@@ -545,8 +549,9 @@ export struct TextReaderSettingsPanel {
             .backgroundColor($r('app.color.background_secondary'))
             .fontColor($r('app.color.text_primary'))
             .onClick(() => {
-              if (this.settings.textStyle.fontSize < 32) {
-                this.settings.textStyle.fontSize += 1;
+              const nextFontSize = clampTextReaderFontSize(this.settings.textStyle.fontSize + 1);
+              if (nextFontSize !== this.settings.textStyle.fontSize) {
+                this.settings.textStyle.fontSize = nextFontSize;
                 this.updateAndNotify();
               }
             })

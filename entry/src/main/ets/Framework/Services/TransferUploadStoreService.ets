@@ -7,7 +7,8 @@
  * 3. 将记录转交给 DataManagementPage 继续导入
  */
 
-import { fileIo, fileUri } from '@kit.CoreFileKit';
+import { fileIo, fileUri, statfs } from '@kit.CoreFileKit';
+import type { WriteOptions } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { logger } from '../../Utils/Logger';
 import { getContext } from '../../GlobalContext';
@@ -27,7 +28,8 @@ const TAG = 'TransferUploadStore';
 const INDEX_VERSION = 1;
 const MAX_RECORD_COUNT = 40;
 const STALE_PART_FILE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const UPLOAD_WRITE_BUFFER_FLUSH_BYTES = 1024 * 1024;
+const UPLOAD_WRITE_BUFFER_FLUSH_BYTES = 8 * 1024 * 1024;
+const UPLOAD_FREE_SPACE_RESERVE_BYTES = 512 * 1024 * 1024;
 const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
 const APP_STORAGE_TRANSFER_RESULT = 'pendingTransferImportResult';
 const APP_STORAGE_TRANSFER_TRACKING_ACTIVE = 'pendingTransferTrackingActive';
@@ -50,8 +52,16 @@ export interface TransferStagedUploadSession {
   flushedBytes: number;
   pendingWriteChunks: Uint8Array[];
   pendingWriteBytes: number;
+  reservedBytes: number;
   fileDescriptor: number;
   createdAt: number;
+}
+
+export interface TransferUploadStorageBudget {
+  inboxBytes: number;
+  reservedBytes: number;
+  freeBytes: number;
+  reserveBytes: number;
 }
 
 export class TransferUploadStoreService {
@@ -63,6 +73,8 @@ export class TransferUploadStoreService {
   private filesDir: string = '';
   private indexFilePath: string = '';
   private records: TransferUploadRecord[] = [];
+  private reservedUploadBytes: number = 0;
+  private storageBudgetLock: Promise<void> = Promise.resolve<void>(undefined);
   private readonly encoder: util.TextEncoder = new util.TextEncoder();
   private readonly decoder: util.TextDecoder = new util.TextDecoder('utf-8');
 
@@ -133,7 +145,8 @@ export class TransferUploadStoreService {
     contentType: string,
     clientName: string,
     clientIp: string,
-    expectedBytes: number
+    expectedBytes: number,
+    maxTotalBytes: number = 0
   ): Promise<TransferStagedUploadSession> {
     await this.initialize();
 
@@ -142,31 +155,62 @@ export class TransferUploadStoreService {
     if (!isTransferAcceptedImportCategory(importCategory)) {
       throw new Error(`暂不支持当前文件类型: ${normalizedFileName}`);
     }
+    await this.reserveUploadBudget(expectedBytes, maxTotalBytes);
 
-    const uploadId = this.buildRecordId();
-    const tempFilePath = `${this.filesDir}/${Date.now()}_${uploadId}.part`;
-    const file = await fileIo.open(
-      tempFilePath,
-      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC
-    );
+    try {
+      const uploadId = this.buildRecordId();
+      const tempFilePath = `${this.filesDir}/${Date.now()}_${uploadId}.part`;
+      const file = await fileIo.open(
+        tempFilePath,
+        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC
+      );
 
-    const session: TransferStagedUploadSession = {
-      uploadId: uploadId,
-      normalizedFileName: normalizedFileName,
-      contentType: contentType.trim(),
-      clientName: clientName.trim(),
-      clientIp: clientIp.trim(),
-      importCategory: importCategory,
-      tempFilePath: tempFilePath,
-      expectedBytes: expectedBytes,
-      receivedBytes: 0,
-      flushedBytes: 0,
-      pendingWriteChunks: [],
-      pendingWriteBytes: 0,
-      fileDescriptor: file.fd,
-      createdAt: Date.now()
+      const session: TransferStagedUploadSession = {
+        uploadId: uploadId,
+        normalizedFileName: normalizedFileName,
+        contentType: contentType.trim(),
+        clientName: clientName.trim(),
+        clientIp: clientIp.trim(),
+        importCategory: importCategory,
+        tempFilePath: tempFilePath,
+        expectedBytes: expectedBytes,
+        receivedBytes: 0,
+        flushedBytes: 0,
+        pendingWriteChunks: [],
+        pendingWriteBytes: 0,
+        reservedBytes: expectedBytes,
+        fileDescriptor: file.fd,
+        createdAt: Date.now()
+      };
+      return session;
+    } catch (error) {
+      this.releaseUploadBytes(expectedBytes);
+      throw new Error(this.stringifyError(error));
+    }
+  }
+
+  public async getStorageBudget(): Promise<TransferUploadStorageBudget> {
+    await this.initialize();
+    const budget: TransferUploadStorageBudget = {
+      inboxBytes: this.calculateInboxBytes(),
+      reservedBytes: this.reservedUploadBytes,
+      freeBytes: await this.getFreeStorageBytes(),
+      reserveBytes: UPLOAD_FREE_SPACE_RESERVE_BYTES
     };
-    return session;
+    return budget;
+  }
+
+  public getCachedInboxBytes(): number {
+    return this.calculateInboxBytes();
+  }
+
+  public getCachedReservedBytes(): number {
+    return this.reservedUploadBytes;
+  }
+
+  public async ensureUploadCapacity(expectedBytes: number, maxTotalBytes: number = 0): Promise<void> {
+    await this.initialize();
+    await this.ensureStorageBudget(expectedBytes, maxTotalBytes);
   }
 
   public async appendUploadChunk(session: TransferStagedUploadSession, chunk: Uint8Array): Promise<void> {
@@ -183,49 +227,61 @@ export class TransferUploadStoreService {
 
   public async finalizeUpload(session: TransferStagedUploadSession): Promise<TransferUploadRecord> {
     try {
-      await this.flushPendingUploadChunks(session);
-      this.assertUploadSizeMatches(session);
-      await fileIo.close(session.fileDescriptor);
-    } catch (error) {
-      await this.tryCloseUploadFile(session);
-      await this.tryDeleteFile(session.tempFilePath);
-      throw new Error(this.stringifyError(error));
+      try {
+        await this.flushPendingUploadChunks(session);
+        this.assertUploadSizeMatches(session);
+        await fileIo.close(session.fileDescriptor);
+      } catch (error) {
+        await this.tryCloseUploadFile(session);
+        await this.tryDeleteFile(session.tempFilePath);
+        throw new Error(this.stringifyError(error));
+      }
+
+      const storedFileName = `${Date.now()}_${session.uploadId}_${session.normalizedFileName}`;
+      const localPath = `${this.filesDir}/${storedFileName}`;
+      try {
+        await fileIo.rename(session.tempFilePath, localPath);
+      } catch (error) {
+        await this.tryDeleteFile(session.tempFilePath);
+        throw new Error(this.stringifyError(error));
+      }
+
+      const record: TransferUploadRecord = {
+        id: session.uploadId,
+        fileName: session.normalizedFileName,
+        localPath: localPath,
+        localUri: fileUri.getUriFromPath(localPath),
+        fileSizeBytes: session.receivedBytes,
+        contentType: session.contentType,
+        importCategory: session.importCategory,
+        clientName: session.clientName,
+        clientIp: session.clientIp,
+        source: 'lan_transfer',
+        receivedAt: session.createdAt,
+        status: 'received'
+      };
+
+      this.records.unshift(record);
+      const removedRecords = this.trimRecords();
+      await this.saveIndex();
+      await this.deleteRecordFiles(removedRecords);
+
+      logger.info(
+        TAG,
+        `已完成局域网传书文件落盘: ${record.fileName}, 分类=${record.importCategory}, 大小=${record.fileSizeBytes} 字节`
+      );
+      return cloneTransferUploadRecord(record);
+    } finally {
+      this.releaseUploadBytes(session.reservedBytes);
+      session.reservedBytes = 0;
     }
-
-    const storedFileName = `${Date.now()}_${session.uploadId}_${session.normalizedFileName}`;
-    const localPath = `${this.filesDir}/${storedFileName}`;
-    await fileIo.rename(session.tempFilePath, localPath);
-
-    const record: TransferUploadRecord = {
-      id: session.uploadId,
-      fileName: session.normalizedFileName,
-      localPath: localPath,
-      localUri: fileUri.getUriFromPath(localPath),
-      fileSizeBytes: session.receivedBytes,
-      contentType: session.contentType,
-      importCategory: session.importCategory,
-      clientName: session.clientName,
-      clientIp: session.clientIp,
-      source: 'lan_transfer',
-      receivedAt: session.createdAt,
-      status: 'received'
-    };
-
-    this.records.unshift(record);
-    const removedRecords = this.trimRecords();
-    await this.saveIndex();
-    await this.deleteRecordFiles(removedRecords);
-
-    logger.info(
-      TAG,
-      `已完成局域网传书文件落盘: ${record.fileName}, 分类=${record.importCategory}, 大小=${record.fileSizeBytes} 字节`
-    );
-    return cloneTransferUploadRecord(record);
   }
 
   public async abortUpload(session: TransferStagedUploadSession): Promise<void> {
     session.pendingWriteChunks = [];
     session.pendingWriteBytes = 0;
+    this.releaseUploadBytes(session.reservedBytes);
+    session.reservedBytes = 0;
     try {
       await fileIo.close(session.fileDescriptor);
     } catch (_error) {
@@ -238,14 +294,16 @@ export class TransferUploadStoreService {
     contentType: string,
     clientName: string,
     clientIp: string,
-    body: ArrayBuffer
+    body: ArrayBuffer,
+    maxTotalBytes: number = 0
   ): Promise<TransferUploadRecord> {
     const session = await this.beginUpload(
       originalFileName,
       contentType,
       clientName,
       clientIp,
-      body.byteLength
+      body.byteLength,
+      maxTotalBytes
     );
     try {
       await this.appendUploadChunk(session, new Uint8Array(body));
@@ -467,6 +525,84 @@ export class TransferUploadStoreService {
     }
   }
 
+  private async ensureStorageBudget(incomingBytes: number, maxTotalBytes: number = 0): Promise<void> {
+    const budget = await this.getStorageBudget();
+    const currentTotalBytes = budget.inboxBytes + budget.reservedBytes;
+    if (maxTotalBytes > 0 && currentTotalBytes + incomingBytes > maxTotalBytes) {
+      throw new Error(
+        `传书收件箱总量已达上限: 当前 ${this.formatBytes(currentTotalBytes)}，本次需要 ${this.formatBytes(incomingBytes)}，总上限 ${this.formatBytes(maxTotalBytes)}`
+      );
+    }
+    const requiredBytes = incomingBytes + budget.reserveBytes;
+    if (budget.freeBytes > 0 && budget.freeBytes < requiredBytes) {
+      throw new Error(
+        `设备剩余空间不足: 文件需要 ${this.formatBytes(incomingBytes)}，建议至少保留 ${this.formatBytes(budget.reserveBytes)}，当前可用 ${this.formatBytes(budget.freeBytes)}`
+      );
+    }
+  }
+
+  private async reserveUploadBudget(incomingBytes: number, maxTotalBytes: number): Promise<void> {
+    const previousLock = this.storageBudgetLock;
+    let releaseLock: () => void = (): void => {};
+    this.storageBudgetLock = new Promise<void>((resolve: () => void) => {
+      releaseLock = resolve;
+    });
+
+    await previousLock;
+    try {
+      await this.ensureStorageBudget(incomingBytes, maxTotalBytes);
+      this.reserveUploadBytes(incomingBytes);
+    } finally {
+      releaseLock();
+    }
+  }
+
+  private calculateInboxBytes(): number {
+    let totalBytes = 0;
+    for (const record of this.records) {
+      totalBytes += record.fileSizeBytes;
+    }
+    return totalBytes;
+  }
+
+  private reserveUploadBytes(bytes: number): void {
+    if (bytes <= 0) {
+      return;
+    }
+    this.reservedUploadBytes += bytes;
+  }
+
+  private releaseUploadBytes(bytes: number): void {
+    if (bytes <= 0) {
+      return;
+    }
+    this.reservedUploadBytes = Math.max(0, this.reservedUploadBytes - bytes);
+  }
+
+  private async getFreeStorageBytes(): Promise<number> {
+    try {
+      return await statfs.getFreeSize(this.filesDir);
+    } catch (error) {
+      logger.warn(TAG, `获取传书收件箱剩余空间失败: ${this.stringifyError(error)}`);
+      return 0;
+    }
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes <= 0) {
+      return '0 B';
+    }
+    const units: string[] = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let index = 0;
+    while (value >= 1024 && index < units.length - 1) {
+      value = value / 1024;
+      index += 1;
+    }
+    const fractionDigits = index === 0 ? 0 : 1;
+    return `${value.toFixed(fractionDigits)} ${units[index]}`;
+  }
+
   private async fileExists(path: string): Promise<boolean> {
     try {
       await fileIo.stat(path);
@@ -579,61 +715,46 @@ export class TransferUploadStoreService {
     }
 
     const writeBytes = session.pendingWriteBytes;
-    const writeBuffer = this.createUploadWriteBuffer(session.pendingWriteChunks, writeBytes);
-    await this.writeArrayBufferFully(session.fileDescriptor, writeBuffer);
+    await this.writeUploadChunksFully(session.fileDescriptor, session.pendingWriteChunks);
     session.flushedBytes += writeBytes;
     session.pendingWriteChunks = [];
     session.pendingWriteBytes = 0;
   }
 
-  private async writeArrayBufferFully(fileDescriptor: number, buffer: ArrayBuffer): Promise<void> {
-    const totalBytes = buffer.byteLength;
-    if (totalBytes <= 0) {
-      return;
+  private async writeUploadChunksFully(fileDescriptor: number, chunks: Uint8Array[]): Promise<void> {
+    for (const chunk of chunks) {
+      if (chunk.byteLength <= 0) {
+        continue;
+      }
+      await this.writeUint8ArrayFully(fileDescriptor, chunk);
     }
+  }
 
+  private async writeUint8ArrayFully(fileDescriptor: number, source: Uint8Array): Promise<void> {
     let writtenTotal = 0;
-    const sourceBytes = new Uint8Array(buffer);
-    while (writtenTotal < totalBytes) {
-      const remainingBuffer = writtenTotal === 0
-        ? buffer
-        : this.copyUint8ArrayToBuffer(sourceBytes.subarray(writtenTotal));
-      const writtenBytes = await fileIo.write(fileDescriptor, remainingBuffer);
-      if (writtenBytes <= 0 || writtenBytes > totalBytes - writtenTotal) {
-        throw new Error(`上传文件写入不完整: expected=${totalBytes}, actual=${writtenTotal + writtenBytes}`);
+    while (writtenTotal < source.byteLength) {
+      const remainingBytes = source.byteLength - writtenTotal;
+      const writeBuffer = this.resolveWritableBuffer(source, writtenTotal);
+      const options: WriteOptions = {
+        length: remainingBytes
+      };
+      const writtenBytes = await fileIo.write(fileDescriptor, writeBuffer, options);
+      if (writtenBytes <= 0 || writtenBytes > remainingBytes) {
+        throw new Error(`上传文件写入不完整: expected=${source.byteLength}, actual=${writtenTotal + writtenBytes}`);
       }
       writtenTotal += writtenBytes;
     }
   }
 
-  private createUploadWriteBuffer(chunks: Uint8Array[], totalBytes: number): ArrayBuffer {
-    if (chunks.length === 1) {
-      const source = chunks[0];
-      const directBuffer = this.tryGetWholeArrayBuffer(source);
-      if (directBuffer !== null) {
-        return directBuffer;
+  private resolveWritableBuffer(source: Uint8Array, offset: number): ArrayBuffer {
+    if (offset <= 0) {
+      const sourceBuffer = source.buffer;
+      if (source.byteOffset === 0 && source.byteLength === sourceBuffer.byteLength) {
+        return sourceBuffer;
       }
+      return this.copyUint8ArrayToBuffer(source);
     }
-
-    const merged = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-      if (offset >= totalBytes) {
-        break;
-      }
-      const writeLength = Math.min(chunk.byteLength, totalBytes - offset);
-      merged.set(chunk.subarray(0, writeLength), offset);
-      offset += writeLength;
-    }
-    return merged.buffer;
-  }
-
-  private tryGetWholeArrayBuffer(source: Uint8Array): ArrayBuffer | null {
-    const sourceBuffer = source.buffer;
-    if (source.byteOffset === 0 && source.byteLength === sourceBuffer.byteLength) {
-      return sourceBuffer;
-    }
-    return null;
+    return this.copyUint8ArrayToBuffer(source.subarray(offset));
   }
 
   private assertUploadSizeMatches(session: TransferStagedUploadSession): void {

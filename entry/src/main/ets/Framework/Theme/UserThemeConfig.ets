@@ -183,6 +183,18 @@ const DEFAULT_EFFECTS: EffectsConfig = {
  * 默认 HdsTab 特效配置
  */
 const DEFAULT_HDS_TAB_EFFECTS: HdsTabEffectsConfig = {
+  opacityRatio: 0.82,
+  minOpacity: 0.68,
+  maxOpacity: 0.90,
+  lightHighlightOpacity: 0.50,
+  darkHighlightOpacity: 0.34,
+  materialLevel: 0,
+  blurEnabled: true,
+  sideMargin: 8,
+  bottomMargin: 0
+};
+
+const LEGACY_DEFAULT_HDS_TAB_EFFECTS: HdsTabEffectsConfig = {
   opacityRatio: 0.72,
   minOpacity: 0.56,
   maxOpacity: 0.82,
@@ -261,6 +273,18 @@ function copyHdsTabEffects(source: HdsTabEffectsConfig): HdsTabEffectsConfig {
     sideMargin: source.sideMargin,
     bottomMargin: source.bottomMargin
   };
+}
+
+function isLegacyDefaultHdsTabEffects(source: Partial<HdsTabEffectsConfig>): boolean {
+  return source.opacityRatio === LEGACY_DEFAULT_HDS_TAB_EFFECTS.opacityRatio &&
+    source.minOpacity === LEGACY_DEFAULT_HDS_TAB_EFFECTS.minOpacity &&
+    source.maxOpacity === LEGACY_DEFAULT_HDS_TAB_EFFECTS.maxOpacity &&
+    source.lightHighlightOpacity === LEGACY_DEFAULT_HDS_TAB_EFFECTS.lightHighlightOpacity &&
+    source.darkHighlightOpacity === LEGACY_DEFAULT_HDS_TAB_EFFECTS.darkHighlightOpacity &&
+    source.materialLevel === LEGACY_DEFAULT_HDS_TAB_EFFECTS.materialLevel &&
+    source.blurEnabled === LEGACY_DEFAULT_HDS_TAB_EFFECTS.blurEnabled &&
+    source.sideMargin === LEGACY_DEFAULT_HDS_TAB_EFFECTS.sideMargin &&
+    source.bottomMargin === LEGACY_DEFAULT_HDS_TAB_EFFECTS.bottomMargin;
 }
 
 /**
@@ -435,17 +459,24 @@ export class UserThemeConfigManager {
         };
         // 合并默认值，确保新增字段有默认值
         const defaultProfile = createDefaultProfile();
+        const loadedHdsTabEffects: Partial<HdsTabEffectsConfig> = loaded.hdsTabEffects ? loaded.hdsTabEffects : {};
+        const shouldMigrateHdsTabDefaults: boolean = isLegacyDefaultHdsTabEffects(loadedHdsTabEffects);
+        const mergedHdsTabEffects: HdsTabEffectsConfig = mergeHdsTabEffects(
+          DEFAULT_HDS_TAB_EFFECTS,
+          shouldMigrateHdsTabDefaults ? {} : loadedHdsTabEffects
+        );
         this.currentProfile = {
           id: loaded.id ? loaded.id : defaultProfile.id,
           name: loaded.name ? loaded.name : defaultProfile.name,
           lastModified: loaded.lastModified ? loaded.lastModified : defaultProfile.lastModified,
           transparency: mergeTransparency(DEFAULT_TRANSPARENCY, loaded.transparency ? loaded.transparency : {}),
           effects: mergeEffects(DEFAULT_EFFECTS, normalizedEffects),
-          hdsTabEffects: mergeHdsTabEffects(
-            DEFAULT_HDS_TAB_EFFECTS,
-            loaded.hdsTabEffects ? loaded.hdsTabEffects : {}
-          )
+          hdsTabEffects: mergedHdsTabEffects
         };
+        if (shouldMigrateHdsTabDefaults) {
+          await this.saveCurrentProfile();
+          logger.info(TAG, '已将旧版 HdsTab 默认效果迁移到新版默认效果');
+        }
         logger.info(TAG, `加载当前配置: ${this.currentProfile.name}`);
       }
     } catch (error) {

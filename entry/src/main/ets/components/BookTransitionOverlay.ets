@@ -25,6 +25,19 @@ import {
 import { AnimationSettingsManager } from '../Framework/Animation/AnimationSettingsManager';
 
 const TAG = 'BookTransitionOverlay';
+const BOOK_TRANSITION_OVERLAY_ROOT_ID = 'book_transition_overlay_root';
+const DEFAULT_COVER_POSITION: CoverPosition = {
+  x: 16,
+  y: 120,
+  width: 140,
+  height: 200
+};
+
+interface TransitionCoordinateOffset {
+  x: number;
+  y: number;
+  useScreenOffset: boolean;
+}
 
 /**
  * 过渡动画请求参数
@@ -64,6 +77,7 @@ export class GlobalTransitionState {
   mode: TransitionMode = TransitionMode.OPEN;
   coverImagePath: string = '';
   coverPosition: CoverPosition = { x: 0, y: 0, width: 100, height: 150 };
+  closeCoverComponentId: string = '';
   readerContentPixelMap: image.PixelMap | null = null;
   readerContentImagePath: string = '';  // 压缩后的临时截图路径
   isReaderReady: boolean = false;
@@ -107,6 +121,17 @@ export class TransitionController {
   private isCancelling: boolean = false;
   private pendingNavigationTimer: number = -1;
   private openReadyHideTimer: number = -1;
+
+  private isDefaultCoverPosition(coverPosition: CoverPosition): boolean {
+    return coverPosition.x === DEFAULT_COVER_POSITION.x
+      && coverPosition.y === DEFAULT_COVER_POSITION.y
+      && coverPosition.width === DEFAULT_COVER_POSITION.width
+      && coverPosition.height === DEFAULT_COVER_POSITION.height;
+  }
+
+  private isValidCoverPosition(coverPosition: CoverPosition): boolean {
+    return coverPosition.width > 0 && coverPosition.height > 0;
+  }
   
   private constructor() {
     logger.info(TAG, 'TransitionController 初始化');
@@ -151,8 +176,7 @@ export class TransitionController {
     if (!animationSettingsManager.isBookOpenAnimationEnabled()) {
       logger.info(TAG, `书籍打开动画已禁用，直接执行回调: bookId=${targetBookId}`);
       // 保存封面位置（用于关闭动画）
-      const isDefaultPosition = coverPosition.x === 16 && coverPosition.y === 120 && 
-                                coverPosition.width === 140 && coverPosition.height === 200;
+      const isDefaultPosition = this.isDefaultCoverPosition(coverPosition);
       if (!isDefaultPosition) {
         this.lastOpenCoverPosition = coverPosition;
       }
@@ -173,8 +197,7 @@ export class TransitionController {
     }
     
     // 只在位置有效时保存（避免默认位置覆盖正确位置）
-    const isDefaultPosition = coverPosition.x === 16 && coverPosition.y === 120 && 
-                              coverPosition.width === 140 && coverPosition.height === 200;
+    const isDefaultPosition = this.isDefaultCoverPosition(coverPosition);
     if (!isDefaultPosition) {
       this.lastOpenCoverPosition = coverPosition;
       logger.info(TAG, `保存封面位置: pos=(${coverPosition.x}, ${coverPosition.y}), size=${coverPosition.width}x${coverPosition.height}`);
@@ -195,6 +218,7 @@ export class TransitionController {
       mode: TransitionMode.OPEN,
       coverImagePath: coverImagePath,
       coverPosition: coverPosition,
+      closeCoverComponentId: '',
       readerContentPixelMap: null,
       readerContentImagePath: '',
       isReaderReady: false,
@@ -350,7 +374,8 @@ export class TransitionController {
     coverPosition: CoverPosition,
     readerContentPixelMap?: image.PixelMap,
     onComplete?: () => void,
-    readerContentImagePath?: string
+    readerContentImagePath?: string,
+    closeCoverComponentId?: string
   ): void {
     this.clearOpenReadyHideTimer();
 
@@ -374,26 +399,29 @@ export class TransitionController {
       this.onCancelCallback = null;
     }
     
-    // 优先使用翻开动画保存的位置（因为关闭时封面组件可能不在屏幕上）
+    // 关闭开始时先锁定一个稳定基础目标；淡出前只允许动画组件对明确的窗口坐标基准差做小幅补偿。
     let finalCoverPosition: CoverPosition;
     
-    if (this.lastOpenCoverPosition && this.lastOpenCoverPosition.width > 0 && this.lastOpenCoverPosition.height > 0) {
-      // 优先使用翻开动画保存的位置
-      logger.info(TAG, `🎯 使用翻开动画保存的封面位置: pos=(${this.lastOpenCoverPosition.x}, ${this.lastOpenCoverPosition.y}), size=${this.lastOpenCoverPosition.width}x${this.lastOpenCoverPosition.height}`);
+    if (this.isValidCoverPosition(coverPosition) && !this.isDefaultCoverPosition(coverPosition)) {
+      logger.info(TAG, `使用关闭时测量的封面位置: pos=(${coverPosition.x}, ${coverPosition.y}), size=${coverPosition.width}x${coverPosition.height}`);
+      finalCoverPosition = coverPosition;
+      this.lastOpenCoverPosition = coverPosition;
+    } else if (this.lastOpenCoverPosition && this.isValidCoverPosition(this.lastOpenCoverPosition)) {
+      logger.info(TAG, `当前封面位置不可用，回退到翻开动画保存的位置: pos=(${this.lastOpenCoverPosition.x}, ${this.lastOpenCoverPosition.y}), size=${this.lastOpenCoverPosition.width}x${this.lastOpenCoverPosition.height}`);
       finalCoverPosition = this.lastOpenCoverPosition;
-    } else if (coverPosition.width > 0 && coverPosition.height > 0) {
-      // 使用传入的位置
-      logger.info(TAG, `使用传入的封面位置: pos=(${coverPosition.x}, ${coverPosition.y}), size=${coverPosition.width}x${coverPosition.height}`);
+    } else if (this.isValidCoverPosition(coverPosition)) {
+      logger.warn(TAG, `只能使用默认封面位置: pos=(${coverPosition.x}, ${coverPosition.y}), size=${coverPosition.width}x${coverPosition.height}`);
       finalCoverPosition = coverPosition;
     } else {
       // 都无效时使用默认位置
       logger.warn(TAG, '无法获取封面位置，使用默认位置');
-      finalCoverPosition = { x: 16, y: 120, width: 140, height: 200 };
+      finalCoverPosition = DEFAULT_COVER_POSITION;
     }
     
     this.currentState.isActive = true;
     this.currentState.mode = TransitionMode.CLOSE;
     this.currentState.coverPosition = finalCoverPosition;
+    this.currentState.closeCoverComponentId = closeCoverComponentId || '';
     this.currentState.readerContentPixelMap = readerContentPixelMap || null;
     this.currentState.readerContentImagePath = readerContentImagePath || '';
     this.currentState.isReaderReady = true;
@@ -419,18 +447,22 @@ export class TransitionController {
     
     // 计算最终封面位置
     let finalCoverPosition: CoverPosition;
-    if (this.lastOpenCoverPosition && this.lastOpenCoverPosition.width > 0 && this.lastOpenCoverPosition.height > 0) {
+    if (this.isValidCoverPosition(coverPosition) && !this.isDefaultCoverPosition(coverPosition)) {
+      finalCoverPosition = coverPosition;
+      this.lastOpenCoverPosition = coverPosition;
+    } else if (this.lastOpenCoverPosition && this.isValidCoverPosition(this.lastOpenCoverPosition)) {
       finalCoverPosition = this.lastOpenCoverPosition;
-    } else if (coverPosition.width > 0 && coverPosition.height > 0) {
+    } else if (this.isValidCoverPosition(coverPosition)) {
       finalCoverPosition = coverPosition;
     } else {
-      finalCoverPosition = { x: 16, y: 120, width: 140, height: 200 };
+      finalCoverPosition = DEFAULT_COVER_POSITION;
     }
     
     // 设置准备状态（显示全屏遮罩但不开始动画）
     this.currentState.isActive = true;
     this.currentState.mode = TransitionMode.CLOSE;
     this.currentState.coverPosition = finalCoverPosition;
+    this.currentState.closeCoverComponentId = '';
     this.currentState.readerContentPixelMap = null;
     this.currentState.readerContentImagePath = '';
     this.currentState.isReaderReady = false;  // 标记为未就绪，不开始动画
@@ -455,6 +487,7 @@ export class TransitionController {
     this.currentState.readerContentPixelMap = readerContentPixelMap || null;
     this.currentState.readerContentImagePath = readerContentImagePath || '';
     this.currentState.isReaderReady = true;  // 标记为就绪，开始动画
+    this.currentState.closeCoverComponentId = '';
     
     this.onCloseComplete = onComplete || null;
     this.notifyStateChange();
@@ -669,6 +702,7 @@ export struct BookTransitionOverlay {
   @State private targetBookType: 'manga' | 'ebook' | 'novel' = 'manga';
   @State private coverImagePath: string = '';
   @State private coverPosition: CoverPosition = { x: 0, y: 0, width: 100, height: 150 };
+  @State private closeCoverComponentId: string = '';
   @State private readerContentPixelMap: image.PixelMap | null = null;
   @State private readerContentImagePath: string = '';  // 压缩后的截图临时文件路径
   @State private isReaderReady: boolean = false;
@@ -724,6 +758,34 @@ export struct BookTransitionOverlay {
   private handlePhaseChange(phase: TransitionPhase): void {
     logger.info(TAG, `阶段变化: ${phase}`);
   }
+
+  private isUsableResolvedCoverPosition(position: CoverPosition): boolean {
+    if (position.width <= 0 || position.height <= 0) {
+      return false;
+    }
+    if (position.x === DEFAULT_COVER_POSITION.x
+      && position.y === DEFAULT_COVER_POSITION.y
+      && position.width === DEFAULT_COVER_POSITION.width
+      && position.height === DEFAULT_COVER_POSITION.height) {
+      return false;
+    }
+    return true;
+  }
+
+  private resolveCloseCoverPosition(): CoverPosition | null {
+    if (!this.isActive || this.mode !== TransitionMode.CLOSE || this.closeCoverComponentId.length === 0) {
+      return null;
+    }
+
+    const latestPosition: CoverPosition = getCoverPositionById(this.closeCoverComponentId);
+    if (!this.isUsableResolvedCoverPosition(latestPosition)) {
+      logger.warn(TAG, `关闭动画淡出前复测未获取到有效封面位置: id=${this.closeCoverComponentId}`);
+      return null;
+    }
+
+    logger.info(TAG, `关闭动画淡出前复测封面位置: id=${this.closeCoverComponentId}, pos=(${latestPosition.x}, ${latestPosition.y}), size=${latestPosition.width}x${latestPosition.height}, delta=(${latestPosition.x - this.coverPosition.x}, ${latestPosition.y - this.coverPosition.y})`);
+    return latestPosition;
+  }
   
   // 超时保护定时器
   private safetyTimeoutTimer: number = -1;
@@ -762,6 +824,7 @@ export struct BookTransitionOverlay {
     this.targetBookType = state.targetBookType;
     this.coverImagePath = state.coverImagePath;
     this.coverPosition = state.coverPosition;
+    this.closeCoverComponentId = state.closeCoverComponentId;
     this.readerContentPixelMap = state.readerContentPixelMap;
     this.readerContentImagePath = state.readerContentImagePath;
     this.isReaderReady = state.isReaderReady;
@@ -788,8 +851,8 @@ export struct BookTransitionOverlay {
   }
   
   build() {
-    if (this.isActive) {
-      Stack() {
+    Stack() {
+      if (this.isActive) {
         BookOpenTransition({
           mode: this.mode,
           contentType: this.targetBookType,
@@ -804,6 +867,7 @@ export struct BookTransitionOverlay {
           bookTitle: this.bookTitle,
           bookAuthor: this.bookAuthor,
           bookIntro: this.bookIntro,
+          resolveCloseCoverPosition: () => this.resolveCloseCoverPosition(),
           onAnimationComplete: () => {
             this.clearSafetyTimeout();
             this.handleAnimationComplete();
@@ -811,13 +875,14 @@ export struct BookTransitionOverlay {
           onPhaseChange: (phase: TransitionPhase) => this.handlePhaseChange(phase)
         })
       }
-      .width('100%')
-      .height('100%')
-      .position({ x: 0, y: 0 })
-      .zIndex(9999)  // 确保在最顶层
-      .hitTestBehavior(HitTestMode.Block)  // 阻止点击穿透
-      .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])  // 扩展到所有安全区域
     }
+    .width('100%')
+    .height('100%')
+    .id(BOOK_TRANSITION_OVERLAY_ROOT_ID)
+    .position({ x: 0, y: 0 })
+    .zIndex(9999)  // 确保在最顶层
+    .hitTestBehavior(this.isActive ? HitTestMode.Block : HitTestMode.None)
+    .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])  // 扩展到所有安全区域
   }
 }
 
@@ -883,32 +948,45 @@ export function isTransitioning(): boolean {
   return TransitionController.getInstance().isTransitioning();
 }
 
+function getTransitionOverlayCoordinateOffset(): TransitionCoordinateOffset {
+  try {
+    const rootRectInfo = componentUtils.getRectangleById(BOOK_TRANSITION_OVERLAY_ROOT_ID);
+    if (rootRectInfo) {
+      return {
+        x: Number(rootRectInfo.screenOffset.x),
+        y: Number(rootRectInfo.screenOffset.y),
+        useScreenOffset: true
+      };
+    }
+  } catch (error) {
+    logger.warn(TAG, `获取过渡覆盖层坐标原点失败，使用屏幕原点: ${String(error)}`);
+  }
+  return {
+    x: 0,
+    y: 0,
+    useScreenOffset: false
+  };
+}
+
 /**
  * 便捷函数：获取组件的屏幕位置
  * @param componentId 组件ID（需要在组件上设置 .id() 属性）
  * @returns 封面位置信息，如果获取失败返回默认值
  */
 export function getCoverPositionById(componentId: string): CoverPosition {
-  // 默认位置（当组件不存在或尺寸为0时使用）
-  const defaultPosition: CoverPosition = {
-    x: 16,
-    y: 120,
-    width: 140,
-    height: 200
-  };
-  
   if (!componentId || componentId.length === 0) {
     logger.warn(TAG, '组件ID为空，使用默认位置');
-    return defaultPosition;
+    return DEFAULT_COVER_POSITION;
   }
   
   try {
     const rectInfo = componentUtils.getRectangleById(componentId);
     if (rectInfo) {
-      // 转换为vp单位
+      const overlayOffset = getTransitionOverlayCoordinateOffset();
+      const sourceOffset = overlayOffset.useScreenOffset ? rectInfo.screenOffset : rectInfo.windowOffset;
       const position: CoverPosition = {
-        x: px2vp(rectInfo.windowOffset.x),
-        y: px2vp(rectInfo.windowOffset.y),
+        x: px2vp(Number(sourceOffset.x) - overlayOffset.x),
+        y: px2vp(Number(sourceOffset.y) - overlayOffset.y),
         width: px2vp(rectInfo.size.width),
         height: px2vp(rectInfo.size.height)
       };
@@ -916,10 +994,10 @@ export function getCoverPositionById(componentId: string): CoverPosition {
       // 检查尺寸是否有效（组件可能不在当前页面）
       if (position.width <= 0 || position.height <= 0) {
         logger.warn(TAG, `组件尺寸无效: id=${componentId}, size=${position.width}x${position.height}，使用默认位置`);
-        return defaultPosition;
+        return DEFAULT_COVER_POSITION;
       }
       
-      logger.info(TAG, `获取组件位置成功: id=${componentId}, pos=(${position.x}, ${position.y}), size=${position.width}x${position.height}`);
+      logger.info(TAG, `获取组件位置成功: id=${componentId}, pos=(${position.x}, ${position.y}), size=${position.width}x${position.height}, source=${overlayOffset.useScreenOffset ? 'screenOffset' : 'windowOffset'}, overlayOffset=(${px2vp(overlayOffset.x)}, ${px2vp(overlayOffset.y)}), window=(${px2vp(Number(rectInfo.windowOffset.x))}, ${px2vp(Number(rectInfo.windowOffset.y))}), screen=(${px2vp(Number(rectInfo.screenOffset.x))}, ${px2vp(Number(rectInfo.screenOffset.y))})`);
       return position;
     }
   } catch (error) {
@@ -927,7 +1005,7 @@ export function getCoverPositionById(componentId: string): CoverPosition {
   }
   
   logger.warn(TAG, `未找到组件: id=${componentId}，使用默认位置`);
-  return defaultPosition;
+  return DEFAULT_COVER_POSITION;
 }
 
 /**
@@ -1181,7 +1259,8 @@ export async function startBookCloseTransitionWithComponentId(
       coverPosition,
       captureResult?.pixelMap,
       onComplete,
-      captureResult?.imagePath
+      captureResult?.imagePath,
+      coverComponentId
     );
     logger.info(TAG, `🔴 startCloseTransition 调用完成`);
   } catch (error) {

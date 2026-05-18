@@ -4656,6 +4656,14 @@ struct MainMenuPage {
     return `${anchorScope}_${contentType}_${String(id)}`;
   }
 
+  private getDirectCoverComponentId(
+    anchorScope: LibraryGridCardScope,
+    contentType: 'manga' | 'ebook' | 'novel' | 'pdf_ebook',
+    id: string | number
+  ): string {
+    return `cover_${contentType}_${anchorScope}_direct_${String(id)}`;
+  }
+
   /**
    * 显示漫画操作菜单（长按触发）
    */
@@ -19911,6 +19919,7 @@ struct MainMenuPage {
     selected: boolean,
     showSelection: boolean,
     badgeText: LibraryCoverTypeMarker | '' = '',
+    componentId: string = '',
     manga?: Manga
   ) {
     Stack() {
@@ -19966,6 +19975,7 @@ struct MainMenuPage {
       }
     }
     .width('100%')
+    .id(componentId)
     .aspectRatio(0.7)
     .borderRadius(this.getCoverImageRadius())
     .border({
@@ -19991,11 +20001,11 @@ struct MainMenuPage {
           this.mangaMultiSelect.selectedIds.has(manga.id),
           this.isMangaLibrarySelectionActive(),
           this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMangaLibrarySelectionActive() ? '漫画' : '',
+          this.getDirectCoverComponentId(anchorScope, 'manga', manga.id),
           manga
         )
       }
       .width('100%')
-      .id(`library_manga_${manga.id}`)
 
       Column({ space: 4 }) {
         Text(manga.title)
@@ -20050,7 +20060,7 @@ struct MainMenuPage {
       if (this.isMangaLibrarySelectionActive()) {
         this.toggleMangaSelection(manga.id);
       } else {
-        this.handleLibraryMangaCoverClick(manga, `library_manga_${manga.id}`);
+        this.handleLibraryMangaCoverClick(manga, this.getDirectCoverComponentId(anchorScope, 'manga', manga.id));
       }
     })
     .gesture(
@@ -20085,11 +20095,11 @@ struct MainMenuPage {
           this.resolveEBookCoverAsset(ebook),
           this.ebookMultiSelect.selectedIds.has(ebook.id),
           this.isEBookLibrarySelectionActive(),
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isEBookLibrarySelectionActive() ? '电子书' : ''
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isEBookLibrarySelectionActive() ? '电子书' : '',
+          this.getDirectCoverComponentId(anchorScope, 'ebook', ebook.id)
         )
       }
       .width('100%')
-      .id(`cover_ebook_grid_${ebook.id}`)
 
       Column({ space: 4 }) {
         Text(ebook.metadata.title)
@@ -20144,7 +20154,7 @@ struct MainMenuPage {
       if (this.isEBookLibrarySelectionActive()) {
         this.toggleEBookSelection(ebook.id);
       } else {
-        this.handleLibraryEBookCoverClick(ebook, `cover_ebook_grid_${ebook.id}`);
+        this.handleLibraryEBookCoverClick(ebook, this.getDirectCoverComponentId(anchorScope, 'ebook', ebook.id));
       }
     })
     .gesture(
@@ -20181,11 +20191,11 @@ struct MainMenuPage {
           this.isNovelLibrarySelectionActive(),
           this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isNovelLibrarySelectionActive()
             ? this.getNovelCoverTypeMarker(novel)
-            : ''
+            : '',
+          this.getDirectCoverComponentId(anchorScope, 'novel', novel.id)
         )
       }
       .width('100%')
-      .id(`library_novel_${novel.id}`)
 
       Column({ space: 4 }) {
         Text(novel.name)
@@ -20240,7 +20250,7 @@ struct MainMenuPage {
       if (this.isNovelLibrarySelectionActive()) {
         this.toggleNovelSelection(novel.id);
       } else {
-        this.handleLibraryNovelCoverClick(novel, `library_novel_${novel.id}`);
+        this.handleLibraryNovelCoverClick(novel, this.getDirectCoverComponentId(anchorScope, 'novel', novel.id));
       }
     })
     .gesture(
@@ -20275,11 +20285,11 @@ struct MainMenuPage {
           this.resolvePdfEBookCoverAsset(manga),
           this.mangaMultiSelect.selectedIds.has(manga.id),
           this.isMangaLibrarySelectionActive(),
-          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMangaLibrarySelectionActive() ? '电子书' : ''
+          this.shouldShowLibraryCoverTypeMarker(anchorScope) && !this.isMangaLibrarySelectionActive() ? '电子书' : '',
+          this.getDirectCoverComponentId(anchorScope, 'pdf_ebook', manga.id)
         )
       }
       .width('100%')
-      .id(`cover_pdf_ebook_grid_${manga.id}`)
 
       Column({ space: 4 }) {
         Text(manga.title)
@@ -20331,7 +20341,7 @@ struct MainMenuPage {
       if (this.isMangaLibrarySelectionActive()) {
         this.toggleMangaSelection(manga.id);
       } else {
-        this.handleLibraryMangaCoverClick(manga, `cover_pdf_ebook_grid_${manga.id}`);
+        this.handleLibraryMangaCoverClick(manga, this.getDirectCoverComponentId(anchorScope, 'pdf_ebook', manga.id));
       }
     })
     .gesture(

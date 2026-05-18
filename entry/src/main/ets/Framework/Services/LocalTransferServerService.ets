@@ -43,12 +43,16 @@ const TAG = 'LocalTransferServer';
 const BACKGROUND_OWNER = 'local_transfer_server';
 const DEFAULT_SESSION_TTL_MINUTES = 10;
 const MAX_HEADER_SIZE_BYTES = 32 * 1024;
+const MAX_CONTROL_REQUEST_BODY_BYTES = 64 * 1024;
 const MAX_RECENT_UPLOADS_RESPONSE = 12;
+const MAX_PENDING_UPLOAD_QUEUE_WARN_BYTES = 96 * 1024 * 1024;
+const MAX_PENDING_UPLOAD_QUEUE_BYTES = 256 * 1024 * 1024;
 const TRANSFER_SERVICE_NOTIFICATION_TASK_ID = 'lan_transfer_service';
 const TRANSFER_UPLOAD_NOTIFICATION_PREFIX = 'lan_transfer_upload_';
-const UPLOAD_NOTIFICATION_MIN_INTERVAL_MS = 1200;
+const UPLOAD_NOTIFICATION_MIN_INTERVAL_MS = 3000;
 const UPLOAD_PROGRESS_BROADCAST_MIN_INTERVAL_MS = 500;
 const UPLOAD_PROGRESS_BROADCAST_MIN_PERCENT_DELTA = 1;
+const ACTIVITY_REFRESH_MIN_INTERVAL_MS = 3000;
 
 type TransferHttpRoute = 'landing' | 'info' | 'health' | 'pair_verify' | 'upload' | 'uploads' | 'unknown';
 
@@ -70,6 +74,7 @@ interface TransferParsedHttpRequest {
 interface TransferConnectionState {
   pendingChunks: Uint8Array[];
   pendingChunkReadIndex: number;
+  pendingQueuedBytes: number;
   messagePumpActive: boolean;
   bufferChunks: Uint8Array[];
   bufferedBytes: number;
@@ -85,11 +90,13 @@ interface TransferConnectionState {
   lastUploadProgressBroadcastPercent: number;
   uploadNotificationTerminal: boolean;
   uploadFailureNotified: boolean;
+  uploadAbortActive: boolean;
   remoteAddress: string;
   requestHandled: boolean;
   closeScheduled: boolean;
   connectionClosed: boolean;
   cleanupStarted: boolean;
+  queueWarned: boolean;
 }
 
 interface TransferUploadResultResponse {
@@ -125,6 +132,9 @@ interface TransferRecentUploadsResponseItem {
 interface TransferRecentUploadsResponse {
   ok: boolean;
   count: number;
+  totalBytes: number;
+  reservedBytes: number;
+  maxTotalSizeMb: number;
   records: TransferRecentUploadsResponseItem[];
 }
 
@@ -150,6 +160,7 @@ export class LocalTransferServerService {
   private readonly notificationManager: AppNotificationManager = AppNotificationManager.getInstance();
   private lastAbilityContext: common.UIAbilityContext | null = null;
   private autoStopTimer: number = -1;
+  private lastActivityRefreshAt: number = 0;
 
   private constructor() {}
 
@@ -330,6 +341,7 @@ export class LocalTransferServerService {
       family: 1,
       port: config.port
     };
+    await this.configureTcpServer(server);
     await server.listen(listenAddress);
     const localAddress = await server.getLocalAddress();
 
@@ -351,6 +363,18 @@ export class LocalTransferServerService {
       logger.warn(TAG, `关闭TCP服务失败: ${this.stringifyError(error)}`);
     } finally {
       this.tcpServer = null;
+    }
+  }
+
+  private async configureTcpServer(server: socket.TCPSocketServer): Promise<void> {
+    const options: socket.TCPExtraOptions = {
+      keepAlive: true,
+      TCPNoDelay: true
+    };
+    try {
+      await server.setExtraOptions(options);
+    } catch (error) {
+      logger.debug(TAG, `设置TCP服务选项失败，将使用系统默认值: ${this.stringifyError(error)}`);
     }
   }
 
@@ -376,7 +400,7 @@ export class LocalTransferServerService {
       const serverConfig: webSocket.WebSocketServerConfig = {
         serverIP: '0.0.0.0',
         serverPort: targetPort,
-        maxConcurrentClientsNumber: 8,
+        maxConcurrentClientsNumber: 4,
         maxConnectionsForOneClient: 2
       };
       const started = await server.start(serverConfig);
@@ -443,12 +467,28 @@ export class LocalTransferServerService {
     }
 
     state.remoteAddress = messageInfo.remoteInfo.address;
-    this.markActivity();
+    this.markActivityThrottled();
     if (state.requestHandled) {
       return;
     }
     const chunk = this.wrapArrayBufferAsUint8Array(messageInfo.message);
     state.pendingChunks.push(chunk);
+    state.pendingQueuedBytes += chunk.byteLength;
+    if (!state.queueWarned && state.pendingQueuedBytes > MAX_PENDING_UPLOAD_QUEUE_WARN_BYTES) {
+      state.queueWarned = true;
+      logger.warn(
+        TAG,
+        `TCP接收队列偏高: client=${state.remoteAddress}, queued=${state.pendingQueuedBytes}, warn=${MAX_PENDING_UPLOAD_QUEUE_WARN_BYTES}`
+      );
+    }
+    if (state.pendingQueuedBytes > MAX_PENDING_UPLOAD_QUEUE_BYTES) {
+      logger.warn(
+        TAG,
+        `TCP接收队列过载: client=${state.remoteAddress}, queued=${state.pendingQueuedBytes}, limit=${MAX_PENDING_UPLOAD_QUEUE_BYTES}`
+      );
+      await this.abortUploadConnection(clientConnection, state, '接收缓冲过高，请稍后重试', 503);
+      return;
+    }
 
     await this.drainConnectionMessages(clientConnection, state);
   }
@@ -465,22 +505,24 @@ export class LocalTransferServerService {
     try {
       while (
         state.pendingChunkReadIndex < state.pendingChunks.length &&
-        !state.requestHandled &&
-        !state.connectionClosed
+        !state.requestHandled
       ) {
         const currentState = this.connectionStates.get(clientConnection.clientId);
         if (currentState !== state) {
           state.pendingChunks = [];
           state.pendingChunkReadIndex = 0;
+          state.pendingQueuedBytes = 0;
           return;
         }
         const chunk = state.pendingChunks[state.pendingChunkReadIndex];
         state.pendingChunkReadIndex += 1;
+        state.pendingQueuedBytes = Math.max(0, state.pendingQueuedBytes - chunk.byteLength);
         await this.processIncomingChunk(clientConnection, state, chunk);
       }
       if (state.requestHandled) {
         state.pendingChunks = [];
         state.pendingChunkReadIndex = 0;
+        state.pendingQueuedBytes = 0;
       } else {
         this.compactPendingChunksIfNeeded(state);
       }
@@ -503,7 +545,7 @@ export class LocalTransferServerService {
     state: TransferConnectionState,
     chunk: Uint8Array
   ): Promise<void> {
-    if (chunk.byteLength <= 0 || state.requestHandled || state.connectionClosed) {
+    if (chunk.byteLength <= 0 || state.requestHandled) {
       return;
     }
 
@@ -546,6 +588,11 @@ export class LocalTransferServerService {
       await this.prepareUploadRequest(clientConnection, state);
       return;
     }
+    if (state.parsedRequest.contentLength > MAX_CONTROL_REQUEST_BODY_BYTES) {
+      state.requestHandled = true;
+      await this.sendJsonError(clientConnection, 413, '控制接口请求体过大');
+      return;
+    }
 
     const totalExpectedBytes = state.parsedRequest.headerBytesLength + state.parsedRequest.contentLength;
     if (state.bufferedBytes < totalExpectedBytes) {
@@ -585,6 +632,7 @@ export class LocalTransferServerService {
 
     const config = this.configManager.getConfig();
     const maxFileSizeBytes = config.maxFileSizeMb * 1024 * 1024;
+    const maxTotalSizeBytes = config.maxTotalSizeMb * 1024 * 1024;
     if (request.contentLength > maxFileSizeBytes) {
       await this.rejectUploadRequest(
         clientConnection,
@@ -625,7 +673,8 @@ export class LocalTransferServerService {
         contentType,
         clientName,
         state.remoteAddress,
-        request.contentLength
+        request.contentLength,
+        maxTotalSizeBytes
       );
       state.uploadSession = uploadSession;
       state.uploadBodyReceivedBytes = 0;
@@ -640,25 +689,24 @@ export class LocalTransferServerService {
       state.uploadFailureNotified = false;
       await this.notifyUploadProgress(state, true);
 
-      const bufferedRequestBytes = this.flattenChunks(state.bufferChunks, state.bufferedBytes);
-      const availableBodyBytes = bufferedRequestBytes.byteLength - request.headerBytesLength;
+      const availableBodyBytes = Math.max(0, state.bufferedBytes - request.headerBytesLength);
       const initialBodyLength = availableBodyBytes > 0
         ? Math.min(availableBodyBytes, request.contentLength)
         : 0;
 
-      state.bufferChunks = [];
-      state.bufferedBytes = 0;
-
       if (initialBodyLength > 0) {
-        const initialBody = this.sliceUint8Array(
-          bufferedRequestBytes,
+        const appendedBodyBytes = await this.appendBufferedUploadBody(
+          state,
+          uploadSession,
           request.headerBytesLength,
-          request.headerBytesLength + initialBodyLength
+          initialBodyLength
         );
-        await this.uploadStoreService.appendUploadChunk(uploadSession, initialBody);
-        state.uploadBodyReceivedBytes += initialBody.byteLength;
+        state.uploadBodyReceivedBytes += appendedBodyBytes;
         await this.notifyUploadProgress(state, false);
       }
+
+      state.bufferChunks = [];
+      state.bufferedBytes = 0;
 
       if (state.uploadBodyReceivedBytes >= request.contentLength) {
         await this.completeUploadRequest(clientConnection, state);
@@ -676,7 +724,12 @@ export class LocalTransferServerService {
         state.uploadBodyReceivedBytes = 0;
         state.uploadStartedAt = 0;
       }
-      await this.rejectUploadRequest(clientConnection, state, 400, errorMessage);
+      await this.rejectUploadRequest(
+        clientConnection,
+        state,
+        this.resolveUploadInitErrorStatus(errorMessage),
+        errorMessage
+      );
     }
   }
 
@@ -686,22 +739,7 @@ export class LocalTransferServerService {
     statusCode: number,
     message: string
   ): Promise<void> {
-    await this.notifyUploadFailure(state, message);
-    if (state.uploadSession !== null) {
-      try {
-        await this.uploadStoreService.abortUpload(state.uploadSession);
-      } catch (_abortError) {
-      }
-    }
-    state.uploadSession = null;
-    state.uploadBodyReceivedBytes = 0;
-    state.uploadStartedAt = 0;
-    state.pendingChunks = [];
-    state.pendingChunkReadIndex = 0;
-    state.bufferChunks = [];
-    state.bufferedBytes = 0;
-    state.requestHandled = true;
-    await this.sendJsonError(clientConnection, statusCode, message);
+    await this.abortUploadConnection(clientConnection, state, message, statusCode);
   }
 
   private async handleActiveUploadChunk(
@@ -726,20 +764,20 @@ export class LocalTransferServerService {
       const bodyChunk = writeLength === chunk.byteLength ? chunk : this.sliceUint8Array(chunk, 0, writeLength);
       try {
         await this.uploadStoreService.appendUploadChunk(uploadSession, bodyChunk);
-        if (state.connectionClosed) {
-          return;
-        }
       } catch (error) {
         logger.warn(TAG, `写入上传数据失败: ${this.stringifyError(error)}`);
         await this.abortUploadConnection(clientConnection, state, '写入上传数据失败');
         return;
       }
       state.uploadBodyReceivedBytes += bodyChunk.byteLength;
+      if (state.uploadBodyReceivedBytes >= request.contentLength) {
+        await this.completeUploadRequest(clientConnection, state);
+        return;
+      }
+      if (state.connectionClosed) {
+        return;
+      }
       await this.notifyUploadProgress(state, false);
-    }
-
-    if (state.uploadBodyReceivedBytes >= request.contentLength) {
-      await this.completeUploadRequest(clientConnection, state);
     }
   }
 
@@ -749,7 +787,8 @@ export class LocalTransferServerService {
   ): Promise<void> {
     const uploadSession = state.uploadSession;
     if (uploadSession === null) {
-      await this.sendJsonError(clientConnection, 500, '上传会话不存在');
+      state.requestHandled = true;
+      await this.sendJsonError(clientConnection, 409, '上传会话不存在');
       return;
     }
 
@@ -772,10 +811,10 @@ export class LocalTransferServerService {
       state.uploadSession = null;
       state.uploadBodyReceivedBytes = 0;
       state.uploadStartedAt = 0;
+      state.requestHandled = true;
       this.refreshRuntimePresentation();
       await this.broadcastRuntimeUpdate();
       await this.broadcastUploadsUpdate();
-      state.requestHandled = true;
       await this.sendUploadSuccess(clientConnection, record);
     } catch (error) {
       const errorMessage = this.stringifyError(error);
@@ -793,17 +832,40 @@ export class LocalTransferServerService {
   private async abortUploadConnection(
     clientConnection: socket.TCPSocketConnection,
     state: TransferConnectionState,
-    message: string
+    message: string,
+    statusCode: number = 500
   ): Promise<void> {
+    if (state.uploadAbortActive) {
+      state.pendingChunks = [];
+      state.pendingChunkReadIndex = 0;
+      state.pendingQueuedBytes = 0;
+      state.bufferChunks = [];
+      state.bufferedBytes = 0;
+      state.requestHandled = true;
+      return;
+    }
+    state.uploadAbortActive = true;
     await this.notifyUploadFailure(state, message);
-    if (state.uploadSession !== null) {
-      await this.uploadStoreService.abortUpload(state.uploadSession);
+    const uploadSession = state.uploadSession;
+    if (uploadSession !== null) {
+      try {
+        await this.uploadStoreService.abortUpload(uploadSession);
+      } catch (error) {
+        logger.warn(TAG, `终止上传会话失败: ${this.stringifyError(error)}`);
+      }
       state.uploadSession = null;
       state.uploadBodyReceivedBytes = 0;
       state.uploadStartedAt = 0;
     }
+    state.pendingChunks = [];
+    state.pendingChunkReadIndex = 0;
+    state.pendingQueuedBytes = 0;
+    state.bufferChunks = [];
+    state.bufferedBytes = 0;
     state.requestHandled = true;
-    await this.sendJsonError(clientConnection, 500, message);
+    if (!state.connectionClosed) {
+      await this.sendJsonError(clientConnection, statusCode, message);
+    }
   }
 
   private async updateUploadProgressSnapshot(
@@ -843,7 +905,7 @@ export class LocalTransferServerService {
     if (shouldBroadcast) {
       state.lastUploadProgressBroadcastAt = now;
       state.lastUploadProgressBroadcastPercent = progressPercent;
-      const broadcastTask = this.broadcastRuntimeUpdate();
+      const broadcastTask = this.broadcastRuntimeUpdate(false);
       if (forceBroadcast || status === 'completed' || status === 'failed') {
         await broadcastTask;
       } else {
@@ -1221,11 +1283,13 @@ export class LocalTransferServerService {
     this.scheduleConnectionClose(clientConnection);
   }
 
-  private buildInfoJsonPayload(): string {
-    const runtime = this.getRuntimeState();
+  private buildInfoJsonPayload(refreshPresentation: boolean = true): string {
+    const runtime = refreshPresentation ? this.getRuntimeState() : cloneTransferServerRuntime(this.runtime);
     const config = this.configManager.getConfig();
     const response: TransferInfoResponse = buildTransferInfoResponse(runtime, config);
     response.uploadEnabled = true;
+    response.inboxUsedBytes = this.uploadStoreService.getCachedInboxBytes();
+    response.inboxReservedBytes = this.uploadStoreService.getCachedReservedBytes();
     return JSON.stringify(response);
   }
 
@@ -1248,6 +1312,9 @@ export class LocalTransferServerService {
     const payload: TransferRecentUploadsResponse = {
       ok: true,
       count: responseItems.length,
+      totalBytes: this.uploadStoreService.getCachedInboxBytes(),
+      reservedBytes: this.uploadStoreService.getCachedReservedBytes(),
+      maxTotalSizeMb: this.configManager.getConfig().maxTotalSizeMb,
       records: responseItems
     };
     return JSON.stringify(payload);
@@ -1268,6 +1335,12 @@ export class LocalTransferServerService {
     const safePairedClient = this.escapeHtml(pairedClient);
     const safeWsText = this.escapeHtml(wsText);
     const safeMaxFileSize = this.escapeHtml(config.maxFileSizeMb.toString());
+    const safeMaxTotalSize = this.escapeHtml(config.maxTotalSizeMb.toString());
+    const inboxUsedBytes = this.uploadStoreService.getCachedInboxBytes();
+    const inboxReservedBytes = this.uploadStoreService.getCachedReservedBytes();
+    const safeInboxUsageText = this.escapeHtml(
+      `${this.formatFileSizeText(inboxUsedBytes + inboxReservedBytes)} / ${config.maxTotalSizeMb} MB`
+    );
     const uploadsHtml = this.buildRecentUploadsHtml();
     return `
 <!doctype html>
@@ -1684,8 +1757,16 @@ export class LocalTransferServerService {
           <div class="value" id="wsChannelText">${safeWsText}</div>
         </div>
         <div class="row">
-          <div class="key">文件上限</div>
-          <div class="value">${safeMaxFileSize} MB</div>
+          <div class="key">单文件上限</div>
+          <div class="value" id="maxFileSizeText">${safeMaxFileSize} MB</div>
+        </div>
+        <div class="row">
+          <div class="key">收件箱总量</div>
+          <div class="value" id="inboxUsageText">${safeInboxUsageText}</div>
+        </div>
+        <div class="row">
+          <div class="key">总量上限</div>
+          <div class="value" id="maxTotalSizeText">${safeMaxTotalSize} MB</div>
         </div>
         <div class="row">
           <div class="key">接口</div>
@@ -1733,7 +1814,7 @@ export class LocalTransferServerService {
           <div id="selectedFileText" class="selected-file-text">暂未选择文件</div>
           <button id="uploadButton" class="upload-inline-button" type="button" disabled>开始上传</button>
         </div>
-        <div class="hint">请先完成上一步配对，再选择一个或多个文件；两项都满足后上传按钮会解锁。支持漫画压缩包、EPUB / MOBI / AZW3、PDF、TXT。上传完成后，请回到 APP 中继续导入；本页会自动刷新最近上传状态。</div>
+        <div class="hint">请先完成上一步配对，再选择一个或多个文件；两项都满足后上传按钮会解锁。单文件上限 ${safeMaxFileSize} MB，收件箱总量上限 ${safeMaxTotalSize} MB。支持漫画压缩包、EPUB / MOBI / AZW3、PDF、TXT。上传完成后，请回到 APP 中继续导入；本页会自动刷新最近上传状态。</div>
         <div class="progress-shell">
           <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
           <div id="progressText" class="progress-text">0%</div>
@@ -1766,9 +1847,16 @@ export class LocalTransferServerService {
       const serviceMessageText = document.getElementById('serviceMessageText');
       const pairedClientText = document.getElementById('pairedClientText');
       const wsChannelText = document.getElementById('wsChannelText');
+      const maxFileSizeText = document.getElementById('maxFileSizeText');
+      const inboxUsageText = document.getElementById('inboxUsageText');
+      const maxTotalSizeText = document.getElementById('maxTotalSizeText');
       const pairStateText = document.getElementById('pairStateText');
       const pairPanel = document.getElementById('pairPanel');
       const wsPort = ${runtime.webSocketPort};
+      let maxFileSizeMb = ${config.maxFileSizeMb};
+      let maxTotalSizeMb = ${config.maxTotalSizeMb};
+      let inboxUsedBytes = ${inboxUsedBytes};
+      let inboxReservedBytes = ${inboxReservedBytes};
       let sessionToken = '';
       let wsClient = null;
       let wsReconnectTimer = 0;
@@ -1778,6 +1866,7 @@ export class LocalTransferServerService {
       let isUploadInProgress = false;
       let hasServerUploadProgress = false;
       let uploadProgressPollTimer = 0;
+      let lastUploadSelectionWarning = '';
 
       function escapeHtml(text) {
         return String(text || '').replace(/[&<>"]/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[s]));
@@ -1831,11 +1920,73 @@ export class LocalTransferServerService {
         return [];
       }
 
+      function getMaxFileSizeBytes() {
+        return Number(maxFileSizeMb || 0) * 1024 * 1024;
+      }
+
+      function getMaxTotalSizeBytes() {
+        return Number(maxTotalSizeMb || 0) * 1024 * 1024;
+      }
+
+      function buildSelectionValidation(files) {
+        let totalSize = 0;
+        let exceededSingleFile = null;
+        const maxFileSizeBytes = getMaxFileSizeBytes();
+        for (let index = 0; index < files.length; index += 1) {
+          const file = files[index];
+          const fileSize = Number(file.size || 0);
+          totalSize += fileSize;
+          if (exceededSingleFile === null && maxFileSizeBytes > 0 && fileSize > maxFileSizeBytes) {
+            exceededSingleFile = file;
+          }
+        }
+        const currentInboxBytes = Number(inboxUsedBytes || 0) + Number(inboxReservedBytes || 0);
+        const expectedInboxBytes = currentInboxBytes + totalSize;
+        const maxTotalSizeBytes = getMaxTotalSizeBytes();
+        const exceedsTotal = maxTotalSizeBytes > 0 && expectedInboxBytes > maxTotalSizeBytes;
+        return {
+          totalSize: totalSize,
+          exceededSingleFile: exceededSingleFile,
+          currentInboxBytes: currentInboxBytes,
+          expectedInboxBytes: expectedInboxBytes,
+          exceedsTotal: exceedsTotal
+        };
+      }
+
+      function getSelectionValidationMessage(validation) {
+        if (!validation) {
+          return '';
+        }
+        if (validation.exceededSingleFile) {
+          return '文件 "' + validation.exceededSingleFile.name + '" 超出单文件上限 ' + maxFileSizeMb.toString() + ' MB';
+        }
+        if (validation.exceedsTotal) {
+          return '本次选择后收件箱总量将达到 ' + formatFileSize(validation.expectedInboxBytes) +
+            '，超过总上限 ' + maxTotalSizeMb.toString() + ' MB';
+        }
+        return '';
+      }
+
+      function updateCapacityTexts() {
+        if (maxFileSizeText) {
+          maxFileSizeText.textContent = maxFileSizeMb.toString() + ' MB';
+        }
+        if (maxTotalSizeText) {
+          maxTotalSizeText.textContent = maxTotalSizeMb.toString() + ' MB';
+        }
+        if (inboxUsageText) {
+          const currentInboxBytes = Number(inboxUsedBytes || 0) + Number(inboxReservedBytes || 0);
+          inboxUsageText.textContent = formatFileSize(currentInboxBytes) + ' / ' + maxTotalSizeMb.toString() + ' MB';
+        }
+      }
+
       function updateUploadButtonState() {
         if (!uploadButton) {
           return;
         }
-        uploadButton.disabled = !isUploadReady || getSelectedFiles().length <= 0;
+        const files = getSelectedFiles();
+        const validation = buildSelectionValidation(files);
+        uploadButton.disabled = !isUploadReady || files.length <= 0 || getSelectionValidationMessage(validation).length > 0;
       }
 
       function setUploadReady(isReady) {
@@ -1850,7 +2001,7 @@ export class LocalTransferServerService {
       }
 
       function formatFileSize(size) {
-        const units = ['B', 'KB', 'MB', 'GB'];
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
         let value = Number(size || 0);
         let index = 0;
         while (value >= 1024 && index < units.length - 1) {
@@ -1913,8 +2064,10 @@ export class LocalTransferServerService {
           return;
         }
         uploadProgressPollTimer = window.setInterval(() => {
-          void refreshInfo();
-        }, 1000);
+          if (!wsClient || wsClient.readyState !== window.WebSocket.OPEN) {
+            void refreshInfo();
+          }
+        }, 3000);
       }
 
       function stopUploadProgressPolling() {
@@ -1926,14 +2079,14 @@ export class LocalTransferServerService {
 
       function updateSelectedFileText() {
         const files = getSelectedFiles();
+        const validation = buildSelectionValidation(files);
+        const validationMessage = getSelectionValidationMessage(validation);
         if (selectedFileText) {
           if (files.length > 0) {
-            let totalSize = 0;
             let detailText = '';
             const maxVisibleCount = 4;
             for (let index = 0; index < files.length; index += 1) {
               const file = files[index];
-              totalSize += Number(file.size || 0);
               if (index < maxVisibleCount) {
                 detailText += '\\n' + (index + 1).toString() + '. ' + file.name + ' · ' + formatFileSize(file.size);
               }
@@ -1941,13 +2094,31 @@ export class LocalTransferServerService {
             if (files.length > maxVisibleCount) {
               detailText += '\\n还有 ' + (files.length - maxVisibleCount).toString() + ' 个文件会一起上传';
             }
-            selectedFileText.textContent = '已选择 ' + files.length.toString() + ' 个文件 · 共 ' + formatFileSize(totalSize) + detailText;
+            const inboxSummary = '\\n上传后收件箱占用：' +
+              formatFileSize(validation.expectedInboxBytes) + ' / ' + maxTotalSizeMb.toString() + ' MB';
+            selectedFileText.textContent =
+              '已选择 ' + files.length.toString() + ' 个文件 · 共 ' + formatFileSize(validation.totalSize) +
+              detailText + inboxSummary;
+            if (validationMessage.length > 0) {
+              selectedFileText.textContent += '\\n提示：' + validationMessage;
+            }
           } else {
             selectedFileText.textContent = '暂未选择文件';
           }
         }
         if (dropZone) {
           dropZone.classList.toggle('has-file', files.length > 0);
+        }
+        if (validationMessage.length > 0) {
+          if (lastUploadSelectionWarning !== validationMessage && !isUploadInProgress) {
+            setStatus(validationMessage, true);
+          }
+          lastUploadSelectionWarning = validationMessage;
+        } else if (lastUploadSelectionWarning.length > 0) {
+          lastUploadSelectionWarning = '';
+          if (!isUploadInProgress && isUploadReady) {
+            setStatus('配对成功，请选择文件后开始上传', false);
+          }
         }
         updateUploadButtonState();
       }
@@ -2033,6 +2204,20 @@ export class LocalTransferServerService {
         if (serviceMessageText) {
           serviceMessageText.textContent = String(payload.message || '');
         }
+        if (typeof payload.maxFileSizeMb === 'number' && Number.isFinite(payload.maxFileSizeMb)) {
+          maxFileSizeMb = Math.max(0, Math.floor(payload.maxFileSizeMb));
+        }
+        if (typeof payload.maxTotalSizeMb === 'number' && Number.isFinite(payload.maxTotalSizeMb)) {
+          maxTotalSizeMb = Math.max(0, Math.floor(payload.maxTotalSizeMb));
+        }
+        if (typeof payload.inboxUsedBytes === 'number' && Number.isFinite(payload.inboxUsedBytes)) {
+          inboxUsedBytes = Math.max(0, Math.floor(payload.inboxUsedBytes));
+        }
+        if (typeof payload.inboxReservedBytes === 'number' && Number.isFinite(payload.inboxReservedBytes)) {
+          inboxReservedBytes = Math.max(0, Math.floor(payload.inboxReservedBytes));
+        }
+        updateCapacityTexts();
+        updateSelectedFileText();
         applyUploadProgress(payload.uploadProgress);
         if (pairInput && typeof payload.pairCode === 'string' && payload.pairCode.length > 0) {
           if (sessionToken && currentPairCode.length > 0 && currentPairCode !== payload.pairCode) {
@@ -2060,6 +2245,17 @@ export class LocalTransferServerService {
           return;
         }
         if (Array.isArray(payload.records)) {
+          if (typeof payload.totalBytes === 'number' && Number.isFinite(payload.totalBytes)) {
+            inboxUsedBytes = Math.max(0, Math.floor(payload.totalBytes));
+          }
+          if (typeof payload.reservedBytes === 'number' && Number.isFinite(payload.reservedBytes)) {
+            inboxReservedBytes = Math.max(0, Math.floor(payload.reservedBytes));
+          }
+          if (typeof payload.maxTotalSizeMb === 'number' && Number.isFinite(payload.maxTotalSizeMb)) {
+            maxTotalSizeMb = Math.max(0, Math.floor(payload.maxTotalSizeMb));
+          }
+          updateCapacityTexts();
+          updateSelectedFileText();
           renderUploads(payload.records);
           return;
         }
@@ -2129,6 +2325,17 @@ export class LocalTransferServerService {
           if (!response.ok || !payload.ok || !Array.isArray(payload.records)) {
             return;
           }
+          if (typeof payload.totalBytes === 'number' && Number.isFinite(payload.totalBytes)) {
+            inboxUsedBytes = Math.max(0, Math.floor(payload.totalBytes));
+          }
+          if (typeof payload.reservedBytes === 'number' && Number.isFinite(payload.reservedBytes)) {
+            inboxReservedBytes = Math.max(0, Math.floor(payload.reservedBytes));
+          }
+          if (typeof payload.maxTotalSizeMb === 'number' && Number.isFinite(payload.maxTotalSizeMb)) {
+            maxTotalSizeMb = Math.max(0, Math.floor(payload.maxTotalSizeMb));
+          }
+          updateCapacityTexts();
+          updateSelectedFileText();
           renderUploads(payload.records);
         } catch (_error) {
         }
@@ -2302,11 +2509,25 @@ export class LocalTransferServerService {
           setStatus('请先选择文件', true);
           return;
         }
+        const selectionValidation = buildSelectionValidation(files);
+        const selectionErrorMessage = getSelectionValidationMessage(selectionValidation);
+        if (selectionErrorMessage.length > 0) {
+          setStatus(selectionErrorMessage, true);
+          updateUploadButtonState();
+          return;
+        }
         if (!sessionToken) {
           const paired = await verifyPair();
           if (!paired) {
             return;
           }
+        }
+        const latestSelectionValidation = buildSelectionValidation(files);
+        const latestSelectionErrorMessage = getSelectionValidationMessage(latestSelectionValidation);
+        if (latestSelectionErrorMessage.length > 0) {
+          setStatus(latestSelectionErrorMessage, true);
+          updateUploadButtonState();
+          return;
         }
         setStatus('准备上传 ' + files.length.toString() + ' 个文件，请不要关闭当前页面...', false);
         setPairState('ok', '已配对');
@@ -2378,6 +2599,7 @@ export class LocalTransferServerService {
       setupWebSocket();
       setUploadReady(false);
       setPairState('', '未验证');
+      updateCapacityTexts();
       updateSelectedFileText();
       refreshInfo().then(() => {
         autoVerifyPairOnLoad();
@@ -2421,11 +2643,11 @@ export class LocalTransferServerService {
     return `${clientConnection.clientIP}:${clientConnection.clientPort}`;
   }
 
-  private async broadcastRuntimeUpdate(): Promise<void> {
+  private async broadcastRuntimeUpdate(refreshPresentation: boolean = true): Promise<void> {
     if (this.wsServer === null || this.wsConnections.size <= 0) {
       return;
     }
-    const payload = this.buildInfoJsonPayload();
+    const payload = this.buildInfoJsonPayload(refreshPresentation);
     for (const clientConnection of this.wsConnections.values()) {
       try {
         await this.wsServer.send(payload, clientConnection);
@@ -2582,8 +2804,19 @@ export class LocalTransferServerService {
     }
   }
 
+  private markActivityThrottled(): void {
+    const now = Date.now();
+    if (now - this.lastActivityRefreshAt < ACTIVITY_REFRESH_MIN_INTERVAL_MS) {
+      this.sessionManager.touchSession();
+      return;
+    }
+    this.lastActivityRefreshAt = now;
+    this.markActivity();
+  }
+
   private armAutoStopTimer(config: TransferConfig): void {
     this.clearAutoStopTimer();
+    this.lastActivityRefreshAt = Date.now();
     const delayMs = config.autoStopMinutes * 60 * 1000;
     if (delayMs <= 0) {
       return;
@@ -2605,12 +2838,17 @@ export class LocalTransferServerService {
     const state = this.connectionStates.get(clientId);
     if (state !== null && state !== undefined) {
       state.connectionClosed = true;
-      state.requestHandled = true;
-      state.pendingChunks = [];
-      state.pendingChunkReadIndex = 0;
-      state.bufferChunks = [];
-      state.bufferedBytes = 0;
       if (state.messagePumpActive) {
+        return;
+      }
+      const clientConnection = this.tcpConnections.get(clientId);
+      if (
+        clientConnection !== null &&
+        clientConnection !== undefined &&
+        !state.requestHandled &&
+        state.pendingChunkReadIndex < state.pendingChunks.length
+      ) {
+        await this.drainConnectionMessages(clientConnection, state);
         return;
       }
       await this.finishClosedTcpConnectionCleanup(clientId, state);
@@ -2624,12 +2862,25 @@ export class LocalTransferServerService {
       return;
     }
     state.cleanupStarted = true;
+    state.pendingChunks = [];
+    state.pendingChunkReadIndex = 0;
+    state.pendingQueuedBytes = 0;
+    state.bufferChunks = [];
+    state.bufferedBytes = 0;
     if (state.uploadSession !== null) {
+      state.uploadAbortActive = true;
       await this.notifyUploadFailure(state, '连接已断开，上传已中断');
-      await this.uploadStoreService.abortUpload(state.uploadSession);
-      state.uploadSession = null;
-      state.uploadBodyReceivedBytes = 0;
-      state.uploadStartedAt = 0;
+      const uploadSession = state.uploadSession;
+      try {
+        await this.uploadStoreService.abortUpload(uploadSession);
+      } catch (error) {
+        logger.warn(TAG, `清理断开的上传会话失败: ${this.stringifyError(error)}`);
+      }
+      if (state.uploadSession === uploadSession) {
+        state.uploadSession = null;
+        state.uploadBodyReceivedBytes = 0;
+        state.uploadStartedAt = 0;
+      }
     }
     this.connectionStates.delete(clientId);
     this.tcpConnections.delete(clientId);
@@ -2653,6 +2904,7 @@ export class LocalTransferServerService {
     const state: TransferConnectionState = {
       pendingChunks: [],
       pendingChunkReadIndex: 0,
+      pendingQueuedBytes: 0,
       messagePumpActive: false,
       bufferChunks: [],
       bufferedBytes: 0,
@@ -2668,11 +2920,13 @@ export class LocalTransferServerService {
       lastUploadProgressBroadcastPercent: -1,
       uploadNotificationTerminal: false,
       uploadFailureNotified: false,
+      uploadAbortActive: false,
       remoteAddress: '',
       requestHandled: false,
       closeScheduled: false,
       connectionClosed: false,
-      cleanupStarted: false
+      cleanupStarted: false,
+      queueWarned: false
     };
     return state;
   }
@@ -2685,6 +2939,40 @@ export class LocalTransferServerService {
     state.bufferedBytes += chunk.byteLength;
   }
 
+  private async appendBufferedUploadBody(
+    state: TransferConnectionState,
+    uploadSession: TransferStagedUploadSession,
+    bodyStartOffset: number,
+    maxBodyBytes: number
+  ): Promise<number> {
+    let appendedBytes = 0;
+    let scannedBytes = 0;
+    for (const chunk of state.bufferChunks) {
+      if (appendedBytes >= maxBodyBytes) {
+        break;
+      }
+      const chunkStartOffset = scannedBytes;
+      const chunkEndOffset = chunkStartOffset + chunk.byteLength;
+      scannedBytes = chunkEndOffset;
+      if (chunkEndOffset <= bodyStartOffset) {
+        continue;
+      }
+      const startInChunk = bodyStartOffset > chunkStartOffset ? bodyStartOffset - chunkStartOffset : 0;
+      const remainingBytes = maxBodyBytes - appendedBytes;
+      const availableBytes = chunk.byteLength - startInChunk;
+      const bodyLength = Math.min(availableBytes, remainingBytes);
+      if (bodyLength <= 0) {
+        continue;
+      }
+      const bodyChunk = startInChunk === 0 && bodyLength === chunk.byteLength
+        ? chunk
+        : this.sliceUint8Array(chunk, startInChunk, startInChunk + bodyLength);
+      await this.uploadStoreService.appendUploadChunk(uploadSession, bodyChunk);
+      appendedBytes += bodyChunk.byteLength;
+    }
+    return appendedBytes;
+  }
+
   private compactPendingChunksIfNeeded(state: TransferConnectionState): void {
     if (state.pendingChunkReadIndex <= 0) {
       return;
@@ -2692,6 +2980,7 @@ export class LocalTransferServerService {
     if (state.pendingChunkReadIndex >= state.pendingChunks.length) {
       state.pendingChunks = [];
       state.pendingChunkReadIndex = 0;
+      state.pendingQueuedBytes = 0;
       return;
     }
     if (state.pendingChunkReadIndex < 64) {
@@ -2991,11 +3280,20 @@ export class LocalTransferServerService {
     if (statusCode === 405) {
       return 'Method Not Allowed';
     }
+    if (statusCode === 409) {
+      return 'Conflict';
+    }
     if (statusCode === 413) {
       return 'Payload Too Large';
     }
+    if (statusCode === 415) {
+      return 'Unsupported Media Type';
+    }
     if (statusCode === 431) {
       return 'Request Header Fields Too Large';
+    }
+    if (statusCode === 503) {
+      return 'Service Unavailable';
     }
     if (statusCode === 500) {
       return 'Internal Server Error';
@@ -3012,6 +3310,31 @@ export class LocalTransferServerService {
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  }
+
+  private resolveUploadInitErrorStatus(message: string): number {
+    if (message.indexOf('总量已达上限') >= 0 || message.indexOf('剩余空间不足') >= 0) {
+      return 413;
+    }
+    if (message.indexOf('暂不支持当前文件类型') >= 0) {
+      return 415;
+    }
+    return 400;
+  }
+
+  private formatFileSizeText(bytes: number): string {
+    if (bytes <= 0) {
+      return '0 B';
+    }
+    const units: string[] = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value = value / 1024;
+      unitIndex += 1;
+    }
+    const fractionDigits = unitIndex === 0 ? 0 : 1;
+    return `${value.toFixed(fractionDigits)} ${units[unitIndex]}`;
   }
 
   private describeUploadStatus(status: string): string {

@@ -33,7 +33,10 @@ import {
   TextReadingMode,
   BackgroundType,
   TextReaderSettings,
-  normalizeReadAloudSettings
+  normalizeReadAloudSettings,
+  TEXT_READER_FONT_SIZE_MIN,
+  TEXT_READER_FONT_SIZE_MAX,
+  clampTextReaderFontSize
 } from '../../Models/TextReaderModels';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { EBookDataManager, BackgroundImageInfo } from '../../Framework/Data/EBookDataManager';
@@ -630,10 +633,10 @@ export struct ReadingSettingsSubPage {
       );
 
       // 文字阅读全局设置
-      this.textFontSize = this.settingsManager.getNumber(
+      this.textFontSize = clampTextReaderFontSize(this.settingsManager.getNumber(
         SettingKeys.GLOBAL_TEXT_FONT_SIZE,
         globalNovelSettings.textStyle.fontSize
-      );
+      ));
       this.textFontFamily = this.settingsManager.getString(
         SettingKeys.GLOBAL_TEXT_FONT_FAMILY,
         globalNovelSettings.textStyle.fontFamily
@@ -1039,7 +1042,7 @@ export struct ReadingSettingsSubPage {
       },
       savedBackgroundImages: currentGlobalSettings.savedBackgroundImages ?? DEFAULT_TEXT_READER_SETTINGS.savedBackgroundImages,
       textStyle: {
-        fontSize: Math.max(12, Math.min(40, Math.round(this.textFontSize))),
+        fontSize: clampTextReaderFontSize(this.textFontSize),
         lineHeight: Math.max(1.0, Math.min(3.0, this.textLineHeight)),
         paragraphSpacing: Math.max(0, Math.min(40, Math.round(this.textParagraphSpacing))),
         firstLineIndent: Math.max(0, Math.min(6, Math.round(this.textFirstLineIndent))),
@@ -2502,9 +2505,9 @@ export struct ReadingSettingsSubPage {
         .width('100%')
 
         Slider({
-          value: this.textFontSize,
-          min: 12,
-          max: 32,
+          value: clampTextReaderFontSize(this.textFontSize),
+          min: TEXT_READER_FONT_SIZE_MIN,
+          max: TEXT_READER_FONT_SIZE_MAX,
           step: 1,
           style: SliderStyle.InSet
         })
@@ -2512,7 +2515,7 @@ export struct ReadingSettingsSubPage {
           .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onChange(async (value: number) => {
-            this.textFontSize = Math.round(value);
+            this.textFontSize = clampTextReaderFontSize(value);
             await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, this.textFontSize);
             await this.persistGlobalNovelReaderSettings();
           })

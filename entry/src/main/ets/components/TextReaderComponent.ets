@@ -30,7 +30,8 @@ import {
   TextPageTurnAnimation,
   TextAlignment,
   BackgroundType,
-  DEFAULT_TEXT_READER_SETTINGS
+  DEFAULT_TEXT_READER_SETTINGS,
+  clampTextReaderFontSize
 } from '../Models/TextReaderModels';
 import { HighlightLineType } from '../Models/AnnotationModels';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
@@ -579,7 +580,7 @@ export struct TextReaderComponent {
     const ts = this.settings.textStyle;
     const pm = this.getEffectivePageMargins();
     return `${this.settings.readingMode}|${this.settings.readingDirection}|${this.getResolvedPaginationMode()}|` +
-      `${ts.fontSize}|${ts.lineHeight}|` +
+      `${this.getEffectiveFontSize()}|${ts.lineHeight}|${ts.fontWeight}|${ts.fontFamily}|${ts.fontPath || ''}|` +
       `${ts.letterSpacing}|${ts.paragraphSpacing}|${ts.firstLineIndent}|${pm.top}|${pm.bottom}|${pm.left}|${pm.right}|` +
       `${this.getEffectiveBottomBarHeight()}|${this.componentWidth}|${this.componentHeight}`;
   }
@@ -642,6 +643,13 @@ export struct TextReaderComponent {
       return 0;
     }
     return Math.floor(this.contentAreaHeight / actualLineHeight);
+  }
+
+  private getEffectiveFontSize(): number {
+    if (!this.settings || !this.settings.textStyle) {
+      return DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize;
+    }
+    return clampTextReaderFontSize(this.settings.textStyle.fontSize);
   }
 
   private buildPagesForContent(content: string, linesPerPage: number): TextPage[] {
@@ -1122,7 +1130,7 @@ export struct TextReaderComponent {
     }
 
     const bottomBarHeight = this.getEffectiveBottomBarHeight();
-    const lineHeightVp = this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight;
+    const lineHeightVp = this.getEffectiveFontSize() * this.settings.textStyle.lineHeight;
     const minContentHeight = Math.max(
       lineHeightVp * TextReaderComponent.MIN_CONTENT_LINE_COUNT,
       lineHeightVp
@@ -1179,7 +1187,7 @@ export struct TextReaderComponent {
   * 当上下边距都为0时，轻度收紧文本行高，减少首尾行盒留白的视觉空隙
   */
   private getEffectiveTextLineHeight(): number {
-    const fontSize = this.settings.textStyle.fontSize;
+    const fontSize = this.getEffectiveFontSize();
     const baseLineHeight = fontSize * this.settings.textStyle.lineHeight;
     const pageMargins = this.settings.pageMargins;
     if (!pageMargins) {
@@ -2122,17 +2130,25 @@ export struct TextReaderComponent {
   // 缓存平均字符宽度，避免重复计算
   private cachedAvgCharWidth: number = 0;
   private cachedFontSize: number = 0;
+  private cachedAvgCharWidthSignature: string = '';
   
   /**
   * 获取平均字符宽度（缓存）
   * 注意：这里计算的是单个字符的宽度（不包含字间距）
   */
   private getAvgCharWidth(): number {
-    const fontSize = this.settings.textStyle.fontSize;
+    const fontSize = this.getEffectiveFontSize();
     const letterSpacing = this.settings.textStyle.letterSpacing;
-    const cacheKey = `${fontSize}_${letterSpacing}`;
-    
-    if (this.cachedAvgCharWidth > 0 && this.cachedFontSize === fontSize) {
+    const fontWeight = this.settings.textStyle.fontWeight;
+    const fontFamily = this.settings.textStyle.fontFamily;
+    const fontPath = this.settings.textStyle.fontPath ?? '';
+    const cacheSignature = `${fontSize}_${letterSpacing}_${fontWeight}_${fontFamily}_${fontPath}`;
+
+    if (
+      this.cachedAvgCharWidth > 0 &&
+      this.cachedFontSize === fontSize &&
+      this.cachedAvgCharWidthSignature === cacheSignature
+    ) {
       return this.cachedAvgCharWidth;
     }
     
@@ -2142,8 +2158,12 @@ export struct TextReaderComponent {
     // 单个字符宽度 = (总宽度 - (n-1)*字间距) / n
     // 单个字符宽度 = (总宽度 - (n-1)*字间距) / n
     const charCount = sampleText.length;
-    this.cachedAvgCharWidth = (totalWidth - (charCount - 1) * letterSpacing) / charCount;
+    const measuredCharWidth = (totalWidth - (charCount - 1) * letterSpacing) / charCount;
+    this.cachedAvgCharWidth = Number.isFinite(measuredCharWidth) && measuredCharWidth > 0
+      ? measuredCharWidth
+      : Math.max(0.5, fontSize * 0.5);
     this.cachedFontSize = fontSize;
+    this.cachedAvgCharWidthSignature = cacheSignature;
     
     logger.debug(TAG, `[字符宽度] 总宽度=${totalWidth.toFixed(2)}, 字符数=${charCount}, 字间距=${letterSpacing}, 单字符宽度=${this.cachedAvgCharWidth.toFixed(2)}`);
     return this.cachedAvgCharWidth;
@@ -2155,12 +2175,13 @@ export struct TextReaderComponent {
   private measureTextWidthFast(text: string): number {
     if (!text) return 0;
     
-    const fontSizePx = this.vp2px(this.settings.textStyle.fontSize);
+    const fontSizePx = this.vp2px(this.getEffectiveFontSize());
     const letterSpacingPx = this.vp2px(this.settings.textStyle.letterSpacing);
     
     const result = measure.measureTextSize({
       textContent: text,
       fontSize: `${fontSizePx}px`,
+      fontFamily: this.settings.textStyle.fontFamily,
       fontWeight: this.settings.textStyle.fontWeight,
       letterSpacing: letterSpacingPx
     });
@@ -2223,7 +2244,7 @@ export struct TextReaderComponent {
       return;
     }
     
-    const fontSize = this.settings.textStyle.fontSize;
+    const fontSize = this.getEffectiveFontSize();
     const lineHeight = this.settings.textStyle.lineHeight;
     const actualLineHeight = this.getEffectiveTextLineHeight();
     
@@ -3669,7 +3690,7 @@ export struct TextReaderComponent {
         }
       }, (segment: TextRenderSegment) => segment.key)
     }
-      .fontSize(this.settings.textStyle.fontSize)
+      .fontSize(this.getEffectiveFontSize())
       .fontColor(this.settings.textStyle.textColor)
       .lineHeight(this.getEffectiveTextLineHeight())
       .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -3710,7 +3731,7 @@ export struct TextReaderComponent {
         }
       }, (segment: TextRenderSegment) => segment.key)
     }
-      .fontSize(this.settings.textStyle.fontSize)
+      .fontSize(this.getEffectiveFontSize())
       .fontColor(this.settings.textStyle.textColor)
       .lineHeight(this.getEffectiveTextLineHeight())
       .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -3729,7 +3750,7 @@ export struct TextReaderComponent {
         this.buildPageTextWithHighlight(this.currentPageContent, this.getCurrentPageStartCharIndex(), this.currentPageIndex)
       } else {
         Text(this.currentPageContent)
-          .fontSize(this.settings.textStyle.fontSize)
+          .fontSize(this.getEffectiveFontSize())
           .fontColor(this.settings.textStyle.textColor)
           .lineHeight(this.getEffectiveTextLineHeight())
           .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -3769,7 +3790,7 @@ export struct TextReaderComponent {
           Span(this.getReadAloudAfterSentenceText())
         }
       }
-        .fontSize(this.settings.textStyle.fontSize)
+        .fontSize(this.getEffectiveFontSize())
         .fontColor(this.settings.textStyle.textColor)
         .lineHeight(this.getEffectiveTextLineHeight())
         .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -3800,7 +3821,7 @@ export struct TextReaderComponent {
         this.buildDualPageTextWithHighlight(pageContent, this.getPageStartCharIndexByPageIndex(pageIndex), pageIndex)
       } else {
         Text(pageContent)
-          .fontSize(this.settings.textStyle.fontSize)
+          .fontSize(this.getEffectiveFontSize())
           .fontColor(this.settings.textStyle.textColor)
           .lineHeight(this.getEffectiveTextLineHeight())
           .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -3829,7 +3850,7 @@ export struct TextReaderComponent {
           Span(this.getReadAloudAfterSentenceTextForPage(pageIndex, pageContent))
         }
       }
-        .fontSize(this.settings.textStyle.fontSize)
+        .fontSize(this.getEffectiveFontSize())
         .fontColor(this.settings.textStyle.textColor)
         .lineHeight(this.getEffectiveTextLineHeight())
         .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -4661,7 +4682,7 @@ export struct TextReaderComponent {
       // 通过 padding 避让底部信息栏，与实际显示的 buildPageMode 一致
       // 通过 padding 避让底部信息栏，与实际显示的 buildPageMode 一致
       Text(content)
-        .fontSize(this.settings.textStyle.fontSize)
+        .fontSize(this.getEffectiveFontSize())
         .fontColor(this.settings.textStyle.textColor)
         .lineHeight(this.getEffectiveTextLineHeight())
         .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -6095,7 +6116,7 @@ export struct TextReaderComponent {
               Span(this.getReadAloudScrollAfterSentenceText())
             }
           }
-            .fontSize(this.settings.textStyle.fontSize)
+            .fontSize(this.getEffectiveFontSize())
             .fontColor(this.settings.textStyle.textColor)
             .lineHeight(this.getEffectiveTextLineHeight())
             .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -6132,7 +6153,7 @@ export struct TextReaderComponent {
                 }
               }, (segment: TextRenderSegment) => segment.key)
             }
-              .fontSize(this.settings.textStyle.fontSize)
+              .fontSize(this.getEffectiveFontSize())
               .fontColor(this.settings.textStyle.textColor)
               .lineHeight(this.getEffectiveTextLineHeight())
               .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -6153,7 +6174,7 @@ export struct TextReaderComponent {
           } else {
             if (this.enableNovelAnnotations) {
               Text(this.content)
-                .fontSize(this.settings.textStyle.fontSize)
+                .fontSize(this.getEffectiveFontSize())
                 .fontColor(this.settings.textStyle.textColor)
                 .lineHeight(this.getEffectiveTextLineHeight())
                 .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -6174,7 +6195,7 @@ export struct TextReaderComponent {
             } else {
               ForEach(this.getTextSegments(), (segment: string, _index: number) => {
                 Text(segment)
-                  .fontSize(this.settings.textStyle.fontSize)
+                  .fontSize(this.getEffectiveFontSize())
                   .fontColor(this.settings.textStyle.textColor)
                   .lineHeight(this.getEffectiveTextLineHeight())
                   .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -6277,7 +6298,7 @@ export struct TextReaderComponent {
       // 下一页（在底层，滑动时露出）
       if (this.slideOffset !== 0 || this.showCurlEffect) {
         Text(this.isForward ? this.nextPageContent : this.prevPageContent)
-          .fontSize(this.settings.textStyle.fontSize)
+          .fontSize(this.getEffectiveFontSize())
           .fontColor(this.settings.textStyle.textColor)
           .lineHeight(this.getEffectiveTextLineHeight())
           .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -6366,7 +6387,7 @@ export struct TextReaderComponent {
                   .backgroundColor(this.getBackgroundColor())
               }
               Text(this.dualUnderLeftContent)
-                .fontSize(this.settings.textStyle.fontSize)
+                .fontSize(this.getEffectiveFontSize())
                 .fontColor(this.settings.textStyle.textColor)
                 .lineHeight(this.getEffectiveTextLineHeight())
                 .letterSpacing(this.settings.textStyle.letterSpacing)
@@ -6472,7 +6493,7 @@ export struct TextReaderComponent {
                   .backgroundColor(this.getBackgroundColor())
               }
               Text(this.dualUnderRightContent)
-                .fontSize(this.settings.textStyle.fontSize)
+                .fontSize(this.getEffectiveFontSize())
                 .fontColor(this.settings.textStyle.textColor)
                 .lineHeight(this.getEffectiveTextLineHeight())
                 .letterSpacing(this.settings.textStyle.letterSpacing)

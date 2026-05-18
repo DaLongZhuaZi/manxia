@@ -28,7 +28,10 @@ import {
   BackgroundType,
   PRESET_BACKGROUNDS,
   PresetBackground,
-  DEFAULT_TEXT_READER_SETTINGS
+  DEFAULT_TEXT_READER_SETTINGS,
+  TEXT_READER_FONT_SIZE_MIN,
+  TEXT_READER_FONT_SIZE_MAX,
+  clampTextReaderFontSize
 } from '../Models/TextReaderModels';
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
@@ -277,7 +280,7 @@ export struct EBookSettingsPage {
 ## 字体设置
 
 ### 字体大小
-拖动滑块调整文字大小，范围12-32像素。
+拖动滑块调整文字大小。纯文本阅读器范围 2-50 像素，普通电子书保持单书设置范围。
 
 ### 行间距
 调整行与行之间的距离，让阅读更舒适。
@@ -379,7 +382,10 @@ export struct EBookSettingsPage {
       const themePreset: EBookThemePreset = EBOOK_THEME_PRESETS[globalThemeIndex] || EBOOK_THEME_PRESETS[0];
       
       // 纯文本阅读器全局设置
-      const globalTextFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, 18);
+      const globalTextFontSize = clampTextReaderFontSize(settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_FONT_SIZE,
+        DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize
+      ));
       const globalTextFontFamily = settingsManager.getString(SettingKeys.GLOBAL_TEXT_FONT_FAMILY, 'HarmonyOS Sans');
       const globalTextFontWeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_WEIGHT, 400);
       const globalTextLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, 1.8);
@@ -406,7 +412,7 @@ export struct EBookSettingsPage {
             // 纯文本格式：使用纯文本阅读器全局设置
             logger.info(TAG, `纯文本格式检测到默认设置，应用全局设置: 字体大小=${globalTextFontSize}, 背景色=${globalTextBgPreset.backgroundColor}`);
             
-            this.settingFontSize = globalTextFontSize;
+            this.settingFontSize = clampTextReaderFontSize(globalTextFontSize);
             this.settingFontFamily = globalTextFontFamily;
             this.settingFontPath = '';
             this.settingFontWeight = globalTextFontWeight;
@@ -479,7 +485,7 @@ export struct EBookSettingsPage {
           
           this.settings = ebook.readingSettings;
           // 字体设置
-          this.settingFontSize = ebook.readingSettings.fontSize;
+          this.settingFontSize = clampTextReaderFontSize(ebook.readingSettings.fontSize);
           this.settingFontFamily = ebook.readingSettings.fontFamily;
           this.settingFontPath = ebook.readingSettings.fontPath || '';
           this.settingFontWeight = ebook.readingSettings.fontWeight || 400;
@@ -529,7 +535,7 @@ export struct EBookSettingsPage {
           // 纯文本格式：使用纯文本阅读器全局设置
           logger.info(TAG, `纯文本格式无保存设置，应用全局设置: 字体大小=${globalTextFontSize}, 背景色=${globalTextBgPreset.backgroundColor}`);
           
-          this.settingFontSize = globalTextFontSize;
+          this.settingFontSize = clampTextReaderFontSize(globalTextFontSize);
           this.settingFontFamily = globalTextFontFamily;
           this.settingFontPath = '';
           this.settingFontWeight = globalTextFontWeight;
@@ -636,7 +642,7 @@ export struct EBookSettingsPage {
       // 更新设置
       const newSettings: EBookReadingSettings = {
         // 字体设置
-        fontSize: this.settingFontSize,
+        fontSize: this.isTextFormat() ? clampTextReaderFontSize(this.settingFontSize) : this.settingFontSize,
         fontFamily: this.settingFontFamily,
         fontPath: this.settingFontPath,
         fontWeight: this.settingFontWeight,
@@ -1893,18 +1899,18 @@ export struct EBookSettingsPage {
           .width(80)
 
         Slider({
-          value: this.settingFontSize,
-          min: 12,
-          max: 36,
+          value: clampTextReaderFontSize(this.settingFontSize),
+          min: TEXT_READER_FONT_SIZE_MIN,
+          max: TEXT_READER_FONT_SIZE_MAX,
           step: 1
         })
           .layoutWeight(1)
           .onChange((value: number) => {
-            this.settingFontSize = value;
+            this.settingFontSize = clampTextReaderFontSize(value);
             this.saveSettingsImmediately();
           })
 
-        Text(`${this.settingFontSize}`)
+        Text(`${clampTextReaderFontSize(this.settingFontSize)}`)
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
