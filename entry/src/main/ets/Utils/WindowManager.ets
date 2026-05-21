@@ -7,6 +7,7 @@ import { common } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
 import { logger } from './Logger';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from './OrientationLockManager';
 
 /**
  * 系统栏高度信息接口
@@ -94,25 +95,12 @@ export class WindowManager {
   private static transitionGeneration: number = 0;
 
   /**
-   * 获取当前 Ability 的主窗口（已废弃，仅用于内部兼容）
-   * ⚠️ 警告：此方法依赖globalThis，在某些情况下可能不可用
-   * 推荐使用：getMainWindowFromUIContext() 或 通过 initialize() 传入的 WindowStage
+   * 获取当前 Ability 的主窗口。
+   * 优先复用 initialize()/registerWindowStageStateMonitor() 保存的 WindowStage，
+   * 避免启动期没有 UIContext 时误判为无法获取主窗口。
    */
   private static getMainWindow(): window.Window | null {
-    logger.warn(WindowManager.TAG, '⚠️ 使用了已废弃的getMainWindow()方法，推荐使用getMainWindowFromUIContext()');
-    return null;
-    // 注释掉不安全的globalThis访问
-    // try {
-    //   const context = globalThis.abilityContext as common.UIAbilityContext;
-    //   if (!context || !context.windowStage) {
-    //     logger.error(WindowManager.TAG, '❌ 无法获取AbilityContext或WindowStage');
-    //     return null;
-    //   }
-    //   return context.windowStage.getMainWindowSync();
-    // } catch (error) {
-    //   logger.error(WindowManager.TAG, `❌ 获取主窗口失败: ${(error as Error).message}`);
-    //   return null;
-    // }
+    return WindowManager.getMainWindowFromWindowStageRef('WindowManager.getMainWindow');
   }
 
   /**
@@ -471,39 +459,31 @@ export class WindowManager {
   }
 
   static setPreferredOrientationLandscape(uiContext?: UIContext): void {
-    try {
-      const mainWindow = uiContext ? WindowManager.getMainWindowFromUIContext(uiContext) : WindowManager.getMainWindow();
-      if (!mainWindow) {
-        logger.error(WindowManager.TAG, '无法获取主窗口，设置横屏失败');
-        return;
-      }
-      const promise = mainWindow.setPreferredOrientation(window.Orientation.LANDSCAPE);
-      promise.then(() => {
+    OrientationLockManager.applyStrategy(
+      OrientationLockStrategy.LANDSCAPE,
+      uiContext,
+      'WindowManager.setPreferredOrientationLandscape'
+    ).then((result: OrientationLockApplyResult) => {
+      if (result.success) {
         logger.info(WindowManager.TAG, '已设置为横屏显示');
-      }).catch((err: BusinessError) => {
-        logger.error(WindowManager.TAG, `设置横屏失败: ${JSON.stringify(err)}`);
-      });
-    } catch (error) {
-      logger.error(WindowManager.TAG, `设置横屏异常: ${(error as Error).message}`);
-    }
+      } else {
+        logger.error(WindowManager.TAG, `设置横屏失败: ${result.message}`);
+      }
+    });
   }
 
   static setPreferredOrientationAuto(uiContext?: UIContext): void {
-    try {
-      const mainWindow = uiContext ? WindowManager.getMainWindowFromUIContext(uiContext) : WindowManager.getMainWindow();
-      if (!mainWindow) {
-        logger.error(WindowManager.TAG, '无法获取主窗口，恢复自动旋转失败');
-        return;
-      }
-      const promise = mainWindow.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED);
-      promise.then(() => {
+    OrientationLockManager.applyStrategy(
+      OrientationLockStrategy.AUTO_ROTATION_RESTRICTED,
+      uiContext,
+      'WindowManager.setPreferredOrientationAuto'
+    ).then((result: OrientationLockApplyResult) => {
+      if (result.success) {
         logger.info(WindowManager.TAG, '已恢复自动旋转');
-      }).catch((err: BusinessError) => {
-        logger.error(WindowManager.TAG, `恢复自动旋转失败: ${JSON.stringify(err)}`);
-      });
-    } catch (error) {
-      logger.error(WindowManager.TAG, `恢复自动旋转异常: ${(error as Error).message}`);
-    }
+      } else {
+        logger.error(WindowManager.TAG, `恢复自动旋转失败: ${result.message}`);
+      }
+    });
   }
 
   /**
@@ -1172,15 +1152,15 @@ export class WindowManager {
     }
   }
 
-  private static getMainWindowFromWindowStageRef(): window.Window | null {
+  private static getMainWindowFromWindowStageRef(reason: string = 'reapply display mode'): window.Window | null {
     try {
       if (!WindowManager.windowStageRef) {
-        logger.warn(WindowManager.TAG, 'windowStageRef unavailable when reapplying display mode');
+        logger.warn(WindowManager.TAG, `windowStageRef unavailable: ${reason}`);
         return null;
       }
       return WindowManager.windowStageRef.getMainWindowSync();
     } catch (error) {
-      logger.error(WindowManager.TAG, `Failed to get main window from WindowStage: ${(error as Error).message}`);
+      logger.error(WindowManager.TAG, `Failed to get main window from WindowStage: ${(error as Error).message}, reason=${reason}`);
       return null;
     }
   }

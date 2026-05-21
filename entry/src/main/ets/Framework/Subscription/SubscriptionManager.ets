@@ -48,6 +48,7 @@ import { EBook } from '../../Models/EBookModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
 import { ChapterInfo as WebViewChapterInfo, PageInfo as WebViewPageInfo } from '../WebView/MangaSourceTypes';
+import { eventBus, GameEvent, IEventPayload } from '../EventBus';
 
 const TAG = 'SubscriptionManager';
 const AUTO_RULE_SCAN_INTERVAL_MS = 60 * 1000;
@@ -108,6 +109,9 @@ export class SubscriptionManager {
   private executionRunning: boolean = false;
   private lastAutoRunAt: number = 0;
   private context: common.UIAbilityContext | null = null;
+  private readonly appEnterForegroundCallback = (_payload: IEventPayload): void => {
+    void this.maybeRunDueRules('app_foreground');
+  };
 
   private constructor() {
   }
@@ -153,17 +157,11 @@ export class SubscriptionManager {
     }
 
     try {
-      const previousCallback = AppStorage.get<() => void>('onEnterForeground');
-      AppStorage.setOrCreate('onEnterForeground', () => {
-        if (previousCallback) {
-          previousCallback();
-        }
-        void this.maybeRunDueRules('app_foreground');
-      });
+      eventBus.subscribe(GameEvent.APP_ENTER_FOREGROUND, this.appEnterForegroundCallback);
       this.autoRunRegistered = true;
-      logger.info(TAG, '已注册前台内容跟踪到期检查回调');
+      logger.info(TAG, '已注册前台内容跟踪到期检查事件');
     } catch (error) {
-      logger.warn(TAG, `注册前台内容跟踪检查回调失败: ${String(error)}`);
+      logger.warn(TAG, `注册前台内容跟踪检查事件失败: ${String(error)}`);
     }
   }
 

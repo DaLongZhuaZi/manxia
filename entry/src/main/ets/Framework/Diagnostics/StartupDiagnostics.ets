@@ -129,7 +129,7 @@ export class StartupDiagnostics {
     this.startupStartTime = Date.now();
     this.phases.clear();
     
-    logger.warn('StartupDiagnostics', '🔍 开始监控应用启动流程');
+    logger.startup('StartupDiagnostics', '开始监控应用启动流程');
     logger.performance('StartupDiagnostics', 'startup_monitoring_start', this.startupStartTime, 'timestamp');
   }
 
@@ -199,7 +199,7 @@ export class StartupDiagnostics {
     this.isMonitoring = false;
     const totalTime = Date.now() - this.startupStartTime;
     
-    logger.warn('StartupDiagnostics', `🏁 启动流程监控完成报告，总耗时: ${totalTime}ms`);
+    logger.startup('StartupDiagnostics', '启动流程监控完成', `总耗时: ${totalTime}ms`);
     logger.performance('StartupDiagnostics', 'total_startup_time', totalTime, 'ms');
 
     // 生成诊断报告
@@ -302,8 +302,11 @@ export class StartupDiagnostics {
 
     reportLines.push('📊 ========== 报告结束 ==========');
 
-    // 使用warn级别输出完整报告
-    logger.warn('StartupDiagnostics', reportLines.join('\n'));
+    if (report.issues.length > 0) {
+      logger.warn('StartupDiagnostics', reportLines.join('\n'));
+    } else {
+      logger.info('StartupDiagnostics', reportLines.join('\n'));
+    }
   }
 
   /**

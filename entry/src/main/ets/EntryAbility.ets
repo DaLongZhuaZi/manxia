@@ -6,11 +6,11 @@
  
 import { UIAbility, AbilityConstant, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { BusinessError } from '@kit.BasicServicesKit';
 import { setContext } from './GlobalContext';
 import { DeepLinkRouter } from './Framework/Utils/DeepLinkRouter';
 import { logger } from './Utils/Logger';
 import { WindowManager, DisplayMode } from './Utils/WindowManager';
+import { OrientationLockApplyResult, OrientationLockManager, OrientationLockStrategy } from './Utils/OrientationLockManager';
 import { DataInitializer } from './Framework/Initialization/DataInitializer';
 import { ThemeManager } from './Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager } from './Framework/Managers/DeviceAdaptationManager';
@@ -54,6 +54,7 @@ import {
   ngfSettingsStoreFacade,
   ngfUiShellIntegrationFacade
 } from './Framework/NGF';
+import { BasePayload, eventBus, GameEvent } from './Framework/EventBus';
 
 export default class EntryAbility extends UIAbility {
 
@@ -545,16 +546,24 @@ export default class EntryAbility extends UIAbility {
       // 因此将此操作移到页面加载完成后执行
       const mainWindow = windowStage.getMainWindowSync();
       
-      // 直接使用window API设置自动旋转，不需要UIContext
+      // 通过全局方向锁定管理器设置自动旋转，不需要UIContext
       // 等待方向设置完成后再加载SplashPage，确保系统方向锁定已正确应用
-      mainWindow.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
-        .then(() => {
-          logger.info('EntryAbility', '✅ 使用WindowManager设置默认显示模式成功（显示所有系统栏 + 自动旋转）');
+      OrientationLockManager.applyStrategyToWindow(
+        mainWindow,
+        OrientationLockStrategy.AUTO_ROTATION_RESTRICTED,
+        'EntryAbility.onWindowStageCreate'
+      )
+        .then((result: OrientationLockApplyResult) => {
+          if (result.success) {
+            logger.info('EntryAbility', '✅ 使用WindowManager设置默认显示模式成功（显示所有系统栏 + 自动旋转）');
+          } else {
+            logger.error('EntryAbility', `❌ 设置自动旋转失败: ${result.message}`);
+          }
           // 方向设置完成后加载SplashPage
           this.loadSplashPage(windowStage);
         })
-        .catch((error: BusinessError) => {
-          logger.error('EntryAbility', `❌ 设置自动旋转失败: ${JSON.stringify(error)}`);
+        .catch((error: Error) => {
+          logger.error('EntryAbility', `❌ 设置自动旋转异常: ${error.message}`);
           // 即使失败也要加载SplashPage
           this.loadSplashPage(windowStage);
         });
@@ -1069,14 +1078,11 @@ export default class EntryAbility extends UIAbility {
       logger.warn('EntryAbility', `onForeground widget sync error: ${String(error)}`);
     }
 
-    // 触发业务注册的前台回调
+    // 触发业务注册的前台事件
     try {
-      const onEnterForeground = AppStorage.get<() => void>('onEnterForeground');
-      if (onEnterForeground) {
-        onEnterForeground();
-      }
+      eventBus.publish(GameEvent.APP_ENTER_FOREGROUND, new BasePayload());
     } catch (error) {
-      logger.warn('EntryAbility', `onForeground 回调执行异常: ${String(error)}`);
+      logger.warn('EntryAbility', `onForeground 事件发布异常: ${String(error)}`);
     }
     
     // 重新检测系统主题
@@ -1106,7 +1112,7 @@ export default class EntryAbility extends UIAbility {
    * 注意事项：
    *  - 长时任务应在业务开始时已申请（用户触发下载/校验时）
    *  - onBackground 中可申请短时任务（秒级，用于应急收尾)
-   *  - 业务注册回调：AppStorage.setOrCreate('onEnterBackground', callback)
+   *  - 业务监听后台事件：eventBus.subscribe(GameEvent.APP_ENTER_BACKGROUND, callback)
    */
   onBackground(): void {
     logger.lifecycle('EntryAbility', '应用进入后台');
@@ -1114,14 +1120,11 @@ export default class EntryAbility extends UIAbility {
     // 设置后台状态（统一由WindowManager管理）
     WindowManager.syncBackgroundState(true, '应用进入后台');
 
-    // 触发业务注册的后台回调（下载管理器、校验器等可注册此回调）
+    // 触发业务注册的后台事件（下载管理器、校验器等可监听此事件）
     try {
-      const onEnterBackground = AppStorage.get<() => void>('onEnterBackground');
-      if (onEnterBackground) {
-        onEnterBackground();
-      }
+      eventBus.publish(GameEvent.APP_ENTER_BACKGROUND, new BasePayload());
     } catch (error) {
-      logger.warn('EntryAbility', `onBackground 回调执行异常: ${String(error)}`);
+      logger.warn('EntryAbility', `onBackground 事件发布异常: ${String(error)}`);
     }
   }
 

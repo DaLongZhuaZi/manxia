@@ -45,6 +45,32 @@
 - DevEco Studio 安装目录下默认 HMS SDK 目录为 `F:\DevEco Studio\sdk\default\hms`。
 - 涉及 SDK 路径、toolchains、previewer、hvigor、编译环境或 IDE 绑定目录排查时，优先先核对以上路径，不要凭空假设其他 SDK 安装位置。
 
+### 2.2 本机已验证的常用构建命令
+
+- 本机命令行可用的 Hvigor 入口已实测确认为：`F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat`。
+- 在 PowerShell 中执行 HarmonyOS 构建命令前，优先先显式设置：
+  - `$env:DEVECO_SDK_HOME='F:\DevEco Studio\sdk'`
+- 执行任何 `hvigorw.bat` 命令前，必须先确认当前工作目录就是仓库根目录 `F:\DevEcoStudioProject\manxia`；不要在 `C:\Users\...` 等无关目录直接执行，否则 Hvigor 会按当前目录解析 `hvigor\hvigor-config.json5`，并触发类似 `00304004 Not Found` / `Hvigor config file <cwd>\hvigor\hvigor-config.json5 does not exist` 的误导性报错。
+- 不要先后反复尝试 `hvigor`、`hvigorw`、`ohpm`、猜测 SDK 路径等无根据写法；除非上述已验证入口失效，否则默认直接使用该入口和该环境变量，避免无效试错浪费 tokens。
+- 已在本仓库根目录 `F:\DevEcoStudioProject\manxia` 实测通过的常用命令包括：
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' -v`
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' tasks --no-daemon`
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' taskTree --no-daemon`
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' buildInfo --no-daemon`
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' clean --no-daemon`
+- 已验证可用的 daemon 管理命令包括：
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' --status-daemon`
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' --stop-daemon`
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' --stop-daemon-all`
+- 已验证语法正确、能够进入实际构建流程的命令包括：
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleApp -p product=default -p buildMode=debug --no-daemon --stacktrace`
+  - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleHap --no-daemon --stacktrace`
+- 当前仓库在本机执行完整构建时，已观测到一个明确的本地原生缓存问题：`entry\.cxx\default\default\debug\arm64-v8a` 下旧的 CMake 生成器为 `Visual Studio 17 2022`，而当前 HarmonyOS 构建链使用 `Ninja`，会导致 `BuildNativeWithCmake` 失败。
+- 因此，如果再次遇到 `generator : Ninja does not match the generator used previously: Visual Studio 17 2022`，应优先判断为本地 `.cxx` / `CMakeCache.txt` 缓存冲突，而不是 Hvigor 命令写错。
+- 遇到上述缓存冲突时，先在仓库根目录停止 daemon、记录报错、定位到具体 `.cxx` 目录；只有在当前任务本身就是构建排障，且用户允许处理构建缓存时，才继续清理对应 CMake 缓存。
+- 对当前仓库，优先清理的目标是报错中明确指向的二进制目录 `entry\.cxx\default\default\debug\arm64-v8a`，不要无差别清空整个项目、整个 `entry` 或其他无关缓存目录。
+- 如果清理 `entry\.cxx` 或其子目录时出现 `Access is denied`、`UnauthorizedAccessException`、无法改名、无法删除等错误，应优先判断为该目录的 ACL / 所有权 / 继承链异常，而不是继续误判为 Hvigor 命令问题；这类场景下必须明确说明需要管理员 PowerShell 或手动修复目录权限后再清缓存。
+
 ## 3. ArkTS 硬性语言与类型规则
 
 ### 3.1 类型安全
@@ -117,6 +143,40 @@
   - `logger.performance`
 - 日志分析时，先定位日志提到的代码，再结合源文件、官方文档和最佳实践解释原因，然后再给出方案。
 - 处理导入模块问题时，先检查源文件是否正确导出以及导出名称是否正确；如果是 HarmonyOS 模块，再去官方文档确认模块名与导出名。
+
+### 4.1 大文件与上下文保护规则
+
+- 对非日志、非关键文档、非用户明确要求全文查看的内容，默认禁止一次性整文件输出。
+- 查看代码、配置、普通文档时，默认先定位、再局部读取：
+  - 先用 `rg` / `Select-String` 搜关键词、函数名、类名、常量名、标题。
+  - 再用 `Get-Content -Encoding UTF8 | Select-Object -Skip N -First M` 读取命中位置附近上下文。
+- 单次局部读取默认控制在必要范围内，通常以 `20` 到 `160` 行为宜；除非确有必要，不要一次读取数百上千行。
+- 大于约 `500` 行的文件，默认不应整文件展开；必须先搜索命中点，再按片段分段读取。
+- 如果只是为了确认定义、调用、导出、常量值、标题或配置项，不要顺手把整个文件内容输出出来。
+- 并行查看多个文件时，优先同时读取多个“小窗口片段”，不要并行展开多个大文件全文。
+- 当 `rg` 不可用、缺失或被系统限制时，再退回 `Get-ChildItem ... | Select-String ...`；不要因为工具切换而放宽上下文控制。
+
+### 4.2 日志与长文档的精准提取规则
+
+- 对日志、构建输出、长文档、说明文、抓包文本等大量文本，必须先做“目标收缩”，再做“上下文提取”。
+- 日志分析优先按以下维度收缩范围：
+  - 时间戳
+  - TAG / 模块名
+  - 错误码
+  - 文件名 / 页面名 / 类名
+  - 关键词，如 `ERROR`、`WARN`、`Exception`、`failed`、`compile`
+- 优先使用精准提取方式，而不是全文阅读：
+  - `Select-String -Pattern ... -Context 2,4`
+  - 多关键词组合筛选
+  - 先筛时间段，再读该时间段附近的连续片段
+- 对重复日志，不要逐条通读全部重复项；应优先提取：
+  - 首次出现位置
+  - 代表性样本
+  - 最后一次出现位置
+  - 重复次数或影响范围
+- 分析长文档时，优先先定位目录、标题、章节名、关键术语，再只读取命中的章节片段；不要默认从头到尾通读整份文档。
+- 输出分析结论时，优先引用最关键的少量原文证据，再用自己的话概括；避免把大量日志或文档原文直接搬进回复，浪费 tokens。
+- 如果问题已经可以由精准命中片段解释清楚，就不要继续扩大阅读范围；只有证据不足时再逐步扩展上下文。
 
 ## 5. 资源、配置与文件规则
 

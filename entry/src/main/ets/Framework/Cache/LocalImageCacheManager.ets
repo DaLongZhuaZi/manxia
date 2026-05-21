@@ -34,6 +34,7 @@ export interface LocalLoadConfig {
   maxWidth?: number;   // 最大宽度（用于降采样）
   maxHeight?: number;  // 最大高度（用于降采样）
   priority?: number;   // 加载优先级
+  suppressFailureLog?: boolean; // 调用方会自行恢复时，失败日志降为警告
 }
 
 /**
@@ -195,7 +196,7 @@ export class LocalImageCacheManager {
       try {
         await fs.access(actualPath);
       } catch (e) {
-        logger.error(TAG, `文件不存在: ${actualPath}`);
+        this.logLoadFailure(`文件不存在: ${actualPath}`, config);
         this.loadingTasks.delete(pageId);
         this.notifyLoadComplete(pageId, null);
         return null;
@@ -209,7 +210,7 @@ export class LocalImageCacheManager {
       if (!imageSource) {
         await fs.close(file);
         file = null;
-        logger.error(TAG, `创建ImageSource失败: ${pageId}`);
+        this.logLoadFailure(`创建ImageSource失败: ${pageId}`, config);
         this.loadingTasks.delete(pageId);
         this.notifyLoadComplete(pageId, null);
         return null;
@@ -241,7 +242,7 @@ export class LocalImageCacheManager {
       await fs.close(file);
       file = null;
       if (!pixelMap) {
-        logger.error(TAG, `创建PixelMap失败: ${pageId}`);
+        this.logLoadFailure(`创建PixelMap失败: ${pageId}`, config);
         this.loadingTasks.delete(pageId);
         this.notifyLoadComplete(pageId, null);
         return null;
@@ -293,11 +294,19 @@ export class LocalImageCacheManager {
         }
       } catch (_closeError) {
       }
-      logger.error(TAG, `加载图片失败: ${pageId}, error=${String(error)}`);
+      this.logLoadFailure(`加载图片失败: ${pageId}, error=${String(error)}`, config);
       this.loadingTasks.delete(pageId);
       this.notifyLoadComplete(pageId, null);
       return null;
     }
+  }
+
+  private logLoadFailure(message: string, config?: LocalLoadConfig): void {
+    if (config?.suppressFailureLog === true) {
+      logger.warn(TAG, message);
+      return;
+    }
+    logger.error(TAG, message);
   }
 
   /**

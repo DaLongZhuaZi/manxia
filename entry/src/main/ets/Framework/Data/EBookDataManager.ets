@@ -395,6 +395,7 @@ export class EBookDataManager {
         { name: 'tapToTurn', definition: 'INTEGER DEFAULT 1' },
         { name: 'volumeKeyNavigation', definition: 'INTEGER DEFAULT 1' },
         { name: 'keepScreenOn', definition: 'INTEGER DEFAULT 0' },
+        { name: 'lockDeviceOrientation', definition: 'INTEGER DEFAULT 0' },
         { name: 'showPageNumber', definition: 'INTEGER DEFAULT 1' },
         { name: 'showProgress', definition: 'INTEGER DEFAULT 0' },
         { name: 'showTime', definition: 'INTEGER DEFAULT 1' },
@@ -612,11 +613,11 @@ export class EBookDataManager {
           backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
           pageMargin, pageTopMargin, pageBottomMargin, pageMode, brightness, autoSave, saveInterval,
           letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
-          pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
+          pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn, lockDeviceOrientation,
           showPageNumber, showProgress, showTime, showBattery,
           backgroundType, backgroundImagePath, backgroundImageOpacity, imageReaderSettingsJson,
           createTime, updateTime
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
       const updateSql = `
         UPDATE ebook_reading_settings SET
@@ -624,7 +625,7 @@ export class EBookDataManager {
           backgroundColor = ?, textColor = ?, themeBgImage = ?, nightMode = ?, followSystemTheme = ?,
           pageMargin = ?, pageTopMargin = ?, pageBottomMargin = ?, pageMode = ?, brightness = ?, autoSave = ?, saveInterval = ?,
           letterSpacing = ?, paragraphSpacing = ?, firstLineIndent = ?, textAlignment = ?,
-          pageTurnAnimation = ?, tapToTurn = ?, volumeKeyNavigation = ?, keepScreenOn = ?,
+          pageTurnAnimation = ?, tapToTurn = ?, volumeKeyNavigation = ?, keepScreenOn = ?, lockDeviceOrientation = ?,
           showPageNumber = ?, showProgress = ?, showTime = ?, showBattery = ?,
           backgroundType = ?, backgroundImagePath = ?, backgroundImageOpacity = ?, imageReaderSettingsJson = ?,
           updateTime = ?
@@ -657,6 +658,7 @@ export class EBookDataManager {
         finalSettings.tapToTurn !== false ? 1 : 0,
         finalSettings.volumeKeyNavigation !== false ? 1 : 0,
         finalSettings.keepScreenOn ? 1 : 0,
+        finalSettings.lockDeviceOrientation ? 1 : 0,
         finalSettings.showPageNumber !== false ? 1 : 0,
         finalSettings.showProgress ? 1 : 0,
         finalSettings.showTime !== false ? 1 : 0,
@@ -796,6 +798,7 @@ export class EBookDataManager {
       tapToTurn: settings.tapToTurn,
       volumeKeyNavigation: settings.volumeKeyNavigation,
       keepScreenOn: settings.keepScreenOn,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? DEFAULT_EBOOK_READING_SETTINGS.lockDeviceOrientation ?? false,
       showPageNumber: settings.showPageNumber,
       showProgress: settings.showProgress,
       showTime: settings.showTime,
@@ -972,6 +975,9 @@ export class EBookDataManager {
         SettingKeys.GLOBAL_EBOOK_KEEP_SCREEN_ON,
         baseSettings.keepScreenOn ?? false
       ),
+      lockDeviceOrientation: baseSettings.lockDeviceOrientation ??
+        DEFAULT_EBOOK_READING_SETTINGS.lockDeviceOrientation ??
+        false,
       showPageNumber: settingsManager.getBoolean(
         SettingKeys.GLOBAL_EBOOK_SHOW_PAGE_NUMBER,
         DEFAULT_EBOOK_READING_SETTINGS.showPageNumber ?? true
@@ -1018,6 +1024,9 @@ export class EBookDataManager {
       readingDirection: settings.readingDirection,
       brightness: settings.brightness,
       keepScreenOn: settings.keepScreenOn,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? DEFAULT_IMAGE_READING_SETTINGS.lockDeviceOrientation ?? false,
+      lockMode: settings.lockMode ?? settings.lockOrientation ?? DEFAULT_IMAGE_READING_SETTINGS.lockMode ?? false,
+      lockOrientation: settings.lockMode ?? settings.lockOrientation ?? DEFAULT_IMAGE_READING_SETTINGS.lockMode ?? false,
       pageSpacing: settings.pageSpacing,
       showPageInfo: settings.showPageInfo,
       showPageIndicator: settings.showPageIndicator,
@@ -1026,6 +1035,7 @@ export class EBookDataManager {
       skipIntroPages: settings.skipIntroPages,
       pageTurnAnimation: settings.pageTurnAnimation,
       doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      doublePageVerticalDirection: settings.doublePageVerticalDirection,
       filterSettings: {
         enabled: settings.filterSettings.enabled,
         brightness: settings.filterSettings.brightness,
@@ -1092,6 +1102,9 @@ export class EBookDataManager {
       readingDirection: base.readingDirection ?? DEFAULT_IMAGE_READING_SETTINGS.readingDirection,
       brightness: base.brightness ?? DEFAULT_IMAGE_READING_SETTINGS.brightness,
       keepScreenOn: base.keepScreenOn ?? DEFAULT_IMAGE_READING_SETTINGS.keepScreenOn,
+      lockDeviceOrientation: base.lockDeviceOrientation ?? DEFAULT_IMAGE_READING_SETTINGS.lockDeviceOrientation ?? false,
+      lockMode: base.lockMode ?? base.lockOrientation ?? DEFAULT_IMAGE_READING_SETTINGS.lockMode ?? false,
+      lockOrientation: base.lockMode ?? base.lockOrientation ?? DEFAULT_IMAGE_READING_SETTINGS.lockMode ?? false,
       pageSpacing: base.pageSpacing ?? DEFAULT_IMAGE_READING_SETTINGS.pageSpacing,
       showPageInfo: base.showPageInfo ?? DEFAULT_IMAGE_READING_SETTINGS.showPageInfo,
       showPageIndicator: base.showPageIndicator ?? DEFAULT_IMAGE_READING_SETTINGS.showPageIndicator,
@@ -1100,6 +1113,7 @@ export class EBookDataManager {
       skipIntroPages: base.skipIntroPages ?? DEFAULT_IMAGE_READING_SETTINGS.skipIntroPages,
       pageTurnAnimation: base.pageTurnAnimation ?? DEFAULT_IMAGE_READING_SETTINGS.pageTurnAnimation,
       doublePagePortraitLayout: base.doublePagePortraitLayout ?? DEFAULT_IMAGE_READING_SETTINGS.doublePagePortraitLayout,
+      doublePageVerticalDirection: base.doublePageVerticalDirection ?? DEFAULT_IMAGE_READING_SETTINGS.doublePageVerticalDirection,
       filterSettings: {
         enabled: filterSettings.enabled ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.enabled,
         brightness: filterSettings.brightness ?? DEFAULT_IMAGE_READING_SETTINGS.filterSettings.brightness,
@@ -1965,7 +1979,7 @@ export class EBookDataManager {
         backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
         pageMargin, pageTopMargin, pageBottomMargin, pageMode, brightness, autoSave, saveInterval,
         letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
-        pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
+        pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn, lockDeviceOrientation,
         showPageNumber, showProgress, showTime, showBattery,
         backgroundType, backgroundImagePath, backgroundImageOpacity
       FROM ebook_reading_settings
@@ -2012,6 +2026,7 @@ export class EBookDataManager {
           tapToTurn: Number(getRecordValue(record, 'tapToTurn', 1)) === 1,
           volumeKeyNavigation: Number(getRecordValue(record, 'volumeKeyNavigation', 1)) === 1,
           keepScreenOn: Number(getRecordValue(record, 'keepScreenOn', 0)) === 1,
+          lockDeviceOrientation: Number(getRecordValue(record, 'lockDeviceOrientation', 0)) === 1,
           // 显示设置
           showPageNumber: Number(getRecordValue(record, 'showPageNumber', 1)) === 1,
           showProgress: Number(getRecordValue(record, 'showProgress', 0)) === 1,

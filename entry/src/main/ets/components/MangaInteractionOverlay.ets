@@ -1,5 +1,10 @@
 import { logger } from '../Utils/Logger';
-import { ReadingDirection, ReadingMode } from '../Models/MangaModels';
+import {
+  DoublePagePortraitLayout,
+  DoublePageVerticalDirection,
+  ReadingDirection,
+  ReadingMode
+} from '../Models/MangaModels';
 
 const TAG = 'MangaInteractionOverlay';
 const OVERLAY_FADE_IN_DELAY_MS: number = 50;
@@ -22,9 +27,15 @@ export interface InteractionZone {
 export interface MangaInteractionOverlayParams {
   readingMode: ReadingMode;
   readingDirection: ReadingDirection;
+  doublePagePortraitLayout?: DoublePagePortraitLayout;
+  doublePageVerticalDirection?: DoublePageVerticalDirection;
   componentWidth: number;
   componentHeight: number;
   deviceOrientation: 'portrait' | 'landscape' | 'square';
+  modeLocked?: boolean;
+  orientationLocked?: boolean;
+  singlePageAutoDoublePageAvailable?: boolean;
+  landscapeAutoDoublePageActive?: boolean;
   statusBarHeight: number;
   navigationBarHeight: number;
   onDismiss: () => void;
@@ -64,6 +75,9 @@ export struct MangaInteractionOverlay {
     if (this.params.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
       return true;
     }
+    if (this.isDoublePageVerticalLayoutMode()) {
+      return true;
+    }
     return (
       this.params.readingMode === ReadingMode.SINGLE_PAGE ||
       this.params.readingMode === ReadingMode.DOUBLE_PAGE
@@ -78,6 +92,17 @@ export struct MangaInteractionOverlay {
       return true;
     }
     return this.params.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+  }
+
+  private isDoublePageVerticalLayoutMode(): boolean {
+    return this.params.readingMode === ReadingMode.DOUBLE_PAGE &&
+      this.params.deviceOrientation === 'portrait' &&
+      (this.params.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL) === DoublePagePortraitLayout.VERTICAL;
+  }
+
+  private isDoublePageVerticalNextAtTop(): boolean {
+    return (this.params.doublePageVerticalDirection ?? DoublePageVerticalDirection.TOP_TO_BOTTOM) ===
+      DoublePageVerticalDirection.BOTTOM_TO_TOP;
   }
 
   private buildZones(): InteractionZone[] {
@@ -95,15 +120,26 @@ export struct MangaInteractionOverlay {
       }];
     }
 
+    if (this.isDoublePageVerticalLayoutMode()) {
+      return [{
+        type: InteractionZoneType.TOOLBAR_TOGGLE,
+        left: 0,
+        top: 0,
+        width,
+        height,
+        label: '单击任意位置\n显示或隐藏工具栏'
+      }];
+    }
+
     if (this.params.readingMode === ReadingMode.DOUBLE_PAGE) {
       if (this.isVerticalPagingMode()) {
-        return this.buildVerticalZones(width, height, false);
+        return this.buildVerticalZones(width, height, false, this.isDoublePageVerticalNextAtTop());
       }
       return this.buildDoublePageZones(width, height, this.isRtlPagingMode());
     }
 
     if (this.isVerticalPagingMode()) {
-      return this.buildVerticalZones(width, height, true);
+      return this.buildVerticalZones(width, height, true, false);
     }
 
     return this.buildHorizontalZones(width, height, this.isRtlPagingMode());
@@ -140,18 +176,23 @@ export struct MangaInteractionOverlay {
     ];
   }
 
-  private buildVerticalZones(width: number, height: number, isSinglePage: boolean): InteractionZone[] {
+  private buildVerticalZones(
+    width: number,
+    height: number,
+    isSinglePage: boolean,
+    nextAtTop: boolean
+  ): InteractionZone[] {
     const sideHeight = height * 0.3;
     const middleHeight = height - sideHeight * 2;
     const toolbarLabel = isSinglePage ? '显示/隐藏\n工具栏' : '双页中部\n显示工具栏';
     return [
       {
-        type: InteractionZoneType.PAGE_TURN_PREV,
+        type: nextAtTop ? InteractionZoneType.PAGE_TURN_NEXT : InteractionZoneType.PAGE_TURN_PREV,
         left: 0,
         top: 0,
         width,
         height: sideHeight,
-        label: '上一页'
+        label: nextAtTop ? '下一页' : '上一页'
       },
       {
         type: InteractionZoneType.TOOLBAR_TOGGLE,
@@ -162,12 +203,12 @@ export struct MangaInteractionOverlay {
         label: toolbarLabel
       },
       {
-        type: InteractionZoneType.PAGE_TURN_NEXT,
+        type: nextAtTop ? InteractionZoneType.PAGE_TURN_PREV : InteractionZoneType.PAGE_TURN_NEXT,
         left: 0,
         top: sideHeight + middleHeight,
         width,
         height: sideHeight,
-        label: '下一页'
+        label: nextAtTop ? '上一页' : '下一页'
       }
     ];
   }
@@ -240,8 +281,10 @@ export struct MangaInteractionOverlay {
     }
 
     if (this.params.readingMode === ReadingMode.DOUBLE_PAGE) {
-      if (this.isVerticalPagingMode()) {
-        return '双页纵向模式：上方翻到上一页，中间显示工具栏，下方翻到下一页。';
+      if (this.isDoublePageVerticalLayoutMode()) {
+        return this.isDoublePageVerticalNextAtTop()
+          ? '双页纵向模式（下到上）：继续上推触顶进入下一对页，回拉至触底返回上一对页；单击任意位置显示或隐藏工具栏。'
+          : '双页纵向模式（上到下）：继续下拉触底进入下一对页，回推至触顶返回上一对页；单击任意位置显示或隐藏工具栏。';
       }
       return this.isRtlPagingMode()
         ? '双页模式（从右往左）：左侧窄边缘下一页，中间大区域显示工具栏，右侧窄边缘上一页。'
@@ -262,9 +305,27 @@ export struct MangaInteractionOverlay {
       return '提示：连续滚动模式没有左右翻页热区，工具栏通过单击任意位置呼出。';
     }
     if (this.params.readingMode === ReadingMode.DOUBLE_PAGE) {
-      return '提示：双页模式只有左右边缘翻页，中间的大区域负责显示或隐藏工具栏。';
+      if (this.isDoublePageVerticalLayoutMode()) {
+        return this.isDoublePageVerticalNextAtTop()
+          ? '提示：当前为上下双页，下方到上方阅读；自然滚动触顶进入下一对页、触底返回上一对页，点击仅显示或隐藏工具栏。'
+          : '提示：当前为上下双页，上方到下方阅读；自然滚动触底进入下一对页、触顶返回上一对页，点击仅显示或隐藏工具栏。';
+      }
+      return '提示：双页模式只有左右边缘翻页，中间的大区域负责显示或隐藏工具栏；横向跨页和比例异常页会自动切换为单显。';
     }
     return '提示：点击任意标记区域都可以快速确认当前翻页方向。';
+  }
+
+  private getOrientationReminderText(): string {
+    if (this.params.landscapeAutoDoublePageActive ?? false) {
+      return '模式未锁定：当前由单页模式临时切换为左右双页，转回竖屏会恢复单页。';
+    }
+    if (this.params.singlePageAutoDoublePageAvailable ?? false) {
+      return '模式未锁定：单页模式下旋转到横屏会临时切换为左右双页。';
+    }
+    if ((this.params.modeLocked ?? this.params.orientationLocked) ?? false) {
+      return '模式已锁定：旋转设备时会保持当前阅读模式。';
+    }
+    return '';
   }
 
   private getLegendText(type: InteractionZoneType): string {
@@ -275,7 +336,7 @@ export struct MangaInteractionOverlay {
         return '绿色区域：翻到下一页';
       case InteractionZoneType.TOOLBAR_TOGGLE:
       default:
-        return this.isContinuousMode()
+        return this.isContinuousMode() || this.isDoublePageVerticalLayoutMode()
           ? '橙色区域：单击任意位置显示或隐藏工具栏'
           : '橙色区域：显示或隐藏工具栏';
     }
@@ -359,6 +420,13 @@ export struct MangaInteractionOverlay {
         .fontSize(13)
         .fontColor('rgba(255, 216, 133, 1)')
         .fontFamily(this.appFontFamily)
+
+      if (this.getOrientationReminderText().length > 0) {
+        Text(this.getOrientationReminderText())
+          .fontSize(13)
+          .fontColor('rgba(127, 206, 255, 1)')
+          .fontFamily(this.appFontFamily)
+      }
 
       Column({ space: 6 }) {
         if (this.hasZoneType(InteractionZoneType.PAGE_TURN_PREV)) {

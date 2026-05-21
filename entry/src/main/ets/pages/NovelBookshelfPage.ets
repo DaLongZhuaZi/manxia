@@ -292,6 +292,7 @@ export struct NovelBookshelfPage {
         contentType: UnifiedContentType.NOVEL,
         contentId: item.bookUrl,
         sourceId: item.sourceId,
+        sourceName: item.sourceName,
         cachedTitle: item.bookName,
         cachedCover: item.coverUrl,
         cachedAuthor: item.author
@@ -1479,6 +1480,7 @@ export struct NovelBookshelfPage {
         contentType: UnifiedContentType.NOVEL,
         contentId: book.bookUrl,
         sourceId: book.sourceId,
+        sourceName: book.sourceName,
         cachedTitle: book.name,
         cachedCoverPath: book.coverLocalPath || undefined,
         cachedCover: book.coverLocalPath || book.coverUrl,

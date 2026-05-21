@@ -216,7 +216,7 @@ class StartupController {
     this.executionResults = [];
     this.recoveryAttempts = 0;
 
-    logger.warn('StartupController', '🚀 启动流程监控开始');
+    logger.startup('StartupController', '启动流程监控开始');
     startupDiagnostics.startMonitoring();
   }
 
@@ -376,7 +376,7 @@ class StartupController {
       this.status = StartupStatus.COMPLETED;
       const totalDuration = Date.now() - this.startTime;
       
-      logger.warn('StartupController', `🎉 启动流程完成报告 (总耗时: ${totalDuration}ms)`);
+      logger.startup('StartupController', '启动流程监控完成', `总耗时: ${totalDuration}ms`);
       startupDiagnostics.completeStartupMonitoring();
       
       // 生成启动报告
@@ -418,8 +418,11 @@ class StartupController {
     
     reportLines.push('📊 ========== 报告结束 ==========');
 
-    // 使用warn级别输出完整报告
-    logger.warn('StartupController', reportLines.join('\n'));
+    if (failedPhases > 0 || successfulRecoveries < recoveryAttempts) {
+      logger.warn('StartupController', reportLines.join('\n'));
+    } else {
+      logger.info('StartupController', reportLines.join('\n'));
+    }
   }
 
   /**

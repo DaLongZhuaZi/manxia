@@ -7,6 +7,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import batteryInfo from '@ohos.batteryInfo';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
@@ -230,6 +231,7 @@ export struct EpubWebViewReaderPage {
   private volumeDownCallback: ((event: InputKeyEvent) => void) | null = null;
   private isVolumeKeyListenerRegistered: boolean = false;
   private isPageVisible: boolean = false;
+  private orientationLockToken: string = '';
   private replaceSettingsLoaded: boolean = false;
   private replaceRulesEnabled: boolean = true;
   private scopedReplaceRuleIds: string[] | null = null;
@@ -301,6 +303,7 @@ export struct EpubWebViewReaderPage {
     this.unregisterVolumeKeyListener();
     this.stopAutoPageTurn();
     this.stopTimeUpdate();
+    this.orientationLockToken = ReaderOrientationLockHelper.release(this.orientationLockToken, this.uiContext ?? undefined);
     void this.persistTextReadingSettings('about_to_disappear');
     void this.persistPageReadingSettings('about_to_disappear');
     void this.saveReadingProgress('about_to_disappear');
@@ -312,6 +315,7 @@ export struct EpubWebViewReaderPage {
     WindowManager.reapplyCurrentDisplayMode(24);
     void this.refreshCameraCutoutTopInset('show');
     this.updateVolumeKeyListener();
+    this.syncDeviceOrientationLock('page_show');
     this.startTimeUpdate();
     this.syncAutoPageTurnState();
     this.updateBatteryLevel();
@@ -488,6 +492,7 @@ export struct EpubWebViewReaderPage {
       this.autoPageTurnIntervalSeconds = this.autoPageTurnEnabled ?
         this.pageReadingSettings.autoPageTurnInterval : 5;
       this.updateVolumeKeyListener();
+      this.syncDeviceOrientationLock('settings_loaded');
       logger.info(
         TAG,
         `恢复阅读设置: text(fontSize=${this.readingSettings.fontSize}, fontFamily=${this.readingSettings.fontFamily}, fontPath=${this.readingSettings.fontPath || 'none'}, fontWeight=${this.readingSettings.fontWeight}, lineHeight=${this.readingSettings.lineHeight}, pageMargin=${this.readingSettings.pageMargin}, letterSpacing=${this.readingSettings.letterSpacing ?? 0}, paragraphSpacing=${this.readingSettings.paragraphSpacing ?? 8}, firstLineIndent=${this.readingSettings.firstLineIndent ?? 2}, textAlignment=${this.readingSettings.textAlignment ?? 'JUSTIFY'}, tapToTurn=${this.readingSettings.tapToTurn ?? true}), page(mode=${this.pageReadingSettings.readingMode}, direction=${this.pageReadingSettings.readingDirection}, animation=${this.pageReadingSettings.pageTurnAnimation}, volumeKey=${this.pageReadingSettings.volumeKeyNavigation}, autoPageTurn=${this.pageReadingSettings.autoPageTurnInterval})`
@@ -2857,6 +2862,7 @@ export struct EpubWebViewReaderPage {
       tapToTurn: settings.tapToTurn ?? true,
       volumeKeyNavigation: settings.volumeKeyNavigation ?? true,
       keepScreenOn: settings.keepScreenOn ?? false,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? false,
       showPageNumber: settings.showPageNumber ?? true,
       showProgress: settings.showProgress ?? false,
       showTime: settings.showTime ?? true,
@@ -2894,6 +2900,7 @@ export struct EpubWebViewReaderPage {
       tapToTurn: settings.tapToTurn ?? this.readingSettings.tapToTurn ?? true,
       volumeKeyNavigation: settings.volumeKeyNavigation ?? this.readingSettings.volumeKeyNavigation ?? true,
       keepScreenOn: settings.keepScreenOn ?? this.readingSettings.keepScreenOn ?? false,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? this.readingSettings.lockDeviceOrientation ?? false,
       showPageNumber: settings.showPageNumber ?? this.readingSettings.showPageNumber ?? true,
       showProgress: settings.showProgress ?? this.readingSettings.showProgress ?? false,
       showTime: settings.showTime ?? this.readingSettings.showTime ?? true,
@@ -2914,6 +2921,9 @@ export struct EpubWebViewReaderPage {
       readingDirection: settings.readingDirection,
       brightness: settings.brightness,
       keepScreenOn: settings.keepScreenOn,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false,
+      lockMode: settings.lockMode ?? settings.lockOrientation ?? DEFAULT_READING_SETTINGS.lockMode ?? false,
+      lockOrientation: settings.lockMode ?? settings.lockOrientation ?? DEFAULT_READING_SETTINGS.lockMode ?? false,
       pageSpacing: settings.pageSpacing,
       showPageInfo: settings.showPageInfo,
       showPageIndicator: settings.showPageIndicator,
@@ -2922,6 +2932,7 @@ export struct EpubWebViewReaderPage {
       skipIntroPages: settings.skipIntroPages,
       pageTurnAnimation: settings.pageTurnAnimation,
       doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      doublePageVerticalDirection: settings.doublePageVerticalDirection ?? DEFAULT_READING_SETTINGS.doublePageVerticalDirection,
       filterSettings: {
         enabled: settings.filterSettings.enabled,
         brightness: settings.filterSettings.brightness,
@@ -3026,6 +3037,21 @@ export struct EpubWebViewReaderPage {
     }
   }
 
+  private syncDeviceOrientationLock(reason: string): void {
+    if (!this.uiContext) {
+      this.uiContext = this.getUIContext();
+    }
+    const enabled: boolean = (this.readingSettings.lockDeviceOrientation ?? false) ||
+      (this.pageReadingSettings.lockDeviceOrientation ?? false);
+    this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
+      'EpubWebViewReaderPage',
+      this.orientationLockToken,
+      enabled,
+      this.uiContext ?? undefined
+    );
+    logger.info(TAG, `设备方向锁同步完成: enabled=${enabled}, reason=${reason}`);
+  }
+
   private applyPageReadingSettings(
     settings: MangaReadingSettings,
     trigger: string,
@@ -3040,6 +3066,7 @@ export struct EpubWebViewReaderPage {
       this.autoPageTurnIntervalSeconds = normalized.autoPageTurnInterval;
     }
     this.updateVolumeKeyListener();
+    this.syncDeviceOrientationLock('page_settings_change');
     this.epubReaderController?.applyPageSettings(normalized);
     void this.persistPageReadingSettings(trigger);
     if (readingModeChanged && !this.showQuickSettings) {
@@ -5191,6 +5218,7 @@ export struct EpubWebViewReaderPage {
                   this.ebook.readingSettings = this.cloneTextReadingSettings(mergedSettings);
                 }
                 this.epubReaderController?.applyReadingSettings(mergedSettings);
+                this.syncDeviceOrientationLock('text_settings_change');
                 const bookId = this.ebook?.id ?? '';
                 if (bookId.length > 0) {
                   void this.ebookDataManager.saveReadingSettings(bookId, mergedSettings);

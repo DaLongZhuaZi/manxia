@@ -15,7 +15,14 @@ import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
-import { ReadingMode, ReadingDirection, DEFAULT_READING_SETTINGS, PageTurnAnimationType, DoublePagePortraitLayout } from '../../Models/MangaModels';
+import {
+  ReadingMode,
+  ReadingDirection,
+  DEFAULT_READING_SETTINGS,
+  PageTurnAnimationType,
+  DoublePagePortraitLayout,
+  DoublePageVerticalDirection
+} from '../../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import {
@@ -120,6 +127,8 @@ export struct ReadingSettingsSubPage {
   @State volumeKeyNavigation: boolean = DEFAULT_READING_SETTINGS.volumeKeyNavigation;
   @State defaultPageTurnAnimation: PageTurnAnimationType = DEFAULT_READING_SETTINGS.pageTurnAnimation;
   @State mangaDoublePagePortraitLayout: DoublePagePortraitLayout = DEFAULT_READING_SETTINGS.doublePagePortraitLayout;
+  @State mangaDoublePageVerticalDirection: DoublePageVerticalDirection =
+    DEFAULT_READING_SETTINGS.doublePageVerticalDirection ?? DoublePageVerticalDirection.TOP_TO_BOTTOM;
   @State mangaPageSpacing: number = DEFAULT_READING_SETTINGS.pageSpacing;
   @State mangaShowPageInfo: boolean = DEFAULT_READING_SETTINGS.showPageInfo;
   @State mangaShowPageIndicator: boolean = DEFAULT_READING_SETTINGS.showPageIndicator;
@@ -392,10 +401,16 @@ export struct ReadingSettingsSubPage {
     const normalizedDirection = direction === ReadingDirection.VERTICAL
       ? ReadingDirection.TOP_TO_BOTTOM
       : direction;
+    const portraitLayout: DoublePagePortraitLayout =
+      this.mangaDoublePagePortraitLayout ?? DEFAULT_READING_SETTINGS.doublePagePortraitLayout;
+    if (mode === ReadingMode.DOUBLE_PAGE && portraitLayout === DoublePagePortraitLayout.VERTICAL) {
+      return ReadingDirection.TOP_TO_BOTTOM;
+    }
     if (mode === ReadingMode.DOUBLE_PAGE && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
       return ReadingDirection.LEFT_TO_RIGHT;
     }
-    if (mode === ReadingMode.WEBTOON && normalizedDirection !== ReadingDirection.TOP_TO_BOTTOM) {
+    if ((mode === ReadingMode.WEBTOON || mode === ReadingMode.CONTINUOUS_VERTICAL) &&
+      normalizedDirection !== ReadingDirection.TOP_TO_BOTTOM) {
       return ReadingDirection.TOP_TO_BOTTOM;
     }
     if (mode === ReadingMode.CONTINUOUS_SCROLL && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
@@ -405,12 +420,79 @@ export struct ReadingSettingsSubPage {
   }
 
   private isTopToBottomMangaDirectionDisabled(): boolean {
-    return this.defaultReadingMode === ReadingMode.CONTINUOUS_SCROLL ||
-      this.defaultReadingMode === ReadingMode.DOUBLE_PAGE;
+    return this.defaultReadingMode === ReadingMode.CONTINUOUS_SCROLL;
   }
 
   private isHorizontalMangaDirectionDisabled(): boolean {
-    return this.defaultReadingMode === ReadingMode.WEBTOON;
+    return this.defaultReadingMode === ReadingMode.WEBTOON ||
+      this.defaultReadingMode === ReadingMode.CONTINUOUS_VERTICAL;
+  }
+
+  private isMangaDoublePageVerticalLayoutSelected(): boolean {
+    return this.defaultReadingMode === ReadingMode.DOUBLE_PAGE &&
+      (this.mangaDoublePagePortraitLayout ?? DEFAULT_READING_SETTINGS.doublePagePortraitLayout) ===
+        DoublePagePortraitLayout.VERTICAL;
+  }
+
+  private normalizeMangaPageTurnAnimationForCurrentMode(animationType: PageTurnAnimationType): PageTurnAnimationType {
+    if (this.isMangaDoublePageVerticalLayoutSelected()) {
+      return PageTurnAnimationType.SLIDE;
+    }
+    return animationType;
+  }
+
+  private syncMangaPageTurnAnimationForCurrentMode(): void {
+    const normalizedAnimation: PageTurnAnimationType = this.normalizeMangaPageTurnAnimationForCurrentMode(
+      this.defaultPageTurnAnimation
+    );
+    if (normalizedAnimation !== this.defaultPageTurnAnimation) {
+      this.defaultPageTurnAnimation = normalizedAnimation;
+      void this.settingsManager.setString(SettingKeys.GLOBAL_PAGE_TURN_ANIMATION, this.defaultPageTurnAnimation);
+      this.settingsManager.syncToAppStorage();
+    }
+  }
+
+  @Builder
+  private buildMangaVerticalDoublePageAnimationLockCard() {
+    Column({ space: 8 }) {
+      Button({ stateEffect: true }) {
+        Text('上下专属')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+      }
+      .width(104)
+      .height(32)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      .borderRadius(6)
+      .onClick(() => {
+        this.defaultPageTurnAnimation = PageTurnAnimationType.SLIDE;
+        void this.settingsManager.setString(SettingKeys.GLOBAL_PAGE_TURN_ANIMATION, this.defaultPageTurnAnimation);
+        this.settingsManager.syncToAppStorage();
+      })
+
+      Text('上下双页通过触顶/触底翻页，只使用专属上下滑动动画。')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+    }
+    .width('100%')
+  }
+
+  private getSelectedMangaDoublePageVerticalDirection(): DoublePageVerticalDirection {
+    return this.mangaDoublePageVerticalDirection ??
+      DEFAULT_READING_SETTINGS.doublePageVerticalDirection ??
+      DoublePageVerticalDirection.TOP_TO_BOTTOM;
+  }
+
+  private syncMangaDoublePageLayoutForDirection(direction: ReadingDirection): void {
+    if (this.defaultReadingMode !== ReadingMode.DOUBLE_PAGE) {
+      return;
+    }
+    this.mangaDoublePagePortraitLayout = direction === ReadingDirection.TOP_TO_BOTTOM
+      ? DoublePagePortraitLayout.VERTICAL
+      : DoublePagePortraitLayout.HORIZONTAL;
   }
 
   private getSelectedMangaReadingDirection(): ReadingDirection {
@@ -427,8 +509,11 @@ export struct ReadingSettingsSubPage {
     if (this.isHorizontalMangaDirectionDisabled()) {
       return '条漫模式仅支持从上到下';
     }
+    if (this.isMangaDoublePageVerticalLayoutSelected()) {
+      return '当前双页为上下组合；选择左右方向会切换为左右组合，上下顺序可在下方单独设置。';
+    }
     if (this.defaultReadingMode === ReadingMode.DOUBLE_PAGE) {
-      return '双页模式不支持从上到下';
+      return '当前双页为左右组合；选择从上到下将切换为上下组合。';
     }
     return '';
   }
@@ -477,6 +562,19 @@ export struct ReadingSettingsSubPage {
         SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT,
         DEFAULT_READING_SETTINGS.doublePagePortraitLayout
       ) as DoublePagePortraitLayout;
+      this.mangaDoublePageVerticalDirection = this.settingsManager.getString(
+        SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_VERTICAL_DIRECTION,
+        DEFAULT_READING_SETTINGS.doublePageVerticalDirection ?? DoublePageVerticalDirection.TOP_TO_BOTTOM
+      ) as DoublePageVerticalDirection;
+      const normalizedDirectionWithLayout = this.normalizeMangaReadingDirection(
+        this.defaultReadingMode,
+        this.defaultReadingDirection
+      );
+      if (normalizedDirectionWithLayout !== this.defaultReadingDirection) {
+        this.defaultReadingDirection = normalizedDirectionWithLayout;
+        this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+      }
+      this.syncMangaPageTurnAnimationForCurrentMode();
       this.mangaPageSpacing = Math.max(0, Math.min(50, Math.round(this.settingsManager.getNumber(
         SettingKeys.GLOBAL_MANGA_PAGE_SPACING,
         DEFAULT_READING_SETTINGS.pageSpacing
@@ -1148,6 +1246,7 @@ export struct ReadingSettingsSubPage {
                 this.defaultReadingDirection
               );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              this.syncMangaPageTurnAnimationForCurrentMode();
               this.settingsManager.syncToAppStorage();
             })
 
@@ -1174,6 +1273,7 @@ export struct ReadingSettingsSubPage {
                 this.defaultReadingDirection
               );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              this.syncMangaPageTurnAnimationForCurrentMode();
               this.settingsManager.syncToAppStorage();
             })
 
@@ -1269,11 +1369,19 @@ export struct ReadingSettingsSubPage {
               if (this.isHorizontalMangaDirectionDisabled()) {
                 return;
               }
+              this.syncMangaDoublePageLayoutForDirection(ReadingDirection.LEFT_TO_RIGHT);
+              if (this.defaultReadingMode === ReadingMode.DOUBLE_PAGE) {
+                await this.settingsManager.setString(
+                  SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT,
+                  this.mangaDoublePagePortraitLayout
+                );
+              }
               this.defaultReadingDirection = this.normalizeMangaReadingDirection(
                 this.defaultReadingMode,
                 ReadingDirection.LEFT_TO_RIGHT
               );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              this.syncMangaPageTurnAnimationForCurrentMode();
               this.settingsManager.syncToAppStorage();
             })
 
@@ -1296,11 +1404,19 @@ export struct ReadingSettingsSubPage {
               if (this.isHorizontalMangaDirectionDisabled()) {
                 return;
               }
+              this.syncMangaDoublePageLayoutForDirection(ReadingDirection.RIGHT_TO_LEFT);
+              if (this.defaultReadingMode === ReadingMode.DOUBLE_PAGE) {
+                await this.settingsManager.setString(
+                  SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT,
+                  this.mangaDoublePagePortraitLayout
+                );
+              }
               this.defaultReadingDirection = this.normalizeMangaReadingDirection(
                 this.defaultReadingMode,
                 ReadingDirection.RIGHT_TO_LEFT
               );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              this.syncMangaPageTurnAnimationForCurrentMode();
               this.settingsManager.syncToAppStorage();
             })
 
@@ -1323,11 +1439,19 @@ export struct ReadingSettingsSubPage {
               if (this.isTopToBottomMangaDirectionDisabled()) {
                 return;
               }
+              this.syncMangaDoublePageLayoutForDirection(ReadingDirection.TOP_TO_BOTTOM);
+              if (this.defaultReadingMode === ReadingMode.DOUBLE_PAGE) {
+                await this.settingsManager.setString(
+                  SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT,
+                  this.mangaDoublePagePortraitLayout
+                );
+              }
               this.defaultReadingDirection = this.normalizeMangaReadingDirection(
                 this.defaultReadingMode,
                 ReadingDirection.TOP_TO_BOTTOM
               );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              this.syncMangaPageTurnAnimationForCurrentMode();
               this.settingsManager.syncToAppStorage();
             })
         }
@@ -1364,11 +1488,14 @@ export struct ReadingSettingsSubPage {
 
       // 翻页动画
       Column({ space: 8 }) {
-          Text('默认翻页动画')
+        Text('默认翻页动画')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
+        if (this.isMangaDoublePageVerticalLayoutSelected()) {
+          this.buildMangaVerticalDoublePageAnimationLockCard()
+        } else {
         Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
           ForEach([
             { type: PageTurnAnimationType.NONE, label: '无' },
@@ -1395,13 +1522,14 @@ export struct ReadingSettingsSubPage {
               )
               .borderRadius(6)
               .onClick(async () => {
-                this.defaultPageTurnAnimation = item.type;
+                this.defaultPageTurnAnimation = this.normalizeMangaPageTurnAnimationForCurrentMode(item.type);
                 await this.settingsManager.setString(SettingKeys.GLOBAL_PAGE_TURN_ANIMATION, this.defaultPageTurnAnimation);
                 this.settingsManager.syncToAppStorage();
               })
           })
         }
         .width('100%')
+        }
       }
 
       // 閫氱敤寮€鍏?
@@ -1503,6 +1631,12 @@ export struct ReadingSettingsSubPage {
             .onClick(async () => {
               this.mangaDoublePagePortraitLayout = DoublePagePortraitLayout.VERTICAL;
               await this.settingsManager.setString(SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT, this.mangaDoublePagePortraitLayout);
+              this.defaultReadingDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                this.defaultReadingDirection
+              );
+              await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              this.syncMangaPageTurnAnimationForCurrentMode();
               this.settingsManager.syncToAppStorage();
             })
           Button({ stateEffect: true }) {
@@ -1522,10 +1656,77 @@ export struct ReadingSettingsSubPage {
             .onClick(async () => {
               this.mangaDoublePagePortraitLayout = DoublePagePortraitLayout.HORIZONTAL;
               await this.settingsManager.setString(SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT, this.mangaDoublePagePortraitLayout);
+              this.defaultReadingDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                this.defaultReadingDirection
+              );
+              await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              this.syncMangaPageTurnAnimationForCurrentMode();
               this.settingsManager.syncToAppStorage();
             })
         }
         .width('100%')
+      }
+
+      if (this.isMangaDoublePageVerticalLayoutSelected()) {
+        Column({ space: 8 }) {
+          Row() {
+            Text('双页上下阅读顺序')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+
+          Row({ space: 8 }) {
+            Button({ stateEffect: true }) {
+              Text('上→下')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            }
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor(
+                this.getSelectedMangaDoublePageVerticalDirection() === DoublePageVerticalDirection.TOP_TO_BOTTOM
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+              )
+              .borderRadius(6)
+              .onClick(async () => {
+                this.mangaDoublePageVerticalDirection = DoublePageVerticalDirection.TOP_TO_BOTTOM;
+                await this.settingsManager.setString(
+                  SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_VERTICAL_DIRECTION,
+                  this.mangaDoublePageVerticalDirection
+                );
+                this.settingsManager.syncToAppStorage();
+              })
+
+            Button({ stateEffect: true }) {
+              Text('下→上')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+            }
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor(
+                this.getSelectedMangaDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+              )
+              .borderRadius(6)
+              .onClick(async () => {
+                this.mangaDoublePageVerticalDirection = DoublePageVerticalDirection.BOTTOM_TO_TOP;
+                await this.settingsManager.setString(
+                  SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_VERTICAL_DIRECTION,
+                  this.mangaDoublePageVerticalDirection
+                );
+                this.settingsManager.syncToAppStorage();
+              })
+          }
+          .width('100%')
+        }
       }
 
       Column({ space: 8 }) {

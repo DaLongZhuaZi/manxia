@@ -573,6 +573,7 @@ export struct BookSourceTabContent {
         contentType: UnifiedContentType.NOVEL,
         contentId: book.bookUrl,
         sourceId: book.sourceId,
+        sourceName: book.sourceName,
         cachedTitle: book.name,
         cachedCover: book.coverUrl,
         cachedAuthor: book.author

@@ -1038,6 +1038,7 @@ export class RemoteLibraryMangaBridge {
       skipIntroPages: settings.skipIntroPages,
       pageTurnAnimation: settings.pageTurnAnimation,
       doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      doublePageVerticalDirection: settings.doublePageVerticalDirection,
       filterSettings: {
         enabled: settings.filterSettings.enabled,
         brightness: settings.filterSettings.brightness,

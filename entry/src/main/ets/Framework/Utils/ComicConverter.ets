@@ -11,6 +11,7 @@ import {
   ReadingDirection,
   PageTurnAnimationType,
   DoublePagePortraitLayout,
+  DoublePageVerticalDirection,
   DEFAULT_READING_SETTINGS
 } from '../../Models/MangaModels';
 import { ComicInfo, ReadHistory, OnlineComicInfo, UserSettingsDatabaseRecord } from '../Data/DataManager';
@@ -27,6 +28,21 @@ interface PendingReadingSettingsSaveState {
   runningPromise: Promise<void> | null;
 }
 
+interface SourceSettingsSnapshot {
+  settingsEnabled: boolean;
+  readingMode: ReadingMode | null;
+  readingDirection: ReadingDirection | null;
+  pageTurnAnimation: PageTurnAnimationType | null;
+}
+
+export interface PreloadedComicConversionContext {
+  favoriteComicIds: Set<string>;
+  latestReadHistoryMap: Map<string, ReadHistory>;
+  userSettings: Map<string, UserSettingsDatabaseRecord>;
+  sourceSettingsBySourceId: Map<number, SourceSettingsSnapshot>;
+  comicSourceRecordsBySourceId: Map<number, ComicSourceDatabaseRecord>;
+}
+
 /**
  * 漫画数据转换工具类
  */
@@ -34,12 +50,43 @@ export class ComicConverter {
   private static readingSettingsSaveStates: Map<string, PendingReadingSettingsSaveState> =
     new Map<string, PendingReadingSettingsSaveState>();
 
+  private static getImageSourceType(path: string): ImageSourceType {
+    const src: string = path;
+    if (src.indexOf('http://') === 0 || src.indexOf('https://') === 0) {
+      return ImageSourceType.NETWORK;
+    }
+    if (src.indexOf('$rawfile(') === 0) {
+      return ImageSourceType.RAWFILE;
+    }
+    return ImageSourceType.LOCAL;
+  }
+
+  private static buildDefaultMetadata(author: string, tags: string[], addTime: number): MangaMetadata {
+    return {
+      authors: author ? [author] : [],
+      publisher: '',
+      publicationYear: new Date(addTime).getFullYear(),
+      genres: tags,
+      artists: [],
+      themes: [],
+      demographics: []
+    };
+  }
+
   private static cloneReadingSettings(settings: ReadingSettings): ReadingSettings {
+    const lockMode: boolean = settings.lockMode ??
+      settings.lockOrientation ??
+      DEFAULT_READING_SETTINGS.lockMode ??
+      DEFAULT_READING_SETTINGS.lockOrientation ??
+      false;
     return {
       readingMode: settings.readingMode,
       readingDirection: settings.readingDirection,
       brightness: settings.brightness,
       keepScreenOn: settings.keepScreenOn,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false,
+      lockMode: lockMode,
+      lockOrientation: lockMode,
       pageSpacing: settings.pageSpacing,
       showPageInfo: settings.showPageInfo,
       showPageIndicator: settings.showPageIndicator,
@@ -48,6 +95,9 @@ export class ComicConverter {
       skipIntroPages: settings.skipIntroPages,
       pageTurnAnimation: settings.pageTurnAnimation,
       doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      doublePageVerticalDirection: settings.doublePageVerticalDirection ??
+        DEFAULT_READING_SETTINGS.doublePageVerticalDirection ??
+        DoublePageVerticalDirection.TOP_TO_BOTTOM,
       filterSettings: {
         enabled: settings.filterSettings.enabled,
         brightness: settings.filterSettings.brightness,
@@ -68,22 +118,70 @@ export class ComicConverter {
     };
   }
 
+  private static normalizePageTurnAnimationForMode(
+    animationType: PageTurnAnimationType,
+    readingMode: ReadingMode,
+    doublePagePortraitLayout: DoublePagePortraitLayout
+  ): PageTurnAnimationType {
+    if (readingMode === ReadingMode.DOUBLE_PAGE && doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL) {
+      return PageTurnAnimationType.SLIDE;
+    }
+    return animationType;
+  }
+
   private static normalizeReadingSettings(settings: ReadingSettings | null | undefined): ReadingSettings {
     const base = settings || DEFAULT_READING_SETTINGS;
     const filterSettings = base.filterSettings || DEFAULT_READING_SETTINGS.filterSettings;
+    const readingMode: ReadingMode = base.readingMode ?? DEFAULT_READING_SETTINGS.readingMode;
+    const doublePagePortraitLayout: DoublePagePortraitLayout =
+      base.doublePagePortraitLayout ?? DEFAULT_READING_SETTINGS.doublePagePortraitLayout;
+    let readingDirection: ReadingDirection = base.readingDirection ?? DEFAULT_READING_SETTINGS.readingDirection;
+
+    if (readingDirection === ReadingDirection.VERTICAL) {
+      readingDirection = ReadingDirection.TOP_TO_BOTTOM;
+    }
+
+    if (readingMode === ReadingMode.DOUBLE_PAGE) {
+      if (doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL) {
+        readingDirection = ReadingDirection.TOP_TO_BOTTOM;
+      } else if (readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
+        readingDirection = ReadingDirection.LEFT_TO_RIGHT;
+      }
+    } else if ((readingMode === ReadingMode.WEBTOON ||
+      readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+      readingMode === ReadingMode.CONTINUOUS_VERTICAL) &&
+      readingDirection !== ReadingDirection.TOP_TO_BOTTOM) {
+      readingDirection = ReadingDirection.TOP_TO_BOTTOM;
+    } else if (readingMode === ReadingMode.CONTINUOUS_SCROLL &&
+      readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      readingDirection = ReadingDirection.LEFT_TO_RIGHT;
+    }
+
+    const pageTurnAnimation: PageTurnAnimationType = ComicConverter.normalizePageTurnAnimationForMode(
+      base.pageTurnAnimation ?? DEFAULT_READING_SETTINGS.pageTurnAnimation,
+      readingMode,
+      doublePagePortraitLayout
+    );
+
     return ComicConverter.cloneReadingSettings({
-      readingMode: base.readingMode ?? DEFAULT_READING_SETTINGS.readingMode,
-      readingDirection: base.readingDirection ?? DEFAULT_READING_SETTINGS.readingDirection,
+      readingMode: readingMode,
+      readingDirection: readingDirection,
       brightness: base.brightness ?? DEFAULT_READING_SETTINGS.brightness,
       keepScreenOn: base.keepScreenOn ?? DEFAULT_READING_SETTINGS.keepScreenOn,
+      lockDeviceOrientation: base.lockDeviceOrientation ?? DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false,
+      lockMode: base.lockMode ?? base.lockOrientation ?? DEFAULT_READING_SETTINGS.lockMode ?? false,
+      lockOrientation: base.lockMode ?? base.lockOrientation ?? DEFAULT_READING_SETTINGS.lockMode ?? false,
       pageSpacing: base.pageSpacing ?? DEFAULT_READING_SETTINGS.pageSpacing,
       showPageInfo: base.showPageInfo ?? DEFAULT_READING_SETTINGS.showPageInfo,
       showPageIndicator: base.showPageIndicator ?? DEFAULT_READING_SETTINGS.showPageIndicator,
       fitMode: base.fitMode ?? DEFAULT_READING_SETTINGS.fitMode,
       autoPageTurnInterval: base.autoPageTurnInterval ?? DEFAULT_READING_SETTINGS.autoPageTurnInterval,
       skipIntroPages: base.skipIntroPages ?? DEFAULT_READING_SETTINGS.skipIntroPages,
-      pageTurnAnimation: base.pageTurnAnimation ?? DEFAULT_READING_SETTINGS.pageTurnAnimation,
-      doublePagePortraitLayout: base.doublePagePortraitLayout ?? DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
+      pageTurnAnimation: pageTurnAnimation,
+      doublePagePortraitLayout: doublePagePortraitLayout,
+      doublePageVerticalDirection: base.doublePageVerticalDirection ??
+        DEFAULT_READING_SETTINGS.doublePageVerticalDirection ??
+        DoublePageVerticalDirection.TOP_TO_BOTTOM,
       filterSettings: {
         enabled: filterSettings.enabled ?? DEFAULT_READING_SETTINGS.filterSettings.enabled,
         brightness: filterSettings.brightness ?? DEFAULT_READING_SETTINGS.filterSettings.brightness,
@@ -102,6 +200,77 @@ export class ComicConverter {
       webtoonRightMargin: base.webtoonRightMargin ?? DEFAULT_READING_SETTINGS.webtoonRightMargin,
       webtoonMarginSync: base.webtoonMarginSync ?? DEFAULT_READING_SETTINGS.webtoonMarginSync
     });
+  }
+
+  private static convertReadHistoryToProgress(history: ReadHistory | null): ReadingProgress {
+    if (history !== null) {
+      return {
+        currentChapterId: history.chapterId || '',
+        currentPageIndex: history.pageIndex || 0,
+        lastReadAt: history.readTime || 0,
+        readingStatus: ReadingStatus.READING,
+        totalReadingTime: (history.readDuration || 0) / 1000 / 60,
+        readingPercentage: 0
+      };
+    }
+    return {
+      currentChapterId: '',
+      currentPageIndex: 0,
+      lastReadAt: 0,
+      readingStatus: ReadingStatus.UNREAD,
+      totalReadingTime: 0,
+      readingPercentage: 0
+    };
+  }
+
+  private static async resolveSourceSettingsSnapshot(
+    dataManager: DataManager,
+    sourceId: string | undefined,
+    userId: string,
+    preloadedContext?: PreloadedComicConversionContext
+  ): Promise<SourceSettingsSnapshot> {
+    const emptySnapshot: SourceSettingsSnapshot = {
+      settingsEnabled: false,
+      readingMode: null,
+      readingDirection: null,
+      pageTurnAnimation: null
+    };
+    if (!sourceId) {
+      return emptySnapshot;
+    }
+
+    const sid = Number(sourceId);
+    if (isNaN(sid) || sid <= 0) {
+      return emptySnapshot;
+    }
+
+    if (preloadedContext) {
+      const cachedSnapshot = preloadedContext.sourceSettingsBySourceId.get(sid);
+      if (cachedSnapshot) {
+        return cachedSnapshot;
+      }
+    }
+
+    try {
+      const settingsMap = await dataManager.getSourceUserSettings(sid, [
+        'manga.settingsEnabled',
+        'manga.readingMode',
+        'manga.readingDirection',
+        'manga.pageTurnAnimation'
+      ]);
+      const enabledRecord = settingsMap.get('manga.settingsEnabled');
+      const settingsEnabled = enabledRecord?.settingValue === '1' || enabledRecord?.settingValue === 'true';
+      return {
+        settingsEnabled: settingsEnabled,
+        readingMode: settingsMap.get('manga.readingMode')?.settingValue as ReadingMode | null,
+        readingDirection: settingsMap.get('manga.readingDirection')?.settingValue as ReadingDirection | null,
+        pageTurnAnimation: settingsMap.get('manga.pageTurnAnimation')?.settingValue as PageTurnAnimationType | null
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `加载图源设置快照失败: sourceId=${sourceId}, userId=${userId}, error=${errorMessage}`);
+      return emptySnapshot;
+    }
   }
 
   private static async flushReadingSettingsSaveQueue(
@@ -219,49 +388,16 @@ export class ComicConverter {
   public static async convertComicInfoToMangaAsync(comic: ComicInfo, userId: string = 'default_user'): Promise<Manga> {
     logger.info(TAG, `异步转换漫画信息: ${comic.title} (ID: ${comic.id})`);
     logger.debug(TAG, `[NSFW调试] ComicInfo.isNSFW=${comic.isNSFW}, 类型=${typeof comic.isNSFW}`);
-    
-    // 根据封面路径判断图片来源类型（网络/本地/rawfile）
-    const detectImageSourceType = (path: string): ImageSourceType => {
-      const src: string = path;
-      if (src.indexOf('http://') === 0 || src.indexOf('https://') === 0) {
-        return ImageSourceType.NETWORK;
-      }
-      if (src.indexOf('$rawfile(') === 0) {
-        return ImageSourceType.RAWFILE;
-      }
-      return ImageSourceType.LOCAL;
-    };
-
-    const defaultMetadata: MangaMetadata = {
-      authors: comic.author ? [comic.author] : [],
-      publisher: '',
-      publicationYear: new Date(comic.addTime).getFullYear(),
-      genres: comic.tags ? comic.tags : [],
-      artists: [],
-      themes: [],
-      demographics: []
-    };
-
-    // 从数据库加载阅读设置（传入sourceId以支持图源级别设置）
     const readingSettings = await ComicConverter.loadReadingSettings(comic.id, userId, comic.sourceId);
     logger.debug(TAG, `加载的阅读设置: mode=${readingSettings.readingMode}, direction=${readingSettings.readingDirection}, animation=${readingSettings.pageTurnAnimation}`);
-
-    // 从数据库加载阅读进度
     const readingProgress = await ComicConverter.loadReadingProgress(comic.id, userId);
     logger.debug(TAG, `加载的阅读进度: chapter=${readingProgress.currentChapterId}, page=${readingProgress.currentPageIndex}`);
 
-    // 加载收藏状态
     let favorited: boolean = false;
     try {
       const dm = DataManager.getInstance();
-      const favorites = await dm.getUserFavorites(userId);
-      for (let i: number = 0; i < favorites.length; i++) {
-        const fav = favorites[i];
-        if (fav.comicId === comic.id) {
-          favorited = true;
-          break;
-        }
-      }
+      const favoriteComicIds = await dm.getFavoriteComicIdSet(userId);
+      favorited = favoriteComicIds.has(comic.id);
       logger.debug(TAG, `收藏状态加载完成: ${String(favorited)} (comicId=${comic.id})`);
     } catch (favErr) {
       const em: string = favErr instanceof Error ? favErr.message : String(favErr);
@@ -274,9 +410,9 @@ export class ComicConverter {
       alternativeTitles: [],
       description: comic.description,
       coverImagePath: comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl,
-      coverSourceType: detectImageSourceType(comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl),
+      coverSourceType: ComicConverter.getImageSourceType(comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl),
       status: StatusConverter.toMangaStatus(comic.status),
-      metadata: defaultMetadata,
+      metadata: ComicConverter.buildDefaultMetadata(comic.author, comic.tags ? comic.tags : [], comic.addTime),
       chapters: [], // 章节信息需要单独加载
       readingProgress: readingProgress,
       bookmarks: [],
@@ -389,6 +525,10 @@ export class ComicConverter {
       SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT,
       DEFAULT_READING_SETTINGS.doublePagePortraitLayout
     ) as DoublePagePortraitLayout;
+    const globalDoublePageVerticalDirection = settingsManager.getString(
+      SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_VERTICAL_DIRECTION,
+      DEFAULT_READING_SETTINGS.doublePageVerticalDirection ?? DoublePageVerticalDirection.TOP_TO_BOTTOM
+    ) as DoublePageVerticalDirection;
     const globalCurlBackOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_CURL_BACK_OPACITY, DEFAULT_READING_SETTINGS.curlBackOpacity);
     const globalWebtoonLeftMargin = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_WEBTOON_LEFT_MARGIN, DEFAULT_READING_SETTINGS.webtoonLeftMargin);
     const globalWebtoonRightMargin = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_WEBTOON_RIGHT_MARGIN, DEFAULT_READING_SETTINGS.webtoonRightMargin);
@@ -438,6 +578,9 @@ export class ComicConverter {
       readingDirection: finalDirection,
       brightness: Math.max(0.1, Math.min(2.0, globalBrightness)),
       keepScreenOn: globalKeepScreenOn,
+      lockDeviceOrientation: DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false,
+      lockMode: DEFAULT_READING_SETTINGS.lockMode ?? false,
+      lockOrientation: DEFAULT_READING_SETTINGS.lockMode ?? false,
       pageSpacing: Math.max(0, Math.min(50, Math.round(globalPageSpacing))),
       showPageInfo: globalShowPageInfo,
       showPageIndicator: globalShowPageIndicator,
@@ -446,6 +589,7 @@ export class ComicConverter {
       skipIntroPages: Math.max(0, Math.min(20, Math.round(globalSkipIntroPages))),
       pageTurnAnimation: finalAnimation,
       doublePagePortraitLayout: globalDoublePagePortraitLayout,
+      doublePageVerticalDirection: globalDoublePageVerticalDirection,
       filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
       volumeKeyNavigation: globalVolumeKeyNav,
       curlBackOpacity: Math.max(50, Math.min(100, Math.round(globalCurlBackOpacity))),
@@ -503,6 +647,264 @@ export class ComicConverter {
       readingPercentage: 0
     };
     return defaultReadingProgress;
+  }
+
+  public static async buildPreloadedConversionContext(
+    comics: ComicInfo[],
+    onlineComics: OnlineComicInfo[],
+    userId: string = 'default_user'
+  ): Promise<PreloadedComicConversionContext> {
+    const dataManager = DataManager.getInstance();
+    const favoriteComicIds = await dataManager.getFavoriteComicIdSet(userId);
+
+    const allComicIds: string[] = [];
+    for (let index = 0; index < comics.length; index++) {
+      allComicIds.push(comics[index].id);
+    }
+    for (let index = 0; index < onlineComics.length; index++) {
+      allComicIds.push(onlineComics[index].id);
+    }
+
+    const latestReadHistoryMap = await dataManager.getLatestReadHistoryMap(allComicIds, userId);
+
+    const settingKeys: string[] = [];
+    for (let index = 0; index < comics.length; index++) {
+      settingKeys.push(`manga_settings_${comics[index].id}`);
+    }
+    for (let index = 0; index < onlineComics.length; index++) {
+      settingKeys.push(`manga_settings_${onlineComics[index].id}`);
+    }
+    const userSettings = await dataManager.getSettingsByKeys(settingKeys, userId);
+
+    const sourceIdValues: number[] = [];
+    for (let index = 0; index < comics.length; index++) {
+      const sourceId = Number(comics[index].sourceId);
+      if (!isNaN(sourceId) && sourceId > 0) {
+        sourceIdValues.push(sourceId);
+      }
+    }
+    for (let index = 0; index < onlineComics.length; index++) {
+      const sourceId = Number(onlineComics[index].sourceId);
+      if (!isNaN(sourceId) && sourceId > 0) {
+        sourceIdValues.push(sourceId);
+      }
+    }
+
+    const comicSourceRecordsBySourceId = await dataManager.getComicSourcesByIds(sourceIdValues);
+    const sourceSettingsBySourceId: Map<number, SourceSettingsSnapshot> = new Map<number, SourceSettingsSnapshot>();
+    for (let index = 0; index < sourceIdValues.length; index++) {
+      const sourceId = sourceIdValues[index];
+      if (sourceSettingsBySourceId.has(sourceId)) {
+        continue;
+      }
+      const sourceRecord = comicSourceRecordsBySourceId.get(sourceId);
+      const keyIdentifier = sourceRecord?.pkg || `id_${String(sourceId)}`;
+      const sourceSettingsKeys = [
+        `source:${keyIdentifier}:manga.settingsEnabled`,
+        `source:${keyIdentifier}:manga.readingMode`,
+        `source:${keyIdentifier}:manga.readingDirection`,
+        `source:${keyIdentifier}:manga.pageTurnAnimation`
+      ];
+      const sourceSettings = await dataManager.getSettingsByKeys(sourceSettingsKeys, userId);
+      const enabledRecord = sourceSettings.get(`source:${keyIdentifier}:manga.settingsEnabled`);
+      sourceSettingsBySourceId.set(sourceId, {
+        settingsEnabled: enabledRecord?.settingValue === '1' || enabledRecord?.settingValue === 'true',
+        readingMode: sourceSettings.get(`source:${keyIdentifier}:manga.readingMode`)?.settingValue as ReadingMode | null,
+        readingDirection: sourceSettings.get(`source:${keyIdentifier}:manga.readingDirection`)?.settingValue as ReadingDirection | null,
+        pageTurnAnimation: sourceSettings.get(`source:${keyIdentifier}:manga.pageTurnAnimation`)?.settingValue as PageTurnAnimationType | null
+      });
+    }
+
+    return {
+      favoriteComicIds: favoriteComicIds,
+      latestReadHistoryMap: latestReadHistoryMap,
+      userSettings: userSettings,
+      sourceSettingsBySourceId: sourceSettingsBySourceId,
+      comicSourceRecordsBySourceId: comicSourceRecordsBySourceId
+    };
+  }
+
+  public static async convertComicInfoToMangaWithContext(
+    comic: ComicInfo,
+    userId: string,
+    preloadedContext: PreloadedComicConversionContext
+  ): Promise<Manga> {
+    const settingsKey = `manga_settings_${comic.id}`;
+    let readingSettings: ReadingSettings;
+    const directSettingsRecord = preloadedContext.userSettings.get(settingsKey);
+    if (directSettingsRecord && directSettingsRecord.settingValue) {
+      readingSettings = ComicConverter.normalizeReadingSettings(JSON.parse(directSettingsRecord.settingValue) as ReadingSettings);
+    } else {
+      const sourceSnapshot = await ComicConverter.resolveSourceSettingsSnapshot(
+        DataManager.getInstance(),
+        comic.sourceId,
+        userId,
+        preloadedContext
+      );
+      const settingsManager = SettingsManager.getInstance();
+      const globalMode = settingsManager.getString(SettingKeys.GLOBAL_READING_MODE, '') as ReadingMode | '';
+      const globalDirection = settingsManager.getString(SettingKeys.GLOBAL_READING_DIRECTION, '') as ReadingDirection | '';
+      const globalAnimation = settingsManager.getString(SettingKeys.GLOBAL_PAGE_TURN_ANIMATION, '') as PageTurnAnimationType | '';
+      const globalKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_KEEP_SCREEN_ON, DEFAULT_READING_SETTINGS.keepScreenOn);
+      const globalVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_VOLUME_KEY_NAVIGATION, DEFAULT_READING_SETTINGS.volumeKeyNavigation);
+      const globalBrightness = settingsManager.getNumber(SettingKeys.GLOBAL_BRIGHTNESS, DEFAULT_READING_SETTINGS.brightness);
+      const globalPageSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_PAGE_SPACING, DEFAULT_READING_SETTINGS.pageSpacing);
+      const globalShowPageInfo = settingsManager.getBoolean(SettingKeys.GLOBAL_MANGA_SHOW_PAGE_INFO, DEFAULT_READING_SETTINGS.showPageInfo);
+      const globalShowPageIndicator = settingsManager.getBoolean(SettingKeys.GLOBAL_MANGA_SHOW_PAGE_INDICATOR, DEFAULT_READING_SETTINGS.showPageIndicator);
+      const globalFitMode = settingsManager.getString(SettingKeys.GLOBAL_MANGA_FIT_MODE, DEFAULT_READING_SETTINGS.fitMode);
+      const globalAutoPageTurnInterval = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_AUTO_PAGE_TURN_INTERVAL, DEFAULT_READING_SETTINGS.autoPageTurnInterval);
+      const globalSkipIntroPages = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_SKIP_INTRO_PAGES, DEFAULT_READING_SETTINGS.skipIntroPages);
+      const globalDoublePagePortraitLayout = settingsManager.getString(
+        SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT,
+        DEFAULT_READING_SETTINGS.doublePagePortraitLayout
+      ) as DoublePagePortraitLayout;
+      const globalDoublePageVerticalDirection = settingsManager.getString(
+        SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_VERTICAL_DIRECTION,
+        DEFAULT_READING_SETTINGS.doublePageVerticalDirection ?? DoublePageVerticalDirection.TOP_TO_BOTTOM
+      ) as DoublePageVerticalDirection;
+      const globalCurlBackOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_CURL_BACK_OPACITY, DEFAULT_READING_SETTINGS.curlBackOpacity);
+      const globalWebtoonLeftMargin = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_WEBTOON_LEFT_MARGIN, DEFAULT_READING_SETTINGS.webtoonLeftMargin);
+      const globalWebtoonRightMargin = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_WEBTOON_RIGHT_MARGIN, DEFAULT_READING_SETTINGS.webtoonRightMargin);
+      const globalWebtoonMarginSync = settingsManager.getBoolean(SettingKeys.GLOBAL_MANGA_WEBTOON_MARGIN_SYNC, DEFAULT_READING_SETTINGS.webtoonMarginSync);
+
+      let finalMode: ReadingMode = DEFAULT_READING_SETTINGS.readingMode;
+      let finalDirection: ReadingDirection = DEFAULT_READING_SETTINGS.readingDirection;
+      let finalAnimation: PageTurnAnimationType = DEFAULT_READING_SETTINGS.pageTurnAnimation;
+      if (sourceSnapshot.settingsEnabled && sourceSnapshot.readingMode) {
+        finalMode = sourceSnapshot.readingMode;
+      } else if (globalMode) {
+        finalMode = globalMode;
+      }
+      if (sourceSnapshot.settingsEnabled && sourceSnapshot.readingDirection) {
+        finalDirection = sourceSnapshot.readingDirection;
+      } else if (globalDirection) {
+        finalDirection = globalDirection;
+      } else if (finalMode === ReadingMode.WEBTOON) {
+        finalDirection = ReadingDirection.TOP_TO_BOTTOM;
+      }
+      if (sourceSnapshot.settingsEnabled && sourceSnapshot.pageTurnAnimation) {
+        finalAnimation = sourceSnapshot.pageTurnAnimation;
+      } else if (globalAnimation) {
+        finalAnimation = globalAnimation;
+      }
+
+      readingSettings = ComicConverter.normalizeReadingSettings({
+        readingMode: finalMode,
+        readingDirection: finalDirection,
+        brightness: Math.max(0.1, Math.min(2.0, globalBrightness)),
+        keepScreenOn: globalKeepScreenOn,
+        lockDeviceOrientation: DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false,
+        lockMode: DEFAULT_READING_SETTINGS.lockMode ?? false,
+        lockOrientation: DEFAULT_READING_SETTINGS.lockMode ?? false,
+        pageSpacing: Math.max(0, Math.min(50, Math.round(globalPageSpacing))),
+        showPageInfo: globalShowPageInfo,
+        showPageIndicator: globalShowPageIndicator,
+        fitMode: globalFitMode,
+        autoPageTurnInterval: Math.max(0, Math.min(60, Math.round(globalAutoPageTurnInterval))),
+        skipIntroPages: Math.max(0, Math.min(20, Math.round(globalSkipIntroPages))),
+        pageTurnAnimation: finalAnimation,
+        doublePagePortraitLayout: globalDoublePagePortraitLayout,
+        doublePageVerticalDirection: globalDoublePageVerticalDirection,
+        filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
+        volumeKeyNavigation: globalVolumeKeyNav,
+        curlBackOpacity: Math.max(50, Math.min(100, Math.round(globalCurlBackOpacity))),
+        webtoonLeftMargin: Math.max(0, Math.min(50, Math.round(globalWebtoonLeftMargin))),
+        webtoonRightMargin: Math.max(0, Math.min(50, Math.round(globalWebtoonRightMargin))),
+        webtoonMarginSync: globalWebtoonMarginSync
+      });
+    }
+
+    const latestHistory = preloadedContext.latestReadHistoryMap.get(comic.id) || null;
+    const readingProgress = ComicConverter.convertReadHistoryToProgress(latestHistory);
+    const favorited = preloadedContext.favoriteComicIds.has(comic.id);
+    return {
+      id: comic.id,
+      title: comic.title,
+      alternativeTitles: [],
+      description: comic.description,
+      coverImagePath: comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl,
+      coverSourceType: ComicConverter.getImageSourceType(comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl),
+      status: StatusConverter.toMangaStatus(comic.status),
+      metadata: ComicConverter.buildDefaultMetadata(comic.author, comic.tags ? comic.tags : [], comic.addTime),
+      chapters: [],
+      readingProgress: readingProgress,
+      bookmarks: [],
+      readingSettings: readingSettings,
+      isFavorite: favorited,
+      addedToLibraryAt: comic.addTime,
+      lastUpdatedAt: comic.lastUpdateTime,
+      sourceInfo: {
+        sourceId: comic.sourceId,
+        sourceName: '本地导入',
+        sourceUrl: '',
+        sourceLanguage: 'zh-CN',
+        requiresLogin: false
+      },
+      contentType: comic.contentType || 'manga',
+      isNSFW: comic.isNSFW === 1 || comic.isNSFW === true,
+      isPrivate: comic.isPrivate === 1 || comic.isPrivate === true
+    };
+  }
+
+  public static async convertOnlineComicInfoToMangaWithContext(
+    onlineComic: OnlineComicInfo,
+    userId: string,
+    preloadedContext: PreloadedComicConversionContext
+  ): Promise<Manga> {
+    const baseManga = await ComicConverter.convertComicInfoToMangaWithContext({
+      id: onlineComic.id,
+      title: onlineComic.title,
+      author: onlineComic.author,
+      description: onlineComic.description,
+      coverUrl: onlineComic.coverUrl,
+      sourceId: onlineComic.sourceId,
+      status: MangaStatus.ONGOING,
+      tags: onlineComic.tags,
+      rating: onlineComic.rating,
+      chapterCount: 0,
+      lastUpdateTime: onlineComic.lastUpdateTime,
+      addTime: onlineComic.addTime,
+      externalId: onlineComic.externalId,
+      contentType: 'manga',
+      isNSFW: onlineComic.isNSFW === 1,
+      isPrivate: onlineComic.isPrivate === 1
+    }, userId, preloadedContext);
+
+    const sourceIdNum = Number(onlineComic.sourceId);
+    const sourceRecord = !isNaN(sourceIdNum) && sourceIdNum > 0
+      ? preloadedContext.comicSourceRecordsBySourceId.get(sourceIdNum)
+      : undefined;
+    let resolvedSourceName: string = onlineComic.sourceName || sourceRecord?.name || 'WebView Source';
+    let resolvedSourcePkg: string = onlineComic.sourcePkg || sourceRecord?.pkg || '';
+
+    return {
+      id: baseManga.id,
+      title: baseManga.title,
+      alternativeTitles: baseManga.alternativeTitles,
+      description: baseManga.description,
+      coverImagePath: onlineComic.coverUrl,
+      coverSourceType: ComicConverter.getImageSourceType(onlineComic.coverUrl),
+      status: MangaStatus.ONGOING,
+      metadata: baseManga.metadata,
+      chapters: baseManga.chapters,
+      readingProgress: baseManga.readingProgress,
+      bookmarks: baseManga.bookmarks,
+      readingSettings: baseManga.readingSettings,
+      isFavorite: baseManga.isFavorite,
+      addedToLibraryAt: baseManga.addedToLibraryAt,
+      lastUpdatedAt: baseManga.lastUpdatedAt,
+      sourceInfo: {
+        sourceId: onlineComic.sourceId,
+        sourceName: resolvedSourceName,
+        sourcePkg: resolvedSourcePkg || undefined,
+        sourceUrl: '',
+        sourceLanguage: 'zh-CN',
+        requiresLogin: false
+      },
+      contentType: baseManga.contentType,
+      isNSFW: onlineComic.isNSFW === 1,
+      isPrivate: onlineComic.isPrivate === 1
+    };
   }
 
   /**

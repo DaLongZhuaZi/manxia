@@ -19,7 +19,7 @@ import { LoadingState } from '../Utils/LoadingState';
 import { MoveState } from '../Utils/MoveState';
 
 // 主题相关导入
-import { ComicConverter } from '../Framework/Utils/ComicConverter';
+import { ComicConverter, PreloadedComicConversionContext } from '../Framework/Utils/ComicConverter';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { DeepLinkRouter, DeepLinkResult, DeepLinkSearchResult, DeepLinkSourceResult, DeepLinkNovelSearchResult, DeepLinkNovelSourceResult, DeepLinkNovelDetailResult } from '../Framework/Utils/DeepLinkRouter';
 import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
@@ -169,7 +169,7 @@ import { AnnotationCenterPage, AnnotationCenterPageParams } from './AnnotationCe
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
-import { LibraryCoverManager } from '../Framework/Storage/LibraryCoverManager';
+import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';
 
 // 测试页面导入已移除
@@ -202,6 +202,7 @@ import { AppColors, ColorRole } from '../Framework/Theme/AppColors';
 import { USER_THEME_KEYS } from '../Framework/Theme/UserThemeConfig';
 import { DataService } from '../Framework/Services/DataService';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookCoverExtractionResult, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 
 // 导入电子书相关模型
 import { EBook, EBookStatus, EBookFormat } from '../Models/EBookModels';
@@ -616,6 +617,14 @@ struct MainMenuPage {
   private localLibraryCoverCacheManager: LocalImageCacheManager = LocalImageCacheManager.getInstance();
   private localLibraryCoverLoadingKeys: Set<string> = new Set();
   private localLibraryCoverFailedKeys: Set<string> = new Set();
+  private localLibraryCoverRepairingKeys: Set<string> = new Set();
+  private static readonly LOCAL_COVER_REPAIR_SCAN_LIMIT: number = 160;
+  private static readonly REPAIR_EBOOK_COVER_WIDTH: number = 400;
+  private static readonly REPAIR_EBOOK_COVER_HEIGHT: number = 600;
+  private static readonly REPAIR_EBOOK_TITLE_AREA_TOP_PERCENT: number = 0.130;
+  private static readonly REPAIR_EBOOK_TITLE_AREA_BOTTOM_PERCENT: number = 0.345;
+  private static readonly REPAIR_EBOOK_TITLE_AREA_LEFT_PERCENT: number = 0.110;
+  private static readonly REPAIR_EBOOK_TITLE_AREA_RIGHT_PERCENT: number = 0.895;
 
   // 书库筛选和视图相关状态
   @State libraryContentType: LibraryContentType = LibraryContentType.MANGA; // 书库内容类型（漫画/电子书）
@@ -860,6 +869,7 @@ struct MainMenuPage {
   // Suwayomi Tab信号（通过SuwayomiTabContent组件管理内部状态）
   @State private suwayomiTabRefreshSignal: number = 0;
   @State private komgaTabRefreshSignal: number = 0;
+  private startupDeferredTasksScheduled: boolean = false;
 
   // Tab内容缓存管理器
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
@@ -1633,7 +1643,6 @@ struct MainMenuPage {
     this.checkAndShowChangelog(); // 新版本首次启动显示更新日志
     this.initializeContentData(); // 加载漫画、电子书并提取标签作者
     void this.loadLibraryViewMode();
-    this.loadRecentReadingList();
     this.initializeRepositoryManager(); // 初始化仓库管理器（会在完成后自动加载图源列表）
     this.checkSourceUpdates(); // 检查图源更新
 
@@ -6060,20 +6069,44 @@ struct MainMenuPage {
     try {
       logger.info(TAG, '开始初始化内容数据...');
 
-      // 先加载漫画、电子书和小说列表
+      const keyPathStartTime = Date.now();
       await this.loadMangaList();
-      await this.loadEBookList();
-      await this.loadNovelList();
-
-      // 数据加载完成后提取标签和作者
-      await this.extractTagsAndAuthors();
-      
-      // 清理孤立的书架映射记录（那些指向不存在内容的映射）
-      await this.cleanupOrphanedShelfMappings();
-
-      logger.info(TAG, '内容数据初始化完成');
+      await Promise.all([
+        this.loadEBookList(),
+        this.loadNovelList()
+      ]);
+      logger.info(TAG, `内容数据关键路径加载完成: duration=${Date.now() - keyPathStartTime}ms`);
+      this.scheduleDeferredStartupContentTasks();
     } catch (error) {
       logger.error(TAG, `初始化内容数据失败: ${String(error)}`);
+    }
+  }
+
+  private scheduleDeferredStartupContentTasks(): void {
+    if (this.startupDeferredTasksScheduled) {
+      return;
+    }
+    this.startupDeferredTasksScheduled = true;
+    setTimeout(() => {
+      void this.runDeferredStartupContentTasks();
+    }, 16);
+  }
+
+  private async runDeferredStartupContentTasks(): Promise<void> {
+    const deferredStartTime = Date.now();
+    try {
+      logger.info(TAG, '开始执行冷启动后台补全任务');
+      await this.extractTagsAndAuthors();
+      await this.cleanupOrphanedShelfMappings();
+      const recentReadingAlreadyLoaded = this.recentReadingList.length > 0 ||
+        this.recentEBookList.length > 0 ||
+        this.recentNovelList.length > 0;
+      if (!recentReadingAlreadyLoaded) {
+        await this.loadRecentReadingList();
+      }
+      logger.info(TAG, `冷启动后台补全任务完成: duration=${Date.now() - deferredStartTime}ms`);
+    } catch (error) {
+      logger.error(TAG, `冷启动后台补全任务失败: ${String(error)}`);
     }
   }
   
@@ -8776,10 +8809,20 @@ struct MainMenuPage {
         logger.info(TAG, `普通模式：从online_comic_info表获取到 ${onlineComics.length} 条非隐私在线漫画`);
       }
 
+      let preloadedContext: PreloadedComicConversionContext | undefined = undefined;
+      try {
+        preloadedContext = await ComicConverter.buildPreloadedConversionContext(localComics, onlineComics);
+        logger.info(TAG, `漫画转换预加载上下文已就绪: local=${localComics.length}, online=${onlineComics.length}`);
+      } catch (preloadError) {
+        logger.warn(TAG, `漫画转换预加载上下文构建失败，将回退到逐条转换: ${String(preloadError)}`);
+      }
+
       // 转换本地漫画
       for (const comicInfo of localComics) {
         try {
-          const manga = await ComicConverter.convertComicInfoToMangaAsync(comicInfo);
+          const manga = preloadedContext
+            ? await ComicConverter.convertComicInfoToMangaWithContext(comicInfo, 'default_user', preloadedContext)
+            : await ComicConverter.convertComicInfoToMangaAsync(comicInfo);
           mangaList.push(manga);
         } catch (convErr) {
           logger.warn(TAG, `转换本地漫画失败: ${String(convErr)}`);
@@ -8791,7 +8834,9 @@ struct MainMenuPage {
       // 转换在线漫画
       for (const onlineComicInfo of onlineComics) {
         try {
-          const manga = await ComicConverter.convertOnlineComicInfoToMangaAsync(onlineComicInfo);
+          const manga = preloadedContext
+            ? await ComicConverter.convertOnlineComicInfoToMangaWithContext(onlineComicInfo, 'default_user', preloadedContext)
+            : await ComicConverter.convertOnlineComicInfoToMangaAsync(onlineComicInfo);
           mangaList.push(manga);
         } catch (convErr) {
           logger.warn(TAG, `转换在线漫画失败: ${String(convErr)}`);
@@ -10838,14 +10883,17 @@ struct MainMenuPage {
     if (this.getCachedLocalLibraryCoverPixelMap(normalizedPath)) {
       return;
     }
-    if (this.localLibraryCoverLoadingKeys.has(cacheKey) || this.localLibraryCoverFailedKeys.has(cacheKey)) {
+    if (this.localLibraryCoverLoadingKeys.has(cacheKey) ||
+      this.localLibraryCoverRepairingKeys.has(cacheKey) ||
+      this.localLibraryCoverFailedKeys.has(cacheKey)) {
       return;
     }
 
     this.localLibraryCoverLoadingKeys.add(cacheKey);
     void this.localLibraryCoverCacheManager.loadImage(cacheKey, normalizedPath, {
       maxWidth: 720,
-      maxHeight: 1080
+      maxHeight: 1080,
+      suppressFailureLog: true
     }).then((pixelMap: image.PixelMap | null) => {
       if (pixelMap) {
         this.localLibraryCoverFailedKeys.delete(cacheKey);
@@ -10854,14 +10902,659 @@ struct MainMenuPage {
         return;
       }
 
-      this.localLibraryCoverFailedKeys.add(cacheKey);
-      logger.warn(TAG, `[封面修复] 本地封面解码失败，无法用于稳定渲染: path='${normalizedPath}'`);
+      this.handleLocalLibraryCoverDecodeFailure(normalizedPath, cacheKey, 'PixelMap为空');
     }).catch((error: Object) => {
-      this.localLibraryCoverFailedKeys.add(cacheKey);
-      logger.warn(TAG, `[封面修复] 本地封面解码异常: path='${normalizedPath}', error=${String(error)}`);
+      this.handleLocalLibraryCoverDecodeFailure(normalizedPath, cacheKey, String(error));
     }).finally(() => {
       this.localLibraryCoverLoadingKeys.delete(cacheKey);
     });
+  }
+
+  private handleLocalLibraryCoverDecodeFailure(normalizedPath: string, cacheKey: string, detail: string): void {
+    if (this.localLibraryCoverRepairingKeys.has(cacheKey)) {
+      logger.debug(TAG, `[封面修复] 本地封面正在恢复，跳过重复请求: path='${normalizedPath}'`);
+      return;
+    }
+
+    this.localLibraryCoverRepairingKeys.add(cacheKey);
+    logger.warn(TAG, `[封面修复] 本地封面解码失败，准备恢复: path='${normalizedPath}', detail=${detail}`);
+    void this.repairLocalLibraryCover(normalizedPath, detail).then((repairedPath: string) => {
+      if (repairedPath.length > 0) {
+        this.localLibraryCoverFailedKeys.delete(cacheKey);
+        this.localLibraryCoverRenderVersion = this.localLibraryCoverRenderVersion + 1;
+        logger.info(TAG, `[封面修复] 本地封面恢复完成: failed='${normalizedPath}', repaired='${repairedPath}'`);
+        this.ensureLocalLibraryCoverPrepared(repairedPath);
+        return;
+      }
+
+      this.localLibraryCoverFailedKeys.add(cacheKey);
+      logger.warn(TAG, `[封面修复] 本地封面恢复失败，保留默认封面: path='${normalizedPath}'`);
+    }).catch((error: Object) => {
+      this.localLibraryCoverFailedKeys.add(cacheKey);
+      logger.warn(TAG, `[封面修复] 本地封面恢复异常: path='${normalizedPath}', error=${String(error)}`);
+    }).finally(() => {
+      this.localLibraryCoverRepairingKeys.delete(cacheKey);
+    });
+  }
+
+  private async repairLocalLibraryCover(normalizedPath: string, detail: string): Promise<string> {
+    const ebook = this.findEBookByCoverPath(normalizedPath);
+    if (ebook !== null) {
+      return await this.repairEBookCover(ebook, normalizedPath, detail);
+    }
+
+    const manga = this.findMangaByCoverPath(normalizedPath);
+    if (manga !== null) {
+      return await this.repairMangaCover(manga, normalizedPath, detail);
+    }
+
+    const novel = this.findNovelByCoverPath(normalizedPath);
+    if (novel !== null) {
+      return await this.repairNovelCover(novel, normalizedPath, detail);
+    }
+
+    logger.warn(TAG, `[封面修复] 未找到封面归属，无法写回数据: path='${normalizedPath}'`);
+    return '';
+  }
+
+  private async repairEBookCover(ebook: EBook, failedPath: string, detail: string): Promise<string> {
+    logger.warn(TAG, `[封面修复] 开始恢复电子书封面: id=${ebook.id}, failed='${failedPath}', detail=${detail}`);
+
+    const preparedSibling = await this.persistDecodableLocalCoverCandidate(
+      ebook.filePath,
+      failedPath,
+      LibraryCoverType.EBOOK,
+      ebook.id
+    );
+    if (preparedSibling.length > 0) {
+      await this.applyEBookCoverRepair(ebook.id, preparedSibling);
+      return preparedSibling;
+    }
+
+    const extractedCoverPath = await this.extractEBookCoverForRepair(ebook);
+    if (extractedCoverPath.length > 0) {
+      await this.applyEBookCoverRepair(ebook.id, extractedCoverPath);
+      return extractedCoverPath;
+    }
+
+    const generatedCoverPath = await this.generateEBookCoverForRepair(ebook);
+    if (generatedCoverPath.length > 0) {
+      await this.applyEBookCoverRepair(ebook.id, generatedCoverPath);
+      return generatedCoverPath;
+    }
+
+    return '';
+  }
+
+  private async repairMangaCover(manga: Manga, failedPath: string, detail: string): Promise<string> {
+    logger.warn(TAG, `[封面修复] 开始恢复漫画封面: id=${manga.id}, failed='${failedPath}', detail=${detail}`);
+    const repairedPath = await this.persistDecodableLocalCoverCandidate(
+      failedPath,
+      failedPath,
+      LibraryCoverType.MANGA,
+      manga.id
+    );
+    if (repairedPath.length <= 0) {
+      return '';
+    }
+
+    await this.applyMangaCoverRepair(manga.id, repairedPath);
+    return repairedPath;
+  }
+
+  private async repairNovelCover(novel: NovelBook, failedPath: string, detail: string): Promise<string> {
+    logger.warn(TAG, `[封面修复] 开始恢复小说封面: id=${novel.id}, failed='${failedPath}', detail=${detail}`);
+    const repairedPath = await this.persistDecodableLocalCoverCandidate(
+      novel.bookUrl || failedPath,
+      failedPath,
+      LibraryCoverType.NOVEL,
+      novel.id
+    );
+    if (repairedPath.length <= 0) {
+      return '';
+    }
+
+    await this.applyNovelCoverRepair(novel.id, repairedPath);
+    return repairedPath;
+  }
+
+  private async persistDecodableLocalCoverCandidate(
+    containerPath: string,
+    failedPath: string,
+    coverType: LibraryCoverType,
+    uniqueId: string
+  ): Promise<string> {
+    const candidatePath = await this.findDecodableLocalLibraryCoverCandidate(containerPath, failedPath);
+    if (candidatePath.length <= 0) {
+      return '';
+    }
+
+    const filesDir = this.getFilesDirForCoverRepair();
+    if (filesDir.length > 0) {
+      const persistedPath = await LibraryCoverManager.persistCoverByFilesDir(
+        filesDir,
+        coverType,
+        uniqueId,
+        candidatePath
+      );
+      if (persistedPath !== null && await this.isLocalLibraryCoverDecodable(persistedPath)) {
+        return persistedPath;
+      }
+    }
+
+    return candidatePath;
+  }
+
+  private async findDecodableLocalLibraryCoverCandidate(containerPath: string, failedPath: string): Promise<string> {
+    const rootDir = this.getLocalLibraryCoverDirectory(containerPath);
+    if (rootDir.length <= 0) {
+      return '';
+    }
+    return await this.findFirstDecodableImageUnderDirectory(rootDir, failedPath);
+  }
+
+  private async findFirstDecodableImageUnderDirectory(rootDir: string, failedPath: string): Promise<string> {
+    const directories: string[] = [rootDir];
+    const failedNormalized = this.normalizeCompareLocalCoverPath(failedPath);
+    let directoryIndex = 0;
+    let scannedFileCount = 0;
+
+    while (directoryIndex < directories.length && scannedFileCount < MainMenuPage.LOCAL_COVER_REPAIR_SCAN_LIMIT) {
+      const currentDir = directories[directoryIndex];
+      directoryIndex++;
+
+      let entries: string[] = [];
+      try {
+        entries = fs.listFileSync(currentDir);
+      } catch (_error) {
+        continue;
+      }
+      entries.sort((left: string, right: string) => left.localeCompare(right));
+
+      const imageEntries: string[] = [];
+      const subDirectories: string[] = [];
+      for (const entry of entries) {
+        if (!entry || entry.startsWith('.')) {
+          continue;
+        }
+        const fullPath = `${currentDir}/${entry}`;
+        if (this.isSupportedLocalLibraryCoverFile(entry)) {
+          imageEntries.push(entry);
+          continue;
+        }
+        try {
+          fs.listFileSync(fullPath);
+          subDirectories.push(fullPath);
+        } catch (_error) {
+        }
+      }
+
+      imageEntries.sort((left: string, right: string) => {
+        const rankDiff = this.getLocalCoverCandidateRank(left) - this.getLocalCoverCandidateRank(right);
+        return rankDiff !== 0 ? rankDiff : left.localeCompare(right);
+      });
+
+      for (const entry of imageEntries) {
+        if (scannedFileCount >= MainMenuPage.LOCAL_COVER_REPAIR_SCAN_LIMIT) {
+          break;
+        }
+        const fullPath = `${currentDir}/${entry}`;
+        scannedFileCount++;
+        if (this.normalizeCompareLocalCoverPath(fullPath) === failedNormalized) {
+          continue;
+        }
+        if (await this.isLocalLibraryCoverDecodable(fullPath)) {
+          return fullPath;
+        }
+      }
+
+      subDirectories.sort((left: string, right: string) => left.localeCompare(right));
+      for (const subDir of subDirectories) {
+        directories.push(subDir);
+      }
+    }
+
+    return '';
+  }
+
+  private getLocalCoverCandidateRank(fileName: string): number {
+    const lowerName = fileName.toLowerCase();
+    if (/^cover([_-].+)?\.(jpg|jpeg|png|webp)$/i.test(lowerName)) {
+      return 0;
+    }
+    if (lowerName.includes('front') || lowerName.includes('folder') || lowerName.includes('poster')) {
+      return 1;
+    }
+    return 2;
+  }
+
+  private async isLocalLibraryCoverDecodable(rawPath: string): Promise<boolean> {
+    const normalizedPath = this.getNormalizedLocalLibraryCoverPath(rawPath);
+    if (normalizedPath.length <= 0) {
+      return false;
+    }
+
+    let file: fs.File | null = null;
+    let imageSource: image.ImageSource | null = null;
+    let pixelMap: image.PixelMap | null = null;
+    try {
+      if (!fs.accessSync(normalizedPath)) {
+        return false;
+      }
+      file = fs.openSync(normalizedPath, fs.OpenMode.READ_ONLY);
+      imageSource = image.createImageSource(file.fd);
+      pixelMap = await imageSource.createPixelMap({
+        sampleSize: 8,
+        editable: false
+      });
+      if (pixelMap === null) {
+        return false;
+      }
+      const imageInfo = pixelMap.getImageInfoSync();
+      return imageInfo.size.width > 0 && imageInfo.size.height > 0;
+    } catch (_error) {
+      return false;
+    } finally {
+      try {
+        if (pixelMap !== null) {
+          await pixelMap.release();
+        }
+      } catch (_pixelMapReleaseError) {
+      }
+      try {
+        if (imageSource !== null) {
+          await imageSource.release();
+        }
+      } catch (_imageSourceReleaseError) {
+      }
+      try {
+        if (file !== null) {
+          fs.closeSync(file);
+        }
+      } catch (_fileCloseError) {
+      }
+    }
+  }
+
+  private async extractEBookCoverForRepair(ebook: EBook): Promise<string> {
+    const filePath = typeof ebook.filePath === 'string' ? ebook.filePath.trim() : '';
+    if (filePath.length <= 0) {
+      return '';
+    }
+    try {
+      if (!fs.accessSync(filePath)) {
+        return '';
+      }
+    } catch (_error) {
+      return '';
+    }
+
+    const filesDir = this.getFilesDirForCoverRepair();
+    if (filesDir.length <= 0) {
+      return '';
+    }
+    const coverDir = `${filesDir}/ebook_covers`;
+    this.ensureLocalDirectory(coverDir);
+
+    const result: EBookCoverExtractionResult = await EBookCoverExtractor.extractCover(filePath, coverDir);
+    if (result.success && result.coverPath.length > 0 && await this.isLocalLibraryCoverDecodable(result.coverPath)) {
+      return result.coverPath;
+    }
+
+    for (const candidatePath of result.candidateImages) {
+      if (candidatePath.length > 0 && await this.isLocalLibraryCoverDecodable(candidatePath)) {
+        return candidatePath;
+      }
+    }
+
+    logger.info(TAG, `[封面修复] 电子书封面重新提取未命中: id=${ebook.id}, reason=${result.errorMessage || '无可用候选'}`);
+    return '';
+  }
+
+  private async generateEBookCoverForRepair(ebook: EBook): Promise<string> {
+    const filesDir = this.getFilesDirForCoverRepair();
+    if (filesDir.length <= 0) {
+      return '';
+    }
+
+    const coverDir = `${filesDir}/ebook_covers`;
+    this.ensureLocalDirectory(coverDir);
+    const outputPath = `${coverDir}/${ebook.id}_generated_cover.webp`;
+    let pixelMap: image.PixelMap | null = null;
+    try {
+      const snapshot = this.getUIContext().getComponentSnapshot();
+      pixelMap = await snapshot.createFromBuilder(() => {
+        this.buildRepairEBookCoverForSnapshot(ebook.metadata.title || ebook.id);
+      });
+      if (pixelMap === null) {
+        return '';
+      }
+      const savedPath = await this.saveRepairPixelMapToFile(pixelMap, outputPath);
+      if (savedPath.length > 0 && await this.isLocalLibraryCoverDecodable(savedPath)) {
+        return savedPath;
+      }
+    } catch (error) {
+      logger.warn(TAG, `[封面修复] 电子书封面重新生成失败: id=${ebook.id}, error=${String(error)}`);
+    } finally {
+      try {
+        if (pixelMap !== null) {
+          await pixelMap.release();
+        }
+      } catch (_pixelMapReleaseError) {
+      }
+    }
+    return '';
+  }
+
+  @Builder
+  buildRepairEBookCoverForSnapshot(title: string) {
+    Stack() {
+      Image($r('app.media.ebook'))
+        .width(MainMenuPage.REPAIR_EBOOK_COVER_WIDTH)
+        .height(MainMenuPage.REPAIR_EBOOK_COVER_HEIGHT)
+        .objectFit(ImageFit.Cover)
+
+      Text(this.formatRepairEBookCoverTitle(title))
+        .fontSize(this.calculateRepairEBookCoverFontSize(title))
+        .fontWeight(FontWeight.Bold)
+        .fontColor(Color.Black)
+        .fontFamily(this.appFontFamily)
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .lineHeight(this.calculateRepairEBookCoverFontSize(title) * 1.3)
+        .width(MainMenuPage.REPAIR_EBOOK_COVER_WIDTH *
+          (MainMenuPage.REPAIR_EBOOK_TITLE_AREA_RIGHT_PERCENT - MainMenuPage.REPAIR_EBOOK_TITLE_AREA_LEFT_PERCENT) - 24)
+        .constraintSize({
+          maxHeight: MainMenuPage.REPAIR_EBOOK_COVER_HEIGHT *
+            (MainMenuPage.REPAIR_EBOOK_TITLE_AREA_BOTTOM_PERCENT - MainMenuPage.REPAIR_EBOOK_TITLE_AREA_TOP_PERCENT) - 20
+        })
+        .position({
+          x: MainMenuPage.REPAIR_EBOOK_COVER_WIDTH * MainMenuPage.REPAIR_EBOOK_TITLE_AREA_LEFT_PERCENT + 12,
+          y: MainMenuPage.REPAIR_EBOOK_COVER_HEIGHT *
+            (MainMenuPage.REPAIR_EBOOK_TITLE_AREA_TOP_PERCENT + MainMenuPage.REPAIR_EBOOK_TITLE_AREA_BOTTOM_PERCENT) / 2 -
+            this.calculateRepairEBookCoverFontSize(title) * 0.65
+        })
+    }
+    .width(MainMenuPage.REPAIR_EBOOK_COVER_WIDTH)
+    .height(MainMenuPage.REPAIR_EBOOK_COVER_HEIGHT)
+  }
+
+  private formatRepairEBookCoverTitle(title: string): string {
+    let cleanTitle = title.replace(/\.(txt|epub|pdf|mobi|azw3?)$/i, '').replace(/_[a-f0-9]{6,}$/i, '');
+    if (cleanTitle.length > 20) {
+      cleanTitle = cleanTitle.substring(0, 17) + '...';
+    }
+    return cleanTitle;
+  }
+
+  private calculateRepairEBookCoverFontSize(title: string): number {
+    const length = this.formatRepairEBookCoverTitle(title).length;
+    if (length <= 2) {
+      return 70;
+    }
+    if (length <= 4) {
+      return 56;
+    }
+    if (length <= 6) {
+      return 48;
+    }
+    if (length <= 8) {
+      return 36;
+    }
+    if (length <= 12) {
+      return 32;
+    }
+    if (length <= 16) {
+      return 28;
+    }
+    return 24;
+  }
+
+  private async saveRepairPixelMapToFile(pixelMap: image.PixelMap, filePath: string): Promise<string> {
+    const webpPath = this.replaceRepairImageExtension(filePath, '.webp');
+    const webpBuffer = await this.packRepairPixelMap(pixelMap, 'image/webp', 90, webpPath);
+    if (webpBuffer.byteLength > 0 && await this.isPackedRepairImageDecodable(webpBuffer, webpPath)) {
+      this.writeRepairImageBufferToFile(webpPath, webpBuffer);
+      return webpPath;
+    }
+
+    const jpegPath = this.replaceRepairImageExtension(filePath, '.jpg');
+    const jpegBuffer = await this.packRepairPixelMap(pixelMap, 'image/jpeg', 92, jpegPath);
+    if (jpegBuffer.byteLength > 0 && await this.isPackedRepairImageDecodable(jpegBuffer, jpegPath)) {
+      this.writeRepairImageBufferToFile(jpegPath, jpegBuffer);
+      return jpegPath;
+    }
+
+    return '';
+  }
+
+  private replaceRepairImageExtension(filePath: string, ext: string): string {
+    const dotIndex = filePath.lastIndexOf('.');
+    const slashIndex = filePath.lastIndexOf('/');
+    if (dotIndex > slashIndex) {
+      return filePath.substring(0, dotIndex) + ext;
+    }
+    return filePath + ext;
+  }
+
+  private async packRepairPixelMap(
+    pixelMap: image.PixelMap,
+    format: string,
+    quality: number,
+    label: string
+  ): Promise<ArrayBuffer> {
+    const imagePacker = image.createImagePacker();
+    try {
+      const packOptions: image.PackingOption = {
+        format: format,
+        quality: quality
+      };
+      return await imagePacker.packToData(pixelMap, packOptions);
+    } catch (error) {
+      logger.warn(TAG, `[封面修复] 封面打包失败: target=${label}, format=${format}, error=${String(error)}`);
+      return new ArrayBuffer(0);
+    } finally {
+      try {
+        await imagePacker.release();
+      } catch (_releaseError) {
+      }
+    }
+  }
+
+  private async isPackedRepairImageDecodable(imageData: ArrayBuffer, label: string): Promise<boolean> {
+    if (imageData.byteLength <= 0) {
+      return false;
+    }
+
+    let imageSource: image.ImageSource | null = null;
+    let pixelMap: image.PixelMap | null = null;
+    try {
+      imageSource = image.createImageSource(imageData);
+      pixelMap = await imageSource.createPixelMap();
+      return pixelMap !== null;
+    } catch (error) {
+      logger.warn(TAG, `[封面修复] 封面打包结果解码校验失败: target=${label}, error=${String(error)}`);
+      return false;
+    } finally {
+      try {
+        if (pixelMap !== null) {
+          await pixelMap.release();
+        }
+      } catch (_pixelMapReleaseError) {
+      }
+      try {
+        if (imageSource !== null) {
+          await imageSource.release();
+        }
+      } catch (_imageSourceReleaseError) {
+      }
+    }
+  }
+
+  private writeRepairImageBufferToFile(filePath: string, imageData: ArrayBuffer): void {
+    const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    try {
+      fs.writeSync(file.fd, imageData);
+    } finally {
+      fs.closeSync(file);
+    }
+  }
+
+  private ensureLocalDirectory(dirPath: string): void {
+    try {
+      if (!fs.accessSync(dirPath)) {
+        fs.mkdirSync(dirPath, true);
+      }
+    } catch (_error) {
+      fs.mkdirSync(dirPath, true);
+    }
+  }
+
+  private async applyEBookCoverRepair(bookId: string, coverPath: string): Promise<void> {
+    this.updateEBookCoverPathInMemory(bookId, coverPath);
+    await this.ebookDataManager.updateEBookCover(bookId, coverPath);
+  }
+
+  private async applyMangaCoverRepair(mangaId: string, coverPath: string): Promise<void> {
+    this.updateMangaCoverPathInMemory(mangaId, coverPath);
+    await this.dataManager.updateComicCoverForLibrary(mangaId, coverPath);
+  }
+
+  private async applyNovelCoverRepair(bookId: string, coverPath: string): Promise<void> {
+    this.updateNovelCoverPathInMemory(bookId, coverPath);
+    const dataManager = this.novelDataManager ?? getNovelDataManager();
+    this.novelDataManager = dataManager;
+    await dataManager.updateBookCoverLocalPath(bookId, coverPath);
+  }
+
+  private findEBookByCoverPath(normalizedPath: string): EBook | null {
+    const lists: EBook[][] = [
+      this.ebookList,
+      this.allEBookList,
+      this.filteredEbookList,
+      this.recentEBookList,
+      this.categoryFilteredEbookList
+    ];
+    for (const list of lists) {
+      for (const ebook of list) {
+        if (this.isSameLocalLibraryCoverPath(ebook.metadata?.coverImagePath || '', normalizedPath)) {
+          return ebook;
+        }
+      }
+    }
+    return null;
+  }
+
+  private findMangaByCoverPath(normalizedPath: string): Manga | null {
+    const lists: Manga[][] = [
+      this.mangaList,
+      this.allMangaList,
+      this.filteredMangaList,
+      this.recentReadingList,
+      this.pdfEbookList,
+      this.filteredPdfEbookList,
+      this.categoryFilteredMangaList
+    ];
+    for (const list of lists) {
+      for (const manga of list) {
+        if (this.isSameLocalLibraryCoverPath(this.getPreferredMangaCoverPath(manga), normalizedPath)) {
+          return manga;
+        }
+      }
+    }
+    return null;
+  }
+
+  private findNovelByCoverPath(normalizedPath: string): NovelBook | null {
+    const lists: NovelBook[][] = [
+      this.novelList,
+      this.allNovelList,
+      this.filteredNovelList,
+      this.recentNovelList,
+      this.categoryFilteredNovelList
+    ];
+    for (const list of lists) {
+      for (const novel of list) {
+        if (this.isSameLocalLibraryCoverPath(this.getNovelCoverPath(novel), normalizedPath)) {
+          return novel;
+        }
+      }
+    }
+    return null;
+  }
+
+  private updateEBookCoverPathInMemory(bookId: string, coverPath: string): void {
+    const lists: EBook[][] = [
+      this.ebookList,
+      this.allEBookList,
+      this.filteredEbookList,
+      this.recentEBookList,
+      this.categoryFilteredEbookList
+    ];
+    for (const list of lists) {
+      for (const ebook of list) {
+        if (ebook.id === bookId) {
+          ebook.metadata.coverImagePath = coverPath;
+        }
+      }
+    }
+  }
+
+  private updateMangaCoverPathInMemory(mangaId: string, coverPath: string): void {
+    const lists: Manga[][] = [
+      this.mangaList,
+      this.allMangaList,
+      this.filteredMangaList,
+      this.recentReadingList,
+      this.pdfEbookList,
+      this.filteredPdfEbookList,
+      this.categoryFilteredMangaList
+    ];
+    for (const list of lists) {
+      for (const manga of list) {
+        if (manga.id === mangaId) {
+          manga.coverImagePath = coverPath;
+          manga.coverSourceType = ImageSourceType.LOCAL;
+        }
+      }
+    }
+  }
+
+  private updateNovelCoverPathInMemory(bookId: string, coverPath: string): void {
+    const lists: NovelBook[][] = [
+      this.novelList,
+      this.allNovelList,
+      this.filteredNovelList,
+      this.recentNovelList,
+      this.categoryFilteredNovelList
+    ];
+    for (const list of lists) {
+      for (const novel of list) {
+        if (novel.id === bookId) {
+          novel.coverLocalPath = coverPath;
+        }
+      }
+    }
+  }
+
+  private isSameLocalLibraryCoverPath(pathA: string, pathB: string): boolean {
+    const normalizedA = this.normalizeCompareLocalCoverPath(pathA);
+    const normalizedB = this.normalizeCompareLocalCoverPath(pathB);
+    return normalizedA.length > 0 && normalizedA === normalizedB;
+  }
+
+  private normalizeCompareLocalCoverPath(path: string): string {
+    return this.getNormalizedLocalLibraryCoverPath(path).replace(/\\/g, '/');
+  }
+
+  private getFilesDirForCoverRepair(): string {
+    try {
+      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      return hostContext.filesDir || '';
+    } catch (_error) {
+      return '';
+    }
   }
 
   private resolveAppMediaCoverResource(raw: string, fallback: ResourceStr): ResourceStr {
@@ -23787,6 +24480,7 @@ struct MainMenuPage {
         contentType: UnifiedContentType.NOVEL,
         contentId: novel.bookUrl,
         sourceId: novel.sourceId,
+        sourceName: novel.sourceName,
         cachedTitle: novel.name,
         cachedCoverPath: cachedCoverPath,
         cachedCover: displayCoverPath || rawCoverPath,
@@ -24323,6 +25017,14 @@ struct MainMenuPage {
       }
 
       const sourceId = this.getParsedMangaSourceId(manga);
+      const rawCoverPath: string = String(manga.coverImagePath || '').trim();
+      const cachedCoverPath: string | undefined = rawCoverPath.length > 0
+        && !this.isNetworkUrl(rawCoverPath)
+        && !rawCoverPath.startsWith('app.media.')
+        && !rawCoverPath.startsWith('$r(')
+        ? rawCoverPath
+        : undefined;
+      const cachedAuthor: string = manga.metadata?.authors?.join(', ') || '';
 
       // 根据页面设置决定使用哪个详情页
       const pageType = PageSettingsHelper.getMangaDetailPageType();
@@ -24333,8 +25035,12 @@ struct MainMenuPage {
           contentType: UnifiedContentType.MANGA,
           contentId: manga.id,
           sourceId: sourceId?.toString(),
+          sourceName: this.getMangaSourceDisplayName(manga),
+          sourcePkg: manga.sourceInfo?.sourcePkg,
           cachedTitle: manga.title,
-          cachedCover: manga.coverImagePath
+          cachedCoverPath: cachedCoverPath,
+          cachedCover: rawCoverPath,
+          cachedAuthor: cachedAuthor
         };
         this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
         logger.info(TAG, `打开统一详情页(漫画): ${manga.title}`);
@@ -29103,6 +29809,7 @@ struct MainMenuPage {
         contentType: UnifiedContentType.NOVEL,
         contentId: book.bookUrl,
         sourceId: book.sourceId,
+        sourceName: book.sourceName,
         cachedTitle: book.name,
         cachedCover: book.coverUrl,
         cachedAuthor: book.author

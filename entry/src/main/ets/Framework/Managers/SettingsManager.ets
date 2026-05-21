@@ -32,6 +32,7 @@ export class SettingKeys {
   static readonly GLOBAL_VOLUME_KEY_NAVIGATION = 'global_volume_key_navigation';
   static readonly GLOBAL_PAGE_TURN_ANIMATION = 'global_page_turn_animation';
   static readonly GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT = 'global_manga_double_page_portrait_layout';
+  static readonly GLOBAL_MANGA_DOUBLE_PAGE_VERTICAL_DIRECTION = 'global_manga_double_page_vertical_direction';
   static readonly GLOBAL_MANGA_PAGE_SPACING = 'global_manga_page_spacing';
   static readonly GLOBAL_MANGA_SHOW_PAGE_INFO = 'global_manga_show_page_info';
   static readonly GLOBAL_MANGA_SHOW_PAGE_INDICATOR = 'global_manga_show_page_indicator';

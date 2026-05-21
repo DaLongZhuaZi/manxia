@@ -2491,6 +2491,30 @@ export class DataManager {
   }
 
   /**
+   * [性能优化] 获取用户收藏漫画ID集合
+   * 用于批量书库加载时快速判断收藏状态，避免逐条重复读取收藏表
+   */
+  public async getFavoriteComicIdSet(userId: string): Promise<Set<string>> {
+    const favoriteComicIds: Set<string> = new Set<string>();
+    try {
+      const sql = 'SELECT comicId FROM favorite WHERE userId = ?';
+      const records: DatabaseRecord[] = await this.databaseManager.querySql(sql, [userId]);
+      for (let index = 0; index < records.length; index++) {
+        const row = records[index] as FavoriteInfoDatabaseRecord;
+        const comicId = String(row.comicId || '');
+        if (comicId.length > 0) {
+          favoriteComicIds.add(comicId);
+        }
+      }
+      logger.debug(TAG, `获取收藏漫画ID集合完成: userId=${userId}, count=${favoriteComicIds.size}`);
+    } catch (error) {
+      logger.error(TAG, `获取收藏漫画ID集合失败: userId=${userId}`, String(error));
+      throw error as Error;
+    }
+    return favoriteComicIds;
+  }
+
+  /**
    * 移除收藏
    */
   public async removeFavorite(comicId: string, userId: string): Promise<void> {
@@ -3160,6 +3184,68 @@ export class DataManager {
   }
 
   /**
+   * [性能优化] 批量获取多本漫画的最新阅读记录
+   * 使用 UNION ALL 合并本地与在线阅读历史，减少书库冷启动期间的逐条查询
+   */
+  public async getLatestReadHistoryMap(comicIds: string[], userId: string): Promise<Map<string, ReadHistory>> {
+    const result: Map<string, ReadHistory> = new Map<string, ReadHistory>();
+    if (comicIds.length <= 0) {
+      return result;
+    }
+
+    const uniqueComicIds: string[] = [];
+    const seenComicIds: Set<string> = new Set<string>();
+    for (let index = 0; index < comicIds.length; index++) {
+      const comicId = comicIds[index];
+      if (comicId.length > 0 && !seenComicIds.has(comicId)) {
+        seenComicIds.add(comicId);
+        uniqueComicIds.push(comicId);
+      }
+    }
+
+    const chunkSize = 180;
+    try {
+      for (let start = 0; start < uniqueComicIds.length; start += chunkSize) {
+        const chunk = uniqueComicIds.slice(start, start + chunkSize);
+        const placeholders = chunk.map((): string => '?').join(', ');
+        const sql = `
+          SELECT id, comicId, chapterId, userId, pageNumber, readTime, duration, createTime
+          FROM read_history
+          WHERE userId = ? AND comicId IN (${placeholders})
+          UNION ALL
+          SELECT id, comicId, chapterId, userId, pageNumber, readTime, duration, createTime
+          FROM online_read_history
+          WHERE userId = ? AND comicId IN (${placeholders})
+        `;
+        const args: (string | number)[] = [userId];
+        for (let index = 0; index < chunk.length; index++) {
+          args.push(chunk[index]);
+        }
+        args.push(userId);
+        for (let index = 0; index < chunk.length; index++) {
+          args.push(chunk[index]);
+        }
+
+        const records: DatabaseRecord[] = await this.databaseManager.querySql(sql, args);
+        for (let index = 0; index < records.length; index++) {
+          const row = records[index] as ReadHistoryDatabaseRecord;
+          const history = this.convertRecordToReadHistory(row);
+          const existing = result.get(history.comicId);
+          if (!existing || history.readTime > existing.readTime) {
+            result.set(history.comicId, history);
+          }
+        }
+      }
+      logger.debug(TAG, `批量获取最新阅读记录完成: request=${uniqueComicIds.length}, hit=${result.size}`);
+    } catch (error) {
+      logger.error(TAG, `批量获取最新阅读记录失败: userId=${userId}`, String(error));
+      throw error as Error;
+    }
+
+    return result;
+  }
+
+  /**
    * 获取指定漫画的阅读历史记录（按时间倒序）
    * @param comicId 漫画ID
    * @param userId 用户ID
@@ -3550,6 +3636,55 @@ export class DataManager {
   }
 
   /**
+   * [性能优化] 批量获取设置
+   * 使用单次或少量分块 SQL 查询多条 user_settings 记录，降低冷启动时的数据库往返次数
+   */
+  async getSettingsByKeys(keys: string[], userId: string = 'default_user'): Promise<Map<string, UserSettingsDatabaseRecord>> {
+    const result: Map<string, UserSettingsDatabaseRecord> = new Map<string, UserSettingsDatabaseRecord>();
+    if (keys.length <= 0) {
+      return result;
+    }
+
+    const uniqueKeys: string[] = [];
+    const seenKeys: Set<string> = new Set<string>();
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index];
+      if (key.length > 0 && !seenKeys.has(key)) {
+        seenKeys.add(key);
+        uniqueKeys.push(key);
+      }
+    }
+
+    const chunkSize = 180;
+    try {
+      for (let start = 0; start < uniqueKeys.length; start += chunkSize) {
+        const chunk = uniqueKeys.slice(start, start + chunkSize);
+        const placeholders = chunk.map((): string => '?').join(', ');
+        const sql = `SELECT * FROM user_settings WHERE userId = ? AND settingKey IN (${placeholders})`;
+        const args: (string | number)[] = [userId];
+        for (let index = 0; index < chunk.length; index++) {
+          args.push(chunk[index]);
+        }
+
+        const records: DatabaseRecord[] = await this.databaseManager.querySql(sql, args);
+        for (let index = 0; index < records.length; index++) {
+          const record = records[index] as UserSettingsDatabaseRecord;
+          const settingKey = String(record.settingKey || '');
+          if (settingKey.length > 0) {
+            result.set(settingKey, record);
+          }
+        }
+      }
+      logger.debug(TAG, `批量获取设置完成: request=${uniqueKeys.length}, hit=${result.size}`);
+    } catch (error) {
+      logger.error(TAG, '批量获取设置失败', String(error));
+      throw error as Error;
+    }
+
+    return result;
+  }
+
+  /**
    * 保存设置
    */
   async saveSetting(key: string, value: string, type: string): Promise<void> {
@@ -3687,6 +3822,55 @@ export class DataManager {
       logger.error(TAG, `获取图源记录失败: sourceId=${sourceId}`, String(error));
       return null;
     }
+  }
+
+  /**
+   * [性能优化] 批量获取图源记录
+   * 用于书库冷启动时一次性补齐在线漫画的图源名称、pkg 等信息
+   */
+  async getComicSourcesByIds(sourceIds: number[]): Promise<Map<number, ComicSourceDatabaseRecord>> {
+    const result: Map<number, ComicSourceDatabaseRecord> = new Map<number, ComicSourceDatabaseRecord>();
+    if (sourceIds.length <= 0) {
+      return result;
+    }
+
+    const uniqueSourceIds: number[] = [];
+    const seenSourceIds: Set<number> = new Set<number>();
+    for (let index = 0; index < sourceIds.length; index++) {
+      const sourceId = sourceIds[index];
+      if (sourceId > 0 && !seenSourceIds.has(sourceId)) {
+        seenSourceIds.add(sourceId);
+        uniqueSourceIds.push(sourceId);
+      }
+    }
+
+    const chunkSize = 180;
+    try {
+      for (let start = 0; start < uniqueSourceIds.length; start += chunkSize) {
+        const chunk = uniqueSourceIds.slice(start, start + chunkSize);
+        const placeholders = chunk.map((): string => '?').join(', ');
+        const sql = `SELECT * FROM comic_source WHERE id IN (${placeholders})`;
+        const args: (string | number)[] = [];
+        for (let index = 0; index < chunk.length; index++) {
+          args.push(String(chunk[index]));
+        }
+
+        const records: DatabaseRecord[] = await this.databaseManager.querySql(sql, args);
+        for (let index = 0; index < records.length; index++) {
+          const record = records[index] as ComicSourceDatabaseRecord;
+          const recordSourceId = Number(record.id);
+          if (!isNaN(recordSourceId) && recordSourceId > 0) {
+            result.set(recordSourceId, record);
+          }
+        }
+      }
+      logger.debug(TAG, `批量获取图源记录完成: request=${uniqueSourceIds.length}, hit=${result.size}`);
+    } catch (error) {
+      logger.error(TAG, '批量获取图源记录失败', String(error));
+      throw error as Error;
+    }
+
+    return result;
   }
 
   // ==================== 图源置顶管理 ====================

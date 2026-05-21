@@ -740,6 +740,7 @@ export struct SourceSettingsPage {
       if (mangaMode && mangaMode.settingValue) { this.sourceReadingMode = mangaMode.settingValue as ReadingMode; }
       if (mangaDirection && mangaDirection.settingValue) { this.sourceReadingDirection = mangaDirection.settingValue as ReadingDirection; }
       if (mangaAnimation && mangaAnimation.settingValue) { this.sourcePageTurnAnimation = mangaAnimation.settingValue as PageTurnAnimationType; }
+      this.syncSourcePageTurnAnimationForCurrentMode();
 
       // 加载电子书默认阅读设置
       const ebookEnabled: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'ebook.settingsEnabled');
@@ -783,6 +784,22 @@ export struct SourceSettingsPage {
     }
   }
 
+  private isSourceVerticalDoublePageModeSelected(): boolean {
+    return this.sourceReadingMode === ReadingMode.DOUBLE_PAGE &&
+      this.sourceReadingDirection === ReadingDirection.TOP_TO_BOTTOM;
+  }
+
+  private normalizeSourcePageTurnAnimation(animationType: PageTurnAnimationType): PageTurnAnimationType {
+    if (this.isSourceVerticalDoublePageModeSelected()) {
+      return PageTurnAnimationType.SLIDE;
+    }
+    return animationType;
+  }
+
+  private syncSourcePageTurnAnimationForCurrentMode(): void {
+    this.sourcePageTurnAnimation = this.normalizeSourcePageTurnAnimation(this.sourcePageTurnAnimation);
+  }
+
   private async saveSettings(): Promise<void> {
     if (!this.pageParams || !this.pageParams.sourceName) {
       this.showToast('无效的图源');
@@ -815,6 +832,7 @@ export struct SourceSettingsPage {
       // 保存漫画默认阅读设置
       await this.dataManager.saveSourceUserSetting(sid, 'manga.settingsEnabled', this.sourceMangaSettingsEnabled ? '1' : '0', 'boolean');
       if (this.sourceMangaSettingsEnabled) {
+        this.syncSourcePageTurnAnimationForCurrentMode();
         await this.dataManager.saveSourceUserSetting(sid, 'manga.readingMode', this.sourceReadingMode, 'string');
         await this.dataManager.saveSourceUserSetting(sid, 'manga.readingDirection', this.sourceReadingDirection, 'string');
         await this.dataManager.saveSourceUserSetting(sid, 'manga.pageTurnAnimation', this.sourcePageTurnAnimation, 'string');
@@ -858,6 +876,7 @@ export struct SourceSettingsPage {
       const sourceRecord = await this.dataManager.getComicSourceByName(this.pageParams.sourceName);
       if (!sourceRecord) { return; }
       const sid: number = Number(sourceRecord.id);
+      this.syncSourcePageTurnAnimationForCurrentMode();
       
       await this.dataManager.saveSourceUserSetting(sid, 'manga.settingsEnabled', this.sourceMangaSettingsEnabled ? '1' : '0', 'boolean');
       await this.dataManager.saveSourceUserSetting(sid, 'manga.readingMode', this.sourceReadingMode, 'string');
@@ -1926,6 +1945,7 @@ export struct SourceSettingsPage {
                         .borderRadius(6)
                         .onClick(() => { 
                           this.sourceReadingMode = item.mode; 
+                          this.syncSourcePageTurnAnimationForCurrentMode();
                           this.saveMangaReadingSettings();
                         })
                     })
@@ -1965,6 +1985,7 @@ export struct SourceSettingsPage {
                         .borderRadius(6)
                         .onClick(() => { 
                           this.sourceReadingDirection = item.direction; 
+                          this.syncSourcePageTurnAnimationForCurrentMode();
                           this.saveMangaReadingSettings();
                         })
                     })
@@ -1981,6 +2002,30 @@ export struct SourceSettingsPage {
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   
+                  if (this.isSourceVerticalDoublePageModeSelected()) {
+                    Column({ space: 8 }) {
+                      Button({ stateEffect: true }) {
+                        Text('上下专属')
+                          .fontSize(12)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+                      }
+                      .width(104)
+                      .height(32)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                      .borderRadius(6)
+                      .onClick(() => {
+                        this.sourcePageTurnAnimation = PageTurnAnimationType.SLIDE;
+                        this.saveMangaReadingSettings();
+                      })
+                      Text('双页从上到下使用触顶/触底翻页，只支持专属上下滑动动画。')
+                        .fontSize(12)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                        .width('100%')
+                    }
+                    .width('100%')
+                  } else {
                   Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
                     ForEach([
                       { type: PageTurnAnimationType.NONE, label: '无' },
@@ -2007,12 +2052,13 @@ export struct SourceSettingsPage {
                         )
                         .borderRadius(6)
                         .onClick(() => { 
-                          this.sourcePageTurnAnimation = item.type; 
+                          this.sourcePageTurnAnimation = this.normalizeSourcePageTurnAnimation(item.type);
                           this.saveMangaReadingSettings();
                         })
                     })
                   }
                   .width('100%')
+                  }
                 }
                 .width('100%')
               } else {

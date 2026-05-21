@@ -782,6 +782,7 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       tapToTurn INTEGER DEFAULT 1,
       volumeKeyNavigation INTEGER DEFAULT 1,
       keepScreenOn INTEGER DEFAULT 0,
+      lockDeviceOrientation INTEGER DEFAULT 0,
       showPageNumber INTEGER DEFAULT 1,
       showProgress INTEGER DEFAULT 0,
       showTime INTEGER DEFAULT 1,

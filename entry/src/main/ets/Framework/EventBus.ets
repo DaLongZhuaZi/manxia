@@ -253,6 +253,9 @@ export class CoverSelectionCompletedPayload implements IEventPayload {
  * GameEvent 常量对象的类型接口
  */
 interface GameEventConstants {
+  // 应用生命周期
+  APP_ENTER_FOREGROUND: string;
+  APP_ENTER_BACKGROUND: string;
   // 核心游戏循环
   GAME_STATE_UPDATE: string;
   // UI 与渲染
@@ -303,6 +306,10 @@ interface GameEventConstants {
 }
 
 export const GameEvent: GameEventConstants = {
+  // --- 应用生命周期事件 ---
+  APP_ENTER_FOREGROUND: 'appEnterForeground',
+  APP_ENTER_BACKGROUND: 'appEnterBackground',
+
   // --- 核心游戏循环事件 ---
   GAME_STATE_UPDATE: 'gameStateUpdate',
 

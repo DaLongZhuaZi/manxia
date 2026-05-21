@@ -1,0 +1,758 @@
+/**
+ * 全局搜索服务
+ * 统一管理所有内容类型的搜索逻辑
+ * 
+ * 文件路径: entry/src/main/ets/Framework/Services/GlobalSearchService.ets
+ */
+
+import { logger } from '../../Utils/Logger';
+import { DataService } from './DataService';
+import { DataManager, ComicInfo } from '../Data/DataManager';
+import { ComicInfo as OnlineComicInfo } from '../Source/SourceExecutor';
+import { EBookDataManager } from '../Data/EBookDataManager';
+import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
+import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
+import { SearchParseOptions } from '../Novel/NovelSourceExecutor';
+import { SourceManager, SourceInfo } from '../Source/SourceManager';
+import { SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Source/SuwayomiSourceExecutor';
+import { EBook } from '../../Models/EBookModels';
+import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
+import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
+
+const TAG = 'GlobalSearchService';
+
+// ==================== 类型定义 ====================
+
+/**
+ * 搜索内容类型
+ */
+export enum SearchContentType {
+  ALL = 'all',           // 全部
+  MANGA = 'manga',       // 漫画
+  NOVEL = 'novel',       // 小说
+  EBOOK = 'ebook'        // 电子书
+}
+
+/**
+ * 搜索来源类型
+ */
+export enum SearchSourceType {
+  ALL = 'all',           // 全部
+  LOCAL = 'local',       // 本地
+  ONLINE = 'online'      // 在线
+}
+
+/**
+ * 在线源类型
+ */
+export enum OnlineSourceType {
+  MANGA_SOURCE = 'manga_source',     // 漫画图源
+  SUWAYOMI = 'suwayomi',             // Suwayomi
+  NOVEL_SOURCE = 'novel_source'      // 小说书源
+}
+
+/**
+ * 统一搜索结果项
+ */
+export interface UnifiedSearchItem {
+  id: string;                        // 唯一ID
+  title: string;                     // 标题
+  author?: string;                   // 作者
+  coverUrl?: string;                 // 封面URL
+  description?: string;              // 简介
+  contentType: SearchContentType;    // 内容类型
+  sourceType: SearchSourceType;      // 来源类型（本地/在线）
+  onlineSourceType?: OnlineSourceType; // 在线源类型
+  sourceId: string;                  // 源ID
+  sourceName: string;                // 源名称
+  // 原始数据
+  rawManga?: ComicInfo;
+  rawEbook?: EBook;
+  rawNovelBook?: NovelBook;
+  rawNovelSearch?: NovelSearchResult;
+  rawOnlineComic?: OnlineComicInfo;
+}
+
+/**
+ * 搜索源分组结果
+ */
+export interface SearchSourceGroup {
+  groupId: string;                   // 分组ID
+  groupName: string;                 // 分组名称
+  contentType: SearchContentType;    // 内容类型
+  sourceType: SearchSourceType;      // 来源类型
+  onlineSourceType?: OnlineSourceType; // 在线源类型
+  items: UnifiedSearchItem[];        // 搜索结果
+  isSearching: boolean;              // 是否正在搜索
+  hasError: boolean;                 // 是否有错误
+  errorMessage?: string;             // 错误信息
+}
+
+/**
+ * 搜索筛选配置
+ */
+export interface SearchFilterConfig {
+  contentType: SearchContentType;     // 内容类型筛选
+  sourceType: SearchSourceType;       // 来源类型筛选
+  selectedMangaSources: string[];     // 选中的漫画图源ID列表
+  selectedNovelSources: string[];     // 选中的小说书源ID列表
+  enableSuwayomi: boolean;            // 是否启用Suwayomi搜索
+  maxConcurrent: number;              // 最大并发数
+}
+
+/**
+ * 搜索进度回调
+ */
+export type SearchProgressCallback = (
+  completedGroups: number,
+  totalGroups: number,
+  currentGroupName: string,
+  results: SearchSourceGroup[]
+) => void;
+
+/**
+ * 任务分类结果
+ */
+interface ClassifiedTasks {
+  local: Array<() => Promise<void>>;
+  manga: Array<() => Promise<void>>;
+  novel: Array<() => Promise<void>>;
+  suwayomi: Array<() => Promise<void>>;
+}
+
+/**
+ * 全局搜索服务类
+ */
+export class GlobalSearchService {
+  private static instance: GlobalSearchService | null = null;
+  
+  private dataService: DataService;
+  private dataManager: DataManager;
+  private ebookDataManager: EBookDataManager;
+  private novelDataManager: NovelDataManager;
+  private novelSourceManager: NovelSourceManager;
+  private sourceManager: SourceManager;
+  private suwayomiExecutor: SuwayomiSourceExecutor;
+  private webViewSourceManager: WebViewSourceManager;
+
+  private constructor() {
+    this.dataService = DataService.getInstance();
+    this.dataManager = DataManager.getInstance();
+    this.ebookDataManager = EBookDataManager.getInstance();
+    this.novelDataManager = getNovelDataManager();
+    this.novelSourceManager = getNovelSourceManager();
+    this.sourceManager = SourceManager.getInstance();
+    this.suwayomiExecutor = SuwayomiSourceExecutor.getInstance();
+    this.webViewSourceManager = WebViewSourceManager.getInstance();
+  }
+
+  /**
+   * 获取单例实例
+   */
+  static getInstance(): GlobalSearchService {
+    if (!GlobalSearchService.instance) {
+      GlobalSearchService.instance = new GlobalSearchService();
+    }
+    return GlobalSearchService.instance;
+  }
+
+  // ==================== 获取可用源 ====================
+
+  /**
+   * 获取可用的漫画图源列表（按置顶排序）
+   */
+  async getAvailableMangaSources(): Promise<SourceInfo[]> {
+    try {
+      return await this.sourceManager.getEnabledSourcesSortedByPinned();
+    } catch (error) {
+      logger.error(TAG, `获取漫画图源失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 获取可用的小说书源列表
+   */
+  getAvailableNovelSources(): NovelSourceInfo[] {
+    try {
+      return this.novelSourceManager.getEnabledSources().filter(s => s.searchable);
+    } catch (error) {
+      logger.error(TAG, `获取小说书源失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 获取可用的Suwayomi扩展源列表
+   */
+  async getAvailableSuwayomiSources(): Promise<SuwayomiExtensionSource[]> {
+    try {
+      if (!this.suwayomiExecutor.isConfigured()) {
+        return [];
+      }
+      return await this.suwayomiExecutor.getAvailableSources();
+    } catch (error) {
+      logger.error(TAG, `获取Suwayomi源失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 检查Suwayomi是否已配置
+   */
+  isSuwayomiConfigured(): boolean {
+    return this.suwayomiExecutor.isConfigured();
+  }
+
+  // ==================== 本地搜索 ====================
+
+  /**
+   * 搜索本地漫画
+   */
+  async searchLocalManga(keyword: string): Promise<UnifiedSearchItem[]> {
+    try {
+      const searchResult = await this.dataService.searchComics(keyword);
+      return searchResult.comics.map((comic: ComicInfo): UnifiedSearchItem => ({
+        id: `local-manga-${comic.id}`,
+        title: comic.title,
+        author: comic.author,
+        coverUrl: comic.coverLocalPath || comic.coverUrl,
+        description: comic.description,
+        contentType: SearchContentType.MANGA,
+        sourceType: SearchSourceType.LOCAL,
+        sourceId: 'local-manga',
+        sourceName: '本地漫画',
+        rawManga: comic
+      }));
+    } catch (error) {
+      logger.error(TAG, `搜索本地漫画失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 搜索本地电子书
+   */
+  async searchLocalEbooks(keyword: string): Promise<UnifiedSearchItem[]> {
+    try {
+      const ebooks = await this.ebookDataManager.searchEBooks(keyword);
+      return ebooks.map((ebook: EBook): UnifiedSearchItem => ({
+        id: `local-ebook-${ebook.id}`,
+        title: ebook.metadata.title,
+        author: ebook.metadata.author,
+        coverUrl: ebook.metadata.coverImagePath,
+        description: ebook.metadata.description,
+        contentType: SearchContentType.EBOOK,
+        sourceType: SearchSourceType.LOCAL,
+        sourceId: 'local-ebook',
+        sourceName: '本地电子书',
+        rawEbook: ebook
+      }));
+    } catch (error) {
+      logger.error(TAG, `搜索本地电子书失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 搜索本地小说
+   */
+  async searchLocalNovels(keyword: string): Promise<UnifiedSearchItem[]> {
+    try {
+      const novels = await this.novelDataManager.searchBooks(keyword);
+      return novels.map((novel: NovelBook): UnifiedSearchItem => ({
+        id: `local-novel-${novel.id}`,
+        title: novel.name,
+        author: novel.author,
+        coverUrl: novel.coverUrl,
+        description: novel.intro,
+        contentType: SearchContentType.NOVEL,
+        sourceType: SearchSourceType.LOCAL,
+        sourceId: 'local-novel',
+        sourceName: '本地小说',
+        rawNovelBook: novel
+      }));
+    } catch (error) {
+      logger.error(TAG, `搜索本地小说失败: ${error}`);
+      return [];
+    }
+  }
+
+  // ==================== 在线搜索 ====================
+
+  /**
+   * 搜索在线漫画（单个图源）
+   * 支持两种图源格式：
+   * - HTTP 格式（features配置）：使用 SourceExecutor
+   * - WebView 格式（workflows配置）：使用 MangaSourceEngine
+   */
+  async searchOnlineManga(sourceId: number, keyword: string, page: number = 1): Promise<UnifiedSearchItem[]> {
+    try {
+      // 获取图源信息
+      const sources = await this.sourceManager.getAllSources();
+      const source = sources.find(s => s.id === sourceId);
+      const sourceName = source?.name || `图源${sourceId}`;
+      
+      // 检测图源类型
+      const isWebViewSource = await this.webViewSourceManager.isWebViewSource(sourceId);
+      logger.info(TAG, `搜索图源: ${sourceName} (id=${sourceId}), 类型=${isWebViewSource ? 'WebView' : 'HTTP'}`);
+      
+      let results: OnlineComicInfo[] = [];
+      
+      if (isWebViewSource) {
+        // WebView 格式图源 - 使用 MangaSourceEngine
+        results = await this.searchWithMangaEngine(sourceId, sourceName, keyword, page);
+      } else {
+        // HTTP 格式图源 - 使用原有的 SourceExecutor
+        results = await this.sourceManager.search(sourceId, keyword, page);
+      }
+      
+      return results.map((comic: OnlineComicInfo): UnifiedSearchItem => ({
+        id: `online-manga-${sourceId}-${comic.id}`,
+        title: comic.title,
+        author: comic.author,
+        coverUrl: comic.coverUrl,
+        description: comic.description,
+        contentType: SearchContentType.MANGA,
+        sourceType: SearchSourceType.ONLINE,
+        onlineSourceType: OnlineSourceType.MANGA_SOURCE,
+        sourceId: String(sourceId),
+        sourceName: sourceName,
+        rawOnlineComic: comic
+      }));
+    } catch (error) {
+      logger.error(TAG, `搜索在线漫画失败 (sourceId=${sourceId}): ${error}`);
+      return [];
+    }
+  }
+  
+  /**
+   * 使用 MangaSourceEngine 搜索 WebView 格式图源
+   */
+  private async searchWithMangaEngine(sourceId: number, sourceName: string, keyword: string, page: number): Promise<OnlineComicInfo[]> {
+    try {
+      // 获取或创建 MangaSourceEngine
+      const engine = await this.webViewSourceManager.getMangaEngine(sourceId, sourceName);
+      
+      // 执行搜索
+      const searchResult = await engine.searchManga(keyword, page);
+      
+      if (!searchResult.success || !searchResult.data) {
+        logger.warn(TAG, `MangaEngine 搜索失败: ${searchResult.error || '未知错误'}`);
+        return [];
+      }
+      
+      // 转换结果格式
+      const mangas = searchResult.data.mangas || [];
+      return mangas.map((manga): OnlineComicInfo => ({
+        id: manga.id || manga.url || '',  // 优先使用id，没有则用url作为唯一标识
+        title: manga.title,
+        author: manga.author || '',
+        coverUrl: manga.cover || '',
+        description: manga.description || '',
+        url: manga.url || '',
+        status: manga.status || ''
+      }));
+    } catch (error) {
+      logger.error(TAG, `MangaEngine 搜索异常 (sourceId=${sourceId}): ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 搜索Suwayomi漫画（库搜索或指定源搜索）
+   */
+  async searchSuwayomi(keyword: string, sourceId?: string): Promise<UnifiedSearchItem[]> {
+    try {
+      if (!this.suwayomiExecutor.isConfigured()) {
+        logger.warn(TAG, 'Suwayomi未配置');
+        return [];
+      }
+
+      let results: OnlineComicInfo[];
+      if (sourceId) {
+        this.suwayomiExecutor.setCurrentSource(sourceId);
+        results = await this.suwayomiExecutor.search(keyword);
+      } else {
+        results = await this.suwayomiExecutor.searchLibrary(keyword);
+      }
+
+      return results.map((comic: OnlineComicInfo): UnifiedSearchItem => ({
+        id: `suwayomi-${sourceId || 'library'}-${comic.id}`,
+        title: comic.title,
+        author: comic.author,
+        coverUrl: comic.coverUrl,
+        description: comic.description,
+        contentType: SearchContentType.MANGA,
+        sourceType: SearchSourceType.ONLINE,
+        onlineSourceType: OnlineSourceType.SUWAYOMI,
+        sourceId: sourceId || 'suwayomi-library',
+        sourceName: sourceId ? `Suwayomi-${sourceId}` : 'Suwayomi库',
+        rawOnlineComic: comic
+      }));
+    } catch (error) {
+      logger.error(TAG, `搜索Suwayomi失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 搜索在线小说（单个书源）
+   */
+  async searchOnlineNovel(sourceId: string, keyword: string, page: number = 1): Promise<UnifiedSearchItem[]> {
+    try {
+      const parseOptions: SearchParseOptions = {
+        yieldSliceMs: 12
+      };
+      const results = await this.novelSourceManager.search(sourceId, keyword, page, parseOptions);
+      return results.map((novel: NovelSearchResult): UnifiedSearchItem => ({
+        id: `online-novel-${sourceId}-${novel.bookUrl}`,
+        title: novel.name,
+        author: novel.author,
+        coverUrl: novel.coverUrl,
+        description: novel.intro,
+        contentType: SearchContentType.NOVEL,
+        sourceType: SearchSourceType.ONLINE,
+        onlineSourceType: OnlineSourceType.NOVEL_SOURCE,
+        sourceId: sourceId,
+        sourceName: novel.sourceName,
+        rawNovelSearch: novel
+      }));
+    } catch (error) {
+      logger.error(TAG, `搜索在线小说失败 (sourceId=${sourceId}): ${error}`);
+      return [];
+    }
+  }
+
+  // ==================== 统一搜索 ====================
+
+  /**
+   * 执行全局搜索
+   * @param keyword 搜索关键词
+   * @param filter 筛选配置
+   * @param onProgress 进度回调
+   */
+  async searchAll(
+    keyword: string,
+    filter: SearchFilterConfig,
+    onProgress?: SearchProgressCallback
+  ): Promise<SearchSourceGroup[]> {
+    const groups: SearchSourceGroup[] = [];
+    const searchTasks: Array<() => Promise<void>> = [];
+    
+    // 根据筛选配置构建搜索任务
+    
+    // 1. 本地搜索
+    if (filter.sourceType === SearchSourceType.ALL || filter.sourceType === SearchSourceType.LOCAL) {
+      // 本地漫画
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.MANGA) {
+        const group: SearchSourceGroup = {
+          groupId: 'local-manga',
+          groupName: '本地漫画',
+          contentType: SearchContentType.MANGA,
+          sourceType: SearchSourceType.LOCAL,
+          items: [],
+          isSearching: true,
+          hasError: false
+        };
+        groups.push(group);
+        searchTasks.push(async () => {
+          try {
+            group.items = await this.searchLocalManga(keyword);
+            group.isSearching = false;
+          } catch (error) {
+            group.isSearching = false;
+            group.hasError = true;
+            group.errorMessage = String(error);
+          }
+        });
+      }
+      
+      // 本地电子书
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.EBOOK) {
+        const group: SearchSourceGroup = {
+          groupId: 'local-ebook',
+          groupName: '本地电子书',
+          contentType: SearchContentType.EBOOK,
+          sourceType: SearchSourceType.LOCAL,
+          items: [],
+          isSearching: true,
+          hasError: false
+        };
+        groups.push(group);
+        searchTasks.push(async () => {
+          try {
+            group.items = await this.searchLocalEbooks(keyword);
+            group.isSearching = false;
+          } catch (error) {
+            group.isSearching = false;
+            group.hasError = true;
+            group.errorMessage = String(error);
+          }
+        });
+      }
+      
+      // 本地小说
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.NOVEL) {
+        const group: SearchSourceGroup = {
+          groupId: 'local-novel',
+          groupName: '本地小说',
+          contentType: SearchContentType.NOVEL,
+          sourceType: SearchSourceType.LOCAL,
+          items: [],
+          isSearching: true,
+          hasError: false
+        };
+        groups.push(group);
+        searchTasks.push(async () => {
+          try {
+            group.items = await this.searchLocalNovels(keyword);
+            group.isSearching = false;
+          } catch (error) {
+            group.isSearching = false;
+            group.hasError = true;
+            group.errorMessage = String(error);
+          }
+        });
+      }
+    }
+    
+    // 2. 在线搜索
+    if (filter.sourceType === SearchSourceType.ALL || filter.sourceType === SearchSourceType.ONLINE) {
+      // 在线漫画图源
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.MANGA) {
+        for (const sourceId of filter.selectedMangaSources) {
+          const numSourceId = parseInt(sourceId);
+          if (isNaN(numSourceId)) continue;
+          
+          const sources = await this.sourceManager.getAllSources();
+          const source = sources.find(s => s.id === numSourceId);
+          const sourceName = source?.name || `图源${sourceId}`;
+          
+          const group: SearchSourceGroup = {
+            groupId: `online-manga-${sourceId}`,
+            groupName: sourceName,
+            contentType: SearchContentType.MANGA,
+            sourceType: SearchSourceType.ONLINE,
+            onlineSourceType: OnlineSourceType.MANGA_SOURCE,
+            items: [],
+            isSearching: true,
+            hasError: false
+          };
+          groups.push(group);
+          searchTasks.push(async () => {
+            try {
+              group.items = await this.searchOnlineManga(numSourceId, keyword);
+              group.isSearching = false;
+            } catch (error) {
+              group.isSearching = false;
+              group.hasError = true;
+              group.errorMessage = String(error);
+            }
+          });
+        }
+        
+        // Suwayomi
+        if (filter.enableSuwayomi && this.isSuwayomiConfigured()) {
+          const group: SearchSourceGroup = {
+            groupId: 'suwayomi-library',
+            groupName: 'Suwayomi',
+            contentType: SearchContentType.MANGA,
+            sourceType: SearchSourceType.ONLINE,
+            onlineSourceType: OnlineSourceType.SUWAYOMI,
+            items: [],
+            isSearching: true,
+            hasError: false
+          };
+          groups.push(group);
+          searchTasks.push(async () => {
+            try {
+              group.items = await this.searchSuwayomi(keyword);
+              group.isSearching = false;
+            } catch (error) {
+              group.isSearching = false;
+              group.hasError = true;
+              group.errorMessage = String(error);
+            }
+          });
+        }
+      }
+      
+      // 在线小说书源
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.NOVEL) {
+        for (const sourceId of filter.selectedNovelSources) {
+          const sourceObj = this.novelSourceManager.getSource(sourceId);
+          const sourceName = sourceObj?.bookSourceName || sourceId;
+          
+          const group: SearchSourceGroup = {
+            groupId: `online-novel-${sourceId}`,
+            groupName: sourceName,
+            contentType: SearchContentType.NOVEL,
+            sourceType: SearchSourceType.ONLINE,
+            onlineSourceType: OnlineSourceType.NOVEL_SOURCE,
+            items: [],
+            isSearching: true,
+            hasError: false
+          };
+          groups.push(group);
+          searchTasks.push(async () => {
+            try {
+              group.items = await this.searchOnlineNovel(sourceId, keyword);
+              group.isSearching = false;
+            } catch (error) {
+              group.isSearching = false;
+              group.hasError = true;
+              group.errorMessage = String(error);
+            }
+          });
+        }
+      }
+    }
+    
+    // 3. 执行搜索任务
+    // 【关键重构】将图源搜索和书源搜索完全分离，避免资源竞争
+    const totalGroups = groups.length;
+    let completedGroups = 0;
+    
+    logger.info(TAG, `开始全局搜索: keyword="${keyword}", 共${totalGroups}个分组`);
+    
+    // 【关键】立即触发一次进度回调，让 UI 显示所有正在搜索的分组
+    if (onProgress) {
+      onProgress(0, totalGroups, '', this.createProgressSnapshot(groups));
+    }
+    
+    // 根据 group 类型对任务进行分类
+    const tasksByType = this.classifyTasksByGroup(groups, searchTasks);
+    
+    // 创建进度更新函数
+    const updateProgress = () => {
+      completedGroups++;
+      if (onProgress) {
+        let currentGroupName = '';
+        for (const group of groups) {
+          if (!group.isSearching) {
+            currentGroupName = group.groupName;
+          }
+        }
+        onProgress(completedGroups, totalGroups, currentGroupName, this.createProgressSnapshot(groups));
+      }
+    };
+    
+    // 并行执行三类任务（各类内部串行/分批执行）
+    const batchSize = filter.maxConcurrent || 3;
+    
+    const executeTasksInBatches = async (tasks: Array<() => Promise<void>>, batchSz: number): Promise<void> => {
+      for (let i = 0; i < tasks.length; i += batchSz) {
+        const batch = tasks.slice(i, Math.min(i + batchSz, tasks.length));
+        await Promise.all(batch.map(async (task) => {
+          await task();
+          updateProgress();
+        }));
+      }
+    };
+    
+    // 【关键】三类任务完全并行执行，互不干扰
+    await Promise.all([
+      // 本地搜索任务（快速完成）
+      executeTasksInBatches(tasksByType.local, batchSize),
+      // 图源搜索任务（需要 WebView）
+      executeTasksInBatches(tasksByType.manga, batchSize),
+      // 书源搜索任务（独立 HTTP 请求）
+      executeTasksInBatches(tasksByType.novel, batchSize),
+      // Suwayomi 搜索任务
+      executeTasksInBatches(tasksByType.suwayomi, 1)
+    ]);
+
+    // 兜底确保所有分组都已结束，避免 UI 长时间停留在“搜索中”
+    for (const group of groups) {
+      group.isSearching = false;
+    }
+
+    if (onProgress) {
+      onProgress(totalGroups, totalGroups, '', this.createProgressSnapshot(groups));
+    }
+    
+    logger.info(TAG, `全局搜索完成: 共${groups.reduce((sum, g) => sum + g.items.length, 0)}条结果`);
+    
+    return groups;
+  }
+  
+  /**
+   * 根据分组类型对任务进行分类
+   */
+  private classifyTasksByGroup(
+    groups: SearchSourceGroup[], 
+    tasks: Array<() => Promise<void>>
+  ): ClassifiedTasks {
+    const result: ClassifiedTasks = {
+      local: [],
+      manga: [],
+      novel: [],
+      suwayomi: []
+    };
+    
+    // tasks 和 groups 是一一对应的（同一顺序添加）
+    for (let i = 0; i < tasks.length && i < groups.length; i++) {
+      const group = groups[i];
+      const task = tasks[i];
+      
+      if (group.sourceType === SearchSourceType.LOCAL) {
+        result.local.push(task);
+      } else if (group.onlineSourceType === OnlineSourceType.MANGA_SOURCE) {
+        result.manga.push(task);
+      } else if (group.onlineSourceType === OnlineSourceType.NOVEL_SOURCE) {
+        result.novel.push(task);
+      } else if (group.onlineSourceType === OnlineSourceType.SUWAYOMI) {
+        result.suwayomi.push(task);
+      } else {
+        // 默认放到本地任务
+        result.local.push(task);
+      }
+    }
+    
+    logger.info(TAG, `任务分类: 本地=${result.local.length}, 图源=${result.manga.length}, 书源=${result.novel.length}, Suwayomi=${result.suwayomi.length}`);
+    
+    return result;
+  }
+
+  /**
+   * 生成进度快照：返回新数组和新分组对象，保证 UI 能感知到状态更新
+   */
+  private createProgressSnapshot(groups: SearchSourceGroup[]): SearchSourceGroup[] {
+    const snapshot: SearchSourceGroup[] = [];
+    for (const group of groups) {
+      snapshot.push({
+        groupId: group.groupId,
+        groupName: group.groupName,
+        contentType: group.contentType,
+        sourceType: group.sourceType,
+        onlineSourceType: group.onlineSourceType,
+        // 进度快照只需要替换分组对象，避免频繁深拷贝大结果集导致主线程抖动
+        items: group.items,
+        isSearching: group.isSearching,
+        hasError: group.hasError,
+        errorMessage: group.errorMessage
+      });
+    }
+    return snapshot;
+  }
+
+  /**
+   * 获取默认筛选配置
+   */
+  getDefaultFilterConfig(): SearchFilterConfig {
+    return {
+      contentType: SearchContentType.ALL,
+      sourceType: SearchSourceType.LOCAL,
+      selectedMangaSources: [],
+      selectedNovelSources: [],
+      enableSuwayomi: false,
+      maxConcurrent: 5
+    };
+  }
+}
+
+// 导出便捷函数
+export function getGlobalSearchService(): GlobalSearchService {
+  return GlobalSearchService.getInstance();
+}

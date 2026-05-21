@@ -19,6 +19,7 @@ interface BusinessErrorLike {
 }
 
 type HoldingAwarenessError = Error | BusinessErrorLike | Object | string | number | boolean | null | undefined;
+type HoldingCapabilityLogBucket = 'holding' | 'operating' | 'recent_operating';
 
 export enum HoldingUiAnchor {
   LEFT = 'left',
@@ -110,6 +111,9 @@ export class HoldingAwarenessManager {
   private activityMotionGranted: boolean = false;
   private latestHoldingStatus: motion.HoldingHandStatus = motion.HoldingHandStatus.UNKNOWN_STATUS;
   private latestOperatingStatus: motion.OperatingHandStatus = motion.OperatingHandStatus.UNKNOWN_STATUS;
+  private holdingCapabilityLimitedLogged: boolean = false;
+  private operatingCapabilityLimitedLogged: boolean = false;
+  private recentOperatingCapabilityLimitedLogged: boolean = false;
 
   private readonly holdingHandChangedCallback = (status: motion.HoldingHandStatus): void => {
     this.latestHoldingStatus = status;
@@ -220,6 +224,9 @@ export class HoldingAwarenessManager {
     this.teardownSubscriptions();
     this.listeners.clear();
     this.isInitialized = false;
+    this.holdingCapabilityLimitedLogged = false;
+    this.operatingCapabilityLimitedLogged = false;
+    this.recentOperatingCapabilityLimitedLogged = false;
   }
 
   private ensureStorageDefaults(): void {
@@ -297,12 +304,24 @@ export class HoldingAwarenessManager {
     try {
       motion.on('holdingHandChanged', this.holdingHandChangedCallback);
       this.holdingSubscribed = true;
+      this.holdingCapabilityLimitedLogged = false;
       logger.info(TAG, `已启用智感握姿监听：原因=${reason}`);
     } catch (error) {
-      logger.warn(
-        TAG,
-        `启用智感握姿监听失败：原因=${reason}，错误码=${this.extractErrorCode(error)}，错误=${this.extractErrorMessage(error)}`
-      );
+      const errorCode = this.extractErrorCode(error);
+      if (this.isCapabilityLimitedErrorCode(errorCode)) {
+        this.logCapabilityLimitedOnce(
+          'holdingHandChanged订阅',
+          reason,
+          errorCode,
+          error,
+          'holding'
+        );
+      } else {
+        logger.warn(
+          TAG,
+          `启用智感握姿监听失败：原因=${reason}，错误码=${errorCode}，错误=${this.extractErrorMessage(error)}`
+        );
+      }
     }
   }
 
@@ -314,12 +333,24 @@ export class HoldingAwarenessManager {
     try {
       motion.on('operatingHandChanged', this.operatingHandChangedCallback);
       this.operatingSubscribed = true;
+      this.operatingCapabilityLimitedLogged = false;
       logger.info(TAG, `已启用操作手监听：原因=${reason}`);
     } catch (error) {
-      logger.warn(
-        TAG,
-        `启用操作手监听失败：原因=${reason}，错误码=${this.extractErrorCode(error)}，错误=${this.extractErrorMessage(error)}`
-      );
+      const errorCode = this.extractErrorCode(error);
+      if (this.isCapabilityLimitedErrorCode(errorCode)) {
+        this.logCapabilityLimitedOnce(
+          'operatingHandChanged订阅',
+          reason,
+          errorCode,
+          error,
+          'operating'
+        );
+      } else {
+        logger.warn(
+          TAG,
+          `启用操作手监听失败：原因=${reason}，错误码=${errorCode}，错误=${this.extractErrorMessage(error)}`
+        );
+      }
     }
   }
 
@@ -330,15 +361,27 @@ export class HoldingAwarenessManager {
     }
     try {
       this.latestOperatingStatus = motion.getRecentOperatingHandStatus();
+      this.recentOperatingCapabilityLimitedLogged = false;
       logger.info(
         TAG,
         `已刷新最近一次操作手状态：状态=${this.describeOperatingHandStatus(this.latestOperatingStatus)}，原因=${reason}`
       );
     } catch (error) {
-      logger.debug(
-        TAG,
-        `刷新最近一次操作手状态失败：原因=${reason}，错误码=${this.extractErrorCode(error)}，错误=${this.extractErrorMessage(error)}`
-      );
+      const errorCode = this.extractErrorCode(error);
+      if (this.isCapabilityLimitedErrorCode(errorCode)) {
+        this.logCapabilityLimitedOnce(
+          'getRecentOperatingHandStatus查询',
+          reason,
+          errorCode,
+          error,
+          'recent_operating'
+        );
+      } else {
+        logger.debug(
+          TAG,
+          `刷新最近一次操作手状态失败：原因=${reason}，错误码=${errorCode}，错误=${this.extractErrorMessage(error)}`
+        );
+      }
     }
   }
 
@@ -360,6 +403,10 @@ export class HoldingAwarenessManager {
 
   private buildSnapshot(): HoldingAwarenessSnapshot {
     const previousAnchor = this.currentSnapshot.preferredAnchor ?? HoldingUiAnchor.RIGHT;
+    const hasHoldingSignal = this.latestHoldingStatus !== motion.HoldingHandStatus.UNKNOWN_STATUS;
+    const hasOperatingSignal =
+      this.latestOperatingStatus === motion.OperatingHandStatus.LEFT_HAND_OPERATED ||
+      this.latestOperatingStatus === motion.OperatingHandStatus.RIGHT_HAND_OPERATED;
     let preferredAnchor: HoldingUiAnchor = previousAnchor;
     let side: HoldingAwarenessSide = HoldingAwarenessSide.UNKNOWN;
     let source: HoldingAwarenessSource = HoldingAwarenessSource.DEFAULT;
@@ -419,8 +466,8 @@ export class HoldingAwarenessManager {
       side,
       source,
       confidence,
-      available: this.holdingSubscribed || this.operatingSubscribed,
-      preciseSupported: this.holdingSubscribed,
+      available: this.holdingSubscribed || this.operatingSubscribed || hasHoldingSignal || hasOperatingSignal,
+      preciseSupported: this.holdingSubscribed || hasHoldingSignal,
       detectGestureGranted: this.detectGestureGranted,
       activityMotionGranted: this.activityMotionGranted,
       lastUpdatedAt: Date.now()
@@ -555,6 +602,60 @@ export class HoldingAwarenessManager {
       return String(businessError.code);
     }
     return '未知';
+  }
+
+  private isCapabilityLimitedErrorCode(errorCode: string): boolean {
+    // SDK 将 801 定义为本次调用受设备能力限制，不能当成永久不支持缓存。
+    return errorCode === '801';
+  }
+
+  private logCapabilityLimitedOnce(
+    apiName: string,
+    reason: string,
+    errorCode: string,
+    error: HoldingAwarenessError,
+    bucket: HoldingCapabilityLogBucket
+  ): void {
+    if (this.hasLoggedCapabilityLimited(bucket)) {
+      logger.debug(TAG, `${apiName} 本次调用能力受限，保留后续重试：原因=${reason}，错误码=${errorCode}`);
+      return;
+    }
+
+    this.markCapabilityLimitedLogged(bucket);
+    logger.info(
+      TAG,
+      `${apiName} 本次调用返回能力受限，按SDK语义不判定设备永久不支持，将在后续恢复/权限变化时继续重试：` +
+        `原因=${reason}，错误码=${errorCode}，错误=${this.extractErrorMessage(error)}`
+    );
+  }
+
+  private hasLoggedCapabilityLimited(bucket: HoldingCapabilityLogBucket): boolean {
+    switch (bucket) {
+      case 'holding':
+        return this.holdingCapabilityLimitedLogged;
+      case 'operating':
+        return this.operatingCapabilityLimitedLogged;
+      case 'recent_operating':
+        return this.recentOperatingCapabilityLimitedLogged;
+      default:
+        return false;
+    }
+  }
+
+  private markCapabilityLimitedLogged(bucket: HoldingCapabilityLogBucket): void {
+    switch (bucket) {
+      case 'holding':
+        this.holdingCapabilityLimitedLogged = true;
+        break;
+      case 'operating':
+        this.operatingCapabilityLimitedLogged = true;
+        break;
+      case 'recent_operating':
+        this.recentOperatingCapabilityLimitedLogged = true;
+        break;
+      default:
+        break;
+    }
   }
 
   private extractErrorMessage(error: HoldingAwarenessError): string {

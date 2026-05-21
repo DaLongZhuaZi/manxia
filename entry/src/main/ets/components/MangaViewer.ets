@@ -20,7 +20,8 @@ import {
   ImageSourceType,
   PageTurnAnimationType,
   MangaImageRequestHeader,
-  DoublePagePortraitLayout
+  DoublePagePortraitLayout,
+  DoublePageVerticalDirection
 } from '../Models/MangaModels';
 import { colorMap } from '../Data/ResourceMap';
 import {
@@ -40,6 +41,13 @@ import { ImageLoadStateManager, ImageLoadState as NewImageLoadState, PageState }
 import { PreloadDebugInfo } from './PreloadDebugOverlay';
 // 新增：本地图片缓存管理器
 import { LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
+import {
+  DoublePageSmartDisplayMode,
+  DoublePageSmartDisplayPlan,
+  DoublePageSmartDisplayReason,
+  DoublePageSmartLayoutHelper,
+  PageDimensionsInfo
+} from '../Utils/DoublePageSmartLayoutHelper';
 
 const TAG = 'MangaViewer';
 
@@ -344,6 +352,13 @@ class WebtoonLazyDataSource implements IDataSource {
 
 @Component
 export struct MangaViewer {
+  private static readonly VERTICAL_DOUBLE_PAGE_EDGE_TOLERANCE_VP: number = 18;
+  private static readonly VERTICAL_DOUBLE_PAGE_EDGE_GUIDE_ZONE_VP: number = 132;
+  private static readonly VERTICAL_DOUBLE_PAGE_EDGE_HINT_VP: number = 28;
+  private static readonly VERTICAL_DOUBLE_PAGE_EDGE_TRIGGER_VP: number = 76;
+  private static readonly VERTICAL_DOUBLE_PAGE_EDGE_MAX_PULL_VP: number = 88;
+  private static readonly VERTICAL_DOUBLE_PAGE_EDGE_COOLDOWN_MS: number = 420;
+
   @Prop chapter: MangaChapter;
   @Prop @Watch('onCurrentPageIndexChange') currentPageIndex: number;
   @State private viewCurrentPageIndex: number = 0;
@@ -448,11 +463,24 @@ export struct MangaViewer {
   @State private doubleLeftPageId: string = '';
   @State private doubleRightImageInput: Resource | string | image.PixelMap = $r('app.media.ic_image');
   @State private doubleRightPageId: string = '';
+  @State private verticalDoubleTopPageIndex: number = -1;
+  @State private verticalDoubleTopPageId: string = '';
+  @State private verticalDoubleTopImageInput: Resource | string | image.PixelMap = $r('app.media.ic_image');
+  @State private verticalDoubleBottomPageIndex: number = -1;
+  @State private verticalDoubleBottomPageId: string = '';
+  @State private verticalDoubleBottomImageInput: Resource | string | image.PixelMap = $r('app.media.ic_image');
+  @State private verticalDoubleCurrentContentKey: string = 'vertical_current_empty';
+  @State private verticalDoubleCurrentContentIdentity: string = 'vertical_identity_empty';
+  @State private verticalDoubleCurrentLayerToggle: boolean = false;
   private pagePixelMapMeta: Map<string, PixelMapMeta> = new Map();
   @State private currentScale: number = 1.0;
   // 双页模式渲染所需的左右页索引（使用@State确保UI响应式刷新）
   @State private leftPageIndex: number = -1;
   @State private rightPageIndex: number = -1;
+  @State private currentDoublePageDisplayMode: DoublePageSmartDisplayMode = DoublePageSmartDisplayMode.DUAL;
+  @State private currentDoublePageDisplayReason: DoublePageSmartDisplayReason = DoublePageSmartDisplayReason.NORMAL_PAIR;
+  @State private previewPrevSingleDoublePage: boolean = false;
+  @State private previewNextSingleDoublePage: boolean = false;
   @State private translateX: number = 0;
   @State private translateY: number = 0;
   @State private isDragging: boolean = false;
@@ -548,6 +576,17 @@ export struct MangaViewer {
   // 滚动相关（连续滚动模式）
   @State private scrollOffset: number = 0;
   private scroller: Scroller = new Scroller();
+  @State private verticalDoublePageScrollOffset: number = 0;
+  @State private verticalDoublePageTurnAction: 'next' | 'prev' | null = null;
+  private verticalDoublePageBoundaryAccumulator: number = 0;
+  private verticalDoublePageBoundaryDirection: 'top' | 'bottom' | '' = '';
+  private verticalDoublePageBoundaryLastTime: number = 0;
+  @State private verticalDoublePageEdgeHintProgress: number = 0;
+  private verticalDoublePageLastPanOffsetY: number = 0;
+  private verticalDoublePageLastScrollDeltaY: number = 0;
+  private verticalDoublePagePanStartScrollOffset: number = 0;
+  private verticalDoublePageReleasePullY: number = 0;
+  private verticalDoublePageProgrammaticScrollUntil: number = 0;
 
   // 动画系统
   private animationManager: GlobalAnimationManager = globalAnimationManager;
@@ -669,6 +708,9 @@ export struct MangaViewer {
     this.initializeImageStates();
     // 初始化双页模式的左右页索引
     this.updateDoublePageIndices();
+    if (this.isDoublePageVerticalPortraitMode()) {
+      this.syncVerticalDoublePagePositionForCurrentPair(false);
+    }
 
     // 初始化滚动位置键
     this.initScrollPositionKey();
@@ -723,10 +765,13 @@ export struct MangaViewer {
    * 由 chapterTick 变化触发
    */
   private onChapterChange(): void {
-    logger.info(TAG, `🔔 [章节切换] 检测到章节切换，chapterTick=${this.chapterTick}，重新初始化组件`);
+    logger.info(TAG, `🔔 [章节切换] 检测到章节切换，chapterTick=${this.chapterTick}，目标页=${this.currentPageIndex + 1}，重新初始化组件`);
+
+    this.suppressExternalIndex = false;
 
     // 重置页面索引
     this.viewCurrentPageIndex = this.currentPageIndex;
+    logger.debug(TAG, `章节切换同步页码: view=${this.viewCurrentPageIndex + 1}, prop=${this.currentPageIndex + 1}`);
 
     // 重置渲染计数器
     this.renderEpoch = 0;
@@ -778,6 +823,13 @@ export struct MangaViewer {
         this.imageLoadStateManager.initPage(page.id, index);
       });
       this.initializeImageStates();
+      if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+        this.updateDoublePageIndices();
+        this.updateDoublePagePreview();
+        if (this.isDoublePageVerticalPortraitMode()) {
+          this.syncVerticalDoublePagePositionForCurrentPair(false);
+        }
+      }
 
       // 关键修复：先更新显示变量为实际URL（而不是占位图）
       // 这样Image组件会立即使用新章节的URL
@@ -921,8 +973,17 @@ export struct MangaViewer {
         this.triggerUnifiedPreload();
         return;
       }
-      this.updateSinglePageDisplay();
-      this.updateSinglePagePreview();
+      if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+        if (this.isDoublePageVerticalPortraitMode()) {
+          this.forceRefreshVerticalDoublePageCurrentPair('set_page_index');
+        } else {
+          this.updateDoublePageIndices();
+          this.updateDoublePagePreview();
+        }
+      } else {
+        this.updateSinglePageDisplay();
+        this.updateSinglePagePreview();
+      }
       this.loadCurrentAndNeighborPages();
     }
   }
@@ -1002,11 +1063,15 @@ export struct MangaViewer {
       return;
     }
     
-    logger.debug(TAG, `页面索引变化: 新页面=${this.currentPageIndex + 1}`);
+    logger.debug(TAG, `页面索引变化: ${previousViewPageIndex + 1} -> ${this.currentPageIndex + 1}`);
     this.viewCurrentPageIndex = this.currentPageIndex;
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       this.updateDoublePageIndices();
       this.updateDoublePagePreview();
+      if (this.isDoublePageVerticalPortraitMode()) {
+        this.verticalDoublePageTurnAction = this.currentPageIndex > previousViewPageIndex ? 'next' : 'prev';
+        this.syncVerticalDoublePagePositionForCurrentPair(false);
+      }
     } else {
       this.updateSinglePageDisplay();
       this.updateSinglePagePreview();
@@ -1014,11 +1079,17 @@ export struct MangaViewer {
 
     // 触发翻页动画（双页卷曲动画期间不触发，避免重复动画）
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE && !this.showDualCurlEffect) {
-      const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
       const isForwardExternalJump: boolean = this.currentPageIndex > previousViewPageIndex;
-      this.pageTurnDirection = isForwardExternalJump
-        ? (isRTL ? 'right' : 'left')
-        : (isRTL ? 'left' : 'right');
+      if (this.isDoublePageVerticalPortraitMode()) {
+        this.isCommittingPageTurn = true;
+        const action: 'next' | 'prev' = isForwardExternalJump ? 'next' : 'prev';
+        this.pageTurnDirection = this.getVerticalDoublePageTurnDirection(action);
+      } else {
+        const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+        this.pageTurnDirection = isForwardExternalJump
+          ? (isRTL ? 'right' : 'left')
+          : (isRTL ? 'left' : 'right');
+      }
       this.animatePageTurn();
       this.translateX = 0;
       this.translateY = 0;
@@ -1534,13 +1605,16 @@ export struct MangaViewer {
     this.initialTranslateX = this.translateX;
     this.initialTranslateY = this.translateY;
 
+    if (this.isDoublePageVerticalPortraitMode() && this.currentScale <= 1.0) {
+      this.verticalDoublePageLastPanOffsetY = 0;
+      this.resetVerticalDoublePageBoundaryState();
+    }
+
     // ========== 卷页动画：拖拽开始时立即进入交互模式 ==========
     const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
-    const isDoublePage: boolean = this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
-    const isTTB: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
-      (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM);
+    const isVerticalPagingMode: boolean = this.isSinglePageVerticalPagingMode() || this.isDoublePageVerticalPortraitMode();
 
-    if (animationType === PageTurnAnimationType.CURL && !isTTB) {
+    if (animationType === PageTurnAnimationType.CURL && !isVerticalPagingMode && !this.shouldUseSmartDoublePageLayout()) {
       // 准备卷页模式（但不立即显示，等待有明显拖拽时再显示）
       // 支持单页和双页模式
       this.prepareCurlMode();
@@ -1729,6 +1803,9 @@ export struct MangaViewer {
 
     // 双页模式 + 横屏
     if (mode === ReadingMode.DOUBLE_PAGE && this.isLandscapeScreen()) {
+      if (this.shouldUseSmartDoublePageLayout()) {
+        return false;
+      }
       return true;
     }
 
@@ -1768,13 +1845,17 @@ export struct MangaViewer {
     const deltaX = event.fingerList[0].globalX - this.panStartX;
     const deltaY = event.fingerList[0].globalY - this.panStartY;
 
+    if (this.isDoublePageVerticalPortraitMode() && this.currentScale <= 1.0) {
+      return;
+    }
+
     // ========== 卷页动画：实时更新卷曲进度 ==========
     const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
     const isDoublePage: boolean = this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
 
     if (animationType === PageTurnAnimationType.CURL && this.currentScale <= 1.0) {
       // 双页檌屏卷页模式
-      if (isDoublePage && this.isLandscapeScreen()) {
+      if (isDoublePage && this.isLandscapeScreen() && !this.shouldUseSmartDoublePageLayout()) {
         this.curlTouchY = event.fingerList[0].globalY;
         this.updateDualCurlProgress(deltaX);
         return;
@@ -1795,9 +1876,8 @@ export struct MangaViewer {
     } else if (this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL) {
       // 连续滚动模式下的垂直拖拽
       this.translateY = this.initialTranslateY + deltaY;
-    } else if (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
-      (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM)) {
-      // 单页上下翻页模式下使用垂直拖拽用于翻页预览
+    } else if (this.isSinglePageVerticalPagingMode() || this.isDoublePageVerticalPortraitMode()) {
+      // 上下翻页模式下使用垂直拖拽用于翻页预览
       this.translateY = this.initialTranslateY + deltaY;
     } else {
       // 单页模式下的水平拖拽（用于翻页）
@@ -1962,10 +2042,17 @@ export struct MangaViewer {
     }
 
     const isDoublePage: boolean = this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
-    const isTTB: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
-      (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM);
+    const isSinglePageTTB: boolean = this.isSinglePageVerticalPagingMode();
+    const isVerticalDoublePage: boolean = this.isDoublePageVerticalPortraitMode();
+    const usesVerticalPagingAxis: boolean = isSinglePageTTB || isVerticalDoublePage;
 
     if (this.currentScale <= 1.0) {
+      if (isVerticalDoublePage) {
+        this.translateX = 0;
+        this.translateY = 0;
+        return;
+      }
+
       const thresholdX: number = Math.max(20, Math.floor(this.screenWidth * 0.05));
       const thresholdY: number = Math.max(20, Math.floor(this.screenHeight * 0.05));
       logger.debug(TAG, `拖拽结束: tx=${this.translateX.toFixed ? this.translateX.toFixed(1) : this.translateX}, ty=${this.translateY.toFixed ? this.translateY.toFixed(1) : this.translateY}, thX=${thresholdX}, thY=${thresholdY}, cur=${this.currentPageIndex}, view=${this.viewCurrentPageIndex}`);
@@ -1976,7 +2063,7 @@ export struct MangaViewer {
 
       // ========== 卷页动画特殊处理 ==========
       const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
-      if (animationType === PageTurnAnimationType.CURL && !isTTB) {
+      if (animationType === PageTurnAnimationType.CURL && !usesVerticalPagingAxis) {
         // 双页檌屏卷页模式
         if (isDoublePage && this.isLandscapeScreen() && this.showDualCurlEffect) {
           const flipThreshold: number = this.curlEffectConfig.flipThreshold;
@@ -2102,59 +2189,90 @@ export struct MangaViewer {
       const previousSinglePageInput: Resource | string | image.PixelMap = this.singlePageImageInput;
 
       if (isDoublePage) {
-        const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-        const maxIndex: number = this.chapter.pages.length - 1;
-        // 双页模式始终每次翻两页（一对页）
-        const pairStart: number = this.viewCurrentPageIndex - (this.viewCurrentPageIndex % 2);
-        const nextPairStart: number = Math.min(pairStart + 2, maxIndex - (maxIndex % 2));
-        const prevPairStart: number = Math.max(pairStart - 2, 0);
+        if (isVerticalDoublePage) {
+          const maxIndex: number = this.chapter.pages.length - 1;
+          const pairStart: number = this.viewCurrentPageIndex - (this.viewCurrentPageIndex % 2);
+          const nextPairStart: number = Math.min(pairStart + 2, maxIndex - (maxIndex % 2));
+          const prevPairStart: number = Math.max(pairStart - 2, 0);
+          const nextAtTop: boolean = this.isDoublePageVerticalNextAtTop();
+          const draggedUp: boolean = this.translateY < -thresholdY;
+          const draggedDown: boolean = this.translateY > thresholdY;
+          const dragForward: boolean = nextAtTop ? draggedDown : draggedUp;
+          const dragBackward: boolean = nextAtTop ? draggedUp : draggedDown;
 
-        if (isRTL) {
-          if (this.translateX > thresholdX) {
+          if (dragForward) {
             if (nextPairStart > pairStart) {
               this.viewCurrentPageIndex = nextPairStart;
               this.updateDoublePageIndices();
-              this.pageTurnDirection = 'right';
-              logger.info(TAG, '双页RTL：向右拖拽，下一对页');
+              this.pageTurnDirection = draggedDown ? 'down' : 'up';
+              logger.info(TAG, `双页竖向：${draggedDown ? '向下' : '向上'}拖拽，下一对页`);
               pageChanged = true;
             } else if (this.callbacks.onChapterChange) {
               this.callbacks.onChapterChange('next');
             }
-          } else if (this.translateX < -thresholdX) {
+          } else if (dragBackward) {
             if (prevPairStart < pairStart) {
               this.viewCurrentPageIndex = prevPairStart;
               this.updateDoublePageIndices();
-              this.pageTurnDirection = 'left';
-              logger.info(TAG, '双页RTL：向左拖拽，上一对页');
+              this.pageTurnDirection = draggedDown ? 'down' : 'up';
+              logger.info(TAG, `双页竖向：${draggedDown ? '向下' : '向上'}拖拽，上一对页`);
               pageChanged = true;
             } else if (this.callbacks.onChapterChange) {
               this.callbacks.onChapterChange('prev');
             }
           }
         } else {
-          if (this.translateX > thresholdX) {
-            if (prevPairStart < pairStart) {
-              this.viewCurrentPageIndex = prevPairStart;
-              this.updateDoublePageIndices();
-              this.pageTurnDirection = 'right';
-              logger.info(TAG, '双页LTR：向右拖拽，上一对页');
-              pageChanged = true;
-            } else if (this.callbacks.onChapterChange) {
-              this.callbacks.onChapterChange('prev');
+          const currentPlan: DoublePageSmartDisplayPlan = this.resolveDoublePageSmartPlanForIndex(this.viewCurrentPageIndex);
+          const previousPlan: DoublePageSmartDisplayPlan = this.resolvePreviousDoublePageSmartPlan(this.viewCurrentPageIndex);
+          const nextPlan: DoublePageSmartDisplayPlan = this.resolveNextDoublePageSmartPlan(this.viewCurrentPageIndex);
+          const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+          if (isRTL) {
+            if (this.translateX > thresholdX) {
+              if (nextPlan.startIndex >= 0 && nextPlan.startIndex > currentPlan.startIndex) {
+                this.viewCurrentPageIndex = nextPlan.startIndex;
+                this.updateDoublePageIndices();
+                this.pageTurnDirection = 'right';
+                logger.info(TAG, `双页RTL：向右拖拽，下一组显示（${nextPlan.mode}）`);
+                pageChanged = true;
+              } else if (this.callbacks.onChapterChange) {
+                this.callbacks.onChapterChange('next');
+              }
+            } else if (this.translateX < -thresholdX) {
+              if (previousPlan.startIndex >= 0 && previousPlan.startIndex < currentPlan.startIndex) {
+                this.viewCurrentPageIndex = previousPlan.startIndex;
+                this.updateDoublePageIndices();
+                this.pageTurnDirection = 'left';
+                logger.info(TAG, `双页RTL：向左拖拽，上一组显示（${previousPlan.mode}）`);
+                pageChanged = true;
+              } else if (this.callbacks.onChapterChange) {
+                this.callbacks.onChapterChange('prev');
+              }
             }
-          } else if (this.translateX < -thresholdX) {
-            if (nextPairStart > pairStart) {
-              this.viewCurrentPageIndex = nextPairStart;
-              this.updateDoublePageIndices();
-              this.pageTurnDirection = 'left';
-              logger.info(TAG, '双页LTR：向左拖拽，下一对页');
-              pageChanged = true;
-            } else if (this.callbacks.onChapterChange) {
-              this.callbacks.onChapterChange('next');
+          } else {
+            if (this.translateX > thresholdX) {
+              if (previousPlan.startIndex >= 0 && previousPlan.startIndex < currentPlan.startIndex) {
+                this.viewCurrentPageIndex = previousPlan.startIndex;
+                this.updateDoublePageIndices();
+                this.pageTurnDirection = 'right';
+                logger.info(TAG, `双页LTR：向右拖拽，上一组显示（${previousPlan.mode}）`);
+                pageChanged = true;
+              } else if (this.callbacks.onChapterChange) {
+                this.callbacks.onChapterChange('prev');
+              }
+            } else if (this.translateX < -thresholdX) {
+              if (nextPlan.startIndex >= 0 && nextPlan.startIndex > currentPlan.startIndex) {
+                this.viewCurrentPageIndex = nextPlan.startIndex;
+                this.updateDoublePageIndices();
+                this.pageTurnDirection = 'left';
+                logger.info(TAG, `双页LTR：向左拖拽，下一组显示（${nextPlan.mode}）`);
+                pageChanged = true;
+              } else if (this.callbacks.onChapterChange) {
+                this.callbacks.onChapterChange('next');
+              }
             }
           }
         }
-      } else if (isTTB) {
+      } else if (isSinglePageTTB) {
         // 单页上下模式：依据垂直拖拽距离判断翻页
         if (Math.abs(this.translateY) > thresholdY) {
           if (this.translateY > 0) {
@@ -2407,6 +2525,77 @@ export struct MangaViewer {
     }
   }
 
+  private animateVerticalDoublePagePageTurn(): void {
+    if (!this.uiContext) {
+      this.isPageTurning = false;
+      this.isCommittingPageTurn = false;
+      this.pageTurnDirection = null;
+      this.verticalDoublePageTurnAction = null;
+      this.verticalDoublePageReleasePullY = 0;
+      this.pageTurnProgress = 0;
+      this.resetPageTurnAnimationState();
+      return;
+    }
+
+    const action: 'next' | 'prev' = this.resolveVerticalDoublePageTurnAction();
+    const origin: 'top' | 'bottom' = this.getVerticalDoublePageActionOrigin(action);
+    const viewportHeight: number = this.getVerticalDoublePageViewportHeight();
+    const releaseProgress: number = Math.min(
+      1.0,
+      Math.abs(this.verticalDoublePageReleasePullY) / MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_MAX_PULL_VP
+    );
+    const entryDistance: number = viewportHeight * (0.12 - releaseProgress * 0.04);
+    const initialOffsetY: number = origin === 'top' ? -entryDistance : entryDistance;
+
+    this.isPageTurning = true;
+    this.pageTurnProgress = 0;
+    this.resetPageTurnAnimationState();
+    this.currentAnimationType = PageTurnAnimationType.SLIDE;
+    this.pageTurnOpacity = 0.98;
+    this.pageTurnMatrix = matrix4.identity()
+      .translate({ x: 0, y: initialOffsetY, z: -24 })
+      .scale({ x: 0.992, y: 0.992, z: 1 });
+
+    setTimeout(() => {
+      if (!this.uiContext) {
+        return;
+      }
+
+      this.uiContext.animateTo({
+        duration: 240,
+        curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1),
+        iterations: 1,
+        playMode: PlayMode.Normal,
+        onFinish: () => {
+          this.isPageTurning = false;
+          this.isCommittingPageTurn = false;
+          this.pageTurnDirection = null;
+          this.verticalDoublePageTurnAction = null;
+          this.verticalDoublePageReleasePullY = 0;
+          this.pageTurnProgress = 0;
+          this.currentAnimationType = PageTurnAnimationType.NONE;
+          this.resetSoftTransitionOverlay();
+          this.resetVerticalDoublePageBoundaryState();
+          this.forceRefreshVerticalDoublePageCurrentPair('animation_finish');
+          logger.debug(TAG, '双页竖向边界翻页动画完成');
+        }
+      }, () => {
+        this.pageTurnProgress = 1.0;
+        this.pageTurnOpacity = 1.0;
+        this.pageTurnMatrix = matrix4.identity();
+        this.pageTurnScale = 1.0;
+        this.pageTurnTranslateX = 0;
+        this.pageTurnTranslateY = 0;
+        this.pageTurnRotateY = 0;
+        this.pageTurnRotateX = 0;
+        this.pageTurnRotateZ = 0;
+        this.pageTurnPerspective = 0;
+        this.pageTurnSkewX = 0;
+        this.pageTurnSkewY = 0;
+      });
+    }, 0);
+  }
+
   /**
    * 执行翻页动画
    * 根据readingSettings.pageTurnAnimation设置使用不同的动画效果
@@ -2418,11 +2607,17 @@ export struct MangaViewer {
       return;
     }
 
+    if (this.isDoublePageVerticalPortraitMode()) {
+      this.animateVerticalDoublePagePageTurn();
+      return;
+    }
+
     const configuredAnimationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
     const animationType = configuredAnimationType === PageTurnAnimationType.NONE
       ? PageTurnAnimationType.FADE
       : configuredAnimationType;
     const isForward = this.pageTurnDirection === 'left' || this.pageTurnDirection === 'up';
+    const isVerticalTurn = this.pageTurnDirection === 'up' || this.pageTurnDirection === 'down';
     const screenW = this.screenWidth > 0 ? this.screenWidth : 360;
     const screenH = this.screenHeight > 0 ? this.screenHeight : 780;
 
@@ -2461,14 +2656,16 @@ export struct MangaViewer {
     // 先设置初始状态（新页面的起始状态）
     switch (animationType) {
       case PageTurnAnimationType.SLIDE:
-        // 平滑滑动效果：水平滑入，带有轻微的3D透视
         duration = 350;
         animCurve = Curve.FastOutSlowIn;
-        this.pageTurnOpacity = 1.0; // 保持可见，避免闪现
-        // 创建滑动的3D矩阵：从屏幕外侧面滑入
-        this.pageTurnMatrix = matrix4.identity()
-          .translate({ x: isForward ? screenW : -screenW, y: 0, z: -50 })
-          .scale({ x: 0.95, y: 0.95, z: 1 });
+        this.pageTurnOpacity = 1.0;
+        this.pageTurnMatrix = isVerticalTurn
+          ? matrix4.identity()
+              .translate({ x: 0, y: this.pageTurnDirection === 'up' ? screenH : -screenH, z: -50 })
+              .scale({ x: 0.95, y: 0.95, z: 1 })
+          : matrix4.identity()
+              .translate({ x: isForward ? screenW : -screenW, y: 0, z: -50 })
+              .scale({ x: 0.95, y: 0.95, z: 1 });
         break;
 
       case PageTurnAnimationType.FADE:
@@ -2481,84 +2678,102 @@ export struct MangaViewer {
         break;
 
       case PageTurnAnimationType.CURL:
-        // 卷页效果：由独立的startCurlPageTurn流程处理
-        // 如果走到这里，说明是从其他入口调用的animatePageTurn（如双页模式）
-        // 此时回退到滑动动画
-        logger.info(TAG, '卷页动画由独立流程处理，此处使用滑动动画');
+        logger.info(TAG, isVerticalTurn ? '纵向卷页回退到纵向滑动动画' : '卷页动画由独立流程处理，此处使用滑动动画');
         duration = 350;
         animCurve = Curve.EaseOut;
         this.pageTurnOpacity = 1.0;
-        this.pageTurnMatrix = matrix4.identity()
-          .translate({ x: isForward ? screenW : -screenW, y: 0, z: 0 });
+        this.pageTurnMatrix = isVerticalTurn
+          ? matrix4.identity().translate({ x: 0, y: this.pageTurnDirection === 'up' ? screenH : -screenH, z: 0 })
+          : matrix4.identity().translate({ x: isForward ? screenW : -screenW, y: 0, z: 0 });
         break;
 
       case PageTurnAnimationType.ZOOM:
-        // [已废弃] 缩放效果 -> 映射到景深效果
-        // 保留case以兼容旧设置，实际使用DEPTH效果
         duration = 400;
         animCurve = Curve.FastOutSlowIn;
         this.pageTurnOpacity = 0.7;
-        this.pageTurnMatrix = matrix4.identity()
-          .translate({ x: 0, y: -screenH * 0.05, z: -300 })
-          .scale({ x: 0.6, y: 0.6, z: 1 })
-          .rotate({ x: 1, y: 0, z: 0, angle: -15 })
-          .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 8 : -8 });
+        this.pageTurnMatrix = isVerticalTurn
+          ? matrix4.identity()
+              .translate({ x: 0, y: this.pageTurnDirection === 'up' ? screenH * 0.06 : -screenH * 0.06, z: -300 })
+              .scale({ x: 0.6, y: 0.6, z: 1 })
+              .rotate({ x: 1, y: 0, z: 0, angle: this.pageTurnDirection === 'up' ? 12 : -12 })
+          : matrix4.identity()
+              .translate({ x: 0, y: -screenH * 0.05, z: -300 })
+              .scale({ x: 0.6, y: 0.6, z: 1 })
+              .rotate({ x: 1, y: 0, z: 0, angle: -15 })
+              .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 8 : -8 });
         break;
 
       case PageTurnAnimationType.FLIP: {
-        // [已废弃] 翻转效果 -> 映射到立方体效果
-        // 保留case以兼容旧设置，实际使用CUBE效果
         duration = 420;
         animCurve = Curve.EaseInOut;
         this.pageTurnOpacity = 1.0;
-        const flipCubeAngle = isForward ? 90 : -90;
-        const flipCubeTranslateX = isForward ? screenW * 0.5 : -screenW * 0.5;
-        this.pageTurnMatrix = matrix4.identity()
-          .translate({ x: flipCubeTranslateX, y: 0, z: -screenW * 0.25 })
-          .rotate({ x: 0, y: 1, z: 0, angle: flipCubeAngle })
-          .scale({ x: 0.95, y: 0.95, z: 1 });
+        const flipAngle = isVerticalTurn
+          ? (this.pageTurnDirection === 'up' ? -90 : 90)
+          : (isForward ? 90 : -90);
+        const flipTranslateX = isForward ? screenW * 0.5 : -screenW * 0.5;
+        const flipTranslateY = this.pageTurnDirection === 'up' ? screenH * 0.5 : -screenH * 0.5;
+        this.pageTurnMatrix = isVerticalTurn
+          ? matrix4.identity()
+              .translate({ x: 0, y: flipTranslateY, z: -screenH * 0.25 })
+              .rotate({ x: 1, y: 0, z: 0, angle: flipAngle })
+              .scale({ x: 0.95, y: 0.95, z: 1 })
+          : matrix4.identity()
+              .translate({ x: flipTranslateX, y: 0, z: -screenW * 0.25 })
+              .rotate({ x: 0, y: 1, z: 0, angle: flipAngle })
+              .scale({ x: 0.95, y: 0.95, z: 1 });
         break;
       }
 
       case PageTurnAnimationType.CUBE: {
-        // 立方体效果：页面像立方体的一面旋转进入
         duration = 420;
         animCurve = Curve.EaseInOut;
-        this.pageTurnOpacity = 1.0; // 完全可见
-        // 立方体效果：90度旋转，配合位移模拟立方体边缘
-        const cubeAngle = isForward ? 90 : -90;
+        this.pageTurnOpacity = 1.0;
+        const cubeAngle = isVerticalTurn
+          ? (this.pageTurnDirection === 'up' ? -90 : 90)
+          : (isForward ? 90 : -90);
         const cubeTranslateX = isForward ? screenW * 0.5 : -screenW * 0.5;
-        // 立方体的关键是旋转中心在边缘
-        this.pageTurnMatrix = matrix4.identity()
-          .translate({ x: cubeTranslateX, y: 0, z: -screenW * 0.25 })
-          .rotate({ x: 0, y: 1, z: 0, angle: cubeAngle })
-          .scale({ x: 0.95, y: 0.95, z: 1 });
+        const cubeTranslateY = this.pageTurnDirection === 'up' ? screenH * 0.5 : -screenH * 0.5;
+        this.pageTurnMatrix = isVerticalTurn
+          ? matrix4.identity()
+              .translate({ x: 0, y: cubeTranslateY, z: -screenH * 0.25 })
+              .rotate({ x: 1, y: 0, z: 0, angle: cubeAngle })
+              .scale({ x: 0.95, y: 0.95, z: 1 })
+          : matrix4.identity()
+              .translate({ x: cubeTranslateX, y: 0, z: -screenW * 0.25 })
+              .rotate({ x: 0, y: 1, z: 0, angle: cubeAngle })
+              .scale({ x: 0.95, y: 0.95, z: 1 });
         break;
       }
 
       case PageTurnAnimationType.COVER:
-        // 覆盖效果：新页面从一侧滑入覆盖旧页面
         duration = 400;
         animCurve = Curve.FastOutSlowIn;
         this.pageTurnOpacity = 0.5;
-        // 覆盖效果：从屏幕外滑入，略微放大
-        this.pageTurnMatrix = matrix4.identity()
-          .translate({ x: isForward ? screenW : -screenW, y: 0, z: 50 })
-          .scale({ x: 1.02, y: 1.02, z: 1 })
-          .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 5 : -5 });
+        this.pageTurnMatrix = isVerticalTurn
+          ? matrix4.identity()
+              .translate({ x: 0, y: this.pageTurnDirection === 'up' ? screenH : -screenH, z: 50 })
+              .scale({ x: 1.02, y: 1.02, z: 1 })
+              .rotate({ x: 1, y: 0, z: 0, angle: this.pageTurnDirection === 'up' ? -5 : 5 })
+          : matrix4.identity()
+              .translate({ x: isForward ? screenW : -screenW, y: 0, z: 50 })
+              .scale({ x: 1.02, y: 1.02, z: 1 })
+              .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 5 : -5 });
         break;
 
       case PageTurnAnimationType.DEPTH:
-        // 景深效果：页面从远处推进到近处
         duration = 400;
         animCurve = Curve.FastOutSlowIn;
-        this.pageTurnOpacity = 0.7; // 保持可见
-        // 景深效果：从稍远处推进到近处
-        this.pageTurnMatrix = matrix4.identity()
-          .translate({ x: 0, y: -screenH * 0.05, z: -300 })
-          .scale({ x: 0.6, y: 0.6, z: 1 })
-          .rotate({ x: 1, y: 0, z: 0, angle: -15 })
-          .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 8 : -8 });
+        this.pageTurnOpacity = 0.7;
+        this.pageTurnMatrix = isVerticalTurn
+          ? matrix4.identity()
+              .translate({ x: 0, y: this.pageTurnDirection === 'up' ? screenH * 0.06 : -screenH * 0.06, z: -300 })
+              .scale({ x: 0.6, y: 0.6, z: 1 })
+              .rotate({ x: 1, y: 0, z: 0, angle: this.pageTurnDirection === 'up' ? 16 : -16 })
+          : matrix4.identity()
+              .translate({ x: 0, y: -screenH * 0.05, z: -300 })
+              .scale({ x: 0.6, y: 0.6, z: 1 })
+              .rotate({ x: 1, y: 0, z: 0, angle: -15 })
+              .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 8 : -8 });
         break;
 
       default:
@@ -3562,6 +3777,10 @@ export struct MangaViewer {
   }
 
   private getDoublePrevOverlayOpacity(): number {
+    if (this.isDoublePageVerticalPortraitMode()) {
+      return this.getVerticalDoublePagePreviewOpacity('prev');
+    }
+
     const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
     if (this.isCommittingPageTurn) {
       if (this.isSoftNonePageTurn()) {
@@ -3578,6 +3797,10 @@ export struct MangaViewer {
   }
 
   private getDoubleNextOverlayOpacity(): number {
+    if (this.isDoublePageVerticalPortraitMode()) {
+      return this.getVerticalDoublePagePreviewOpacity('next');
+    }
+
     const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
     if (this.isCommittingPageTurn) {
       if (this.isSoftNonePageTurn()) {
@@ -3741,31 +3964,34 @@ export struct MangaViewer {
     if (this.readingSettings.readingMode !== ReadingMode.DOUBLE_PAGE || !this.chapter || !this.chapter.pages) {
       this.leftPageIndex = -1;
       this.rightPageIndex = -1;
+      this.currentDoublePageDisplayMode = DoublePageSmartDisplayMode.DUAL;
+      this.currentDoublePageDisplayReason = DoublePageSmartDisplayReason.NORMAL_PAIR;
       return;
     }
 
     const total: number = this.chapter.pages.length;
     const current: number = Math.min(Math.max(0, this.viewCurrentPageIndex), total - 1);
-    const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-    const isTTB: boolean = this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM;
+    const isVerticalPortrait: boolean = this.isDoublePageVerticalPortraitMode();
+    const isRTL: boolean = !isVerticalPortrait &&
+      this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
 
     const prevLeft: number = this.leftPageIndex;
     const prevRight: number = this.rightPageIndex;
 
-    // 双页模式始终配对显示两页（横屏和竖屏都是）
-    const pairStart: number = current - (current % 2);
-
-    // 根据阅读方向决定左右页的位置
-    // LTR: 页码小的在左边
-    // RTL: 页码小的在右边
-    if (isRTL) {
-      // RTL: 页码小的在右边，页码大的在左边
-      this.rightPageIndex = pairStart;
-      this.leftPageIndex = (pairStart + 1 < total) ? pairStart + 1 : -1;
-    } else {
-      // LTR/TTB: 页码小的在左边，页码大的在右边
+    if (isVerticalPortrait) {
+      const pairStart: number = current - (current % 2);
       this.leftPageIndex = pairStart;
       this.rightPageIndex = (pairStart + 1 < total) ? pairStart + 1 : -1;
+      this.currentDoublePageDisplayMode = DoublePageSmartDisplayMode.DUAL;
+      this.currentDoublePageDisplayReason = (pairStart + 1 < total)
+        ? DoublePageSmartDisplayReason.NORMAL_PAIR
+        : DoublePageSmartDisplayReason.TAIL_PAGE;
+    } else {
+      const currentPlan: DoublePageSmartDisplayPlan = this.resolveDoublePageSmartPlanForIndex(current);
+      this.leftPageIndex = currentPlan.leftPageIndex;
+      this.rightPageIndex = currentPlan.rightPageIndex;
+      this.currentDoublePageDisplayMode = currentPlan.mode;
+      this.currentDoublePageDisplayReason = currentPlan.reason;
     }
 
     const leftState: ImageLoadState | undefined = (this.leftPageIndex >= 0 && this.leftPageIndex < total)
@@ -3775,13 +4001,21 @@ export struct MangaViewer {
       ? this.getPageLoadState(this.chapter.pages[this.rightPageIndex])
       : undefined;
 
-    logger.debug(TAG, `双页索引更新: 方向=${isRTL ? 'RTL' : isTTB ? 'TTB' : 'LTR'}, left=${this.leftPageIndex}(${leftState?.isLoaded ? 'loaded' : leftState?.isLoading ? 'loading' : 'idle'}), right=${this.rightPageIndex}(${rightState?.isLoaded ? 'loaded' : rightState?.isLoading ? 'loading' : 'idle'}), current=${this.viewCurrentPageIndex}`);
+    const directionLabel: string = isVerticalPortrait
+      ? `VERTICAL_${this.getDoublePageVerticalDirection()}`
+      : `${isRTL ? 'RTL' : 'LTR'}_${this.currentDoublePageDisplayMode}_${this.currentDoublePageDisplayReason}`;
+    logger.debug(TAG, `双页索引更新: 方向=${directionLabel}, left=${this.leftPageIndex}(${leftState?.isLoaded ? 'loaded' : leftState?.isLoading ? 'loading' : 'idle'}), right=${this.rightPageIndex}(${rightState?.isLoaded ? 'loaded' : rightState?.isLoading ? 'loading' : 'idle'}), current=${this.viewCurrentPageIndex}`);
 
     // 加载触发由组件onAppear完成，避免非可视页面提前进入超时逻辑
     const pairChanged: boolean = (prevLeft !== this.leftPageIndex) || (prevRight !== this.rightPageIndex);
     if (pairChanged) {
       this.ensureDoublePageImagesPreloaded();
-      setTimeout(() => { this.renderEpoch = this.renderEpoch + 1; }, 0);
+      setTimeout(() => {
+        this.renderEpoch = this.renderEpoch + 1;
+        if (this.isDoublePageVerticalPortraitMode()) {
+          this.updateVerticalDoublePageRenderSlots();
+        }
+      }, 0);
     }
     this.updateDoublePageDisplay();
     this.cleanupInvisiblePixelMaps();
@@ -3794,16 +4028,54 @@ export struct MangaViewer {
     if (!this.chapter || !this.chapter.pages) {
       return;
     }
-    const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-    const maxIndex: number = this.chapter.pages.length - 1;
-    const pairStart: number = this.viewCurrentPageIndex - (this.viewCurrentPageIndex % 2);
-    const nextPairStart: number = Math.min(pairStart + 2, maxIndex - (maxIndex % 2));
-    const prevPairStart: number = Math.max(pairStart - 2, 0);
-    const preloadStart: number = isRTL ? nextPairStart : prevPairStart;
-    const preloadEnd: number = isRTL ? nextPairStart + 1 : prevPairStart + 1;
-    for (let i = preloadStart; i <= preloadEnd; i++) {
-      if (i >= 0 && i < this.chapter.pages.length) {
-        const page: MangaPage = this.chapter.pages[i];
+    if (this.isDoublePageVerticalPortraitMode()) {
+      const maxIndex: number = this.chapter.pages.length - 1;
+      const pairStart: number = this.viewCurrentPageIndex - (this.viewCurrentPageIndex % 2);
+      const nextPairStart: number = Math.min(pairStart + 2, maxIndex - (maxIndex % 2));
+      const prevPairStart: number = Math.max(pairStart - 2, 0);
+      const preloadPairStarts: number[] = [];
+      if (prevPairStart < pairStart) {
+        preloadPairStarts.push(prevPairStart);
+      }
+      if (nextPairStart > pairStart) {
+        preloadPairStarts.push(nextPairStart);
+      }
+      for (let pairIndex = 0; pairIndex < preloadPairStarts.length; pairIndex++) {
+        const preloadPairStart: number = preloadPairStarts[pairIndex];
+        for (let i = preloadPairStart; i <= preloadPairStart + 1; i++) {
+          if (i >= 0 && i < this.chapter.pages.length) {
+            const page: MangaPage = this.chapter.pages[i];
+            const st: ImageLoadState | undefined = this.getPageLoadState(page);
+            const hasPm: boolean = this.pagePixelMaps.has(page.id);
+            if (!hasPm && (!st || !st.isLoading)) {
+              this.loadImage(page);
+            }
+          }
+        }
+      }
+      return;
+    }
+
+    const previousPlan: DoublePageSmartDisplayPlan = this.resolvePreviousDoublePageSmartPlan(this.viewCurrentPageIndex);
+    const nextPlan: DoublePageSmartDisplayPlan = this.resolveNextDoublePageSmartPlan(this.viewCurrentPageIndex);
+    const preloadIndices: number[] = [];
+    if (previousPlan.leftPageIndex >= 0) {
+      preloadIndices.push(previousPlan.leftPageIndex);
+    }
+    if (previousPlan.rightPageIndex >= 0) {
+      preloadIndices.push(previousPlan.rightPageIndex);
+    }
+    if (nextPlan.leftPageIndex >= 0) {
+      preloadIndices.push(nextPlan.leftPageIndex);
+    }
+    if (nextPlan.rightPageIndex >= 0) {
+      preloadIndices.push(nextPlan.rightPageIndex);
+    }
+
+    for (let i = 0; i < preloadIndices.length; i++) {
+      const pageIndex: number = preloadIndices[i];
+      if (pageIndex >= 0 && pageIndex < this.chapter.pages.length) {
+        const page: MangaPage = this.chapter.pages[pageIndex];
         const st: ImageLoadState | undefined = this.getPageLoadState(page);
         const hasPm: boolean = this.pagePixelMaps.has(page.id);
         if (!hasPm && (!st || !st.isLoading)) {
@@ -3867,6 +4139,9 @@ export struct MangaViewer {
   private onReadingSettingsChange(): void {
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       this.updateDoublePageIndices();
+      if (this.isDoublePageVerticalPortraitMode()) {
+        this.syncVerticalDoublePagePositionForCurrentPair(false);
+      }
     } else if (this.isContinuousScrollMode()) {
       this.leftPageIndex = -1;
       this.rightPageIndex = -1;
@@ -3894,6 +4169,11 @@ export struct MangaViewer {
       // 非双页模式重置索引，避免残留
       this.leftPageIndex = -1;
       this.rightPageIndex = -1;
+      this.currentDoublePageDisplayMode = DoublePageSmartDisplayMode.DUAL;
+      this.currentDoublePageDisplayReason = DoublePageSmartDisplayReason.NORMAL_PAIR;
+      this.updateSinglePageDisplay();
+      this.updateSinglePagePreview();
+      this.loadCurrentAndNeighborPages();
     }
     logger.debug(TAG, `阅读设置变更: mode=${this.readingSettings.readingMode.toString()}, direction=${this.readingSettings.readingDirection.toString()}`);
   }
@@ -4413,7 +4693,7 @@ export struct MangaViewer {
    * 构建双页显示
    * 支持平滑翻页动画和正确的阅读方向
    * 横屏：左右并排显示两页
-   * 竖屏：单页显示（双页模式在竖屏下退化为单页）
+   * 竖屏：根据组合方式显示上下或左右双页
    */
   @Builder
   buildDoublePageView() {
@@ -4421,7 +4701,7 @@ export struct MangaViewer {
       // 横屏模式：左右并排显示两页
       this.buildDoublePageLandscapeView()
     } else {
-      // 竖屏模式：单页显示（使用当前页）
+      // 竖屏模式：使用双页竖屏布局
       this.buildDoublePagePortraitView()
     }
   }
@@ -4434,120 +4714,230 @@ export struct MangaViewer {
   buildDoublePageLandscapeView() {
     Stack() {
       if ((this.previewPrevLeftPageId && this.previewPrevLeftPageId.length > 0) || (this.previewPrevRightPageId && this.previewPrevRightPageId.length > 0)) {
-        Row({ space: 0 }) {
-          if (this.previewPrevLeftPageId && this.previewPrevLeftPageId.length > 0) {
-            Image(this.previewPrevLeftImageInput)
-              .key(`${this.previewPrevLeftPageId}_preview_prev_left_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevLeftPageId)}`)
-              .width('50%')
-              .height('100%')
-              .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevLeftPageId)!))
-              .padding(0)
-              .margin(0)
-              .borderWidth(0)
-              .onAppear(() => {
-                const pg = this.getPageById(this.previewPrevLeftPageId);
-                if (pg) { this.logImageDisplayBefore(pg, this.previewPrevLeftImageInput); }
-              })
-              .onComplete(() => {
-                const pg = this.getPageById(this.previewPrevLeftPageId);
-                if (pg) { this.logImageDisplayAfter(pg, true); }
-              })
-              .onError((error: ImageError) => {
-                const pg = this.getPageById(this.previewPrevLeftPageId);
-                if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
-              })
-          } else {
-            Column().width('50%').height('100%')
+        if (this.previewPrevSingleDoublePage) {
+          Stack() {
+            if (this.previewPrevLeftPageId && this.previewPrevLeftPageId.length > 0) {
+              Image(this.previewPrevLeftImageInput)
+                .key(`${this.previewPrevLeftPageId}_preview_prev_single_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevLeftPageId)}`)
+                .width('100%')
+                .height('100%')
+                .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevLeftPageId)!))
+                .padding(0)
+                .margin(0)
+                .borderWidth(0)
+                .onAppear(() => {
+                  const pg = this.getPageById(this.previewPrevLeftPageId);
+                  if (pg) { this.logImageDisplayBefore(pg, this.previewPrevLeftImageInput); }
+                })
+                .onComplete(() => {
+                  const pg = this.getPageById(this.previewPrevLeftPageId);
+                  if (pg) { this.logImageDisplayAfter(pg, true); }
+                })
+                .onError((error: ImageError) => {
+                  const pg = this.getPageById(this.previewPrevLeftPageId);
+                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                })
+            }
           }
-          if (this.previewPrevRightPageId && this.previewPrevRightPageId.length > 0) {
-            Image(this.previewPrevRightImageInput)
-              .key(`${this.previewPrevRightPageId}_preview_prev_right_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevRightPageId)}`)
-              .width('50%')
-              .height('100%')
-              .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevRightPageId)!))
-              .padding(0)
-              .margin(0)
-              .borderWidth(0)
-              .onAppear(() => {
-                const pg = this.getPageById(this.previewPrevRightPageId);
-                if (pg) { this.logImageDisplayBefore(pg, this.previewPrevRightImageInput); }
-              })
-              .onComplete(() => {
-                const pg = this.getPageById(this.previewPrevRightPageId);
-                if (pg) { this.logImageDisplayAfter(pg, true); }
-              })
-              .onError((error: ImageError) => {
-                const pg = this.getPageById(this.previewPrevRightPageId);
-                if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
-              })
-          } else {
-            Column().width('50%').height('100%')
+          .width('100%')
+          .height('100%')
+          .opacity(this.getDoublePrevOverlayOpacity())
+        } else {
+          Row({ space: 0 }) {
+            if (this.previewPrevLeftPageId && this.previewPrevLeftPageId.length > 0) {
+              Image(this.previewPrevLeftImageInput)
+                .key(`${this.previewPrevLeftPageId}_preview_prev_left_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevLeftPageId)}`)
+                .width('50%')
+                .height('100%')
+                .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevLeftPageId)!))
+                .padding(0)
+                .margin(0)
+                .borderWidth(0)
+                .onAppear(() => {
+                  const pg = this.getPageById(this.previewPrevLeftPageId);
+                  if (pg) { this.logImageDisplayBefore(pg, this.previewPrevLeftImageInput); }
+                })
+                .onComplete(() => {
+                  const pg = this.getPageById(this.previewPrevLeftPageId);
+                  if (pg) { this.logImageDisplayAfter(pg, true); }
+                })
+                .onError((error: ImageError) => {
+                  const pg = this.getPageById(this.previewPrevLeftPageId);
+                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                })
+            } else {
+              Column().width('50%').height('100%')
+            }
+            if (this.previewPrevRightPageId && this.previewPrevRightPageId.length > 0) {
+              Image(this.previewPrevRightImageInput)
+                .key(`${this.previewPrevRightPageId}_preview_prev_right_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewPrevRightPageId)}`)
+                .width('50%')
+                .height('100%')
+                .objectFit(this.getImageFitMode(this.getPageById(this.previewPrevRightPageId)!))
+                .padding(0)
+                .margin(0)
+                .borderWidth(0)
+                .onAppear(() => {
+                  const pg = this.getPageById(this.previewPrevRightPageId);
+                  if (pg) { this.logImageDisplayBefore(pg, this.previewPrevRightImageInput); }
+                })
+                .onComplete(() => {
+                  const pg = this.getPageById(this.previewPrevRightPageId);
+                  if (pg) { this.logImageDisplayAfter(pg, true); }
+                })
+                .onError((error: ImageError) => {
+                  const pg = this.getPageById(this.previewPrevRightPageId);
+                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                })
+            } else {
+              Column().width('50%').height('100%')
+            }
           }
+          .width('100%')
+          .height('100%')
+          .opacity(this.getDoublePrevOverlayOpacity())
         }
-        .width('100%')
-        .height('100%')
-        // 移除transition动画，避免与翻页动画冲突，保持opacity即时响应
-        .opacity(this.getDoublePrevOverlayOpacity())
       }
       if ((this.previewNextLeftPageId && this.previewNextLeftPageId.length > 0) || (this.previewNextRightPageId && this.previewNextRightPageId.length > 0)) {
-        Row({ space: 0 }) {
-          if (this.previewNextLeftPageId && this.previewNextLeftPageId.length > 0) {
-            Image(this.previewNextLeftImageInput)
-              .key(`${this.previewNextLeftPageId}_preview_next_left_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextLeftPageId)}`)
-              .width('50%')
-              .height('100%')
-              .objectFit(this.getImageFitMode(this.getPageById(this.previewNextLeftPageId)!))
-              .padding(0)
-              .margin(0)
-              .borderWidth(0)
-              .onAppear(() => {
-                const pg = this.getPageById(this.previewNextLeftPageId);
-                if (pg) { this.logImageDisplayBefore(pg, this.previewNextLeftImageInput); }
-              })
-              .onComplete(() => {
-                const pg = this.getPageById(this.previewNextLeftPageId);
-                if (pg) { this.logImageDisplayAfter(pg, true); }
-              })
-              .onError((error: ImageError) => {
-                const pg = this.getPageById(this.previewNextLeftPageId);
-                if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
-              })
-          } else {
-            Column().width('50%').height('100%')
+        if (this.previewNextSingleDoublePage) {
+          Stack() {
+            if (this.previewNextLeftPageId && this.previewNextLeftPageId.length > 0) {
+              Image(this.previewNextLeftImageInput)
+                .key(`${this.previewNextLeftPageId}_preview_next_single_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextLeftPageId)}`)
+                .width('100%')
+                .height('100%')
+                .objectFit(this.getImageFitMode(this.getPageById(this.previewNextLeftPageId)!))
+                .padding(0)
+                .margin(0)
+                .borderWidth(0)
+                .onAppear(() => {
+                  const pg = this.getPageById(this.previewNextLeftPageId);
+                  if (pg) { this.logImageDisplayBefore(pg, this.previewNextLeftImageInput); }
+                })
+                .onComplete(() => {
+                  const pg = this.getPageById(this.previewNextLeftPageId);
+                  if (pg) { this.logImageDisplayAfter(pg, true); }
+                })
+                .onError((error: ImageError) => {
+                  const pg = this.getPageById(this.previewNextLeftPageId);
+                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                })
+            }
           }
-          if (this.previewNextRightPageId && this.previewNextRightPageId.length > 0) {
-            Image(this.previewNextRightImageInput)
-              .key(`${this.previewNextRightPageId}_preview_next_right_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextRightPageId)}`)
-              .width('50%')
-              .height('100%')
-              .objectFit(this.getImageFitMode(this.getPageById(this.previewNextRightPageId)!))
-              .padding(0)
-              .margin(0)
-              .borderWidth(0)
-              .onAppear(() => {
-                const pg = this.getPageById(this.previewNextRightPageId);
-                if (pg) { this.logImageDisplayBefore(pg, this.previewNextRightImageInput); }
-              })
-              .onComplete(() => {
-                const pg = this.getPageById(this.previewNextRightPageId);
-                if (pg) { this.logImageDisplayAfter(pg, true); }
-              })
-              .onError((error: ImageError) => {
-                const pg = this.getPageById(this.previewNextRightPageId);
-                if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
-              })
-          } else {
-            Column().width('50%').height('100%')
+          .width('100%')
+          .height('100%')
+          .opacity(this.getDoubleNextOverlayOpacity())
+        } else {
+          Row({ space: 0 }) {
+            if (this.previewNextLeftPageId && this.previewNextLeftPageId.length > 0) {
+              Image(this.previewNextLeftImageInput)
+                .key(`${this.previewNextLeftPageId}_preview_next_left_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextLeftPageId)}`)
+                .width('50%')
+                .height('100%')
+                .objectFit(this.getImageFitMode(this.getPageById(this.previewNextLeftPageId)!))
+                .padding(0)
+                .margin(0)
+                .borderWidth(0)
+                .onAppear(() => {
+                  const pg = this.getPageById(this.previewNextLeftPageId);
+                  if (pg) { this.logImageDisplayBefore(pg, this.previewNextLeftImageInput); }
+                })
+                .onComplete(() => {
+                  const pg = this.getPageById(this.previewNextLeftPageId);
+                  if (pg) { this.logImageDisplayAfter(pg, true); }
+                })
+                .onError((error: ImageError) => {
+                  const pg = this.getPageById(this.previewNextLeftPageId);
+                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                })
+            } else {
+              Column().width('50%').height('100%')
+            }
+            if (this.previewNextRightPageId && this.previewNextRightPageId.length > 0) {
+              Image(this.previewNextRightImageInput)
+                .key(`${this.previewNextRightPageId}_preview_next_right_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.previewNextRightPageId)}`)
+                .width('50%')
+                .height('100%')
+                .objectFit(this.getImageFitMode(this.getPageById(this.previewNextRightPageId)!))
+                .padding(0)
+                .margin(0)
+                .borderWidth(0)
+                .onAppear(() => {
+                  const pg = this.getPageById(this.previewNextRightPageId);
+                  if (pg) { this.logImageDisplayBefore(pg, this.previewNextRightImageInput); }
+                })
+                .onComplete(() => {
+                  const pg = this.getPageById(this.previewNextRightPageId);
+                  if (pg) { this.logImageDisplayAfter(pg, true); }
+                })
+                .onError((error: ImageError) => {
+                  const pg = this.getPageById(this.previewNextRightPageId);
+                  if (pg) { this.logDetailedImageError(pg, error); this.logImageDisplayAfter(pg, false); }
+                })
+            } else {
+              Column().width('50%').height('100%')
+            }
           }
+          .width('100%')
+          .height('100%')
+          .opacity(this.getDoubleNextOverlayOpacity())
         }
-        .width('100%')
-        .height('100%')
-        // 移除transition动画，避免与翻页动画冲突，保持opacity即时响应
-        .opacity(this.getDoubleNextOverlayOpacity())
       }
       // 修复：横屏下双页模式图片间隔问题
       // 使用 space: 0 确保无间隔，使用 justifyContent: FlexAlign.Center 居中显示
-      Row({ space: 0 }) {
+      if (this.isDoublePageSingleDisplayActive()) {
+        Stack() {
+          if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
+            Image(this.doubleLeftImageInput)
+              .key(`${this.doubleLeftPageId}_${this.leftPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}_${this.pagePixelMaps.has(this.doubleLeftPageId) ? 'pm' : 'url'}_single`)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Contain)
+              .padding(0)
+              .margin(0)
+              .borderWidth(0)
+              .brightness(this.getFilterBrightness())
+              .contrast(this.getFilterContrast())
+              .saturate(this.getFilterSaturation())
+              .grayscale(this.getFilterGrayscale())
+              .invert(this.getFilterInvert())
+              .sepia(this.getFilterSepia())
+              .onAppear(() => {
+                const page = this.getPageById(this.doubleLeftPageId);
+                if (page) {
+                  this.logImageDisplayBefore(page, this.doubleLeftImageInput);
+                }
+              })
+              .onComplete(() => {
+                const page = this.getPageById(this.doubleLeftPageId);
+                if (page) {
+                  const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+                  const newState: ImageLoadState = { isLoading: false, isLoaded: true, dimensions: prev && prev.dimensions ? prev.dimensions : undefined, error: undefined } as ImageLoadState;
+                  this.imageLoadStates.set(page.id, newState);
+                  this.imageLoadStates = new Map(this.imageLoadStates);
+                  this.logImageDisplayAfter(page, true);
+                }
+              })
+              .onError((error: ImageError) => {
+                const page = this.getPageById(this.doubleLeftPageId);
+                if (page) {
+                  this.handleImageComponentError(page, error, 'double_single');
+                }
+              })
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .key(`double_page_single_${this.renderEpoch}`)
+        .scale({ x: this.currentScale, y: this.currentScale })
+        .translate({ x: this.translateX, y: this.translateY })
+        .transform(this.pageTurnMatrix)
+        .opacity(this.pageTurnOpacity)
+        .padding(0)
+        .margin(0)
+        .borderWidth(0)
+      } else {
+        Row({ space: 0 }) {
         // 左页（不存在时填充占位）
         // 左页（固定占据50%宽度，图片靠右对齐紧贴书脊）
         if (this.leftPageIndex >= 0) {
@@ -4683,6 +5073,7 @@ export struct MangaViewer {
       .padding(0)
       .margin(0)
       .borderWidth(0)
+      }
 
       // 双页卷页效果层（使用 opacity 实现平滑淡出过渡）
       if (this.showDualCurlEffect && (this.dualCurlLeftPM || this.dualCurlRightPM)) {
@@ -4738,147 +5129,802 @@ export struct MangaViewer {
     return (this.readingSettings.doublePagePortraitLayout || DoublePagePortraitLayout.VERTICAL) === DoublePagePortraitLayout.VERTICAL;
   }
 
+  private shouldUseVerticalDoublePageManualScrollMode(): boolean {
+    return this.isDoublePageVerticalPortraitMode() && this.currentScale <= 1.0;
+  }
+
+  @Builder
+  private buildDoublePagePortraitBody() {
+    if (this.isVerticalPortraitLayout()) {
+      // 上下组合布局：页码小的在上
+      this.buildDoublePagePortraitVertical()
+    } else {
+      // 左右组合布局：根据阅读方向决定位置
+      this.buildDoublePagePortraitHorizontal()
+    }
+
+    // 页面指示器
+    if (this.readingSettings.showPageInfo) {
+      this.buildDoublePageIndicator()
+    }
+  }
+
   /**
    * 构建双页竖屏视图
    * 支持两种组合方式：上下组合（VERTICAL）和左右组合（HORIZONTAL）
    */
   @Builder
   buildDoublePagePortraitView() {
-    Stack() {
-      if (this.isVerticalPortraitLayout()) {
-        // 上下组合布局：页码小的在上
-        this.buildDoublePagePortraitVertical()
-      } else {
-        // 左右组合布局：根据阅读方向决定位置
-        this.buildDoublePagePortraitHorizontal()
+    if (this.shouldUseVerticalDoublePageManualScrollMode()) {
+      Stack() {
+        this.buildDoublePagePortraitBody()
       }
-
-      // 页面指示器
-      if (this.readingSettings.showPageInfo) {
-        this.buildDoublePageIndicator()
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .onAppear(() => {
-      logger.debug(TAG, `构建双页竖屏视图: layout=${this.isVerticalPortraitLayout() ? 'VERTICAL' : 'HORIZONTAL'}, left=${this.leftPageIndex}, right=${this.rightPageIndex}`);
-    })
-    .gesture(
-      GestureGroup(GestureMode.Parallel,
-        PanGesture({ fingers: 1, direction: PanDirection.All, distance: 5 })
-          .onActionStart((event: GestureEvent) => this.handlePanStart(event))
-          .onActionUpdate((event: GestureEvent) => this.handlePanUpdate(event))
-          .onActionEnd((event: GestureEvent) => this.handlePanEnd(event)),
+      .width('100%')
+      .height('100%')
+      .onAppear(() => {
+        logger.debug(TAG, `构建双页竖屏视图: layout=${this.isVerticalPortraitLayout() ? 'VERTICAL' : 'HORIZONTAL'}, left=${this.leftPageIndex}, right=${this.rightPageIndex}, interaction=manual_vertical_scroll`);
+      })
+      .gesture(
         PinchGesture({ fingers: 2, distance: 5 })
           .onActionStart(() => this.handlePinchStart())
           .onActionUpdate((event: GestureEvent) => this.handlePinchUpdate(event))
           .onActionEnd(() => this.handlePinchEnd())
       )
+    } else {
+      Stack() {
+        this.buildDoublePagePortraitBody()
+      }
+      .width('100%')
+      .height('100%')
+      .onAppear(() => {
+        logger.debug(TAG, `构建双页竖屏视图: layout=${this.isVerticalPortraitLayout() ? 'VERTICAL' : 'HORIZONTAL'}, left=${this.leftPageIndex}, right=${this.rightPageIndex}, interaction=pan_and_pinch`);
+      })
+      .gesture(
+        GestureGroup(GestureMode.Parallel,
+          PanGesture({ fingers: 1, direction: PanDirection.All, distance: 5 })
+            .onActionStart((event: GestureEvent) => this.handlePanStart(event))
+            .onActionUpdate((event: GestureEvent) => this.handlePanUpdate(event))
+            .onActionEnd((event: GestureEvent) => this.handlePanEnd(event)),
+          PinchGesture({ fingers: 2, distance: 5 })
+            .onActionStart(() => this.handlePinchStart())
+            .onActionUpdate((event: GestureEvent) => this.handlePinchUpdate(event))
+            .onActionEnd(() => this.handlePinchEnd())
+        )
+      )
+    }
+  }
+
+  private getVerticalDoublePageImageHeight(pageIndex: number): number {
+    if (!this.chapter || !this.chapter.pages || pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
+      return 0;
+    }
+    return Math.max(1, Math.floor(this.getEstimatedImageHeight(this.chapter.pages[pageIndex])));
+  }
+
+  private getVerticalDoublePageContentHeight(): number {
+    return this.getVerticalDoublePageImageHeight(this.getTopPageIndex()) +
+      this.getVerticalDoublePageImageHeight(this.getBottomPageIndex());
+  }
+
+  private clampVerticalDoublePageScrollOffset(offset: number): number {
+    const maxScroll: number = this.getVerticalDoublePageMaxScroll();
+    return Math.max(0, Math.min(offset, maxScroll));
+  }
+
+  private isValidVerticalDoublePageIndex(pageIndex: number): boolean {
+    return !!this.chapter && !!this.chapter.pages && pageIndex >= 0 && pageIndex < this.chapter.pages.length;
+  }
+
+  private getVerticalDoublePageDisplayInput(
+    pageIndex: number,
+    fallbackInput: Resource | string | image.PixelMap
+  ): Resource | string | image.PixelMap {
+    if (!this.isValidVerticalDoublePageIndex(pageIndex)) {
+      return fallbackInput;
+    }
+    const page: MangaPage = this.chapter.pages[pageIndex];
+    const pm: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
+    if (pm) {
+      return pm;
+    }
+    const localPm: image.PixelMap | null = this.localImageCache.get(page.id);
+    if (localPm) {
+      return localPm;
+    }
+    if (page.sourceType !== ImageSourceType.NETWORK) {
+      return this.getImageResource(page);
+    }
+    return fallbackInput;
+  }
+
+  private getVerticalDoublePagePageIdByIndex(pageIndex: number): string {
+    if (!this.isValidVerticalDoublePageIndex(pageIndex)) {
+      return '';
+    }
+    return this.chapter.pages[pageIndex].id;
+  }
+
+  private getVerticalDoublePageImageInputByIndex(pageIndex: number): Resource | string | image.PixelMap {
+    if (!this.isValidVerticalDoublePageIndex(pageIndex)) {
+      return $r('app.media.ic_image');
+    }
+    const page: MangaPage = this.chapter.pages[pageIndex];
+    return this.getDisplayImageInput(page);
+  }
+
+  private updateVerticalDoublePageRenderSlots(): void {
+    if (!this.isDoublePageVerticalPortraitMode() || !this.chapter || !this.chapter.pages) {
+      this.verticalDoubleTopPageIndex = -1;
+      this.verticalDoubleTopPageId = '';
+      this.verticalDoubleTopImageInput = $r('app.media.ic_image');
+      this.verticalDoubleBottomPageIndex = -1;
+      this.verticalDoubleBottomPageId = '';
+      this.verticalDoubleBottomImageInput = $r('app.media.ic_image');
+      if (this.verticalDoubleCurrentContentIdentity !== 'vertical_identity_empty') {
+        this.verticalDoubleCurrentLayerToggle = !this.verticalDoubleCurrentLayerToggle;
+      }
+      this.verticalDoubleCurrentContentIdentity = 'vertical_identity_empty';
+      this.verticalDoubleCurrentContentKey = `vertical_current_empty_${this.renderEpoch}_${this.verticalDoubleCurrentLayerToggle ? 'A' : 'B'}`;
+      return;
+    }
+
+    const topIndex: number = this.getTopPageIndex();
+    const bottomIndex: number = this.getBottomPageIndex();
+    const topId: string = this.getVerticalDoublePagePageIdByIndex(topIndex);
+    const bottomId: string = this.getVerticalDoublePagePageIdByIndex(bottomIndex);
+
+    this.verticalDoubleTopPageIndex = topIndex;
+    this.verticalDoubleTopPageId = topId;
+    this.verticalDoubleTopImageInput = this.getVerticalDoublePageImageInputByIndex(topIndex);
+    this.verticalDoubleBottomPageIndex = bottomIndex;
+    this.verticalDoubleBottomPageId = bottomId;
+    this.verticalDoubleBottomImageInput = this.getVerticalDoublePageImageInputByIndex(bottomIndex);
+    const contentIdentity: string = `vertical_identity_${this.viewCurrentPageIndex}_${topIndex}_${bottomIndex}_${topId}_${bottomId}_${this.getVerticalDoublePageSlotSourceState(topId)}_${this.getVerticalDoublePageSlotSourceState(bottomId)}`;
+    if (contentIdentity !== this.verticalDoubleCurrentContentIdentity) {
+      this.verticalDoubleCurrentLayerToggle = !this.verticalDoubleCurrentLayerToggle;
+      this.verticalDoubleCurrentContentIdentity = contentIdentity;
+      logger.debug(TAG, `双页竖向当前层身份变化: layer=${this.verticalDoubleCurrentLayerToggle ? 'A' : 'B'}, identity=${contentIdentity}`);
+    }
+    this.verticalDoubleCurrentContentKey = `${contentIdentity}_${this.renderEpoch}_${this.verticalDoubleCurrentLayerToggle ? 'A' : 'B'}`;
+    const topPath: string = topIndex >= 0 && topIndex < this.chapter.pages.length
+      ? (this.getFsPathFromPage(this.chapter.pages[topIndex]) || 'N/A')
+      : 'N/A';
+    const bottomPath: string = bottomIndex >= 0 && bottomIndex < this.chapter.pages.length
+      ? (this.getFsPathFromPage(this.chapter.pages[bottomIndex]) || 'N/A')
+      : 'N/A';
+    logger.debug(TAG, `双页竖向渲染槽更新: top=${topIndex}/${topId}/${topPath}, bottom=${bottomIndex}/${bottomId}/${bottomPath}, key=${this.verticalDoubleCurrentContentKey}`);
+  }
+
+  private getVerticalDoublePageSlotSourceState(pageId: string): string {
+    if (pageId.length === 0) {
+      return 'none';
+    }
+    if (this.pagePixelMaps.has(pageId)) {
+      return `pm_${this.getPixelMapEpoch(pageId)}`;
+    }
+    if (this.localImageCache.has(pageId)) {
+      return `local_${this.getPixelMapEpoch(pageId)}`;
+    }
+    return `src_${this.getPixelMapEpoch(pageId)}`;
+  }
+
+  private shouldRenderVerticalDoublePageImage(pageIndex: number): boolean {
+    if (!this.isValidVerticalDoublePageIndex(pageIndex)) {
+      return false;
+    }
+    const page: MangaPage = this.chapter.pages[pageIndex];
+    if (this.pagePixelMaps.has(page.id) || this.localImageCache.has(page.id)) {
+      return true;
+    }
+    const st: ImageLoadState | undefined = this.getPageLoadState(page);
+    if ((st && st.isLoading && !st.isLoaded) || this.localImageCache.isLoading(page.id)) {
+      return false;
+    }
+    if (page.sourceType === ImageSourceType.NETWORK) {
+      return false;
+    }
+    if (page.sourceType === ImageSourceType.LOCAL) {
+      const fsPath: string | undefined = this.getFsPathFromPage(page);
+      return !!fsPath && fsPath.length > 0;
+    }
+    return page.imageUrl.length > 0;
+  }
+
+  private shouldShowVerticalDoublePageError(pageIndex: number): boolean {
+    if (!this.isValidVerticalDoublePageIndex(pageIndex)) {
+      return false;
+    }
+    const page: MangaPage = this.chapter.pages[pageIndex];
+    const st: ImageLoadState | undefined = this.getPageLoadState(page);
+    return !!st && !!st.error && st.error.length > 0;
+  }
+
+  private getVerticalDoublePageErrorText(pageIndex: number): string {
+    if (!this.isValidVerticalDoublePageIndex(pageIndex)) {
+      return '图片加载失败';
+    }
+    const page: MangaPage = this.chapter.pages[pageIndex];
+    const st: ImageLoadState | undefined = this.getPageLoadState(page);
+    return st && st.error && st.error.length > 0 ? st.error : '图片加载失败';
+  }
+
+  private ensureVerticalDoublePagePageLoading(pageIndex: number): void {
+    if (!this.isValidVerticalDoublePageIndex(pageIndex) ||
+      this.shouldRenderVerticalDoublePageImage(pageIndex) ||
+      this.shouldShowVerticalDoublePageError(pageIndex)) {
+      return;
+    }
+    const page: MangaPage = this.chapter.pages[pageIndex];
+    const st: ImageLoadState | undefined = this.getPageLoadState(page);
+    if (st && st.isLoading) {
+      return;
+    }
+    if (page.sourceType === ImageSourceType.LOCAL) {
+      this.triggerLocalImageLoad(page, this.chapter.id, pageIndex);
+      return;
+    }
+    this.loadImage(page);
+  }
+
+  private markVerticalDoublePageImageComplete(pageIndex: number, pageId: string): void {
+    const page: MangaPage | undefined = this.isValidVerticalDoublePageIndex(pageIndex)
+      ? this.chapter.pages[pageIndex]
+      : this.getPageById(pageId);
+    if (!page) {
+      return;
+    }
+    const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+    const newState: ImageLoadState = {
+      isLoading: false,
+      isLoaded: true,
+      dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+      error: undefined
+    } as ImageLoadState;
+    this.imageLoadStates.set(page.id, newState);
+    this.imageLoadStates = new Map(this.imageLoadStates);
+    this.clearPendingLoadTimer(page.id);
+    this.logImageDisplayAfter(page, true);
+  }
+
+  private handleVerticalDoublePageImageError(pageIndex: number, pageId: string, error: ImageError, keyPrefix: string): void {
+    const page: MangaPage | undefined = this.isValidVerticalDoublePageIndex(pageIndex)
+      ? this.chapter.pages[pageIndex]
+      : this.getPageById(pageId);
+    if (!page) {
+      return;
+    }
+    this.handleImageComponentError(page, error, `double_vertical_${keyPrefix}`);
+  }
+
+  @Builder
+  private buildVerticalDoublePageLoading(heightValue: number) {
+    Column() {
+      LoadingProgress()
+        .width(44)
+        .height(44)
+        .color(colorMap.accent)
+      Text('加载中...')
+        .fontSize(13)
+        .fontColor(colorMap.textSecondary)
+        .margin({ top: 8 })
+    }
+    .width('100%')
+    .height(heightValue)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private buildVerticalDoublePageFailure(pageIndex: number, heightValue: number) {
+    Column() {
+      Image($r('app.media.ic_image'))
+        .width(52)
+        .height(52)
+        .objectFit(ImageFit.Contain)
+        .opacity(0.68)
+      Text('加载失败')
+        .fontSize(14)
+        .fontColor(colorMap.textPrimary)
+        .fontWeight(FontWeight.Medium)
+        .margin({ top: 8 })
+      Text(this.getVerticalDoublePageErrorText(pageIndex))
+        .fontSize(12)
+        .fontColor(colorMap.textSecondary)
+        .margin({ top: 4 })
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .height(heightValue)
+    .justifyContent(FlexAlign.Center)
+    .padding(16)
+  }
+
+  @Builder
+  private buildVerticalDoublePageImageSlot(
+    pageIndex: number,
+    pageId: string,
+    imageInput: Resource | string | image.PixelMap,
+    keyPrefix: string
+  ) {
+    if (this.isValidVerticalDoublePageIndex(pageIndex)) {
+      Stack() {
+        if (this.shouldRenderVerticalDoublePageImage(pageIndex)) {
+          Image(this.getVerticalDoublePageDisplayInput(pageIndex, imageInput))
+            .key(`${pageId}_${keyPrefix}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(pageId)}`)
+            .width('100%')
+            .height(this.getVerticalDoublePageImageHeight(pageIndex))
+            .objectFit(ImageFit.Contain)
+            .draggable(false)
+            .padding(0)
+            .margin(0)
+            .borderWidth(0)
+            .brightness(this.getFilterBrightness())
+            .contrast(this.getFilterContrast())
+            .saturate(this.getFilterSaturation())
+            .grayscale(this.getFilterGrayscale())
+            .invert(this.getFilterInvert())
+            .sepia(this.getFilterSepia())
+            .onAppear(() => {
+              const page: MangaPage = this.chapter.pages[pageIndex];
+              const actualPath: string | undefined = this.getFsPathFromPage(page);
+              logger.debug(TAG, `双页竖向图片槽显示: key=${keyPrefix}, index=${pageIndex}, pageId=${pageId}, actualId=${page.id}, path=${actualPath ? actualPath : 'N/A'}, view=${this.viewCurrentPageIndex}, left=${this.leftPageIndex}, right=${this.rightPageIndex}, epoch=${this.renderEpoch}`);
+              this.logImageDisplayBefore(page, this.getVerticalDoublePageDisplayInput(pageIndex, imageInput));
+            })
+            .onComplete(() => {
+              this.markVerticalDoublePageImageComplete(pageIndex, pageId);
+            })
+            .onError((error: ImageError) => {
+              this.handleVerticalDoublePageImageError(pageIndex, pageId, error, keyPrefix);
+            })
+        } else if (this.shouldShowVerticalDoublePageError(pageIndex)) {
+          this.buildVerticalDoublePageFailure(pageIndex, this.getVerticalDoublePageImageHeight(pageIndex))
+        } else {
+          this.buildVerticalDoublePageLoading(this.getVerticalDoublePageImageHeight(pageIndex))
+        }
+      }
+      .width('100%')
+      .height(this.getVerticalDoublePageImageHeight(pageIndex))
+      .onAppear(() => {
+        this.ensureVerticalDoublePagePageLoading(pageIndex);
+      })
+    }
+  }
+
+  private handleVerticalDoublePageManualPanStart(event: GestureEvent): void {
+    if (!event.fingerList || event.fingerList.length === 0 || !event.fingerList[0]) {
+      logger.warn(TAG, '双页竖向拖拽开始时fingerList无效，忽略此事件');
+      return;
+    }
+    if (!this.shouldUseVerticalDoublePageManualScrollMode() || this.isZooming) {
+      return;
+    }
+
+    this.isDragging = true;
+    this.pageChangeCommitted = false;
+    this.swipeTriggered = false;
+    this.panStartY = event.fingerList[0].globalY;
+    this.verticalDoublePageLastPanOffsetY = 0;
+    this.verticalDoublePagePanStartScrollOffset = this.syncVerticalDoublePageScrollOffset();
+    this.verticalDoublePageLastScrollDeltaY = 0;
+    this.resetVerticalDoublePageBoundaryState();
+    this.preloadDoublePageNeighbors();
+    logger.debug(TAG, `双页竖向手动滚动开始: offset=${this.verticalDoublePagePanStartScrollOffset.toFixed(1)}, max=${this.getVerticalDoublePageMaxScroll().toFixed(1)}`);
+  }
+
+  private handleVerticalDoublePageManualPanUpdate(event: GestureEvent): void {
+    if (!this.isDragging || !this.shouldUseVerticalDoublePageManualScrollMode()) {
+      return;
+    }
+    if (!event.fingerList || event.fingerList.length === 0 || !event.fingerList[0]) {
+      logger.warn(TAG, '双页竖向拖拽更新时fingerList无效，忽略此事件');
+      return;
+    }
+    if (this.isZooming || this.isPageTurning || this.isCommittingPageTurn) {
+      return;
+    }
+
+    const deltaY: number = event.fingerList[0].globalY - this.panStartY;
+    const panFrameDeltaY: number = deltaY - this.verticalDoublePageLastPanOffsetY;
+    this.verticalDoublePageLastPanOffsetY = deltaY;
+
+    const scrollIntentY: number = -panFrameDeltaY;
+    if (!Number.isFinite(scrollIntentY) || Math.abs(scrollIntentY) < 0.1) {
+      return;
+    }
+
+    const previousOffsetY: number = this.verticalDoublePageScrollOffset;
+    const nextOffsetY: number = this.clampVerticalDoublePageScrollOffset(
+      this.verticalDoublePagePanStartScrollOffset - deltaY
+    );
+    this.verticalDoublePageLastScrollDeltaY = scrollIntentY;
+
+    if (this.handleVerticalDoublePageBoundaryInteraction(scrollIntentY, previousOffsetY, nextOffsetY)) {
+      logger.debug(TAG, `双页竖向触边拖拽: intent=${scrollIntentY.toFixed(1)}, offset=${previousOffsetY.toFixed(1)} -> ${nextOffsetY.toFixed(1)}, max=${this.getVerticalDoublePageMaxScroll().toFixed(1)}, action=${this.verticalDoublePageTurnAction ?? 'none'}`);
+      return;
+    }
+
+    this.verticalDoublePageScrollOffset = nextOffsetY;
+    if (Math.abs(scrollIntentY) > 1.0) {
+      logger.debug(TAG, `双页竖向手动滚动: intent=${scrollIntentY.toFixed(1)}, offset=${nextOffsetY.toFixed(1)}, max=${this.getVerticalDoublePageMaxScroll().toFixed(1)}`);
+    }
+    if (!this.isPageTurning && !this.isCommittingPageTurn) {
+      this.translateY = 0;
+      this.verticalDoublePageTurnAction = null;
+    }
+  }
+
+  private handleVerticalDoublePageManualPanEnd(): void {
+    if (!this.isDoublePageVerticalPortraitMode()) {
+      this.isDragging = false;
+      return;
+    }
+    this.isDragging = false;
+    this.verticalDoublePageLastPanOffsetY = 0;
+    this.handleVerticalDoublePageScrollStop();
+  }
+
+  @Builder
+  buildDoublePagePortraitVerticalPreview(
+    topPageId: string,
+    topImageInput: Resource | string | image.PixelMap,
+    bottomPageId: string,
+    bottomImageInput: Resource | string | image.PixelMap,
+    keyPrefix: string
+  ) {
+    Column({ space: 0 }) {
+      if (topPageId.length > 0) {
+        this.buildVerticalDoublePageImageSlot(
+          this.getPageIndexById(topPageId),
+          topPageId,
+          topImageInput,
+          `${keyPrefix}_top`
+        )
+      }
+      if (bottomPageId.length > 0) {
+        this.buildVerticalDoublePageImageSlot(
+          this.getPageIndexById(bottomPageId),
+          bottomPageId,
+          bottomImageInput,
+          `${keyPrefix}_bottom`
+        )
+      }
+    }
+    .width('100%')
+  }
+
+  private shouldBuildVerticalDoublePagePreview(role: 'prev' | 'next'): boolean {
+    if (this.getVerticalDoublePageActivePreviewRole() !== role) {
+      return false;
+    }
+    if (role === 'prev') {
+      return this.previewPrevLeftPageId.length > 0 || this.previewPrevRightPageId.length > 0;
+    }
+    return this.previewNextLeftPageId.length > 0 || this.previewNextRightPageId.length > 0;
+  }
+
+  @Builder
+  private buildVerticalDoublePageCurrentLayer(layerName: string) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column({ space: 0 }) {
+        if (this.verticalDoubleTopPageIndex >= 0 && this.verticalDoubleTopPageIndex < this.chapter.pages.length) {
+          this.buildVerticalDoublePageImageSlot(
+            this.verticalDoubleTopPageIndex,
+            this.verticalDoubleTopPageId,
+            this.verticalDoubleTopImageInput,
+            `portrait_v_${layerName}_top`
+          )
+        }
+        if (this.verticalDoubleBottomPageIndex >= 0 && this.verticalDoubleBottomPageIndex < this.chapter.pages.length) {
+          this.buildVerticalDoublePageImageSlot(
+            this.verticalDoubleBottomPageIndex,
+            this.verticalDoubleBottomPageId,
+            this.verticalDoubleBottomImageInput,
+            `portrait_v_${layerName}_bottom`
+          )
+        }
+        if (this.verticalDoubleTopPageIndex < 0 && this.getTopPageIndex() >= 0 && this.getTopPageIndex() < this.chapter.pages.length) {
+          this.buildVerticalDoublePageImageSlot(
+            this.getTopPageIndex(),
+            this.getVerticalDoublePagePageIdByIndex(this.getTopPageIndex()),
+            this.getVerticalDoublePageImageInputByIndex(this.getTopPageIndex()),
+            `portrait_v_${layerName}_top_fallback`
+          )
+        }
+        if (this.verticalDoubleBottomPageIndex < 0 && this.getBottomPageIndex() >= 0 && this.getBottomPageIndex() < this.chapter.pages.length) {
+          this.buildVerticalDoublePageImageSlot(
+            this.getBottomPageIndex(),
+            this.getVerticalDoublePagePageIdByIndex(this.getBottomPageIndex()),
+            this.getVerticalDoublePageImageInputByIndex(this.getBottomPageIndex()),
+            `portrait_v_${layerName}_bottom_fallback`
+          )
+        }
+      }
+      .width('100%')
+      .height(this.getVerticalDoublePageContentHeight())
+      .translate({ x: 0, y: -this.clampVerticalDoublePageScrollOffset(this.verticalDoublePageScrollOffset) })
+    }
+    .key(`${this.getVerticalDoublePageCurrentContentKey()}_${layerName}`)
+    .width('100%')
+    .height('100%')
+    .clip(true)
+    .gesture(
+      PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 2 })
+        .onActionStart((event: GestureEvent) => this.handleVerticalDoublePageManualPanStart(event))
+        .onActionUpdate((event: GestureEvent) => this.handleVerticalDoublePageManualPanUpdate(event))
+        .onActionEnd(() => this.handleVerticalDoublePageManualPanEnd())
     )
+    .scale({
+      x: this.currentScale * this.getVerticalDoublePageContentScaleFactor(),
+      y: this.currentScale * this.getVerticalDoublePageContentScaleFactor()
+    })
+    .translate({ x: this.translateX, y: this.translateY })
+    .transform(this.pageTurnMatrix)
+    .opacity(this.pageTurnOpacity)
+    .zIndex(10)
+    .onAppear(() => {
+      logger.debug(TAG, `双页竖向当前层显示: layer=${layerName}, key=${this.getVerticalDoublePageCurrentContentKey()}, top=${this.verticalDoubleTopPageIndex}/${this.verticalDoubleTopPageId}, bottom=${this.verticalDoubleBottomPageIndex}/${this.verticalDoubleBottomPageId}`);
+    })
   }
 
   /**
    * 获取上下组合布局的上方页面索引
    */
   private getTopPageIndex(): number {
-    const isRTL = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-    return isRTL ? this.rightPageIndex : this.leftPageIndex;
+    return this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP
+      ? this.rightPageIndex
+      : this.leftPageIndex;
   }
 
   /**
    * 获取上下组合布局的下方页面索引
    */
   private getBottomPageIndex(): number {
-    const isRTL = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-    return isRTL ? this.leftPageIndex : this.rightPageIndex;
+    return this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP
+      ? this.leftPageIndex
+      : this.rightPageIndex;
   }
 
   /**
    * 获取上下组合布局的上方页面ID
    */
   private getTopPageId(): string {
-    const isRTL = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-    return isRTL ? this.doubleRightPageId : this.doubleLeftPageId;
+    return this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP
+      ? this.doubleRightPageId
+      : this.doubleLeftPageId;
   }
 
   /**
    * 获取上下组合布局的下方页面ID
    */
   private getBottomPageId(): string {
-    const isRTL = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-    return isRTL ? this.doubleLeftPageId : this.doubleRightPageId;
+    return this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP
+      ? this.doubleLeftPageId
+      : this.doubleRightPageId;
   }
 
   /**
    * 获取上下组合布局的上方图片输入
    */
   private getTopImageInput(): string | Resource | image.PixelMap {
-    const isRTL = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-    return isRTL ? this.doubleRightImageInput : this.doubleLeftImageInput;
+    return this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP
+      ? this.doubleRightImageInput
+      : this.doubleLeftImageInput;
   }
 
   /**
    * 获取上下组合布局的下方图片输入
    */
   private getBottomImageInput(): string | Resource | image.PixelMap {
-    const isRTL = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
-    return isRTL ? this.doubleLeftImageInput : this.doubleRightImageInput;
+    return this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP
+      ? this.doubleLeftImageInput
+      : this.doubleRightImageInput;
+  }
+
+  private isVerticalDoublePageEdgeVisible(edge: 'top' | 'bottom'): boolean {
+    if (!this.isDoublePageVerticalPortraitMode() || this.currentScale > 1.0) {
+      return false;
+    }
+    const edgeTolerance: number = MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_TOLERANCE_VP;
+    const offsetY: number = this.clampVerticalDoublePageScrollOffset(this.verticalDoublePageScrollOffset);
+    if (edge === 'top') {
+      return offsetY <= edgeTolerance;
+    }
+    const maxScroll: number = this.getVerticalDoublePageMaxScroll();
+    return offsetY >= Math.max(0, maxScroll - edgeTolerance);
+  }
+
+  private shouldShowVerticalDoublePageEdgeHint(edge: 'top' | 'bottom'): boolean {
+    if (!this.isDoublePageVerticalPortraitMode() || this.currentScale > 1.0) {
+      return false;
+    }
+    return !this.isPageTurning && !this.isCommittingPageTurn && this.isVerticalDoublePageEdgeVisible(edge);
+  }
+
+  private shouldShowVerticalDoublePageEdgeHintText(edge: 'top' | 'bottom'): boolean {
+    if (!this.isDoublePageVerticalPortraitMode() || this.currentScale > 1.0) {
+      return false;
+    }
+    if (this.verticalDoublePageBoundaryDirection === edge && this.verticalDoublePageEdgeHintProgress > 0) {
+      return true;
+    }
+    if ((this.isPageTurning || this.isCommittingPageTurn) && this.verticalDoublePageTurnAction) {
+      return this.getVerticalDoublePageActionOrigin(this.resolveVerticalDoublePageTurnAction()) === edge;
+    }
+    return false;
+  }
+
+  private getVerticalDoublePageEdgeHintOpacity(edge: 'top' | 'bottom'): number {
+    if (this.shouldShowVerticalDoublePageEdgeHintText(edge)) {
+      return Math.max(0.68, this.getVerticalDoublePageEdgeHintTextOpacity(edge));
+    }
+    if (!this.shouldShowVerticalDoublePageEdgeHint(edge)) {
+      return 0;
+    }
+    if (this.verticalDoublePageBoundaryDirection === edge) {
+      return Math.min(1.0, 0.76 + this.verticalDoublePageEdgeHintProgress * 0.24);
+    }
+    return 0.68;
+  }
+
+  private getVerticalDoublePageEdgeHintLineWidth(edge: 'top' | 'bottom'): string {
+    let progress: number = 0;
+    if (this.verticalDoublePageBoundaryDirection === edge) {
+      progress = this.verticalDoublePageEdgeHintProgress;
+    }
+    const widthValue: number = 34 + progress * 22;
+    return `${Math.round(widthValue)}%`;
+  }
+
+  private getVerticalDoublePageEdgeHintZoneHeight(edge: 'top' | 'bottom'): number {
+    if (this.verticalDoublePageBoundaryDirection === edge) {
+      return MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_GUIDE_ZONE_VP +
+        this.verticalDoublePageEdgeHintProgress * 28;
+    }
+    return MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_GUIDE_ZONE_VP;
+  }
+
+  private getVerticalDoublePageEdgeHintLineHeight(edge: 'top' | 'bottom'): number {
+    if (this.verticalDoublePageBoundaryDirection === edge) {
+      return 3 + this.verticalDoublePageEdgeHintProgress * 2;
+    }
+    return 3;
+  }
+
+  private getVerticalDoublePageEdgeHintText(edge: 'top' | 'bottom'): string {
+    const action: 'next' | 'prev' = this.getVerticalDoublePageBoundaryAction(edge);
+    if (action === 'prev' && this.isFirstChapter) {
+      return '当前已是最前';
+    }
+    if (action === 'next' && this.isLastChapter) {
+      return '当前已是最后';
+    }
+    const actionText: string = action === 'next' ? '下一组' : '上一组';
+    if (this.verticalDoublePageBoundaryDirection === edge && this.verticalDoublePageEdgeHintProgress >= 1.0) {
+      return `释放切换${actionText}`;
+    }
+    return edge === 'top' ? `下拉到提示线切换${actionText}` : `上拉到提示线切换${actionText}`;
+  }
+
+  private getVerticalDoublePageEdgeHintTextOpacity(edge: 'top' | 'bottom'): number {
+    if (!this.shouldShowVerticalDoublePageEdgeHintText(edge)) {
+      return 0;
+    }
+    if (this.verticalDoublePageBoundaryDirection === edge) {
+      return Math.min(1.0, 0.45 + this.verticalDoublePageEdgeHintProgress * 0.55);
+    }
+    return Math.max(0.58, 0.92 - this.pageTurnProgress * 0.26);
+  }
+
+  @Builder
+  private buildVerticalDoublePageEdgeHintLine(edge: 'top' | 'bottom') {
+    Row() {
+      Column()
+        .width(this.getVerticalDoublePageEdgeHintLineWidth(edge))
+        .height(this.getVerticalDoublePageEdgeHintLineHeight(edge))
+        .backgroundColor(colorMap.accent)
+        .borderRadius(3)
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private buildVerticalDoublePageEdgeHintText(edge: 'top' | 'bottom') {
+    if (this.shouldShowVerticalDoublePageEdgeHintText(edge)) {
+      Row() {
+        Text(this.getVerticalDoublePageEdgeHintText(edge))
+          .fontSize(12)
+          .fontColor(colorMap.textOnAccent)
+          .fontWeight(FontWeight.Medium)
+          .backgroundColor(colorMap.backgroundOverlay)
+          .borderRadius(12)
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .maxLines(1)
+          .opacity(this.getVerticalDoublePageEdgeHintTextOpacity(edge))
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+    }
+  }
+
+  @Builder
+  private buildVerticalDoublePageEdgeHint(edge: 'top' | 'bottom') {
+    Stack({ alignContent: edge === 'top' ? Alignment.TopStart : Alignment.BottomStart }) {
+      Column({ space: 6 }) {
+        if (edge === 'top') {
+          this.buildVerticalDoublePageEdgeHintLine(edge)
+          this.buildVerticalDoublePageEdgeHintText(edge)
+        } else {
+          this.buildVerticalDoublePageEdgeHintText(edge)
+          this.buildVerticalDoublePageEdgeHintLine(edge)
+        }
+      }
+      .width('100%')
+      .height(this.getVerticalDoublePageEdgeHintZoneHeight(edge))
+      .justifyContent(edge === 'top' ? FlexAlign.Start : FlexAlign.End)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: 24, right: 24, top: edge === 'top' ? 12 : 0, bottom: edge === 'bottom' ? 12 : 0 })
+      .opacity(this.getVerticalDoublePageEdgeHintOpacity(edge))
+      .hitTestBehavior(HitTestMode.Transparent)
+    }
+    .width('100%')
+    .height('100%')
+    .position({ x: 0, y: 0 })
+    .hitTestBehavior(HitTestMode.Transparent)
+    .zIndex(30)
   }
 
   /**
    * 双页竖屏-上下组合布局
-   * 页码小的在上，页码大的在下
+   * 根据竖向双页方向决定上下页顺序
    */
   @Builder
   buildDoublePagePortraitVertical() {
-    Scroll() {
-      Column({ space: 0 }) {
-        // 上方页面（页码小）
-        if (this.getTopPageIndex() >= 0 && this.getTopPageIndex() < this.chapter.pages.length) {
-          Image(this.getTopImageInput())
-            .key(`${this.getTopPageId()}_portrait_v_top_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.getTopPageId())}`)
-            .width('100%')
-            .objectFit(ImageFit.Contain)
-            .padding(0)
-            .margin(0)
-            .borderWidth(0)
-            // 应用滤镜效果
-            .brightness(this.getFilterBrightness())
-            .contrast(this.getFilterContrast())
-            .saturate(this.getFilterSaturation())
-            .grayscale(this.getFilterGrayscale())
-            .invert(this.getFilterInvert())
-            .sepia(this.getFilterSepia())
+    Stack() {
+      if (this.shouldBuildVerticalDoublePagePreview('prev')) {
+        Stack() {
+          this.buildDoublePagePortraitVerticalPreview(
+            this.isDoublePageVerticalNextAtTop() ? this.previewPrevRightPageId : this.previewPrevLeftPageId,
+            this.isDoublePageVerticalNextAtTop() ? this.previewPrevRightImageInput : this.previewPrevLeftImageInput,
+            this.isDoublePageVerticalNextAtTop() ? this.previewPrevLeftPageId : this.previewPrevRightPageId,
+            this.isDoublePageVerticalNextAtTop() ? this.previewPrevLeftImageInput : this.previewPrevRightImageInput,
+            'preview_prev_vertical'
+          )
         }
-        // 下方页面（页码大）
-        if (this.getBottomPageIndex() >= 0 && this.getBottomPageIndex() < this.chapter.pages.length) {
-          Image(this.getBottomImageInput())
-            .key(`${this.getBottomPageId()}_portrait_v_bottom_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.getBottomPageId())}`)
-            .width('100%')
-            .objectFit(ImageFit.Contain)
-            .padding(0)
-            .margin(0)
-            .borderWidth(0)
-            // 应用滤镜效果
-            .brightness(this.getFilterBrightness())
-            .contrast(this.getFilterContrast())
-            .saturate(this.getFilterSaturation())
-            .grayscale(this.getFilterGrayscale())
-            .invert(this.getFilterInvert())
-            .sepia(this.getFilterSepia())
-        }
+        .width('100%')
+        .height('100%')
+        .translate({ x: 0, y: this.getVerticalDoublePagePreviewTranslateY('prev') })
+        .scale({ x: this.getVerticalDoublePagePreviewScale('prev'), y: this.getVerticalDoublePagePreviewScale('prev') })
+        .opacity(this.getDoublePrevOverlayOpacity())
+        .zIndex(2)
       }
-      .width('100%')
+      if (this.shouldBuildVerticalDoublePagePreview('next')) {
+        Stack() {
+          this.buildDoublePagePortraitVerticalPreview(
+            this.isDoublePageVerticalNextAtTop() ? this.previewNextRightPageId : this.previewNextLeftPageId,
+            this.isDoublePageVerticalNextAtTop() ? this.previewNextRightImageInput : this.previewNextLeftImageInput,
+            this.isDoublePageVerticalNextAtTop() ? this.previewNextLeftPageId : this.previewNextRightPageId,
+            this.isDoublePageVerticalNextAtTop() ? this.previewNextLeftImageInput : this.previewNextRightImageInput,
+            'preview_next_vertical'
+          )
+        }
+        .width('100%')
+        .height('100%')
+        .translate({ x: 0, y: this.getVerticalDoublePagePreviewTranslateY('next') })
+        .scale({ x: this.getVerticalDoublePagePreviewScale('next'), y: this.getVerticalDoublePagePreviewScale('next') })
+        .opacity(this.getDoubleNextOverlayOpacity())
+        .zIndex(2)
+      }
+      if (this.verticalDoubleCurrentLayerToggle) {
+        this.buildVerticalDoublePageCurrentLayer('A')
+      } else {
+        this.buildVerticalDoublePageCurrentLayer('B')
+      }
+      this.buildVerticalDoublePageEdgeHint('top')
+      this.buildVerticalDoublePageEdgeHint('bottom')
     }
     .width('100%')
     .height('100%')
-    .scrollable(ScrollDirection.Vertical)
-    .scrollBar(BarState.Off)
-    // 使用matrix4.transform()实现真正的3D变换效果
-    .scale({ x: this.currentScale, y: this.currentScale })
-    .translate({ x: this.translateX, y: this.translateY })
-    .transform(this.pageTurnMatrix)
-    .opacity(this.pageTurnOpacity)
   }
 
   /**
@@ -4888,7 +5934,33 @@ export struct MangaViewer {
    */
   @Builder
   buildDoublePagePortraitHorizontal() {
-    Row({ space: 0 }) {
+    if (this.isDoublePageSingleDisplayActive()) {
+      Stack() {
+        if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
+          Image(this.doubleLeftImageInput)
+            .key(`${this.doubleLeftPageId}_portrait_h_single_${this.viewCurrentPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(this.doubleLeftPageId)}`)
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Contain)
+            .padding(0)
+            .margin(0)
+            .borderWidth(0)
+            .brightness(this.getFilterBrightness())
+            .contrast(this.getFilterContrast())
+            .saturate(this.getFilterSaturation())
+            .grayscale(this.getFilterGrayscale())
+            .invert(this.getFilterInvert())
+            .sepia(this.getFilterSepia())
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .scale({ x: this.currentScale, y: this.currentScale })
+      .translate({ x: this.translateX, y: this.translateY })
+      .transform(this.pageTurnMatrix)
+      .opacity(this.pageTurnOpacity)
+    } else {
+      Row({ space: 0 }) {
       // 左侧页面
       if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
         Image(this.doubleLeftImageInput)
@@ -4931,14 +6003,15 @@ export struct MangaViewer {
         // 右页不存在时的占位
         Column().width('50%').height('100%')
       }
+      }
+      .width('100%')
+      .height('100%')
+      // 使用matrix4.transform()实现真正的3D变换效果
+      .scale({ x: this.currentScale, y: this.currentScale })
+      .translate({ x: this.translateX, y: this.translateY })
+      .transform(this.pageTurnMatrix)
+      .opacity(this.pageTurnOpacity)
     }
-    .width('100%')
-    .height('100%')
-    // 使用matrix4.transform()实现真正的3D变换效果
-    .scale({ x: this.currentScale, y: this.currentScale })
-    .translate({ x: this.translateX, y: this.translateY })
-    .transform(this.pageTurnMatrix)
-    .opacity(this.pageTurnOpacity)
   }
 
   /**
@@ -5556,7 +6629,7 @@ export struct MangaViewer {
     const SPEED_THRESHOLD: number = 100;
     if (speed < SPEED_THRESHOLD) { return; }
 
-    const isTTB: boolean = this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM;
+    const isVerticalDoublePage: boolean = this.isDoublePageVerticalPortraitMode();
     const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
     const maxIndex: number = this.chapter.pages.length - 1;
     const pairStart: number = this.viewCurrentPageIndex - (this.viewCurrentPageIndex % 2);
@@ -5565,11 +6638,14 @@ export struct MangaViewer {
     const animationType: PageTurnAnimationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
     const useCurl: boolean = animationType === PageTurnAnimationType.CURL && this.isLandscapeScreen();
 
-    if (isTTB) {
+    if (isVerticalDoublePage) {
       const isSwipeUp: boolean = angle <= -45 && angle >= -135;
       const isSwipeDown: boolean = angle >= 45 && angle <= 135;
+      const nextAtTop: boolean = this.isDoublePageVerticalNextAtTop();
+      const goNext: boolean = nextAtTop ? isSwipeDown : isSwipeUp;
+      const goPrev: boolean = nextAtTop ? isSwipeUp : isSwipeDown;
 
-      if (isSwipeUp && nextPairStart <= maxIndex && nextPairStart > pairStart) {
+      if (goNext && nextPairStart <= maxIndex && nextPairStart > pairStart) {
         if (useCurl) {
           this.performDualCurlAnimation(nextPairStart, true);
         } else {
@@ -5578,8 +6654,8 @@ export struct MangaViewer {
           this.preloadDoublePageNeighbors();
           if (this.callbacks.onPageChange) { this.callbacks.onPageChange(nextPairStart); }
         }
-        logger.info(TAG, '双页TTB：上滑，下一对页');
-      } else if (isSwipeDown && prevPairStart < pairStart) {
+        logger.info(TAG, `双页竖向：${nextAtTop ? '下滑' : '上滑'}，下一对页`);
+      } else if (goPrev && prevPairStart < pairStart) {
         if (useCurl) {
           this.performDualCurlAnimation(prevPairStart, false);
         } else {
@@ -5588,7 +6664,7 @@ export struct MangaViewer {
           this.preloadDoublePageNeighbors();
           if (this.callbacks.onPageChange) { this.callbacks.onPageChange(prevPairStart); }
         }
-        logger.info(TAG, '双页TTB：下滑，上一对页');
+        logger.info(TAG, `双页竖向：${nextAtTop ? '上滑' : '下滑'}，上一对页`);
       }
     } else {
       const isSwipeRight: boolean = angle >= -45 && angle <= 45;
@@ -5900,12 +6976,489 @@ export struct MangaViewer {
     return false;
   }
 
+  private getDoublePageVerticalDirection(): DoublePageVerticalDirection {
+    return this.readingSettings.doublePageVerticalDirection ?? DoublePageVerticalDirection.TOP_TO_BOTTOM;
+  }
+
+  private isSinglePageVerticalPagingMode(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
+      (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE &&
+        this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM);
+  }
+
+  private isDoublePageVerticalPortraitMode(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE &&
+      !this.isLandscapeScreen() &&
+      this.isVerticalPortraitLayout();
+  }
+
+  private isDoublePageVerticalNextAtTop(): boolean {
+    return this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP;
+  }
+
+  private shouldUseSmartDoublePageLayout(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE &&
+      !this.isDoublePageVerticalPortraitMode();
+  }
+
+  private getDoublePageSmartDimensions(pageIndex: number): PageDimensionsInfo | null {
+    if (!this.chapter || !this.chapter.pages || pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
+      return null;
+    }
+
+    const page: MangaPage = this.chapter.pages[pageIndex];
+    const stateDimensions: PageDimensionsInfo | null = DoublePageSmartLayoutHelper.resolvePageDimensionsFromMetadata(page);
+    if (stateDimensions) {
+      return stateDimensions;
+    }
+
+    const loadState: ImageLoadState | undefined = this.getPageLoadState(page);
+    if (loadState && loadState.dimensions && loadState.dimensions.width > 0 && loadState.dimensions.height > 0) {
+      return {
+        width: loadState.dimensions.width,
+        height: loadState.dimensions.height
+      } as PageDimensionsInfo;
+    }
+
+    const pixelMap: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
+    if (!pixelMap) {
+      return null;
+    }
+
+    try {
+      const imageInfo = pixelMap.getImageInfoSync();
+      if (imageInfo && imageInfo.size && imageInfo.size.width > 0 && imageInfo.size.height > 0) {
+        return {
+          width: imageInfo.size.width,
+          height: imageInfo.size.height
+        } as PageDimensionsInfo;
+      }
+    } catch (_error) {
+    }
+
+    return null;
+  }
+
+  private resolveDoublePageSmartPlanForIndex(pageIndex: number): DoublePageSmartDisplayPlan {
+    if (!this.chapter || !this.chapter.pages) {
+      return {
+        startIndex: -1,
+        endIndex: -1,
+        leftPageIndex: -1,
+        rightPageIndex: -1,
+        pageCount: 0,
+        mode: DoublePageSmartDisplayMode.DUAL,
+        reason: DoublePageSmartDisplayReason.NORMAL_PAIR
+      } as DoublePageSmartDisplayPlan;
+    }
+
+    const isRtl: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+    return DoublePageSmartLayoutHelper.resolvePlanAtIndex(
+      this.chapter.pages,
+      pageIndex,
+      isRtl,
+      (targetPageIndex: number): PageDimensionsInfo | null => this.getDoublePageSmartDimensions(targetPageIndex)
+    );
+  }
+
+  private resolvePreviousDoublePageSmartPlan(pageIndex: number): DoublePageSmartDisplayPlan {
+    if (!this.chapter || !this.chapter.pages) {
+      return {
+        startIndex: -1,
+        endIndex: -1,
+        leftPageIndex: -1,
+        rightPageIndex: -1,
+        pageCount: 0,
+        mode: DoublePageSmartDisplayMode.DUAL,
+        reason: DoublePageSmartDisplayReason.NORMAL_PAIR
+      } as DoublePageSmartDisplayPlan;
+    }
+
+    const isRtl: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+    return DoublePageSmartLayoutHelper.resolvePreviousPlan(
+      this.chapter.pages,
+      pageIndex,
+      isRtl,
+      (targetPageIndex: number): PageDimensionsInfo | null => this.getDoublePageSmartDimensions(targetPageIndex)
+    );
+  }
+
+  private resolveNextDoublePageSmartPlan(pageIndex: number): DoublePageSmartDisplayPlan {
+    if (!this.chapter || !this.chapter.pages) {
+      return {
+        startIndex: -1,
+        endIndex: -1,
+        leftPageIndex: -1,
+        rightPageIndex: -1,
+        pageCount: 0,
+        mode: DoublePageSmartDisplayMode.DUAL,
+        reason: DoublePageSmartDisplayReason.NORMAL_PAIR
+      } as DoublePageSmartDisplayPlan;
+    }
+
+    const isRtl: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+    return DoublePageSmartLayoutHelper.resolveNextPlan(
+      this.chapter.pages,
+      pageIndex,
+      isRtl,
+      (targetPageIndex: number): PageDimensionsInfo | null => this.getDoublePageSmartDimensions(targetPageIndex)
+    );
+  }
+
+  private isDoublePageSingleDisplayActive(): boolean {
+    return this.currentDoublePageDisplayMode === DoublePageSmartDisplayMode.SINGLE;
+  }
+
+  private getVerticalDoublePageViewportHeight(): number {
+    return this.screenHeight > 0 ? this.screenHeight : 780;
+  }
+
+  private getVerticalDoublePageMaxScroll(): number {
+    if (!this.isDoublePageVerticalPortraitMode() || !this.chapter || !this.chapter.pages) {
+      return 0;
+    }
+
+    const contentHeight: number = this.getVerticalDoublePageContentHeight();
+    return Math.max(0, contentHeight - this.getVerticalDoublePageViewportHeight());
+  }
+
+  private getVerticalDoublePageStartScrollOffset(): number {
+    const maxScroll: number = this.getVerticalDoublePageMaxScroll();
+    return this.isDoublePageVerticalNextAtTop() ? maxScroll : 0;
+  }
+
+  private syncVerticalDoublePageScrollOffset(): number {
+    const nextOffset: number = this.clampVerticalDoublePageScrollOffset(this.verticalDoublePageScrollOffset);
+    this.verticalDoublePageScrollOffset = nextOffset;
+    return nextOffset;
+  }
+
+  private resetVerticalDoublePageBoundaryState(clearAction: boolean = true): void {
+    this.verticalDoublePageBoundaryAccumulator = 0;
+    this.verticalDoublePageBoundaryDirection = '';
+    this.verticalDoublePageEdgeHintProgress = 0;
+    if (clearAction) {
+      this.verticalDoublePageTurnAction = null;
+    }
+  }
+
+  private syncVerticalDoublePagePositionForCurrentPair(animate: boolean = false): void {
+    if (!this.isDoublePageVerticalPortraitMode()) {
+      return;
+    }
+
+    const targetOffset: number = this.getVerticalDoublePageStartScrollOffset();
+    this.verticalDoublePageScrollOffset = targetOffset;
+    this.verticalDoublePageLastScrollDeltaY = 0;
+    this.verticalDoublePageProgrammaticScrollUntil = Date.now() + (animate ? 320 : 180);
+    this.translateY = 0;
+    this.resetVerticalDoublePageBoundaryState(false);
+  }
+
+  private getVerticalDoublePageBoundaryAction(boundaryDirection: 'top' | 'bottom'): 'next' | 'prev' {
+    if (boundaryDirection === 'top') {
+      return this.isDoublePageVerticalNextAtTop() ? 'next' : 'prev';
+    }
+    return this.isDoublePageVerticalNextAtTop() ? 'prev' : 'next';
+  }
+
+  private getVerticalDoublePageActionOrigin(action: 'next' | 'prev'): 'top' | 'bottom' {
+    if (action === 'next') {
+      return this.isDoublePageVerticalNextAtTop() ? 'top' : 'bottom';
+    }
+    return this.isDoublePageVerticalNextAtTop() ? 'bottom' : 'top';
+  }
+
+  private resolveVerticalDoublePageTurnAction(): 'next' | 'prev' {
+    if (this.verticalDoublePageTurnAction) {
+      return this.verticalDoublePageTurnAction;
+    }
+    if (this.pageTurnDirection === 'down') {
+      return this.isDoublePageVerticalNextAtTop() ? 'next' : 'prev';
+    }
+    return this.isDoublePageVerticalNextAtTop() ? 'prev' : 'next';
+  }
+
+  private getVerticalDoublePageTurnDirection(action: 'next' | 'prev'): 'up' | 'down' {
+    return this.getVerticalDoublePageActionOrigin(action) === 'top' ? 'down' : 'up';
+  }
+
+  private getVerticalDoublePagePullProgress(): number {
+    return Math.min(1.0, Math.abs(this.translateY) / MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_MAX_PULL_VP);
+  }
+
+  private getVerticalDoublePageActivePreviewRole(): 'prev' | 'next' | '' {
+    const action: 'next' | 'prev' | null = this.verticalDoublePageTurnAction;
+    if (!this.isDoublePageVerticalPortraitMode() || !action) {
+      return '';
+    }
+    if (this.isPageTurning || this.isCommittingPageTurn) {
+      return '';
+    }
+    if (Math.abs(this.translateY) > 0.5) {
+      return action;
+    }
+    return '';
+  }
+
+  private getVerticalDoublePagePreviewOpacity(role: 'prev' | 'next'): number {
+    const activeRole: 'prev' | 'next' | '' = this.getVerticalDoublePageActivePreviewRole();
+    if (role !== activeRole) {
+      return 0.0;
+    }
+    if (this.isPageTurning || this.isCommittingPageTurn) {
+      return Math.max(0.0, 1.0 - this.pageTurnProgress);
+    }
+    const progress: number = this.getVerticalDoublePagePullProgress();
+    if (progress <= 0.34) {
+      return 0.0;
+    }
+    const previewProgress: number = Math.min(1.0, (progress - 0.34) / 0.66);
+    return previewProgress * 0.52;
+  }
+
+  private getVerticalDoublePagePreviewTranslateY(role: 'prev' | 'next'): number {
+    const activeRole: 'prev' | 'next' | '' = this.getVerticalDoublePageActivePreviewRole();
+    if (role !== activeRole) {
+      return 0;
+    }
+
+    if (this.isPageTurning || this.isCommittingPageTurn) {
+      const travel: number = this.getVerticalDoublePageViewportHeight() * 0.08 * this.pageTurnProgress;
+      return this.pageTurnDirection === 'down' ? travel : -travel;
+    }
+
+    const action: 'next' | 'prev' | null = this.verticalDoublePageTurnAction;
+    if (!action) {
+      return 0;
+    }
+
+    const hiddenOffset: number = this.getVerticalDoublePageViewportHeight() * 0.88;
+    const visibleOffset: number = hiddenOffset * this.getVerticalDoublePagePullProgress();
+    return this.getVerticalDoublePageActionOrigin(action) === 'top'
+      ? -hiddenOffset + visibleOffset
+      : hiddenOffset - visibleOffset;
+  }
+
+  private getVerticalDoublePagePreviewScale(role: 'prev' | 'next'): number {
+    const activeRole: 'prev' | 'next' | '' = this.getVerticalDoublePageActivePreviewRole();
+    if (role !== activeRole) {
+      return 1.0;
+    }
+    if (this.isPageTurning || this.isCommittingPageTurn) {
+      return 1.0 - this.pageTurnProgress * 0.018;
+    }
+    return 0.985 + this.getVerticalDoublePagePullProgress() * 0.015;
+  }
+
+  private getVerticalDoublePageContentScaleFactor(): number {
+    if (!this.isDoublePageVerticalPortraitMode() || this.isPageTurning || this.isCommittingPageTurn) {
+      return 1.0;
+    }
+    return 1.0 - this.getVerticalDoublePagePullProgress() * 0.01;
+  }
+
+  private triggerVerticalDoublePageBoundaryTurn(action: 'next' | 'prev'): boolean {
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return false;
+    }
+    if (this.pageChangeCommitted || this.isPageTurning || this.isCommittingPageTurn) {
+      return false;
+    }
+
+    const maxIndex: number = this.chapter.pages.length - 1;
+    const pairStart: number = this.viewCurrentPageIndex - (this.viewCurrentPageIndex % 2);
+    const nextPairStart: number = Math.min(pairStart + 2, maxIndex - (maxIndex % 2));
+    const prevPairStart: number = Math.max(pairStart - 2, 0);
+    const targetPairStart: number = action === 'next' ? nextPairStart : prevPairStart;
+    const canTurn: boolean = action === 'next' ? targetPairStart > pairStart : targetPairStart < pairStart;
+
+    this.verticalDoublePageBoundaryLastTime = Date.now();
+
+    if (!canTurn) {
+      this.animateToPosition(0, 0);
+      this.resetVerticalDoublePageBoundaryState();
+      this.suppressExternalIndex = false;
+      if (this.callbacks.onChapterChange) {
+        this.callbacks.onChapterChange(action);
+      }
+      return true;
+    }
+
+    this.pageChangeCommitted = true;
+    this.swipeTriggered = true;
+    this.isCommittingPageTurn = true;
+    this.verticalDoublePageTurnAction = action;
+    this.verticalDoublePageReleasePullY = this.translateY;
+    this.pageTurnDirection = this.getVerticalDoublePageTurnDirection(action);
+    this.translateX = 0;
+    this.translateY = 0;
+    this.viewCurrentPageIndex = targetPairStart;
+    this.suppressExternalIndex = false;
+    this.resetVerticalDoublePageBoundaryState(false);
+    this.updateDoublePageIndices();
+    this.updateDoublePageDisplay();
+    this.updateDoublePagePreview();
+    this.syncVerticalDoublePagePositionForCurrentPair(false);
+    this.preloadDoublePageNeighbors();
+    this.ensureDoublePageImagesPreloaded();
+    this.updateVerticalDoublePageRenderSlots();
+    this.animatePageTurn();
+    if (this.callbacks.onPageChange) {
+      this.callbacks.onPageChange(targetPairStart);
+    }
+    logger.info(TAG, `双页竖向边界翻页: action=${action}, pair=${pairStart} -> ${targetPairStart}, view=${this.viewCurrentPageIndex}, prop旧值=${this.currentPageIndex}, direction=${this.pageTurnDirection}`);
+    setTimeout(() => { this.pageChangeCommitted = false; }, this.SWIPE_COOLDOWN_MS);
+    if (!this.showSoftTransitionOverlay) {
+      setTimeout(() => { this.isCommittingPageTurn = false; }, 260);
+    }
+    return true;
+  }
+
+  private forceRefreshVerticalDoublePageCurrentPair(reason: string): void {
+    if (!this.isDoublePageVerticalPortraitMode()) {
+      return;
+    }
+    this.syncVerticalDoublePagePositionForCurrentPair(false);
+    this.updateDoublePageIndices();
+    this.updateDoublePageDisplay();
+    this.updateDoublePagePreview();
+    this.renderEpoch = this.renderEpoch + 1;
+    this.updateVerticalDoublePageRenderSlots();
+    logger.debug(TAG, `双页竖向强制刷新当前页组: reason=${reason}, view=${this.viewCurrentPageIndex}, left=${this.leftPageIndex}, right=${this.rightPageIndex}, epoch=${this.renderEpoch}`);
+  }
+
+  private handleVerticalDoublePageBoundaryInteraction(rawDeltaY: number, previousOffsetY: number, absoluteOffsetY: number): boolean {
+    if (!this.isDoublePageVerticalPortraitMode()) {
+      return false;
+    }
+    if (this.currentScale > 1.0 || this.isPageTurning || this.isCommittingPageTurn) {
+      this.resetVerticalDoublePageBoundaryState();
+      return false;
+    }
+    if (!Number.isFinite(rawDeltaY) || Math.abs(rawDeltaY) < 0.1) {
+      return false;
+    }
+
+    const now: number = Date.now();
+    if (now - this.verticalDoublePageBoundaryLastTime < MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_COOLDOWN_MS) {
+      return false;
+    }
+
+    const edgeTolerance: number = MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_TOLERANCE_VP;
+    const maxScroll: number = this.getVerticalDoublePageMaxScroll();
+    const wasAtBottom: boolean = previousOffsetY >= Math.max(0, maxScroll - edgeTolerance);
+    const isAtBottom: boolean = absoluteOffsetY >= Math.max(0, maxScroll - edgeTolerance);
+    const wasAtTop: boolean = previousOffsetY <= edgeTolerance;
+    const isAtTop: boolean = absoluteOffsetY <= edgeTolerance;
+
+    let boundaryDirection: 'top' | 'bottom' | '' = '';
+    if (rawDeltaY > 0 && wasAtBottom && isAtBottom) {
+      boundaryDirection = 'bottom';
+    } else if (rawDeltaY < 0 && wasAtTop && isAtTop) {
+      boundaryDirection = 'top';
+    }
+
+    if (boundaryDirection === '') {
+      this.resetVerticalDoublePageBoundaryState();
+      return false;
+    }
+
+    if (this.verticalDoublePageBoundaryDirection !== boundaryDirection) {
+      this.verticalDoublePageBoundaryDirection = boundaryDirection;
+      this.verticalDoublePageBoundaryAccumulator = 0;
+    }
+
+    this.verticalDoublePageBoundaryAccumulator += Math.abs(rawDeltaY);
+    this.verticalDoublePageEdgeHintProgress = Math.min(
+      1.0,
+      this.verticalDoublePageBoundaryAccumulator / MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_TRIGGER_VP
+    );
+    const pendingAction: 'next' | 'prev' = this.getVerticalDoublePageBoundaryAction(boundaryDirection);
+    this.verticalDoublePageTurnAction = pendingAction;
+    const pullAccumulator: number = Math.max(
+      0,
+      this.verticalDoublePageBoundaryAccumulator - MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_HINT_VP
+    );
+    const pullDistance: number = Math.min(
+      MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_MAX_PULL_VP,
+      pullAccumulator * 1.15
+    );
+    this.translateY = boundaryDirection === 'top' ? pullDistance : -pullDistance;
+
+    return true;
+  }
+
+  private handleVerticalDoublePageScrollStop(): void {
+    if (!this.isDoublePageVerticalPortraitMode()) {
+      return;
+    }
+    if (this.currentScale > 1.0) {
+      this.verticalDoublePageLastScrollDeltaY = 0;
+      this.resetVerticalDoublePageBoundaryState();
+      return;
+    }
+    if (this.isPageTurning || this.isCommittingPageTurn) {
+      this.verticalDoublePageLastScrollDeltaY = 0;
+      return;
+    }
+
+    const now: number = Date.now();
+    if (now < this.verticalDoublePageProgrammaticScrollUntil) {
+      logger.debug(TAG, '双页竖向滚动结束来自程序同步，忽略边界翻页检测');
+      this.verticalDoublePageLastScrollDeltaY = 0;
+      this.resetVerticalDoublePageBoundaryState();
+      return;
+    }
+
+    const absoluteOffsetY: number = this.syncVerticalDoublePageScrollOffset();
+    const maxScroll: number = this.getVerticalDoublePageMaxScroll();
+    const edgeTolerance: number = MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_TOLERANCE_VP;
+    const atTop: boolean = absoluteOffsetY <= edgeTolerance;
+    const atBottom: boolean = absoluteOffsetY >= Math.max(0, maxScroll - edgeTolerance);
+
+    let boundaryDirection: 'top' | 'bottom' | '' = this.verticalDoublePageBoundaryDirection;
+    if (boundaryDirection === '' && atTop && this.verticalDoublePageLastScrollDeltaY < -0.1) {
+      boundaryDirection = 'top';
+    } else if (boundaryDirection === '' && atBottom && this.verticalDoublePageLastScrollDeltaY > 0.1) {
+      boundaryDirection = 'bottom';
+    }
+
+    logger.debug(TAG, `双页竖向滚动结束: offset=${absoluteOffsetY.toFixed(1)}, max=${maxScroll.toFixed(1)}, lastDelta=${this.verticalDoublePageLastScrollDeltaY.toFixed(1)}, atTop=${atTop}, atBottom=${atBottom}, boundary=${boundaryDirection}`);
+
+    if (boundaryDirection === '') {
+      if (!this.isPageTurning && !this.isCommittingPageTurn) {
+        this.translateY = 0;
+        this.verticalDoublePageTurnAction = null;
+      }
+      this.verticalDoublePageLastScrollDeltaY = 0;
+      this.resetVerticalDoublePageBoundaryState();
+      return;
+    }
+
+    if (this.verticalDoublePageBoundaryAccumulator < MangaViewer.VERTICAL_DOUBLE_PAGE_EDGE_TRIGGER_VP) {
+      this.animateToPosition(0, 0);
+      this.verticalDoublePageLastScrollDeltaY = 0;
+      this.resetVerticalDoublePageBoundaryState();
+      return;
+    }
+
+    const action: 'next' | 'prev' = this.getVerticalDoublePageBoundaryAction(boundaryDirection);
+    this.verticalDoublePageTurnAction = action;
+    if (!this.triggerVerticalDoublePageBoundaryTurn(action)) {
+      this.animateToPosition(0, 0);
+      this.resetVerticalDoublePageBoundaryState();
+    }
+    this.verticalDoublePageLastScrollDeltaY = 0;
+  }
+
   /**
    * 获取翻页方向
    */
   private getPageDirection(): 'horizontal' | 'vertical' {
-    if (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
-    this.isWebtoonMode()) {
+    if (this.isSinglePageVerticalPagingMode() ||
+      this.isDoublePageVerticalPortraitMode() ||
+      this.isWebtoonMode()) {
       return 'vertical';
     }
     return 'horizontal';
@@ -5947,6 +7500,10 @@ export struct MangaViewer {
       return `${page.id}_${pixelEpoch}_${sourceState}`;
     }
     return `${page.id}_${this.viewCurrentPageIndex}_${this.renderEpoch}_${pixelEpoch}_${sourceState}`;
+  }
+
+  private getVerticalDoublePageCurrentContentKey(): string {
+    return this.verticalDoubleCurrentContentKey;
   }
 
   private usesAlbumNoneVerticalAxis(): boolean {
@@ -7422,25 +8979,71 @@ export struct MangaViewer {
     if (!this.chapter || !this.chapter.pages) {
       return;
     }
-    const total: number = this.chapter.pages.length;
-    const current: number = Math.min(Math.max(0, this.viewCurrentPageIndex), total - 1);
-    const pairStart: number = current - (current % 2);
-    const maxIndex: number = total - 1;
-    const prevPairStart: number = Math.max(pairStart - 2, 0);
-    const nextPairStart: number = Math.min(pairStart + 2, maxIndex - (maxIndex % 2));
+    this.previewPrevSingleDoublePage = false;
+    this.previewNextSingleDoublePage = false;
 
-    if (prevPairStart >= 0 && prevPairStart < total) {
-      const prevLeft: MangaPage = this.chapter.pages[prevPairStart];
-      const prevRightIdx: number = prevPairStart + 1;
-      const prevRightValid: boolean = prevRightIdx < total;
-      this.previewPrevLeftPageId = prevLeft.id;
-      // 优先使用PixelMap（支持加密图片），否则使用URL
-      this.previewPrevLeftImageInput = this.getDisplayImageInput(prevLeft);
-      if (prevRightValid) {
-        const prevRight: MangaPage = this.chapter.pages[prevRightIdx];
-        this.previewPrevRightPageId = prevRight.id;
-        // 优先使用PixelMap（支持加密图片），否则使用URL
-        this.previewPrevRightImageInput = this.getDisplayImageInput(prevRight);
+    if (this.isDoublePageVerticalPortraitMode()) {
+      const total: number = this.chapter.pages.length;
+      const current: number = Math.min(Math.max(0, this.viewCurrentPageIndex), total - 1);
+      const pairStart: number = current - (current % 2);
+      const maxPairStart: number = total > 0 ? (total - 1) - ((total - 1) % 2) : -1;
+      const prevPairStart: number = pairStart >= 2 ? pairStart - 2 : -1;
+      const nextPairStart: number = pairStart + 2 <= maxPairStart ? pairStart + 2 : -1;
+
+      if (prevPairStart >= 0 && prevPairStart < total) {
+        const prevLeft: MangaPage = this.chapter.pages[prevPairStart];
+        const prevRightIdx: number = prevPairStart + 1;
+        const prevRightValid: boolean = prevRightIdx < total;
+        this.previewPrevLeftPageId = prevLeft.id;
+        this.previewPrevLeftImageInput = this.getDisplayImageInput(prevLeft);
+        if (prevRightValid) {
+          const prevRight: MangaPage = this.chapter.pages[prevRightIdx];
+          this.previewPrevRightPageId = prevRight.id;
+          this.previewPrevRightImageInput = this.getDisplayImageInput(prevRight);
+        } else {
+          this.previewPrevRightPageId = '';
+          this.previewPrevRightImageInput = $r('app.media.ic_image');
+        }
+      } else {
+        this.previewPrevLeftPageId = '';
+        this.previewPrevLeftImageInput = $r('app.media.ic_image');
+        this.previewPrevRightPageId = '';
+        this.previewPrevRightImageInput = $r('app.media.ic_image');
+      }
+
+      if (nextPairStart >= 0 && nextPairStart < total) {
+        const nextLeft: MangaPage = this.chapter.pages[nextPairStart];
+        const nextRightIdx: number = nextPairStart + 1;
+        const nextRightValid: boolean = nextRightIdx < total;
+        this.previewNextLeftPageId = nextLeft.id;
+        this.previewNextLeftImageInput = this.getDisplayImageInput(nextLeft);
+        if (nextRightValid) {
+          const nextRight: MangaPage = this.chapter.pages[nextRightIdx];
+          this.previewNextRightPageId = nextRight.id;
+          this.previewNextRightImageInput = this.getDisplayImageInput(nextRight);
+        } else {
+          this.previewNextRightPageId = '';
+          this.previewNextRightImageInput = $r('app.media.ic_image');
+        }
+      } else {
+        this.previewNextLeftPageId = '';
+        this.previewNextLeftImageInput = $r('app.media.ic_image');
+        this.previewNextRightPageId = '';
+        this.previewNextRightImageInput = $r('app.media.ic_image');
+      }
+      return;
+    }
+
+    const previousPlan: DoublePageSmartDisplayPlan = this.resolvePreviousDoublePageSmartPlan(this.viewCurrentPageIndex);
+    if (previousPlan.leftPageIndex >= 0 && previousPlan.leftPageIndex < this.chapter.pages.length) {
+      const previousLeftPage: MangaPage = this.chapter.pages[previousPlan.leftPageIndex];
+      this.previewPrevLeftPageId = previousLeftPage.id;
+      this.previewPrevLeftImageInput = this.getDisplayImageInput(previousLeftPage);
+      this.previewPrevSingleDoublePage = previousPlan.mode === DoublePageSmartDisplayMode.SINGLE;
+      if (previousPlan.rightPageIndex >= 0 && previousPlan.rightPageIndex < this.chapter.pages.length) {
+        const previousRightPage: MangaPage = this.chapter.pages[previousPlan.rightPageIndex];
+        this.previewPrevRightPageId = previousRightPage.id;
+        this.previewPrevRightImageInput = this.getDisplayImageInput(previousRightPage);
       } else {
         this.previewPrevRightPageId = '';
         this.previewPrevRightImageInput = $r('app.media.ic_image');
@@ -7452,18 +9055,16 @@ export struct MangaViewer {
       this.previewPrevRightImageInput = $r('app.media.ic_image');
     }
 
-    if (nextPairStart >= 0 && nextPairStart < total) {
-      const nextLeft: MangaPage = this.chapter.pages[nextPairStart];
-      const nextRightIdx: number = nextPairStart + 1;
-      const nextRightValid: boolean = nextRightIdx < total;
-      this.previewNextLeftPageId = nextLeft.id;
-      // 优先使用PixelMap（支持加密图片），否则使用URL
-      this.previewNextLeftImageInput = this.getDisplayImageInput(nextLeft);
-      if (nextRightValid) {
-        const nextRight: MangaPage = this.chapter.pages[nextRightIdx];
-        this.previewNextRightPageId = nextRight.id;
-        // 优先使用PixelMap（支持加密图片），否则使用URL
-        this.previewNextRightImageInput = this.getDisplayImageInput(nextRight);
+    const nextPlan: DoublePageSmartDisplayPlan = this.resolveNextDoublePageSmartPlan(this.viewCurrentPageIndex);
+    if (nextPlan.leftPageIndex >= 0 && nextPlan.leftPageIndex < this.chapter.pages.length) {
+      const nextLeftPage: MangaPage = this.chapter.pages[nextPlan.leftPageIndex];
+      this.previewNextLeftPageId = nextLeftPage.id;
+      this.previewNextLeftImageInput = this.getDisplayImageInput(nextLeftPage);
+      this.previewNextSingleDoublePage = nextPlan.mode === DoublePageSmartDisplayMode.SINGLE;
+      if (nextPlan.rightPageIndex >= 0 && nextPlan.rightPageIndex < this.chapter.pages.length) {
+        const nextRightPage: MangaPage = this.chapter.pages[nextPlan.rightPageIndex];
+        this.previewNextRightPageId = nextRightPage.id;
+        this.previewNextRightImageInput = this.getDisplayImageInput(nextRightPage);
       } else {
         this.previewNextRightPageId = '';
         this.previewNextRightImageInput = $r('app.media.ic_image');
@@ -7505,6 +9106,7 @@ export struct MangaViewer {
       this.doubleRightPageId = '';
       this.doubleRightImageInput = $r('app.media.ic_image');
     }
+    this.updateVerticalDoublePageRenderSlots();
   }
   private invalidatePixelMapIfSourceChanged(page: MangaPage): void {
     const id: string = page.id;
@@ -7960,6 +9562,9 @@ export struct MangaViewer {
     // 检查是否是当前可见页面
     const isVisible = this.isPageCurrentlyVisible(page);
     if (!isVisible) {
+      if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE && this.shouldUseSmartDoublePageLayout()) {
+        this.updateDoublePagePreview();
+      }
       if (this.shouldUseAlbumNoneTransition()) {
         const prevIdx: number = this.getPrevPageIndex();
         const nextIdx: number = this.getNextPageIndex();
@@ -7983,7 +9588,13 @@ export struct MangaViewer {
 
     // 根据阅读模式刷新对应的显示
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
-      this.updateDoublePageDisplay();
+      if (this.shouldUseSmartDoublePageLayout()) {
+        this.updateDoublePageIndices();
+        this.updateDoublePageDisplay();
+        this.updateDoublePagePreview();
+      } else {
+        this.updateDoublePageDisplay();
+      }
     } else {
       this.updateSinglePageDisplay();
       if (this.shouldUseSoftNoneCrossfade() && this.showSoftTransitionOverlay && pageIdx === this.viewCurrentPageIndex) {
@@ -8096,6 +9707,30 @@ export struct MangaViewer {
    */
   private commitPagePixelMap(pageId: string, pixelMap: image.PixelMap): void {
     this.pagePixelMaps.set(pageId, pixelMap);
+    const pageIndex: number = this.getPageIndexById(pageId);
+    if (pageIndex >= 0 && this.chapter && this.chapter.pages && pageIndex < this.chapter.pages.length) {
+      const page: MangaPage = this.chapter.pages[pageIndex];
+      try {
+        const imageInfo = pixelMap.getImageInfoSync();
+        if (imageInfo && imageInfo.size && imageInfo.size.width > 0 && imageInfo.size.height > 0) {
+          page.width = imageInfo.size.width;
+          page.height = imageInfo.size.height;
+          const previousState: ImageLoadState | undefined = this.imageLoadStates.get(pageId);
+          const nextState: ImageLoadState = {
+            isLoading: previousState ? previousState.isLoading : false,
+            isLoaded: previousState ? previousState.isLoaded : false,
+            dimensions: {
+              width: imageInfo.size.width,
+              height: imageInfo.size.height
+            } as dimensions,
+            error: previousState ? previousState.error : undefined
+          } as ImageLoadState;
+          this.imageLoadStates.set(pageId, nextState);
+          this.imageLoadStates = new Map(this.imageLoadStates);
+        }
+      } catch (_error) {
+      }
+    }
     if (this.isWebtoonMode()) {
       const dataIndex = this.findWebtoonDataIndex(pageId);
       if (dataIndex >= 0) {
@@ -11169,6 +12804,49 @@ export struct MangaViewer {
     return this.chapter.pages.length;
   }
 
+  private getDoublePageIndicatorFirstLabel(): string {
+    if (this.isDoublePageVerticalPortraitMode()) {
+      const topPageIndex: number = this.getTopPageIndex();
+      return `上${topPageIndex >= 0 ? topPageIndex + 1 : '-'}`;
+    }
+    if (this.isDoublePageSingleDisplayActive()) {
+      return `${this.leftPageIndex >= 0 ? this.leftPageIndex + 1 : '-'}`;
+    }
+    return `${this.leftPageIndex >= 0 ? this.leftPageIndex + 1 : '-'}`;
+  }
+
+  private getDoublePageIndicatorSecondLabel(): string {
+    if (this.isDoublePageVerticalPortraitMode()) {
+      const bottomPageIndex: number = this.getBottomPageIndex();
+      return `下${bottomPageIndex >= 0 ? bottomPageIndex + 1 : '-'}`;
+    }
+    if (this.isDoublePageSingleDisplayActive()) {
+      return '';
+    }
+    return `${this.rightPageIndex >= 0 ? this.rightPageIndex + 1 : '-'}`;
+  }
+
+  private getDoublePageIndicatorLayoutStatus(): string {
+    if (this.isDoublePageVerticalPortraitMode()) {
+      return `上下双页·${this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP ? '下→上' : '上→下'}`;
+    }
+
+    switch (this.currentDoublePageDisplayReason) {
+      case DoublePageSmartDisplayReason.LANDSCAPE_SPREAD:
+        return '单显·横向跨页';
+      case DoublePageSmartDisplayReason.ADJACENT_LANDSCAPE:
+        return '单显·相邻大图保护';
+      case DoublePageSmartDisplayReason.LARGE_SINGLE_PAGE:
+        return '单显·大图';
+      case DoublePageSmartDisplayReason.ASPECT_MISMATCH:
+        return '单显·比例校正';
+      case DoublePageSmartDisplayReason.TAIL_PAGE:
+        return '单显·尾页';
+      default:
+        return '双页·智能配对';
+    }
+  }
+
   /**
    * 构建双页模式指示器
    */
@@ -11176,19 +12854,21 @@ export struct MangaViewer {
   buildDoublePageIndicator() {
     Column() {
       Row() {
-        Text(`${this.leftPageIndex >= 0 ? this.leftPageIndex + 1 : '-'}`)
+        Text(this.getDoublePageIndicatorFirstLabel())
           .fontSize(12)
           .fontColor(colorMap.textOnAccent)
           .fontWeight(FontWeight.Bold)
 
-        Text(' | ')
-          .fontSize(10)
-          .fontColor(colorMap.textSecondary)
+        if (!this.isDoublePageSingleDisplayActive()) {
+          Text(' | ')
+            .fontSize(10)
+            .fontColor(colorMap.textSecondary)
 
-        Text(`${this.rightPageIndex >= 0 ? this.rightPageIndex + 1 : '-'}`)
-          .fontSize(12)
-          .fontColor(colorMap.textOnAccent)
-          .fontWeight(FontWeight.Bold)
+          Text(this.getDoublePageIndicatorSecondLabel())
+            .fontSize(12)
+            .fontColor(colorMap.textOnAccent)
+            .fontWeight(FontWeight.Bold)
+        }
 
         Text(' / ')
           .fontSize(10)
@@ -11199,6 +12879,11 @@ export struct MangaViewer {
           .fontSize(10)
           .fontColor(colorMap.textSecondary)
       }
+
+      Text(this.getDoublePageIndicatorLayoutStatus())
+        .fontSize(9)
+        .fontColor(colorMap.accent)
+        .margin({ top: 2 })
     }
     .backgroundColor(colorMap.backgroundOverlay)
     .borderRadius(12)
@@ -11375,6 +13060,24 @@ export struct MangaViewer {
    */
   public getMangaViewerInstance(): MangaViewer {
     return this;
+  }
+
+  public getCurrentViewPageIndex(): number {
+    return this.viewCurrentPageIndex;
+  }
+
+  public syncVerticalDoublePageToPageIndex(pageIndex: number, reason: string): void {
+    if (!this.isDoublePageVerticalPortraitMode()) {
+      return;
+    }
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return;
+    }
+    const maxIndex: number = this.chapter.pages.length - 1;
+    const safeIndex: number = Math.max(0, Math.min(pageIndex, maxIndex));
+    const pairStart: number = safeIndex - (safeIndex % 2);
+    this.viewCurrentPageIndex = pairStart;
+    this.forceRefreshVerticalDoublePageCurrentPair(reason);
   }
 
   build() {

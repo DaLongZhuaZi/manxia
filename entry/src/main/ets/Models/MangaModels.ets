@@ -186,6 +186,14 @@ export enum DoublePagePortraitLayout {
 }
 
 /**
+ * 双页竖屏上下组合翻页方向
+ */
+export enum DoublePageVerticalDirection {
+  TOP_TO_BOTTOM = 'TOP_TO_BOTTOM',  // 上方为上一对页，下方为下一对页
+  BOTTOM_TO_TOP = 'BOTTOM_TO_TOP'   // 上方为下一对页，下方为上一对页
+}
+
+/**
  * 阅读设置接口
  */
 export interface ReadingSettings {
@@ -197,6 +205,12 @@ export interface ReadingSettings {
   brightness: number;
   /** 是否保持屏幕常亮 */
   keepScreenOn: boolean;
+  /** 是否锁定设备屏幕方向 */
+  lockDeviceOrientation?: boolean;
+  /** 是否锁定当前阅读模式，不随设备横竖屏临时切换 */
+  lockMode?: boolean;
+  /** 兼容旧字段：是否锁定当前阅读模式 */
+  lockOrientation?: boolean;
   /** 页面间距 */
   pageSpacing: number;
   /** 是否显示页面信息 */
@@ -213,6 +227,8 @@ export interface ReadingSettings {
   pageTurnAnimation: PageTurnAnimationType;
   /** 双页竖屏组合方式 */
   doublePagePortraitLayout: DoublePagePortraitLayout;
+  /** 双页竖屏上下组合翻页方向 */
+  doublePageVerticalDirection?: DoublePageVerticalDirection;
   /** 滤镜设置 */
   filterSettings: FilterSettings;
   /** 音量键翻页 */
@@ -399,6 +415,9 @@ export const DEFAULT_READING_SETTINGS: ReadingSettings = {
   readingDirection: ReadingDirection.LEFT_TO_RIGHT,
   brightness: 1.0,  // 范围 0.1-2.0，1.0 为默认亮度（对应系统亮度 0.5）
   keepScreenOn: true,
+  lockDeviceOrientation: false,
+  lockMode: false,
+  lockOrientation: false,
   pageSpacing: 0,
   showPageInfo: true,
   showPageIndicator: true,
@@ -407,6 +426,7 @@ export const DEFAULT_READING_SETTINGS: ReadingSettings = {
   skipIntroPages: 0,
   pageTurnAnimation: PageTurnAnimationType.SLIDE,
   doublePagePortraitLayout: DoublePagePortraitLayout.VERTICAL,
+  doublePageVerticalDirection: DoublePageVerticalDirection.TOP_TO_BOTTOM,
   filterSettings: {
     enabled: false,
     contrast: 100,

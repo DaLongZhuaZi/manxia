@@ -87,6 +87,7 @@ export struct EBookReadingSettingsPanel {
       tapToTurn: this.settings.tapToTurn,
       volumeKeyNavigation: this.settings.volumeKeyNavigation,
       keepScreenOn: this.settings.keepScreenOn,
+      lockDeviceOrientation: this.settings.lockDeviceOrientation ?? false,
       showPageNumber: this.settings.showPageNumber,
       showProgress: this.settings.showProgress,
       showTime: this.settings.showTime,
@@ -217,6 +218,18 @@ export struct EBookReadingSettingsPanel {
     const newSettings = this.copySettings();
     newSettings.pageMode = mode;
     this.onSettingsChange(newSettings);
+  }
+
+  private updateDeviceOrientationLock(enabled: boolean): void {
+    const newSettings = this.copySettings();
+    newSettings.lockDeviceOrientation = enabled;
+    this.onSettingsChange(newSettings);
+  }
+
+  private getDeviceOrientationLockHint(): string {
+    return (this.settings.lockDeviceOrientation ?? false)
+      ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
+      : '关闭后会跟随系统旋转策略，适合临时横屏阅读';
   }
 
   build() {
@@ -916,6 +929,26 @@ export struct EBookReadingSettingsPanel {
       }
       .width('100%')
 
+      Row() {
+        Column() {
+          Text('锁定方向')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+          Text(this.getDeviceOrientationLockHint())
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.settings.lockDeviceOrientation ?? false })
+          .onChange((isOn: boolean) => {
+            this.updateDeviceOrientationLock(isOn);
+          })
+      }
+      .width('100%')
+
       // 保存间隔
       if (this.settings.autoSave) {
         Row() {
@@ -983,6 +1016,7 @@ export struct EBookReadingSettingsPanel {
       tapToTurn: DEFAULT_EBOOK_READING_SETTINGS.tapToTurn,
       volumeKeyNavigation: DEFAULT_EBOOK_READING_SETTINGS.volumeKeyNavigation,
       keepScreenOn: DEFAULT_EBOOK_READING_SETTINGS.keepScreenOn,
+      lockDeviceOrientation: DEFAULT_EBOOK_READING_SETTINGS.lockDeviceOrientation ?? false,
       showPageNumber: DEFAULT_EBOOK_READING_SETTINGS.showPageNumber,
       showProgress: DEFAULT_EBOOK_READING_SETTINGS.showProgress,
       showTime: DEFAULT_EBOOK_READING_SETTINGS.showTime,

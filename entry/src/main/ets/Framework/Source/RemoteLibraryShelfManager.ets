@@ -120,6 +120,7 @@ export class RemoteLibraryShelfManager {
         skipIntroPages: manga.readingSettings.skipIntroPages,
         pageTurnAnimation: manga.readingSettings.pageTurnAnimation,
         doublePagePortraitLayout: manga.readingSettings.doublePagePortraitLayout,
+        doublePageVerticalDirection: manga.readingSettings.doublePageVerticalDirection,
         filterSettings: {
           enabled: manga.readingSettings.filterSettings.enabled,
           brightness: manga.readingSettings.filterSettings.brightness,

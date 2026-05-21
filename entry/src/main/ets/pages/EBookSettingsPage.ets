@@ -117,6 +117,7 @@ export struct EBookSettingsPage {
   @State settingTapToTurn: boolean = true;
   @State settingVolumeKeyNavigation: boolean = true;
   @State settingKeepScreenOn: boolean = false;
+  @State settingLockDeviceOrientation: boolean = false;
   // 显示设置
   @State settingShowPageNumber: boolean = true;
   @State settingShowProgress: boolean = false;
@@ -340,6 +341,7 @@ export struct EBookSettingsPage {
     this.settingTapToTurn = settings.tapToTurn ?? true;
     this.settingVolumeKeyNavigation = settings.volumeKeyNavigation ?? true;
     this.settingKeepScreenOn = settings.keepScreenOn ?? false;
+    this.settingLockDeviceOrientation = settings.lockDeviceOrientation ?? false;
     this.settingShowPageNumber = settings.showPageNumber ?? true;
     this.settingShowProgress = settings.showProgress ?? false;
     this.settingShowTime = settings.showTime ?? true;
@@ -436,6 +438,7 @@ export struct EBookSettingsPage {
             this.settingTapToTurn = globalTextTapToTurn;
             this.settingVolumeKeyNavigation = globalTextVolumeKeyNav;
             this.settingKeepScreenOn = globalTextKeepScreenOn;
+            this.settingLockDeviceOrientation = false;
             this.settingShowPageNumber = true;
             this.settingShowProgress = false;
             this.settingShowTime = true;
@@ -471,6 +474,7 @@ export struct EBookSettingsPage {
             this.settingTapToTurn = true;
             this.settingVolumeKeyNavigation = true;
             this.settingKeepScreenOn = false;
+            this.settingLockDeviceOrientation = false;
             this.settingShowPageNumber = true;
             this.settingShowProgress = false;
             this.settingShowTime = true;
@@ -519,6 +523,7 @@ export struct EBookSettingsPage {
           this.settingTapToTurn = ebook.readingSettings.tapToTurn ?? true;
           this.settingVolumeKeyNavigation = ebook.readingSettings.volumeKeyNavigation ?? true;
           this.settingKeepScreenOn = ebook.readingSettings.keepScreenOn ?? false;
+          this.settingLockDeviceOrientation = ebook.readingSettings.lockDeviceOrientation ?? false;
           // 显示设置
           this.settingShowPageNumber = ebook.readingSettings.showPageNumber ?? true;
           this.settingShowProgress = ebook.readingSettings.showProgress ?? false;
@@ -559,6 +564,7 @@ export struct EBookSettingsPage {
           this.settingTapToTurn = globalTextTapToTurn;
           this.settingVolumeKeyNavigation = globalTextVolumeKeyNav;
           this.settingKeepScreenOn = globalTextKeepScreenOn;
+          this.settingLockDeviceOrientation = false;
           this.settingShowPageNumber = true;
           this.settingShowProgress = false;
           this.settingShowTime = true;
@@ -594,6 +600,7 @@ export struct EBookSettingsPage {
           this.settingTapToTurn = true;
           this.settingVolumeKeyNavigation = true;
           this.settingKeepScreenOn = false;
+          this.settingLockDeviceOrientation = false;
           this.settingShowPageNumber = true;
           this.settingShowProgress = false;
           this.settingShowTime = true;
@@ -675,6 +682,7 @@ export struct EBookSettingsPage {
         tapToTurn: this.settingTapToTurn,
         volumeKeyNavigation: this.settingVolumeKeyNavigation,
         keepScreenOn: this.settingKeepScreenOn,
+        lockDeviceOrientation: this.settingLockDeviceOrientation,
         // 显示设置
         showPageNumber: this.settingShowPageNumber,
         showProgress: this.settingShowProgress,
@@ -1426,6 +1434,31 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingAutoSave })
           .onChange((isOn: boolean) => {
             this.settingAutoSave = isOn;
+            this.saveSettingsImmediately();
+          })
+      }
+      .width('100%')
+
+      Row() {
+        Column() {
+          Text('锁定方向')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Text(this.settingLockDeviceOrientation
+            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
+            : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.settingLockDeviceOrientation })
+          .onChange((isOn: boolean) => {
+            this.settingLockDeviceOrientation = isOn;
             this.saveSettingsImmediately();
           })
       }
@@ -2618,6 +2651,31 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingKeepScreenOn })
           .onChange((isOn: boolean) => {
             this.settingKeepScreenOn = isOn;
+            this.saveSettingsImmediately();
+          })
+      }
+      .width('100%')
+
+      Row() {
+        Column() {
+          Text('锁定方向')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Text(this.settingLockDeviceOrientation
+            ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
+            : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.settingLockDeviceOrientation })
+          .onChange((isOn: boolean) => {
+            this.settingLockDeviceOrientation = isOn;
             this.saveSettingsImmediately();
           })
       }
