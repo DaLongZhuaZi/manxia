@@ -1992,6 +1992,7 @@ struct ReadingAnalyticsPage {
         contentType: UnifiedContentType.MANGA,
         contentId: mangaId,
         cachedTitle: title,
+        cachedCoverPath: this.getUnifiedDetailCachedCoverPath(coverPath),
         cachedCover: coverPath
       };
       this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
@@ -2016,6 +2017,7 @@ struct ReadingAnalyticsPage {
         contentType: UnifiedContentType.EBOOK,
         contentId: ebookId,
         cachedTitle: title,
+        cachedCoverPath: this.getUnifiedDetailCachedCoverPath(coverPath),
         cachedCover: coverPath
       };
       this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
@@ -2049,6 +2051,7 @@ struct ReadingAnalyticsPage {
         contentId: bookUrl,
         sourceId: sourceId,
         cachedTitle: title,
+        cachedCoverPath: this.getUnifiedDetailCachedCoverPath(coverPath),
         cachedCover: coverPath,
         cachedAuthor: author
       };
@@ -2074,6 +2077,23 @@ struct ReadingAnalyticsPage {
     } catch (error) {
       logger.error(TAG, '返回失败', String(error));
     }
+  }
+
+  private getUnifiedDetailCachedCoverPath(coverPath: string): string | undefined {
+    const normalizedPath: string = coverPath.trim();
+    if (normalizedPath.length <= 0) {
+      return undefined;
+    }
+    if (normalizedPath.startsWith('http://') || normalizedPath.startsWith('https://')) {
+      return undefined;
+    }
+    if (normalizedPath.startsWith('app.media.') || normalizedPath.startsWith('$r(')) {
+      return undefined;
+    }
+    if (normalizedPath.startsWith('/') || normalizedPath.startsWith('file://')) {
+      return normalizedPath;
+    }
+    return undefined;
   }
 
   /**

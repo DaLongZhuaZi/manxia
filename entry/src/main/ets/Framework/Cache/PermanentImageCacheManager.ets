@@ -51,10 +51,11 @@ export class PermanentImageCacheManager {
   private dbManager: DatabaseManager;
   private permanentCachePath: string = '';
   private tempCachePath: string = '';
+  private pendingContextLogged: boolean = false;
 
   private constructor() {
     this.dbManager = DatabaseManager.getInstance();
-    this.initCachePaths();
+    this.initCachePaths('constructor');
   }
 
   public static getInstance(): PermanentImageCacheManager {
@@ -67,15 +68,19 @@ export class PermanentImageCacheManager {
   /**
    * 初始化缓存路径
    */
-  private async initCachePaths(): Promise<void> {
+  private initCachePaths(reason: string): boolean {
     try {
       const context = uiContextManager.getAbilityContext();
       if (!context) {
-        logger.warn(TAG, 'Context未初始化，延迟初始化缓存路径');
-        return;
+        if (!this.pendingContextLogged) {
+          logger.debug(TAG, `Context未初始化，缓存路径等待后续按需初始化: reason=${reason}`);
+          this.pendingContextLogged = true;
+        }
+        return false;
       }
       this.permanentCachePath = context.filesDir + '/permanent_cache';
       this.tempCachePath = context.cacheDir + '/temp_image_cache';
+      this.pendingContextLogged = false;
       
       // 确保目录存在
       if (!fs.accessSync(this.permanentCachePath)) {
@@ -87,9 +92,18 @@ export class PermanentImageCacheManager {
         fs.mkdirSync(this.tempCachePath);
         logger.info(TAG, `创建临时缓存目录: ${this.tempCachePath}`);
       }
+      return true;
     } catch (error) {
       logger.error(TAG, `初始化缓存路径失败: ${error}`);
+      return false;
     }
+  }
+
+  private ensureCachePathsReady(reason: string): boolean {
+    if (this.permanentCachePath.length > 0 && this.tempCachePath.length > 0) {
+      return true;
+    }
+    return this.initCachePaths(reason);
   }
 
   /**
@@ -129,6 +143,9 @@ export class PermanentImageCacheManager {
     pageIndex: number,
     imageUrl: string
   ): string {
+    if (!this.ensureCachePathsReady('getPermanentImagePath')) {
+      return '';
+    }
     // 从URL提取扩展名
     let ext = '.jpg';
     const urlLower = imageUrl.toLowerCase();
@@ -157,6 +174,9 @@ export class PermanentImageCacheManager {
     pageIndex: number,
     imageUrl: string
   ): string {
+    if (!this.ensureCachePathsReady('getTempImagePath')) {
+      return '';
+    }
     let ext = '.jpg';
     const urlLower = imageUrl.toLowerCase();
     if (urlLower.includes('.png')) {
@@ -205,12 +225,19 @@ export class PermanentImageCacheManager {
     imageData: ArrayBuffer
   ): Promise<string | null> {
     try {
+      if (!this.ensureCachePathsReady('saveImageToCache')) {
+        logger.warn(TAG, '缓存路径尚未就绪，跳过本次图片缓存写入');
+        return null;
+      }
       const config = await this.getSourceCacheConfig(sourceId);
       
       // 根据配置决定保存到永久缓存还是临时缓存
       const targetPath = config.downloadWhileReading
         ? this.getPermanentImagePath(sourceId, mangaId, chapterId, pageIndex, imageUrl)
         : this.getTempImagePath(sourceId, mangaId, chapterId, pageIndex, imageUrl);
+      if (targetPath.length <= 0) {
+        return null;
+      }
       
       // 如果文件已存在，直接返回
       if (fs.accessSync(targetPath)) {
@@ -366,6 +393,9 @@ export class PermanentImageCacheManager {
     const configs: SourceCacheConfig[] = [];
     
     try {
+      if (!this.ensureCachePathsReady('getAllSourceConfigs')) {
+        return configs;
+      }
       if (!fs.accessSync(this.permanentCachePath)) {
         return configs;
       }
@@ -399,6 +429,9 @@ export class PermanentImageCacheManager {
     const stats: MangaCacheStats[] = [];
     
     try {
+      if (!this.ensureCachePathsReady('getSourceMangaCacheStats')) {
+        return stats;
+      }
       const sourcePath = `${this.permanentCachePath}/source_${sourceId}`;
       if (!fs.accessSync(sourcePath)) {
         return stats;
@@ -453,6 +486,9 @@ export class PermanentImageCacheManager {
    */
   async deleteMangaCache(sourceId: number, mangaId: string): Promise<boolean> {
     try {
+      if (!this.ensureCachePathsReady('deleteMangaCache')) {
+        return false;
+      }
       const safeMangaId = mangaId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const mangaPath = `${this.permanentCachePath}/source_${sourceId}/manga_${safeMangaId}`;
       
@@ -508,6 +544,9 @@ export class PermanentImageCacheManager {
     imageUrl: string
   ): Promise<string | null> {
     try {
+      if (!this.ensureCachePathsReady('getCachedImagePath')) {
+        return null;
+      }
       // 先检查永久缓存
       const permanentPath = this.getPermanentImagePath(sourceId, mangaId, chapterId, pageIndex, imageUrl);
       if (fs.accessSync(permanentPath)) {
@@ -531,6 +570,9 @@ export class PermanentImageCacheManager {
    */
   async cleanMangaCache(sourceId: number, mangaId: string): Promise<void> {
     try {
+      if (!this.ensureCachePathsReady('cleanMangaCache')) {
+        return;
+      }
       const safeMangaId = mangaId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const mangaPath = `${this.permanentCachePath}/source_${sourceId}/manga_${safeMangaId}`;
       

@@ -11,6 +11,7 @@ import {
   ReadingMode,
   ReadingDirection,
   DoublePagePortraitLayout,
+  DoublePageVerticalDirection,
   PageTurnAnimationType
 } from '../Models/MangaModels';
 import { getFontManager, SystemFont, CustomFont } from '../Framework/Managers/FontManager';
@@ -61,6 +62,7 @@ export struct EpubReaderSettingsPanel {
     tapToTurn: true,
     volumeKeyNavigation: true,
     keepScreenOn: false,
+    lockDeviceOrientation: false,
     showPageNumber: true,
     showProgress: false,
     showTime: true,
@@ -75,6 +77,9 @@ export struct EpubReaderSettingsPanel {
     readingDirection: DEFAULT_READING_SETTINGS.readingDirection,
     brightness: DEFAULT_READING_SETTINGS.brightness,
     keepScreenOn: DEFAULT_READING_SETTINGS.keepScreenOn,
+    lockDeviceOrientation: DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false,
+    lockMode: DEFAULT_READING_SETTINGS.lockMode ?? DEFAULT_READING_SETTINGS.lockOrientation ?? false,
+    lockOrientation: DEFAULT_READING_SETTINGS.lockMode ?? DEFAULT_READING_SETTINGS.lockOrientation ?? false,
     pageSpacing: DEFAULT_READING_SETTINGS.pageSpacing,
     showPageInfo: DEFAULT_READING_SETTINGS.showPageInfo,
     showPageIndicator: DEFAULT_READING_SETTINGS.showPageIndicator,
@@ -83,6 +88,7 @@ export struct EpubReaderSettingsPanel {
     skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
     pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
     doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
+    doublePageVerticalDirection: DEFAULT_READING_SETTINGS.doublePageVerticalDirection,
     filterSettings: {
       enabled: DEFAULT_READING_SETTINGS.filterSettings.enabled,
       brightness: DEFAULT_READING_SETTINGS.filterSettings.brightness,
@@ -159,6 +165,7 @@ export struct EpubReaderSettingsPanel {
       tapToTurn: settings.tapToTurn ?? true,
       volumeKeyNavigation: settings.volumeKeyNavigation ?? true,
       keepScreenOn: settings.keepScreenOn ?? false,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? false,
       showPageNumber: settings.showPageNumber ?? true,
       showProgress: settings.showProgress ?? false,
       showTime: settings.showTime ?? true,
@@ -183,6 +190,9 @@ export struct EpubReaderSettingsPanel {
       readingDirection: readingDirection,
       brightness: settings.brightness,
       keepScreenOn: settings.keepScreenOn,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false,
+      lockMode: settings.lockMode ?? settings.lockOrientation ?? DEFAULT_READING_SETTINGS.lockMode ?? false,
+      lockOrientation: settings.lockMode ?? settings.lockOrientation ?? DEFAULT_READING_SETTINGS.lockMode ?? false,
       pageSpacing: settings.pageSpacing,
       showPageInfo: settings.showPageInfo,
       showPageIndicator: settings.showPageIndicator,
@@ -191,6 +201,7 @@ export struct EpubReaderSettingsPanel {
       skipIntroPages: settings.skipIntroPages,
       pageTurnAnimation: settings.pageTurnAnimation,
       doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      doublePageVerticalDirection: settings.doublePageVerticalDirection ?? DoublePageVerticalDirection.TOP_TO_BOTTOM,
       filterSettings: {
         enabled: settings.filterSettings.enabled,
         brightness: settings.filterSettings.brightness,
@@ -220,6 +231,10 @@ export struct EpubReaderSettingsPanel {
     this.current.pageTurnAnimation = this.currentPageSettings.pageTurnAnimation;
     this.current.volumeKeyNavigation = this.currentPageSettings.volumeKeyNavigation;
     this.current.keepScreenOn = this.currentPageSettings.keepScreenOn;
+    const deviceOrientationLocked: boolean = (this.current.lockDeviceOrientation ?? false) ||
+      (this.currentPageSettings.lockDeviceOrientation ?? false);
+    this.current.lockDeviceOrientation = deviceOrientationLocked;
+    this.currentPageSettings.lockDeviceOrientation = deviceOrientationLocked;
   }
 
   private loadFontLists(): void {
@@ -480,12 +495,27 @@ export struct EpubReaderSettingsPanel {
     this.notifySharedSettings();
   }
 
+  private updateDeviceOrientationLock(enabled: boolean): void {
+    this.current.lockDeviceOrientation = enabled;
+    this.currentPageSettings.lockDeviceOrientation = enabled;
+    this.notifySharedSettings();
+  }
+
+  private getDeviceOrientationLockHint(): string {
+    return (this.current.lockDeviceOrientation ?? false)
+      ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
+      : '关闭后会跟随系统旋转策略，适合临时横屏阅读';
+  }
+
   private resetAllSettings(): void {
     this.current = this.createTextSettingsSnapshot(DEFAULT_EBOOK_READING_SETTINGS);
     this.currentPageSettings = this.createPageSettingsSnapshot(DEFAULT_READING_SETTINGS);
     this.current.pageTurnAnimation = this.currentPageSettings.pageTurnAnimation;
     this.current.volumeKeyNavigation = this.currentPageSettings.volumeKeyNavigation;
     this.current.keepScreenOn = this.currentPageSettings.keepScreenOn;
+    this.current.lockDeviceOrientation = this.currentPageSettings.lockDeviceOrientation ??
+      this.current.lockDeviceOrientation ??
+      false;
     this.notifySharedSettings();
   }
 
@@ -807,6 +837,29 @@ export struct EpubReaderSettingsPanel {
           .selectedColor($r('app.color.accent_primary'))
           .onChange((isOn: boolean) => {
             this.updateKeepScreenOn(isOn);
+          })
+      }
+      .width('100%')
+
+      Row() {
+        Column() {
+          Text('锁定方向')
+            .fontSize(14)
+            .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
+          Text(this.getDeviceOrientationLockHint())
+            .fontSize(11)
+            .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.current.lockDeviceOrientation ?? false })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.updateDeviceOrientationLock(isOn);
           })
       }
       .width('100%')

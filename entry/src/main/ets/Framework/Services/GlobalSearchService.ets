@@ -7,7 +7,7 @@
 
 import { logger } from '../../Utils/Logger';
 import { DataService } from './DataService';
-import { DataManager, ComicInfo } from '../Data/DataManager';
+import { ComicInfo } from '../Data/DataManager';
 import { ComicInfo as OnlineComicInfo } from '../Source/SourceExecutor';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
@@ -18,6 +18,7 @@ import { SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Source/Suway
 import { EBook } from '../../Models/EBookModels';
 import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
+import { SourceDetailSearchExecutor, SourceDetailSearchResult, getSourceDetailSearchExecutor } from './SourceDetailSearchExecutor';
 
 const TAG = 'GlobalSearchService';
 
@@ -82,6 +83,7 @@ export interface SearchSourceGroup {
   contentType: SearchContentType;    // 内容类型
   sourceType: SearchSourceType;      // 来源类型
   onlineSourceType?: OnlineSourceType; // 在线源类型
+  usesWebViewEngine?: boolean;       // 是否使用 WebView workflow 引擎
   items: UnifiedSearchItem[];        // 搜索结果
   isSearching: boolean;              // 是否正在搜索
   hasError: boolean;                 // 是否有错误
@@ -115,7 +117,8 @@ export type SearchProgressCallback = (
  */
 interface ClassifiedTasks {
   local: Array<() => Promise<void>>;
-  manga: Array<() => Promise<void>>;
+  mangaHttp: Array<() => Promise<void>>;
+  mangaWebView: Array<() => Promise<void>>;
   novel: Array<() => Promise<void>>;
   suwayomi: Array<() => Promise<void>>;
 }
@@ -127,23 +130,23 @@ export class GlobalSearchService {
   private static instance: GlobalSearchService | null = null;
   
   private dataService: DataService;
-  private dataManager: DataManager;
   private ebookDataManager: EBookDataManager;
   private novelDataManager: NovelDataManager;
   private novelSourceManager: NovelSourceManager;
   private sourceManager: SourceManager;
   private suwayomiExecutor: SuwayomiSourceExecutor;
   private webViewSourceManager: WebViewSourceManager;
+  private sourceDetailSearchExecutor: SourceDetailSearchExecutor;
 
   private constructor() {
     this.dataService = DataService.getInstance();
-    this.dataManager = DataManager.getInstance();
     this.ebookDataManager = EBookDataManager.getInstance();
     this.novelDataManager = getNovelDataManager();
     this.novelSourceManager = getNovelSourceManager();
     this.sourceManager = SourceManager.getInstance();
     this.suwayomiExecutor = SuwayomiSourceExecutor.getInstance();
     this.webViewSourceManager = WebViewSourceManager.getInstance();
+    this.sourceDetailSearchExecutor = getSourceDetailSearchExecutor();
   }
 
   /**
@@ -286,26 +289,26 @@ export class GlobalSearchService {
    * - HTTP 格式（features配置）：使用 SourceExecutor
    * - WebView 格式（workflows配置）：使用 MangaSourceEngine
    */
-  async searchOnlineManga(sourceId: number, keyword: string, page: number = 1): Promise<UnifiedSearchItem[]> {
+  async searchOnlineManga(
+    sourceId: number,
+    keyword: string,
+    page: number = 1
+  ): Promise<UnifiedSearchItem[]> {
     try {
       // 获取图源信息
       const sources = await this.sourceManager.getAllSources();
       const source = sources.find(s => s.id === sourceId);
       const sourceName = source?.name || `图源${sourceId}`;
-      
-      // 检测图源类型
-      const isWebViewSource = await this.webViewSourceManager.isWebViewSource(sourceId);
-      logger.info(TAG, `搜索图源: ${sourceName} (id=${sourceId}), 类型=${isWebViewSource ? 'WebView' : 'HTTP'}`);
-      
-      let results: OnlineComicInfo[] = [];
-      
-      if (isWebViewSource) {
-        // WebView 格式图源 - 使用 MangaSourceEngine
-        results = await this.searchWithMangaEngine(sourceId, sourceName, keyword, page);
-      } else {
-        // HTTP 格式图源 - 使用原有的 SourceExecutor
-        results = await this.sourceManager.search(sourceId, keyword, page);
+      const sourceSearchResult: SourceDetailSearchResult = await this.sourceDetailSearchExecutor.search({
+        sourceId: sourceId,
+        query: keyword,
+        searchType: 'search',
+        page: page
+      });
+      if (!sourceSearchResult.success) {
+        throw new Error(sourceSearchResult.errorMessage || '图源搜索失败');
       }
+      const results: OnlineComicInfo[] = sourceSearchResult.items;
       
       return results.map((comic: OnlineComicInfo): UnifiedSearchItem => ({
         id: `online-manga-${sourceId}-${comic.id}`,
@@ -317,48 +320,15 @@ export class GlobalSearchService {
         sourceType: SearchSourceType.ONLINE,
         onlineSourceType: OnlineSourceType.MANGA_SOURCE,
         sourceId: String(sourceId),
-        sourceName: sourceName,
+        sourceName: sourceSearchResult.sourceName || sourceName,
         rawOnlineComic: comic
       }));
     } catch (error) {
       logger.error(TAG, `搜索在线漫画失败 (sourceId=${sourceId}): ${error}`);
-      return [];
+      throw new Error(`搜索在线漫画失败: ${String(error)}`);
     }
   }
   
-  /**
-   * 使用 MangaSourceEngine 搜索 WebView 格式图源
-   */
-  private async searchWithMangaEngine(sourceId: number, sourceName: string, keyword: string, page: number): Promise<OnlineComicInfo[]> {
-    try {
-      // 获取或创建 MangaSourceEngine
-      const engine = await this.webViewSourceManager.getMangaEngine(sourceId, sourceName);
-      
-      // 执行搜索
-      const searchResult = await engine.searchManga(keyword, page);
-      
-      if (!searchResult.success || !searchResult.data) {
-        logger.warn(TAG, `MangaEngine 搜索失败: ${searchResult.error || '未知错误'}`);
-        return [];
-      }
-      
-      // 转换结果格式
-      const mangas = searchResult.data.mangas || [];
-      return mangas.map((manga): OnlineComicInfo => ({
-        id: manga.id || manga.url || '',  // 优先使用id，没有则用url作为唯一标识
-        title: manga.title,
-        author: manga.author || '',
-        coverUrl: manga.cover || '',
-        description: manga.description || '',
-        url: manga.url || '',
-        status: manga.status || ''
-      }));
-    } catch (error) {
-      logger.error(TAG, `MangaEngine 搜索异常 (sourceId=${sourceId}): ${error}`);
-      throw error as Error;
-    }
-  }
-
   /**
    * 搜索Suwayomi漫画（库搜索或指定源搜索）
    */
@@ -528,6 +498,7 @@ export class GlobalSearchService {
           const sources = await this.sourceManager.getAllSources();
           const source = sources.find(s => s.id === numSourceId);
           const sourceName = source?.name || `图源${sourceId}`;
+          const isWebViewSource = await this.webViewSourceManager.isWebViewSource(numSourceId);
           
           const group: SearchSourceGroup = {
             groupId: `online-manga-${sourceId}`,
@@ -535,6 +506,7 @@ export class GlobalSearchService {
             contentType: SearchContentType.MANGA,
             sourceType: SearchSourceType.ONLINE,
             onlineSourceType: OnlineSourceType.MANGA_SOURCE,
+            usesWebViewEngine: isWebViewSource,
             items: [],
             isSearching: true,
             hasError: false
@@ -542,7 +514,7 @@ export class GlobalSearchService {
           groups.push(group);
           searchTasks.push(async () => {
             try {
-              group.items = await this.searchOnlineManga(numSourceId, keyword);
+              group.items = await this.searchOnlineManga(numSourceId, keyword, 1);
               group.isSearching = false;
             } catch (error) {
               group.isSearching = false;
@@ -655,8 +627,10 @@ export class GlobalSearchService {
     await Promise.all([
       // 本地搜索任务（快速完成）
       executeTasksInBatches(tasksByType.local, batchSize),
-      // 图源搜索任务（需要 WebView）
-      executeTasksInBatches(tasksByType.manga, batchSize),
+      // HTTP 图源搜索任务
+      executeTasksInBatches(tasksByType.mangaHttp, batchSize),
+      // WebView 图源共享同一个控制器，必须串行避免页面上下文互相覆盖
+      executeTasksInBatches(tasksByType.mangaWebView, 1),
       // 书源搜索任务（独立 HTTP 请求）
       executeTasksInBatches(tasksByType.novel, batchSize),
       // Suwayomi 搜索任务
@@ -686,7 +660,8 @@ export class GlobalSearchService {
   ): ClassifiedTasks {
     const result: ClassifiedTasks = {
       local: [],
-      manga: [],
+      mangaHttp: [],
+      mangaWebView: [],
       novel: [],
       suwayomi: []
     };
@@ -699,7 +674,11 @@ export class GlobalSearchService {
       if (group.sourceType === SearchSourceType.LOCAL) {
         result.local.push(task);
       } else if (group.onlineSourceType === OnlineSourceType.MANGA_SOURCE) {
-        result.manga.push(task);
+        if (group.usesWebViewEngine === true) {
+          result.mangaWebView.push(task);
+        } else {
+          result.mangaHttp.push(task);
+        }
       } else if (group.onlineSourceType === OnlineSourceType.NOVEL_SOURCE) {
         result.novel.push(task);
       } else if (group.onlineSourceType === OnlineSourceType.SUWAYOMI) {
@@ -710,7 +689,7 @@ export class GlobalSearchService {
       }
     }
     
-    logger.info(TAG, `任务分类: 本地=${result.local.length}, 图源=${result.manga.length}, 书源=${result.novel.length}, Suwayomi=${result.suwayomi.length}`);
+    logger.info(TAG, `任务分类: 本地=${result.local.length}, HTTP图源=${result.mangaHttp.length}, WebView图源=${result.mangaWebView.length}, 书源=${result.novel.length}, Suwayomi=${result.suwayomi.length}`);
     
     return result;
   }
@@ -727,6 +706,7 @@ export class GlobalSearchService {
         contentType: group.contentType,
         sourceType: group.sourceType,
         onlineSourceType: group.onlineSourceType,
+        usesWebViewEngine: group.usesWebViewEngine,
         // 进度快照只需要替换分组对象，避免频繁深拷贝大结果集导致主线程抖动
         items: group.items,
         isSearching: group.isSearching,

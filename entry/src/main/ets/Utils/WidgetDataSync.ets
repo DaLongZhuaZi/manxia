@@ -20,6 +20,7 @@ const WIDGET_DATA_STORE = 'widget_reading_data';
 const FORM_STORAGE = 'form_storage';
 const RECENT_READ_LIMIT = 6;
 const SYNC_MIN_INTERVAL_MS = 45 * 1000;
+const DATA_READY_RETRY_DELAY_MS = 1500;
 
 /**
  * 阅读目标数据
@@ -134,6 +135,8 @@ export class WidgetDataSync {
   private context: common.UIAbilityContext | null = null;
   private lastSyncTimestamp: number = 0;
   private syncInFlight: Promise<void> | null = null;
+  private pendingSyncAfterDataReady: boolean = false;
+  private dataReadyRetryTimer: number = -1;
 
   private constructor() {}
 
@@ -151,17 +154,23 @@ export class WidgetDataSync {
   /**
    * 从数据源加载并同步所有卡片数据
    */
-  public async syncAllData(): Promise<void> {
+  public async syncAllData(): Promise<boolean> {
     if (!this.context) {
       logger.warn(TAG, 'syncAllData: context not initialized');
-      return;
+      return false;
     }
 
     // 启动早期可能触发前后台切换，此时数据系统尚未就绪，直接跳过避免访问未初始化数据库
     const initStatus = DataInitializer.getInstance().getInitializationStatus();
     if (!initStatus.isInitialized) {
-      logger.warn(TAG, `syncAllData: data system not ready (initializing=${initStatus.isInitializing}), skip`);
-      return;
+      if (initStatus.isInitializing) {
+        logger.debug(TAG, 'syncAllData: data system initializing, defer widget sync');
+        this.scheduleSyncAfterDataReady('data_initializing');
+      } else {
+        logger.debug(TAG, 'syncAllData: data system not ready, defer widget sync');
+        this.scheduleSyncAfterDataReady('data_not_ready');
+      }
+      return false;
     }
 
     try {
@@ -195,8 +204,11 @@ export class WidgetDataSync {
         `电子书目标=${goals.ebookGoalMinutes}分钟/已读=${goals.ebookReadMinutes}分钟, ` +
         `小说目标=${goals.novelGoalMinutes}分钟/已读=${goals.novelReadMinutes}分钟, ` +
         `最近阅读=${recentReads.length}本`);
+      this.pendingSyncAfterDataReady = false;
+      return true;
     } catch (e) {
       logger.error(TAG, `syncAllData error: ${JSON.stringify(e)}`);
+      return false;
     }
   }
 
@@ -216,14 +228,39 @@ export class WidgetDataSync {
     }
 
     this.syncInFlight = this.syncAllData()
-      .then(() => {
-        this.lastSyncTimestamp = Date.now();
+      .then((synced: boolean) => {
+        if (synced) {
+          this.lastSyncTimestamp = Date.now();
+        }
       })
       .finally(() => {
         this.syncInFlight = null;
       });
 
     return this.syncInFlight;
+  }
+
+  private scheduleSyncAfterDataReady(reason: string): void {
+    this.pendingSyncAfterDataReady = true;
+    if (this.dataReadyRetryTimer >= 0) {
+      return;
+    }
+
+    this.dataReadyRetryTimer = setTimeout(() => {
+      this.dataReadyRetryTimer = -1;
+      const initStatus = DataInitializer.getInstance().getInitializationStatus();
+      if (initStatus.isInitialized) {
+        logger.info(TAG, `数据系统已就绪，补执行卡片同步: reason=${reason}`);
+        void this.syncAllDataThrottled(true);
+        return;
+      }
+      if (initStatus.isInitializing) {
+        this.scheduleSyncAfterDataReady('still_initializing');
+        return;
+      }
+      this.pendingSyncAfterDataReady = false;
+      logger.warn(TAG, `数据系统仍未就绪，取消本次卡片同步补偿: reason=${reason}`);
+    }, DATA_READY_RETRY_DELAY_MS);
   }
 
   /**

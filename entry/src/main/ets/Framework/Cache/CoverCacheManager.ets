@@ -36,6 +36,7 @@ export class CoverCacheManager {
   private failedDownloads: Set<string> = new Set(); // 记录失败的下载，避免重复尝试
   private isPathInitialized: boolean = false;
   private initializationPromise: Promise<void> | null = null;
+  private pendingContextLogged: boolean = false;
   private sourcePkgCache: Map<number, string> = new Map(); // sourceId -> pkg 缓存
   private readonly photos18Pkg: string = 'com.manxia.extension.all.photos18';
   private photos18CoverRecords: Map<string, CoverCacheRecord> = new Map();
@@ -64,11 +65,15 @@ export class CoverCacheManager {
     try {
       const context = uiContextManager.getAbilityContext();
       if (!context) {
-        logger.warn(TAG, 'Context未初始化，延迟初始化封面路径');
+        if (!this.pendingContextLogged) {
+          logger.debug(TAG, 'Context未初始化，封面路径等待后续按需初始化');
+          this.pendingContextLogged = true;
+        }
         return;
       }
       
       this.coverBasePath = context.filesDir + '/covers';
+      this.pendingContextLogged = false;
       
       // 确保基础目录存在
       if (!fs.accessSync(this.coverBasePath)) {

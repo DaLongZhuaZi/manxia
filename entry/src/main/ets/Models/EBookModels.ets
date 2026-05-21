@@ -134,6 +134,7 @@ export interface EBookReadingSettings {
   tapToTurn?: boolean;         // 点击翻页
   volumeKeyNavigation?: boolean; // 音量键翻页
   keepScreenOn?: boolean;      // 保持屏幕常亮
+  lockDeviceOrientation?: boolean; // 锁定设备屏幕方向
   
   // 显示设置
   showPageNumber?: boolean;    // 显示页码
@@ -213,6 +214,7 @@ export const DEFAULT_EBOOK_READING_SETTINGS: EBookReadingSettings = {
   tapToTurn: true,
   volumeKeyNavigation: true,
   keepScreenOn: false,
+  lockDeviceOrientation: false,
   showPageNumber: true,
   showProgress: false,
   showTime: true,

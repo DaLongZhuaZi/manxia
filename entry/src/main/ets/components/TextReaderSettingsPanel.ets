@@ -202,6 +202,7 @@ export struct TextReaderSettingsPanel {
         right: this.settings.pageMargins.right
       },
       keepScreenOn: this.settings.keepScreenOn,
+      lockDeviceOrientation: this.settings.lockDeviceOrientation ?? false,
       showPageNumber: this.settings.showPageNumber,
       showProgress: this.settings.showProgress,
       showTime: this.settings.showTime,
@@ -1160,6 +1161,8 @@ export struct TextReaderSettingsPanel {
         this.updateAndNotify();
       })
 
+      this.buildDeviceOrientationLockSetting()
+
       Divider().color($r('app.color.divider'))
       
       // 底部显示模式
@@ -1239,6 +1242,33 @@ export struct TextReaderSettingsPanel {
     .width('100%')
   }
   
+  @Builder
+  buildDeviceOrientationLockSetting() {
+    Row() {
+      Column() {
+        Text('锁定方向')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+        Text((this.settings.lockDeviceOrientation ?? false)
+          ? '保持当前屏幕方向，阅读时旋转设备不会改变方向'
+          : '关闭后会跟随系统旋转策略，适合临时横屏阅读')
+          .fontSize(11)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ top: 2 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.settings.lockDeviceOrientation ?? false })
+        .onChange((value: boolean) => {
+          this.settings.lockDeviceOrientation = value;
+          this.updateAndNotify();
+        })
+    }
+    .width('100%')
+    .padding({ top: 4, bottom: 4 })
+  }
+
   @Builder
   buildToggleSetting(label: string, isOn: boolean, onChange: (isOn: boolean) => void) {
     Row() {

@@ -12,6 +12,7 @@ import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Manage
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import {
   EBook,
@@ -250,6 +251,7 @@ struct EBookReaderPage {
   private hasNotifiedTransitionReaderReady: boolean = false;
   private transitionLoadingProgress: number = 0;
   private isCloseTransitionNavigating: boolean = false;
+  private orientationLockToken: string = '';
   
   // 阅读时间记录相关
   private readerKitController: ReaderKitViewerController | null = null;
@@ -444,6 +446,7 @@ struct EBookReaderPage {
     this.stopReadingTimeTracking();
     // [修复] 发布阅读进度更新事件，通知书库页面刷新
     this.saveReadingProgress();
+    this.orientationLockToken = ReaderOrientationLockHelper.release(this.orientationLockToken, this.uiContext);
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
     if (isOpeningReadAloudPlayer) {
       logger.info(TAG, '电子书阅读器即将进入听书独立页，aboutToDisappear 保留沉浸模式');
@@ -470,6 +473,7 @@ struct EBookReaderPage {
     this.syncTextReadAloudUiFromController();
     this.readAloudController.refreshMediaSession();
     this.refreshCurrentEBookBookmarkState('on_page_show');
+    this.syncDeviceOrientationLock('page_show');
     this.scheduleToolbarAutoHide('page_show');
     void this.refreshPageGuide('onPageShow');
   }
@@ -1314,6 +1318,9 @@ struct EBookReaderPage {
 
       // 调试日志：检查章节内容
       this.reportTransitionLoadingProgress(0.48, 'settings_restored');
+      if (ebook.format !== EBookFormat.TXT) {
+        this.syncDeviceOrientationLock('ebook_settings_loaded');
+      }
       const chapterCount = ebook.chapters?.length || 0;
       if (chapterCount <= 0) {
         throw new Error('电子书中没有可用章节');
@@ -1431,6 +1438,7 @@ struct EBookReaderPage {
         globalFirstLineIndent, globalPageMargin, globalBgPreset, globalUseBgImage, globalBgImagePath, 
         globalBgImageOpacity, globalPageTurnAnimation, globalKeepScreenOn, globalVolumeKeyNav, globalTapToTurn);
     }
+    this.syncDeviceOrientationLock('text_settings_loaded');
   }
 
   /**
@@ -1477,6 +1485,7 @@ struct EBookReaderPage {
         right: pageMargin
       },
       keepScreenOn: keepScreenOn,
+      lockDeviceOrientation: false,
       showPageNumber: true,
       showProgress: false,
       showTime: true,
@@ -1545,6 +1554,7 @@ struct EBookReaderPage {
         right: settings.pageMargin || 24
       },
       keepScreenOn: settings.keepScreenOn ?? true,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? false,
       showPageNumber: settings.showPageNumber ?? true,
       showProgress: settings.showProgress ?? false,
       showTime: settings.showTime ?? true,
@@ -1573,6 +1583,25 @@ struct EBookReaderPage {
       return normalizeReadAloudSettings(globalDefaults);
     }
     return this.mergeReadAloudSettings(globalDefaults, settings);
+  }
+
+  private syncDeviceOrientationLock(reason: string): void {
+    if (!this.uiContext) {
+      this.uiContext = this.getUIContext();
+    }
+    let enabled: boolean = false;
+    if (this.isUsingTextReader()) {
+      enabled = this.textReaderSettings.lockDeviceOrientation ?? false;
+    } else {
+      enabled = this.ebook?.readingSettings?.lockDeviceOrientation ?? false;
+    }
+    this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
+      'EBookReaderPage',
+      this.orientationLockToken,
+      enabled,
+      this.uiContext
+    );
+    logger.info(TAG, `设备方向锁同步完成: enabled=${enabled}, reason=${reason}`);
   }
 
   private mergeReadAloudSettings(current: ReadAloudSettings, partial: Partial<ReadAloudSettings>): ReadAloudSettings {
@@ -2162,6 +2191,7 @@ struct EBookReaderPage {
       // 立即应用到 Reader Kit（如果控制器已就绪）
       this.ebook.readingSettings = settings;
       this.syncImagePageReaderSettings();
+      this.syncDeviceOrientationLock('ebook_settings_change');
 
       // 保存到数据库
       if (this.readerKitController && this.readerKitController.isControllerReady()) {
@@ -2479,6 +2509,7 @@ struct EBookReaderPage {
         },
         pageMargins: this.textReaderSettings.pageMargins,
         keepScreenOn: this.textReaderSettings.keepScreenOn,
+        lockDeviceOrientation: this.textReaderSettings.lockDeviceOrientation ?? false,
         showPageNumber: this.textReaderSettings.showPageNumber,
         showProgress: this.textReaderSettings.showProgress,
         showTime: this.textReaderSettings.showTime,
@@ -2486,7 +2517,8 @@ struct EBookReaderPage {
         tapToTurn: this.textReaderSettings.tapToTurn,
         volumeKeyNavigation: this.textReaderSettings.volumeKeyNavigation,
         autoScrollSpeed: this.textReaderSettings.autoScrollSpeed,
-        curlBackOpacity: this.textReaderSettings.curlBackOpacity
+        curlBackOpacity: this.textReaderSettings.curlBackOpacity,
+        readAloud: this.textReaderSettings.readAloud
       };
     }
     
@@ -3332,6 +3364,11 @@ struct EBookReaderPage {
       readingDirection: DEFAULT_READING_SETTINGS.readingDirection,
       brightness: brightness,
       keepScreenOn: keepScreenOn,
+      lockDeviceOrientation: this.ebook?.readingSettings?.lockDeviceOrientation ??
+        DEFAULT_READING_SETTINGS.lockDeviceOrientation ??
+        false,
+      lockMode: DEFAULT_READING_SETTINGS.lockMode ?? DEFAULT_READING_SETTINGS.lockOrientation ?? false,
+      lockOrientation: DEFAULT_READING_SETTINGS.lockMode ?? DEFAULT_READING_SETTINGS.lockOrientation ?? false,
       pageSpacing: DEFAULT_READING_SETTINGS.pageSpacing,
       showPageInfo: showPageInfo,
       showPageIndicator: showPageIndicator,
@@ -3340,6 +3377,7 @@ struct EBookReaderPage {
       skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
       pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
       doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
+      doublePageVerticalDirection: DEFAULT_READING_SETTINGS.doublePageVerticalDirection,
       filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
       volumeKeyNavigation: volumeKeyNavigation,
       curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity,
@@ -3668,6 +3706,7 @@ struct EBookReaderPage {
             if (previousHintKey !== this.getInteractionHintKey(settings)) {
               this.queueInteractionHintIfNeeded(settings);
             }
+            this.syncDeviceOrientationLock('text_settings_change');
             this.saveTextReaderSettings();
             this.syncTextReadAloudContext();
             this.persistGlobalReadAloudSettings(this.getSafeReadAloudSettings(settings.readAloud));
@@ -3764,6 +3803,7 @@ struct EBookReaderPage {
       settings.tapToTurn = this.textReaderSettings.tapToTurn;
       settings.volumeKeyNavigation = this.textReaderSettings.volumeKeyNavigation;
       settings.keepScreenOn = this.textReaderSettings.keepScreenOn;
+      settings.lockDeviceOrientation = this.textReaderSettings.lockDeviceOrientation ?? false;
       this.updateVolumeKeyListener();
       
       // 保存到数据库

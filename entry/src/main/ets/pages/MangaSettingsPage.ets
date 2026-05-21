@@ -13,7 +13,16 @@ import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ReadingSettings, DEFAULT_READING_SETTINGS, ReadingDirection, ReadingMode, Manga, ImageSourceType, PageTurnAnimationType } from '../Models/MangaModels';
+import {
+  ReadingSettings,
+  DEFAULT_READING_SETTINGS,
+  ReadingDirection,
+  ReadingMode,
+  Manga,
+  ImageSourceType,
+  PageTurnAnimationType,
+  DoublePagePortraitLayout
+} from '../Models/MangaModels';
 import { DataManager, ComicInfo, ChapterInfo, PageInfo, ComicBasicInfoUpdate } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
@@ -336,6 +345,7 @@ struct MangaSettingsPage {
         
         // 使用从数据库加载的阅读设置
         this.readingSettings = this.currentManga.readingSettings;
+        this.normalizeCurrentPageTurnAnimation();
         logger.info(TAG, `从数据库加载的阅读设置: mode=${this.readingSettings.readingMode}`);
         
         // 初始化编辑状态
@@ -820,13 +830,53 @@ struct MangaSettingsPage {
 
   // 显式更新方法 - 修改后立即保存到数据库
   private setReadingDirection(direction: ReadingDirection): void {
-    this.readingSettings.readingDirection = direction;
+    if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+      this.readingSettings.doublePagePortraitLayout = direction === ReadingDirection.TOP_TO_BOTTOM
+        ? DoublePagePortraitLayout.VERTICAL
+        : DoublePagePortraitLayout.HORIZONTAL;
+    }
+    this.readingSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      this.readingSettings.readingMode,
+      direction,
+      this.readingSettings.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL
+    );
+    this.normalizeCurrentPageTurnAnimation();
     this.saveSettingsImmediately();
   }
 
   private setReadingMode(mode: ReadingMode): void {
     this.readingSettings.readingMode = mode;
+    this.readingSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      mode,
+      this.readingSettings.readingDirection,
+      this.readingSettings.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL
+    );
+    this.normalizeCurrentPageTurnAnimation();
     this.saveSettingsImmediately();
+  }
+
+  private normalizeReadingDirectionForMode(
+    mode: ReadingMode,
+    direction: ReadingDirection,
+    doublePagePortraitLayout: DoublePagePortraitLayout
+  ): ReadingDirection {
+    const normalizedDirection = direction === ReadingDirection.VERTICAL
+      ? ReadingDirection.TOP_TO_BOTTOM
+      : direction;
+    if (mode === ReadingMode.DOUBLE_PAGE && doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL) {
+      return ReadingDirection.TOP_TO_BOTTOM;
+    }
+    if (mode === ReadingMode.DOUBLE_PAGE && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    if ((mode === ReadingMode.WEBTOON || mode === ReadingMode.CONTINUOUS_VERTICAL) &&
+      normalizedDirection !== ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.TOP_TO_BOTTOM;
+    }
+    if (mode === ReadingMode.CONTINUOUS_SCROLL && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    return normalizedDirection;
   }
 
   private setShowPageInfo(isOn: boolean): void {
@@ -844,9 +894,48 @@ struct MangaSettingsPage {
     this.saveSettingsImmediately();
   }
 
+  private setLockMode(isOn: boolean): void {
+    this.readingSettings.lockMode = isOn;
+    this.readingSettings.lockOrientation = isOn;
+    this.saveSettingsImmediately();
+  }
+
+  private setLockDeviceOrientation(isOn: boolean): void {
+    this.readingSettings.lockDeviceOrientation = isOn;
+    this.saveSettingsImmediately();
+  }
+
   private setVolumeKeyNavigation(isOn: boolean): void {
     this.readingSettings.volumeKeyNavigation = isOn;
     this.saveSettingsImmediately();
+  }
+
+  private isSinglePageReadingMode(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE ||
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB;
+  }
+
+  private isModeLocked(): boolean {
+    return this.readingSettings.lockMode ?? this.readingSettings.lockOrientation ?? false;
+  }
+
+  private getModeLockHint(): string {
+    if (this.isModeLocked()) {
+      return '已锁定，旋转设备时保持当前阅读模式';
+    }
+    if (this.isSinglePageReadingMode()) {
+      return '未锁定，横屏会临时切换为左右双页';
+    }
+    return '锁定后旋转设备不会触发临时布局切换';
+  }
+
+  private getDeviceOrientationLockHint(): string {
+    if (this.readingSettings.lockDeviceOrientation ?? false) {
+      return '已锁定，阅读时保持当前横竖屏方向';
+    }
+    return '开启后会锁住当前设备方向，避免阅读时误旋转';
   }
 
   private setBrightness(value: number): void {
@@ -865,8 +954,9 @@ struct MangaSettingsPage {
   }
 
   private setPageTurnAnimation(animationType: PageTurnAnimationType): void {
-    this.readingSettings.pageTurnAnimation = animationType;
-    logger.info(TAG, `翻页动画设置更新为: ${animationType}`);
+    const normalizedAnimation: PageTurnAnimationType = this.normalizePageTurnAnimationForCurrentMode(animationType);
+    this.readingSettings.pageTurnAnimation = normalizedAnimation;
+    logger.info(TAG, `翻页动画设置更新为: ${normalizedAnimation}`);
     this.saveSettingsImmediately();
   }
 
@@ -1092,34 +1182,63 @@ struct MangaSettingsPage {
 
   /**
    * 判断是否禁用从上到下阅读方向
-   * 双页模式下不支持TTB方向
    */
   private isTTBDisabled(): boolean {
-    return this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
+    return this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
   }
 
   private isHorizontalDirectionDisabled(): boolean {
-    return this.readingSettings.readingMode === ReadingMode.WEBTOON;
+    return this.readingSettings.readingMode === ReadingMode.WEBTOON ||
+      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+  }
+
+  private isDoublePageVerticalLayoutSelected(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE &&
+      (this.readingSettings.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL) ===
+        DoublePagePortraitLayout.VERTICAL;
+  }
+
+  private normalizePageTurnAnimationForCurrentMode(animationType: PageTurnAnimationType): PageTurnAnimationType {
+    if (this.isDoublePageVerticalLayoutSelected()) {
+      return PageTurnAnimationType.SLIDE;
+    }
+    return animationType;
+  }
+
+  private normalizeCurrentPageTurnAnimation(): void {
+    this.readingSettings.pageTurnAnimation = this.normalizePageTurnAnimationForCurrentMode(
+      this.readingSettings.pageTurnAnimation
+    );
+  }
+
+  @Builder
+  private buildVerticalDoublePageAnimationLockCard() {
+    Column({ space: 8 }) {
+      Text('上下专属')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .padding(10)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+        .borderRadius(8)
+      Text('上下双页通过触顶/触底翻页，只使用专属上下滑动动画。')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+    }
+    .width('100%')
   }
 
   /**
    * 处理阅读模式变更时的逻辑
-   * 当切换到双页模式时，如果当前方向是TTB，则自动切换到LTR
    */
   private handleReadingModeChange(mode: ReadingMode): void {
     const oldMode = this.readingSettings.readingMode;
     this.setReadingMode(mode);
-    
-    // 如果切换到双页模式且当前方向是TTB，则自动切换到LTR
-    if (mode === ReadingMode.DOUBLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
-      logger.info(TAG, `切换到双页模式，自动将阅读方向从TTB改为LTR`);
-      this.setReadingDirection(ReadingDirection.LEFT_TO_RIGHT);
-    }
-
-    if (mode === ReadingMode.WEBTOON && this.readingSettings.readingDirection !== ReadingDirection.TOP_TO_BOTTOM) {
-      logger.info(TAG, `切换到条漫模式，自动将阅读方向调整为TTB`);
-      this.setReadingDirection(ReadingDirection.TOP_TO_BOTTOM);
-    }
+    logger.info(TAG, `阅读模式切换: ${oldMode} -> ${mode}, direction=${this.readingSettings.readingDirection}, layout=${this.readingSettings.doublePagePortraitLayout}`);
   }
 
   // 构建封面和基本信息区域
@@ -1577,16 +1696,18 @@ struct MangaSettingsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
         
-        // 当双页模式时显示提示信息
-        if (this.isTTBDisabled()) {
-          Text('双页模式不支持从上到下')
+        if (this.isHorizontalDirectionDisabled()) {
+          Text('条漫模式仅支持从上到下')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        }
-
-        if (this.isHorizontalDirectionDisabled()) {
-          Text('条漫模式仅支持从上到下')
+        } else if (this.isDoublePageVerticalLayoutSelected()) {
+          Text('当前双页为上下组合；选择左右方向会切换为左右组合')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        } else if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+          Text('当前双页为左右组合；选择从上到下将切换为上下组合')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1883,6 +2004,56 @@ struct MangaSettingsPage {
       .justifyContent(FlexAlign.SpaceBetween)
 
       Row() {
+        Column() {
+          Text('锁定方向')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text(this.getDeviceOrientationLockHint())
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.lockDeviceOrientation ?? false })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.setLockDeviceOrientation(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      Row() {
+        Column() {
+          Text('锁定模式')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text(this.getModeLockHint())
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.isModeLocked() })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.setLockMode(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      Row() {
         Text('音量键翻页')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
@@ -2109,6 +2280,9 @@ struct MangaSettingsPage {
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .width('100%')
 
+            if (this.isDoublePageVerticalLayoutSelected()) {
+              this.buildVerticalDoublePageAnimationLockCard()
+            } else {
             Row() {
               // 无动画
               Column() {
@@ -2259,6 +2433,7 @@ struct MangaSettingsPage {
             .width('100%')
             .justifyContent(FlexAlign.SpaceBetween)
             .margin({ top: 8 })
+            }
           }
           .width('100%')
         }

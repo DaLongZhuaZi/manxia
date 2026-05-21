@@ -1564,6 +1564,7 @@ export struct UnifiedDetailPage {
   // 智能推荐状态
   @State recommendedItems: RecommendationItem[] = [];
   @State isLoadingRecommendations: boolean = false;
+  @State isPrimarySectionReady: boolean = false;
 
   private applyPageDisplayMode(mode: DisplayMode): void {
     WindowManager.setDisplayMode(mode, this.getUIContext());
@@ -1774,6 +1775,7 @@ export struct UnifiedDetailPage {
       this.errorMessage = '';
       this.expandedTagChipIds = [];
       this.resolvedDisplaySourceName = '';
+      this.isPrimarySectionReady = this.hasRenderablePrimaryContent();
 
       switch (this.pageParams.contentType) {
         case UnifiedContentType.MANGA:
@@ -1835,6 +1837,7 @@ export struct UnifiedDetailPage {
       this.errorMessage = '加载失败，请重试';
     } finally {
       this.isLoading = false;
+      this.isPrimarySectionReady = this.hasRenderablePrimaryContent();
     }
   }
 
@@ -1896,6 +1899,7 @@ export struct UnifiedDetailPage {
         logger.info(TAG, `[分阶段] 基本信息已加载: ${manga.title}`);
         this.isFavorite = isFavorite;
         this.isBasicInfoLoaded = true;
+        this.isPrimarySectionReady = true;
         this.isLoading = false;  // 基本信息加载完成，停止主加载动画
         
         // 先显示基本信息（无章节）
@@ -2358,6 +2362,7 @@ export struct UnifiedDetailPage {
     logger.info(TAG, `统一模型转换完成: 章节数=${this.content.totalChapters}`);
     
     // 章节加载完成
+    this.isPrimarySectionReady = true;
     this.isChaptersLoading = false;
 
     // 检测是否为在线电子书（filePath是JSON格式的扩展数据且id是URL）
@@ -2807,6 +2812,7 @@ export struct UnifiedDetailPage {
     await this.applyReplaceRulesToCurrentNovelContent(enableReplaceRules, scopedReplaceRuleIds);
     
     // 章节加载完成
+    this.isPrimarySectionReady = true;
     this.isChaptersLoading = false;
   }
 
@@ -3805,7 +3811,21 @@ export struct UnifiedDetailPage {
    * 对于在线漫画显示"在线漫画"，本地漫画显示"本地漫画"
    */
   private getContentTypeName(): string {
-    if (!this.content) return '';
+    if (!this.content) {
+      switch (this.pageParams?.contentType) {
+        case UnifiedContentType.MANGA:
+          if (this.pageParams?.sourceId && Number(this.pageParams.sourceId) > 0) {
+            return '在线漫画';
+          }
+          return '漫画';
+        case UnifiedContentType.EBOOK:
+          return '电子书';
+        case UnifiedContentType.NOVEL:
+          return '小说';
+        default:
+          return '';
+      }
+    }
     switch (this.content.contentType) {
       case UnifiedContentType.MANGA:
         // 判断是否为在线漫画
@@ -4996,7 +5016,38 @@ export struct UnifiedDetailPage {
   }
 
   private getRawCoverImagePath(): string {
-    return this.localCoverPath || this.content?.coverUrl || '';
+    return this.localCoverPath || this.content?.coverUrl || this.pageParams?.cachedCover || '';
+  }
+
+  private getDisplayTitleText(): string {
+    const contentTitle: string = this.stripHtmlTags(this.content?.title || '').trim();
+    if (contentTitle.length > 0) {
+      return contentTitle;
+    }
+    const cachedTitle: string = this.stripHtmlTags(this.pageParams?.cachedTitle || '').trim();
+    if (cachedTitle.length > 0) {
+      return cachedTitle;
+    }
+    return '加载中...';
+  }
+
+  private getDisplayAuthorText(): string {
+    const contentAuthor: string = this.stripHtmlTags(this.content?.author || '').trim();
+    if (contentAuthor.length > 0) {
+      return contentAuthor;
+    }
+    const cachedAuthor: string = this.stripHtmlTags(this.pageParams?.cachedAuthor || '').trim();
+    return cachedAuthor;
+  }
+
+  private hasRenderablePrimaryContent(): boolean {
+    if (this.content !== null) {
+      return true;
+    }
+    const cachedTitle: string = this.stripHtmlTags(this.pageParams?.cachedTitle || '').trim();
+    const cachedCover: string = (this.pageParams?.cachedCoverPath || this.pageParams?.cachedCover || '').trim();
+    const cachedAuthor: string = this.stripHtmlTags(this.pageParams?.cachedAuthor || '').trim();
+    return cachedTitle.length > 0 || cachedCover.length > 0 || cachedAuthor.length > 0;
   }
 
   private hasCoverImageSource(): boolean {
@@ -5089,6 +5140,18 @@ export struct UnifiedDetailPage {
             .height(COVER_HEIGHT)
             .objectFit(ImageFit.Cover)
             .borderRadius(8)
+        } else if (this.isCoverLoading && !this.hasCoverImageSource()) {
+          Column({ space: 10 }) {
+            LoadingProgress()
+              .width(24)
+              .height(24)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .width(COVER_WIDTH)
+          .height(COVER_HEIGHT)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(8)
+          .justifyContent(FlexAlign.Center)
         } else if (this.hasCoverImageSource() && !this.isNetworkCover()) {
           Image(this.getCoverImageSource())
             .width(COVER_WIDTH)
@@ -5157,20 +5220,29 @@ export struct UnifiedDetailPage {
 
       // 信息区域
       Column({ space: 8 }) {
-        Text(this.stripHtmlTags(this.content?.title || '加载中...'))
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-          .onClick(() => {
-            this.navigateToSearch(this.content?.title || '');
-          })
+        if (this.getDisplayTitleText().length > 0) {
+          Text(this.getDisplayTitleText())
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .onClick(() => {
+              const titleText = this.getDisplayTitleText();
+              this.navigateToSearch(titleText);
+            })
+        } else {
+          Blank()
+            .width('72%')
+            .height(24)
+            .borderRadius(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        }
 
-        if (this.content?.author) {
-          Text(this.stripHtmlTags(this.content.author))
+        if (this.getDisplayAuthorText().length > 0) {
+          Text(this.getDisplayAuthorText())
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -5178,12 +5250,12 @@ export struct UnifiedDetailPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
             .onClick(() => {
-              this.navigateToSearch(this.content?.author || '');
+              this.navigateToSearch(this.getDisplayAuthorText());
             })
         } else {
-          Text('')
-            .fontSize(14)
+          Blank()
             .width('100%')
+            .height(16)
         }
 
         Row({ space: 8 }) {
@@ -5713,7 +5785,7 @@ export struct UnifiedDetailPage {
           }
           .width('100%')
 
-          Text(this.stripHtmlTags(this.content?.description || '暂无简介'))
+          Text(this.stripHtmlTags(this.content?.description || (this.isLoading ? '正在加载简介...' : '暂无简介')))
             .fontSize(14)
             .lineHeight(22)
             .fontFamily(this.appFontFamily)
@@ -5753,8 +5825,52 @@ export struct UnifiedDetailPage {
   }
 
   @Builder
-  buildActionBar() {
+  private buildActionBarLoadingPlaceholder() {
     Stack({ alignContent: Alignment.TopStart }) {
+      this.buildGlassSectionChrome()
+      Flex({
+        wrap: FlexWrap.Wrap,
+        justifyContent: FlexAlign.Start,
+        alignItems: ItemAlign.Start,
+        space: { main: LengthMetrics.vp(8), cross: LengthMetrics.vp(8) }
+      }) {
+        Column()
+          .width(92)
+          .height(36)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(18)
+
+        Column()
+          .width(118)
+          .height(36)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(18)
+
+        Column()
+          .width(78)
+          .height(36)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(18)
+      }
+      .width('100%')
+      .padding(18)
+    }
+    .width('100%')
+    .backgroundColor(this.getSectionBackgroundColor())
+    .backgroundBlurStyle(this.getSectionBlurStyle(), this.getSectionBlurOptions())
+    .backgroundEffect(this.getSectionBackgroundEffect())
+    .borderRadius(this.getSectionRadius())
+    .clip(true)
+    .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
+    .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
+  }
+
+  @Builder
+  buildActionBar() {
+    if (!this.content) {
+      this.buildActionBarLoadingPlaceholder()
+    } else {
+      Stack({ alignContent: Alignment.TopStart }) {
       this.buildGlassSectionChrome()
       Flex({
         wrap: FlexWrap.Wrap,
@@ -6014,6 +6130,7 @@ export struct UnifiedDetailPage {
     .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
     .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
     .id('guide_unified_detail_action_bar')
+    }
   }
 
   private async toggleNSFW(): Promise<void> {
@@ -8601,9 +8718,7 @@ export struct UnifiedDetailPage {
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column() {
-          if (this.isLoading) {
-            this.buildLoadingView()
-          } else if (this.errorMessage) {
+          if (this.errorMessage && !this.hasRenderablePrimaryContent()) {
             this.buildErrorView()
           } else if (this.responsive_isLandscape) {
             // 横屏布局：左侧封面信息 + 右侧章节列表

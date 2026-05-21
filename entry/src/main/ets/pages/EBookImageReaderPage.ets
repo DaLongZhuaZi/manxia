@@ -9,6 +9,7 @@ import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { KeyCode } from '@kit.InputKit';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { getFontManager, FontScene } from '../Framework/Managers/FontManager';
@@ -167,6 +168,7 @@ struct EBookImageReaderPage {
   private sourceCoverComponentId: string = '';
   private isCloseTransitionNavigating: boolean = false;
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
+  private orientationLockToken: string = '';
   private hasNotifiedTransitionReaderReady: boolean = false;
   private transitionLoadingProgress: number = 0;
   private isPageVisible: boolean = false;
@@ -191,6 +193,7 @@ struct EBookImageReaderPage {
     }
     void this.persistImageReaderSettings('about_to_disappear');
     void this.saveReadingProgressInternal('about_to_disappear');
+    this.orientationLockToken = ReaderOrientationLockHelper.release(this.orientationLockToken, this.uiContext);
     this.restoreNormalMode();
     eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
     if (!this.isCloseTransitionNavigating) {
@@ -558,6 +561,7 @@ struct EBookImageReaderPage {
       this.runtimeChapter = runtime.runtimeChapter;
       this.chapterListChapters = runtime.chapterListChapters;
       this.readingSettings = this.cloneReadingSettings(settings);
+      this.syncDeviceOrientationLock('settings_loaded');
       this.currentPageIndex = runtime.initialPageIndex;
       this.initialViewerPageIndex = runtime.initialPageIndex;
       this.viewerZoomScale = 1;
@@ -583,6 +587,9 @@ struct EBookImageReaderPage {
       readingDirection: settings.readingDirection,
       brightness: settings.brightness,
       keepScreenOn: settings.keepScreenOn,
+      lockDeviceOrientation: settings.lockDeviceOrientation ?? DEFAULT_READING_SETTINGS.lockDeviceOrientation ?? false,
+      lockMode: settings.lockMode ?? settings.lockOrientation ?? DEFAULT_READING_SETTINGS.lockMode ?? false,
+      lockOrientation: settings.lockMode ?? settings.lockOrientation ?? DEFAULT_READING_SETTINGS.lockMode ?? false,
       pageSpacing: settings.pageSpacing,
       showPageInfo: settings.showPageInfo,
       showPageIndicator: settings.showPageIndicator,
@@ -591,6 +598,7 @@ struct EBookImageReaderPage {
       skipIntroPages: settings.skipIntroPages,
       pageTurnAnimation: settings.pageTurnAnimation,
       doublePagePortraitLayout: settings.doublePagePortraitLayout,
+      doublePageVerticalDirection: settings.doublePageVerticalDirection ?? DEFAULT_READING_SETTINGS.doublePageVerticalDirection,
       filterSettings: {
         enabled: settings.filterSettings.enabled,
         brightness: settings.filterSettings.brightness,
@@ -609,6 +617,22 @@ struct EBookImageReaderPage {
       webtoonRightMargin: settings.webtoonRightMargin ?? DEFAULT_READING_SETTINGS.webtoonRightMargin,
       webtoonMarginSync: settings.webtoonMarginSync ?? DEFAULT_READING_SETTINGS.webtoonMarginSync
     };
+  }
+
+  private syncDeviceOrientationLock(reason: string): void {
+    if (!this.uiContext) {
+      this.uiContext = this.getUIContext();
+    }
+    const enabled: boolean = this.readingSettings.lockDeviceOrientation ??
+      DEFAULT_READING_SETTINGS.lockDeviceOrientation ??
+      false;
+    this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
+      'EBookImageReaderPage',
+      this.orientationLockToken,
+      enabled,
+      this.uiContext
+    );
+    logger.info(TAG, `设备方向锁同步完成: enabled=${enabled}, reason=${reason}`);
   }
 
   private getTotalPages(): number {
@@ -1795,6 +1819,7 @@ struct EBookImageReaderPage {
     const readingModeChanged = this.readingSettings.readingMode !== settings.readingMode ||
       this.readingSettings.readingDirection !== settings.readingDirection;
     this.readingSettings = this.cloneReadingSettings(settings);
+    this.syncDeviceOrientationLock('settings_change');
     void this.persistImageReaderSettings('handle_settings_change');
     this.syncAutoPageTurnStateFromSettings(true);
     if (readingModeChanged) {

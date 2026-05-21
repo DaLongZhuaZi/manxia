@@ -54,6 +54,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { ReaderOrientationLockHelper } from '../Utils/ReaderOrientationLockHelper';
 import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { curves, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
@@ -212,6 +213,7 @@ export struct NovelReaderPage {
   private pendingSettingsSnapshot: TextReaderSettings | null = null;
   private settingsSavePromise: Promise<void> | null = null;
   private uiContext: UIContext | null = null;
+  private orientationLockToken: string = '';
   private saveProgressInterval: number = 30000;// 30秒自动保存
   private readAloudProgressSaveInterval: number = 4000;
   private readAloudUiSyncTimer: number = -1;
@@ -314,6 +316,10 @@ export struct NovelReaderPage {
       logger.info(TAG, '小说阅读器即将进入听书独立页，aboutToDisappear 保留沉浸式与方向设置');
     } else {
       this.restoreNormalMode();
+      this.orientationLockToken = ReaderOrientationLockHelper.release(
+        this.orientationLockToken,
+        this.uiContext ?? undefined
+      );
       // 关闭动画主动返回时，不要在这里中断过渡层
       WindowManager.setPreferredOrientationAuto(this.uiContext ?? undefined);
     }
@@ -892,6 +898,7 @@ export struct NovelReaderPage {
     } catch (e) {
       logger.warn(TAG, `加载设置失败: ${String(e)}`);
     }
+    this.syncDeviceOrientationLock('settings_loaded');
   }
   
   /**
@@ -948,10 +955,29 @@ export struct NovelReaderPage {
 
     if (settings.tapToTurn === undefined) settings.tapToTurn = DEFAULT_TEXT_READER_SETTINGS.tapToTurn;
     if (settings.volumeKeyNavigation === undefined) settings.volumeKeyNavigation = DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
+    if (settings.lockDeviceOrientation === undefined) {
+      settings.lockDeviceOrientation = DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false;
+    }
 
     settings.readAloud = normalizeReadAloudSettings(
       settings.readAloud ?? DEFAULT_TEXT_READER_SETTINGS.readAloud
     );
+  }
+
+  private syncDeviceOrientationLock(reason: string): void {
+    if (!this.uiContext) {
+      this.uiContext = this.getUIContext();
+    }
+    const enabled: boolean = this.settings.lockDeviceOrientation ??
+      DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ??
+      false;
+    this.orientationLockToken = ReaderOrientationLockHelper.syncCurrentOrientationLock(
+      'NovelReaderPage',
+      this.orientationLockToken,
+      enabled,
+      this.uiContext ?? undefined
+    );
+    logger.info(TAG, `设备方向锁同步完成: enabled=${enabled}, reason=${reason}`);
   }
 
   private isLocalTxtNovelMode(): boolean {
@@ -1907,6 +1933,7 @@ export struct NovelReaderPage {
         right: sourcePageMargins.right
       },
       keepScreenOn: newSettings.keepScreenOn,
+      lockDeviceOrientation: newSettings.lockDeviceOrientation ?? false,
       showPageNumber: newSettings.showPageNumber,
       showProgress: newSettings.showProgress,
       showTime: newSettings.showTime,
@@ -1928,6 +1955,7 @@ export struct NovelReaderPage {
     this.settings = nextSettings;
     // 检测阅读模式变化，处理双页模式的横屏切换和组件重载
     this.saveSettings();
+    this.syncDeviceOrientationLock('settings_change');
     if (nextSettings.readAloud) {
       this.readAloudController.updateSettings(nextSettings.readAloud);
     }
@@ -1953,11 +1981,16 @@ export struct NovelReaderPage {
       if (!this.uiContext) {
         this.uiContext = this.getUIContext();
       }
+      const deviceOrientationLocked: boolean = this.settings.lockDeviceOrientation ??
+        DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ??
+        false;
       
       if (newMode === TextReadingMode.DUAL_PAGE) {
         // 延迟重载组件，等待横屏旋转完成
         logger.info(TAG, 'Screen orientation changed to landscape');
-        WindowManager.setPreferredOrientationLandscape(this.uiContext ?? undefined);
+        if (!deviceOrientationLocked) {
+          WindowManager.setPreferredOrientationLandscape(this.uiContext ?? undefined);
+        }
         // 离开双页模式：恢复自动旋转 + 重载组件
         setTimeout(() => {
           this.readerKey++;
@@ -1965,7 +1998,9 @@ export struct NovelReaderPage {
       } else if (oldMode === TextReadingMode.DUAL_PAGE) {
         // 延迟重载组件，等待旋转完成
         logger.info(TAG, '离开双页模式，恢复自动旋转并重载组件');
-        WindowManager.setPreferredOrientationAuto(this.uiContext ?? undefined);
+        if (!deviceOrientationLocked) {
+          WindowManager.setPreferredOrientationAuto(this.uiContext ?? undefined);
+        }
         // 延迟重载组件，等待旋转完成
         setTimeout(() => {
           this.readerKey++;

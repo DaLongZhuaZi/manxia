@@ -730,6 +730,8 @@ export interface TextReaderSettings {
   pageMargins: PageMargins;
   /** 是否保持屏幕常亮 */
   keepScreenOn: boolean;
+  /** 是否锁定设备屏幕方向 */
+  lockDeviceOrientation?: boolean;
   /** 是否显示页码 */
   showPageNumber: boolean;
   /** 是否显示进度百分比 */
@@ -800,6 +802,7 @@ export const DEFAULT_TEXT_READER_SETTINGS: TextReaderSettings = {
   textStyle: DEFAULT_TEXT_STYLE,
   pageMargins: DEFAULT_PAGE_MARGINS,
   keepScreenOn: true,
+  lockDeviceOrientation: false,
   showPageNumber: true,
   showProgress: true,
   showTime: true,

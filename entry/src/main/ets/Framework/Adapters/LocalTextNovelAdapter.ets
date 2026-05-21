@@ -59,6 +59,7 @@ function cloneTextReaderSettings(settings: TextReaderSettings): TextReaderSettin
       right: settings.pageMargins.right
     },
     keepScreenOn: settings.keepScreenOn,
+    lockDeviceOrientation: settings.lockDeviceOrientation ?? DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false,
     showPageNumber: settings.showPageNumber,
     showProgress: settings.showProgress,
     showTime: settings.showTime,
@@ -128,6 +129,10 @@ function buildComparableEBookReadingSettings(settings: EBookReadingSettings): EB
     tapToTurn: resolveOptionalBoolean(settings.tapToTurn, DEFAULT_TEXT_READER_SETTINGS.tapToTurn),
     volumeKeyNavigation: resolveOptionalBoolean(settings.volumeKeyNavigation, DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation),
     keepScreenOn: resolveOptionalBoolean(settings.keepScreenOn, DEFAULT_TEXT_READER_SETTINGS.keepScreenOn),
+    lockDeviceOrientation: resolveOptionalBoolean(
+      settings.lockDeviceOrientation,
+      DEFAULT_TEXT_READER_SETTINGS.lockDeviceOrientation ?? false
+    ),
     showPageNumber: resolveOptionalBoolean(settings.showPageNumber, DEFAULT_TEXT_READER_SETTINGS.showPageNumber),
     showProgress: resolveOptionalBoolean(settings.showProgress, DEFAULT_TEXT_READER_SETTINGS.showProgress),
     showTime: resolveOptionalBoolean(settings.showTime, DEFAULT_TEXT_READER_SETTINGS.showTime),
@@ -185,6 +190,7 @@ export function hasCustomLocalTextNovelReadingSettings(
     || comparable.tapToTurn !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.tapToTurn
     || comparable.volumeKeyNavigation !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.volumeKeyNavigation
     || comparable.keepScreenOn !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.keepScreenOn
+    || comparable.lockDeviceOrientation !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.lockDeviceOrientation
     || comparable.showPageNumber !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.showPageNumber
     || comparable.showProgress !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.showProgress
     || comparable.showTime !== DEFAULT_LOCAL_TXT_EBOOK_READING_SETTINGS.showTime
@@ -268,6 +274,7 @@ export function buildTextReaderSettingsFromEBookSettings(
   base.tapToTurn = ebookSettings.tapToTurn ?? base.tapToTurn;
   base.volumeKeyNavigation = ebookSettings.volumeKeyNavigation ?? base.volumeKeyNavigation;
   base.keepScreenOn = ebookSettings.keepScreenOn ?? base.keepScreenOn;
+  base.lockDeviceOrientation = ebookSettings.lockDeviceOrientation ?? base.lockDeviceOrientation ?? false;
   base.showPageNumber = ebookSettings.showPageNumber ?? base.showPageNumber;
   base.showProgress = ebookSettings.showProgress ?? base.showProgress;
   base.showTime = ebookSettings.showTime ?? base.showTime;
@@ -311,6 +318,7 @@ export function syncTextReaderSettingsToEBookSettings(
     tapToTurn: source.tapToTurn,
     volumeKeyNavigation: source.volumeKeyNavigation,
     keepScreenOn: source.keepScreenOn,
+    lockDeviceOrientation: source.lockDeviceOrientation,
     showPageNumber: source.showPageNumber,
     showProgress: source.showProgress,
     showTime: source.showTime,
@@ -338,6 +346,7 @@ export function syncTextReaderSettingsToEBookSettings(
   next.tapToTurn = settings.tapToTurn;
   next.volumeKeyNavigation = settings.volumeKeyNavigation;
   next.keepScreenOn = settings.keepScreenOn;
+  next.lockDeviceOrientation = settings.lockDeviceOrientation ?? false;
   next.showPageNumber = settings.showPageNumber;
   next.showProgress = settings.showProgress;
   next.showTime = settings.showTime;

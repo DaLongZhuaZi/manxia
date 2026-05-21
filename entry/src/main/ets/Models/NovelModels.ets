@@ -159,6 +159,7 @@ export interface NovelReaderSettings {
   backgroundColor: string;
   brightness: number;
   keepScreenOn: boolean;
+  lockDeviceOrientation?: boolean;
   volumeKeyTurn: boolean;
   clickTurn: boolean;
   autoScroll: boolean;
@@ -178,6 +179,7 @@ export const DEFAULT_NOVEL_READER_SETTINGS: NovelReaderSettings = {
   backgroundColor: '#F5F5DC',
   brightness: 1.0,
   keepScreenOn: true,
+  lockDeviceOrientation: false,
   volumeKeyTurn: true,
   clickTurn: true,
   autoScroll: false,

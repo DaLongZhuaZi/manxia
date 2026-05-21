@@ -7,6 +7,7 @@
 import { logger } from '../Utils/Logger';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { 
+  DoublePageVerticalDirection,
   ReadingMode, 
   ReadingDirection,
   ReadingSettings,
@@ -136,15 +137,21 @@ export struct MangaQuickSettings {
    */
   private createNewSettings(): ReadingSettings {
     const readingMode = this.getEffectiveReadingMode();
+    const doublePagePortraitLayout = this.readingSettings.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL;
     const readingDirection = this.normalizeReadingDirectionForMode(
       readingMode,
-      this.readingSettings.readingDirection
+      this.readingSettings.readingDirection,
+      doublePagePortraitLayout
     );
+    const lockMode: boolean = this.readingSettings.lockMode ?? this.readingSettings.lockOrientation ?? false;
     return {
       readingMode: readingMode,
       readingDirection: readingDirection,
       brightness: this.readingSettings.brightness,
       keepScreenOn: this.readingSettings.keepScreenOn,
+      lockDeviceOrientation: this.readingSettings.lockDeviceOrientation ?? false,
+      lockMode: lockMode,
+      lockOrientation: lockMode,
       pageSpacing: this.readingSettings.pageSpacing,
       showPageInfo: this.readingSettings.showPageInfo,
       showPageIndicator: this.readingSettings.showPageIndicator,
@@ -152,7 +159,8 @@ export struct MangaQuickSettings {
       autoPageTurnInterval: this.readingSettings.autoPageTurnInterval,
       skipIntroPages: this.readingSettings.skipIntroPages,
       pageTurnAnimation: this.readingSettings.pageTurnAnimation,
-      doublePagePortraitLayout: this.readingSettings.doublePagePortraitLayout,
+      doublePagePortraitLayout: doublePagePortraitLayout,
+      doublePageVerticalDirection: this.readingSettings.doublePageVerticalDirection,
       filterSettings: this.readingSettings.filterSettings,
       volumeKeyNavigation: this.readingSettings.volumeKeyNavigation,
       curlBackOpacity: this.readingSettings.curlBackOpacity,
@@ -168,7 +176,11 @@ export struct MangaQuickSettings {
   private updateReadingMode(mode: ReadingMode): void {
     const newSettings = this.createNewSettings();
     newSettings.readingMode = mode;
-    newSettings.readingDirection = this.normalizeReadingDirectionForMode(mode, newSettings.readingDirection);
+    newSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      mode,
+      newSettings.readingDirection,
+      newSettings.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL
+    );
     
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(newSettings);
@@ -180,9 +192,15 @@ export struct MangaQuickSettings {
    */
   private updateReadingDirection(direction: ReadingDirection): void {
     const newSettings = this.createNewSettings();
+    if (newSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+      newSettings.doublePagePortraitLayout = direction === ReadingDirection.TOP_TO_BOTTOM
+        ? DoublePagePortraitLayout.VERTICAL
+        : DoublePagePortraitLayout.HORIZONTAL;
+    }
     newSettings.readingDirection = this.normalizeReadingDirectionForMode(
       newSettings.readingMode,
-      direction
+      direction,
+      newSettings.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL
     );
     
     if (this.callbacks.onSettingsChange) {
@@ -196,7 +214,20 @@ export struct MangaQuickSettings {
   private updateDoublePagePortraitLayout(layout: DoublePagePortraitLayout): void {
     const newSettings = this.createNewSettings();
     newSettings.doublePagePortraitLayout = layout;
+    newSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      newSettings.readingMode,
+      newSettings.readingDirection,
+      layout
+    );
     
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(newSettings);
+    }
+  }
+
+  private updateDoublePageVerticalDirection(direction: DoublePageVerticalDirection): void {
+    const newSettings = this.createNewSettings();
+    newSettings.doublePageVerticalDirection = direction;
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(newSettings);
     }
@@ -209,6 +240,25 @@ export struct MangaQuickSettings {
     const newSettings = this.createNewSettings();
     newSettings.volumeKeyNavigation = enabled;
     
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(newSettings);
+    }
+  }
+
+  private updateModeLock(enabled: boolean): void {
+    const newSettings = this.createNewSettings();
+    newSettings.lockMode = enabled;
+    newSettings.lockOrientation = enabled;
+
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(newSettings);
+    }
+  }
+
+  private updateDeviceOrientationLock(enabled: boolean): void {
+    const newSettings = this.createNewSettings();
+    newSettings.lockDeviceOrientation = enabled;
+
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(newSettings);
     }
@@ -228,6 +278,24 @@ export struct MangaQuickSettings {
     return !this.hideContinuousScrollMode && this.getEffectiveReadingMode() === ReadingMode.CONTINUOUS_SCROLL;
   }
 
+  private isSinglePageReadingMode(): boolean {
+    const mode = this.getEffectiveReadingMode();
+    return mode === ReadingMode.SINGLE_PAGE ||
+      mode === ReadingMode.SINGLE_PAGE_LTR ||
+      mode === ReadingMode.SINGLE_PAGE_RTL ||
+      mode === ReadingMode.SINGLE_PAGE_TTB;
+  }
+
+  private isDoublePageVerticalLayoutSelected(): boolean {
+    return this.getEffectiveReadingMode() === ReadingMode.DOUBLE_PAGE &&
+      (this.readingSettings.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL) ===
+        DoublePagePortraitLayout.VERTICAL;
+  }
+
+  private getDoublePageVerticalDirection(): DoublePageVerticalDirection {
+    return this.readingSettings.doublePageVerticalDirection ?? DoublePageVerticalDirection.TOP_TO_BOTTOM;
+  }
+
   private getEffectiveReadingMode(): ReadingMode {
     if (this.hideContinuousScrollMode && this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL) {
       return ReadingMode.SINGLE_PAGE;
@@ -241,12 +309,19 @@ export struct MangaQuickSettings {
       : direction;
   }
 
-  private normalizeReadingDirectionForMode(mode: ReadingMode, direction: ReadingDirection): ReadingDirection {
+  private normalizeReadingDirectionForMode(
+    mode: ReadingMode,
+    direction: ReadingDirection,
+    doublePagePortraitLayout: DoublePagePortraitLayout
+  ): ReadingDirection {
     const normalizedDirection = this.normalizeReadingDirection(direction);
     if (this.hideContinuousScrollMode && mode === ReadingMode.CONTINUOUS_SCROLL) {
       return normalizedDirection === ReadingDirection.RIGHT_TO_LEFT
         ? ReadingDirection.RIGHT_TO_LEFT
         : ReadingDirection.LEFT_TO_RIGHT;
+    }
+    if (mode === ReadingMode.DOUBLE_PAGE && doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL) {
+      return ReadingDirection.TOP_TO_BOTTOM;
     }
     if (mode === ReadingMode.DOUBLE_PAGE && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
       return ReadingDirection.LEFT_TO_RIGHT;
@@ -266,7 +341,8 @@ export struct MangaQuickSettings {
   private getSelectedReadingDirection(): ReadingDirection {
     return this.normalizeReadingDirectionForMode(
       this.getEffectiveReadingMode(),
-      this.readingSettings.readingDirection
+      this.readingSettings.readingDirection,
+      this.readingSettings.doublePagePortraitLayout ?? DoublePagePortraitLayout.VERTICAL
     );
   }
 
@@ -331,8 +407,7 @@ export struct MangaQuickSettings {
    * 判断是否禁用从上到下阅读方向（双页模式下不支持）
    */
   private isTTBDisabled(): boolean {
-    return this.getEffectiveReadingMode() === ReadingMode.DOUBLE_PAGE ||
-      this.isContinuousScrollReadingMode();
+    return this.isContinuousScrollReadingMode();
   }
 
   /**
@@ -349,10 +424,34 @@ export struct MangaQuickSettings {
     if (this.isHorizontalDirectionDisabled()) {
       return '条漫模式仅支持从上到下';
     }
-    if (this.isTTBDisabled()) {
-      return '双页模式不支持从上到下';
+    if (this.isDoublePageVerticalLayoutSelected()) {
+      return '当前双页为上下组合；选择左右方向会切换为左右组合，上下顺序由下方选项控制。';
+    }
+    if (this.getEffectiveReadingMode() === ReadingMode.DOUBLE_PAGE) {
+      return '当前双页为左右组合；选择从上到下将切换为上下组合。';
     }
     return '';
+  }
+
+  private isModeLocked(): boolean {
+    return this.readingSettings.lockMode ?? this.readingSettings.lockOrientation ?? false;
+  }
+
+  private getModeLockHint(): string {
+    if (this.isModeLocked()) {
+      return '已锁定：旋转设备时保持当前阅读模式。';
+    }
+    if (this.isSinglePageReadingMode()) {
+      return '未锁定：横屏会临时切换为左右双页。';
+    }
+    return '锁定后旋转设备不会触发临时布局切换。';
+  }
+
+  private getDeviceOrientationLockHint(): string {
+    if (this.readingSettings.lockDeviceOrientation ?? false) {
+      return '已锁定：保持当前横竖屏方向。';
+    }
+    return '开启后会锁住当前设备方向，避免阅读时误旋转。';
   }
 
   /**
@@ -504,6 +603,120 @@ export struct MangaQuickSettings {
         .onChange((isOn: boolean) => {
           this.updateVolumeKeyNavigation(isOn);
         })
+    }
+    .width('100%')
+    .margin({ bottom: 16 })
+  }
+
+  @Builder
+  buildModeLockToggle() {
+    Column({ space: 4 }) {
+      Row() {
+        Column() {
+          Text('锁定模式')
+            .fontSize(14)
+            .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
+
+          Text(this.getModeLockHint())
+            .fontSize(11)
+            .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.isModeLocked() })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.updateModeLock(isOn);
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ bottom: 16 })
+  }
+
+  @Builder
+  buildDeviceOrientationLockToggle() {
+    Column({ space: 4 }) {
+      Row() {
+        Column() {
+          Text('锁定方向')
+            .fontSize(14)
+            .fontColor($r('app.color.text_primary'))
+            .fontFamily(this.appFontFamily)
+
+          Text(this.getDeviceOrientationLockHint())
+            .fontSize(11)
+            .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.lockDeviceOrientation ?? false })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.updateDeviceOrientationLock(isOn);
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ bottom: 16 })
+  }
+
+  /**
+   * 构建双页上下翻页方向选择器
+   */
+  @Builder
+  buildDoublePageVerticalDirectionSelector() {
+    Column({ space: 8 }) {
+      Text('上下翻页方向')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+
+      Row({ space: 8 }) {
+        Column() {
+          Text('上→下')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.TOP_TO_BOTTOM ?
+              $r('app.color.accent') :
+              $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(10)
+        .backgroundColor(this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.TOP_TO_BOTTOM ?
+          $r('app.color.accent_background') :
+          Color.Transparent)
+        .borderRadius(8)
+        .onClick(() => this.updateDoublePageVerticalDirection(DoublePageVerticalDirection.TOP_TO_BOTTOM))
+
+        Column() {
+          Text('下→上')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP ?
+              $r('app.color.accent') :
+              $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(10)
+        .backgroundColor(this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP ?
+          $r('app.color.accent_background') :
+          Color.Transparent)
+        .borderRadius(8)
+        .onClick(() => this.updateDoublePageVerticalDirection(DoublePageVerticalDirection.BOTTOM_TO_TOP))
+      }
+      .width('100%')
     }
     .width('100%')
     .margin({ bottom: 16 })
@@ -710,6 +923,12 @@ export struct MangaQuickSettings {
           
           // 双页竖屏组合
           this.buildDoublePageLayoutSelector()
+          if (this.isDoublePageVerticalLayoutSelected()) {
+            this.buildDoublePageVerticalDirectionSelector()
+          }
+
+          this.buildModeLockToggle()
+          this.buildDeviceOrientationLockToggle()
           
           // 音量键翻页
           this.buildVolumeKeyToggle()
@@ -798,6 +1017,12 @@ export struct MangaQuickSettings {
              
             // 双页竖屏组合（紧凑版）
             this.buildLandscapeDoublePageLayout()
+            if (this.isDoublePageVerticalLayoutSelected()) {
+              this.buildLandscapeDoublePageVerticalDirectionSelector()
+            }
+
+            this.buildLandscapeModeLockToggle()
+            this.buildLandscapeDeviceOrientationLockToggle()
             
             // 音量键翻页
             this.buildLandscapeVolumeKeyToggle()
@@ -955,6 +1180,65 @@ export struct MangaQuickSettings {
   }
 
   /**
+   * 构建横屏模式锁定开关
+   */
+  @Builder
+  buildLandscapeModeLockToggle() {
+    Column() {
+      Row() {
+        Text('锁定模式')
+          .fontSize(12)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.isModeLocked() })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.updateModeLock(isOn);
+          })
+      }
+      .width('100%')
+
+      Text(this.getModeLockHint())
+        .fontSize(9)
+        .fontColor($r('app.color.text_secondary'))
+        .fontFamily(this.appFontFamily)
+        .margin({ top: 2 })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+  }
+
+  @Builder
+  buildLandscapeDeviceOrientationLockToggle() {
+    Column() {
+      Row() {
+        Text('锁定方向')
+          .fontSize(12)
+          .fontColor($r('app.color.text_primary'))
+          .fontFamily(this.appFontFamily)
+          .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.lockDeviceOrientation ?? false })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.updateDeviceOrientationLock(isOn);
+          })
+      }
+      .width('100%')
+
+      Text(this.getDeviceOrientationLockHint())
+        .fontSize(9)
+        .fontColor($r('app.color.text_secondary'))
+        .fontFamily(this.appFontFamily)
+        .margin({ top: 2 })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+  }
+
+  /**
    * 构建横屏音量键翻页开关
    */
   @Builder
@@ -971,6 +1255,59 @@ export struct MangaQuickSettings {
         .onChange((isOn: boolean) => {
           this.updateVolumeKeyNavigation(isOn);
         })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+  }
+
+  /**
+   * 构建横屏双页上下翻页方向选择器
+   */
+  @Builder
+  buildLandscapeDoublePageVerticalDirectionSelector() {
+    Column() {
+      Text('上下翻页方向')
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .fontFamily(this.appFontFamily)
+        .width('100%')
+        .margin({ bottom: 6 })
+
+      Row({ space: 4 }) {
+        Column() {
+          Text('上→下')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.TOP_TO_BOTTOM ?
+              $r('app.color.accent') :
+              $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(8)
+        .backgroundColor(this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.TOP_TO_BOTTOM ?
+          $r('app.color.accent_background') :
+          Color.Transparent)
+        .borderRadius(6)
+        .onClick(() => this.updateDoublePageVerticalDirection(DoublePageVerticalDirection.TOP_TO_BOTTOM))
+
+        Column() {
+          Text('下→上')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP ?
+              $r('app.color.accent') :
+              $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(8)
+        .backgroundColor(this.getDoublePageVerticalDirection() === DoublePageVerticalDirection.BOTTOM_TO_TOP ?
+          $r('app.color.accent_background') :
+          Color.Transparent)
+        .borderRadius(6)
+        .onClick(() => this.updateDoublePageVerticalDirection(DoublePageVerticalDirection.BOTTOM_TO_TOP))
+      }
+      .width('100%')
     }
     .width('100%')
     .margin({ bottom: 12 })
