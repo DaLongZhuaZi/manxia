@@ -23,9 +23,14 @@ export enum GuideStep {
   IMAGE_SOURCE_GUIDE = 3, // 图源引导
   BOOK_SOURCE_GUIDE = 4,  // 书源引导
   CUSTOM_EXPERIENCE = 5,  // 自定义体验引导
-  ANALYTICS_PERMISSION = 6, // 阅读报告权限询问（保留但跳过）
-  LIBRARY_INTRO = 7,     // 书库介绍
+  ANALYTICS_PERMISSION = 6, // 通知权限与使用场景
+  LIBRARY_INTRO = 7,     // 隐私书库与SFW模式说明
   COMPLETED = 8          // 完成
+}
+
+export enum GuideFlowMode {
+  FULL = 'full',
+  SOURCE_FEATURE_ONLY = 'source_feature_only'
 }
 
 /**
@@ -51,11 +56,15 @@ export class WelcomeGuideManager {
   private readonly KEY_CURRENT_STEP = 'current_guide_step';
   private readonly KEY_LAST_SHOW_TIME = 'last_show_time';
   private readonly KEY_USER_MANUAL_ADDED = 'user_manual_added';
+  private readonly KEY_SOURCE_FEATURE_GUIDE_SHOWN = 'source_feature_guide_shown';
+  private readonly KEY_ACTIVE_GUIDE_FLOW = 'active_guide_flow';
 
   private isFirstLaunch: boolean = true;
   private guideCompleted: boolean = false;
   private guideSkipped: boolean = false;
   private currentStep: GuideStep = GuideStep.WELCOME;
+  private sourceFeatureGuideShown: boolean = false;
+  private activeGuideFlow: GuideFlowMode = GuideFlowMode.FULL;
   private isInitialized: boolean = false;
 
   private constructor() {
@@ -153,8 +162,19 @@ export class WelcomeGuideManager {
         // 读取当前步骤
         const savedStep = await this.preferencesStore.get(this.KEY_CURRENT_STEP, GuideStep.WELCOME) as number;
         this.currentStep = this.normalizeStep(savedStep as GuideStep);
+        this.sourceFeatureGuideShown = await this.preferencesStore.get(this.KEY_SOURCE_FEATURE_GUIDE_SHOWN, false) as boolean;
+
+        const savedGuideFlow = await this.preferencesStore.get(this.KEY_ACTIVE_GUIDE_FLOW, GuideFlowMode.FULL) as string;
+        if (savedGuideFlow === GuideFlowMode.SOURCE_FEATURE_ONLY) {
+          this.activeGuideFlow = GuideFlowMode.SOURCE_FEATURE_ONLY;
+        } else {
+          this.activeGuideFlow = GuideFlowMode.FULL;
+        }
+        if (this.guideCompleted && this.activeGuideFlow !== GuideFlowMode.SOURCE_FEATURE_ONLY) {
+          this.currentStep = GuideStep.COMPLETED;
+        }
         
-        logger.info(TAG, `引导状态加载完成: 首次=${this.isFirstLaunch}, 完成=${this.guideCompleted}, 跳过=${this.guideSkipped}, 步骤=${this.currentStep}`);
+        logger.info(TAG, `引导状态加载完成: 首次=${this.isFirstLaunch}, 完成=${this.guideCompleted}, 跳过=${this.guideSkipped}, 步骤=${this.currentStep}, 源功能引导已显示=${this.sourceFeatureGuideShown}, flow=${this.activeGuideFlow}`);
       }
     } catch (error) {
       logger.error(TAG, '加载引导状态失败', String(error));
@@ -177,6 +197,8 @@ export class WelcomeGuideManager {
       await this.preferencesStore.put(this.KEY_GUIDE_SKIPPED, this.guideSkipped);
       await this.preferencesStore.put(this.KEY_CURRENT_STEP, this.currentStep);
       await this.preferencesStore.put(this.KEY_LAST_SHOW_TIME, Date.now());
+      await this.preferencesStore.put(this.KEY_SOURCE_FEATURE_GUIDE_SHOWN, this.sourceFeatureGuideShown);
+      await this.preferencesStore.put(this.KEY_ACTIVE_GUIDE_FLOW, this.activeGuideFlow);
       await this.preferencesStore.flush();
       
       logger.info(TAG, '引导状态保存成功');
@@ -226,6 +248,7 @@ export class WelcomeGuideManager {
       this.guideCompleted = true;
       this.isFirstLaunch = false;
       this.currentStep = GuideStep.COMPLETED;
+      this.activeGuideFlow = GuideFlowMode.FULL;
       await this.saveGuideState();
       logger.info(TAG, '引导流程已完成');
     } catch (error) {
@@ -243,6 +266,7 @@ export class WelcomeGuideManager {
       }
       this.guideSkipped = true;
       this.isFirstLaunch = false;
+      this.activeGuideFlow = GuideFlowMode.FULL;
       await this.saveGuideState();
       logger.info(TAG, '用户跳过了引导流程');
     } catch (error) {
@@ -262,6 +286,8 @@ export class WelcomeGuideManager {
       this.guideCompleted = false;
       this.guideSkipped = false;
       this.currentStep = GuideStep.WELCOME;
+      this.sourceFeatureGuideShown = false;
+      this.activeGuideFlow = GuideFlowMode.FULL;
       await this.saveGuideState();
       logger.info(TAG, '引导状态已重置');
     } catch (error) {
@@ -274,6 +300,14 @@ export class WelcomeGuideManager {
    */
   public getCurrentStep(): GuideStep {
     return this.normalizeStep(this.currentStep);
+  }
+
+  public getActiveGuideFlow(): GuideFlowMode {
+    return this.activeGuideFlow;
+  }
+
+  public isSourceFeatureGuideShown(): boolean {
+    return this.sourceFeatureGuideShown;
   }
 
   /**
@@ -322,6 +356,35 @@ export class WelcomeGuideManager {
       skipped: this.guideSkipped,
       lastShowTime: Date.now()
     };
+  }
+
+  public async startSourceFeatureGuide(): Promise<void> {
+    try {
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
+      this.sourceFeatureGuideShown = true;
+      this.activeGuideFlow = GuideFlowMode.SOURCE_FEATURE_ONLY;
+      this.currentStep = GuideStep.IMAGE_SOURCE_GUIDE;
+      await this.saveGuideState();
+      logger.info(TAG, '已启动仅源功能引导流程');
+    } catch (error) {
+      logger.error(TAG, `启动源功能引导失败: ${String(error)}`);
+    }
+  }
+
+  public async finishSourceFeatureGuide(): Promise<void> {
+    try {
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
+      this.activeGuideFlow = GuideFlowMode.FULL;
+      this.currentStep = this.guideCompleted ? GuideStep.COMPLETED : GuideStep.WELCOME;
+      await this.saveGuideState();
+      logger.info(TAG, '仅源功能引导流程已结束');
+    } catch (error) {
+      logger.error(TAG, `结束源功能引导失败: ${String(error)}`);
+    }
   }
 
   /**

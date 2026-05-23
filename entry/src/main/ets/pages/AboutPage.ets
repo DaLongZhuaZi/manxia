@@ -26,7 +26,158 @@ import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelpe
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-const INVITE_TEST_URL = 'https://appgallery.huawei.com/apptest/5enwyzzrrmQ';
+const APP_TEST_INVITE_URL = 'https://appgallery.huawei.com/apptest/5enwyzzrrmQ';
+const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/6a3f68c8a1506b2ddcab54807e0b0e96?invitationCode=AcNZnnBCQbh';
+
+interface InviteTestLinkOption {
+  label: string;
+  url: string;
+}
+
+@CustomDialog
+struct InviteTestEntryDialog {
+  controller: CustomDialogController;
+  @Prop themeState: ThemeAwareState;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  onSelectAppTest: () => void = () => {};
+  onSelectAppGallery: () => void = () => {};
+  onCancel: () => void = () => {};
+
+  private handleSelect(action: () => void): void {
+    action();
+    this.controller.close();
+  }
+
+  build() {
+    Column({ space: 14 }) {
+      Text('选择邀测入口')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+
+      Text('请选择要打开的邀测版本入口')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+
+      Column({ space: 10 }) {
+        Row({ space: 12 }) {
+          Image($r('app.media.ic_sync_normal'))
+            .width(22)
+            .height(22)
+
+          Column({ space: 2 }) {
+            Text('AppTest邀请')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Text('进入 AppTest 邀测页')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 14, bottom: 14 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .borderRadius(14)
+        .border({
+          width: 1,
+          color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.handleSelect(this.onSelectAppTest);
+        })
+
+        Row({ space: 12 }) {
+          Image($r('app.media.ic_system_normal'))
+            .width(22)
+            .height(22)
+
+          Column({ space: 2 }) {
+            Text('应用市场邀请')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Text('进入应用市场邀测加入页')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 14, bottom: 14 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(14)
+        .border({
+          width: 1,
+          color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.handleSelect(this.onSelectAppGallery);
+        })
+      }
+      .width('100%')
+
+      Button('取消')
+        .width('100%')
+        .height(42)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+        .borderRadius(12)
+        .onClick(() => {
+          this.onCancel();
+          this.controller.close();
+        })
+    }
+    .width('86%')
+    .constraintSize({ maxWidth: 420 })
+    .padding({ left: 18, right: 18, top: 18, bottom: 18 })
+    .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+    .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme),
+      SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme)
+    )
+    .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+    .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+    .clip(true)
+    .border({
+      width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+      color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+    })
+    .shadow({
+      radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+      color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+      offsetX: 0,
+      offsetY: 8
+    })
+  }
+}
 
 // 使用NavDestinationContext官方类型
 // @kit.ArkUI提供的NavDestinationContext已包含必要的类型定义
@@ -51,6 +202,7 @@ struct AboutPage {
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
   private deviceChangeListener: DeviceChangeListener | null = null;
+  private inviteTestDialogController: CustomDialogController | null = null;
   @State responsive_contentPadding: number = 16;
   @State responsive_maxContentWidth: number = 1200;
   @State responsive_isLandscape: boolean = false;
@@ -115,6 +267,14 @@ struct AboutPage {
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
+    }
+    if (this.inviteTestDialogController) {
+      try {
+        this.inviteTestDialogController.close();
+      } catch (error) {
+        logger.warn(TAG, `关闭邀测弹窗失败: ${String(error)}`);
+      }
+      this.inviteTestDialogController = null;
     }
   }
 
@@ -374,20 +534,67 @@ struct AboutPage {
   }
 
   /**
-   * 打开邀测版本页面
+   * 打开邀测链接
    */
-  private async openInviteTestPage(): Promise<void> {
+  private async openInviteTestLink(option: InviteTestLinkOption): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
-      await context.openLink(INVITE_TEST_URL, { appLinkingOnly: false });
-      logger.info(TAG, '已打开邀测版本页面');
+      const hostContext = this.getUIContext()?.getHostContext();
+      const context = hostContext as common.UIAbilityContext | null;
+      if (!context) {
+        throw new Error('无法获取页面上下文');
+      }
+      await context.openLink(option.url, { appLinkingOnly: false });
+      logger.info(TAG, `已打开邀测链接: ${option.label}`);
     } catch (error) {
-      logger.error(TAG, '打开邀测版本页面失败', String(error));
+      logger.error(TAG, `打开邀测链接失败: ${option.label}`, String(error));
       promptAction.showToast({
-        message: '无法打开浏览器，请手动访问邀测版本页面',
+        message: `无法打开浏览器，请手动访问${option.label}`,
         duration: 3000
       });
     }
+  }
+
+  /**
+   * 显示邀测版本入口选择框
+   */
+  private showInviteTestActionMenu(): void {
+    if (this.inviteTestDialogController) {
+      try {
+        this.inviteTestDialogController.close();
+      } catch (error) {
+        logger.warn(TAG, `关闭旧邀测弹窗失败: ${String(error)}`);
+      }
+      this.inviteTestDialogController = null;
+    }
+
+    const controller = new CustomDialogController({
+      builder: InviteTestEntryDialog({
+        themeState: this.themeState,
+        onSelectAppTest: () => {
+          this.inviteTestDialogController = null;
+          void this.openInviteTestLink({
+            label: 'AppTest邀请',
+            url: APP_TEST_INVITE_URL
+          });
+        },
+        onSelectAppGallery: () => {
+          this.inviteTestDialogController = null;
+          void this.openInviteTestLink({
+            label: '应用市场邀请',
+            url: APP_GALLERY_INVITE_URL
+          });
+        },
+        onCancel: () => {
+          logger.debug(TAG, '邀测入口选择已取消或关闭');
+          this.inviteTestDialogController = null;
+        }
+      }),
+      alignment: DialogAlignment.Center,
+      autoCancel: true,
+      customStyle: true
+    });
+    this.inviteTestDialogController = controller;
+    controller.open();
   }
 
   /**
@@ -406,7 +613,11 @@ struct AboutPage {
       
       // 尝试打开QQ群页面
       try {
-        const context = getContext(this) as common.UIAbilityContext;
+        const hostContext = this.getUIContext()?.getHostContext();
+        const context = hostContext as common.UIAbilityContext | null;
+        if (!context) {
+          throw new Error('无法获取页面上下文');
+        }
         // 使用QQ群卡片scheme - 直接打开群资料页
         const qqGroupUrl = `mqqapi://card/show_pslcard?src_type=internal&version=1&card_type=group&uin=${qqGroupNumber}`;
         
@@ -447,8 +658,8 @@ struct AboutPage {
       })
 
       this.buildButtonItem('邀测版本', () => {
-        logger.info(TAG, '打开邀测版本页面');
-        this.openInviteTestPage();
+        logger.info(TAG, '显示邀测版本入口选择框');
+        this.showInviteTestActionMenu();
       })
 
       this.buildButtonItem('版本记录', () => {

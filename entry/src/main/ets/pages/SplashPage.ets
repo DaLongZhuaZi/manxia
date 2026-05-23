@@ -9,7 +9,7 @@ import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { common } from '@kit.AbilityKit';
 import { colorMap } from '../Data/ResourceMap';
-import { deviceInfo } from '@kit.BasicServicesKit';
+import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
 import { getAppInitializationManager, InitializationState, InitPhase, InitProgressCallback } from '../Framework/Managers/AppInitializationManager';
 import { ngfEventBusFacade, NGFEventPayload, NGFInitializationEventName } from '../Framework/NGF';
 import { ngfPlatformWindowControllerFacade, NGFDisplayMode } from '../Framework/NGF/platformOhos/index';
@@ -601,17 +601,7 @@ struct SplashPage {
 
   // 媒体资源回退：根据当前自定义主题ID与设备类型选择 a_* / b_*
   private getFallbackMediaResource(): ResourceStr {
-    const setId: string = (this.currentCustomThemeId === 'secondary_custom_theme') ? 'b' : 'a';
-    const devType: string = String(deviceInfo.deviceType);
-    if (setId === 'a') {
-      if (devType === 'foldable') { return $r('app.media.a_1'); }
-      if (devType === 'phone') { return $r('app.media.a_2'); }
-      return $r('app.media.a_3');
-    } else {
-      if (devType === 'foldable') { return $r('app.media.b_1'); }
-      if (devType === 'phone') { return $r('app.media.b_2'); }
-      return $r('app.media.b_3');
-    }
+    return BuiltInThemeResources.resolveResource(this.currentCustomThemeId);
   }
 }
 

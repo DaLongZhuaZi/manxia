@@ -12139,56 +12139,21 @@ struct MainMenuPage {
    */
   @Builder
   buildFloatingSearchButton() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
-        .linearGradient(this.getFloatingSearchButtonGlassGradient())
-
-      Column()
-        .width(34)
-        .height(13)
-        .borderRadius(999)
-        .backgroundColor(this.getFloatingSearchButtonHighlightColor())
-        .position({ x: 7, y: 5 })
-
-      Column()
-        .width('100%')
-        .height(1)
-        .backgroundColor(this.getFloatingSearchButtonTopEdgeColor())
-
-      Column()
-        .width(30)
-        .height(1)
-        .backgroundColor(this.getFloatingSearchButtonBottomEdgeColor())
-        .position({ x: 9, y: 42 })
-
-      Stack({ alignContent: Alignment.Center }) {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(27)
-          .fontColor([this.getFloatingSearchButtonIconColor()])
-          .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-      }
-      .width('100%')
-      .height('100%')
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(27)
+        .fontColor([this.getFloatingSearchButtonIconColor()])
+        .renderingStrategy(SymbolRenderingStrategy.SINGLE)
     }
     .width(this.FLOAT_SEARCH_BUTTON_SIZE)
     .height(this.FLOAT_SEARCH_BUTTON_SIZE)
     .backgroundColor(this.getFloatingSearchButtonBackground())
     .backgroundBlurStyle(this.getBottomBarContainerBlurStyle(), this.getBottomBarContainerBlurOptions())
-    .backgroundEffect(this.getBottomBarContainerBackgroundEffect())
     .borderRadius(this.FLOAT_SEARCH_BUTTON_SIZE / 2)
     .clip(true)
     .border({
       width: 1,
       color: this.getFloatingSearchButtonBorderColor()
-    })
-    .shadow({
-      radius: this.getFloatingSearchButtonShadowRadius(),
-      color: this.getFloatingSearchButtonShadowColor(),
-      offsetX: 0,
-      offsetY: 5
     })
     .stateStyles({
       pressed: {
@@ -28050,63 +28015,6 @@ struct MainMenuPage {
     return this.themeState.currentTheme === ThemeType.DARK
       ? 'rgba(255, 255, 255, 0.20)'
       : 'rgba(255, 255, 255, 0.52)';
-  }
-
-  private getFloatingSearchButtonTopEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.30)'
-      : 'rgba(255, 255, 255, 0.78)';
-  }
-
-  private getFloatingSearchButtonBottomEdgeColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.10)'
-      : 'rgba(120, 140, 170, 0.14)';
-  }
-
-  private getFloatingSearchButtonHighlightColor(): ResourceColor {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(255, 255, 255, 0.18)'
-      : 'rgba(255, 255, 255, 0.42)';
-  }
-
-  private getFloatingSearchButtonShadowColor(): string {
-    if (!this.userThemeShadowEnabled) {
-      return 'rgba(0, 0, 0, 0)';
-    }
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(0, 0, 0, 0.16)'
-      : 'rgba(84, 99, 126, 0.08)';
-  }
-
-  private getFloatingSearchButtonShadowRadius(): number {
-    if (!this.userThemeShadowEnabled) {
-      return 0;
-    }
-    return this.themeState.currentTheme === ThemeType.DARK ? 18 : 16;
-  }
-
-  private getFloatingSearchButtonGlassGradient(): LinearGradient {
-    if (this.themeState.currentTheme === ThemeType.DARK) {
-      return {
-        angle: 180,
-        colors: [
-          ['rgba(255, 255, 255, 0.11)', 0],
-          ['rgba(255, 255, 255, 0.04)', 0.32],
-          ['rgba(12, 18, 28, 0.02)', 0.72],
-          ['rgba(255, 255, 255, 0.04)', 1]
-        ]
-      };
-    }
-    return {
-      angle: 180,
-      colors: [
-        ['rgba(255, 255, 255, 0.32)', 0],
-        ['rgba(255, 255, 255, 0.12)', 0.30],
-        ['rgba(176, 208, 244, 0.04)', 0.72],
-        ['rgba(255, 255, 255, 0.12)', 1]
-      ]
-    };
   }
 
   private getSettingsAnalyticsCardTitleColor(): ResourceColor {
