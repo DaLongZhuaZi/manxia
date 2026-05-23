@@ -509,29 +509,6 @@ export struct UnifiedDetailPage {
     return value.trim();
   }
 
-  private loadGlobalChapterSortOrderPreference(): void {
-    const storedValue = this.settingsManager.getString(
-      SettingKeys.GLOBAL_UNIFIED_DETAIL_CHAPTER_SORT_ORDER,
-      ChapterSortOrder.ASCENDING
-    );
-    if (storedValue === ChapterSortOrder.DESCENDING) {
-      this.chapterSortOrder = ChapterSortOrder.DESCENDING;
-      return;
-    }
-    this.chapterSortOrder = ChapterSortOrder.ASCENDING;
-  }
-
-  private persistGlobalChapterSortOrderPreference(sortOrder: ChapterSortOrder): void {
-    void this.settingsManager.setString(SettingKeys.GLOBAL_UNIFIED_DETAIL_CHAPTER_SORT_ORDER, sortOrder);
-  }
-
-  private toggleGlobalChapterSortOrder(): void {
-    this.chapterSortOrder = this.chapterSortOrder === ChapterSortOrder.ASCENDING
-      ? ChapterSortOrder.DESCENDING
-      : ChapterSortOrder.ASCENDING;
-    this.persistGlobalChapterSortOrderPreference(this.chapterSortOrder);
-  }
-
   private normalizeDisplaySourceText(value: string | undefined | null): string {
     const rawText: string = this.normalizeTrackingText(value);
     if (rawText.length <= 0) {
@@ -2093,7 +2070,6 @@ export struct UnifiedDetailPage {
 
   aboutToAppear(): void {
     this.applyPageDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE);
-    this.loadGlobalChapterSortOrderPreference();
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -7493,7 +7469,9 @@ export struct UnifiedDetailPage {
                 .height(32)
                 .backgroundColor(Color.Transparent)
                 .onClick(() => {
-                  this.toggleGlobalChapterSortOrder();
+                  this.chapterSortOrder = this.chapterSortOrder === ChapterSortOrder.ASCENDING
+                    ? ChapterSortOrder.DESCENDING
+                    : ChapterSortOrder.ASCENDING;
                 })
               }
 

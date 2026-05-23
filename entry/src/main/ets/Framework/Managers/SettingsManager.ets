@@ -135,6 +135,9 @@ export class SettingKeys {
   // 下载设置
   static readonly DOWNLOAD_WIFI_ONLY = 'download_wifi_only';
   static readonly MAX_CONCURRENT_DOWNLOADS = 'max_concurrent_downloads';
+
+  // 统一详情页全局设置
+  static readonly GLOBAL_UNIFIED_DETAIL_CHAPTER_SORT_ORDER = 'global_unified_detail_chapter_sort_order';
   
   // 通知设置
   static readonly ENABLE_DOWNLOAD_NOTIFICATIONS = 'enable_download_notifications';

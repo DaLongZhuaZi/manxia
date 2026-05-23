@@ -4096,9 +4096,22 @@ export class MangaSourceEngine {
       if (result.success && result.data) {
         let sources: ESObject[] = [];
         if (typeof result.data === 'string') {
-          sources = JSON.parse(result.data) as ESObject[];
+          const parsed: ESObject = JSON.parse(result.data) as ESObject;
+          if (Array.isArray(parsed)) {
+            sources = parsed as ESObject[];
+          } else if (parsed && typeof parsed === 'object') {
+            const parsedRecord: Record<string, ESObject> = parsed as Record<string, ESObject>;
+            if (Array.isArray(parsedRecord['sources'])) {
+              sources = parsedRecord['sources'] as ESObject[];
+            }
+          }
         } else if (Array.isArray(result.data)) {
           sources = result.data;
+        } else if (result.data && typeof result.data === 'object') {
+          const dataRecord: Record<string, ESObject> = result.data as Record<string, ESObject>;
+          if (Array.isArray(dataRecord['sources'])) {
+            sources = dataRecord['sources'] as ESObject[];
+          }
         }
 
         return {
@@ -4141,9 +4154,22 @@ export class MangaSourceEngine {
       if (result.success && result.data) {
         let files: ESObject[] = [];
         if (typeof result.data === 'string') {
-          files = JSON.parse(result.data) as ESObject[];
+          const parsed: ESObject = JSON.parse(result.data) as ESObject;
+          if (Array.isArray(parsed)) {
+            files = parsed as ESObject[];
+          } else if (parsed && typeof parsed === 'object') {
+            const parsedRecord: Record<string, ESObject> = parsed as Record<string, ESObject>;
+            if (Array.isArray(parsedRecord['files'])) {
+              files = parsedRecord['files'] as ESObject[];
+            }
+          }
         } else if (Array.isArray(result.data)) {
           files = result.data;
+        } else if (result.data && typeof result.data === 'object') {
+          const dataRecord: Record<string, ESObject> = result.data as Record<string, ESObject>;
+          if (Array.isArray(dataRecord['files'])) {
+            files = dataRecord['files'] as ESObject[];
+          }
         }
 
         return {

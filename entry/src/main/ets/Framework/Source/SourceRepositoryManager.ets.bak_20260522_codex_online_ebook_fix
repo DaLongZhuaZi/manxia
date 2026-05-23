@@ -691,7 +691,7 @@ export class SourceRepositoryManager {
         // fileIo.accessSync 如果文件存在不抛异常，不存在则抛异常
         fileIo.accessSync(iconPath);
         // 如果没有抛异常，说明文件存在
-        logger.debug(TAG, `找到图源图标: ${iconPath}`);
+        logger.info(TAG, `找到图源图标: ${iconPath}`);
         return iconPath;
       } catch (_) {
         // 文件不存在，尝试下一个格式

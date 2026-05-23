@@ -637,7 +637,7 @@ export class SourceManager {
       const foundIconPath = repoManager.getSourceIconPath(pkg);
       if (foundIconPath) {
         iconPath = foundIconPath;
-        logger.debug(TAG, `图源 ${source.name} 找到图标: ${iconPath}`);
+        logger.info(TAG, `图源 ${source.name} 找到图标: ${iconPath}`);
       } else {
         logger.warn(TAG, `图源 ${source.name} 未找到图标, pkg=${pkg}`);
       }

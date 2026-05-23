@@ -17,9 +17,6 @@ import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
 import { ImageCacheManager } from '../Framework/Cache/ImageCacheManager';
 import { DataManager } from '../Framework/Data/DataManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
-import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
-import { OnlineEBookImportService } from '../Framework/Services/OnlineEBookImportService';
 import { webview } from '@kit.ArkWeb';
 import { http } from '@kit.NetworkKit';
 import { image } from '@kit.ImageKit';
@@ -35,9 +32,6 @@ import {
   DownloadTaskInfo,
   DownloadTaskType
 } from '../Framework/Download/DownloadManager';
-import { EBookReaderParams } from './EBookReaderRouteTypes';
-import { ChapterInfo as SourceChapterInfo, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
-import { promptAction } from '@kit.ArkUI';
 
 const TAG = 'OnlineEBookDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -133,8 +127,6 @@ export struct OnlineEBookDetailPage {
   private sourceManager: SourceManager = SourceManager.getInstance();
   private authManager: WebViewAuthManager = WebViewAuthManager.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
-  private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
-  private onlineEBookImportService: OnlineEBookImportService = OnlineEBookImportService.getInstance();
   private mangaSourceEngine: MangaSourceEngine | null = null;
   private webViewController: webview.WebviewController = new webview.WebviewController();
   @State private webViewReady: boolean = false;
@@ -151,14 +143,10 @@ export struct OnlineEBookDetailPage {
   @State downloadButtonState: DownloadButtonState = DownloadButtonState.IDLE;
   @State downloadProgress: number = 0;
   @State downloadPhase: string = 'idle';
-  @State importedBookId: string = '';
-  @State importStatusText: string = '';
-  @State importErrorMessage: string = '';
   @State detailRecoveryInProgress: boolean = false;
   @State detailRecoveryStatusText: string = '';
   private readonly detailRecoveryMaxAttempts: number = 2;
   private detailRecoveryTimer: number = -1;
-  private importInProgress: boolean = false;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -203,10 +191,6 @@ export struct OnlineEBookDetailPage {
     this.cachedCover = params.cachedCover || '';
     this.autoStartDownload = params.autoStartDownload === true;
     this.autoStartTriggered = false;
-    this.importedBookId = '';
-    this.importStatusText = '';
-    this.importErrorMessage = '';
-    this.importInProgress = false;
     this.detailRecoveryInProgress = false;
     this.detailRecoveryStatusText = '';
     if (this.autoStartDownload) {
@@ -563,11 +547,9 @@ export struct OnlineEBookDetailPage {
     const existingTask = this.globalDownloadManager.getEBookTask(this.bookId);
     if (existingTask) {
       this.currentDownloadTask = existingTask;
-      this.downloadProgress = existingTask.progress;
       this.updateUIFromTaskStatus(existingTask.status);
       if (existingTask.status === TaskStatus.COMPLETED) {
         logger.info(TAG, `电子书已下载: ${existingTask.savePath}`);
-        await this.handleCompletedDownloadTask(existingTask, this.autoStartDownload);
         return;
       }
     }
@@ -610,13 +592,32 @@ export struct OnlineEBookDetailPage {
         }
         
         if (sources.length > 0) {
-          await this.presentDownloadSources(sources);
+          this.downloadSources = sources;
+          let autoSelectedSource: DownloadSource | null = null;
+          for (let i = 0; i < sources.length; i++) {
+            const candidate = sources[i];
+            if (candidate.recommended && candidate.available !== false) {
+              autoSelectedSource = candidate;
+              break;
+            }
+          }
+          if (autoSelectedSource === null && sources.length === 1) {
+            autoSelectedSource = sources[0];
+          }
+
+          if (autoSelectedSource !== null) {
+            logger.info(TAG, `自动选择下载源: ${autoSelectedSource.name}`);
+            await this.handleSourceSelect(autoSelectedSource);
+            return;
+          }
+
+          this.showSourceSelector = true;
+          this.downloadButtonState = DownloadButtonState.IDLE;
+          this.downloadPhase = 'selecting_source';
+          logger.info(TAG, `显示下载源选择器，共 ${sources.length} 个源`);
         } else {
           throw new Error('未找到可用的下载源');
         }
-      } else if (this.shouldFallbackToLegacyDownloadWorkflow('getDownloadSources', result.error || '')) {
-        logger.info(TAG, '任务式下载源获取不可用，回退到旧电子书工作流');
-        await this.startLegacyDownloadFlow();
       } else {
         throw new Error(result.error || '获取下载源失败');
       }
@@ -625,83 +626,6 @@ export struct OnlineEBookDetailPage {
       this.downloadButtonState = DownloadButtonState.FAILED;
       this.downloadPhase = 'failed';
     }
-  }
-
-  private shouldFallbackToLegacyDownloadWorkflow(taskId: string, errorText: string): boolean {
-    const normalizedError = String(errorText || '');
-    return normalizedError.includes(`任务未找到: ${taskId}`);
-  }
-
-  private async startLegacyDownloadFlow(): Promise<void> {
-    if (!this.mangaSourceEngine) {
-      throw new Error('图源引擎未初始化');
-    }
-
-    const chapterResult = await this.mangaSourceEngine.getChapterList(this.bookId);
-    if (!chapterResult.success || !chapterResult.data || chapterResult.data.length <= 0) {
-      throw new Error(chapterResult.error || '旧工作流未返回可用下载源');
-    }
-
-    const sources = this.buildLegacyDownloadSources(chapterResult.data);
-    if (sources.length <= 0) {
-      throw new Error('旧工作流未解析出可用下载源');
-    }
-
-    logger.info(TAG, `旧工作流解析到 ${sources.length} 个下载源`);
-    await this.presentDownloadSources(sources);
-  }
-
-  private buildLegacyDownloadSources(chapters: SourceChapterInfo[]): DownloadSource[] {
-    const sources: DownloadSource[] = [];
-    const seen: Record<string, boolean> = {};
-
-    for (let i = 0; i < chapters.length; i++) {
-      const chapter = chapters[i];
-      const url = String(chapter.url || '');
-      const name = String(chapter.title || `下载源 ${i + 1}`).trim();
-      const key = `${name}|${url}`.toLowerCase();
-      if (key.length <= 1 || seen[key]) {
-        continue;
-      }
-      seen[key] = true;
-      sources.push({
-        id: `legacy_${i}_${chapter.id || chapter.externalId || name}`,
-        name: name,
-        url: url,
-        recommended: i === 0,
-        available: true
-      });
-    }
-
-    return sources;
-  }
-
-  private async presentDownloadSources(sources: DownloadSource[]): Promise<void> {
-    this.downloadSources = sources;
-    const autoSelectedSource = this.pickAutoSelectedSource(sources);
-    if (autoSelectedSource !== null) {
-      logger.info(TAG, `自动选择下载源: ${autoSelectedSource.name}`);
-      await this.handleSourceSelect(autoSelectedSource);
-      return;
-    }
-
-    this.showSourceSelector = true;
-    this.downloadButtonState = DownloadButtonState.IDLE;
-    this.downloadPhase = 'selecting_source';
-    logger.info(TAG, `显示下载源选择器，共 ${sources.length} 个源`);
-  }
-
-  private pickAutoSelectedSource(sources: DownloadSource[]): DownloadSource | null {
-    for (let i = 0; i < sources.length; i++) {
-      const candidate = sources[i];
-      if (candidate.recommended && candidate.available !== false) {
-        return candidate;
-      }
-    }
-    if (sources.length === 1) {
-      return sources[0];
-    }
-    return null;
   }
 
   private parseDownloadSourcesResult(result: ESObject): DownloadSourcesParseResult {
@@ -1307,9 +1231,6 @@ export struct OnlineEBookDetailPage {
         } else {
           throw new Error('未找到可下载的文件');
         }
-      } else if (this.shouldFallbackToLegacyDownloadWorkflow('getFileListFromSource', result?.error || '')) {
-        logger.info(TAG, `任务式文件列表获取不可用，回退到旧电子书工作流: ${source.name}`);
-        await this.handleLegacySourceSelect(source);
       } else {
         throw new Error(result?.error || '获取文件列表失败');
       }
@@ -1318,101 +1239,6 @@ export struct OnlineEBookDetailPage {
       this.downloadButtonState = DownloadButtonState.FAILED;
       this.downloadPhase = 'failed';
     }
-  }
-
-  private async handleLegacySourceSelect(source: DownloadSource): Promise<void> {
-    if (!this.mangaSourceEngine) {
-      throw new Error('图源引擎未初始化');
-    }
-
-    const pageResult = await this.mangaSourceEngine.getPageList(source.url, this.bookId);
-    let formats: FileFormat[] = [];
-    if (pageResult.success && pageResult.data && pageResult.data.length > 0) {
-      formats = this.buildLegacyFileFormats(pageResult.data, source);
-    }
-
-    if (formats.length <= 0) {
-      const fallbackFormat = this.buildDirectFormatFromSource(source);
-      if (fallbackFormat !== null) {
-        formats.push(fallbackFormat);
-      }
-    }
-
-    if (formats.length <= 0) {
-      throw new Error(pageResult.error || '旧工作流未找到可下载的文件');
-    }
-
-    this.fileFormats = formats;
-    this.showFormatSelector = true;
-    this.downloadButtonState = DownloadButtonState.IDLE;
-    this.downloadPhase = 'selecting_format';
-    logger.info(TAG, `旧工作流解析到 ${formats.length} 个文件格式`);
-  }
-
-  private buildLegacyFileFormats(pages: SourcePageInfo[], source: DownloadSource): FileFormat[] {
-    const formats: FileFormat[] = [];
-    const seen: Record<string, boolean> = {};
-
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i];
-      const url = String(page.imageUrl || '');
-      const format = this.inferFormat(source.name, url);
-      if (format.length <= 0 || seen[format]) {
-        continue;
-      }
-      seen[format] = true;
-      formats.push({
-        format: format,
-        displayName: this.getFormatDisplayName(format, source.name),
-        url: url,
-        available: true
-      });
-    }
-
-    return formats;
-  }
-
-  private buildDirectFormatFromSource(source: DownloadSource): FileFormat | null {
-    const format = this.inferFormat(source.name, source.url);
-    if (format.length <= 0 || source.url.length <= 0) {
-      return null;
-    }
-    return {
-      format: format,
-      displayName: this.getFormatDisplayName(format, source.name),
-      url: source.url,
-      available: true
-    };
-  }
-
-  private inferFormat(sourceName: string, url: string): string {
-    const normalizedName = String(sourceName || '').toLowerCase();
-    const normalizedUrl = String(url || '').toLowerCase();
-
-    if (normalizedUrl.includes('.epub') || normalizedUrl.includes('.epub3') || normalizedName.includes('epub')) {
-      return 'epub';
-    }
-    if (normalizedUrl.includes('.txt') || normalizedName.includes('plain text') || normalizedName.includes('txt')) {
-      return 'txt';
-    }
-    if (normalizedUrl.includes('.pdf') || normalizedName.includes('pdf')) {
-      return 'pdf';
-    }
-    if (normalizedUrl.includes('.azw3') || normalizedName.includes('azw3')) {
-      return 'azw3';
-    }
-    if (normalizedUrl.includes('.mobi') || normalizedUrl.includes('.kf8') || normalizedUrl.includes('.kindle') ||
-      normalizedName.includes('kindle') || normalizedName.includes('mobi')) {
-      return 'mobi';
-    }
-    return '';
-  }
-
-  private getFormatDisplayName(format: string, sourceName: string): string {
-    if (sourceName.trim().length > 0) {
-      return sourceName;
-    }
-    return format.toUpperCase();
   }
 
   private parseFileFormats(result: ESObject): FileFormat[] {
@@ -1475,8 +1301,6 @@ export struct OnlineEBookDetailPage {
     this.showFormatSelector = false;
     this.downloadButtonState = DownloadButtonState.DOWNLOADING;
     this.downloadPhase = 'downloading';
-    this.importErrorMessage = '';
-    this.importStatusText = '';
 
     if (!format.url) {
       logger.error(TAG, '下载链接不可用');
@@ -1519,8 +1343,8 @@ export struct OnlineEBookDetailPage {
       if (task.status === TaskStatus.DOWNLOADING || task.status === TaskStatus.PENDING) {
         setTimeout(() => checkProgress(), 500);
       } else if (task.status === TaskStatus.COMPLETED) {
+        this.downloadPhase = 'completed';
         logger.info(TAG, `电子书下载完成: ${task.savePath}`);
-        void this.handleCompletedDownloadTask(task, this.autoStartDownload);
       } else if (task.status === TaskStatus.FAILED) {
         this.downloadPhase = 'failed';
         logger.error(TAG, `电子书下载失败: ${task.error}`);
@@ -1528,67 +1352,6 @@ export struct OnlineEBookDetailPage {
     };
 
     checkProgress();
-  }
-
-  private async handleCompletedDownloadTask(task: DownloadTaskInfo, openAfterImport: boolean): Promise<void> {
-    this.currentDownloadTask = task;
-    this.downloadProgress = 100;
-    this.downloadPhase = 'importing';
-    this.downloadButtonState = DownloadButtonState.LOADING;
-    this.importStatusText = '正在导入书库...';
-
-    if (this.importInProgress) {
-      logger.info(TAG, '电子书导入已在进行中，跳过重复触发');
-      return;
-    }
-
-    this.importInProgress = true;
-    try {
-      const existingBook = await this.ebookDataManager.getEBookByFilePath(task.savePath);
-      if (existingBook) {
-        this.importedBookId = existingBook.id;
-        this.importStatusText = '已导入书库';
-        this.importErrorMessage = '';
-        this.downloadPhase = 'completed';
-        this.downloadButtonState = DownloadButtonState.COMPLETED;
-        logger.info(TAG, `下载文件已存在于书库: ${existingBook.id}`);
-      } else {
-        const importedBook = await this.onlineEBookImportService.importDownloadedBook(task.savePath);
-        this.importedBookId = importedBook.id;
-        this.importStatusText = '已导入书库';
-        this.importErrorMessage = '';
-        this.downloadPhase = 'completed';
-        this.downloadButtonState = DownloadButtonState.COMPLETED;
-        promptAction.showToast({ message: `已导入书库: ${importedBook.metadata.title}`, duration: 1600 });
-      }
-
-      if (openAfterImport && this.importedBookId.length > 0) {
-        this.openImportedBookReader();
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.importErrorMessage = `导入失败: ${errorMessage}`;
-      this.importStatusText = '';
-      this.downloadButtonState = DownloadButtonState.FAILED;
-      this.downloadPhase = 'failed';
-      logger.error(TAG, `下载完成后导入电子书失败: ${errorMessage}`);
-    } finally {
-      this.importInProgress = false;
-    }
-  }
-
-  private openImportedBookReader(): void {
-    if (this.importedBookId.length <= 0) {
-      return;
-    }
-
-    const params: EBookReaderParams = {
-      bookId: this.importedBookId
-    };
-    const opened = openEBookReaderRouterPage(this.getUIContext(), params, TAG);
-    if (!opened) {
-      promptAction.showToast({ message: '无法打开本地阅读器', duration: 1500 });
-    }
   }
 
   build() {
@@ -1863,22 +1626,14 @@ export struct OnlineEBookDetailPage {
     .backgroundColor(this.getDownloadButtonColor())
     .borderRadius(8)
     .onClick(() => {
-      if (this.importedBookId.length > 0) {
-        this.openImportedBookReader();
-        return;
-      }
       if (this.downloadButtonState === DownloadButtonState.IDLE || 
           this.downloadButtonState === DownloadButtonState.FAILED) {
-        void this.startDownloadFlow();
+        this.startDownloadFlow();
       }
     })
   }
 
   private getDownloadButtonText(): string {
-    if (this.importedBookId.length > 0 && !this.importInProgress) {
-      return '打开本地阅读';
-    }
-
     switch (this.downloadButtonState) {
       case DownloadButtonState.LOADING:
         // 根据下载阶段显示不同的提示
@@ -1889,8 +1644,6 @@ export struct OnlineEBookDetailPage {
             return '正在搜索下载源...';
           case 'fetching_files':
             return '正在获取文件列表...';
-          case 'importing':
-            return '正在导入书库...';
           case 'selecting_source':
             return '请选择下载源';
           case 'selecting_format':
@@ -1901,7 +1654,7 @@ export struct OnlineEBookDetailPage {
       case DownloadButtonState.DOWNLOADING:
         return `下载中 ${this.downloadProgress}%`;
       case DownloadButtonState.COMPLETED:
-        return this.importedBookId.length > 0 ? '打开本地阅读' : '下载完成';
+        return '下载完成';
       case DownloadButtonState.FAILED:
         return '下载失败，点击重试';
       default:
@@ -2073,8 +1826,7 @@ export struct OnlineEBookDetailPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .layoutWeight(1)
 
-        if (this.downloadPhase === 'downloading' || this.downloadPhase === 'fetching_sources' ||
-          this.downloadPhase === 'fetching_files' || this.downloadPhase === 'importing') {
+        if (this.downloadPhase === 'downloading' || this.downloadPhase === 'fetching_sources' || this.downloadPhase === 'fetching_files') {
           LoadingProgress()
             .width(14)
             .height(14)
@@ -2086,16 +1838,6 @@ export struct OnlineEBookDetailPage {
       // 错误信息
       if (this.currentDownloadTask?.error) {
         Text(this.currentDownloadTask.error)
-          .fontSize(12)
-          .fontColor('#F44336')
-          .width('100%')
-          .padding(8)
-          .backgroundColor('#F4433620')
-          .borderRadius(6)
-      }
-
-      if (this.importErrorMessage.length > 0) {
-        Text(this.importErrorMessage)
           .fontSize(12)
           .fontColor('#F44336')
           .width('100%')
@@ -2115,7 +1857,6 @@ export struct OnlineEBookDetailPage {
       case 'downloading':
       case 'fetching_sources':
       case 'fetching_files':
-      case 'importing':
         return '●';
       case 'failed':
         return '✗';
@@ -2131,7 +1872,6 @@ export struct OnlineEBookDetailPage {
       case 'downloading':
       case 'fetching_sources':
       case 'fetching_files':
-      case 'importing':
         return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
       case 'failed':
         return '#F44336';
@@ -2152,10 +1892,8 @@ export struct OnlineEBookDetailPage {
         return '请选择文件格式';
       case 'downloading':
         return `下载中 ${this.downloadProgress}%`;
-      case 'importing':
-        return this.importStatusText.length > 0 ? this.importStatusText : '正在导入书库...';
       case 'completed':
-        return this.importedBookId.length > 0 ? '已导入书库，可打开阅读' : '下载完成';
+        return '下载完成';
       case 'failed':
         return '下载失败';
       default:

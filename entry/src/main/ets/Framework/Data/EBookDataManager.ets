@@ -1788,6 +1788,25 @@ export class EBookDataManager {
   }
 
   /**
+   * 根据文件路径获取电子书
+   */
+  public async getEBookByFilePath(filePath: string): Promise<EBook | null> {
+    try {
+      const sql = `SELECT * FROM ebook_info WHERE filePath = ? LIMIT 1`;
+      const records = await this.dbManager.querySql(sql, [filePath]);
+
+      if (records && records.length > 0) {
+        return await this.buildEBookFromRecord(records[0]);
+      }
+
+      return null;
+    } catch (error) {
+      logger.error(TAG, `根据文件路径获取电子书失败: ${String(error instanceof Error ? error.message : error)}`);
+      return null;
+    }
+  }
+
+  /**
    * 从数据库记录构建EBook对象
    */
   private async buildEBookFromRecord(record: DatabaseRecord): Promise<EBook> {

@@ -41,18 +41,6 @@ export interface UnifiedChapter {
   originalType: UnifiedContentType;
 }
 
-export interface RemoteVerificationInfo {
-  status: string;
-  message: string;
-  pageUrl?: string;
-  pageTitle?: string;
-  cooldownText?: string;
-  cooldownSeconds?: number;
-  canRetryVerification?: boolean;
-  attempt?: number;
-  lastUpdatedTime?: number;
-}
-
 /**
  * 统一内容模型（用于详情页展示）
  */
@@ -88,7 +76,6 @@ export interface UnifiedContent {
   sourcePkg?: string;    // 图源包名（稳定标识，不随重新导入变化）
   sourceUrl?: string;
   isLocal: boolean;
-  remoteVerificationInfo?: RemoteVerificationInfo;
   
   // 额外元数据
   publisher?: string;
