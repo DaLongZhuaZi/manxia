@@ -4,7 +4,7 @@
  */
 import { logger } from '../../Utils/Logger';
 import { CUSTOM_THEME_KEYS, GlassLevel, ThemeManager, ThemeType } from '../Managers/ThemeManager';
-import { deviceInfo } from '@kit.BasicServicesKit';
+import { BuiltInThemeResources } from '../Theme/BuiltInThemeResources';
 
 const TAG = 'GlobalBackgroundLayer';
 
@@ -228,24 +228,6 @@ export struct GlobalBackgroundLayer {
   }
 
   private getFallbackMediaResource(): ResourceStr {
-    const setId: string = this.currentCustomThemeId === 'secondary_custom_theme' ? 'b' : 'a';
-    const devType: string = String(deviceInfo.deviceType);
-    if (setId === 'a') {
-      if (devType === 'foldable') {
-        return $r('app.media.a_1');
-      }
-      if (devType === 'phone') {
-        return $r('app.media.a_2');
-      }
-      return $r('app.media.a_3');
-    }
-
-    if (devType === 'foldable') {
-      return $r('app.media.b_1');
-    }
-    if (devType === 'phone') {
-      return $r('app.media.b_2');
-    }
-    return $r('app.media.b_3');
+    return BuiltInThemeResources.resolveResource(this.currentCustomThemeId);
   }
 }

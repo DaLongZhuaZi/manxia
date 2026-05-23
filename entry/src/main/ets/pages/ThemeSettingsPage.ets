@@ -3,7 +3,7 @@
  * 提供自定义主题功能：图片选择、裁剪、模糊效果、主色调提取、深色模式适配
  */
 import { logger } from '../Utils/Logger';
-import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS, SplashRotationRule } from '../Framework/Managers/ThemeManager';
+import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS, SplashRotationRule, CustomThemeMode } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -17,9 +17,8 @@ import { CropAlignment } from '../Framework/Utils/ImageCropper';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
 import effectKit from '@ohos.effectKit';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint, DeviceType as AdaptDeviceType } from '../Framework/Managers/DeviceAdaptationManager';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
-import { deviceInfo } from '@kit.BasicServicesKit';
 import { hdsMaterial, HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
@@ -27,6 +26,7 @@ import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBac
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
 
 const TAG = 'ThemeSettingsPage';
 const HDS_TAB_MATERIAL_FOLLOW_GLOBAL: number = -1;
@@ -55,6 +55,7 @@ interface CustomTheme {
   blurLevel: number;
   brightness: number; // 亮度调整（0-100），50为原始亮度
   primaryColor: string;
+  themeMode?: CustomThemeMode;
   isDark: boolean;
   createTime: number;
   lastModified: number;
@@ -64,6 +65,12 @@ interface SplashRotationOption {
   label: string;
   description: string;
   value: SplashRotationRule;
+}
+
+interface ThemeModeOption {
+  label: string;
+  description: string;
+  value: CustomThemeMode;
 }
 
 /**
@@ -199,6 +206,7 @@ export struct ThemeSettingsPage {
   @State selectedImagePixelHeight: number = 0;
   @State newThemeName: string = '';
   @State selectedPrimaryColor: string = '';
+  @State selectedThemeMode: CustomThemeMode = CustomThemeMode.AUTO;
   @State availablePrimaryColors: string[] = [];
   @State customPrimaryColorHex: string = '#007DFF';
   @State customPrimaryColorR: number = 0;
@@ -298,12 +306,31 @@ export struct ThemeSettingsPage {
   @State hdsTabBottomMarginValue: number = 0;
 
   // 默认自定义主题常量
-  private DEFAULT_THEME_ID: string = 'default_custom_theme';
-  private DEFAULT_THEME_NAME: string = '第一自定义主题';
-  private SECONDARY_THEME_ID: string = 'secondary_custom_theme';
+  private DEFAULT_THEME_ID: string = BuiltInThemeResources.DEFAULT_THEME_ID;
+  private DEFAULT_THEME_NAME: string = '自定义';
+  private SECONDARY_THEME_ID: string = BuiltInThemeResources.SECONDARY_THEME_ID;
   private SECONDARY_THEME_NAME: string = '第二自定义主题';
+  private CAT_DARK_THEME_ID: string = BuiltInThemeResources.CAT_DARK_THEME_ID;
+  private CAT_DARK_THEME_NAME: string = '猫猫深色主题';
   // 原始背景图片所在 rawfile 目录（如需调整实际目录，请修改此常量）
   private RAW_BACKGROUND_DIR: string = 'backgrounds';
+  private themeModeOptions: ThemeModeOption[] = [
+    {
+      label: '浅色',
+      description: '固定使用浅色组件、文字与背景适配',
+      value: CustomThemeMode.LIGHT
+    },
+    {
+      label: '深色',
+      description: '固定使用深色组件、文字与背景适配',
+      value: CustomThemeMode.DARK
+    },
+    {
+      label: '自适应',
+      description: '跟随系统浅色或深色设置自动切换配色',
+      value: CustomThemeMode.AUTO
+    }
+  ];
   private splashRotationOptions: SplashRotationOption[] = [
     {
       label: '每次启动轮换',
@@ -515,6 +542,89 @@ export struct ThemeSettingsPage {
 
   private getHideSplashProgressFromTheme(theme: CustomTheme): boolean {
     return theme.hideSplashProgress === true;
+  }
+
+  private getThemeModeFromTheme(theme: CustomTheme): CustomThemeMode {
+    if (theme.themeMode === CustomThemeMode.LIGHT) {
+      return CustomThemeMode.LIGHT;
+    }
+    if (theme.themeMode === CustomThemeMode.DARK) {
+      return CustomThemeMode.DARK;
+    }
+    if (theme.themeMode === CustomThemeMode.AUTO) {
+      return CustomThemeMode.AUTO;
+    }
+    if (theme.id === this.SECONDARY_THEME_ID || theme.id === this.CAT_DARK_THEME_ID) {
+      return CustomThemeMode.DARK;
+    }
+    return CustomThemeMode.AUTO;
+  }
+
+  private getThemeModeLabel(mode: CustomThemeMode): string {
+    if (mode === CustomThemeMode.LIGHT) {
+      return '浅色';
+    }
+    if (mode === CustomThemeMode.DARK) {
+      return '深色';
+    }
+    return '自适应';
+  }
+
+  private getThemeModeDescription(mode: CustomThemeMode): string {
+    if (mode === CustomThemeMode.LIGHT) {
+      return '固定浅色配色';
+    }
+    if (mode === CustomThemeMode.DARK) {
+      return '固定深色配色';
+    }
+    return '跟随系统配色';
+  }
+
+  private isDarkPreviewTheme(theme: CustomTheme): boolean {
+    return this.getThemeModeFromTheme(theme) === CustomThemeMode.DARK;
+  }
+
+  private normalizeStoredThemeName(theme: CustomTheme): string {
+    const rawName: string = theme.name ? theme.name : '';
+    if (
+      theme.id === this.DEFAULT_THEME_ID &&
+      (rawName.length === 0 || rawName === '第一自定义主题' || rawName === '默认自定义主题')
+    ) {
+      return this.DEFAULT_THEME_NAME;
+    }
+    if (rawName.length > 0) {
+      return rawName;
+    }
+    return this.DEFAULT_THEME_NAME;
+  }
+
+  private isBuiltInResourceThemeId(themeId: string): boolean {
+    return BuiltInThemeResources.isBuiltInResourceTheme(themeId);
+  }
+
+  private getEditingSourceTheme(): CustomTheme | null {
+    if (!this.isEditingCustomTheme || this.editingThemeId.length === 0) {
+      return null;
+    }
+    let idx: number = 0;
+    while (idx < this.customThemes.length) {
+      const theme: CustomTheme = this.customThemes[idx];
+      if (theme.id === this.editingThemeId) {
+        return theme;
+      }
+      idx = idx + 1;
+    }
+    return null;
+  }
+
+  private canSaveCurrentTheme(): boolean {
+    if (this.isProcessing) {
+      return false;
+    }
+    if (this.isEditingCustomTheme) {
+      return this.getEditingSourceTheme() !== null;
+    }
+    return this.processedImagePixelMap !== null;
   }
 
   private getSplashRotationRuleLabel(rule: SplashRotationRule): string {
@@ -1041,6 +1151,23 @@ export struct ThemeSettingsPage {
     this.resetSplashViewfinder();
   }
 
+  private clearCurrentBackgroundSelection(): void {
+    if (this.selectedImagePixelMap) {
+      this.selectedImagePixelMap.release();
+      this.selectedImagePixelMap = null;
+    }
+    if (this.processedImagePixelMap) {
+      this.processedImagePixelMap.release();
+      this.processedImagePixelMap = null;
+    }
+    this.selectedImagePath = '';
+    this.processedImagePath = '';
+    this.activeBackgroundDraftPath = '';
+    this.selectedImagePixelWidth = 0;
+    this.selectedImagePixelHeight = 0;
+    this.resetBackgroundViewfinder();
+  }
+
   private removeSplashDraftAt(index: number): void {
     if (index < 0 || index >= this.splashDraftImagePaths.length) {
       return;
@@ -1142,7 +1269,9 @@ export struct ThemeSettingsPage {
       }
       if (resolvedPath.length > 0 && fs.accessSync(resolvedPath)) {
         const targetPath: string = `${themesDir}/${themeId}_splash_${index + 1}.webp`;
-        fs.copyFileSync(resolvedPath, targetPath);
+        if (resolvedPath !== targetPath) {
+          fs.copyFileSync(resolvedPath, targetPath);
+        }
         generatedPaths.push(targetPath);
       } else {
         logger.warn(TAG, `跳过不可访问的开屏图: ${sourcePath}`);
@@ -1603,66 +1732,6 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 设备类型到背景名选择（a_* / b_*）
-   */
-  private getDeviceTypeString(): string {
-    // 直接使用官方 deviceInfo.deviceType，返回字符串：'foldable' | 'phone' | 'tablet' | '2in1' 或其他
-    const sysType: string = String(deviceInfo.deviceType);
-    // 同步折叠屏检测，若为折叠屏则优先使用折叠屏规则
-    const isFoldable: boolean = this.deviceManager.getDeviceInfo().isFoldable;
-    if (isFoldable) {
-      return 'foldable';
-    }
-    if (sysType === 'phone') {
-      return 'phone';
-    }
-    if (sysType === 'tablet') {
-      return 'tablet';
-    }
-    if (sysType === '2in1') {
-      return '2in1';
-    }
-    // 无法识别时，回退到设备适配管理器的判断
-    const managedType = this.deviceManager.getDeviceInfo().deviceType;
-    if (managedType === AdaptDeviceType.FOLDABLE) {
-      return 'foldable';
-    }
-    if (managedType === AdaptDeviceType.PHONE) {
-      return 'phone';
-    }
-    if (managedType === AdaptDeviceType.TABLET) {
-      return 'tablet';
-    }
-    if (managedType === AdaptDeviceType.TWO_IN_ONE) {
-      return '2in1';
-    }
-    return 'phone';
-  }
-
-  /**
-   * 根据设备类型返回 a_* 或 b_* 的具体名称
-   */
-  private selectBackgroundName(setId: string): string {
-    const dev: string = this.getDeviceTypeString();
-    // a_* 集合：折叠屏 a_1，手机 a_2，平板/2in1 a_3
-    if (setId === 'a') {
-      if (dev === 'foldable') { return 'a_1'; }
-      if (dev === 'phone') { return 'a_2'; }
-      // tablet 或 2in1
-      return 'a_3';
-    }
-    // b_* 集合：折叠屏 b_1，手机 b_2，平板/2in1 b_3
-    if (setId === 'b') {
-      if (dev === 'foldable') { return 'b_1'; }
-      if (dev === 'phone') { return 'b_2'; }
-      return 'b_3';
-    }
-    return 'a_2';
-  }
-
-  // 媒体资源模式下不再需要rawfile拷贝，相关逻辑已移除
-
-  /**
    * 更新响应式布局参数
    */
   private updateResponsiveParams(): void {
@@ -1739,22 +1808,23 @@ export struct ThemeSettingsPage {
         let j: number = 0;
         while (j < this.customThemes.length) {
           const t: CustomTheme = this.customThemes[j];
-          const isDefaultOrSecondary: boolean = (t.id === this.DEFAULT_THEME_ID) || (t.id === this.SECONDARY_THEME_ID);
+          const isBuiltInResourceTheme: boolean = this.isBuiltInResourceThemeId(t.id);
           const splashPaths: string[] = this.getSplashPathsFromTheme(t);
           const splashRule: SplashRotationRule = this.getSplashRotationRuleFromTheme(t);
           const splashCursor: number = t.splashRotationCursor !== undefined ? t.splashRotationCursor : -1;
           const splashDate: string = t.splashRotationLastDateKey ? t.splashRotationLastDateKey : '';
           const hideSplashLogo: boolean = this.getHideSplashLogoFromTheme(t);
           const hideSplashProgress: boolean = this.getHideSplashProgressFromTheme(t);
+          const themeMode: CustomThemeMode = this.getThemeModeFromTheme(t);
           const blurLevel: number = t.blurLevel !== undefined ? t.blurLevel : 0;
           const brightness: number = t.brightness !== undefined ? t.brightness : 50;
           const createTime: number = t.createTime !== undefined ? t.createTime : Date.now();
           const lastModified: number = t.lastModified !== undefined ? t.lastModified : createTime;
           const newTheme: CustomTheme = {
             id: t.id,
-            name: t.name,
-            backgroundImagePath: isDefaultOrSecondary ? '' : (t.backgroundImagePath ? t.backgroundImagePath : ''),
-            backgroundImagePathDark: isDefaultOrSecondary ? '' : (t.backgroundImagePathDark ? t.backgroundImagePathDark : ''),
+            name: this.normalizeStoredThemeName(t),
+            backgroundImagePath: isBuiltInResourceTheme ? '' : (t.backgroundImagePath ? t.backgroundImagePath : ''),
+            backgroundImagePathDark: isBuiltInResourceTheme ? '' : (t.backgroundImagePathDark ? t.backgroundImagePathDark : ''),
             splashBackgroundImagePath: splashPaths.length > 0 ? splashPaths[0] : '',
             splashBackgroundImagePaths: splashPaths,
             splashRotationRule: splashRule,
@@ -1765,7 +1835,8 @@ export struct ThemeSettingsPage {
             blurLevel: blurLevel,
             brightness: brightness,
             primaryColor: t.primaryColor,
-            isDark: t.isDark,
+            themeMode: themeMode,
+            isDark: themeMode === CustomThemeMode.DARK,
             createTime: createTime,
             lastModified: lastModified
           };
@@ -1801,9 +1872,10 @@ export struct ThemeSettingsPage {
       // 添加或更新主题
       const normalizedSplashPaths: string[] = this.getSplashPathsFromTheme(theme);
       const normalizedRule: SplashRotationRule = this.getSplashRotationRuleFromTheme(theme);
+      const normalizedThemeMode: CustomThemeMode = this.getThemeModeFromTheme(theme);
       const normalizedTheme: CustomTheme = {
         id: theme.id,
-        name: theme.name,
+        name: this.normalizeStoredThemeName(theme),
         backgroundImagePath: theme.backgroundImagePath ? theme.backgroundImagePath : '',
         backgroundImagePathDark: theme.backgroundImagePathDark ? theme.backgroundImagePathDark : '',
         splashBackgroundImagePath: normalizedSplashPaths.length > 0 ? normalizedSplashPaths[0] : '',
@@ -1816,12 +1888,12 @@ export struct ThemeSettingsPage {
         blurLevel: theme.blurLevel,
         brightness: theme.brightness,
         primaryColor: theme.primaryColor,
-        isDark: theme.isDark,
+        themeMode: normalizedThemeMode,
+        isDark: normalizedThemeMode === CustomThemeMode.DARK,
         createTime: theme.createTime,
         lastModified: theme.lastModified
       };
-      const isDefaultOrSecondary: boolean = (normalizedTheme.id === this.DEFAULT_THEME_ID) || (normalizedTheme.id === this.SECONDARY_THEME_ID);
-      if (isDefaultOrSecondary) {
+      if (this.isBuiltInResourceThemeId(normalizedTheme.id)) {
         normalizedTheme.backgroundImagePath = '';
         normalizedTheme.backgroundImagePathDark = '';
       }
@@ -1864,10 +1936,13 @@ export struct ThemeSettingsPage {
       return this.normalizeThemePreviewPath(preferredPath);
     }
     if (theme.id === this.DEFAULT_THEME_ID) {
-      return $r('app.media.a_3');
+      return BuiltInThemeResources.resolvePreviewResource(theme.id);
     }
     if (theme.id === this.SECONDARY_THEME_ID) {
-      return $r('app.media.b_3');
+      return BuiltInThemeResources.resolvePreviewResource(theme.id);
+    }
+    if (theme.id === this.CAT_DARK_THEME_ID) {
+      return BuiltInThemeResources.resolvePreviewResource(theme.id);
     }
     return '';
   }
@@ -1891,9 +1966,10 @@ export struct ThemeSettingsPage {
       while (idx < this.customThemes.length) {
         const sourceTheme: CustomTheme = this.customThemes[idx];
         const splashPaths: string[] = this.getSplashPathsFromTheme(sourceTheme);
+        const sanitizedThemeMode: CustomThemeMode = this.getThemeModeFromTheme(sourceTheme);
         const sanitizedTheme: CustomTheme = {
           id: sourceTheme.id,
-          name: sourceTheme.name,
+          name: this.normalizeStoredThemeName(sourceTheme),
           backgroundImagePath: sourceTheme.backgroundImagePath ? sourceTheme.backgroundImagePath : '',
           backgroundImagePathDark: sourceTheme.backgroundImagePathDark ? sourceTheme.backgroundImagePathDark : '',
           splashBackgroundImagePath: splashPaths.length > 0 ? splashPaths[0] : '',
@@ -1906,12 +1982,12 @@ export struct ThemeSettingsPage {
           blurLevel: sourceTheme.blurLevel,
           brightness: sourceTheme.brightness,
           primaryColor: sourceTheme.primaryColor,
-          isDark: sourceTheme.isDark,
+          themeMode: sanitizedThemeMode,
+          isDark: sanitizedThemeMode === CustomThemeMode.DARK,
           createTime: sourceTheme.createTime,
           lastModified: sourceTheme.lastModified
         };
-        const isDefaultOrSecondary: boolean = (sanitizedTheme.id === this.DEFAULT_THEME_ID) || (sanitizedTheme.id === this.SECONDARY_THEME_ID);
-        if (isDefaultOrSecondary) {
+        if (this.isBuiltInResourceThemeId(sanitizedTheme.id)) {
           sanitizedTheme.backgroundImagePath = '';
           sanitizedTheme.backgroundImagePathDark = '';
         }
@@ -2088,13 +2164,12 @@ export struct ThemeSettingsPage {
 
       if (exists) {
         logger.debug(TAG, '默认自定义主题已存在，跳过初始化');
-        return;
+      } else {
+        // 创建默认自定义主题（按设备类型选择 a_* 背景，失败则回退透明）
+        const created: CustomTheme = await this.createDefaultCustomTheme();
+        await this.saveCustomTheme(created);
+        logger.info(TAG, '✅ 默认自定义主题已初始化并写入列表');
       }
-
-      // 创建默认自定义主题（按设备类型选择 a_* 背景，失败则回退透明）
-      const created: CustomTheme = await this.createDefaultCustomTheme();
-      await this.saveCustomTheme(created);
-      logger.info(TAG, '✅ 默认自定义主题已初始化并写入列表');
 
       // [修复] 移除自动应用逻辑，避免强制用户使用自定义主题
       // 用户应该主动选择是否使用自定义主题，而不是被动强制应用
@@ -2105,6 +2180,7 @@ export struct ThemeSettingsPage {
     }
     // 在默认主题流程结束后，确保第二自定义主题也初始化
     await this.ensureSecondaryCustomThemeInitialized();
+    await this.ensureCatDarkCustomThemeInitialized();
   }
 
   /**
@@ -2174,6 +2250,7 @@ export struct ThemeSettingsPage {
       blurLevel: 0,
       brightness: 50,
       primaryColor: primaryColor,
+      themeMode: CustomThemeMode.AUTO,
       isDark: false,
       createTime: now,
       lastModified: now
@@ -2213,7 +2290,7 @@ export struct ThemeSettingsPage {
 
     // 改为使用媒体资源（app.media.b_*）进行显示，不再复制rawfile到文件目录
     const now: number = Date.now();
-    const primaryColor: string = THEME_CONFIGS[ThemeType.LIGHT].primaryColor;
+    const primaryColor: string = THEME_CONFIGS[ThemeType.DARK].primaryColor;
     const created: CustomTheme = {
       id: this.SECONDARY_THEME_ID,
       name: this.SECONDARY_THEME_NAME,
@@ -2229,12 +2306,65 @@ export struct ThemeSettingsPage {
       blurLevel: 0,
       brightness: 50,
       primaryColor: primaryColor,
-      isDark: false,
+      themeMode: CustomThemeMode.DARK,
+      isDark: true,
       createTime: now,
       lastModified: now
     };
     await this.saveCustomTheme(created);
     logger.info(TAG, '✅ 已创建第二自定义主题（媒体资源 b_*）并写入列表');
+  }
+
+  private async ensureCatDarkCustomThemeInitialized(): Promise<void> {
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      logger.error(TAG, '无法获取UIAbilityContext');
+      return;
+    }
+    const themesDir: string = `${context.filesDir}/custom_themes`;
+    if (!fs.accessSync(themesDir)) {
+      fs.mkdirSync(themesDir);
+    }
+
+    let exists: boolean = false;
+    let i: number = 0;
+    while (i < this.customThemes.length) {
+      const t: CustomTheme = this.customThemes[i];
+      if (t.id === this.CAT_DARK_THEME_ID) {
+        exists = true;
+        break;
+      }
+      i = i + 1;
+    }
+    if (exists) {
+      logger.debug(TAG, '猫猫深色主题已存在，跳过创建');
+      return;
+    }
+
+    const now: number = Date.now();
+    const primaryColor: string = THEME_CONFIGS[ThemeType.DARK].primaryColor;
+    const created: CustomTheme = {
+      id: this.CAT_DARK_THEME_ID,
+      name: this.CAT_DARK_THEME_NAME,
+      backgroundImagePath: '',
+      backgroundImagePathDark: '',
+      splashBackgroundImagePath: '',
+      splashBackgroundImagePaths: [],
+      splashRotationRule: SplashRotationRule.FIXED_FIRST,
+      splashRotationCursor: -1,
+      splashRotationLastDateKey: '',
+      hideSplashLogo: false,
+      hideSplashProgress: false,
+      blurLevel: 0,
+      brightness: 50,
+      primaryColor: primaryColor,
+      themeMode: CustomThemeMode.DARK,
+      isDark: true,
+      createTime: now,
+      lastModified: now
+    };
+    await this.saveCustomTheme(created);
+    logger.info(TAG, '✅ 已创建猫猫深色主题（媒体资源 cat_dark_*）并写入列表');
   }
 
   /**
@@ -2267,6 +2397,7 @@ export struct ThemeSettingsPage {
       if (index >= 0) {
         // 已存在，直接应用（背景路径可能为空，由显示层采用媒体资源回退）
         targetTheme = this.customThemes[index];
+        targetTheme.name = this.normalizeStoredThemeName(targetTheme);
       } else {
         // 不存在则创建（媒体资源模式）
         const created: CustomTheme = await this.createDefaultCustomTheme();
@@ -3056,8 +3187,13 @@ export struct ThemeSettingsPage {
    * 保存两张图片：浅色模式（原亮度）和深色模式（降低亮度）
    */
   private async saveAndApplyTheme(): Promise<void> {
-    if (!this.selectedImagePixelMap) {
+    const sourceTheme: CustomTheme | null = this.getEditingSourceTheme();
+    if (!this.selectedImagePixelMap && sourceTheme === null) {
       logger.error(TAG, '没有可保存的主题');
+      promptAction.showToast({
+        message: '请先选择背景图片',
+        duration: 1600
+      });
       return;
     }
     
@@ -3081,16 +3217,26 @@ export struct ThemeSettingsPage {
         ? this.editingThemeId
         : `theme_${Date.now()}`;
       
-      // 1. 生成浅色模式图片（使用用户设置的亮度+模糊）
-      this.processingMessage = '正在生成浅色模式图片...';
-      this.processingProgress = 20;
-      const lightImagePath = await this.generateThemeImage(themeId, 'light', this.blurLevel, this.brightnessLevel);
-      
-      // 2. 生成深色模式图片（在用户设置基础上降低亮度）
-      this.processingMessage = '正在生成深色模式图片...';
-      this.processingProgress = 60;
-      const darkBrightness = Math.max(10, Math.min(40, this.brightnessLevel - 20)); // 比当前亮度低20%，范围10-40
-      const darkImagePath = await this.generateThemeImage(themeId, 'dark', this.blurLevel, darkBrightness);
+      let lightImagePath: string = '';
+      let darkImagePath: string = '';
+      if (this.selectedImagePixelMap) {
+        // 1. 生成浅色模式图片（使用用户设置的亮度+模糊）
+        this.processingMessage = '正在生成浅色模式图片...';
+        this.processingProgress = 20;
+        lightImagePath = await this.generateThemeImage(themeId, 'light', this.blurLevel, this.brightnessLevel);
+
+        // 2. 生成深色模式图片（在用户设置基础上降低亮度）
+        this.processingMessage = '正在生成深色模式图片...';
+        this.processingProgress = 60;
+        const darkBrightness = Math.max(10, Math.min(40, this.brightnessLevel - 20)); // 比当前亮度低20%，范围10-40
+        darkImagePath = await this.generateThemeImage(themeId, 'dark', this.blurLevel, darkBrightness);
+      } else if (sourceTheme !== null) {
+        // 编辑默认/内置资源主题时允许只保存颜色与启动页显示选项，继续复用原媒体配置。
+        lightImagePath = sourceTheme.backgroundImagePath ? sourceTheme.backgroundImagePath : '';
+        darkImagePath = sourceTheme.backgroundImagePathDark ? sourceTheme.backgroundImagePathDark : '';
+        this.processingMessage = '正在复用原主题素材...';
+        this.processingProgress = 60;
+      }
 
       // 生成开屏图片列表（如果已选择或已加入草稿）
       let splashImagePaths: string[] = [];
@@ -3098,6 +3244,8 @@ export struct ThemeSettingsPage {
         this.processingMessage = '正在生成开屏图片...';
         this.processingProgress = 80;
         splashImagePaths = await this.generateSplashImages(themeId);
+      } else if (sourceTheme !== null) {
+        splashImagePaths = this.getSplashPathsFromTheme(sourceTheme);
       }
       const splashPrimaryPath: string = splashImagePaths.length > 0 ? splashImagePaths[0] : '';
       
@@ -3109,6 +3257,7 @@ export struct ThemeSettingsPage {
       const createTimeValue: number = this.isEditingCustomTheme && this.editingThemeCreateTime > 0
         ? this.editingThemeCreateTime
         : Date.now();
+      const selectedMode: CustomThemeMode = this.selectedThemeMode;
       const customTheme: CustomTheme = {
         id: themeId,
         name: themeName,
@@ -3124,7 +3273,8 @@ export struct ThemeSettingsPage {
         blurLevel: this.blurLevel,
         brightness: this.brightnessLevel,
         primaryColor: primaryColorToUse,
-        isDark: this.themeState.currentTheme === ThemeType.DARK,
+        themeMode: selectedMode,
+        isDark: selectedMode === CustomThemeMode.DARK,
         createTime: createTimeValue,
         lastModified: Date.now()
       };
@@ -3313,6 +3463,7 @@ export struct ThemeSettingsPage {
       // 不强制切换应用主题；保持当前主题设置（含AUTO），由ThemeManager按系统深浅切换背景
       const splashPaths: string[] = this.getSplashPathsFromTheme(theme);
       const splashRule: SplashRotationRule = this.getSplashRotationRuleFromTheme(theme);
+      const themeMode: CustomThemeMode = this.getThemeModeFromTheme(theme);
       
       // 调用ThemeManager统一应用（包含开屏背景路径）
       const themeData: CustomThemeData = {
@@ -3329,7 +3480,8 @@ export struct ThemeSettingsPage {
         hideSplashProgress: this.getHideSplashProgressFromTheme(theme),
         blurLevel: theme.blurLevel,
         primaryColor: theme.primaryColor,
-        isDark: theme.isDark,
+        themeMode: themeMode,
+        isDark: themeMode === CustomThemeMode.DARK,
         createTime: theme.createTime,
         lastModified: theme.lastModified
       };
@@ -3343,6 +3495,7 @@ export struct ThemeSettingsPage {
       }
       logger.info(TAG, `   开屏轮换规则: ${splashRule}`);
       logger.info(TAG, `   主色调: ${theme.primaryColor}`);
+      logger.info(TAG, `   主题类型: ${this.getThemeModeLabel(themeMode)}`);
       logger.info(TAG, `   当前显示主题: ${this.themeManager.getActualThemeSync()}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -3623,14 +3776,15 @@ export struct ThemeSettingsPage {
     this.cropAlignment = CropAlignment.CENTER;
     this.cropZoom = 1.0;
     this.backgroundRotateQuarterTurns = 0;
-    this.resetBackgroundViewfinder();
+    this.clearCurrentBackgroundSelection();
     this.splashCropAlignment = CropAlignment.CENTER;
     this.splashCropZoom = 1.0;
     this.splashRotateQuarterTurns = 0;
-    this.splashRotationRule = SplashRotationRule.EVERY_LAUNCH;
-    this.hideSplashLogo = false;
-    this.hideSplashProgress = false;
-    this.resetSplashViewfinder();
+      this.splashRotationRule = SplashRotationRule.EVERY_LAUNCH;
+      this.hideSplashLogo = false;
+      this.hideSplashProgress = false;
+      this.selectedThemeMode = CustomThemeMode.AUTO;
+      this.resetSplashViewfinder();
     this.cleanupSplashDraftFiles();
     this.cleanupBackgroundDraftFiles();
     this.clearCurrentSplashSelection();
@@ -3652,6 +3806,7 @@ export struct ThemeSettingsPage {
       this.splashRotationRule = this.getSplashRotationRuleFromTheme(theme);
       this.hideSplashLogo = this.getHideSplashLogoFromTheme(theme);
       this.hideSplashProgress = this.getHideSplashProgressFromTheme(theme);
+      this.selectedThemeMode = this.getThemeModeFromTheme(theme);
       if (theme.primaryColor && theme.primaryColor.length > 0) {
         this.ensureColorInPalette(theme.primaryColor);
         this.selectedPrimaryColor = theme.primaryColor;
@@ -3718,6 +3873,122 @@ export struct ThemeSettingsPage {
     })
     .borderRadius(999)
     .clip(true)
+  }
+
+  @Builder
+  private buildThemeModeOptions() {
+    Column({ space: 8 }) {
+      Row() {
+        Column({ space: 2 }) {
+          Text('主题类型')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text(`当前：${this.getThemeModeLabel(this.selectedThemeMode)}，${this.getThemeModeDescription(this.selectedThemeMode)}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .opacity(0.8)
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        ForEach(this.themeModeOptions, (option: ThemeModeOption) => {
+          Column({ space: 4 }) {
+            Text(option.label)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontWeight(this.selectedThemeMode === option.value ? FontWeight.Medium : FontWeight.Normal)
+              .fontColor(this.selectedThemeMode === option.value
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Text(option.description)
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(2)
+              .textAlign(TextAlign.Center)
+              .opacity(0.78)
+          }
+          .layoutWeight(1)
+          .height(70)
+          .justifyContent(FlexAlign.Center)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor(this.selectedThemeMode === option.value
+            ? ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme)
+            : 'rgba(0, 0, 0, 0)')
+          .borderRadius(10)
+          .border({
+            width: this.selectedThemeMode === option.value ? 1 : 0,
+            color: $r('app.color.accent_primary')
+          })
+          .onClick(() => {
+            this.selectedThemeMode = option.value;
+          })
+        }, (option: ThemeModeOption) => option.value)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(8)
+  }
+
+  @Builder
+  private buildSplashVisibilityOptions() {
+    Column({ space: 8 }) {
+      Row() {
+        Column({ space: 2 }) {
+          Text('启动页不显示应用logo')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('开启后，当前主题在启动页仅显示背景与进度，不显示应用图标')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .opacity(0.8)
+        }
+        .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.hideSplashLogo })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.hideSplashLogo = isOn;
+          })
+      }
+      .width('100%')
+      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(8)
+
+      Row() {
+        Column({ space: 2 }) {
+          Text('不显示启动进度')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('开启后，当前主题在启动页不显示进度文本、进度条与百分比')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .opacity(0.8)
+        }
+        .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.hideSplashProgress })
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((isOn: boolean) => {
+            this.hideSplashProgress = isOn;
+          })
+      }
+      .width('100%')
+      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(8)
+    }
+    .width('100%')
   }
 
   private clampPercent(value: number): number {
@@ -4216,12 +4487,17 @@ export struct ThemeSettingsPage {
                             // 主题背景图片预览 - 显示缩略图或占位符
                             Stack() {
                               if (this.resolveThemePreviewSource(theme)) {
-                                Image(this.resolveThemePreviewSource(theme))
+                                Column()
                                   .width('100%')
                                   .height(120)
-                                  .objectFit(ImageFit.Cover)
+                                  .backgroundImage(this.resolveThemePreviewSource(theme), {
+                                    repeat: ImageRepeat.NoRepeat,
+                                    syncLoad: true
+                                  })
+                                  .backgroundImageSize(ImageSize.Cover)
+                                  .backgroundImagePosition(Alignment.Top)
                                   .borderRadius(12)
-                                  .syncLoad(true)
+                                  .clip(true)
                               } else {
                                 // 无背景图片时显示主题色渐变占位符
                                 Column()
@@ -4230,13 +4506,13 @@ export struct ThemeSettingsPage {
                                   .borderRadius(12)
                                   .linearGradient({
                                     angle: 135,
-                                    colors: [[theme.primaryColor, 0.0], [theme.isDark ? '#1A1A1A' : '#F5F5F5', 1.0]]
+                                    colors: [[theme.primaryColor, 0.0], [this.isDarkPreviewTheme(theme) ? '#1A1A1A' : '#F5F5F5', 1.0]]
                                   })
 
                                 Text('默认主题')
                                   .fontSize(14)
                                   .fontFamily(this.appFontFamily)
-                                  .fontColor(theme.isDark ? '#FFFFFF' : '#333333')
+                                  .fontColor(this.isDarkPreviewTheme(theme) ? '#FFFFFF' : '#333333')
                                   .opacity(0.7)
                               }
 
@@ -4280,7 +4556,7 @@ export struct ThemeSettingsPage {
                                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                                   .maxLines(1)
                                   .textOverflow({ overflow: TextOverflow.Ellipsis })
-                                Text(theme.isDark ? '深色主题' : '浅色主题')
+                                Text(`${this.getThemeModeLabel(this.getThemeModeFromTheme(theme))}主题`)
                                   .fontSize(12)
                                   .fontFamily(this.appFontFamily)
                                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -4901,6 +5177,10 @@ export struct ThemeSettingsPage {
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
 
+                  this.buildSplashVisibilityOptions()
+
+                  this.buildThemeModeOptions()
+
                   Text('使用胶囊标签页分别配置背景图与开屏图，二者都支持取景框裁剪和旋转')
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
@@ -4977,54 +5257,6 @@ export struct ThemeSettingsPage {
                         .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                         .width('100%')
-
-                      Row() {
-                        Column({ space: 2 }) {
-                          Text('启动页不显示应用logo')
-                            .fontSize(13)
-                            .fontFamily(this.appFontFamily)
-                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                          Text('开启后，当前主题在启动页仅显示背景与进度，不显示应用图标')
-                            .fontSize(11)
-                            .fontFamily(this.appFontFamily)
-                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                            .opacity(0.8)
-                        }
-                        .layoutWeight(1)
-                        Toggle({ type: ToggleType.Switch, isOn: this.hideSplashLogo })
-                          .selectedColor($r('app.color.accent_primary'))
-                          .onChange((isOn: boolean) => {
-                            this.hideSplashLogo = isOn;
-                          })
-                      }
-                      .width('100%')
-                      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                      .borderRadius(8)
-
-                      Row() {
-                        Column({ space: 2 }) {
-                          Text('不显示启动进度')
-                            .fontSize(13)
-                            .fontFamily(this.appFontFamily)
-                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                          Text('开启后，当前主题在启动页不显示进度文本、进度条与百分比')
-                            .fontSize(11)
-                            .fontFamily(this.appFontFamily)
-                            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                            .opacity(0.8)
-                        }
-                        .layoutWeight(1)
-                        Toggle({ type: ToggleType.Switch, isOn: this.hideSplashProgress })
-                          .selectedColor($r('app.color.accent_primary'))
-                          .onChange((isOn: boolean) => {
-                            this.hideSplashProgress = isOn;
-                          })
-                      }
-                      .width('100%')
-                      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                      .borderRadius(8)
 
                       Column({ space: 6 }) {
                         ForEach(this.splashRotationOptions, (option: SplashRotationOption) => {
@@ -5878,7 +6110,7 @@ export struct ThemeSettingsPage {
                       .fontFamily(this.appFontFamily)
                       .backgroundColor($r('app.color.color_success'))
                       .borderRadius(10)
-                      .enabled(!this.isProcessing && this.processedImagePixelMap !== null)
+                      .enabled(this.canSaveCurrentTheme())
                       .onClick(() => this.saveAndApplyTheme())
                   }
                   .id('theme_create_save')
@@ -5981,7 +6213,7 @@ export struct ThemeSettingsPage {
                     .fontFamily(this.appFontFamily)
                     .backgroundColor($r('app.color.color_success'))
                     .borderRadius(12)
-                    .enabled(!this.isProcessing && this.processedImagePixelMap !== null)
+                    .enabled(this.canSaveCurrentTheme())
                     .onClick(() => this.saveAndApplyTheme())
                 }
                 .id('theme_create_save_legacy')
@@ -6063,7 +6295,9 @@ export struct ThemeSettingsPage {
                 .margin({ bottom: 16 })
               }
 
-              this.buildHdsTabEffectsPanel()
+              if (!this.isCreatingCustomTheme) {
+                this.buildHdsTabEffectsPanel()
+              }
             }
             .enabled(this.settingsTapEnabled)
             .width('100%')

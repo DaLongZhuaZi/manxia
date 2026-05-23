@@ -4,6 +4,7 @@ import { ThemeAwareHelper, ThemeAwareState } from '../../Framework/Components/Th
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
+import { WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
 import { logger } from '../../Utils/Logger';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
@@ -24,6 +25,7 @@ export struct SourceFeatureSettingsSubPage {
 
   private readonly componentId: string = 'SourceFeatureSettingsSubPage';
   private readonly settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readonly welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
@@ -41,6 +43,33 @@ export struct SourceFeatureSettingsSubPage {
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
+  }
+
+  private async maybeLaunchSourceFeatureGuide(previousValue: boolean, nextValue: boolean): Promise<void> {
+    if (previousValue || !nextValue) {
+      return;
+    }
+
+    try {
+      await this.welcomeGuideManager.initialize();
+      if (this.welcomeGuideManager.isSourceFeatureGuideShown()) {
+        return;
+      }
+
+      await this.welcomeGuideManager.startSourceFeatureGuide();
+      const router = this.getUIContext()?.getRouter();
+      if (!router) {
+        logger.warn(TAG, 'Router不可用，无法打开源功能引导页');
+        return;
+      }
+
+      await router.pushUrl({
+        url: 'pages/WelcomeGuidePage'
+      });
+      logger.info(TAG, '首次开启显示源功能，已打开源功能引导页');
+    } catch (error) {
+      logger.error(TAG, `首次开启源功能后打开引导失败: ${String(error)}`);
+    }
   }
 
   @Builder
@@ -66,10 +95,12 @@ export struct SourceFeatureSettingsSubPage {
         Toggle({ type: ToggleType.Switch, isOn: this.sourceFeaturesEnabled })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onChange(async (isOn: boolean) => {
+            const previousValue = this.sourceFeaturesEnabled;
             this.sourceFeaturesEnabled = isOn;
             await this.settingsManager.setBoolean(SettingKeys.SOURCE_FEATURES_ENABLED, isOn);
             this.settingsManager.syncToAppStorage();
             AppStorage.setOrCreate('source_features_enabled', isOn);
+            await this.maybeLaunchSourceFeatureGuide(previousValue, isOn);
           })
       }
       .width('100%')

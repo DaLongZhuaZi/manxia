@@ -6,10 +6,17 @@
 
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { ThemeManager, ThemeType, CustomThemeData } from '../Framework/Managers/ThemeManager';
+import { ThemeManager, ThemeType, CustomThemeData, CustomThemeMode } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { WelcomeGuideManager, GuideStep } from '../Framework/Managers/WelcomeGuideManager';
+import { WelcomeGuideManager, GuideStep, GuideFlowMode } from '../Framework/Managers/WelcomeGuideManager';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { DataManager } from '../Framework/Data/DataManager';
+import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
+import { InteractionManager } from '../Framework/Managers/InteractionManager';
+import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
@@ -29,6 +36,9 @@ interface GuideStepContent {
   showSkip: boolean;
 }
 
+type GuideBottomBarStyle = 'hds' | 'custom';
+type GuideLibraryDisplayMode = 'flat' | 'shelf';
+
 @Entry
 @Component
 struct WelcomeGuidePage {
@@ -46,6 +56,12 @@ struct WelcomeGuidePage {
 
   // 引导管理器
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private dataManager: DataManager = DataManager.getInstance();
+  private notificationManager: AppNotificationManager = AppNotificationManager.getInstance();
+  private interactionManager: InteractionManager = InteractionManager.getInstance();
+  private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
+  private guideFlowMode: GuideFlowMode = GuideFlowMode.FULL;
 
   // 页面状态
   @State private currentStep: GuideStep = GuideStep.WELCOME;
@@ -53,8 +69,21 @@ struct WelcomeGuidePage {
   @State private contentOpacity: number = 0;
   @State private contentTranslateY: number = 50;
   @State private buttonClickTrigger: number = 0;  // 按钮点击触发器，用于强制更新
+  @State private notificationPermissionGranted: boolean = false;
+  @State private notificationPermissionRequesting: boolean = false;
+  @State private notificationPermissionStatusText: string = '';
+  @State private guideBottomBarStyleIndex: number = 0; // 0: HDS, 1: 经典
+  @State private guideLibraryDisplayModeIndex: number = 0; // 0: 平铺, 1: 书架
+  @State private guideGlobalBackgroundEnabled: boolean = true;
+  @State private guideBackgroundBlurEnabled: boolean = false;
+  @State private guideVibrationEnabled: boolean = true;
+  @State private guideDuplicateDetectionEnabled: boolean = true;
+  @State private customExperienceHintText: string = '继续后会应用这些体验设置。';
+  @State private customExperienceSettingsReady: boolean = false;
 
   private uiContext: UIContext | undefined = undefined;
+  private notificationPermissionAutoRequested: boolean = false;
+  private customExperienceSettingsInitialized: boolean = false;
 
   /**
    * 初始化引导步骤内容
@@ -98,7 +127,7 @@ struct WelcomeGuidePage {
       const imageSourceGuideContent: GuideStepContent = {
         title: '图源说明',
         subtitle: '了解图源支持情况',
-        description: '漫匣仅支持使用自有图源。图源用于获取在线漫画内容，不同图源提供不同源站的漫画资源。点击主页面底栏中的「图源」，然后点击“图源导入”，输入下面的仓库地址即可同步仓库（需要科学网络）。',
+        description: '漫匣仅支持使用自有图源。图源用于获取在线漫画内容，不同图源提供不同源站的漫画资源。点击主页面底栏中的「图源」，然后点击“图源导入”，输入下面的仓库地址即可同步仓库',
         icon: $r('sys.symbol.rectangle_stack'),
         buttonText: '下一步',
         showSkip: false
@@ -108,7 +137,7 @@ struct WelcomeGuidePage {
       const bookSourceGuideContent: GuideStepContent = {
         title: '书源说明',
         subtitle: '了解书源支持情况',
-        description: '漫匣支持开源阅读（Legado）的大部分书源（聚合书源除外），您可以在后续需要在线小说时，再从对应功能页进入书源相关设置与使用流程。这里先帮助您建立整体认知，避免欢迎引导阶段跳转过多页面。',
+        description: '漫匣支持开源阅读（Legado）的大部分书源（聚合书源除外），您可以在后续需要在线小说时，再从对应功能页进入书源相关设置与使用流程。',
         icon: $r('sys.symbol.text_book_closed'),
         buttonText: '继续下一步',
         showSkip: false
@@ -119,31 +148,29 @@ struct WelcomeGuidePage {
     // 自定义体验引导步骤
     const customExperienceContent: GuideStepContent = {
       title: '自定义体验',
-      subtitle: '打造专属于您的阅读体验',
-      description: '漫匣支持丰富的自定义设置，包括自定义字体、自定义页面布局、自定义底栏标签、主题颜色等。您可以在设置页面中根据个人喜好进行调整。点击下方按钮前往全局设置页面。',
+      subtitle: '常用体验项设置',
+      description: '这里提供几项最常用的功能开关，后续随时可在管理-全局设置进行微调。',
       icon: $r('sys.symbol.slider_horizontal_2_square'),
-      buttonText: '前往全局设置',
+      buttonText: '应用设置并继续',
       showSkip: false
     };
     steps.set(GuideStep.CUSTOM_EXPERIENCE, customExperienceContent);
 
     const analyticsPermissionContent: GuideStepContent = {
-      title: '阅读报告',
-      subtitle: '了解您的阅读习惯',
-      description: '开启阅读报告功能后，应用将收集您的阅读时长、阅读偏好等数据，在本地分析处理后为您生成个性化的阅读分析报告。此功能默认关闭，您可以随时进入报告页面中更改。',
-      icon: $r('sys.symbol.histogram_fill'),
+      title: '通知权限',
+      subtitle: '让重要提醒更及时',
+      description: '通知权限主要用于下载完成、内容更新、局域网传书和其他关键提醒。',
+      icon: $r('sys.symbol.worldclock_fill_1'),
       buttonText: '继续',
       showSkip: false
     };
     steps.set(GuideStep.ANALYTICS_PERMISSION, analyticsPermissionContent);
 
     const libraryIntroContent: GuideStepContent = {
-      title: '开始阅读',
-      subtitle: '探索您的书库',
-      description: this.sourceFeaturesEnabled
-        ? '现在，您可以在书库页面查看已导入的漫画与电子书，或者从图源/书源当中获取，点击封面即可前往详情页开始阅读。祝您阅读愉快！'
-        : '现在，您可以在书库页面查看已导入的漫画与电子书，点击封面即可前往详情页开始阅读。祝您阅读愉快！',
-      icon: $r('sys.symbol.books_vertical_fill'),
+      title: '隐私书库与 SFW 模式',
+      subtitle: '两种常用的内容保护方式',
+      description: '漫匣支持通过底栏长按快速切换隐私书库与开关 SFW 模式',
+      icon: $r('sys.symbol.lock_shield_fill'),
       buttonText: '进入书库',
       showSkip: false
     };
@@ -154,6 +181,242 @@ struct WelcomeGuidePage {
 
   private getGuideSteps(): Map<GuideStep, GuideStepContent> {
     return this.initGuideSteps();
+  }
+
+  private isSourceFeatureOnlyFlow(): boolean {
+    return this.guideFlowMode === GuideFlowMode.SOURCE_FEATURE_ONLY;
+  }
+
+  private async handleStepEntered(step: GuideStep): Promise<void> {
+    this.guideFlowMode = this.welcomeGuideManager.getActiveGuideFlow();
+
+    if (step === GuideStep.CUSTOM_EXPERIENCE) {
+      await this.initializeCustomExperienceSettingsIfNeeded();
+      return;
+    }
+
+    if (step === GuideStep.ANALYTICS_PERMISSION) {
+      await this.ensureNotificationPermissionState(true);
+      return;
+    }
+
+    if (step === GuideStep.LIBRARY_INTRO) {
+      await this.ensureNotificationPermissionState(false);
+    }
+  }
+
+  private async ensureNotificationPermissionState(requestIfNeeded: boolean): Promise<void> {
+    try {
+      const hasPermission = await this.notificationManager.checkPermission();
+      this.notificationPermissionGranted = hasPermission;
+      if (hasPermission) {
+        this.notificationPermissionStatusText = '当前已拥有通知权限，下载完成与更新提醒可以正常显示。';
+        return;
+      }
+
+      this.notificationPermissionStatusText = requestIfNeeded
+        ? '当前未拥有通知权限，正在尝试再次请求授权...'
+        : '当前未拥有通知权限，您可以稍后再次请求授权。';
+
+      if (!requestIfNeeded || this.notificationPermissionAutoRequested) {
+        return;
+      }
+
+      this.notificationPermissionAutoRequested = true;
+      const hostContext = this.uiContext?.getHostContext();
+      const context = hostContext as common.UIAbilityContext | null;
+      if (!context) {
+        this.notificationPermissionStatusText = '无法获取页面上下文，暂时无法请求通知权限。';
+        return;
+      }
+
+      this.notificationPermissionRequesting = true;
+      const granted = await this.notificationManager.requestPermission(context);
+      this.notificationPermissionGranted = granted;
+      this.notificationPermissionStatusText = granted
+        ? '通知权限已授予，后续提醒会正常显示。'
+        : '通知权限仍未授予，您可以稍后在系统设置中开启。';
+    } catch (error) {
+      logger.error(TAG, `欢迎引导检查通知权限失败: ${String(error)}`);
+      this.notificationPermissionStatusText = '检查通知权限失败，请稍后重试。';
+    } finally {
+      this.notificationPermissionRequesting = false;
+    }
+  }
+
+  private async requestNotificationPermissionAgain(): Promise<void> {
+    this.notificationPermissionAutoRequested = false;
+    await this.ensureNotificationPermissionState(true);
+  }
+
+  private async initializeCustomExperienceSettingsIfNeeded(): Promise<void> {
+    if (this.customExperienceSettingsInitialized) {
+      return;
+    }
+    this.customExperienceSettingsReady = false;
+    await this.settingsManager.initialize();
+    await this.interactionManager.initialize();
+    await this.refreshGuideBottomBarStyleFromSettings();
+    await this.refreshGuideLibraryDisplayModeFromSettings();
+
+    this.guideGlobalBackgroundEnabled = this.settingsManager.getBoolean(
+      SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
+      true
+    );
+    this.guideBackgroundBlurEnabled = this.settingsManager.getBoolean(
+      SettingKeys.BACKGROUND_BLUR_ENABLED,
+      false
+    );
+    this.guideVibrationEnabled = this.interactionManager.getSettings().vibrationEnabled;
+    this.guideDuplicateDetectionEnabled = this.settingsManager.getBoolean(
+      SettingKeys.DUPLICATE_DETECTION_ENABLED,
+      false
+    );
+    this.customExperienceHintText = '继续后会应用这些体验设置；底栏样式与书库样式在重新进入主页面时更容易看到变化。';
+    this.customExperienceSettingsReady = true;
+    this.customExperienceSettingsInitialized = true;
+  }
+
+  private async refreshGuideBottomBarStyleFromSettings(): Promise<void> {
+    const savedStyle: string = this.settingsManager.getString(SettingKeys.BOTTOM_BAR_STYLE, 'hds');
+    this.guideBottomBarStyleIndex = savedStyle === 'custom' ? 1 : 0;
+  }
+
+  private async refreshGuideLibraryDisplayModeFromSettings(): Promise<void> {
+    try {
+      const viewMode = await this.dataManager.getUserSetting('default_user', 'library_view_mode');
+      this.guideLibraryDisplayModeIndex = viewMode === 'category' ? 1 : 0;
+    } catch (error) {
+      logger.warn(TAG, `读取欢迎引导书库样式失败，使用平铺: ${String(error)}`);
+      this.guideLibraryDisplayModeIndex = 0;
+    }
+  }
+
+  private getGuideBottomBarStyleValue(): GuideBottomBarStyle {
+    return this.guideBottomBarStyleIndex === 1 ? 'custom' : 'hds';
+  }
+
+  private getGuideBottomBarStyleIndex(style: GuideBottomBarStyle): number {
+    return style === 'custom' ? 1 : 0;
+  }
+
+  private getGuideLibraryDisplayModeValue(): GuideLibraryDisplayMode {
+    return this.guideLibraryDisplayModeIndex === 1 ? 'shelf' : 'flat';
+  }
+
+  private getGuideLibraryDisplayModeIndex(mode: GuideLibraryDisplayMode): number {
+    return mode === 'shelf' ? 1 : 0;
+  }
+
+  private async setGuideBottomBarStyle(style: GuideBottomBarStyle, forcePersist: boolean = false): Promise<void> {
+    const nextIndex: number = this.getGuideBottomBarStyleIndex(style);
+    if (!forcePersist && this.guideBottomBarStyleIndex === nextIndex) {
+      return;
+    }
+
+    const previousIndex: number = this.guideBottomBarStyleIndex;
+    try {
+      this.guideBottomBarStyleIndex = nextIndex;
+      this.buttonClickTrigger = this.buttonClickTrigger + 1;
+      await this.settingsManager.setBottomBarStyle(style);
+      this.settingsManager.syncToAppStorage();
+      AppStorage.setOrCreate<string>('main_menu_bottom_bar_style', style);
+      this.customExperienceHintText = '底栏样式已保存，重新进入主页面时会显示得更明显。';
+    } catch (error) {
+      this.guideBottomBarStyleIndex = previousIndex;
+      this.buttonClickTrigger = this.buttonClickTrigger + 1;
+      logger.error(TAG, `保存引导底栏样式失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存底栏样式失败', duration: 1500 });
+    }
+  }
+
+  private async setGuideLibraryDisplayMode(mode: GuideLibraryDisplayMode, forcePersist: boolean = false): Promise<void> {
+    const nextIndex: number = this.getGuideLibraryDisplayModeIndex(mode);
+    if (!forcePersist && this.guideLibraryDisplayModeIndex === nextIndex) {
+      return;
+    }
+
+    const previousIndex: number = this.guideLibraryDisplayModeIndex;
+    try {
+      this.guideLibraryDisplayModeIndex = nextIndex;
+      this.buttonClickTrigger = this.buttonClickTrigger + 1;
+      const targetMode = mode === 'shelf' ? 'category' : 'grid';
+      await this.dataManager.saveUserSetting('default_user', 'library_view_mode', targetMode);
+      this.customExperienceHintText = '书库样式已保存，重新进入主页面书库时即可看到变化。';
+    } catch (error) {
+      this.guideLibraryDisplayModeIndex = previousIndex;
+      this.buttonClickTrigger = this.buttonClickTrigger + 1;
+      logger.error(TAG, `保存引导书库样式失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存书库样式失败', duration: 1500 });
+    }
+  }
+
+  private async setGuideGlobalBackgroundEnabled(enabled: boolean): Promise<void> {
+    try {
+      this.guideGlobalBackgroundEnabled = enabled;
+      await this.settingsManager.setBoolean(SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED, enabled);
+      this.settingsManager.syncToAppStorage();
+      AppStorage.setOrCreate(SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED, enabled);
+    } catch (error) {
+      logger.error(TAG, `保存全局自定义背景设置失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存全局背景设置失败', duration: 1500 });
+    }
+  }
+
+  private async setGuideBackgroundBlurEnabled(enabled: boolean): Promise<void> {
+    try {
+      this.guideBackgroundBlurEnabled = enabled;
+      await this.settingsManager.setBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, enabled);
+      this.settingsManager.syncToAppStorage();
+      AppStorage.setOrCreate('backgroundBlurEnabled', enabled);
+    } catch (error) {
+      logger.error(TAG, `保存后台隐私遮罩设置失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存后台隐私遮罩设置失败', duration: 1500 });
+    }
+  }
+
+  private async setGuideVibrationEnabled(enabled: boolean): Promise<void> {
+    try {
+      this.guideVibrationEnabled = enabled;
+      await this.interactionManager.setVibrationEnabled(enabled);
+    } catch (error) {
+      logger.error(TAG, `保存震动反馈设置失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存震动反馈设置失败', duration: 1500 });
+    }
+  }
+
+  private async setGuideDuplicateDetectionEnabled(enabled: boolean): Promise<void> {
+    try {
+      this.guideDuplicateDetectionEnabled = enabled;
+      await this.settingsManager.setDuplicateDetectionEnabled(enabled);
+      this.settingsManager.syncToAppStorage();
+    } catch (error) {
+      logger.error(TAG, `保存重复检测设置失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存重复检测设置失败', duration: 1500 });
+    }
+  }
+
+  private async applyCustomExperienceSelections(): Promise<void> {
+    await this.setGuideBottomBarStyle(this.getGuideBottomBarStyleValue(), true);
+    await this.setGuideLibraryDisplayMode(this.getGuideLibraryDisplayModeValue(), true);
+    await this.setGuideGlobalBackgroundEnabled(this.guideGlobalBackgroundEnabled);
+    await this.setGuideBackgroundBlurEnabled(this.guideBackgroundBlurEnabled);
+    await this.setGuideVibrationEnabled(this.guideVibrationEnabled);
+    await this.setGuideDuplicateDetectionEnabled(this.guideDuplicateDetectionEnabled);
+  }
+
+  private async applyCustomExperienceAndAdvance(): Promise<void> {
+    if (this.isAnimating) {
+      return;
+    }
+
+    await this.applyCustomExperienceSelections();
+    this.animateStepChange(() => {
+      this.currentStep = GuideStep.ANALYTICS_PERMISSION;
+      void this.welcomeGuideManager.setCurrentStep(GuideStep.ANALYTICS_PERMISSION);
+      void this.handleStepEntered(GuideStep.ANALYTICS_PERMISSION);
+      logger.info(TAG, `自定义体验设置已应用，步骤更新到: ${this.currentStep}`);
+    });
   }
 
   aboutToAppear(): void {
@@ -176,7 +439,9 @@ struct WelcomeGuidePage {
 
     // 加载当前步骤（从WelcomeGuideManager获取最新状态）
     this.currentStep = this.welcomeGuideManager.getCurrentStep();
+    this.guideFlowMode = this.welcomeGuideManager.getActiveGuideFlow();
     logger.info(TAG, `欢迎引导页面加载，当前引导步骤: ${this.currentStep}`);
+    void this.handleStepEntered(this.currentStep);
     void this.syncCurrentStepFromManager('aboutToAppear');
 
     // 启动入场动画
@@ -192,6 +457,7 @@ struct WelcomeGuidePage {
     try {
       await this.welcomeGuideManager.initialize();
       const latestStep = this.welcomeGuideManager.getCurrentStep();
+      this.guideFlowMode = this.welcomeGuideManager.getActiveGuideFlow();
       if (latestStep === this.currentStep) {
         return;
       }
@@ -200,12 +466,14 @@ struct WelcomeGuidePage {
         this.contentOpacity = 0;
         this.contentTranslateY = 30;
         this.currentStep = latestStep;
+        void this.handleStepEntered(latestStep);
         setTimeout(() => {
           this.startEntranceAnimation();
         }, 100);
         return;
       }
       this.currentStep = latestStep;
+      void this.handleStepEntered(latestStep);
     } catch (error) {
       logger.error(TAG, `同步欢迎引导步骤失败: trigger=${trigger}, error=${String(error)}`);
     }
@@ -360,35 +628,40 @@ struct WelcomeGuidePage {
         // 直接进入下一步（书源引导）
         logger.debug(TAG, '执行 IMAGE_SOURCE_GUIDE 步骤处理，进入书源引导');
         this.animateStepChange(() => {
-          const nextStep = this.sourceFeaturesEnabled ? GuideStep.BOOK_SOURCE_GUIDE : GuideStep.CUSTOM_EXPERIENCE;
+          const nextStep = GuideStep.BOOK_SOURCE_GUIDE;
           this.currentStep = nextStep;
-          this.welcomeGuideManager.setCurrentStep(nextStep);
+          void this.welcomeGuideManager.setCurrentStep(nextStep);
+          void this.handleStepEntered(nextStep);
           logger.info(TAG, `步骤已更新到: ${this.currentStep}`);
         });
         break;
 
       case GuideStep.BOOK_SOURCE_GUIDE:
-        // 直接进入下一步，避免欢迎引导阶段额外跳转页面
+        if (this.isSourceFeatureOnlyFlow()) {
+          logger.debug(TAG, '执行 BOOK_SOURCE_GUIDE 步骤处理，结束仅源功能引导');
+          void this.finishSourceFeatureGuideAndExit();
+          break;
+        }
         logger.debug(TAG, '执行 BOOK_SOURCE_GUIDE 步骤处理，直接进入自定义体验步骤');
         this.animateStepChange(() => {
           this.currentStep = GuideStep.CUSTOM_EXPERIENCE;
-          this.welcomeGuideManager.setCurrentStep(GuideStep.CUSTOM_EXPERIENCE);
+          void this.welcomeGuideManager.setCurrentStep(GuideStep.CUSTOM_EXPERIENCE);
+          void this.handleStepEntered(GuideStep.CUSTOM_EXPERIENCE);
           logger.info(TAG, `步骤已更新到: ${this.currentStep}`);
         });
         break;
 
       case GuideStep.CUSTOM_EXPERIENCE:
-        // 导航到全局设置页面
-        logger.debug(TAG, '执行 CUSTOM_EXPERIENCE 步骤处理，准备导航到全局设置页面');
-        void this.navigateToGlobalSettings();
+        logger.debug(TAG, '执行 CUSTOM_EXPERIENCE 步骤处理，应用设置并进入通知权限步骤');
+        void this.applyCustomExperienceAndAdvance();
         break;
 
       case GuideStep.ANALYTICS_PERMISSION:
-        // 阅读报告步骤（保留但跳过），直接进入 LIBRARY_INTRO
-        logger.debug(TAG, '跳过阅读报告步骤，直接进入 LIBRARY_INTRO');
+        logger.debug(TAG, '执行通知权限步骤处理，进入隐私书库与SFW说明');
         this.animateStepChange(() => {
           this.currentStep = GuideStep.LIBRARY_INTRO;
-          this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
+          void this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
+          void this.handleStepEntered(GuideStep.LIBRARY_INTRO);
         });
         break;
 
@@ -415,12 +688,6 @@ struct WelcomeGuidePage {
       case GuideStep.DATA_IMPORT:
         nextStep = this.sourceFeaturesEnabled ? GuideStep.IMAGE_SOURCE_GUIDE : GuideStep.CUSTOM_EXPERIENCE;
         break;
-      case GuideStep.BOOK_SOURCE_GUIDE:
-        nextStep = GuideStep.CUSTOM_EXPERIENCE;
-        break;
-      case GuideStep.CUSTOM_EXPERIENCE:
-        nextStep = GuideStep.ANALYTICS_PERMISSION;
-        break;
       default:
         return;
     }
@@ -428,7 +695,8 @@ struct WelcomeGuidePage {
     logger.info(TAG, `跳过导航，直接进入下一步: ${nextStep}`);
     this.animateStepChange(() => {
       this.currentStep = nextStep;
-      this.welcomeGuideManager.setCurrentStep(nextStep);
+      void this.welcomeGuideManager.setCurrentStep(nextStep);
+      void this.handleStepEntered(nextStep);
     });
   }
 
@@ -438,6 +706,23 @@ struct WelcomeGuidePage {
   private async completeGuide(): Promise<void> {
     logger.info(TAG, '引导流程完成');
     await this.welcomeGuideManager.markGuideCompleted();
+    this.navigateToMainMenu();
+  }
+
+  private async finishSourceFeatureGuideAndExit(): Promise<void> {
+    logger.info(TAG, '仅源功能引导完成，准备返回上一页');
+    await this.welcomeGuideManager.finishSourceFeatureGuide();
+
+    try {
+      const router = this.uiContext?.getRouter();
+      if (router) {
+        router.back();
+        return;
+      }
+    } catch (error) {
+      logger.warn(TAG, `源功能引导返回上一页失败，回退主页面: ${String(error)}`);
+    }
+
     this.navigateToMainMenu();
   }
 
@@ -529,13 +814,14 @@ struct WelcomeGuidePage {
   private async applyCustomThemePresetA(): Promise<void> {
     try {
       const data: CustomThemeData = {
-        id: 'default_custom_theme',
-        name: '默认自定义主题',
+        id: BuiltInThemeResources.DEFAULT_THEME_ID,
+        name: '自定义',
         backgroundImagePath: '',
         backgroundImagePathDark: '',
         splashBackgroundImagePath: '',
         blurLevel: 12,
         primaryColor: '#007AFF',
+        themeMode: CustomThemeMode.AUTO,
         isDark: false,
         createTime: Date.now(),
         lastModified: Date.now()
@@ -568,13 +854,14 @@ struct WelcomeGuidePage {
   private async applyCustomThemePresetB(): Promise<void> {
     try {
       const data: CustomThemeData = {
-        id: 'secondary_custom_theme',
+        id: BuiltInThemeResources.SECONDARY_THEME_ID,
         name: '次级自定义主题',
         backgroundImagePath: '',
         backgroundImagePathDark: '',
         splashBackgroundImagePath: '',
         blurLevel: 12,
         primaryColor: '#0A84FF',
+        themeMode: CustomThemeMode.DARK,
         isDark: true,
         createTime: Date.now(),
         lastModified: Date.now()
@@ -597,6 +884,41 @@ struct WelcomeGuidePage {
     } catch (error) {
       const msg: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '应用次级自定义主题失败', msg);
+    }
+  }
+
+  private async applyCustomThemePresetCatDark(): Promise<void> {
+    try {
+      const data: CustomThemeData = {
+        id: BuiltInThemeResources.CAT_DARK_THEME_ID,
+        name: '猫猫深色主题',
+        backgroundImagePath: '',
+        backgroundImagePathDark: '',
+        splashBackgroundImagePath: '',
+        blurLevel: 12,
+        primaryColor: '#4BA3FF',
+        themeMode: CustomThemeMode.DARK,
+        isDark: true,
+        createTime: Date.now(),
+        lastModified: Date.now()
+      };
+      await this.themeManager.applyCustomTheme(data);
+      logger.info(TAG, '已应用猫猫深色主题（cat_dark 系列，媒体资源回退）');
+
+      if (this.currentStep === GuideStep.THEME_SELECTION) {
+        if (this.isAnimating) {
+          logger.warn(TAG, '动画进行中，暂不切换到下一步');
+          return;
+        }
+        this.animateStepChange(() => {
+          this.currentStep = GuideStep.DATA_IMPORT;
+          this.welcomeGuideManager.setCurrentStep(GuideStep.DATA_IMPORT);
+          logger.info(TAG, `主题应用后已切换到下一步: ${this.currentStep}`);
+        });
+      }
+    } catch (error) {
+      const msg: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '应用猫猫深色主题失败', msg);
     }
   }
 
@@ -653,7 +975,7 @@ struct WelcomeGuidePage {
    * 获取当前步骤内容
    */
   private getCurrentStepContent(): GuideStepContent {
-    return this.getGuideSteps().get(this.currentStep) ?? {
+    const defaultContent = this.getGuideSteps().get(this.currentStep) ?? {
       title: '欢迎',
       subtitle: '',
       description: '',
@@ -661,14 +983,466 @@ struct WelcomeGuidePage {
       buttonText: '继续',
       showSkip: false
     };
+
+    if (this.isSourceFeatureOnlyFlow() && this.currentStep === GuideStep.BOOK_SOURCE_GUIDE) {
+      return {
+        title: defaultContent.title,
+        subtitle: defaultContent.subtitle,
+        description: defaultContent.description,
+        icon: defaultContent.icon,
+        buttonText: '完成引导',
+        showSkip: defaultContent.showSkip
+      };
+    }
+
+    return defaultContent;
+  }
+
+  @Builder
+  private buildGuideToggleRow(
+    title: string,
+    description: string,
+    isOn: boolean,
+    onToggle: (value: boolean) => void
+  ) {
+    Row() {
+      Column({ space: 4 }) {
+        Text(title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontFamily(this.appFontFamily)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+
+        Text(description)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontFamily(this.appFontFamily)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: isOn })
+        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .onChange((value: boolean) => {
+          onToggle(value);
+        })
+    }
+    .width('100%')
+    .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(14)
+  }
+
+  @Builder
+  private buildNotificationGuideSection() {
+    Column({ space: 12 }) {
+      Column({ space: 10 }) {
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.worldclock_fill_1'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          Text('下载完成后及时提醒您查看结果')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .textAlign(TextAlign.Start)
+        }
+
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          Text('图源/书源更新、局域网传书等重要状态也会用通知提示')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .textAlign(TextAlign.Start)
+        }
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(16)
+
+      Column({ space: 8 }) {
+        Text(this.notificationPermissionGranted ? '通知权限状态：已授权' : '通知权限状态：未授权')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.notificationPermissionGranted
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text(this.notificationPermissionStatusText)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+
+        if (!this.notificationPermissionGranted) {
+          Button(this.notificationPermissionRequesting ? '正在请求通知权限...' : '再次请求通知权限')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .borderRadius(18)
+            .height(36)
+            .enabled(!this.notificationPermissionRequesting)
+            .opacity(this.notificationPermissionRequesting ? 0.6 : 1.0)
+            .onClick(() => {
+              if (!this.notificationPermissionRequesting) {
+                void this.requestNotificationPermissionAgain();
+              }
+            })
+        }
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(16)
+    }
+    .width('100%')
+    .padding({ left: 32, right: 32 })
+    .margin({ bottom: 28 })
+  }
+
+  @Builder
+  private buildPrivacyAndSfwGuideSection() {
+    Column({ space: 12 }) {
+      Column({ space: 8 }) {
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.lock_fill'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          Text('长按底栏“书库”可进入或退出隐私书库，用于集中隐藏私密内容')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .textAlign(TextAlign.Start)
+        }
+
+        Text('隐私书库支持密码/生物识别验证，适合需要额外保护的内容。')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(16)
+
+      Column({ space: 8 }) {
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.lock_shield_fill'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          Text('长按底栏“管理”可开启或关闭 SFW 模式，自动隐藏带有 NSFW 标记的内容')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .textAlign(TextAlign.Start)
+        }
+
+        Text(this.contentFilterManager.isSFWModeEnabled()
+          ? '当前状态：SFW 模式已开启'
+          : '当前状态：SFW 模式未开启')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(16)
+    }
+    .width('100%')
+    .padding({ left: 32, right: 32 })
+    .margin({ bottom: 28 })
+  }
+
+  @Builder
+  private buildCustomExperienceGuideSection() {
+    Scroll() {
+      Column({ space: 12 }) {
+        if (!this.customExperienceSettingsReady) {
+          Column({ space: 10 }) {
+            LoadingProgress()
+              .width(28)
+              .height(28)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            Text('正在同步当前体验设置...')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .padding(20)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(16)
+        } else {
+          Column({ space: 10 }) {
+            Text('底栏样式')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+
+            Row({ space: 10 }) {
+              Row({ space: 8 }) {
+                Text('HDS 底栏')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.guideBottomBarStyleIndex === 0
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                if (this.guideBottomBarStyleIndex === 0) {
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(14)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                }
+              }
+              .key(`guide_hds_bottom_${this.guideBottomBarStyleIndex}_${this.buttonClickTrigger}`)
+              .height(42)
+              .layoutWeight(1)
+              .justifyContent(FlexAlign.Center)
+              .padding({ left: 12, right: 12 })
+              .borderRadius(12)
+              .backgroundColor(this.guideBottomBarStyleIndex === 0
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+                : SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .border({
+                width: this.guideBottomBarStyleIndex === 0 ? 1.5 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                color: this.guideBottomBarStyleIndex === 0
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+              })
+              .onClick((): void => {
+                void this.setGuideBottomBarStyle('hds');
+              })
+
+              Row({ space: 8 }) {
+                Text('经典底栏')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.guideBottomBarStyleIndex === 1
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                if (this.guideBottomBarStyleIndex === 1) {
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(14)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                }
+              }
+              .key(`guide_custom_bottom_${this.guideBottomBarStyleIndex}_${this.buttonClickTrigger}`)
+              .height(42)
+              .layoutWeight(1)
+              .justifyContent(FlexAlign.Center)
+              .padding({ left: 12, right: 12 })
+              .borderRadius(12)
+              .backgroundColor(this.guideBottomBarStyleIndex === 1
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+                : SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .border({
+                width: this.guideBottomBarStyleIndex === 1 ? 1.5 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                color: this.guideBottomBarStyleIndex === 1
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+              })
+              .onClick((): void => {
+                void this.setGuideBottomBarStyle('custom');
+              })
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(16)
+
+          Column({ space: 10 }) {
+            Text('书库样式')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+
+            Row({ space: 10 }) {
+              Row({ space: 8 }) {
+                Text('平铺')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.guideLibraryDisplayModeIndex === 0
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                if (this.guideLibraryDisplayModeIndex === 0) {
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(14)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                }
+              }
+              .key(`guide_flat_library_${this.guideLibraryDisplayModeIndex}_${this.buttonClickTrigger}`)
+              .height(42)
+              .layoutWeight(1)
+              .justifyContent(FlexAlign.Center)
+              .padding({ left: 12, right: 12 })
+              .borderRadius(12)
+              .backgroundColor(this.guideLibraryDisplayModeIndex === 0
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+                : SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .border({
+                width: this.guideLibraryDisplayModeIndex === 0 ? 1.5 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                color: this.guideLibraryDisplayModeIndex === 0
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+              })
+              .onClick((): void => {
+                void this.setGuideLibraryDisplayMode('flat');
+              })
+
+              Row({ space: 8 }) {
+                Text('书架')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.guideLibraryDisplayModeIndex === 1
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                if (this.guideLibraryDisplayModeIndex === 1) {
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(14)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                }
+              }
+              .key(`guide_shelf_library_${this.guideLibraryDisplayModeIndex}_${this.buttonClickTrigger}`)
+              .height(42)
+              .layoutWeight(1)
+              .justifyContent(FlexAlign.Center)
+              .padding({ left: 12, right: 12 })
+              .borderRadius(12)
+              .backgroundColor(this.guideLibraryDisplayModeIndex === 1
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+                : SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .border({
+                width: this.guideLibraryDisplayModeIndex === 1 ? 1.5 : SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme),
+                color: this.guideLibraryDisplayModeIndex === 1
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme)
+              })
+              .onClick((): void => {
+                void this.setGuideLibraryDisplayMode('shelf');
+              })
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(16)
+
+          Column({ space: 10 }) {
+            this.buildGuideToggleRow(
+              '全局自定义背景',
+              '非主页页面默认跟随全局自定义背景',
+              this.guideGlobalBackgroundEnabled,
+              (value: boolean) => {
+                void this.setGuideGlobalBackgroundEnabled(value);
+              }
+            )
+            this.buildGuideToggleRow(
+              '后台隐私遮罩',
+              '在后台任务界面显示隐私保护遮罩',
+              this.guideBackgroundBlurEnabled,
+              (value: boolean) => {
+                void this.setGuideBackgroundBlurEnabled(value);
+              }
+            )
+            this.buildGuideToggleRow(
+              '震动反馈',
+              '保留按钮、长按等常用触觉反馈',
+              this.guideVibrationEnabled,
+              (value: boolean) => {
+                void this.setGuideVibrationEnabled(value);
+              }
+            )
+            this.buildGuideToggleRow(
+              '内容重复检测',
+              '添加漫画、电子书、小说时自动检测重复内容',
+              this.guideDuplicateDetectionEnabled,
+              (value: boolean) => {
+                void this.setGuideDuplicateDetectionEnabled(value);
+              }
+            )
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(16)
+
+          Text(this.customExperienceHintText)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+        }
+      }
+      .width('100%')
+      .padding({ left: 32, right: 32, bottom: 8 })
+    }
+    .width('100%')
+    .height('38%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .margin({ bottom: 24 })
   }
 
   private lifecycle = new PageLifecycleManager('WelcomeGuidePage', { enableDebug: true });
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, '欢迎引导页面即将销毁');
+    this.customExperienceSettingsInitialized = false;
+    if (this.isSourceFeatureOnlyFlow()) {
+      void this.welcomeGuideManager.finishSourceFeatureGuide();
+    }
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   build() {
@@ -690,37 +1464,54 @@ struct WelcomeGuidePage {
             Text(this.getCurrentStepContent().title)
               .fontSize(28)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .margin({ bottom: 8 })
 
             // 副标题
             Text(this.getCurrentStepContent().subtitle)
               .fontSize(16)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .margin({ bottom: 16 })
 
             // 描述
             Text(this.getCurrentStepContent().description)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .textAlign(TextAlign.Center)
               .lineHeight(24)
               .padding({ left: 32, right: 32 })
               .margin({ bottom: 24 })
 
-            // 两个主题演示卡片
-            Row({ space: 16 }) {
+            // 内置主题演示卡片
+            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Center }) {
               // 主题一（A 系列）
               Column() {
-                Image($r('app.media.a_2'))
+                Column()
                   .width(160)
                   .height(100)
-                  .objectFit(ImageFit.Cover)
+                  .backgroundImage(BuiltInThemeResources.resolvePreviewResource(BuiltInThemeResources.DEFAULT_THEME_ID), {
+                    repeat: ImageRepeat.NoRepeat,
+                    syncLoad: true
+                  })
+                  .backgroundImageSize(ImageSize.Cover)
+                  .backgroundImagePosition(Alignment.Top)
                   .borderRadius(12)
+                  .clip(true)
+                  .margin({ bottom: 8 })
+
+                Text('自定义')
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .margin({ bottom: 8 })
 
                 Button('应用主题一')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .height(40)
                   .width(160)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
@@ -730,18 +1521,33 @@ struct WelcomeGuidePage {
                     this.applyCustomThemePresetA();
                   })
               }
+              .margin({ left: 8, right: 8, bottom: 12 })
 
               // 主题二（B 系列）
               Column() {
-                Image($r('app.media.b_2'))
+                Column()
                   .width(160)
                   .height(100)
-                  .objectFit(ImageFit.Cover)
+                  .backgroundImage(BuiltInThemeResources.resolvePreviewResource(BuiltInThemeResources.SECONDARY_THEME_ID), {
+                    repeat: ImageRepeat.NoRepeat,
+                    syncLoad: true
+                  })
+                  .backgroundImageSize(ImageSize.Cover)
+                  .backgroundImagePosition(Alignment.Top)
                   .borderRadius(12)
+                  .clip(true)
+                  .margin({ bottom: 8 })
+
+                Text('第二自定义主题')
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .margin({ bottom: 8 })
 
                 Button('应用主题二')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .height(40)
                   .width(160)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
@@ -751,6 +1557,42 @@ struct WelcomeGuidePage {
                     this.applyCustomThemePresetB();
                   })
               }
+              .margin({ left: 8, right: 8, bottom: 12 })
+
+              Column() {
+                Column()
+                  .width(160)
+                  .height(100)
+                  .backgroundImage(BuiltInThemeResources.resolvePreviewResource(BuiltInThemeResources.CAT_DARK_THEME_ID), {
+                    repeat: ImageRepeat.NoRepeat,
+                    syncLoad: true
+                  })
+                  .backgroundImageSize(ImageSize.Cover)
+                  .backgroundImagePosition(Alignment.Top)
+                  .borderRadius(12)
+                  .clip(true)
+                  .margin({ bottom: 8 })
+
+                Text('猫猫深色主题')
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .margin({ bottom: 8 })
+
+                Button('应用深色猫猫')
+                  .fontSize(14)
+                  .fontFamily(this.appFontFamily)
+                  .height(40)
+                  .width(160)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                  .borderRadius(20)
+                  .onClick(() => {
+                    this.applyCustomThemePresetCatDark();
+                  })
+              }
+              .margin({ left: 8, right: 8, bottom: 12 })
             }
             .margin({ bottom: 16 })
 
@@ -790,33 +1632,45 @@ struct WelcomeGuidePage {
             Text(this.getCurrentStepContent().title)
               .fontSize(28)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .margin({ bottom: 12 })
 
             Text(this.getCurrentStepContent().subtitle)
               .fontSize(16)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .margin({ bottom: 24 })
 
             Text(this.getCurrentStepContent().description)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .textAlign(TextAlign.Center)
               .lineHeight(24)
               .padding({ left: 32, right: 32 })
-              .margin({ bottom: this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE && this.sourceFeaturesEnabled ? 16 : 48 })
+              .margin({
+                bottom: (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE && this.sourceFeaturesEnabled) ||
+                  this.currentStep === GuideStep.CUSTOM_EXPERIENCE ||
+                  this.currentStep === GuideStep.ANALYTICS_PERMISSION ||
+                  this.currentStep === GuideStep.LIBRARY_INTRO
+                  ? 16
+                  : 48
+              })
 
             // 图源说明页面的可复制URL文本框
             if (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE && this.sourceFeaturesEnabled) {
               Column() {
                 Text('图源仓库地址')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .margin({ bottom: 8 })
 
                 Row() {
                   Text(SOURCE_REPO_URL)
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .maxLines(2)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -825,6 +1679,7 @@ struct WelcomeGuidePage {
 
                   Button('复制')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .height(32)
                     .padding({ left: 12, right: 12 })
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
@@ -843,6 +1698,18 @@ struct WelcomeGuidePage {
               .padding({ left: 32, right: 32 })
               .margin({ bottom: 32 })
             }
+
+            if (this.currentStep === GuideStep.CUSTOM_EXPERIENCE) {
+              this.buildCustomExperienceGuideSection()
+            }
+
+            if (this.currentStep === GuideStep.ANALYTICS_PERMISSION) {
+              this.buildNotificationGuideSection()
+            }
+
+            if (this.currentStep === GuideStep.LIBRARY_INTRO) {
+              this.buildPrivacyAndSfwGuideSection()
+            }
           }
         }
         .justifyContent(FlexAlign.Center)
@@ -856,6 +1723,7 @@ struct WelcomeGuidePage {
           // 主要操作按钮 - 暂时使用普通Button来排查AnimatedButton的问题
           Button(this.getCurrentStepContent().buttonText)
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .height(48)
             .width('80%')
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
@@ -869,11 +1737,10 @@ struct WelcomeGuidePage {
             })
 
           // 下一步按钮（用于可导航步骤，允许不导航直接进入下一步）
-          if (this.currentStep === GuideStep.DATA_IMPORT ||
-              this.currentStep === GuideStep.BOOK_SOURCE_GUIDE ||
-              this.currentStep === GuideStep.CUSTOM_EXPERIENCE) {
+          if (this.currentStep === GuideStep.DATA_IMPORT) {
             Text('下一步')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .margin({ top: 8 })
               .opacity(this.isAnimating ? 0.5 : 1.0)
@@ -903,4 +1770,3 @@ struct WelcomeGuidePage {
 }
 
 export { WelcomeGuidePage };
-

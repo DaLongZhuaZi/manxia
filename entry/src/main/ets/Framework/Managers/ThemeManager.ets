@@ -27,6 +27,15 @@ export enum ThemeType {
 }
 
 /**
+ * 自定义主题的配色跟随模式
+ */
+export enum CustomThemeMode {
+  LIGHT = 'light',
+  DARK = 'dark',
+  AUTO = 'auto'
+}
+
+/**
  * 主题配置接口
  */
 export interface ThemeConfig {
@@ -58,6 +67,7 @@ export interface CustomThemeData {
   hideSplashProgress?: boolean;
   blurLevel: number;
   primaryColor: string;
+  themeMode?: CustomThemeMode;
   isDark: boolean;
   createTime: number;
   lastModified: number;
@@ -88,6 +98,7 @@ export interface CustomThemeKeys {
   HIDE_SPLASH_LOGO: string;
   HIDE_SPLASH_PROGRESS: string;
   PRIMARY_COLOR: string;
+  THEME_MODE: string;
   IS_CUSTOM_THEME_ACTIVE: string;
   CURRENT_THEME_ID: string;
 }
@@ -105,9 +116,14 @@ export const CUSTOM_THEME_KEYS: CustomThemeKeys = {
   HIDE_SPLASH_LOGO: 'custom_theme_hide_splash_logo',
   HIDE_SPLASH_PROGRESS: 'custom_theme_hide_splash_progress',
   PRIMARY_COLOR: 'custom_theme_primary_color',
+  THEME_MODE: 'custom_theme_mode',
   IS_CUSTOM_THEME_ACTIVE: 'custom_theme_is_active',
   CURRENT_THEME_ID: 'custom_theme_current_id'
 };
+
+function isBuiltInDarkCustomTheme(themeId: string): boolean {
+  return themeId === 'secondary_custom_theme' || themeId === 'cat_dark_custom_theme';
+}
 
 /**
  * 玻璃效果上下文枚举（名义类型）
@@ -230,6 +246,7 @@ export class ThemeManager {
   private readonly CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY = 'custom_theme_splash_rotation_date';
   private readonly CUSTOM_THEME_HIDE_SPLASH_LOGO_KEY = 'custom_theme_hide_splash_logo';
   private readonly CUSTOM_THEME_HIDE_SPLASH_PROGRESS_KEY = 'custom_theme_hide_splash_progress';
+  private readonly CUSTOM_THEME_MODE_KEY = 'custom_theme_mode';
   private isInitialized: boolean = false; // 添加初始化标志
   // 轻量玻璃模糊在浅色主题下启用
   private glassBlurEnabledInLightMode: boolean = true;
@@ -288,15 +305,6 @@ export class ThemeManager {
       // 3.6. 初始化用户主题配置管理器
       await this.initializeUserThemeConfig();
 
-      // 3.7. 如果自定义主题处于激活状态，则强制使用AUTO以跟随系统
-      // 避免用户之前保存的固定深色/浅色导致与系统不一致
-      const customActive: boolean = this.isCustomThemeActive();
-      if (customActive && this.currentTheme !== ThemeType.AUTO) {
-        this.currentTheme = ThemeType.AUTO;
-        await this.saveTheme(ThemeType.AUTO);
-        logger.info(TAG, '自定义主题已激活，已切换到AUTO以跟随系统主题');
-      }
-      
       // 4. 确定最终显示的主题
       const finalTheme = this.getActualThemeSync();
       logger.info(TAG, `🎯 最终显示主题: ${finalTheme}`);
@@ -329,6 +337,32 @@ export class ThemeManager {
     
     // 如果还没有初始化，调用公开的初始化方法
     await this.initialize();
+  }
+
+  private normalizeCustomThemeMode(rawMode: CustomThemeMode | string | undefined, themeId: string): CustomThemeMode {
+    if (rawMode === CustomThemeMode.LIGHT) {
+      return CustomThemeMode.LIGHT;
+    }
+    if (rawMode === CustomThemeMode.DARK) {
+      return CustomThemeMode.DARK;
+    }
+    if (rawMode === CustomThemeMode.AUTO) {
+      return CustomThemeMode.AUTO;
+    }
+    if (isBuiltInDarkCustomTheme(themeId)) {
+      return CustomThemeMode.DARK;
+    }
+    return CustomThemeMode.AUTO;
+  }
+
+  private themeTypeFromCustomThemeMode(mode: CustomThemeMode): ThemeType {
+    if (mode === CustomThemeMode.LIGHT) {
+      return ThemeType.LIGHT;
+    }
+    if (mode === CustomThemeMode.DARK) {
+      return ThemeType.DARK;
+    }
+    return ThemeType.AUTO;
   }
 
   /**
@@ -1350,12 +1384,22 @@ export class ThemeManager {
     // 重新加载保存的主题
     await this.loadTheme();
 
-    // 当自定义主题激活时，确保跟随系统
+    // 当自定义主题激活时，按主题自身的类型恢复浅色、深色或自适应。
     const customActive: boolean = this.isCustomThemeActive();
-    if (customActive && this.currentTheme !== ThemeType.AUTO) {
-      this.currentTheme = ThemeType.AUTO;
-      await this.saveTheme(ThemeType.AUTO);
-      logger.info(TAG, '自定义主题激活，刷新时强制AUTO以跟随系统');
+    if (customActive) {
+      const activeThemeId: string = this.getCurrentCustomThemeId();
+      let storedModeRaw: string = AppStorage.get<string>(CUSTOM_THEME_KEYS.THEME_MODE) || '';
+      if (this.preferencesStore) {
+        storedModeRaw = await this.preferencesStore.get(this.CUSTOM_THEME_MODE_KEY, '') as string;
+      }
+      const mode: CustomThemeMode = this.normalizeCustomThemeMode(storedModeRaw, activeThemeId);
+      const targetTheme: ThemeType = this.themeTypeFromCustomThemeMode(mode);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.THEME_MODE, mode);
+      if (this.currentTheme !== targetTheme) {
+        this.currentTheme = targetTheme;
+        await this.saveTheme(targetTheme);
+        logger.info(TAG, `自定义主题激活，刷新时按主题类型恢复: ${mode}`);
+      }
     }
     
     // 通知当前主题
@@ -1509,6 +1553,7 @@ export class ThemeManager {
       const splashResolved = this.resolveSplashBackgroundByRule(splashPaths, splashRule, splashCursorInput, splashDateInput);
       const hideSplashLogo: boolean = themeData.hideSplashLogo === true;
       const hideSplashProgress: boolean = themeData.hideSplashProgress === true;
+      const themeMode: CustomThemeMode = this.normalizeCustomThemeMode(themeData.themeMode, themeData.id);
       
       // 1. 设置全局状态（双版本背景）
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_LIGHT, themeData.backgroundImagePath);
@@ -1524,21 +1569,22 @@ export class ThemeManager {
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, hideSplashLogo);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, hideSplashProgress);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, themeData.primaryColor);
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.THEME_MODE, themeMode);
       // 必须先设置 IS_CUSTOM_THEME_ACTIVE 为 true，再调用 refreshCustomBackgroundForCurrentTheme
       // 否则该函数会因为检查到 IS_CUSTOM_THEME_ACTIVE 不为 true 而提前返回
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.IS_CUSTOM_THEME_ACTIVE, true);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.CURRENT_THEME_ID, themeData.id);
+      
+      // 2. 自定义主题按“浅色 / 深色 / 自适应”类型决定应用配色。
+      const targetTheme: ThemeType = this.themeTypeFromCustomThemeMode(themeMode);
+      if (this.currentTheme !== targetTheme) {
+        this.currentTheme = targetTheme;
+        await this.saveTheme(targetTheme);
+        this.notifyThemeChange(this.getActualThemeSync());
+      }
+
       // 根据当前实际主题刷新通用背景键，确保旧组件兼容
       this.refreshCustomBackgroundForCurrentTheme();
-      
-      // 2. 启用自定义主题时，强制将主题设置为AUTO以跟随系统
-      // 避免用户之前固定为DARK/LIGHT导致与系统不一致
-      if (this.currentTheme !== ThemeType.AUTO) {
-        this.currentTheme = ThemeType.AUTO;
-        await this.saveTheme(ThemeType.AUTO);
-        // 主动通知为系统当前主题
-        this.notifyThemeChange(this.actualTheme);
-      }
       
       // 3. 保存自定义主题信息到首选项
       if (this.preferencesStore) {
@@ -1556,6 +1602,7 @@ export class ThemeManager {
         await this.preferencesStore.put(this.CUSTOM_THEME_HIDE_SPLASH_LOGO_KEY, hideSplashLogo);
         await this.preferencesStore.put(this.CUSTOM_THEME_HIDE_SPLASH_PROGRESS_KEY, hideSplashProgress);
         await this.preferencesStore.put('custom_theme_color', themeData.primaryColor);
+        await this.preferencesStore.put(this.CUSTOM_THEME_MODE_KEY, themeMode);
         await this.preferencesStore.flush();
       }
       
@@ -1566,6 +1613,7 @@ export class ThemeManager {
       logger.info(TAG, `   启动页隐藏Logo: ${hideSplashLogo}`);
       logger.info(TAG, `   启动页隐藏进度: ${hideSplashProgress}`);
       logger.info(TAG, `   主色调: ${themeData.primaryColor}`);
+      logger.info(TAG, `   主题类型: ${themeMode}`);
       logger.info(TAG, `   当前显示主题: ${this.getActualThemeSync()}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -1591,6 +1639,7 @@ export class ThemeManager {
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, false);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, false);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, '');
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.THEME_MODE, CustomThemeMode.AUTO);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.IS_CUSTOM_THEME_ACTIVE, false);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.CURRENT_THEME_ID, '');
       
@@ -1608,6 +1657,7 @@ export class ThemeManager {
         await this.preferencesStore.delete(this.CUSTOM_THEME_HIDE_SPLASH_LOGO_KEY);
         await this.preferencesStore.delete(this.CUSTOM_THEME_HIDE_SPLASH_PROGRESS_KEY);
         await this.preferencesStore.delete('custom_theme_color');
+        await this.preferencesStore.delete(this.CUSTOM_THEME_MODE_KEY);
         await this.preferencesStore.flush();
       }
       
@@ -1772,9 +1822,15 @@ export class ThemeManager {
       const hideSplashLogo: boolean = await this.preferencesStore.get(this.CUSTOM_THEME_HIDE_SPLASH_LOGO_KEY, false) as boolean;
       const hideSplashProgress: boolean = await this.preferencesStore.get(this.CUSTOM_THEME_HIDE_SPLASH_PROGRESS_KEY, false) as boolean;
       const color: string = await this.preferencesStore.get('custom_theme_color', '') as string;
+      const themeModeRaw: string = await this.preferencesStore.get(this.CUSTOM_THEME_MODE_KEY, '') as string;
+      const themeMode: CustomThemeMode = this.normalizeCustomThemeMode(themeModeRaw, themeId);
 
       // 媒体资源模式迁移：默认/第二自定义主题不应使用本地文件路径
-      const isDefaultOrSecondary: boolean = (themeId === 'default_custom_theme' || themeId === 'secondary_custom_theme');
+      const isDefaultOrSecondary: boolean = (
+        themeId === 'default_custom_theme'
+          || themeId === 'secondary_custom_theme'
+          || themeId === 'cat_dark_custom_theme'
+      );
       const hasLegacyFilePath: boolean = (backgroundLight.indexOf('/custom_themes/') >= 0) || (backgroundDark.indexOf('/custom_themes/') >= 0);
       if (isActive && isDefaultOrSecondary && hasLegacyFilePath) {
         backgroundLight = '';
@@ -1782,7 +1838,7 @@ export class ThemeManager {
         await this.preferencesStore.put('custom_theme_background_light', '');
         await this.preferencesStore.put('custom_theme_background_dark', '');
         await this.preferencesStore.flush();
-        logger.info(TAG, '🔧 已迁移默认/次级自定义主题到媒体资源模式（清空旧文件路径）');
+        logger.info(TAG, '🔧 已迁移内置资源主题到媒体资源模式（清空旧文件路径）');
       }
 
       const splashPaths: string[] = this.decodeSplashBackgrounds(splashBackgroundsRaw);
@@ -1801,6 +1857,11 @@ export class ThemeManager {
       // 允许默认/次级主题在空路径情况下保持激活，展示层将使用媒体资源回退
       const allowEmptyForResourceMode: boolean = isDefaultOrSecondary && isActive && hasColor;
       if ((isActive && hasColor && hasBackground) || allowEmptyForResourceMode) {
+        const targetTheme: ThemeType = this.themeTypeFromCustomThemeMode(themeMode);
+        if (this.currentTheme !== targetTheme) {
+          this.currentTheme = targetTheme;
+          await this.saveTheme(targetTheme);
+        }
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.IS_CUSTOM_THEME_ACTIVE, true);
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.CURRENT_THEME_ID, themeId);
         // 保存双版本，并刷新通用键
@@ -1813,21 +1874,24 @@ export class ThemeManager {
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, hideSplashLogo === true);
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, hideSplashProgress === true);
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, color);
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.THEME_MODE, themeMode);
 
         const needUpdateCursor: boolean = splashResolved.cursor !== splashCursorRaw;
         const needUpdateDate: boolean = splashResolved.lastDateKey !== splashDateKey;
         const needWriteBackList: boolean = splashBackgroundsRaw.length === 0 && splashPaths.length > 0;
         const needWriteBackRule: boolean = splashRotationRuleRaw.length === 0;
-        if (needUpdateCursor || needUpdateDate || needWriteBackList || needWriteBackRule) {
+        const needWriteBackMode: boolean = themeModeRaw.length === 0;
+        if (needUpdateCursor || needUpdateDate || needWriteBackList || needWriteBackRule || needWriteBackMode) {
           await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_BACKGROUND_KEY, splashResolved.selectedPath);
           await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_BACKGROUNDS_KEY, this.encodeSplashBackgrounds(splashPaths));
           await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_RULE_KEY, splashRule);
           await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_CURSOR_KEY, splashResolved.cursor);
           await this.preferencesStore.put(this.CUSTOM_THEME_SPLASH_ROTATION_DATE_KEY, splashResolved.lastDateKey);
+          await this.preferencesStore.put(this.CUSTOM_THEME_MODE_KEY, themeMode);
           await this.preferencesStore.flush();
         }
         
-        logger.info(TAG, `已加载自定义主题状态: ID=${themeId}, 主色调=${color}, 开屏图=${splashPaths.length}`);
+        logger.info(TAG, `已加载自定义主题状态: ID=${themeId}, 类型=${themeMode}, 主色调=${color}, 开屏图=${splashPaths.length}`);
       } else {
         // 确保初始化默认状态
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.IS_CUSTOM_THEME_ACTIVE, false);
@@ -1841,6 +1905,7 @@ export class ThemeManager {
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, false);
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, false);
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, '');
+        AppStorage.setOrCreate(CUSTOM_THEME_KEYS.THEME_MODE, CustomThemeMode.AUTO);
       }
     } catch (error) {
       const errMsg: string = error instanceof Error ? error.message : String(error);
@@ -1857,6 +1922,7 @@ export class ThemeManager {
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_LOGO, false);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.HIDE_SPLASH_PROGRESS, false);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, '');
+      AppStorage.setOrCreate(CUSTOM_THEME_KEYS.THEME_MODE, CustomThemeMode.AUTO);
     }
   }
 
