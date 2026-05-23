@@ -101,7 +101,7 @@ export class WebViewAuthManager {
 
   private async captureCookiesFromWebEngine(sourceId: number, url: string): Promise<boolean> {
     const normalizedUrl: string = url.trim();
-    if (normalizedUrl.length === 0) {
+    if (normalizedUrl.length === 0 || normalizedUrl === 'about:blank') {
       return false;
     }
 
@@ -115,7 +115,7 @@ export class WebViewAuthManager {
       const cookieStr: string = await webview.WebCookieManager.fetchCookie(normalizedUrl);
       const incoming: CookieEntry[] = this.parseDocumentCookieString(cookieStr);
       if (incoming.length === 0) {
-        logger.warn(TAG, `WebCookieManager返回Cookie为空: sourceId=${sourceId}, url=${normalizedUrl}`);
+        logger.debug(TAG, `WebCookieManager返回Cookie为空: sourceId=${sourceId}, url=${normalizedUrl}`);
         return false;
       }
       const normalizedIncoming: CookieEntry[] = this.mergeCookies([], incoming);
@@ -290,8 +290,17 @@ export class WebViewAuthManager {
         }
       }
 
+      if (currentUrl === 'about:blank') {
+        logger.debug(TAG, `当前页面为 about:blank，跳过 document.cookie 捕获: sourceId=${sourceId}`);
+        return;
+      }
+
       const cookieStr: string = await controller.runJavaScript('document.cookie');
       const incoming: CookieEntry[] = this.parseDocumentCookieString(cookieStr);
+      if (incoming.length === 0) {
+        logger.debug(TAG, `document.cookie 为空，跳过保存: sourceId=${sourceId}`);
+        return;
+      }
       const merged: CookieEntry[] = this.mergeCookies([], incoming);
       const json: string = this.serializeCookies(merged);
       await this.dataManager.updateComicSourceCookies(sourceId, json);

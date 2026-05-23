@@ -44,6 +44,7 @@ import {
   UnifiedContentType,
   UnifiedReadStatus,
   UnifiedDetailPageParams,
+  RemoteVerificationInfo,
   UnifiedContentActions,
   ChapterFilterType,
   ChapterSortOrder,
@@ -68,6 +69,7 @@ import { LOCAL_TXT_NOVEL_SOURCE_ID, buildLocalTextNovelBookId, buildNovelReaderP
 import { DuplicateDetectionService } from '../Framework/DuplicateDetection/DuplicateDetectionService';
 import { DuplicateCheckContentType, DuplicateMatchItem } from '../Framework/DuplicateDetection/DuplicateDetectionModels';
 import { DuplicateDetectionDialog } from '../Framework/Components/DuplicateDetectionDialog';
+import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 
 // 数据管理器导入
 import { DataManager, ChapterInfo, PageInfo, OnlineChapterInfo } from '../Framework/Data/DataManager';
@@ -79,6 +81,7 @@ import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
+import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
@@ -251,6 +254,7 @@ interface TagChipItem {
 }
 
 interface OnlineEBookDetailRecord {
+  id?: string;
   title?: string;
   author?: string;
   description?: string;
@@ -265,6 +269,41 @@ interface OnlineEBookExtendedData {
   sourceName?: string;
   sourcePkg?: string;
   onlineReaderUrl?: string;
+  detailRequestValue?: string;
+  verificationStatus?: string;
+  verificationMessage?: string;
+  verificationPageUrl?: string;
+  verificationPageTitle?: string;
+  verificationCooldownText?: string;
+  verificationCooldownSeconds?: number;
+  verificationCanRetry?: boolean;
+  verificationAttempt?: number;
+  verificationUpdatedAt?: number;
+}
+
+interface OnlineEBookWorkflowAction {
+  type?: string;
+  url?: string;
+}
+
+interface OnlineEBookWorkflowDefinition {
+  actions?: OnlineEBookWorkflowAction[];
+}
+
+interface OnlineEBookWorkflowCollection {
+  getBookDetail?: OnlineEBookWorkflowDefinition;
+}
+
+interface OnlineEBookSourceConfig {
+  workflows?: OnlineEBookWorkflowCollection;
+}
+
+interface OnlineEBookVerificationState {
+  url: string;
+  title: string;
+  isVerifyEntry: boolean;
+  cooldownText: string;
+  canRetryVerification: boolean;
 }
 
 interface DialogResult {
@@ -310,6 +349,7 @@ export struct UnifiedDetailPage {
   // 下拉刷新状态
   @State isRefreshing: boolean = false;       // 是否正在刷新
   @State refreshProgress: string = '';        // 刷新进度文本
+  @State onlineEBookVerificationInfo: RemoteVerificationInfo | null = null;
   
   // 重新获取状态（在线漫画）
   @State isRefetchingManga: boolean = false;  // 是否正在重新获取漫画信息
@@ -467,6 +507,29 @@ export struct UnifiedDetailPage {
       return '';
     }
     return value.trim();
+  }
+
+  private loadGlobalChapterSortOrderPreference(): void {
+    const storedValue = this.settingsManager.getString(
+      SettingKeys.GLOBAL_UNIFIED_DETAIL_CHAPTER_SORT_ORDER,
+      ChapterSortOrder.ASCENDING
+    );
+    if (storedValue === ChapterSortOrder.DESCENDING) {
+      this.chapterSortOrder = ChapterSortOrder.DESCENDING;
+      return;
+    }
+    this.chapterSortOrder = ChapterSortOrder.ASCENDING;
+  }
+
+  private persistGlobalChapterSortOrderPreference(sortOrder: ChapterSortOrder): void {
+    void this.settingsManager.setString(SettingKeys.GLOBAL_UNIFIED_DETAIL_CHAPTER_SORT_ORDER, sortOrder);
+  }
+
+  private toggleGlobalChapterSortOrder(): void {
+    this.chapterSortOrder = this.chapterSortOrder === ChapterSortOrder.ASCENDING
+      ? ChapterSortOrder.DESCENDING
+      : ChapterSortOrder.ASCENDING;
+    this.persistGlobalChapterSortOrderPreference(this.chapterSortOrder);
   }
 
   private normalizeDisplaySourceText(value: string | undefined | null): string {
@@ -779,6 +842,7 @@ export struct UnifiedDetailPage {
       sourcePkg: currentContent.sourcePkg,
       sourceUrl: currentContent.sourceUrl,
       isLocal: currentContent.isLocal,
+      remoteVerificationInfo: currentContent.remoteVerificationInfo,
       publisher: currentContent.publisher,
       publishDate: currentContent.publishDate,
       isbn: currentContent.isbn,
@@ -812,6 +876,438 @@ export struct UnifiedDetailPage {
       logger.warn(TAG, `解析在线电子书扩展数据失败: ${String(error)}`);
       return null;
     }
+  }
+
+  private getNormalizedOnlineEBookBaseUrl(sourceInfo: SourceInfo | null): string {
+    const rawBaseUrl: string = this.normalizeTrackingText(sourceInfo?.baseUrl);
+    if (rawBaseUrl.endsWith('/')) {
+      return rawBaseUrl.substring(0, rawBaseUrl.length - 1);
+    }
+    return rawBaseUrl;
+  }
+
+  private buildAbsoluteOnlineEBookUrl(baseUrl: string, pathOrUrl: string): string {
+    const normalizedValue: string = this.normalizeTrackingText(pathOrUrl);
+    if (normalizedValue.length <= 0) {
+      return '';
+    }
+    if (this.isHttpUrl(normalizedValue)) {
+      return normalizedValue;
+    }
+    if (baseUrl.length <= 0) {
+      return normalizedValue;
+    }
+    if (normalizedValue.startsWith('/')) {
+      return `${baseUrl}${normalizedValue}`;
+    }
+    return `${baseUrl}/${normalizedValue}`;
+  }
+
+  private extractOnlineEBookDetailUrlTemplate(sourceConfig: OnlineEBookSourceConfig | null): string {
+    if (!sourceConfig || !sourceConfig.workflows || !sourceConfig.workflows.getBookDetail) {
+      return '';
+    }
+    const actions: OnlineEBookWorkflowAction[] | undefined = sourceConfig.workflows.getBookDetail.actions;
+    if (!actions || !Array.isArray(actions)) {
+      return '';
+    }
+    for (let index = 0; index < actions.length; index++) {
+      const action: OnlineEBookWorkflowAction = actions[index];
+      if (action.type === 'navigate' && action.url && action.url.trim().length > 0) {
+        return action.url.trim();
+      }
+    }
+    return '';
+  }
+
+  private async resolveOnlineEBookDetailRequestValue(
+    bookId: string,
+    sourceId: string,
+    sourceInfo: SourceInfo | null,
+    extendedData: OnlineEBookExtendedData | null
+  ): Promise<string> {
+    const normalizedBookId: string = this.normalizeTrackingText(bookId);
+    if (normalizedBookId.length <= 0) {
+      return '';
+    }
+
+    const storedRequestValue: string = this.normalizeTrackingText(extendedData?.detailRequestValue);
+    if (storedRequestValue.length > 0) {
+      return storedRequestValue;
+    }
+
+    if (this.isHttpUrl(normalizedBookId)) {
+      return normalizedBookId;
+    }
+
+    const baseUrl: string = this.getNormalizedOnlineEBookBaseUrl(sourceInfo);
+    if (normalizedBookId.startsWith('/')) {
+      return this.buildAbsoluteOnlineEBookUrl(baseUrl, normalizedBookId);
+    }
+
+    const numericSourceId: number = Number(sourceId);
+    if (numericSourceId > 0) {
+      try {
+        const rawSourceConfig = await this.dataManager.getSourceConfig(numericSourceId) as OnlineEBookSourceConfig | null;
+        const detailUrlTemplate: string = this.extractOnlineEBookDetailUrlTemplate(rawSourceConfig);
+        if (detailUrlTemplate.includes('{{bookId}}')) {
+          return normalizedBookId;
+        }
+        if (detailUrlTemplate.includes('{{mangaUrl}}')) {
+          return this.buildAbsoluteOnlineEBookUrl(baseUrl, normalizedBookId);
+        }
+      } catch (error) {
+        logger.warn(TAG, `解析在线电子书详情模板失败: ${String(error)}`);
+      }
+    }
+
+    return normalizedBookId;
+  }
+
+  private isOnlineEBookDownloadOnlyContent(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.EBOOK) {
+      return false;
+    }
+    if (this.content.isLocal) {
+      return false;
+    }
+    return this.normalizeTrackingText(this.onlineReaderUrl).length <= 0;
+  }
+
+  private beginOnlineEBookRecovery(statusText: string): void {
+    this.isOnlineEBookRecoveryInProgress = true;
+    this.onlineEBookRecoveryStatusText = statusText;
+    this.refreshProgress = statusText;
+    this.isLoading = true;
+    this.isChaptersLoading = true;
+    this.isLoadingRecommendations = true;
+    this.isLoadingShelfContent = true;
+    if (this.content && this.content.contentType === UnifiedContentType.EBOOK) {
+      if (!this.content.description || this.content.description.includes('安全验证页面')) {
+        this.content.description = statusText;
+      }
+    }
+  }
+
+  private endOnlineEBookRecovery(): void {
+    this.isOnlineEBookRecoveryInProgress = false;
+    this.onlineEBookRecoveryStatusText = '';
+    if (this.refreshProgress.includes('安全验证')) {
+      this.refreshProgress = '';
+    }
+    this.isLoading = false;
+    this.isLoadingRecommendations = false;
+    this.isLoadingShelfContent = false;
+  }
+
+  private isReadActionBusy(): boolean {
+    return this.isOpeningOnlineEBookDownloadDetail || this.isOnlineEBookRecoveryInProgress;
+  }
+
+  private clearOnlineEBookRecoveryTimer(): void {
+    if (this.onlineEBookRecoveryTimer >= 0) {
+      clearTimeout(this.onlineEBookRecoveryTimer);
+      this.onlineEBookRecoveryTimer = -1;
+    }
+  }
+
+  private buildOnlineEBookVerificationInfo(
+    status: string,
+    message: string,
+    pageUrl: string,
+    pageTitle: string,
+    cooldownText: string,
+    cooldownSeconds: number,
+    canRetryVerification: boolean,
+    attempt: number
+  ): RemoteVerificationInfo {
+    const info: RemoteVerificationInfo = {
+      status: status,
+      message: message,
+      pageUrl: pageUrl,
+      pageTitle: pageTitle,
+      cooldownText: cooldownText,
+      cooldownSeconds: cooldownSeconds,
+      canRetryVerification: canRetryVerification,
+      attempt: attempt,
+      lastUpdatedTime: Date.now()
+    };
+    return info;
+  }
+
+  private extractOnlineEBookVerificationInfo(extendedData: OnlineEBookExtendedData | null): RemoteVerificationInfo | null {
+    if (!extendedData) {
+      return null;
+    }
+    const status: string = this.normalizeTrackingText(extendedData.verificationStatus);
+    const message: string = this.normalizeTrackingText(extendedData.verificationMessage);
+    const pageUrl: string = this.normalizeTrackingText(extendedData.verificationPageUrl);
+    const pageTitle: string = this.normalizeDisplaySourceText(extendedData.verificationPageTitle || '');
+    const cooldownText: string = this.normalizeTrackingText(extendedData.verificationCooldownText);
+    const cooldownSeconds: number = Number(extendedData.verificationCooldownSeconds || 0);
+    const canRetryRaw: string = this.normalizeTrackingText(String(extendedData.verificationCanRetry ?? ''));
+    const canRetryVerification: boolean = canRetryRaw === 'true' || canRetryRaw === '1';
+    const attempt: number = Number(extendedData.verificationAttempt || 0);
+    const lastUpdatedTime: number = Number(extendedData.verificationUpdatedAt || 0);
+    if (status.length <= 0 && message.length <= 0 && pageUrl.length <= 0 && pageTitle.length <= 0 && cooldownText.length <= 0) {
+      return null;
+    }
+    return {
+      status: status,
+      message: message,
+      pageUrl: pageUrl,
+      pageTitle: pageTitle,
+      cooldownText: cooldownText,
+      cooldownSeconds: cooldownSeconds,
+      canRetryVerification: canRetryVerification,
+      attempt: attempt,
+      lastUpdatedTime: lastUpdatedTime
+    };
+  }
+
+  private async persistOnlineEBookVerificationInfo(info: RemoteVerificationInfo | null): Promise<void> {
+    if (!this.content || this.content.contentType !== UnifiedContentType.EBOOK) {
+      return;
+    }
+    try {
+      const ebook: EBook | null = await this.ebookDataManager.getEBookById(this.content.id);
+      if (!ebook) {
+        return;
+      }
+      const extendedData: OnlineEBookExtendedData | null = this.getOnlineEBookExtendedData(ebook.filePath);
+      if (!extendedData) {
+        return;
+      }
+      const nextData: OnlineEBookExtendedData = {
+        sourceId: extendedData.sourceId || this.content.sourceId || '',
+        sourceName: extendedData.sourceName || this.content.sourceName || '',
+        sourcePkg: extendedData.sourcePkg || this.content.sourcePkg || '',
+        onlineReaderUrl: extendedData.onlineReaderUrl || this.onlineReaderUrl || '',
+        detailRequestValue: extendedData.detailRequestValue || this.onlineEBookDetailRequestValue || '',
+        verificationStatus: info ? info.status : '',
+        verificationMessage: info ? info.message : '',
+        verificationPageUrl: info ? (info.pageUrl || '') : '',
+        verificationPageTitle: info ? (info.pageTitle || '') : '',
+        verificationCooldownText: info ? (info.cooldownText || '') : '',
+        verificationCooldownSeconds: info ? (info.cooldownSeconds || 0) : 0,
+        verificationCanRetry: info ? (info.canRetryVerification === true) : false,
+        verificationAttempt: info ? (info.attempt || 0) : 0,
+        verificationUpdatedAt: info ? (info.lastUpdatedTime || Date.now()) : 0
+      };
+      const nextJson: string = JSON.stringify(nextData);
+      if (nextJson === ebook.filePath) {
+        return;
+      }
+      ebook.filePath = nextJson;
+      await this.ebookDataManager.saveEBook(ebook, { skipReadingSettings: true });
+    } catch (error) {
+      logger.warn(TAG, `持久化在线电子书验证信息失败: ${String(error)}`);
+    }
+  }
+
+  private applyOnlineEBookVerificationInfo(info: RemoteVerificationInfo | null, persistToLocal: boolean): void {
+    this.onlineEBookVerificationInfo = info;
+    if (this.content) {
+      this.content.remoteVerificationInfo = info || undefined;
+    }
+    if (persistToLocal) {
+      void this.persistOnlineEBookVerificationInfo(info);
+    }
+  }
+
+  private parseCooldownTextToSeconds(text: string): number {
+    const normalizedText: string = this.normalizeTrackingText(text);
+    if (normalizedText.length <= 0) {
+      return 0;
+    }
+    const minuteMatch: RegExpMatchArray | null = normalizedText.match(/(\d+)\s*分钟/);
+    if (minuteMatch && minuteMatch.length > 1) {
+      return Number(minuteMatch[1]) * 60;
+    }
+    const secondMatch: RegExpMatchArray | null = normalizedText.match(/(\d+)\s*秒/);
+    if (secondMatch && secondMatch.length > 1) {
+      return Number(secondMatch[1]);
+    }
+    return 0;
+  }
+
+  private async getOnlineEBookVerificationState(): Promise<OnlineEBookVerificationState> {
+    const fallback: OnlineEBookVerificationState = {
+      url: '',
+      title: '',
+      isVerifyEntry: false,
+      cooldownText: '',
+      canRetryVerification: false
+    };
+    try {
+      const script = `JSON.stringify({
+        url: location.href || '',
+        title: document.title || '',
+        isVerifyEntry: (location.pathname || '').includes('verify_entry') || (document.title || '').includes('安全检查'),
+        cooldownText: (document.querySelector('.cooldown-time') && document.querySelector('.cooldown-time').textContent) ? document.querySelector('.cooldown-time').textContent.trim() : '',
+        canRetryVerification: typeof window.retryVerification === 'function'
+      })`;
+      const resultStr = await new Promise<string>((resolve, reject) => {
+        this.webViewController.runJavaScript(script, (error: Error | null, result: string) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(String(result));
+          }
+        });
+      });
+      let cleanResult = resultStr;
+      if (cleanResult.startsWith('"') && cleanResult.endsWith('"')) {
+        cleanResult = cleanResult.slice(1, -1).replace(/\\"/g, '"');
+      }
+      const parsed = JSON.parse(cleanResult) as Record<string, ESObject>;
+      return {
+        url: String(parsed['url'] || ''),
+        title: String(parsed['title'] || ''),
+        isVerifyEntry: Boolean(parsed['isVerifyEntry']),
+        cooldownText: String(parsed['cooldownText'] || ''),
+        canRetryVerification: Boolean(parsed['canRetryVerification'])
+      };
+    } catch (error) {
+      logger.warn(TAG, `读取在线电子书验证状态失败: ${String(error)}`);
+      return fallback;
+    }
+  }
+
+  private async triggerOnlineEBookVerificationRetry(): Promise<boolean> {
+    try {
+      const resultStr = await new Promise<string>((resolve, reject) => {
+        this.webViewController.runJavaScript(
+          `(() => { if (typeof window.retryVerification === 'function') { window.retryVerification(); return 'true'; } return 'false'; })()`,
+          (error: Error | null, result: string) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve(String(result));
+            }
+          }
+        );
+      });
+      const normalized: string = resultStr.replace(/^"+|"+$/g, '').trim().toLowerCase();
+      return normalized === 'true';
+    } catch (error) {
+      logger.warn(TAG, `触发在线电子书站点验证失败: ${String(error)}`);
+      return false;
+    }
+  }
+
+  private scheduleOnlineEBookRecovery(
+    bookId: string,
+    sourceId: string,
+    retryAttempt: number,
+    delayMs: number,
+    statusText: string
+  ): void {
+    this.clearOnlineEBookRecoveryTimer();
+    this.beginOnlineEBookRecovery(statusText);
+    this.onlineEBookRecoveryTimer = setTimeout(() => {
+      this.onlineEBookRecoveryTimer = -1;
+      void this.loadOnlineEBookContent(bookId, sourceId, retryAttempt);
+    }, delayMs);
+  }
+
+  private isInvalidOnlineEBookDetailResult(detail: OnlineEBookDetailRecord, sourceInfo: SourceInfo | null): boolean {
+    const detailId: string = this.normalizeTrackingText(detail.id);
+    const detailTitle: string = this.normalizeDisplaySourceText(detail.title);
+    if (detailTitle.includes('安全检查') || detailId.includes('verify_entry')) {
+      return true;
+    }
+    const baseUrl: string = this.normalizeTrackingText(sourceInfo?.baseUrl).toLowerCase();
+    if (baseUrl.includes('tstrs.me') && detailId.startsWith('/')) {
+      return true;
+    }
+    return false;
+  }
+
+  private openOnlineEBookDownloadDetailPage(): void {
+    if (!this.content) {
+      return;
+    }
+    const sourceIdText: string = this.normalizeTrackingText(this.content.sourceId || this.pageParams?.sourceId);
+    const numericSourceId: number = Number(sourceIdText);
+    if (!(numericSourceId > 0)) {
+      promptAction.showToast({ message: '缺少在线电子书图源信息', duration: 1500 });
+      return;
+    }
+    const params: OnlineEBookDetailPageParams = {
+      sourceId: numericSourceId,
+      bookId: this.content.id || this.pageParams?.contentId || '',
+      cachedCoverPath: this.localCoverPath || this.pageParams?.cachedCoverPath || undefined,
+      cachedTitle: this.content.title || this.pageParams?.cachedTitle || undefined,
+      cachedCover: this.content.coverUrl || this.pageParams?.cachedCover || undefined,
+      autoStartDownload: true
+    };
+    logger.info(TAG, `打开在线电子书下载详情页: sourceId=${numericSourceId}, bookId=${params.bookId}`);
+    this.navigateWithManagedWindowTransition('OnlineEBookDetailPage', params);
+  }
+
+  private async retryOnlineEBookDetailAfterVerification(
+    bookId: string,
+    sourceId: string,
+    retryAttempt: number
+  ): Promise<void> {
+    const verificationState: OnlineEBookVerificationState = await this.getOnlineEBookVerificationState();
+    const cooldownSeconds: number = this.parseCooldownTextToSeconds(verificationState.cooldownText);
+    if (cooldownSeconds > 0) {
+      const delayMs: number = Math.max(5000, (cooldownSeconds * 1000) + 1500);
+      const statusText: string = `站点安全验证冷却中，约 ${verificationState.cooldownText} 后自动重试...`;
+      this.applyOnlineEBookVerificationInfo(
+        this.buildOnlineEBookVerificationInfo(
+          'cooldown',
+          statusText,
+          verificationState.url,
+          verificationState.title,
+          verificationState.cooldownText,
+          cooldownSeconds,
+          verificationState.canRetryVerification,
+          retryAttempt
+        ),
+        true
+      );
+      this.scheduleOnlineEBookRecovery(bookId, sourceId, retryAttempt, delayMs, statusText);
+      return;
+    }
+    if (verificationState.canRetryVerification) {
+      const triggered: boolean = await this.triggerOnlineEBookVerificationRetry();
+      if (triggered) {
+        const statusText: string = `正在通过站点安全验证（第 ${retryAttempt}/${this.onlineEBookRecoveryMaxAttempts} 次）...`;
+        this.applyOnlineEBookVerificationInfo(
+          this.buildOnlineEBookVerificationInfo(
+            'verifying',
+            statusText,
+            verificationState.url,
+            verificationState.title,
+            verificationState.cooldownText,
+            cooldownSeconds,
+            true,
+            retryAttempt
+          ),
+          true
+        );
+        this.scheduleOnlineEBookRecovery(bookId, sourceId, retryAttempt, 6500, statusText);
+        return;
+      }
+    }
+    const fallbackStatusText: string = `站点安全验证中，正在第 ${retryAttempt}/${this.onlineEBookRecoveryMaxAttempts} 次重试...`;
+    this.applyOnlineEBookVerificationInfo(
+      this.buildOnlineEBookVerificationInfo(
+        'retrying',
+        fallbackStatusText,
+        verificationState.url,
+        verificationState.title,
+        verificationState.cooldownText,
+        cooldownSeconds,
+        verificationState.canRetryVerification,
+        retryAttempt
+      ),
+      true
+    );
+    this.scheduleOnlineEBookRecovery(bookId, sourceId, retryAttempt, 2000 * retryAttempt, fallbackStatusText);
   }
 
   private getCurrentNovelSourceId(): string {
@@ -1557,6 +2053,13 @@ export struct UnifiedDetailPage {
   @State private ebookWebViewReady: boolean = false;
   @State private ebookSourceInfo: SourceInfo | null = null;
   @State private onlineReaderUrl: string = '';
+  private onlineEBookDetailRequestValue: string = '';
+  private webViewAuthManager: WebViewAuthManager = WebViewAuthManager.getInstance();
+  @State private isOnlineEBookRecoveryInProgress: boolean = false;
+  @State private onlineEBookRecoveryStatusText: string = '';
+  @State private isOpeningOnlineEBookDownloadDetail: boolean = false;
+  private readonly onlineEBookRecoveryMaxAttempts: number = 2;
+  private onlineEBookRecoveryTimer: number = -1;
   
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -1590,6 +2093,7 @@ export struct UnifiedDetailPage {
 
   aboutToAppear(): void {
     this.applyPageDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE);
+    this.loadGlobalChapterSortOrderPreference();
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -1712,6 +2216,7 @@ export struct UnifiedDetailPage {
     this.webViewControllerAttached = false;
     this.pendingInitialContentLoad = false;
     this.initialContentLoadTriggered = false;
+    this.clearOnlineEBookRecoveryTimer();
     
     // 取消下载回调注册
     if (this.downloadCallbackRegistered) {
@@ -2339,6 +2844,9 @@ export struct UnifiedDetailPage {
    * 加载本地电子书内容
    */
   private async loadLocalEBookContent(bookId: string): Promise<void> {
+    this.onlineReaderUrl = '';
+    this.onlineEBookDetailRequestValue = '';
+    this.applyOnlineEBookVerificationInfo(null, false);
     // 重置加载状态
     this.isChaptersLoading = true;
     this.chaptersLoadProgress = '';
@@ -2365,12 +2873,11 @@ export struct UnifiedDetailPage {
     this.isPrimarySectionReady = true;
     this.isChaptersLoading = false;
 
-    // 检测是否为在线电子书（filePath是JSON格式的扩展数据且id是URL）
-    const isOnlineEbook = bookId.startsWith('http://') || bookId.startsWith('https://');
+    const extendedData: OnlineEBookExtendedData | null = this.getOnlineEBookExtendedData(ebook.filePath);
+    const extendedSourceId: string = this.normalizeTrackingText(extendedData?.sourceId);
+    const isOnlineEbook: boolean = this.isHttpUrl(bookId) || extendedSourceId.length > 0;
     if (isOnlineEbook && ebook.filePath) {
       try {
-        // 尝试从filePath解析扩展数据
-        const extendedData: OnlineEBookExtendedData | null = this.getOnlineEBookExtendedData(ebook.filePath);
         const sourceId: string = extendedData?.sourceId || '';
         const onlineReaderUrl: string = extendedData?.onlineReaderUrl || '';
         const sourceName: string = await this.resolveMangaSourceDisplayName(
@@ -2378,9 +2885,17 @@ export struct UnifiedDetailPage {
           extendedData?.sourcePkg,
           extendedData?.sourceName
         );
+        this.content.isLocal = false;
         if (sourceId.length > 0) {
           this.content.sourceId = sourceId;
         }
+        if (extendedData?.sourcePkg && extendedData.sourcePkg.length > 0) {
+          this.content.sourcePkg = extendedData.sourcePkg;
+        }
+        if (extendedData?.detailRequestValue && extendedData.detailRequestValue.length > 0) {
+          this.onlineEBookDetailRequestValue = extendedData.detailRequestValue;
+        }
+        this.applyOnlineEBookVerificationInfo(this.extractOnlineEBookVerificationInfo(extendedData), false);
         if (sourceName.length > 0) {
           this.resolvedDisplaySourceName = sourceName;
           this.content.sourceName = sourceName;
@@ -2405,8 +2920,14 @@ export struct UnifiedDetailPage {
   /**
    * 加载在线电子书内容
    */
-  private async loadOnlineEBookContent(bookId: string, sourceId: string): Promise<void> {
+  private async loadOnlineEBookContent(bookId: string, sourceId: string, retryAttempt: number = 0): Promise<void> {
     logger.info(TAG, `加载在线电子书: bookId=${bookId}, sourceId=${sourceId}`);
+    if (retryAttempt === 0) {
+      this.onlineReaderUrl = '';
+      this.onlineEBookDetailRequestValue = '';
+      this.endOnlineEBookRecovery();
+      this.applyOnlineEBookVerificationInfo(null, false);
+    }
     
     // 重置加载状态
     this.isBasicInfoLoaded = false;
@@ -2457,6 +2978,7 @@ export struct UnifiedDetailPage {
         sourceName: this.ebookSourceInfo.name,
         sourcePkg: this.ebookSourceInfo.pkg,
         isLocal: false,
+        remoteVerificationInfo: this.onlineEBookVerificationInfo || undefined,
         chapters: emptyChapters,
         originalData: emptyOriginalData,
         originalType: UnifiedContentType.EBOOK
@@ -2471,23 +2993,47 @@ export struct UnifiedDetailPage {
       await this.initializeEBookWebViewEngine(Number(sourceId));
       
       if (this.ebookSourceEngine && this.ebookWebViewReady) {
-        // 使用WebView获取详情
-        // 构建完整的URL：如果bookId不是完整路径，需要添加baseUrl
-        let fullUrl = bookId;
-        if (!bookId.startsWith('http')) {
-          // bookId可能是/book/xxx格式或者只是文件名
-          if (bookId.startsWith('/')) {
-            fullUrl = `${this.ebookSourceInfo?.baseUrl || 'https://zh.chris101.ru'}${bookId}`;
-          } else {
-            // 尝试从缓存的URL构建
-            fullUrl = `${this.ebookSourceInfo?.baseUrl || 'https://zh.chris101.ru'}/${bookId}`;
-          }
-        }
-        logger.info(TAG, `使用WebView获取电子书详情: bookId=${bookId}, fullUrl=${fullUrl}`);
-        const result = await this.ebookSourceEngine.getBookDetail(fullUrl);
+        const extendedData: OnlineEBookExtendedData | null = this.getOnlineEBookExtendedData(this.content?.filePath);
+        const detailRequestValue: string = await this.resolveOnlineEBookDetailRequestValue(
+          bookId,
+          sourceId,
+          this.ebookSourceInfo,
+          extendedData
+        );
+        this.onlineEBookDetailRequestValue = detailRequestValue;
+        logger.info(TAG, `使用WebView获取电子书详情: bookId=${bookId}, detailRequestValue=${detailRequestValue}`);
+        const result = await this.ebookSourceEngine.getBookDetail(detailRequestValue);
         
         if (result.success && result.data) {
           const detail = result.data as OnlineEBookDetailRecord;
+          if (this.isInvalidOnlineEBookDetailResult(detail, this.ebookSourceInfo)) {
+            logger.warn(TAG, `在线电子书详情命中非目标页面，跳过覆盖: id=${String(detail.id || '')}, title=${String(detail.title || '')}`);
+            const verificationState: OnlineEBookVerificationState = await this.getOnlineEBookVerificationState();
+            const verificationInfo: RemoteVerificationInfo = this.buildOnlineEBookVerificationInfo(
+              verificationState.isVerifyEntry ? 'verify_entry' : 'failed',
+              verificationState.cooldownText.length > 0 ? `站点安全验证冷却中：${verificationState.cooldownText}` : '站点返回了安全验证页面',
+              verificationState.url,
+              verificationState.title,
+              verificationState.cooldownText,
+              this.parseCooldownTextToSeconds(verificationState.cooldownText),
+              verificationState.canRetryVerification,
+              retryAttempt
+            );
+            this.applyOnlineEBookVerificationInfo(verificationInfo, true);
+            if (retryAttempt < this.onlineEBookRecoveryMaxAttempts) {
+              void this.retryOnlineEBookDetailAfterVerification(bookId, sourceId, retryAttempt + 1);
+              return;
+            }
+            this.endOnlineEBookRecovery();
+            this.refreshProgress = '站点仍在安全验证中，请稍后下拉刷新。';
+            if (this.content) {
+              this.content.description = '站点仍在安全验证中，请稍后下拉刷新。';
+            }
+            this.isChaptersLoading = false;
+            return;
+          }
+          this.applyOnlineEBookVerificationInfo(null, true);
+          this.endOnlineEBookRecovery();
           logger.info(TAG, `电子书详情获取成功: ${JSON.stringify(detail).substring(0, 200)}`);
           
           // 更新内容
@@ -2533,7 +3079,7 @@ export struct UnifiedDetailPage {
   /**
    * 加载在线阅读器URL（用于已收藏的在线电子书）
    */
-  private async loadOnlineReaderUrl(bookId: string, sourceId: string): Promise<void> {
+  private async loadOnlineReaderUrl(bookId: string, sourceId: string, retryAttempt: number = 0): Promise<void> {
     try {
       // 加载图源信息
       const sources = await this.sourceManager.getAllSources();
@@ -2548,11 +3094,25 @@ export struct UnifiedDetailPage {
       await this.initializeEBookWebViewEngine(Number(sourceId));
       
       if (this.ebookWebViewReady && this.ebookSourceEngine) {
-        // 获取电子书详情
-        const result = await this.ebookSourceEngine.getBookDetail(bookId);
+        const extendedData: OnlineEBookExtendedData | null = this.getOnlineEBookExtendedData(this.content?.filePath);
+        const detailRequestValue: string = await this.resolveOnlineEBookDetailRequestValue(
+          bookId,
+          sourceId,
+          sourceInfo,
+          extendedData
+        );
+        this.onlineEBookDetailRequestValue = detailRequestValue;
+        const result = await this.ebookSourceEngine.getBookDetail(detailRequestValue);
         
         if (result.success && result.data) {
           const detail = result.data as OnlineEBookDetailRecord;
+          if (this.isInvalidOnlineEBookDetailResult(detail, sourceInfo)) {
+            logger.warn(TAG, `加载在线阅读器URL命中非目标页面，跳过: id=${String(detail.id || '')}, title=${String(detail.title || '')}`);
+            if (retryAttempt < this.onlineEBookRecoveryMaxAttempts) {
+              void this.loadOnlineReaderUrl(bookId, sourceId, retryAttempt + 1);
+            }
+            return;
+          }
           const readerUrlValue: string = String(detail.readerUrl || '');
           if (readerUrlValue && readerUrlValue.length > 0) {
             this.onlineReaderUrl = readerUrlValue;
@@ -2590,6 +3150,7 @@ export struct UnifiedDetailPage {
         sourceId: sourceId
       };
       this.ebookSourceEngine = new MangaSourceEngine(engineConfig);
+      await this.webViewAuthManager.applyCookiesToController(sourceId, this.webViewController);
       
       const loadResult = await this.ebookSourceEngine.loadConfig(configJson, true);
       if (!loadResult.success) {
@@ -2949,6 +3510,7 @@ export struct UnifiedDetailPage {
       sourcePkg: currentContent.sourcePkg,
       sourceUrl: currentContent.sourceUrl,
       isLocal: currentContent.isLocal,
+      remoteVerificationInfo: currentContent.remoteVerificationInfo,
       publisher: currentContent.publisher,
       publishDate: currentContent.publishDate,
       isbn: currentContent.isbn,
@@ -3047,6 +3609,7 @@ export struct UnifiedDetailPage {
       sourcePkg: currentContent.sourcePkg,
       sourceUrl: currentContent.sourceUrl,
       isLocal: currentContent.isLocal,
+      remoteVerificationInfo: currentContent.remoteVerificationInfo,
       publisher: currentContent.publisher,
       publishDate: currentContent.publishDate,
       isbn: currentContent.isbn,
@@ -3181,8 +3744,14 @@ export struct UnifiedDetailPage {
   }
 
   private getReadButtonLabel(): string {
+    if (this.isOpeningOnlineEBookDownloadDetail) {
+      return '正在准备下载...';
+    }
     if (this.isCurrentNovelAudioSource()) {
       return this.hasReadingRecord() ? '继续听书' : '开始听书';
+    }
+    if (this.isOnlineEBookDownloadOnlyContent()) {
+      return this.isOnlineEBookRecoveryInProgress ? '站点验证中...' : '下载后阅读';
     }
     return this.hasReadingRecord() ? '继续阅读' : '开始阅读';
   }
@@ -3206,6 +3775,7 @@ export struct UnifiedDetailPage {
    */
   private continueReading(): void {
     if (!this.content) return;
+    if (this.isReadActionBusy()) return;
 
     logger.info(TAG, `continueReading: contentType=${this.content.contentType}, onlineReaderUrl=${this.onlineReaderUrl ? this.onlineReaderUrl.substring(0, 50) + '...' : 'null'}, sourceId=${this.content.sourceId}`);
 
@@ -3215,6 +3785,16 @@ export struct UnifiedDetailPage {
       if (this.onlineReaderUrl) {
         logger.info(TAG, '使用在线阅读器');
         this.openOnlineEBookReader();
+        return;
+      }
+      if (this.isOnlineEBookDownloadOnlyContent()) {
+        logger.info(TAG, '在线电子书无阅读器URL，转到下载详情页');
+        this.isOpeningOnlineEBookDownloadDetail = true;
+        this.refreshProgress = '正在准备下载信息...';
+        this.isChaptersLoading = true;
+        this.isLoadingRecommendations = true;
+        this.isLoadingShelfContent = true;
+        this.openOnlineEBookDownloadDetailPage();
         return;
       }
       // 本地电子书：直接打开阅读器
@@ -5330,9 +5910,16 @@ export struct UnifiedDetailPage {
           // 阅读按钮
           Button() {
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.text_book_closed'))
-                .fontSize(14)
-                .fontColor([Color.White])
+              if (this.isReadActionBusy()) {
+                LoadingProgress()
+                  .width(14)
+                  .height(14)
+                  .color(Color.White)
+              } else {
+                SymbolGlyph($r('sys.symbol.text_book_closed'))
+                  .fontSize(14)
+                  .fontColor([Color.White])
+              }
               Text(this.getReadButtonLabel())
                 .fontSize(14)
                 .fontFamily(this.appFontFamily)
@@ -5343,6 +5930,7 @@ export struct UnifiedDetailPage {
             .height(36)
             .width('100%')
             .id('guide_unified_detail_primary_action')
+            .enabled(!this.isReadActionBusy())
             .onClick(() => this.continueReading())
 
           if (this.canShowReadAloudButton()) {
@@ -5575,6 +6163,102 @@ export struct UnifiedDetailPage {
     return result;
   }
 
+  private shouldShowOnlineEBookVerificationInfo(): boolean {
+    return this.content?.contentType === UnifiedContentType.EBOOK && this.onlineEBookVerificationInfo !== null;
+  }
+
+  private getOnlineEBookVerificationCardTitle(): string {
+    if (!this.onlineEBookVerificationInfo) {
+      return '站点状态';
+    }
+    const status = this.normalizeTrackingText(this.onlineEBookVerificationInfo.status);
+    if (status === 'cooldown') {
+      return '站点冷却中';
+    }
+    if (status === 'verifying') {
+      return '站点验证中';
+    }
+    return '站点状态';
+  }
+
+  private formatOnlineEBookVerificationUpdatedAt(timestamp: number | undefined): string {
+    const safeTimestamp: number = Number(timestamp || 0);
+    if (!(safeTimestamp > 0)) {
+      return '';
+    }
+    const date = new Date(safeTimestamp);
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getDate()}`.padStart(2, '0');
+    const hour = `${date.getHours()}`.padStart(2, '0');
+    const minute = `${date.getMinutes()}`.padStart(2, '0');
+    const second = `${date.getSeconds()}`.padStart(2, '0');
+    return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  }
+
+  @Builder
+  private buildOnlineEBookVerificationInfoCard() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        Text(this.getOnlineEBookVerificationCardTitle())
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+        if (this.onlineEBookVerificationInfo && this.onlineEBookVerificationInfo.attempt && this.onlineEBookVerificationInfo.attempt > 0) {
+          Text(`第 ${this.onlineEBookVerificationInfo.attempt} 次`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+      }
+      .width('100%')
+
+      Text(this.onlineEBookVerificationInfo ? this.onlineEBookVerificationInfo.message : '')
+        .fontSize(13)
+        .lineHeight(20)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+      if (this.onlineEBookVerificationInfo && this.onlineEBookVerificationInfo.cooldownText && this.onlineEBookVerificationInfo.cooldownText.length > 0) {
+        Text(`冷却时间: ${this.onlineEBookVerificationInfo.cooldownText}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      }
+
+      if (this.onlineEBookVerificationInfo && this.onlineEBookVerificationInfo.pageTitle && this.onlineEBookVerificationInfo.pageTitle.length > 0) {
+        Text(`页面标题: ${this.onlineEBookVerificationInfo.pageTitle}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+
+      if (this.onlineEBookVerificationInfo && this.onlineEBookVerificationInfo.pageUrl && this.onlineEBookVerificationInfo.pageUrl.length > 0) {
+        Text(`页面地址: ${this.onlineEBookVerificationInfo.pageUrl}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+
+      if (this.onlineEBookVerificationInfo && this.formatOnlineEBookVerificationUpdatedAt(this.onlineEBookVerificationInfo.lastUpdatedTime).length > 0) {
+        Text(`记录时间: ${this.formatOnlineEBookVerificationUpdatedAt(this.onlineEBookVerificationInfo.lastUpdatedTime)}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .alignItems(HorizontalAlign.Start)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(16)
+  }
+
   private normalizeTagLabel(rawLabel: string): string {
     return this.stripHtmlTags(rawLabel).trim();
   }
@@ -5732,6 +6416,10 @@ export struct UnifiedDetailPage {
     Stack({ alignContent: Alignment.TopStart }) {
       this.buildGlassSectionChrome()
       Column({ space: 14 }) {
+        if (this.shouldShowOnlineEBookVerificationInfo()) {
+          this.buildOnlineEBookVerificationInfoCard()
+        }
+
         if (this.content && ((this.content.genres && this.content.genres.length > 0) || (this.content.tags && this.content.tags.length > 0))) {
           Column({ space: 10 }) {
             Row({ space: 8 }) {
@@ -5785,7 +6473,7 @@ export struct UnifiedDetailPage {
           }
           .width('100%')
 
-          Text(this.stripHtmlTags(this.content?.description || (this.isLoading ? '正在加载简介...' : '暂无简介')))
+          Text(this.stripHtmlTags(this.content?.description || (this.isOnlineEBookRecoveryInProgress ? this.onlineEBookRecoveryStatusText : (this.isLoading ? '正在加载简介...' : '暂无简介'))))
             .fontSize(14)
             .lineHeight(22)
             .fontFamily(this.appFontFamily)
@@ -6805,9 +7493,7 @@ export struct UnifiedDetailPage {
                 .height(32)
                 .backgroundColor(Color.Transparent)
                 .onClick(() => {
-                  this.chapterSortOrder = this.chapterSortOrder === ChapterSortOrder.ASCENDING
-                    ? ChapterSortOrder.DESCENDING
-                    : ChapterSortOrder.ASCENDING;
+                  this.toggleGlobalChapterSortOrder();
                 })
               }
 
@@ -8322,7 +9008,7 @@ export struct UnifiedDetailPage {
               this.navigateToSearch(this.content?.title || '');
             })
 
-          Text(this.stripHtmlTags(this.content?.author || ''))
+          Text(this.stripHtmlTags(this.content?.author || (this.isOnlineEBookRecoveryInProgress ? '正在验证站点信息...' : '')))
             .fontSize(13)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -8553,9 +9239,16 @@ export struct UnifiedDetailPage {
       Column({ space: 10 }) {
         Button() {
           Row({ space: 6 }) {
-            SymbolGlyph($r('sys.symbol.text_book_closed'))
-              .fontSize(14)
-              .fontColor([Color.White])
+            if (this.isReadActionBusy()) {
+              LoadingProgress()
+                .width(14)
+                .height(14)
+                .color(Color.White)
+            } else {
+              SymbolGlyph($r('sys.symbol.text_book_closed'))
+                .fontSize(14)
+                .fontColor([Color.White])
+            }
             Text(this.getReadButtonLabel())
               .fontSize(14)
               .fontFamily(this.appFontFamily)
@@ -8572,6 +9265,7 @@ export struct UnifiedDetailPage {
             offsetX: 0,
             offsetY: 4
           })
+          .enabled(!this.isReadActionBusy())
           .onClick(() => this.continueReading())
 
         if (this.canShowReadAloudButton()) {
@@ -8653,6 +9347,22 @@ export struct UnifiedDetailPage {
             }
             if (this.pendingInitialContentLoad || !this.initialContentLoadTriggered) {
               this.triggerInitialContentLoadIfReady();
+            }
+          })
+          .onPageBegin((event) => {
+            const sourceIdText: string = this.normalizeTrackingText(this.pageParams?.sourceId || this.content?.sourceId);
+            const numericSourceId: number = Number(sourceIdText);
+            logger.debug(TAG, `隐藏WebView页面开始加载: ${event.url}`);
+            if (numericSourceId > 0) {
+              void this.webViewAuthManager.applyCookiesToController(numericSourceId, this.webViewController);
+            }
+          })
+          .onPageEnd((event) => {
+            const sourceIdText: string = this.normalizeTrackingText(this.pageParams?.sourceId || this.content?.sourceId);
+            const numericSourceId: number = Number(sourceIdText);
+            logger.debug(TAG, `隐藏WebView页面加载完成: ${event.url}`);
+            if (numericSourceId > 0) {
+              void this.webViewAuthManager.captureCookiesFromController(numericSourceId, this.webViewController);
             }
           })
         
@@ -8934,6 +9644,14 @@ export struct UnifiedDetailPage {
     })
     .onShown(() => {
       this.applyPageDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE);
+      this.isOpeningOnlineEBookDownloadDetail = false;
+      if (this.refreshProgress === '正在准备下载信息...') {
+        this.refreshProgress = '';
+      }
+      if (!this.isOnlineEBookRecoveryInProgress) {
+        this.isLoadingRecommendations = false;
+        this.isLoadingShelfContent = false;
+      }
       // 页面显示时刷新阅读记录（从阅读器返回时）
       this.refreshReadingProgress();
       this.readAloudCacheLoadSignal++;
@@ -9993,7 +10711,20 @@ export struct UnifiedDetailPage {
           const extendedDataMap = new Map<string, string>();
           extendedDataMap.set('sourceId', this.content.sourceId || '');
           extendedDataMap.set('sourceName', this.content.sourceName || '');
+          extendedDataMap.set('sourcePkg', this.content.sourcePkg || '');
           extendedDataMap.set('onlineReaderUrl', this.onlineReaderUrl || '');
+          extendedDataMap.set('detailRequestValue', this.onlineEBookDetailRequestValue || '');
+          if (this.onlineEBookVerificationInfo) {
+            extendedDataMap.set('verificationStatus', this.onlineEBookVerificationInfo.status || '');
+            extendedDataMap.set('verificationMessage', this.onlineEBookVerificationInfo.message || '');
+            extendedDataMap.set('verificationPageUrl', this.onlineEBookVerificationInfo.pageUrl || '');
+            extendedDataMap.set('verificationPageTitle', this.onlineEBookVerificationInfo.pageTitle || '');
+            extendedDataMap.set('verificationCooldownText', this.onlineEBookVerificationInfo.cooldownText || '');
+            extendedDataMap.set('verificationCooldownSeconds', String(this.onlineEBookVerificationInfo.cooldownSeconds || 0));
+            extendedDataMap.set('verificationCanRetry', this.onlineEBookVerificationInfo.canRetryVerification ? 'true' : 'false');
+            extendedDataMap.set('verificationAttempt', String(this.onlineEBookVerificationInfo.attempt || 0));
+            extendedDataMap.set('verificationUpdatedAt', String(this.onlineEBookVerificationInfo.lastUpdatedTime || 0));
+          }
           const extendedDataObj: Record<string, string> = {};
           extendedDataMap.forEach((value: string, key: string) => {
             extendedDataObj[key] = value;

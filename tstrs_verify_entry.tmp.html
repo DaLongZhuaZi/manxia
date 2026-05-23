@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>安全检查</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="https://sn.tstrs.me/96.png">
+  <script src="https://sn.tstrs.me/balooPow.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #f0f0f0;
+      color: #333;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .main-container {
+      width: 100%;
+      max-width: 900px;
+      background: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+    }
+
+    /* 顶部标题栏 */
+    .header-bar {
+      background: #ffffff;
+      padding: 24px 32px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header-content {
+      flex: 1;
+    }
+
+    .header-logo {
+      flex-shrink: 0;
+      margin-left: 24px;
+    }
+
+    .header-logo img {
+      height: 32px;
+      width: auto;
+      max-height: 32px;
+      object-fit: contain;
+    }
+
+    .header-label {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 4px;
+      font-weight: 400;
+    }
+
+    .header-title {
+      font-size: 28px;
+      font-weight: 600;
+      color: #333;
+      margin: 0 0 8px 0;
+    }
+
+    .header-timestamp {
+      font-size: 13px;
+      color: #999;
+    }
+
+    /* 内容区域容器 - 分隔背景 */
+    .content-wrapper {
+      background: #f8fafc;
+    }
+
+    /* 内容区域 - 两栏布局 */
+    .content-area {
+      display: flex;
+      min-height: 400px;
+    }
+
+    .left-panel {
+      flex: 1;
+      padding: 32px;
+      border-right: 1px solid #e0e0e0;
+    }
+
+    .right-panel {
+      flex: 1;
+      padding: 32px;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 16px;
+    }
+
+    .panel-text {
+      font-size: 14px;
+      color: #666;
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    /* 网络流程图 */
+    .network-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin: 40px 0;
+    }
+
+    .flow-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .flow-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .flow-icon.browser {
+        background: #f5f5f5;
+      border: 1px solid #ddd;
+    }
+
+    .flow-icon.browser.success::after {
+      content: '';
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 12px;
+      height: 12px;
+      background: #22c55e;
+      border-radius: 50%;
+      border: 2px solid #fff;
+    }
+
+    .flow-icon.waf {
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+    }
+
+    .flow-icon.waf.success::after {
+      content: '';
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 12px;
+      height: 12px;
+      background: #22c55e;
+      border-radius: 50%;
+      border: 2px solid #fff;
+    }
+
+    .flow-icon.server {
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+    }
+
+    .flow-icon.server.processing::after {
+      content: '';
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 12px;
+      height: 12px;
+      background: #f59e0b;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .flow-icon.server.error::after {
+      content: '';
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 12px;
+      height: 12px;
+      background: #ef4444;
+      border-radius: 50%;
+      border: 2px solid #fff;
+    }
+
+    .flow-icon.server.success::after {
+      content: '';
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 12px;
+      height: 12px;
+      background: #22c55e;
+      border-radius: 50%;
+      border: 2px solid #fff;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.1); opacity: 0.8; }
+    }
+
+    .flow-icon svg {
+      width: 32px;
+      height: 32px;
+      color: #666;
+    }
+
+    .flow-label {
+      font-size: 13px;
+      color: #666;
+      text-align: center;
+      line-height: 1.4;
+      margin-top: 12px;
+      white-space: nowrap;
+    }
+
+    .flow-arrow {
+      display: flex;
+      align-items: center;
+      color: #22c55e;
+      font-size: 18px;
+    }
+
+    .flow-arrow.pending {
+      color: #ccc;
+    }
+
+    .flow-arrow.error {
+      color: #ef4444;
+    }
+
+    .flow-arrow.dashed {
+      border-bottom: 2px dashed #ccc;
+      width: 32px;
+      height: 0;
+    }
+
+    /* 进度信息 */
+    .info-list {
+      margin-top: 24px;
+    }
+
+    .info-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+
+    .info-label {
+      color: #666;
+      min-width: 120px;
+    }
+
+    .info-value {
+      color: #333;
+      font-family: monospace;
+      padding: 4px 8px;
+      border-radius: 4px;
+      flex: 1;
+    }
+
+    /* 解决方案列表 */
+    .solution-list {
+      list-style: none;
+    }
+
+    .solution-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 14px;
+      color: #666;
+    }
+
+    .solution-bullet {
+      color: #3b82f6;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    /* 重试按钮 */
+    .retry-btn {
+      margin-top: 24px;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #fff;
+      background: #3b82f6;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .retry-btn:hover {
+      background: #2563eb;
+    }
+
+    /* 加载状态 */
+    .loading-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin: 24px 0;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #e5e7eb;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      font-size: 14px;
+      color: #666;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: #e5e7eb;
+      border-radius: 2px;
+      margin-top: 16px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: #3b82f6;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    /* 成功状态 */
+    .success-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin: 24px 0;
+    }
+
+    .success-icon {
+      width: 32px;
+      height: 32px;
+      background: #22c55e;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: scaleIn 0.3s ease;
+    }
+
+    @keyframes scaleIn {
+      from { transform: scale(0); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .success-icon svg {
+      width: 18px;
+      height: 18px;
+      color: #fff;
+    }
+
+    .success-text {
+      font-size: 14px;
+      color: #22c55e;
+      font-weight: 500;
+    }
+
+    /* 错误状态 */
+    .error-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin: 24px 0;
+    }
+
+    .error-icon {
+      width: 32px;
+      height: 32px;
+      background: #ef4444;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: scaleIn 0.3s ease;
+    }
+
+    .error-icon svg {
+      width: 18px;
+      height: 18px;
+      color: #fff;
+    }
+
+    .error-text {
+      font-size: 14px;
+      color: #ef4444;
+      font-weight: 500;
+    }
+
+    /* 冷却期卡片 */
+    .cooldown-container {
+      padding: 32px;
+    }
+
+    .cooldown-header {
+      background: #f5f5f5;
+      padding: 24px 32px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .cooldown-content {
+      display: flex;
+      gap: 32px;
+      padding: 32px;
+    }
+
+    .cooldown-icon-large {
+      width: 64px;
+      height: 64px;
+      background: #f59e0b;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .cooldown-icon-large svg {
+      width: 32px;
+      height: 32px;
+      color: #fff;
+    }
+
+    .cooldown-info h3 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 8px;
+    }
+
+    .cooldown-info p {
+      font-size: 14px;
+      color: #666;
+      line-height: 1.6;
+    }
+
+    .cooldown-time {
+      color: #f59e0b;
+      font-weight: 600;
+    }
+
+    /* 响应式设计 */
+    @media (max-width: 768px) {
+      body {
+        padding: 20px 16px;
+      }
+
+      .content-area {
+        flex-direction: column;
+      }
+
+      .left-panel {
+        border-right: none;
+        border-bottom: 1px solid #e0e0e0;
+        padding: 24px;
+      }
+
+      .right-panel {
+        padding: 24px;
+      }
+
+      .header-bar {
+        padding: 20px 24px;
+      }
+
+      .header-title {
+        font-size: 22px;
+      }
+
+      .network-flow {
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .flow-arrow.dashed {
+        display: none;
+      }
+
+      .cooldown-content {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  
+  <!-- 冷却期提示 -->
+  <div class="main-container">
+    <div class="cooldown-header">
+      <div class="header-label">访问被限制</div>
+      <h1 class="header-title">
+        
+        刷新过于频繁
+        
+      </h1>
+      <div class="header-timestamp" id="cooldown-timestamp"></div>
+    </div>
+    <div class="cooldown-content">
+      <div class="cooldown-icon-large">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+      </div>
+      <div class="cooldown-info">
+        
+        <h3>页面刷新过于频繁</h3>
+        <p>
+          您刷新页面的次数过多，请等待 <span class="cooldown-time">9 分钟</span> 后刷新页面重试
+        </p>
+        
+      </div>
+    </div>
+  </div>
+  
+
+<script>
+(function() {
+  // 全局变量
+  let originalUrl = "/book/yaf7bidg0t1";
+  let csrfToken = "ImUxNGU4NjgxMjhjZjQ1MGU3NGYyZmQ4YzI1Nzk5Y2M5NWVkYzVlNWEi.ahAffg.LbToR6Y8DIruOhj31iyLvZ64-A8";
+  let currentProgress = 0;
+  let progressInterval = null;
+  let activeDeviceId = '';
+
+  // 从 cookie 中读取 device_id
+  function getDeviceIdFromCookie() {
+    const match = document.cookie.match(/(?:^|;\s*)device_id=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+
+  // 获取 CSRF Token
+  function getCsrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) return meta.getAttribute('content');
+    const match = document.cookie.match(/csrf_token=([^;]+)/);
+    return match ? match[1] : csrfToken;
+  }
+
+  // 更新时间戳
+  function updateTimestamp() {
+    const now = new Date();
+    const timestamp = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+    const tsEl = document.getElementById('current-timestamp');
+    if (tsEl) tsEl.textContent = timestamp;
+  }
+
+  // 更新进度条
+  function updateProgress(percent) {
+    const fillEl = document.getElementById('progress-fill');
+    if (fillEl) {
+      fillEl.style.width = percent + '%';
+    }
+    currentProgress = percent;
+  }
+
+  // 更新状态文本
+  function updateStatusText(text) {
+    const statusEl = document.getElementById('status-text');
+    if (statusEl) statusEl.textContent = text;
+  }
+
+  // 状态文本映射
+  const statusMap = {
+    'Connecting...': '连接中...',
+    'Computing...': '计算中...',
+    'Verifying...': '验证中...',
+    'Completed': '已完成',
+    'Error': '错误',
+    'Initializing...': '初始化中...'
+  };
+
+  // 更新网络流程图状态
+  function updateNetworkFlow(status) {
+    const arrow2 = document.getElementById('arrow2');
+    const serverIcon = document.getElementById('server-icon');
+    
+    if (status === 'processing') {
+      if (arrow2) arrow2.className = 'flow-arrow pending';
+      if (serverIcon) serverIcon.className = 'flow-icon server processing';
+    } else if (status === 'success') {
+      if (arrow2) {
+        arrow2.className = 'flow-arrow';
+        arrow2.innerHTML = '<svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"></path></svg>';
+      }
+      if (serverIcon) serverIcon.className = 'flow-icon server success';
+    } else if (status === 'error') {
+      if (arrow2) {
+        arrow2.className = 'flow-arrow error';
+        arrow2.innerHTML = '<svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
+      }
+      if (serverIcon) serverIcon.className = 'flow-icon server error';
+    }
+  }
+
+  // 显示加载状态
+  function showLoading(message) {
+    const dynamicEl = document.getElementById('dynamic-status');
+    if (dynamicEl) {
+      dynamicEl.innerHTML = `
+        <div class="loading-section">
+          <div class="spinner"></div>
+          <span class="loading-text">${message}</span>
+        </div>
+      `;
+    }
+  }
+
+  // 显示成功状态
+  function showSuccess() {
+    const dynamicEl = document.getElementById('dynamic-status');
+    if (dynamicEl) {
+      dynamicEl.innerHTML = `
+        <div class="success-section">
+          <div class="success-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
+            </svg>
+          </div>
+          <span class="success-text">验证成功，正在跳转...</span>
+        </div>
+      `;
+    }
+    updateNetworkFlow('success');
+  }
+
+  // 显示错误并提供重试
+  function showError(message, remainingFreeAttempts) {
+    const dynamicEl = document.getElementById('dynamic-status');
+    let errorText = '验证失败，请重试';
+    if (message) {
+      errorText = message;
+    } else if (remainingFreeAttempts !== undefined && remainingFreeAttempts !== null) {
+      errorText = `验证失败，还剩 ${remainingFreeAttempts} 次重试机会`;
+    }
+    
+    if (dynamicEl) {
+      dynamicEl.innerHTML = `
+        <div class="error-section">
+          <div class="error-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </div>
+          <span class="error-text">${errorText}</span>
+        </div>
+      `;
+    }
+    updateNetworkFlow('error');
+    const retryBtn = document.getElementById('retry-button');
+    if (retryBtn) retryBtn.style.display = 'inline-block';
+  }
+
+  // 显示冷却期错误
+  function showCooldownError(cooldownSeconds) {
+    const dynamicEl = document.getElementById('dynamic-status');
+    let timeText;
+    if (cooldownSeconds < 60) {
+      timeText = cooldownSeconds + ' 秒';
+    } else {
+      timeText = Math.ceil(cooldownSeconds / 60) + ' 分钟';
+    }
+    if (dynamicEl) {
+      dynamicEl.innerHTML = `
+        <div class="error-section">
+          <div class="error-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+          </div>
+          <span class="error-text">请等待 ${timeText} 后重试</span>
+        </div>
+      `;
+    }
+    updateNetworkFlow('error');
+    const retryBtn = document.getElementById('retry-button');
+    if (retryBtn) retryBtn.style.display = 'inline-block';
+  }
+
+  // 重试验证（不刷新页面，避免触发刷新计数限制导致无法使用免费重试机会）
+  window.retryVerification = function() {
+    // 隐藏重试按钮
+    const retryBtn = document.getElementById('retry-button');
+    if (retryBtn) retryBtn.style.display = 'none';
+
+    // 清除进度定时器
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
+
+    // 重置进度和状态
+    currentProgress = 0;
+    updateProgress(0);
+    updateStatusText('初始化中...');
+
+    // 重置网络流程图为处理中状态
+    updateNetworkFlow('processing');
+
+    // 清除动态状态区域
+    const dynamicEl = document.getElementById('dynamic-status');
+    if (dynamicEl) dynamicEl.innerHTML = '';
+
+    // 重新开始验证（会获取新挑战，allow_override=True 会覆盖旧挑战）
+    startVerification();
+  };
+
+  // 主验证流程
+  async function startVerification() {
+    try {
+      updateTimestamp();
+      
+      // 获取当前 device_id，确保整个验证流程使用同一个
+      activeDeviceId = getDeviceIdFromCookie();
+      
+      // 阶段1: 获取挑战
+      updateStatusText('连接中...');
+      showLoading('正在获取安全挑战...');
+      updateProgress(10);
+      
+      const challengeResp = await fetch('/pow_challenge?type=entry&device_id=' + encodeURIComponent(activeDeviceId), {
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      const challengeData = await challengeResp.json();
+      
+      // 处理获取挑战时的冷却错误
+      if (!challengeData.ok) {
+        if (challengeData.error === 'in_cooldown' || challengeData.error === 'ip_cooldown') {
+          showCooldownError(
+            challengeData.cooldown_seconds || challengeData.cooldown_minutes * 60 || 0
+          );
+          return;
+        }
+        // 其他错误（如 rate_limited），显示重试按钮
+        throw new Error('获取挑战失败');
+      }
+      
+      updateProgress(25);
+      const { public_salt, challenge, difficulty } = challengeData;
+      
+      // 保存后端返回的 device_id（如果存在）
+      if (challengeData.device_id) {
+        activeDeviceId = challengeData.device_id;
+        // 设置 cookie 以便后续请求使用相同的 device_id
+        document.cookie = 'device_id=' + encodeURIComponent(activeDeviceId) + '; path=/; max-age=2592000; SameSite=Lax';
+      }
+      
+      // 保存 CSRF Token
+      if (challengeData.csrf_token) {
+        csrfToken = challengeData.csrf_token;
+      }
+      
+      // 阶段2: PoW 计算
+      updateStatusText('计算中...');
+      showLoading('正在进行安全计算...');
+      updateProgress(35);
+      
+      const solver = new BalooPow(public_salt, difficulty, challenge, true);
+      
+      // 启动进度模拟
+      progressInterval = setInterval(() => {
+        if (currentProgress < 85) {
+          updateProgress(currentProgress + 1);
+        }
+      }, 100);
+      
+      const solution = await solver.Solve();
+      
+      // 停止进度模拟
+      if (progressInterval) {
+        clearInterval(progressInterval);
+      }
+      
+      if (!solution || !solution.access) {
+        throw new Error('计算失败');
+      }
+      
+      updateProgress(90);
+      
+      // 阶段3: 提交验证
+      updateStatusText('验证中...');
+      showLoading('正在验证结果...');
+      updateProgress(95);
+
+      
+      const verifyResp = await fetch('/api/verify/entry', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken(),
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          pow_challenge: challenge,
+          pow_solution: solution.access,
+          device_id: activeDeviceId
+        })
+      });
+      
+      
+      const verifyData = await verifyResp.json();
+      
+      if (verifyData.ok) {
+        updateProgress(100);
+        updateStatusText('已完成');
+        showSuccess();
+        
+        // 设置 Session Token Cookie
+        if (verifyData.session_token) {
+          document.cookie = 'session_token=' + verifyData.session_token + 
+                           '; path=/; max-age=86400; SameSite=Lax';
+        }
+        
+        // 跳转
+        setTimeout(function() {
+          let redirectUrl = verifyData.redirect_url || originalUrl || '/';
+          // 清理 URL：移除末尾的 ? 符号（当 redirect_url 为 /? 时）
+          if (redirectUrl.endsWith('/?') || redirectUrl.endsWith('?')) {
+            redirectUrl = redirectUrl.replace(/\?+$/, '').replace(/\/\?$/, '/');
+            // 如果清理后为空或只剩 /，确保至少为 /
+            if (!redirectUrl || redirectUrl === '') redirectUrl = '/';
+          }
+          window.location.href = redirectUrl;
+        }, 800);
+      } else {
+        // 处理冷却期错误
+        if (verifyData.error === 'in_cooldown' || verifyData.error === 'ip_cooldown') {
+          showCooldownError(
+            verifyData.cooldown_seconds || verifyData.cooldown_minutes * 60 || 0
+          );
+        } else {
+          // 验证失败，检查是否有重试信息
+          const remainingAttempts = verifyData.remaining_free_attempts;
+          const failCount = verifyData.fail_count;
+          showError(null, remainingAttempts);
+        }
+      }
+      
+    } catch (error) {
+      updateStatusText('错误');
+      showError();
+    }
+  }
+
+  // 页面加载后自动开始验证
+  document.addEventListener('DOMContentLoaded', function() {
+    updateTimestamp();
+    const inCooldown = true;
+    if (!inCooldown) {
+      setTimeout(startVerification, 400);
+    } else {
+      // 冷却期页面更新时间戳
+      const now = new Date();
+      const timestamp = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+      const tsEl = document.getElementById('cooldown-timestamp');
+      if (tsEl) tsEl.textContent = timestamp;
+    }
+  });
+})();
+</script>
+</body>
+</html>
