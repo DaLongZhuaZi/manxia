@@ -17,6 +17,8 @@ import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
+import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
+import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
@@ -271,7 +273,8 @@ export struct EBookDetailPage {
     const coverComponentId: string = `cover_ebook_detail_${this.ebook.id}`;
     const readerParams: EBookReaderParams = {
       bookId: this.ebook.id,
-      coverComponentId: coverComponentId
+      coverComponentId: coverComponentId,
+      readerTitle: this.ebook.metadata.title
     };
     const txtNovelReaderParams = this.ebook.format === EBookFormat.TXT
       ? buildNovelReaderParamsFromTxtEBook(this.ebook, coverComponentId)
@@ -292,13 +295,18 @@ export struct EBookDetailPage {
         // 动画到达95%进度时触发导航，确保翻开动画完整播放
         logger.info(TAG, `翻开过渡动画触发导航: ${hasProgress ? '继续' : '开始'}阅读电子书: ${bookTitle}`);
         if (txtNovelReaderParams) {
-          this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
+          txtNovelReaderParams.readerTitle = this.ebook?.metadata.title || '';
+          if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, txtNovelReaderParams, TAG, false)) {
+            this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
+          }
         } else {
-          const routeName = resolveEBookReaderRouteName(this.ebook);
-          if (routeName === 'EBookReaderPage') {
-            openEBookReaderRouterPage(this.getUIContext(), readerParams, TAG);
-          } else {
-            this.pathStack.pushPath({ name: routeName, param: readerParams });
+          if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG, false)) {
+            const routeName = resolveEBookReaderRouteName(this.ebook);
+            if (routeName === 'EBookReaderPage') {
+              openEBookReaderRouterPage(this.getUIContext(), readerParams, TAG);
+            } else {
+              this.pathStack.pushPath({ name: routeName, param: readerParams });
+            }
           }
         }
       },

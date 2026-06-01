@@ -27,6 +27,7 @@ import { DataManager, ComicInfo, ComicInfoInput, ChapterInfo as DataChapterInfo,
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { colorMap } from '../Data/ResourceMap';
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
+import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
 import { DataService } from '../Framework/Services/DataService';
 import { MangaSettingsPageParams } from './MangaSettingsPage';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
@@ -3888,6 +3889,7 @@ struct MangaDetailPage {
     const readerParams: MangaReaderPageParams = {
       fromPage: 'MangaDetailPage'
     } as MangaReaderPageParams;
+    readerParams.readerTitle = this.currentManga?.title || '';
     
     // 修复：即使不是WebView源，如果有sourceId也应该传递，避免在线漫画被错误标记为Local
     if (this.pageParams?.sourceId) {
@@ -4039,7 +4041,7 @@ struct MangaDetailPage {
         'manga',
         () => {
           logger.info(TAG, '翻开过渡动画完成');
-          this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+          openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG, false);
           logger.info(TAG, `${this.hasReadingProgress() ? '继续' : '开始'}阅读漫画: ${this.currentManga?.title}`);
         },
         undefined,
@@ -4241,6 +4243,7 @@ struct MangaDetailPage {
       fromPage: 'MangaDetailPage',
       chapterTitle: chapter.title  // 传递章节标题用于数据库查询
     } as MangaReaderPageParams;
+    readerParams.readerTitle = this.currentManga?.title || '';
 
     // 设置阅读内容类型并补充必要参数
     // 修复：即使不是WebView源，如果有sourceId也应该传递，避免在线漫画被错误标记为Local
@@ -4362,7 +4365,7 @@ struct MangaDetailPage {
         'manga',
         () => {
           logger.info(TAG, '翻开过渡动画完成(章节)');
-          this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+          openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG, false);
           logger.info(TAG, `开始阅读章节: ${chapter.title}`);
         },
         undefined,

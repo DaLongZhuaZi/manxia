@@ -51,18 +51,10 @@ export struct BackgroundBlurOverlay {
   // 监听isVisible变化，触发动画
   onVisibleChange(): void {
     if (this.isVisible) {
-      // 进入动画：先显示组件，再播放淡入
+      // 后台快照抓取很快，进入后台时遮罩必须立即成为可见状态。
       this.shouldRender = true;
-      // 下一帧播放动画
-      setTimeout(() => {
-        animateTo({
-          duration: 250,
-          curve: Curve.EaseOut
-        }, () => {
-          this.animatedOpacity = 1;
-          this.iconScale = 1.0;
-        });
-      }, 16);
+      this.animatedOpacity = 1;
+      this.iconScale = 1.0;
     } else {
       // 退出动画：先播放淡出，再隐藏组件
       animateTo({

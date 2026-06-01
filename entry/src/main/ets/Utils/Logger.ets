@@ -80,6 +80,8 @@ class Logger {
   // hilog输出级别 - 控制是否将日志输出到系统hilog
   // 设置为OFF时，不会输出任何日志到hilog（但仍会记录到日志收集器）
   private hilogOutputLevel: LogLevel = LogLevel.DEBUG;
+
+  private backgroundOutputPauseTokens: Set<string> = new Set<string>();
   
   // 是否启用时间戳
   private enableTimestamp: boolean = true;
@@ -120,6 +122,28 @@ class Logger {
    */
   public getHilogOutputLevel(): LogLevel {
     return this.hilogOutputLevel;
+  }
+
+  public pauseBackgroundOutput(token: string): void {
+    if (token.length <= 0) {
+      return;
+    }
+    this.backgroundOutputPauseTokens.add(token);
+  }
+
+  public resumeBackgroundOutput(token: string): void {
+    if (token.length <= 0) {
+      return;
+    }
+    this.backgroundOutputPauseTokens.delete(token);
+  }
+
+  public isBackgroundOutputPaused(): boolean {
+    return this.backgroundOutputPauseTokens.size > 0;
+  }
+
+  private shouldSkipForBackgroundPause(level: LogLevel): boolean {
+    return this.isBackgroundOutputPaused() && level < LogLevel.ERROR;
   }
   
   /**
@@ -196,6 +220,9 @@ class Logger {
    */
   public debug(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.DEBUG) {
+      if (this.shouldSkipForBackgroundPause(LogLevel.DEBUG)) {
+        return;
+      }
       const formattedMessage = this.formatMessageWithArgs(LogLevel.DEBUG, tag, message, args);
       // 仅当hilog输出级别允许时才输出到hilog
       if (this.shouldOutputToHilog(LogLevel.DEBUG)) {
@@ -214,6 +241,9 @@ class Logger {
    */
   public info(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.INFO) {
+      if (this.shouldSkipForBackgroundPause(LogLevel.INFO)) {
+        return;
+      }
       const formattedMessage = this.formatMessageWithArgs(LogLevel.INFO, tag, message, args);
       // 仅当hilog输出级别允许时才输出到hilog
       if (this.shouldOutputToHilog(LogLevel.INFO)) {
@@ -232,6 +262,9 @@ class Logger {
    */
   public warn(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.WARN) {
+      if (this.shouldSkipForBackgroundPause(LogLevel.WARN)) {
+        return;
+      }
       const formattedMessage = this.formatMessageWithArgs(LogLevel.WARN, tag, message, args);
       // 仅当hilog输出级别允许时才输出到hilog
       if (this.shouldOutputToHilog(LogLevel.WARN)) {

@@ -23,6 +23,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelReaderPageParams } from './NovelBookshelfPage';
 import { startBookOpenTransitionWithComponentId } from '../components/BookTransitionOverlay';
+import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType, DEFAULT_TEXT_STYLE, TextAlignment } from '../Models/TextReaderModels';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
@@ -1063,7 +1064,10 @@ export struct NovelDetailPage {
       'novel',
       () => {
         // 动画完成后导航到阅读器
-        this.pathStack.pushPathByName('NovelReaderPage', params);
+        params.readerTitle = this.book?.name || '';
+        if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG, false)) {
+          this.pathStack.pushPathByName('NovelReaderPage', params);
+        }
       },
       undefined,
       {

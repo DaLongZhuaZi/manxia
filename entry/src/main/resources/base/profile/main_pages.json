@@ -3,6 +3,9 @@
     "pages/SplashPage",
     "pages/WelcomeGuidePage",
     "pages/MainMenuPage",
-    "pages/EBookReaderRoutePage"
+    "pages/EBookReaderRoutePage",
+    "pages/MangaReaderAbilityPage",
+    "pages/EBookReaderAbilityPage",
+    "pages/NovelReaderAbilityPage"
   ]
 }

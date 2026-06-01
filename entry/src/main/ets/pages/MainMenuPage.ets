@@ -110,10 +110,14 @@ import { SourceDetailPage } from './SourceDetailPage';
 import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
 import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
+import { EBookReaderRoutePageContent } from './EBookReaderRoutePage';
 import { EBookImageReaderPage } from './EBookImageReaderPage';
 import { EpubWebViewReaderPage } from './EpubWebViewReaderPage';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
+import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
+import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
+import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
@@ -1956,7 +1960,10 @@ struct MainMenuPage {
       } else {
         params.autoStartReadAloud = true;
         params.autoOpenReadAloudPlayer = true;
-        this.pathStack.pushPathByName('NovelReaderPage', params);
+        params.readerTitle = resolvedBook.name || novel.name;
+        if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
+          this.pathStack.pushPathByName('NovelReaderPage', params);
+        }
         logger.info(TAG, `快捷方式继续听书命中最近小说: ${novel.name}, chapter=${safeChapterIndex + 1}/${chapters.length}`);
       }
     } catch (error) {
@@ -16895,7 +16902,8 @@ struct MainMenuPage {
       fromPage: fromPage,
       contentType: this.getRemoteProviderReaderContentType(remoteManga),
       sourceName: remoteManga.sourceInfo?.sourceName || '',
-      coverComponentId: coverComponentId
+      coverComponentId: coverComponentId,
+      readerTitle: remoteManga.title
     };
     return params;
   }
@@ -22783,7 +22791,7 @@ struct MainMenuPage {
           manga.id,
           'manga',
           () => {
-            this.pathStack.pushPathByName('MangaReaderPage', remoteParams);
+            openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, remoteParams, TAG, false);
           },
           undefined,
           {
@@ -22922,6 +22930,7 @@ struct MainMenuPage {
       }
 
       readerParams.coverComponentId = componentId;
+      readerParams.readerTitle = manga.title;
 
       // 触发翻开过渡动画
       const coverPath: string = this.normalizeDisplayPathForManga(manga) || '';
@@ -22935,7 +22944,7 @@ struct MainMenuPage {
         () => {
           // 动画完成时触发导航
           logger.info(TAG, '漫画翻开过渡动画触发导航');
-          this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+          openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG, false);
         },
         undefined,
         {
@@ -22976,7 +22985,8 @@ struct MainMenuPage {
     const coverPath: string = this.getEBookTransitionCoverPath(ebook);
     const readerParams: EBookReaderParams = {
       bookId: ebook.id,
-      coverComponentId: componentId
+      coverComponentId: componentId,
+      readerTitle: ebook.metadata.title
     };
     const txtNovelReaderParams = ebook.format === EBookFormat.TXT
       ? buildNovelReaderParamsFromTxtEBook(ebook, componentId)
@@ -22993,13 +23003,18 @@ struct MainMenuPage {
       () => {
         logger.info(TAG, '翻开过渡动画触发导航');
         if (txtNovelReaderParams) {
-          this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
+          txtNovelReaderParams.readerTitle = ebook.metadata.title;
+          if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, txtNovelReaderParams, TAG, false)) {
+            this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
+          }
         } else {
-          const routeName = resolveEBookReaderRouteName(ebook);
-          if (routeName === 'EBookReaderPage') {
-            openEBookReaderRouterPage(this.getUIContext(), readerParams, TAG);
-          } else {
-            this.pathStack.pushPath({ name: routeName, param: readerParams });
+          if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG, false)) {
+            const routeName = resolveEBookReaderRouteName(ebook);
+            if (routeName === 'EBookReaderPage') {
+              openEBookReaderRouterPage(this.getUIContext(), readerParams, TAG);
+            } else {
+              this.pathStack.pushPath({ name: routeName, param: readerParams });
+            }
           }
         }
       },
@@ -23387,7 +23402,10 @@ struct MainMenuPage {
         transitionBookId,
         'novel',
         () => {
-          this.pathStack.pushPathByName('NovelReaderPage', readerParams);
+          readerParams.readerTitle = novel.name;
+          if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG, false)) {
+            this.pathStack.pushPathByName('NovelReaderPage', readerParams);
+          }
         },
         undefined,
         {
@@ -25057,7 +25075,7 @@ struct MainMenuPage {
         if (remoteParams === null) {
           return;
         }
-        this.pathStack.pushPathByName('MangaReaderPage', remoteParams);
+        openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, remoteParams, TAG);
         logger.info(TAG, `打开远程漫画阅读器: ${manga.title}, chapterId=${remoteParams.chapterId}`);
         return;
       }
@@ -25110,9 +25128,10 @@ struct MainMenuPage {
               fromPage: 'MainMenuPage',
               contentType: ct,
               sourceId: sourceIdNum,
-              sourceName: sourceNameVal
+              sourceName: sourceNameVal,
+              readerTitle: manga.title
             } as MangaReaderPageParams;
-            this.pathStack.pushPathByName('MangaReaderPage', paramsFallback);
+            openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, paramsFallback, TAG);
             logger.info(TAG, `无阅读记录，默认第一章（在线）：chapterId=${firstChapterId}, contentType=${String(ct)}`);
             return;
           } else {
@@ -25141,9 +25160,10 @@ struct MainMenuPage {
               fromPage: 'MainMenuPage',
               contentType: ct,
               sourceId: undefined,
-              sourceName: sourceNameVal
+              sourceName: sourceNameVal,
+              readerTitle: manga.title
             } as MangaReaderPageParams;
-            this.pathStack.pushPathByName('MangaReaderPage', paramsFallback);
+            openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, paramsFallback, TAG);
             logger.info(TAG, `无阅读记录，默认第一章（本地）：chapterId=${firstChapterId}`);
             return;
           } else {
@@ -25171,10 +25191,11 @@ struct MainMenuPage {
         fromPage: 'MainMenuPage',
         contentType: ct2,
         sourceId: hasWebSource ? sourceIdNum : undefined,
-        sourceName: sourceNameVal
+        sourceName: sourceNameVal,
+        readerTitle: manga.title
       } as MangaReaderPageParams;
 
-      this.pathStack.pushPathByName('MangaReaderPage', params);
+      openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG);
       logger.info(TAG, `打开漫画阅读器: ${manga.title}, 恢复到章节 ${target.chapterId}, 页 ${String(target.pageIndex)}, contentType=${String(ct2)}, sourceId=${hasWebSource ? String(sourceIdNum) : '未指定'}`);
     } catch (error) {
       const errMsg: string = error instanceof Error ? error.message : String(error);
@@ -28175,6 +28196,8 @@ struct MainMenuPage {
         UserAgreementPage()
       } else if (name === 'PrivacyPolicyPage') {
         PrivacyPolicyPage()
+      } else if (name === 'EBookReaderRoutePage') {
+        EBookReaderRoutePageContent()
       } else if (name === 'EBookImageReaderPage') {
         EBookImageReaderPage()
       } else if (name === 'EpubWebViewReaderPage') {

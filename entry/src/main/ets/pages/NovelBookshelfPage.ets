@@ -92,6 +92,9 @@ export interface NovelReaderPageParams {
   autoStartReadAloud?: boolean;
   autoOpenReadAloudPlayer?: boolean;
   localEbookId?: string;
+  readerHostMode?: string;
+  readerInstanceId?: string;
+  readerTitle?: string;
 }
 
 /**

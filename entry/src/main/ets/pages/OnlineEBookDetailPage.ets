@@ -22,12 +22,17 @@ import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRout
 import { OnlineEBookImportService } from '../Framework/Services/OnlineEBookImportService';
 import { webview } from '@kit.ArkWeb';
 import { http } from '@kit.NetworkKit';
+import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
+import request from '@ohos.request';
+import fs from '@ohos.file.fs';
 import {
   DownloadSource,
   FileFormat,
   StepStatus,
-  DownloadButtonState
+  DownloadButtonState,
+  DownloadSourceSelector,
+  FileFormatSelector
 } from '../Framework/Components/EBookDownloadComponents';
 import {
   MangaDownloadManager,
@@ -38,9 +43,13 @@ import {
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { ChapterInfo as SourceChapterInfo, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
 import { promptAction } from '@kit.ArkUI';
+import { AppColors } from '../Framework/Theme/AppColors';
+import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
+import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 
 const TAG = 'OnlineEBookDetailPage';
-const TITLE_BAR_HEIGHT = 56;
 
 /**
  * 下载源解析结果
@@ -105,7 +114,8 @@ interface OnlineEBookVerifyState {
 @Component
 export struct OnlineEBookDetailPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
-  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @Provide('themeState') themeState: ThemeAwareState = new ThemeAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private componentId: string = 'OnlineEBookDetailPage';
   private scroller: Scroller = new Scroller();
 
@@ -159,6 +169,10 @@ export struct OnlineEBookDetailPage {
   private readonly detailRecoveryMaxAttempts: number = 2;
   private detailRecoveryTimer: number = -1;
   private importInProgress: boolean = false;
+  @State isWaitingForDlRedirect: boolean = false;
+  @State dlOriginalUrl: string = '';
+  @State dlBookTitle: string = '';
+  @State dlFileFormat: string = '';
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -240,9 +254,15 @@ export struct OnlineEBookDetailPage {
 
   private async loadCoverImage(): Promise<void> {
     try {
-      const coverUrl = this.cachedCoverPath || this.cachedCover;
+      let coverUrl = this.cachedCoverPath || this.cachedCover;
       if (!coverUrl) {
         return;
+      }
+      // 解析相对URL为绝对URL
+      if (coverUrl.startsWith('/') && this.sourceInfo?.baseUrl) {
+        const base = String(this.sourceInfo.baseUrl);
+        coverUrl = base.endsWith('/') ? base + coverUrl.substring(1) : base + coverUrl;
+        logger.info(TAG, `封面相对URL已解析: ${coverUrl.substring(0, 80)}`);
       }
       const imageCacheManager = ImageCacheManager.getInstance();
       const pixelMap = await imageCacheManager.loadImage(coverUrl, {});
@@ -448,7 +468,7 @@ export struct OnlineEBookDetailPage {
           this.bookInfo = {
             id: this.bookId,
             title: String(detail['title'] || this.cachedTitle || '未知书名'),
-            cover: String(detail['cover'] || this.cachedCover || ''),
+            cover: String(detail['cover'] || (this.cachedCover && !this.cachedCover.includes('/img/logo') && !this.cachedCover.endsWith('.svg') ? this.cachedCover : '') || ''),
             author: String(detail['author'] || ''),
             publisher: String(detail['publisher'] || ''),
             publishDate: String(detail['publishDate'] || ''),
@@ -458,7 +478,7 @@ export struct OnlineEBookDetailPage {
             fileSize: String(detail['fileSize'] || ''),
             downloadLinks: []
           };
-          
+
           // 解析格式列表
           const formats = detail['formats'] as string[] | undefined;
           if (formats && Array.isArray(formats)) {
@@ -470,8 +490,20 @@ export struct OnlineEBookDetailPage {
               return link;
             });
           }
-          
+
+          // 直接从详情页提取的下载链接（getBookDetail workflow会提取）
+          const detailDownloadLinks = detail['downloadLinks'] as DownloadLink[] | undefined;
+          if (detailDownloadLinks && Array.isArray(detailDownloadLinks) && detailDownloadLinks.length > 0) {
+            this.bookInfo.downloadLinks = detailDownloadLinks;
+            logger.info(TAG, `从详情页提取到 ${detailDownloadLinks.length} 个下载链接`);
+          }
+
           logger.info(TAG, `电子书详情加载成功: ${this.bookInfo.title}`);
+          // 更新封面：如果 WebView 获取到了新的封面 URL 且当前没有已加载的封面
+          if (this.bookInfo.cover && !this.coverPixelMap) {
+            this.cachedCover = this.bookInfo.cover;
+            void this.loadCoverImage();
+          }
           this.startAutoDownloadIfNeeded();
         } else {
           logger.warn(TAG, `获取电子书详情失败: ${result.error}`);
@@ -553,7 +585,7 @@ export struct OnlineEBookDetailPage {
 
   private async startDownloadFlow(): Promise<void> {
     logger.info(TAG, `开始下载流程: bookId=${this.bookId}`);
-    
+
     if (!this.mangaSourceEngine) {
       logger.error(TAG, '引擎未初始化');
       return;
@@ -570,6 +602,25 @@ export struct OnlineEBookDetailPage {
         await this.handleCompletedDownloadTask(existingTask, this.autoStartDownload);
         return;
       }
+    }
+
+    // 检查是否已有从详情页提取的下载链接
+    if (this.bookInfo && this.bookInfo.downloadLinks.length > 0) {
+      logger.info(TAG, `使用详情页提取的下载链接: ${this.bookInfo.downloadLinks.length} 个`);
+      const sources: DownloadSource[] = [];
+      for (let i = 0; i < this.bookInfo.downloadLinks.length; i++) {
+        const link: DownloadLink = this.bookInfo.downloadLinks[i];
+        const source: DownloadSource = {
+          id: `detail_${i}`,
+          name: link.format.toUpperCase(),
+          url: link.url,
+          recommended: i === 0,
+          available: true
+        };
+        sources.push(source);
+      }
+      await this.presentDownloadSources(sources);
+      return;
     }
 
     // 开始获取下载源
@@ -1325,21 +1376,36 @@ export struct OnlineEBookDetailPage {
       throw new Error('图源引擎未初始化');
     }
 
-    const pageResult = await this.mangaSourceEngine.getPageList(source.url, this.bookId);
-    let formats: FileFormat[] = [];
-    if (pageResult.success && pageResult.data && pageResult.data.length > 0) {
-      formats = this.buildLegacyFileFormats(pageResult.data, source);
-    }
+    // 如果源URL是直接下载链接（包含文件扩展名或 /dl/ 端点），直接使用
+    // /dl/ 链接由 handleFormatSelect 通过 WebView fetch 下载（绕过 Cloudflare）
+    const sourceUrl = String(source.url || '');
+    const isDirectDownload = sourceUrl.includes('/dl/') || sourceUrl.includes('/download/') ||
+      /\.(epub|pdf|mobi|azw3|txt|djvu)(?:\b|\?)/i.test(sourceUrl);
 
-    if (formats.length <= 0) {
-      const fallbackFormat = this.buildDirectFormatFromSource(source);
-      if (fallbackFormat !== null) {
-        formats.push(fallbackFormat);
+    let formats: FileFormat[] = [];
+
+    if (isDirectDownload) {
+      logger.info(TAG, `源URL是直接下载链接，跳过getPageList: ${sourceUrl.substring(0, 80)}`);
+      const directFormat = this.buildDirectFormatFromSource(source);
+      if (directFormat !== null) {
+        formats.push(directFormat);
+      }
+    } else {
+      const pageResult = await this.mangaSourceEngine.getPageList(source.url, this.bookId);
+      if (pageResult.success && pageResult.data && pageResult.data.length > 0) {
+        formats = this.buildLegacyFileFormats(pageResult.data, source);
+      }
+
+      if (formats.length <= 0) {
+        const fallbackFormat = this.buildDirectFormatFromSource(source);
+        if (fallbackFormat !== null) {
+          formats.push(fallbackFormat);
+        }
       }
     }
 
     if (formats.length <= 0) {
-      throw new Error(pageResult.error || '旧工作流未找到可下载的文件');
+      throw new Error('旧工作流未找到可下载的文件');
     }
 
     this.fileFormats = formats;
@@ -1485,23 +1551,106 @@ export struct OnlineEBookDetailPage {
     }
 
     try {
-      // 使用全局下载管理器创建下载任务
-      const taskId = await this.globalDownloadManager.createEBookDownloadTask(
-        this.bookId,
-        this.bookInfo?.title || this.cachedTitle || 'ebook',
-        format.url,
-        format.format,
-        this.sourceId
-      );
+      const downloadUrl = format.url;
+      const bookTitle = this.bookInfo?.title || this.cachedTitle || 'ebook';
 
-      logger.info(TAG, `电子书下载任务已创建: ${taskId}`);
-      
-      // 开始轮询下载进度
-      this.pollDownloadProgress(taskId);
+      if (downloadUrl.includes('/dl/')) {
+        // /dl/ 链接被 Cloudflare 保护，HTTP 请求会返回 503
+        // 策略：通过 WebView 导航处理 Cloudflare，onLoadIntercept 捕获重定向 URL
+        logger.info(TAG, `检测到 /dl/ 链接，使用 WebView 导航: ${downloadUrl.substring(0, 80)}`);
+        this.importStatusText = '正在通过浏览器下载...';
+        this.isWaitingForDlRedirect = true;
+        this.dlOriginalUrl = downloadUrl;
+        this.dlBookTitle = bookTitle;
+        this.dlFileFormat = format.format;
+
+        // 通过 JS 导航 WebView 到下载链接
+        const navScript: string = `window.location.href = '${downloadUrl}'; 'navigating';`;
+        this.webViewController.runJavaScript(navScript, (error: Error | null, result: string) => {
+          if (error) {
+            logger.error(TAG, `导航失败: ${error.message}`);
+            this.isWaitingForDlRedirect = false;
+            this.downloadButtonState = DownloadButtonState.FAILED;
+            this.downloadPhase = 'failed';
+            this.importErrorMessage = '下载失败，请重试';
+          } else {
+            logger.info(TAG, `WebView 导航已触发`);
+          }
+        });
+
+        // 超时机制：30秒内未捕获重定向则失败
+        setTimeout(() => {
+          if (this.isWaitingForDlRedirect) {
+            logger.error(TAG, `等待重定向超时`);
+            this.isWaitingForDlRedirect = false;
+            this.downloadButtonState = DownloadButtonState.FAILED;
+            this.downloadPhase = 'failed';
+            this.importErrorMessage = '下载超时，请重试';
+          }
+        }, 30000);
+      } else {
+        // 普通 URL 使用 HTTP 下载
+        const taskId = await this.globalDownloadManager.createEBookDownloadTask(
+          this.bookId,
+          bookTitle,
+          downloadUrl,
+          format.format,
+          this.sourceId
+        );
+
+        logger.info(TAG, `电子书下载任务已创建: ${taskId}`);
+        this.pollDownloadProgress(taskId);
+      }
     } catch (error) {
       logger.error(TAG, `创建下载任务失败: ${String(error)}`);
       this.downloadButtonState = DownloadButtonState.FAILED;
       this.downloadPhase = 'failed';
+    }
+  }
+
+  /**
+   * 使用捕获的 CDN URL 下载文件
+   * onLoadIntercept 拦截到重定向 URL 后调用
+   */
+  private async downloadFromCapturedUrl(cdnUrl: string): Promise<void> {
+    try {
+      const bookTitle: string = this.dlBookTitle;
+      const fileFormat: string = this.dlFileFormat;
+      const safeTitle: string = bookTitle.replace(/[/\\:*?"<>|]/g, '_');
+      const hostCtx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const saveDir: string = `${hostCtx.filesDir}/ebooks/${this.bookId}`;
+      fs.mkdirSync(saveDir, true);
+      const filePath: string = `${saveDir}/${safeTitle}.${fileFormat}`;
+
+      logger.info(TAG, `使用 request.agent 下载: ${cdnUrl.substring(0, 80)}`);
+      this.importStatusText = '正在下载文件...';
+
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      };
+
+      await this.globalDownloadManager.downloadFileWithAgent(
+        cdnUrl, filePath, headers,
+        (received: number, total: number) => {
+          if (total > 0) {
+            const pct: number = Math.floor((received / total) * 100);
+            this.downloadProgress = pct;
+          }
+        }
+      );
+
+      logger.info(TAG, `下载完成: ${filePath}`);
+
+      // 注册下载任务
+      const taskId: string = await this.globalDownloadManager.registerEBookDownloadTask(
+        this.bookId, bookTitle, filePath, fileFormat, this.sourceId
+      );
+      this.pollDownloadProgress(taskId);
+    } catch (error) {
+      logger.error(TAG, `下载失败: ${String(error)}`);
+      this.downloadButtonState = DownloadButtonState.FAILED;
+      this.downloadPhase = 'failed';
+      this.importErrorMessage = '下载失败，请重试';
     }
   }
 
@@ -1583,7 +1732,8 @@ export struct OnlineEBookDetailPage {
     }
 
     const params: EBookReaderParams = {
-      bookId: this.importedBookId
+      bookId: this.importedBookId,
+      readerTitle: this.getBookTitle()
     };
     const opened = openEBookReaderRouterPage(this.getUIContext(), params, TAG);
     if (!opened) {
@@ -1594,10 +1744,19 @@ export struct OnlineEBookDetailPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        // 隐藏的WebView用于执行脚本
+        // Layer 1: Background
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: AppColors.background,
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
+          .width('100%')
+          .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        // Layer 4: Hidden WebView (needs minimum size for Cloudflare JS execution)
         Web({ src: 'about:blank', controller: this.webViewController })
-          .width(1)
-          .height(1)
+          .width(100)
+          .height(100)
           .opacity(0)
           .position({ x: -100, y: -100 })
           .onControllerAttached(() => {
@@ -1614,77 +1773,249 @@ export struct OnlineEBookDetailPage {
             if (this.sourceId > 0) {
               void this.authManager.captureCookiesFromController(this.sourceId, this.webViewController);
             }
+            // 备选方案：如果 onLoadIntercept 未捕获重定向，检查 onPageEnd 中的 URL
+            if (this.isWaitingForDlRedirect && !event.url.includes('/dl/') && event.url !== 'about:blank') {
+              logger.info(TAG, `onPageEnd 检测到重定向: ${event.url.substring(0, 80)}`);
+              this.isWaitingForDlRedirect = false;
+              void this.downloadFromCapturedUrl(event.url);
+            }
+          })
+          .onLoadIntercept((event) => {
+            const req = event.data;
+            const url: string = typeof req === 'string' ? req : req.getRequestUrl();
+            logger.debug(TAG, `onLoadIntercept: ${url}, isWaiting=${this.isWaitingForDlRedirect}`);
+
+            if (this.isWaitingForDlRedirect) {
+              if (url.includes('/dl/') && url !== this.dlOriginalUrl) {
+                // 重定向到新的 /dl/ URL（Cloudflare 解决后的重试）
+                return false; // 放行
+              }
+              if (!url.includes('/dl/')) {
+                // 重定向到 CDN URL（实际文件地址）
+                logger.info(TAG, `捕获重定向 URL: ${url.substring(0, 80)}`);
+                this.isWaitingForDlRedirect = false;
+                void this.downloadFromCapturedUrl(url);
+                return true; // 阻止 WebView 加载
+              }
+            }
+            return false; // 默认放行
           })
 
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-
-        Column() {
-          Blank().height(TITLE_BAR_HEIGHT)
-
-          if (this.isLoading) {
+        // Layer 2: Content
+        if (this.isLoading) {
+          this.buildLoadingSkeleton()
+        } else if (this.errorMessage.length > 0 && !this.bookInfo) {
+          this.buildErrorState()
+        } else {
+          Scroll(this.scroller) {
             Column({ space: 16 }) {
-              LoadingProgress()
-                .width(48)
-                .height(48)
-                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-              Text('加载中...')
-                .fontSize(14)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            }
-            .width('100%')
-            .layoutWeight(1)
-            .justifyContent(FlexAlign.Center)
-          } else if (this.errorMessage && !this.bookInfo) {
-            Column({ space: 16 }) {
-              Text(this.errorMessage)
-                .fontSize(14)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              Button('重试')
-                .onClick(() => {
-                  this.loadBookDetail();
-                })
-            }
-            .width('100%')
-            .layoutWeight(1)
-            .justifyContent(FlexAlign.Center)
-          } else {
-            Scroll(this.scroller) {
-              Column({ space: 16 }) {
-                this.buildBookInfoCard()
-                if (this.bookInfo?.description) {
-                  this.buildDescriptionCard()
-                }
-                if (this.sourceId > 0) {
-                  this.buildDownloadCard()
-                }
-                Blank().height(this.navigationBarHeight + 20)
+              Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+              this.buildBookInfoCard()
+              if (this.bookInfo?.description) {
+                this.buildDescriptionCard()
               }
-              .width('100%')
-              .padding({ left: 16, right: 16 })
+              if (this.sourceId > 0) {
+                this.buildDownloadCard()
+              }
+              Blank().height(this.navigationBarHeight + 20)
             }
-            .scrollBar(BarState.Off)
-            .edgeEffect(EdgeEffect.Spring)
-            .layoutWeight(1)
+            .width('100%')
+            .padding({ left: 16, right: 16 })
           }
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          .layoutWeight(1)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         }
-        .width('100%')
-        .height('100%')
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .padding({ top: this.statusBarHeight })
+
+        // Layer 3: Immersive Title Bar
+        SettingsImmersiveTitleBar({
+          themeState: this.themeState,
+          title: this.getBookTitle(),
+          appFontFamily: this.appFontFamily,
+          backAction: (): boolean => {
+            try {
+              this.pathStack.pop();
+              return true;
+            } catch (_error) {
+              return false;
+            }
+          }
+        })
       }
     }
     .hideTitleBar(true)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+    .backgroundColor(AppColors.background)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
     .onReady((context: NavDestinationContext) => {
       const params = context.pathInfo.param as OnlineEBookDetailPageParams;
       if (params) {
         this.initializePage(params);
       }
     })
+  }
+
+  @Builder
+  buildLoadingSkeleton() {
+    Column({ space: 16 }) {
+      Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+      this.buildBookInfoCardSkeleton()
+      this.buildDescriptionCardSkeleton()
+      this.buildDownloadCardSkeleton()
+      Blank().height(this.navigationBarHeight + 20)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16 })
+  }
+
+  @Builder
+  buildBookInfoCardSkeleton() {
+    Row({ space: 16 }) {
+      Blank()
+        .width(120)
+        .height(180)
+        .borderRadius(8)
+        .backgroundColor(AppColors.surfaceContainerHighest)
+
+      Column({ space: 8 }) {
+        Blank()
+          .width('80%')
+          .height(20)
+          .borderRadius(10)
+          .backgroundColor(AppColors.surfaceContainerHighest)
+        Blank()
+          .width('50%')
+          .height(14)
+          .borderRadius(7)
+          .backgroundColor(AppColors.surfaceContainerHigh)
+        Blank()
+          .width('60%')
+          .height(12)
+          .borderRadius(6)
+          .backgroundColor(AppColors.surfaceContainerHigh)
+        Blank()
+          .width('40%')
+          .height(12)
+          .borderRadius(6)
+          .backgroundColor(AppColors.surfaceContainer)
+        Blank()
+        Blank()
+          .width('30%')
+          .height(11)
+          .borderRadius(5)
+          .backgroundColor(AppColors.surfaceContainer)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .height(180)
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(AppColors.surfaceContainer)
+    .borderRadius(12)
+  }
+
+  @Builder
+  buildDescriptionCardSkeleton() {
+    Column({ space: 8 }) {
+      Blank()
+        .width('20%')
+        .height(16)
+        .borderRadius(8)
+        .backgroundColor(AppColors.surfaceContainerHighest)
+      Blank()
+        .width('100%')
+        .height(14)
+        .borderRadius(7)
+        .backgroundColor(AppColors.surfaceContainerHigh)
+      Blank()
+        .width('90%')
+        .height(14)
+        .borderRadius(7)
+        .backgroundColor(AppColors.surfaceContainerHigh)
+      Blank()
+        .width('70%')
+        .height(14)
+        .borderRadius(7)
+        .backgroundColor(AppColors.surfaceContainer)
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(AppColors.surfaceContainer)
+    .borderRadius(12)
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  buildDownloadCardSkeleton() {
+    Column({ space: 12 }) {
+      Blank()
+        .width('15%')
+        .height(16)
+        .borderRadius(8)
+        .backgroundColor(AppColors.surfaceContainerHighest)
+      Blank()
+        .width('100%')
+        .height(48)
+        .borderRadius(8)
+        .backgroundColor(AppColors.surfaceContainerHigh)
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(AppColors.surfaceContainer)
+    .borderRadius(12)
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  buildErrorState() {
+    Column({ space: 16 }) {
+      Blank().height(SettingsPageTitleBarManager.getContentTopPadding(this.statusBarHeight))
+
+      Column({ space: 12 }) {
+        Text('!')
+          .fontSize(32)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.onError)
+          .width(64)
+          .height(64)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(AppColors.errorContainer)
+          .borderRadius(32)
+
+        Text(this.errorMessage)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppColors.textPrimary)
+          .textAlign(TextAlign.Center)
+
+        Text('请检查网络连接后重试')
+          .fontSize(13)
+          .fontColor(AppColors.textSecondary)
+          .textAlign(TextAlign.Center)
+
+        Button('重试')
+          .width(160)
+          .height(44)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppColors.onPrimary)
+          .backgroundColor(AppColors.primary)
+          .borderRadius(22)
+          .onClick(() => {
+            this.isLoading = true;
+            this.errorMessage = '';
+            void this.loadBookDetail();
+          })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: 32, right: 32 })
+    }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -1702,43 +2033,43 @@ export struct OnlineEBookDetailPage {
           .height(180)
           .borderRadius(8)
           .objectFit(ImageFit.Cover)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .backgroundColor(AppColors.surfaceContainer)
       }
 
       Column({ space: 8 }) {
         Text(this.bookInfo?.title || this.cachedTitle || '未知书名')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(AppColors.textPrimary)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         if (this.bookInfo?.author) {
           Text(this.bookInfo.author)
             .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .fontColor(AppColors.textSecondary)
         } else if (this.detailRecoveryInProgress) {
           Row({ space: 6 }) {
             LoadingProgress()
               .width(14)
               .height(14)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .color(AppColors.primary)
             Text(this.detailRecoveryStatusText || '站点安全验证中...')
               .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .fontColor(AppColors.textSecondary)
           }
         }
 
         if (this.bookInfo?.publisher) {
           Text(this.bookInfo.publisher)
             .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .fontColor(AppColors.textTertiary)
         }
 
         if (this.bookInfo?.categories) {
           Text(this.bookInfo.categories)
             .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .fontColor(AppColors.primary)
         }
 
         Blank()
@@ -1746,10 +2077,10 @@ export struct OnlineEBookDetailPage {
         Row({ space: 4 }) {
           Text('来源:')
             .fontSize(11)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .fontColor(AppColors.textTertiary)
           Text(this.sourceInfo?.name || '')
             .fontSize(11)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+            .fontColor(AppColors.warning)
         }
       }
       .layoutWeight(1)
@@ -1758,7 +2089,7 @@ export struct OnlineEBookDetailPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(AppColors.surfaceContainer)
     .borderRadius(12)
   }
 
@@ -1768,11 +2099,11 @@ export struct OnlineEBookDetailPage {
       Text('简介')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor(AppColors.textPrimary)
 
       Text(this.bookInfo?.description || '')
         .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontColor(AppColors.textSecondary)
         .maxLines(this.expandedDescription ? 100 : 4)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .onClick(() => {
@@ -1782,7 +2113,7 @@ export struct OnlineEBookDetailPage {
       if (!this.expandedDescription && (this.bookInfo?.description?.length || 0) > 100) {
         Text('展开')
           .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .fontColor(AppColors.primary)
           .onClick(() => {
             this.expandedDescription = true;
           })
@@ -1790,7 +2121,7 @@ export struct OnlineEBookDetailPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(AppColors.surfaceContainer)
     .borderRadius(12)
     .alignItems(HorizontalAlign.Start)
   }
@@ -1801,15 +2132,37 @@ export struct OnlineEBookDetailPage {
       Text('下载')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor(AppColors.textPrimary)
 
       // 下载源选择器
       if (this.showSourceSelector && this.downloadSources.length > 0) {
-        this.buildSourceSelector()
+        DownloadSourceSelector({
+          sources: this.downloadSources,
+          isLoading: false,
+          selectedId: this.selectedSourceId,
+          onSelect: (source: DownloadSource) => {
+            this.handleSourceSelect(source);
+          },
+          config: {
+            title: '选择下载源',
+            showRecommendedBadge: true
+          }
+        })
       }
       // 格式选择器
       else if (this.showFormatSelector && this.fileFormats.length > 0) {
-        this.buildFormatSelector()
+        FileFormatSelector({
+          formats: this.fileFormats,
+          selectedFormat: this.selectedFormat,
+          onSelect: (format: FileFormat) => {
+            this.handleFormatSelect(format);
+          },
+          config: {
+            title: '选择格式',
+            layout: 'grid',
+            showSize: true
+          }
+        })
       }
       // 下载按钮
       else {
@@ -1823,7 +2176,7 @@ export struct OnlineEBookDetailPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(AppColors.surfaceContainer)
     .borderRadius(12)
     .alignItems(HorizontalAlign.Start)
   }
@@ -1836,23 +2189,23 @@ export struct OnlineEBookDetailPage {
         Row()
           .width(`${this.downloadProgress}%`)
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '40')
+          .backgroundColor(AppColors.primaryContainer)
           .borderRadius(8)
       }
 
       Row({ space: 8 }) {
-        if (this.downloadButtonState === DownloadButtonState.LOADING || 
+        if (this.downloadButtonState === DownloadButtonState.LOADING ||
             this.downloadButtonState === DownloadButtonState.DOWNLOADING) {
           LoadingProgress()
             .width(20)
             .height(20)
-            .color(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .color(AppColors.onPrimary)
         }
 
         Text(this.getDownloadButtonText())
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .fontColor(AppColors.onPrimary)
       }
       .justifyContent(FlexAlign.Center)
       .width('100%')
@@ -1867,7 +2220,7 @@ export struct OnlineEBookDetailPage {
         this.openImportedBookReader();
         return;
       }
-      if (this.downloadButtonState === DownloadButtonState.IDLE || 
+      if (this.downloadButtonState === DownloadButtonState.IDLE ||
           this.downloadButtonState === DownloadButtonState.FAILED) {
         void this.startDownloadFlow();
       }
@@ -1912,142 +2265,27 @@ export struct OnlineEBookDetailPage {
   private getDownloadButtonColor(): ResourceColor {
     switch (this.downloadButtonState) {
       case DownloadButtonState.COMPLETED:
-        return '#4CAF50';
+        return AppColors.success;
       case DownloadButtonState.FAILED:
-        return '#F44336';
+        return AppColors.error;
       default:
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+        return AppColors.primary;
     }
-  }
-
-  @Builder
-  buildSourceSelector() {
-    Column({ space: 8 }) {
-      Text('选择下载源')
-        .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-      ForEach(this.downloadSources, (source: DownloadSource) => {
-        Row({ space: 12 }) {
-          // 图标
-          Text(source.name.charAt(0).toUpperCase())
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-            .width(32)
-            .height(32)
-            .textAlign(TextAlign.Center)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .borderRadius(6)
-
-          // 名称
-          Text(source.name)
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .layoutWeight(1)
-
-          // 推荐标签
-          if (source.recommended) {
-            Text('推荐')
-              .fontSize(10)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-              .backgroundColor('#FF9800')
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .borderRadius(4)
-          }
-        }
-        .width('100%')
-        .padding(12)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
-        .borderRadius(8)
-        .onClick(() => {
-          this.handleSourceSelect(source);
-        })
-      }, (source: DownloadSource) => source.id)
-
-      // 取消按钮
-      Button('取消')
-        .width('100%')
-        .height(40)
-        .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
-        .borderRadius(8)
-        .onClick(() => {
-          this.showSourceSelector = false;
-          this.downloadPhase = 'idle';
-        })
-    }
-    .width('100%')
-  }
-
-  @Builder
-  buildFormatSelector() {
-    Column({ space: 8 }) {
-      Text('选择格式')
-        .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-        ForEach(this.fileFormats, (format: FileFormat) => {
-          Column({ space: 4 }) {
-            Text(format.displayName || format.format.toUpperCase())
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(this.selectedFormat === format.format 
-                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                : this.getFormatColor(format.format))
-
-            if (format.size) {
-              Text(format.size)
-                .fontSize(10)
-                .fontColor(this.selectedFormat === format.format 
-                  ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) + 'CC'
-                  : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            }
-          }
-          .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-          .margin({ right: 8, bottom: 8 })
-          .backgroundColor(this.selectedFormat === format.format 
-            ? this.getFormatColor(format.format)
-            : ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
-          .borderRadius(8)
-          .border({
-            width: 1,
-            color: this.getFormatColor(format.format)
-          })
-          .onClick(() => {
-            this.handleFormatSelect(format);
-          })
-        }, (format: FileFormat) => format.format)
-      }
-      .width('100%')
-
-      // 取消按钮
-      Button('取消')
-        .width('100%')
-        .height(40)
-        .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
-        .borderRadius(8)
-        .onClick(() => {
-          this.showFormatSelector = false;
-          this.downloadPhase = 'idle';
-        })
-    }
-    .width('100%')
   }
 
   private getFormatColor(format: string): ResourceColor {
     const colorMap: Record<string, string> = {
-      'epub': '#4CAF50',
-      'mobi': '#FF9800',
-      'pdf': '#F44336',
-      'azw3': '#9C27B0',
-      'txt': '#607D8B'
+      'epub': AppColors.success,
+      'mobi': AppColors.warning,
+      'pdf': AppColors.error,
+      'azw3': AppColors.tertiary,
+      'txt': AppColors.secondary
     };
-    return colorMap[format.toLowerCase()] || '#2196F3';
+    const lowerFormat = format.toLowerCase();
+    if (colorMap[lowerFormat]) {
+      return colorMap[lowerFormat];
+    }
+    return AppColors.info;
   }
 
   @Builder
@@ -2057,8 +2295,8 @@ export struct OnlineEBookDetailPage {
       Progress({ value: this.downloadProgress, total: 100, type: ProgressType.Linear })
         .width('100%')
         .height(4)
-        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+        .color(AppColors.primary)
+        .backgroundColor(AppColors.surfaceContainerHigh)
         .borderRadius(2)
 
       // 当前状态
@@ -2070,7 +2308,7 @@ export struct OnlineEBookDetailPage {
 
         Text(this.getPhaseText())
           .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(AppColors.textSecondary)
           .layoutWeight(1)
 
         if (this.downloadPhase === 'downloading' || this.downloadPhase === 'fetching_sources' ||
@@ -2078,7 +2316,7 @@ export struct OnlineEBookDetailPage {
           LoadingProgress()
             .width(14)
             .height(14)
-            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .color(AppColors.primary)
         }
       }
       .width('100%')
@@ -2087,20 +2325,20 @@ export struct OnlineEBookDetailPage {
       if (this.currentDownloadTask?.error) {
         Text(this.currentDownloadTask.error)
           .fontSize(12)
-          .fontColor('#F44336')
+          .fontColor(AppColors.error)
           .width('100%')
           .padding(8)
-          .backgroundColor('#F4433620')
+          .backgroundColor(AppColors.errorContainer)
           .borderRadius(6)
       }
 
       if (this.importErrorMessage.length > 0) {
         Text(this.importErrorMessage)
           .fontSize(12)
-          .fontColor('#F44336')
+          .fontColor(AppColors.error)
           .width('100%')
           .padding(8)
-          .backgroundColor('#F4433620')
+          .backgroundColor(AppColors.errorContainer)
           .borderRadius(6)
       }
     }
@@ -2127,16 +2365,16 @@ export struct OnlineEBookDetailPage {
   private getPhaseColor(): ResourceColor {
     switch (this.downloadPhase) {
       case 'completed':
-        return '#4CAF50';
+        return AppColors.success;
       case 'downloading':
       case 'fetching_sources':
       case 'fetching_files':
       case 'importing':
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+        return AppColors.primary;
       case 'failed':
-        return '#F44336';
+        return AppColors.error;
       default:
-        return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+        return AppColors.textTertiary;
     }
   }
 
@@ -2181,15 +2419,15 @@ export struct OnlineEBookDetailPage {
   private getStepColor(status: StepStatus): ResourceColor {
     switch (status) {
       case StepStatus.COMPLETED:
-        return '#4CAF50';
+        return AppColors.success;
       case StepStatus.RUNNING:
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+        return AppColors.primary;
       case StepStatus.FAILED:
-        return '#F44336';
+        return AppColors.error;
       case StepStatus.WAITING:
-        return '#FF9800';
+        return AppColors.warning;
       default:
-        return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+        return AppColors.textTertiary;
     }
   }
 }

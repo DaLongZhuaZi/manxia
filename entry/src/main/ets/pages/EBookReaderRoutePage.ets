@@ -18,6 +18,17 @@ const TAG = 'EBookReaderRoutePage';
 @Entry
 @Component
 struct EBookReaderRoutePage {
+  build() {
+    Column() {
+      EBookReaderRoutePageContent()
+    }
+    .width('100%')
+    .height('100%')
+  }
+}
+
+@Component
+export struct EBookReaderRoutePageContent {
   @State private pathStack: NavPathStack = new NavPathStack();
   private hasOpenedReader: boolean = false;
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
@@ -27,6 +38,29 @@ struct EBookReaderRoutePage {
   }
 
   private resolveRouteParams(): EBookReaderParams | null {
+    try {
+      const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (stack) {
+        const paramArray = stack.getParamByName('EBookReaderRoutePage') as EBookReaderParams[];
+        if (paramArray && paramArray.length > 0) {
+          const navParams = paramArray[paramArray.length - 1];
+          if (navParams && navParams.bookId) {
+            return {
+              bookId: navParams.bookId,
+              coverComponentId: navParams.coverComponentId || '',
+              routerBackOnClose: false,
+              forceReaderKit: navParams.forceReaderKit === true,
+              autoStartReadAloud: navParams.autoStartReadAloud === true,
+              autoOpenReadAloudPlayer: navParams.autoOpenReadAloudPlayer === true,
+              readerTitle: navParams.readerTitle
+            };
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `读取电子书阅读器 NavPathStack 参数失败: ${String(error)}`);
+    }
+
     const router = this.getUIContext()?.getRouter();
     if (!router) {
       logger.error(TAG, '无法获取 Router 参数：Router 不可用');
@@ -41,7 +75,10 @@ struct EBookReaderRoutePage {
       bookId: rawParams.bookId,
       coverComponentId: rawParams.coverComponentId || '',
       routerBackOnClose: true,
-      forceReaderKit: rawParams.forceReaderKit === true
+      forceReaderKit: rawParams.forceReaderKit === true,
+      autoStartReadAloud: rawParams.autoStartReadAloud === true,
+      autoOpenReadAloudPlayer: rawParams.autoOpenReadAloudPlayer === true,
+      readerTitle: rawParams.readerTitle
     };
   }
 

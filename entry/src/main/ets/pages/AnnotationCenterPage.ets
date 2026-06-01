@@ -33,6 +33,12 @@ import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Mana
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { MangaReaderPageParams } from './MangaReaderPage';
+import { NovelReaderPageParams } from './NovelBookshelfPage';
+import { EBookReaderParams } from './EBookReaderRouteTypes';
+import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
+import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
+import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
 
 const TAG = 'AnnotationCenterPage';
 const MAX_CONTENT_WIDTH: number = 960;
@@ -81,22 +87,6 @@ interface HighlightStylePreview {
   color?: string;
 }
 
-interface NovelReaderRouteParams {
-  sourceId: string;
-  bookUrl: string;
-  bookName: string;
-  chapterUrl: string;
-  chapterTitle: string;
-  chapterIndex: number;
-  totalChapters: number;
-  chapterPageIndex?: number;
-  chapterStartOffset?: number;
-  tocUrl?: string;
-  coverUrl?: string;
-  sourceName?: string;
-  localEbookId?: string;
-}
-
 interface MangaReaderRouteParams {
   mangaId: string;
   sourceId?: number;
@@ -105,10 +95,7 @@ interface MangaReaderRouteParams {
   chapterId?: string;
   pageIndex?: number;
   fromPage?: string;
-}
-
-interface EBookReaderRouteParams {
-  bookId: string;
+  readerTitle?: string;
 }
 
 interface InspirationContentSummary {
@@ -1540,7 +1527,7 @@ export struct AnnotationCenterPage {
       return;
     }
 
-    const params: NovelReaderRouteParams = {
+    const params: NovelReaderPageParams = {
       sourceId: book.sourceId,
       bookUrl: book.bookUrl,
       bookName: book.name,
@@ -1556,9 +1543,12 @@ export struct AnnotationCenterPage {
           : undefined),
       tocUrl: novelContext?.tocUrl || book.tocUrl || book.bookUrl,
       coverUrl: book.coverLocalPath || book.coverUrl || '',
-      sourceName: novelContext?.sourceName || book.sourceName
+      sourceName: novelContext?.sourceName || book.sourceName,
+      readerTitle: book.name
     };
-    this.pathStack.pushPathByName('NovelReaderPage', params);
+    if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
+      this.pathStack.pushPathByName('NovelReaderPage', params);
+    }
     logger.info(
       TAG,
       `定位小说原文成功: 书籍ID=${book.id}, 章节索引=${params.chapterIndex}, 页索引=${params.chapterPageIndex ?? -1}, 起始偏移=${params.chapterStartOffset ?? -1}`
@@ -1608,9 +1598,10 @@ export struct AnnotationCenterPage {
       contentType: finalContentType,
       chapterId: chapterId.length > 0 ? chapterId : undefined,
       pageIndex,
-      fromPage: 'AnnotationCenterPage'
+      fromPage: 'AnnotationCenterPage',
+      readerTitle: this.contentTitle
     };
-    this.pathStack.pushPathByName('MangaReaderPage', params);
+    openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params as MangaReaderPageParams, TAG);
     logger.info(
       TAG,
       `定位漫画原页成功: 漫画ID=${mangaId}, 内容类型=${finalContentType}, 源ID=${sourceId ?? -1}, 章节ID=${params.chapterId || ''}, 页索引=${pageIndex}`
@@ -1670,8 +1661,13 @@ export struct AnnotationCenterPage {
       await this.ebookDataManager.saveReadingProgress(nextProgress);
       ebook.readingProgress = nextProgress;
 
-      const params: EBookReaderRouteParams = { bookId: ebook.id };
-      this.pathStack.pushPathByName(resolveEBookReaderRouteName(ebook), params);
+      const params: EBookReaderParams = {
+        bookId: ebook.id,
+        readerTitle: ebook.metadata.title
+      };
+      if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
+        this.pathStack.pushPathByName(resolveEBookReaderRouteName(ebook), params);
+      }
       logger.info(
         TAG,
         `图片 EPUB 灵感定位成功: 书籍ID=${ebook.id}, 页索引=${safePageIndex}, 章节索引=${entry.ebookChapterIndex}`
@@ -1708,7 +1704,7 @@ export struct AnnotationCenterPage {
 
     if (ebook.format === EBookFormat.TXT) {
       const baseParams = buildNovelReaderParamsFromTxtEBook(ebook);
-      const params: NovelReaderRouteParams = {
+      const params: NovelReaderPageParams = {
         sourceId: baseParams.sourceId,
         bookUrl: baseParams.bookUrl,
         bookName: baseParams.bookName,
@@ -1721,9 +1717,12 @@ export struct AnnotationCenterPage {
         totalChapters: Math.max(chapterCount, 1),
         chapterPageIndex: currentPosition,
         chapterStartOffset: safeStartOffset,
-        localEbookId: ebook.id
+        localEbookId: ebook.id,
+        readerTitle: ebook.metadata.title
       };
-      this.pathStack.pushPathByName('NovelReaderPage', params);
+      if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
+        this.pathStack.pushPathByName('NovelReaderPage', params);
+      }
       logger.info(
         TAG,
         `定位TXT电子书原页成功: 书籍ID=${ebook.id}, 章节索引=${targetChapterIndex}, 页索引=${currentPosition}, 起始偏移=${safeStartOffset}`
@@ -1731,8 +1730,13 @@ export struct AnnotationCenterPage {
       return;
     }
 
-    const params: EBookReaderRouteParams = { bookId: ebook.id };
-    this.pathStack.pushPathByName(resolveEBookReaderRouteName(ebook), params);
+    const params: EBookReaderParams = {
+      bookId: ebook.id,
+      readerTitle: ebook.metadata.title
+    };
+    if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
+      this.pathStack.pushPathByName(resolveEBookReaderRouteName(ebook), params);
+    }
     logger.info(
       TAG,
       `定位电子书原页成功: 书籍ID=${ebook.id}, 章节索引=${targetChapterIndex}, 位置=${currentPosition}`

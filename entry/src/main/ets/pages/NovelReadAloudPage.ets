@@ -19,6 +19,7 @@ import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { loadGlobalReadAloudSettings as loadStoredGlobalReadAloudSettings } from '../Framework/ReadAloud/ReadAloudSettingsStore';
 import { processReadAloudNovelContentByBook } from '../Framework/ReadAloud/ReadAloudTextProcessing';
+import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 
 const TAG = 'NovelReadAloudPage';
 type AudioJsonValue = string | number | boolean | Object | Array<Object> | null;
@@ -1030,9 +1031,12 @@ export struct NovelReadAloudPage {
       tocUrl: this.tocUrl || this.bookUrl,
       author: this.author,
       coverUrl: this.coverUrl,
-      coverComponentId: this.sourceCoverComponentId || undefined
+      coverComponentId: this.sourceCoverComponentId || undefined,
+      readerTitle: this.bookName
     };
-    this.pathStack.pushPathByName('NovelReaderPage', params);
+    if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
+      this.pathStack.pushPathByName('NovelReaderPage', params);
+    }
   }
 
   private getProgressPercent(): number {

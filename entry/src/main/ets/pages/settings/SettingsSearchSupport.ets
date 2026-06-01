@@ -67,6 +67,7 @@ export class SettingsSearchSupport {
 
     // 页面设置
     { id: 'page_detail_type', title: '详情页类型', description: '漫画/电子书/小说详情页类型与统一详情页', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['详情页设置', '漫画详情页', '电子书详情页', '小说详情页', '统一详情页'] },
+    { id: 'page_reader_multiton', title: '阅读器页面多开', description: '控制漫画/电子书/小说阅读器是否使用独立任务实例', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 360, keywords: ['阅读器页面多开', '阅读器多开', '独立实例', '主实例'] },
     { id: 'page_recommendation', title: '相关推荐', description: '统一详情页相关推荐开关', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['相关推荐', '同书架内容'] },
     { id: 'page_background_blur', title: '后台模糊遮罩', description: '多任务界面隐私保护模糊遮罩与图标类型', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['后台模糊遮罩', '隐私遮罩', '后台遮罩', '遮罩图标', '锁定图标', '应用Logo'] },
     { id: 'shortcut_tip', title: '快捷方式说明', description: '桌面长按菜单最多显示4项，可长按拖动快捷方式到桌面', targetPage: 'ShortcutSettingsSubPage', anchorId: 'shortcut_info', scrollOffset: 0, keywords: ['快捷方式', '长按', '拖动到桌面', '桌面快捷'] },

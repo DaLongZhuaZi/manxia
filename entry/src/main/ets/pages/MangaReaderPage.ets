@@ -90,6 +90,14 @@ import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import {
+  MANGA_READER_ABILITY_HOST_MULTITON,
+  MANGA_READER_ABILITY_INSTANCE_ID_KEY
+} from '../Framework/Reader/MangaReaderAbilityConstants';
+import {
+  MangaReaderAbilityParamStore,
+  MangaReaderAbilityWindowPayload
+} from '../Framework/Reader/MangaReaderAbilityParamStore';
 
 const TAG = 'MangaReaderPage';
 
@@ -121,6 +129,12 @@ export interface MangaReaderPageParams {
   skipDatabaseLookup?: boolean;
   /** 章节标题（用于通过标题查询数据库获取章节信息） */
   chapterTitle?: string;
+  /** 阅读器承载实例标识；独立 Ability 使用该字段与主导航栈区分 */
+  readerHostMode?: string;
+  /** 独立阅读器实例ID，用于日志和多实例追踪 */
+  readerInstanceId?: string;
+  /** 独立阅读器实例标题，仅用于任务列表/窗口标题展示 */
+  readerTitle?: string;
 }
 
 /**
@@ -327,6 +341,7 @@ export struct MangaReaderPage {
   // 主题相关状态
   @State pathStack: NavPathStack = new NavPathStack();
   @State pageParams: MangaReaderPageParams | null = null;
+  @LocalStorageProp(MANGA_READER_ABILITY_INSTANCE_ID_KEY) private readerAbilityInstanceId: string = '';
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -563,103 +578,109 @@ export struct MangaReaderPage {
     // 通知预加载管理器：阅读器已激活
     ChapterPreloadManager.getInstance().setReaderActive(true);
     
-    try {
-      const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
-      if (stack) {
-        this.pathStack = stack;
-        logger.debug(TAG, '✅ 成功获取GlobalNavStack');
-        
-        // 获取页面参数 - getParamByName返回Array<unknown>
-        const paramDataArray = this.pathStack.getParamByName('MangaReaderPage') as MangaReaderPageParams[];
-        logger.debug(TAG, `📋 获取到参数数组，长度: ${paramDataArray?.length || 0}`);
-        
-        if (paramDataArray && paramDataArray.length > 0) {
-          const latestParam = paramDataArray[paramDataArray.length - 1]; // 获取最新参数
-          logger.debug(TAG, `📋 使用最新参数 (索引: ${paramDataArray.length - 1})`);
-          
-          if (latestParam && typeof latestParam === 'object' && 
-              (Object.keys(latestParam).includes('manga') || Object.keys(latestParam).includes('mangaId'))) {
-            const typedParams = latestParam as MangaReaderPageParams;
-            this.pageParams = typedParams;
-            
-            // 详细记录参数信息
-            logger.info(TAG, `📖 漫画参数解析成功:`);
-            if (typedParams.manga) {
-              logger.info(TAG, `  - 漫画标题: ${typedParams.manga.title}`);
-              logger.info(TAG, `  - 漫画ID: ${typedParams.mangaId}`);
-              logger.info(TAG, `  - 章节总数: ${typedParams.manga.chapters.length}`);
-            } else if (typedParams.mangaId) {
-              logger.info(TAG, `  - 漫画ID: ${typedParams.mangaId}`);
-              logger.info(TAG, `  - 需要从DataManager加载漫画数据`);
-            }
-            logger.info(TAG, `  - 指定章节ID: ${typedParams.chapterId || '未指定'}`);
-            logger.info(TAG, `  - 指定页面索引: ${typedParams.pageIndex || 0}`);
-            logger.info(TAG, `  - 来源页面: ${typedParams.fromPage || '未指定'}`);
-            
-            this.initializeMangaReader(typedParams);
-          } else {
-            logger.error(TAG, '❌ 参数格式不正确或缺少必需的manga/mangaId属性');
-            logger.error(TAG, `参数类型: ${typeof latestParam}, 包含manga属性: ${latestParam && typeof latestParam === 'object' ? Object.keys(latestParam).includes('manga') : false}, 包含mangaId属性: ${latestParam && typeof latestParam === 'object' ? Object.keys(latestParam).includes('mangaId') : false}`);
-          }
-        } else {
-          logger.error(TAG, '❌ 未找到页面参数，参数数组为空或不存在');
-        }
-      } else {
-        logger.error(TAG, '❌ 无法从 AppStorage 获取 GlobalNavStack!');
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error(TAG, '❌ AppStorage.get 异常', errorMessage);
-    }
+    const initializedFromIsolatedStore = this.tryInitializeIsolatedReaderFromAbilityStore();
 
-    if (!this.pageParams) {
+    if (!initializedFromIsolatedStore && this.readerAbilityInstanceId.length <= 0) {
       try {
-        const router = this.getUIContext()?.getRouter();
-        if (router) {
-          const rawParamsObj = router.getParams() as Record<string, Object>;
-          const rawKeys: string[] = Object.keys(rawParamsObj as Object);
-          const hasManga: boolean = rawKeys.includes('manga');
-          const hasMangaId: boolean = rawKeys.includes('mangaId');
-          const hasSourceId: boolean = rawKeys.includes('sourceId');
-          const hasChapterId: boolean = rawKeys.includes('chapterId');
-          const hasPageIndex: boolean = rawKeys.includes('pageIndex');
-          const hasFromPage: boolean = rawKeys.includes('fromPage');
-          const hasCoverComponentId: boolean = rawKeys.includes('coverComponentId');
+        const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
+        if (stack) {
+          this.pathStack = stack;
+          logger.debug(TAG, '✅ 成功获取GlobalNavStack');
 
-          if (hasManga || hasMangaId) {
-            let inferredContentType: MangaReaderContentType = MangaReaderContentType.Local;
-            if (hasSourceId) {
-              // 路由参数没有下载状态信息，默认为在线未下载以触发网络链路
-              inferredContentType = MangaReaderContentType.OnlineUndownloaded;
+          // 获取页面参数 - getParamByName返回Array<unknown>
+          const paramDataArray = this.pathStack.getParamByName('MangaReaderPage') as MangaReaderPageParams[];
+          logger.debug(TAG, `📋 获取到参数数组，长度: ${paramDataArray?.length || 0}`);
+
+          if (paramDataArray && paramDataArray.length > 0) {
+            const latestParam = paramDataArray[paramDataArray.length - 1]; // 获取最新参数
+            logger.debug(TAG, `📋 使用最新参数 (索引: ${paramDataArray.length - 1})`);
+
+            if (latestParam && typeof latestParam === 'object' &&
+                (Object.keys(latestParam).includes('manga') || Object.keys(latestParam).includes('mangaId'))) {
+              const typedParams = latestParam as MangaReaderPageParams;
+              this.pageParams = typedParams;
+
+              // 详细记录参数信息
+              logger.info(TAG, `📖 漫画参数解析成功:`);
+              if (typedParams.manga) {
+                logger.info(TAG, `  - 漫画标题: ${typedParams.manga.title}`);
+                logger.info(TAG, `  - 漫画ID: ${typedParams.mangaId}`);
+                logger.info(TAG, `  - 章节总数: ${typedParams.manga.chapters.length}`);
+              } else if (typedParams.mangaId) {
+                logger.info(TAG, `  - 漫画ID: ${typedParams.mangaId}`);
+                logger.info(TAG, `  - 需要从DataManager加载漫画数据`);
+              }
+              logger.info(TAG, `  - 指定章节ID: ${typedParams.chapterId || '未指定'}`);
+              logger.info(TAG, `  - 指定页面索引: ${typedParams.pageIndex || 0}`);
+              logger.info(TAG, `  - 来源页面: ${typedParams.fromPage || '未指定'}`);
+
+              this.initializeMangaReader(typedParams);
+            } else {
+              logger.error(TAG, '❌ 参数格式不正确或缺少必需的manga/mangaId属性');
+              logger.error(TAG, `参数类型: ${typeof latestParam}, 包含manga属性: ${latestParam && typeof latestParam === 'object' ? Object.keys(latestParam).includes('manga') : false}, 包含mangaId属性: ${latestParam && typeof latestParam === 'object' ? Object.keys(latestParam).includes('mangaId') : false}`);
             }
-
-            const resultParams: MangaReaderPageParams = {
-              manga: hasManga ? (rawParamsObj['manga'] as Manga) : undefined,
-              mangaId: hasMangaId ? String(rawParamsObj['mangaId']) : undefined,
-              sourceId: hasSourceId ? Number(rawParamsObj['sourceId']) : undefined,
-              contentType: inferredContentType,
-              chapterId: hasChapterId ? String(rawParamsObj['chapterId']) : undefined,
-              pageIndex: hasPageIndex ? Number(rawParamsObj['pageIndex']) : 0,
-              fromPage: hasFromPage ? String(rawParamsObj['fromPage']) : '未指定',
-              coverComponentId: hasCoverComponentId ? String(rawParamsObj['coverComponentId']) : undefined
-            } as MangaReaderPageParams;
-
-            this.pageParams = resultParams;
-            logger.info(TAG, `📖 通过Router解析参数成功`);
-            logger.info(TAG, `  - 内容类型: ${resultParams.contentType}`);
-            logger.info(TAG, `  - 指定章节ID: ${resultParams.chapterId || '未指定'}`);
-            logger.info(TAG, `  - 指定页面索引: ${resultParams.pageIndex || 0}`);
-            this.initializeMangaReader(resultParams);
           } else {
-            logger.error(TAG, '❌ Router参数缺少manga/mangaId字段');
+            logger.error(TAG, '❌ 未找到页面参数，参数数组为空或不存在');
           }
         } else {
-          logger.error(TAG, '❌ UIContext Router不可用');
+          logger.error(TAG, '❌ 无法从 AppStorage 获取 GlobalNavStack!');
         }
-      } catch (routerErr) {
-        const msg: string = routerErr instanceof Error ? routerErr.message : String(routerErr);
-        logger.error(TAG, `❌ 解析Router参数异常: ${msg}`);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        logger.error(TAG, '❌ AppStorage.get 异常', errorMessage);
       }
+
+      if (!this.pageParams) {
+        try {
+          const router = this.getUIContext()?.getRouter();
+          if (router) {
+            const rawParamsObj = router.getParams() as Record<string, Object>;
+            const rawKeys: string[] = Object.keys(rawParamsObj as Object);
+            const hasManga: boolean = rawKeys.includes('manga');
+            const hasMangaId: boolean = rawKeys.includes('mangaId');
+            const hasSourceId: boolean = rawKeys.includes('sourceId');
+            const hasChapterId: boolean = rawKeys.includes('chapterId');
+            const hasPageIndex: boolean = rawKeys.includes('pageIndex');
+            const hasFromPage: boolean = rawKeys.includes('fromPage');
+            const hasCoverComponentId: boolean = rawKeys.includes('coverComponentId');
+
+            if (hasManga || hasMangaId) {
+              let inferredContentType: MangaReaderContentType = MangaReaderContentType.Local;
+              if (hasSourceId) {
+                // 路由参数没有下载状态信息，默认为在线未下载以触发网络链路
+                inferredContentType = MangaReaderContentType.OnlineUndownloaded;
+              }
+
+              const resultParams: MangaReaderPageParams = {
+                manga: hasManga ? (rawParamsObj['manga'] as Manga) : undefined,
+                mangaId: hasMangaId ? String(rawParamsObj['mangaId']) : undefined,
+                sourceId: hasSourceId ? Number(rawParamsObj['sourceId']) : undefined,
+                contentType: inferredContentType,
+                chapterId: hasChapterId ? String(rawParamsObj['chapterId']) : undefined,
+                pageIndex: hasPageIndex ? Number(rawParamsObj['pageIndex']) : 0,
+                fromPage: hasFromPage ? String(rawParamsObj['fromPage']) : '未指定',
+                coverComponentId: hasCoverComponentId ? String(rawParamsObj['coverComponentId']) : undefined
+              } as MangaReaderPageParams;
+
+              this.pageParams = resultParams;
+              logger.info(TAG, `📖 通过Router解析参数成功`);
+              logger.info(TAG, `  - 内容类型: ${resultParams.contentType}`);
+              logger.info(TAG, `  - 指定章节ID: ${resultParams.chapterId || '未指定'}`);
+              logger.info(TAG, `  - 指定页面索引: ${resultParams.pageIndex || 0}`);
+              this.initializeMangaReader(resultParams);
+            } else {
+              logger.error(TAG, '❌ Router参数缺少manga/mangaId字段');
+            }
+          } else {
+            logger.error(TAG, '❌ UIContext Router不可用');
+          }
+        } catch (routerErr) {
+          const msg: string = routerErr instanceof Error ? routerErr.message : String(routerErr);
+          logger.error(TAG, `❌ 解析Router参数异常: ${msg}`);
+        }
+      }
+    } else if (!initializedFromIsolatedStore) {
+      logger.info(TAG, `独立阅读器实例跳过主实例导航参数解析: instanceId=${this.readerAbilityInstanceId}`);
     }
 
     
@@ -673,6 +694,66 @@ export struct MangaReaderPage {
       return;
     }
     this.scheduleFullscreenRestore('app_foreground', 80);
+  }
+
+  private tryInitializeIsolatedReaderFromAbilityStore(): boolean {
+    if (this.pageParams && this.pageParams.readerHostMode === MANGA_READER_ABILITY_HOST_MULTITON) {
+      return true;
+    }
+
+    const windowId = this.resolveHostWindowIdForIsolatedReader();
+    if (windowId < 0) {
+      return false;
+    }
+
+    const payload: MangaReaderAbilityWindowPayload | null =
+      MangaReaderAbilityParamStore.getInstance().resolveWindowPayload(windowId);
+    if (!payload || !payload.params) {
+      return false;
+    }
+
+    const params = this.buildIsolatedReaderParamsFromPayload(payload);
+    this.pageParams = params;
+    logger.info(TAG, `独立阅读器通过窗口绑定解析参数成功: instanceId=${payload.instanceId}, windowId=${windowId}, chapterId=${params.chapterId || ''}`);
+    this.initializeMangaReader(params);
+    return true;
+  }
+
+  private buildIsolatedReaderParamsFromPayload(payload: MangaReaderAbilityWindowPayload): MangaReaderPageParams {
+    const source = payload.params as MangaReaderPageParams;
+    const params: MangaReaderPageParams = {
+      manga: source.manga,
+      mangaId: source.mangaId,
+      sourceId: source.sourceId,
+      sourcePkg: source.sourcePkg,
+      sourceName: source.sourceName,
+      contentType: source.contentType,
+      chapterId: source.chapterId,
+      pageIndex: source.pageIndex,
+      fromPage: source.fromPage,
+      coverComponentId: source.coverComponentId,
+      skipDatabaseLookup: source.skipDatabaseLookup,
+      chapterTitle: source.chapterTitle,
+      readerHostMode: MANGA_READER_ABILITY_HOST_MULTITON,
+      readerInstanceId: payload.instanceId,
+      readerTitle: source.readerTitle
+    };
+    return params;
+  }
+
+  private resolveHostWindowIdForIsolatedReader(): number {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        return -1;
+      }
+      const mainWindow = hostContext.windowStage.getMainWindowSync();
+      const properties = mainWindow.getWindowProperties();
+      return properties.id;
+    } catch (error) {
+      logger.warn(TAG, `独立阅读器获取窗口ID失败: ${String(error)}`);
+      return -1;
+    }
   }
 
   onPageHide() {
@@ -2282,7 +2363,11 @@ export struct MangaReaderPage {
     if (!effectiveParams) {
       return true;
     }
-    return !this.isRemoteProviderContentType(effectiveParams.contentType);
+    if (this.isRemoteProviderContentType(effectiveParams.contentType)) {
+      const coverComponentId = effectiveParams.coverComponentId ? effectiveParams.coverComponentId.trim() : '';
+      return coverComponentId.length > 0;
+    }
+    return true;
   }
 
   private resolveRemoteProviderReadingSettingsScopeKey(mangaId: string): string | null {
@@ -7332,9 +7417,30 @@ export struct MangaReaderPage {
   /**
    * 返回上一页
     */
+  private isHostedByIsolatedReaderAbility(): boolean {
+    return this.pageParams?.readerHostMode === MANGA_READER_ABILITY_HOST_MULTITON;
+  }
+
+  private async terminateIsolatedReaderAbility(reason: string): Promise<void> {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, `独立阅读器退出失败，回退页面栈: reason=${reason}`);
+        this.pathStack.pop();
+        return;
+      }
+      logger.info(TAG, `独立阅读器实例退出: reason=${reason}, instanceId=${this.pageParams?.readerInstanceId || ''}`);
+      await hostContext.terminateSelf();
+    } catch (error) {
+      logger.error(TAG, `独立阅读器实例退出异常: ${String(error)}`);
+      this.pathStack.pop();
+    }
+  }
+
   private async goBack(): Promise<void> {
     try {
       const shouldUseTransition = this.shouldUseReaderTransition(this.pageParams);
+      const isIsolatedReaderAbility = this.isHostedByIsolatedReaderAbility();
       // Build cover component id used by close animation.
       const mangaId = this.readerState.currentManga?.id || '';
       const coverComponentId = this.pageParams?.coverComponentId || (mangaId ? `cover_manga_lib_${mangaId}` : '');
@@ -7351,7 +7457,21 @@ export struct MangaReaderPage {
 
       if (!shouldUseTransition) {
         logger.info(TAG, '远程图源阅读器退出时跳过书籍开合转场');
-        this.pathStack.pop();
+        if (isIsolatedReaderAbility) {
+          await this.terminateIsolatedReaderAbility('go_back_without_transition');
+        } else {
+          this.pathStack.pop();
+        }
+        return;
+      }
+
+      if (isIsolatedReaderAbility) {
+        logger.info(TAG, `独立阅读器退出不挂载关闭动画层，封面组件ID: ${coverComponentId}`);
+        this.isCloseTransitionNavigating = true;
+        if (shouldUseTransition) {
+          cancelTransition();
+        }
+        await this.terminateIsolatedReaderAbility('go_back_isolated_reader');
         return;
       }
 
@@ -7371,7 +7491,11 @@ export struct MangaReaderPage {
       if (this.shouldUseReaderTransition(this.pageParams)) {
         cancelTransition();
       }
-      this.pathStack.pop();
+      if (this.isHostedByIsolatedReaderAbility()) {
+        await this.terminateIsolatedReaderAbility('go_back_error');
+      } else {
+        this.pathStack.pop();
+      }
     }
   }
 
