@@ -154,11 +154,14 @@ import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelMo
 
 // 阅读器参数导入
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
+import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
 import { MangaSettingsPageParams } from './MangaSettingsPage';
 import { EBookSettingsPageParams } from './EBookDetailPage';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
+import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
+import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
@@ -3750,7 +3753,8 @@ export struct UnifiedDetailPage {
     if (this.isCurrentNovelAudioSource()) {
       return this.hasReadingRecord() ? '继续听书' : '开始听书';
     }
-    if (this.isOnlineEBookDownloadOnlyContent()) {
+    // 在线电子书显示"下载后阅读"
+    if (this.content && this.content.contentType === UnifiedContentType.EBOOK && !this.content.isLocal) {
       return this.isOnlineEBookRecoveryInProgress ? '站点验证中...' : '下载后阅读';
     }
     return this.hasReadingRecord() ? '继续阅读' : '开始阅读';
@@ -3781,14 +3785,9 @@ export struct UnifiedDetailPage {
 
     // 电子书特殊处理
     if (this.content.contentType === UnifiedContentType.EBOOK) {
-      // 在线电子书：如果有在线阅读器URL，跳转到ZLibraryReaderPage
-      if (this.onlineReaderUrl) {
-        logger.info(TAG, '使用在线阅读器');
-        this.openOnlineEBookReader();
-        return;
-      }
-      if (this.isOnlineEBookDownloadOnlyContent()) {
-        logger.info(TAG, '在线电子书无阅读器URL，转到下载详情页');
+      // 在线电子书：直接跳转到下载详情页（不依赖在线阅读器）
+      if (!this.content.isLocal) {
+        logger.info(TAG, '在线电子书，转到下载详情页');
         this.isOpeningOnlineEBookDownloadDetail = true;
         this.refreshProgress = '正在准备下载信息...';
         this.isChaptersLoading = true;
@@ -3865,6 +3864,7 @@ export struct UnifiedDetailPage {
     const readerParams: MangaReaderPageParams = {
       fromPage: 'UnifiedDetailPage'
     } as MangaReaderPageParams;
+    readerParams.readerTitle = this.content.title;
     
     // 判断是否为在线漫画
     const hasSourceId = this.content.sourceId && Number(this.content.sourceId) > 0;
@@ -3921,7 +3921,7 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '漫画翻开过渡动画触发导航');
-        this.navigateWithManagedWindowTransition('MangaReaderPage', readerParams);
+        openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG, false);
       },
       undefined,
       {
@@ -3941,7 +3941,8 @@ export struct UnifiedDetailPage {
 
     // EBookReaderParams只需要bookId，章节索引通过阅读进度恢复
     const params: EBookReaderParams = {
-      bookId: this.content.id
+      bookId: this.content.id,
+      readerTitle: this.content.title
     };
     if (autoStartReadAloud) {
       params.autoStartReadAloud = true;
@@ -3988,12 +3989,17 @@ export struct UnifiedDetailPage {
             txtNovelReaderParams.autoStartReadAloud = true;
             txtNovelReaderParams.autoOpenReadAloudPlayer = true;
           }
-          this.navigateWithManagedWindowTransition('NovelReaderPage', txtNovelReaderParams);
+          txtNovelReaderParams.readerTitle = this.content?.title || '';
+          if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, txtNovelReaderParams, TAG, false)) {
+            this.navigateWithManagedWindowTransition('NovelReaderPage', txtNovelReaderParams);
+          }
         } else {
-          if (ebookRouteName === 'EBookReaderPage') {
-            openEBookReaderRouterPage(this.getUIContext(), params, TAG);
-          } else {
-            this.navigateWithManagedWindowTransition(ebookRouteName, params);
+          if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG, false)) {
+            if (ebookRouteName === 'EBookReaderPage') {
+              openEBookReaderRouterPage(this.getUIContext(), params, TAG);
+            } else {
+              this.navigateWithManagedWindowTransition(ebookRouteName, params);
+            }
           }
         }
       },
@@ -4056,7 +4062,10 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '小说翻开过渡动画触发导航');
-        this.navigateWithManagedWindowTransition('NovelReaderPage', params);
+        params.readerTitle = this.content?.title || '';
+        if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG, false)) {
+          this.navigateWithManagedWindowTransition('NovelReaderPage', params);
+        }
       },
       undefined,
       {
@@ -4153,7 +4162,10 @@ export struct UnifiedDetailPage {
     }
     params.autoStartReadAloud = true;
     params.autoOpenReadAloudPlayer = true;
-    this.navigateWithManagedWindowTransition('NovelReaderPage', params);
+    params.readerTitle = this.content.title;
+    if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
+      this.navigateWithManagedWindowTransition('NovelReaderPage', params);
+    }
   }
 
   private openLocalTxtEBookReadAloudPage(chapterIndex: number): void {
@@ -4175,7 +4187,10 @@ export struct UnifiedDetailPage {
     }
     params.autoStartReadAloud = true;
     params.autoOpenReadAloudPlayer = true;
-    this.navigateWithManagedWindowTransition('NovelReaderPage', params);
+    params.readerTitle = this.content.title;
+    if (!openNovelReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG)) {
+      this.navigateWithManagedWindowTransition('NovelReaderPage', params);
+    }
   }
 
   /**

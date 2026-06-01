@@ -64,6 +64,7 @@ import {
   shouldUseEBookImageReaderRoute
 } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
+import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 
 const TAG = 'EBookImageReaderPage';
 
@@ -93,6 +94,8 @@ struct EBookImageReaderPage {
   @State chapterListChapters: MangaChapter[] = [];
   private imageEntries: EBookImagePageEntry[] = [];
   private routerBackOnClose: boolean = false;
+  private readerHostMode: string = '';
+  private readerInstanceId: string = '';
 
   @State readingSettings: MangaReadingSettings = DEFAULT_READING_SETTINGS;
   @State currentPageIndex: number = 0;
@@ -355,6 +358,8 @@ struct EBookImageReaderPage {
   private async initializeWithParams(params: EBookReaderParams): Promise<void> {
     this.sourceCoverComponentId = params.coverComponentId || '';
     this.routerBackOnClose = params.routerBackOnClose === true;
+    this.readerHostMode = params.readerHostMode || '';
+    this.readerInstanceId = params.readerInstanceId || '';
     await this.loadEBook(params.bookId);
   }
 
@@ -1938,17 +1943,51 @@ struct EBookImageReaderPage {
     try {
       const ebookId = this.ebook?.id || '';
       const coverComponentId = this.sourceCoverComponentId || (ebookId ? `cover_ebook_lib_${ebookId}` : '');
+      if (this.isHostedByIsolatedReaderAbility()) {
+        logger.info(TAG, `独立图片电子书阅读器退出不挂载关闭动画层，封面组件ID: ${coverComponentId}`);
+        cancelTransition();
+        await this.terminateIsolatedReaderAbility('go_back_isolated_reader');
+        return;
+      }
       await startBookCloseTransitionWithComponentId('ebook_image_reader_root', coverComponentId);
       this.closeReaderRoute();
     } catch (error) {
       logger.error(TAG, `关闭图片阅读器失败: ${String(error)}`);
       this.isCloseTransitionNavigating = false;
       cancelTransition();
-      this.closeReaderRoute();
+      if (this.isHostedByIsolatedReaderAbility()) {
+        await this.terminateIsolatedReaderAbility('go_back_error');
+      } else {
+        this.closeReaderRoute();
+      }
+    }
+  }
+
+  private isHostedByIsolatedReaderAbility(): boolean {
+    return this.readerHostMode === READER_ABILITY_HOST_MULTITON;
+  }
+
+  private async terminateIsolatedReaderAbility(reason: string): Promise<void> {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, `独立图片电子书阅读器退出失败，回退页面栈: reason=${reason}`);
+        this.pathStack.pop();
+        return;
+      }
+      logger.info(TAG, `独立图片电子书阅读器实例退出: reason=${reason}, instanceId=${this.readerInstanceId}`);
+      await hostContext.terminateSelf();
+    } catch (error) {
+      logger.error(TAG, `独立图片电子书阅读器实例退出异常: ${String(error)}`);
+      this.pathStack.pop();
     }
   }
 
   private closeReaderRoute(): void {
+    if (this.isHostedByIsolatedReaderAbility()) {
+      void this.terminateIsolatedReaderAbility('close_reader_route');
+      return;
+    }
     if (this.routerBackOnClose) {
       const router = this.getUIContext()?.getRouter();
       if (router) {
@@ -3217,6 +3256,7 @@ struct EBookImageReaderPage {
       .height('100%')
       .backgroundColor(Color.Black)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
       .focusable(true)
       .defaultFocus(true)
       .id('ebook_image_reader_root')
@@ -3243,6 +3283,7 @@ struct EBookImageReaderPage {
       this.pathStack = context.pathStack;
       this.uiContext = this.getUIContext();
       PageWindowCoordinator.applyPagePolicy('EBookImageReaderPage', this.uiContext);
+      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
       WindowManager.reapplyCurrentDisplayMode(24);
       const params = context.pathInfo.param as EBookReaderParams;
       if (params) {
@@ -3252,6 +3293,7 @@ struct EBookImageReaderPage {
         this.isLoading = false;
       }
     })
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
   }
 }
 

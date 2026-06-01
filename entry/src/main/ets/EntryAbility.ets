@@ -34,6 +34,7 @@ import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
 import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
 import { getHoldingAwarenessManager } from './Framework/Managers/HoldingAwarenessManager';
 import { initializeReaderKitRuntimeGate } from './Framework/Initialization/ReaderKitFeatureGate';
+import { ReaderHostWindowRestoreCoordinator } from './Framework/Reader/ReaderHostWindowRestoreCoordinator';
 import {
   NETWORK_FOLDER_AVIF_EXTENSIONS,
   NETWORK_FOLDER_BACKUP_EXTENSIONS,
@@ -1102,8 +1103,10 @@ export default class EntryAbility extends UIAbility {
       logger.error('EntryAbility', `前台检测系统主题失败: ${errorMessage}`);
     }
 
-    WindowManager.reapplyCurrentDisplayMode();
-    WindowManager.reapplyCurrentDisplayMode(220);
+    if (!ReaderHostWindowRestoreCoordinator.applyPendingRestore('EntryAbility.onForeground')) {
+      WindowManager.reapplyCurrentDisplayMode();
+      WindowManager.reapplyCurrentDisplayMode(220);
+    }
   }
 
   /**

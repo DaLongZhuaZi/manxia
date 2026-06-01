@@ -1,0 +1,68 @@
+import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
+import { logger } from './Utils/Logger';
+import { MangaReaderPageParams } from './pages/MangaReaderPage';
+import {
+  MANGA_READER_ABILITY_INSTANCE_ID_KEY,
+  MANGA_READER_ABILITY_PAGE,
+  MANGA_READER_ABILITY_PARAMS_KEY
+} from './Framework/Reader/MangaReaderAbilityConstants';
+import { MangaReaderAbilityParamStore } from './Framework/Reader/MangaReaderAbilityParamStore';
+
+const TAG: string = 'MangaReaderAbility';
+
+class MangaReaderAbilityLocalState {
+  public mangaReaderAbilityParams: MangaReaderPageParams | null = null;
+  public mangaReaderAbilityInstanceId: string = '';
+}
+
+export default class MangaReaderAbility extends UIAbility {
+  private instanceId: string = '';
+
+  onCreate(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
+    this.instanceId = this.resolveInstanceId(want);
+    logger.lifecycle(TAG, 'onCreate', `独立漫画阅读器实例创建: instanceId=${this.instanceId}`);
+  }
+
+  onWindowStageCreate(windowStage: window.WindowStage): void {
+    const storageState = new MangaReaderAbilityLocalState();
+    storageState.mangaReaderAbilityInstanceId = this.instanceId;
+    storageState.mangaReaderAbilityParams = MangaReaderAbilityParamStore.getInstance().getParams(this.instanceId);
+
+    if (!storageState.mangaReaderAbilityParams) {
+      logger.error(TAG, `独立漫画阅读器参数缺失: instanceId=${this.instanceId}`);
+    }
+
+    const localStorage = new LocalStorage(storageState);
+    windowStage.loadContent(MANGA_READER_ABILITY_PAGE, localStorage, (err) => {
+      if (err && err.code !== 0) {
+        logger.error(TAG, `加载独立漫画阅读器页面失败: ${JSON.stringify(err)}`);
+        return;
+      }
+      logger.info(TAG, `独立漫画阅读器页面加载成功: instanceId=${this.instanceId}, key=${MANGA_READER_ABILITY_PARAMS_KEY}`);
+    });
+  }
+
+  onWindowStageDestroy(): void {
+    MangaReaderAbilityParamStore.getInstance().remove(this.instanceId);
+    logger.lifecycle(TAG, 'onWindowStageDestroy', `独立漫画阅读器实例销毁: instanceId=${this.instanceId}`);
+  }
+
+  onDestroy(): void {
+    MangaReaderAbilityParamStore.getInstance().remove(this.instanceId);
+    logger.lifecycle(TAG, 'onDestroy', `独立漫画阅读器实例结束: instanceId=${this.instanceId}`);
+  }
+
+  private resolveInstanceId(want: Want): string {
+    const params = want.parameters;
+    if (!params) {
+      return '';
+    }
+    const keys: string[] = Object.keys(params);
+    if (!keys.includes(MANGA_READER_ABILITY_INSTANCE_ID_KEY)) {
+      return '';
+    }
+    const rawValue = params[MANGA_READER_ABILITY_INSTANCE_ID_KEY];
+    return rawValue ? String(rawValue) : '';
+  }
+}

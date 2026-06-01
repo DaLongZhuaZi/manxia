@@ -37,7 +37,9 @@
       "Bash(keytool -printcert -file \"C:\\\\Users\\\\13359\\\\.ohos\\\\config\\\\default_manxia_0Z_DzguaoD7jhcm8Jy7aKqDK2oLkOT3lCc-oiaKnMbE=.cer\")",
       "Bash(keytool -list -v -keystore \"C:\\\\Users\\\\13359\\\\.ohos\\\\config\\\\default_manxia_0Z_DzguaoD7jhcm8Jy7aKqDK2oLkOT3lCc-oiaKnMbE=.p12\" -storetype PKCS12 -storepass \"0000001B2AA9D36204EB44F8B0B0D861681543166A64C312627F53F38DFA06EE0237F11DB591E89095CC1D\")",
       "Bash(keytool -printcert -file \"F:\\\\DevEcoStudioKey\\\\manxia\\\\漫匣.cer\")",
-      "WebFetch(domain:manxia.top)"
+      "WebFetch(domain:manxia.top)",
+      "Bash(where python *)",
+      "Bash(node *)"
     ]
   }
 }

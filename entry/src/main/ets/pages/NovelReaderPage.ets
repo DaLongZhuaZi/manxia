@@ -79,6 +79,7 @@ import {
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 
 const TAG = 'NovelReaderPage';
 const NOVEL_SETTINGS_STORE = 'novel_settings';
@@ -149,6 +150,8 @@ export struct NovelReaderPage {
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   private isPageVisible: boolean = false;
   private sourceCoverComponentId: string = '';
+  private readerHostMode: string = '';
+  private readerInstanceId: string = '';
   private hasNotifiedTransitionReaderReady: boolean = false;
   private isCloseTransitionNavigating: boolean = false;
 
@@ -657,6 +660,26 @@ export struct NovelReaderPage {
   /**
   * 关闭阅读器（带动画）
   */
+  private isHostedByIsolatedReaderAbility(): boolean {
+    return this.readerHostMode === READER_ABILITY_HOST_MULTITON;
+  }
+
+  private async terminateIsolatedReaderAbility(reason: string): Promise<void> {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, `独立小说阅读器退出失败，回退页面栈: reason=${reason}`);
+        this.pathStack.pop();
+        return;
+      }
+      logger.info(TAG, `独立小说阅读器实例退出: reason=${reason}, instanceId=${this.readerInstanceId}`);
+      await hostContext.terminateSelf();
+    } catch (error) {
+      logger.error(TAG, `独立小说阅读器实例退出异常: ${String(error)}`);
+      this.pathStack.pop();
+    }
+  }
+
   private async closeReader(): Promise<void> {
     if (this.pendingSettingsSnapshot !== null || this.settingsSavePromise !== null) {
       try {
@@ -673,6 +696,14 @@ export struct NovelReaderPage {
     const coverComponentId = this.sourceCoverComponentId || `novel_cover_${this.bookId}`;
 
     try {
+      if (this.isHostedByIsolatedReaderAbility()) {
+        logger.info(TAG, `独立小说阅读器退出不挂载关闭动画层，封面组件ID: ${coverComponentId}`);
+        this.isCloseTransitionNavigating = true;
+        cancelTransition();
+        await this.terminateIsolatedReaderAbility('close_reader_isolated_reader');
+        return;
+      }
+
       logger.info(TAG, `触发关闭过渡动画，封面组件ID: ${coverComponentId}`);
       await startBookCloseTransitionWithComponentId(
         'novel_reader_root',
@@ -686,7 +717,11 @@ export struct NovelReaderPage {
       logger.error(TAG, `关闭动画失败: ${String(error)}`);
       this.isCloseTransitionNavigating = false;
       cancelTransition();
-      this.pathStack.pop();
+      if (this.isHostedByIsolatedReaderAbility()) {
+        await this.terminateIsolatedReaderAbility('close_reader_error');
+      } else {
+        this.pathStack.pop();
+      }
     }
   }
 
@@ -3848,6 +3883,8 @@ export struct NovelReaderPage {
       const param = context.pathInfo.param as NovelReaderPageParams | null;
       if (param) {
         this.sourceCoverComponentId = param.coverComponentId || '';
+        this.readerHostMode = param.readerHostMode || '';
+        this.readerInstanceId = param.readerInstanceId || '';
         this.sourceId = param.sourceId;
         this.localEbook = null;
         this.localEbookId = param.localEbookId

@@ -6,6 +6,7 @@
   */
 
 import { logger } from '../Utils/Logger';
+import { common } from '@kit.AbilityKit';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
@@ -32,6 +33,7 @@ import { ReaderKitViewerComponent, ReaderKitViewerController } from '../Framewor
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
+import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
@@ -131,6 +133,8 @@ struct EBookReaderPage {
   private lifecycle = new PageLifecycleManager('EBookReaderPage', { enableDebug: true });
   private routerBackOnClose: boolean = false;
   private forceReaderKit: boolean = false;
+  private readerHostMode: string = '';
+  private readerInstanceId: string = '';
 
   // 电子书数据
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -903,6 +907,10 @@ struct EBookReaderPage {
         this.previousDisplayMode = currentMode;
       }
       WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, this.uiContext);
+      if (this.isHostedByIsolatedReaderAbility()) {
+        PageWindowCoordinator.reapplyPagePolicy('EBookReaderPage', this.uiContext);
+        WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
+      }
       logger.info(TAG, '已进入全沉浸模式');
     } catch (error) {
       logger.error(TAG, `设置全屏模式失败: ${String(error)}`);
@@ -965,7 +973,10 @@ struct EBookReaderPage {
     const params: EBookReaderParams = {
       bookId: ebook.id,
       coverComponentId: this.sourceCoverComponentId,
-      routerBackOnClose: this.routerBackOnClose
+      routerBackOnClose: this.routerBackOnClose,
+      readerHostMode: this.readerHostMode,
+      readerInstanceId: this.readerInstanceId,
+      readerTitle: ebook.metadata.title
     };
     logger.info(
       TAG,
@@ -1217,6 +1228,9 @@ struct EBookReaderPage {
     this.fullscreenRestoreTimer = setTimeout(() => {
       this.fullscreenRestoreTimer = -1;
       logger.debug(TAG, `重新应用沉浸模式: 原因=${reason}`);
+      if (this.isHostedByIsolatedReaderAbility()) {
+        PageWindowCoordinator.reapplyPagePolicy('EBookReaderPage', this.uiContext ?? undefined);
+      }
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext ?? undefined);
       WindowManager.reapplyCurrentDisplayMode(24);
       if (this.showTopToolbar || this.showBottomToolbar) {
@@ -2780,6 +2794,26 @@ struct EBookReaderPage {
   /**
   * 返回上一页
   */
+  private isHostedByIsolatedReaderAbility(): boolean {
+    return this.readerHostMode === READER_ABILITY_HOST_MULTITON;
+  }
+
+  private async terminateIsolatedReaderAbility(reason: string): Promise<void> {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, `独立电子书阅读器退出失败，回退页面栈: reason=${reason}`);
+        this.pathStack.pop();
+        return;
+      }
+      logger.info(TAG, `独立电子书阅读器实例退出: reason=${reason}, instanceId=${this.readerInstanceId}`);
+      await hostContext.terminateSelf();
+    } catch (error) {
+      logger.error(TAG, `独立电子书阅读器实例退出异常: ${String(error)}`);
+      this.pathStack.pop();
+    }
+  }
+
   private async goBack(): Promise<void> {
     try {
       // Build cover component id used by close animation.
@@ -2792,6 +2826,14 @@ struct EBookReaderPage {
 
       // Save progress first, then trigger close transition.
       this.saveReadingProgress();
+
+      if (this.isHostedByIsolatedReaderAbility()) {
+        logger.info(TAG, `独立电子书阅读器退出不挂载关闭动画层，封面组件ID: ${coverComponentId}`);
+        this.isCloseTransitionNavigating = true;
+        cancelTransition();
+        await this.terminateIsolatedReaderAbility('go_back_isolated_reader');
+        return;
+      }
 
       logger.info(TAG, `触发关闭过渡动画（带截图），封面组件ID: ${coverComponentId}`);
       await startBookCloseTransitionWithComponentId(
@@ -2807,11 +2849,19 @@ struct EBookReaderPage {
       this.isCloseTransitionNavigating = false;
       cancelTransition();
       this.saveReadingProgress();
-      this.closeReaderRoute();
+      if (this.isHostedByIsolatedReaderAbility()) {
+        await this.terminateIsolatedReaderAbility('go_back_error');
+      } else {
+        this.closeReaderRoute();
+      }
     }
   }
 
   private closeReaderRoute(): void {
+    if (this.isHostedByIsolatedReaderAbility()) {
+      void this.terminateIsolatedReaderAbility('close_reader_route');
+      return;
+    }
     if (this.routerBackOnClose) {
       const router = this.getUIContext()?.getRouter();
       if (router) {
@@ -2981,6 +3031,7 @@ struct EBookReaderPage {
       .width('100%')
       .height('100%')
       .id('ebook_reader_root')
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
       .focusable(true)
       .defaultFocus(true)
       .onAreaChange((oldValue: Area, newValue: Area) => {
@@ -3022,12 +3073,23 @@ struct EBookReaderPage {
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'EBookReaderPage onReady');
       this.pathStack = context.pathStack;
+      this.uiContext = this.getUIContext();
       
       const params = context.pathInfo.param as EBookReaderParams | null;
       if (params && params.bookId) {
         this.sourceCoverComponentId = params.coverComponentId || '';
         this.routerBackOnClose = params.routerBackOnClose === true;
         this.forceReaderKit = params.forceReaderKit === true;
+        this.readerHostMode = params.readerHostMode || '';
+        this.readerInstanceId = params.readerInstanceId || '';
+        if (this.isHostedByIsolatedReaderAbility()) {
+          PageWindowCoordinator.reapplyPagePolicy('EBookReaderPage', this.uiContext);
+          WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
+          setTimeout((): void => {
+            PageWindowCoordinator.reapplyPagePolicy('EBookReaderPage', this.uiContext ?? undefined);
+            WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext ?? undefined);
+          }, 96);
+        }
         this.loadEBook(params.bookId);
       } else {
         this.errorMessage = '电子书 ID 参数无效';
@@ -3039,6 +3101,7 @@ struct EBookReaderPage {
     })
     .hideTitleBar(true)
     .backgroundColor(Color.Transparent)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed(() => {
       // 返回键处理 - 调用 goBack() 触发关闭过渡动画
       this.goBack();

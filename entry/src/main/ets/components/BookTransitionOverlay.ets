@@ -39,6 +39,11 @@ interface TransitionCoordinateOffset {
   useScreenOffset: boolean;
 }
 
+interface TransitionStateListener {
+  id: number;
+  callback: (state: GlobalTransitionState) => void;
+}
+
 /**
  * 过渡动画请求参数
  */
@@ -103,7 +108,8 @@ export class TransitionController {
   private static readonly EBOOK_TRANSITION_BACKGROUND_DARK: string = '#121214';
   
   // 状态变化回调
-  private onStateChange: ((state: GlobalTransitionState) => void) | null = null;
+  private stateListeners: TransitionStateListener[] = [];
+  private nextStateListenerId: number = 0;
   private onOpenComplete: (() => void) | null = null;
   private onCloseComplete: (() => void) | null = null;
   private onCancelCallback: (() => void) | null = null;
@@ -147,8 +153,25 @@ export class TransitionController {
   /**
    * 设置状态变化回调（由覆盖层组件调用）
    */
-  public setStateChangeCallback(callback: (state: GlobalTransitionState) => void): void {
-    this.onStateChange = callback;
+  public setStateChangeCallback(callback: (state: GlobalTransitionState) => void): number {
+    this.nextStateListenerId = this.nextStateListenerId + 1;
+    const listener: TransitionStateListener = {
+      id: this.nextStateListenerId,
+      callback: callback
+    };
+    this.stateListeners.push(listener);
+    return listener.id;
+  }
+
+  public removeStateChangeCallback(listenerId: number): void {
+    if (listenerId <= 0) {
+      return;
+    }
+    for (let i = this.stateListeners.length - 1; i >= 0; i--) {
+      if (this.stateListeners[i].id === listenerId) {
+        this.stateListeners.splice(i, 1);
+      }
+    }
   }
   
   /**
@@ -677,8 +700,8 @@ export class TransitionController {
    * 通知状态变化
    */
   private notifyStateChange(): void {
-    if (this.onStateChange) {
-      this.onStateChange(this.currentState);
+    for (let i = 0; i < this.stateListeners.length; i++) {
+      this.stateListeners[i].callback(this.currentState);
     }
   }
 
@@ -730,18 +753,25 @@ export struct BookTransitionOverlay {
   
   // 控制器引用
   private controller: TransitionController = TransitionController.getInstance();
+  private stateListenerId: number = -1;
   
   aboutToAppear(): void {
     logger.info(TAG, '覆盖层组件初始化');
     
     // 注册状态变化回调
-    this.controller.setStateChangeCallback((state: GlobalTransitionState) => {
+    this.stateListenerId = this.controller.setStateChangeCallback((state: GlobalTransitionState) => {
       this.updateState(state);
     });
     
     // 同步初始状态
     const initialState = this.controller.getState();
     this.updateState(initialState);
+  }
+
+  aboutToDisappear(): void {
+    this.controller.removeStateChangeCallback(this.stateListenerId);
+    this.stateListenerId = -1;
+    this.clearSafetyTimeout();
   }
   
   
@@ -939,6 +969,13 @@ export function setReaderLoadingProgress(progress: number): void {
  */
 export function cancelTransition(): void {
   TransitionController.getInstance().cancelTransition();
+}
+
+/**
+ * 便捷函数：强制清理过渡状态
+ */
+export function resetBookTransitionState(): void {
+  TransitionController.getInstance().forceReset();
 }
 
 /**

@@ -16,6 +16,7 @@ import { KomgaImage } from '../components/KomgaImage';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { MangaReaderContentType, MangaReaderPageParams } from './MangaReaderPage';
+import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
 
 
 const TAG = 'KomgaMangaDetailPage';
@@ -719,9 +720,10 @@ export struct KomgaMangaDetailPage {
       chapterId: RemoteLibraryMangaBridge.buildKomgaChapterId(instanceId, chapter.id),
       pageIndex: pageIndex >= 0 ? pageIndex : 0,
       fromPage: 'KomgaMangaDetailPage',
-      contentType: MangaReaderContentType.Komga
+      contentType: MangaReaderContentType.Komga,
+      readerTitle: this.detail?.title || ''
     };
-    this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+    openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG);
   }
   private continueReading(): void {
     const chapters: ChapterInfo[] = this.getSortedChapters();

@@ -230,6 +230,45 @@
             "resource": "$profile:shortcuts_config"
           }
         ]
+      },
+      {
+        "name": "MangaReaderAbility",
+        "srcEntry": "./ets/MangaReaderAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:icon_startwindow",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "EBookReaderAbility",
+        "srcEntry": "./ets/EBookReaderAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:icon_startwindow",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "NovelReaderAbility",
+        "srcEntry": "./ets/NovelReaderAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:icon_startwindow",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
       }
     ],
     "extensionAbilities": [
@@ -355,7 +394,7 @@
         "name": "ohos.permission.INTERNET",
         "reason": "$string:get_internet_reason",
         "usedScene": {
-          "abilities": ["EntryAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
           "when": "always"
         }
       },
@@ -363,7 +402,7 @@
         "name": "ohos.permission.GET_NETWORK_INFO",
         "reason": "$string:get_network_info_reason",
         "usedScene": {
-          "abilities": ["EntryAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
           "when": "inuse"
         }
       },
@@ -371,7 +410,14 @@
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
         "reason": "$string:background_running_reason",
         "usedScene": {
-          "abilities": ["EntryAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.PRIVACY_WINDOW",
+        "usedScene": {
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
           "when": "always"
         }
       },
@@ -382,7 +428,7 @@
         "name": "ohos.permission.VIBRATE",
         "reason": "$string:get_vibrate_reason",
         "usedScene": {
-          "abilities": ["EntryAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
           "when": "inuse"
         }
       },

@@ -84,6 +84,7 @@ export class WindowManager {
   private static windowStageRef: window.WindowStage | null = null;
   private static windowStageEventCallback: ((event: window.WindowStageEventType) => void) | null = null;
   private static themeChangeCallback: ((theme: ThemeType) => void) | null = null;
+  private static isBackgroundPrivacyModeEnabled: boolean = false;
   private static readonly TRANSITION_OVERLAY_VISIBLE_KEY = 'window_mode_transition_overlay_visible';
   private static readonly TRANSITION_OVERLAY_OPACITY_KEY = 'window_mode_transition_overlay_opacity';
   private static readonly TRANSITION_OVERLAY_USE_BLUR_KEY = 'window_mode_transition_overlay_use_blur';
@@ -171,6 +172,7 @@ export class WindowManager {
     }
 
     try {
+      WindowManager.applyBackgroundPrivacyMode(false, '解除窗口状态监听');
       WindowManager.windowStageRef.off('windowStageEvent', WindowManager.windowStageEventCallback);
       logger.info(WindowManager.TAG, '窗口状态事件监听已解除');
     } catch (error) {
@@ -187,11 +189,43 @@ export class WindowManager {
   static syncBackgroundState(isInBackground: boolean, source: string): void {
     const current = AppStorage.get<boolean>(WindowManager.BACKGROUND_STORAGE_KEY);
     if (current === isInBackground) {
+      WindowManager.applyBackgroundPrivacyMode(isInBackground, source);
       return;
     }
 
     AppStorage.setOrCreate(WindowManager.BACKGROUND_STORAGE_KEY, isInBackground);
+    WindowManager.applyBackgroundPrivacyMode(isInBackground, source);
     logger.info(WindowManager.TAG, `前后台状态已更新: isInBackground=${isInBackground}, source=${source}`);
+  }
+
+  private static shouldEnableBackgroundPrivacyMode(isInBackground: boolean): boolean {
+    if (!isInBackground) {
+      return false;
+    }
+    return AppStorage.get<boolean>('backgroundBlurEnabled') === true;
+  }
+
+  private static applyBackgroundPrivacyMode(isInBackground: boolean, source: string): void {
+    const shouldEnable = WindowManager.shouldEnableBackgroundPrivacyMode(isInBackground);
+    if (WindowManager.isBackgroundPrivacyModeEnabled === shouldEnable) {
+      return;
+    }
+
+    const mainWindow = WindowManager.getMainWindowFromWindowStageRef(`background privacy mode: ${source}`);
+    if (!mainWindow) {
+      if (!shouldEnable) {
+        WindowManager.isBackgroundPrivacyModeEnabled = false;
+      }
+      return;
+    }
+
+    WindowManager.isBackgroundPrivacyModeEnabled = shouldEnable;
+    mainWindow.setWindowPrivacyMode(shouldEnable).then((): void => {
+      logger.info(WindowManager.TAG, `后台隐私窗口模式已更新: enabled=${shouldEnable}, source=${source}`);
+    }).catch((error: BusinessError): void => {
+      logger.warn(WindowManager.TAG, `后台隐私窗口模式更新失败: enabled=${shouldEnable}, source=${source}, reason=${JSON.stringify(error)}`);
+      WindowManager.isBackgroundPrivacyModeEnabled = !shouldEnable;
+    });
   }
 
   private static handleWindowStageEvent(event: window.WindowStageEventType): void {

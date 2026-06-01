@@ -1,0 +1,459 @@
+{
+    "metadata": {
+        "id": "com.manxia.extension.all.zlibrary",
+        "name": "Z-Library",
+        "type": "ebook",
+        "version": "1.0.0",
+        "language": "all",
+        "baseUrl": "https://zh.chris101.ru",
+        "description": "\u9700\u8981\u5f00\u4ee3\u7406\uff08\u4e0d\u5f00\u7684\u8bdd\u975e\u5e38\u6162\uff09\u3002\u5982\u679c\u4e3b\u7ad9\u65e0\u6cd5\u8bbf\u95ee\uff0c\u53ef\u5728\u8bbe\u7f6e\u4e2d\u5207\u6362\u955c\u50cf\u7ad9\u70b9\u3002",
+        "author": "ManXia Team",
+        "nsfw": false,
+        "tags": [
+            "ebook",
+            "library",
+            "pdf",
+            "epub"
+        ],
+        "Internet": true,
+        "notes": "\u9700\u8981\u5f00\u4ee3\u7406\uff08\u4e0d\u5f00\u7684\u8bdd\u975e\u5e38\u6162\uff09\u3002\u5982\u679c\u4e3b\u7ad9\u65e0\u6cd5\u8bbf\u95ee\uff0c\u53ef\u5728\u8bbe\u7f6e\u4e2d\u5207\u6362\u955c\u50cf\u7ad9\u70b9\u3002"
+    },
+    "capabilities": {
+        "urlResolver": true,
+        "pagination": true,
+        "errorRetry": true,
+        "sessionManagement": true
+    },
+    "network": {
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "forceDesktopUA": true,
+        "headers": {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Cache-Control": "max-age=0"
+        },
+        "timeout": 30000,
+        "retryCount": 3,
+        "retryDelay": 2000
+    },
+    "searchConfig": {
+        "types": [
+            {
+                "id": "search",
+                "label": "\u5173\u952e\u8bcd",
+                "placeholder": "\u8f93\u5165\u4e66\u540d\u3001\u4f5c\u8005\u6216ISBN",
+                "description": "\u641c\u7d22\u7535\u5b50\u4e66",
+                "isDefault": true
+            },
+            {
+                "id": "searchByIsbn",
+                "label": "ISBN",
+                "placeholder": "\u8f93\u5165ISBN\u53f7\uff0c\u5982\uff1a9787111544937",
+                "description": "\u901a\u8fc7ISBN\u7cbe\u786e\u67e5\u627e"
+            }
+        ]
+    },
+    "settings": {
+        "mirrorSite": {
+            "type": "select",
+            "name": "\u955c\u50cf\u7ad9\u70b9",
+            "description": "\u9009\u62e9\u8981\u4f7f\u7528\u7684\u955c\u50cf\u7ad9\u70b9\uff0c\u4e3b\u7ad9\u65e0\u6cd5\u8bbf\u95ee\u65f6\u53ef\u5207\u6362",
+            "default": "https://zh.chris101.ru",
+            "options": [
+                {
+                    "value": "https://zh.chris101.ru",
+                    "label": "\u4e3b\u7ad9 (chris101.ru)"
+                },
+                {
+                    "value": "https://zh.z-lib.gs",
+                    "label": "\u955c\u50cf1 (z-lib.gs)"
+                },
+                {
+                    "value": "https://zh.zlibrary-global.se",
+                    "label": "\u955c\u50cf2 (zlibrary-global.se)"
+                },
+                {
+                    "value": "https://zh.z-lib.fm",
+                    "label": "\u955c\u50cf3 (z-lib.fm)"
+                },
+                {
+                    "value": "https://singlelogin.re",
+                    "label": "SingleLogin\u5165\u53e3"
+                }
+            ]
+        },
+        "preferredFormat": {
+            "type": "select",
+            "name": "\u9996\u9009\u683c\u5f0f",
+            "description": "\u4e0b\u8f7d\u65f6\u4f18\u5148\u9009\u62e9\u7684\u7535\u5b50\u4e66\u683c\u5f0f",
+            "default": "epub",
+            "options": [
+                {
+                    "value": "epub",
+                    "label": "EPUB"
+                },
+                {
+                    "value": "pdf",
+                    "label": "PDF"
+                },
+                {
+                    "value": "mobi",
+                    "label": "MOBI"
+                },
+                {
+                    "value": "azw3",
+                    "label": "AZW3"
+                }
+            ]
+        },
+        "preferredLanguage": {
+            "type": "select",
+            "name": "\u9996\u9009\u8bed\u8a00",
+            "description": "\u641c\u7d22\u7ed3\u679c\u4f18\u5148\u663e\u793a\u7684\u8bed\u8a00",
+            "default": "chinese",
+            "options": [
+                {
+                    "value": "chinese",
+                    "label": "\u4e2d\u6587"
+                },
+                {
+                    "value": "english",
+                    "label": "\u82f1\u6587"
+                },
+                {
+                    "value": "japanese",
+                    "label": "\u65e5\u6587"
+                },
+                {
+                    "value": "all",
+                    "label": "\u5168\u90e8\u8bed\u8a00"
+                }
+            ]
+        }
+    },
+    "workflows": {
+        "initialize": {
+            "description": "\u521d\u59cb\u5316\u8bbf\u95eeZ-Library",
+            "actions": [
+                {
+                    "type": "navigate",
+                    "url": "https://zh.chris101.ru",
+                    "timeout": 30000,
+                    "waitAfterLoad": 1000
+                },
+                {
+                    "type": "condition",
+                    "selector": ".cookie-notice, .gdpr-notice, #cookie-consent",
+                    "exists": true,
+                    "then": [
+                        {
+                            "type": "click",
+                            "selector": ".accept-cookies, .accept-all, #accept-cookies",
+                            "optional": true,
+                            "waitAfter": 1000
+                        }
+                    ]
+                }
+            ]
+        },
+        "popular": {
+            "description": "\u83b7\u53d6\u70ed\u95e8\u7535\u5b50\u4e66",
+            "actions": [
+                {
+                    "type": "navigate",
+                    "url": "https://zh.chris101.ru",
+                    "timeout": 30000
+                },
+                {
+                    "type": "wait",
+                    "condition": "time",
+                    "duration": 5000,
+                    "description": "\u7b49\u5f85\u9875\u9762\u5b8c\u5168\u52a0\u8f7d"
+                },
+                {
+                    "type": "script",
+                    "code": "(() => { const results = []; const items = document.querySelectorAll('.masonry-endless .item'); items.forEach((item) => { const link = item.querySelector('a'); const cover = item.querySelector('z-cover.ready'); if (link && cover) { const fullUrl = link.href || ''; const title = cover.getAttribute('title') || ''; const author = cover.getAttribute('author') || ''; let coverUrl = ''; try { if (cover.shadowRoot) { const shadowImg = cover.shadowRoot.querySelector('img'); if (shadowImg && shadowImg.src) { coverUrl = shadowImg.src; } } } catch(e) { console.log('shadowRoot access error:', e); } results.push({ id: fullUrl, title: title, author: author, cover: coverUrl, url: fullUrl }); } }); return JSON.stringify(results); })();",
+                    "description": "\u63d0\u53d6\u70ed\u95e8\u7535\u5b50\u4e66\u5217\u8868"
+                }
+            ]
+        },
+        "search": {
+            "description": "\u641c\u7d22\u7535\u5b50\u4e66",
+            "actions": [
+                {
+                    "type": "navigate",
+                    "url": "{{baseUrl}}/s/{{query}}?page={{page}}",
+                    "timeout": 30000,
+                    "waitAfterLoad": 15000
+                },
+                {
+                    "type": "wait",
+                    "condition": "element",
+                    "selector": "z-bookcard",
+                    "timeout": 15000
+                },
+                {
+                    "type": "script",
+                    "code": "(() => {\n  const baseUrl = String(((globalThis && globalThis.__baseUrl) || location.origin));\n  const toAbs = (href) => { try { return new URL(String(href || ''), baseUrl).toString(); } catch (_) { return String(href || ''); } };\n  const results = [];\n  const cards = Array.from(document.querySelectorAll('z-bookcard'));\n  for (let i = 0; i < cards.length; i += 1) {\n    const card = cards[i];\n    const href = card.getAttribute('href') || '';\n    const fullUrl = toAbs(href);\n    const titleEl = card.querySelector('[slot=\"title\"]');\n    const authorEl = card.querySelector('[slot=\"author\"]');\n    const img = card.querySelector('img');\n    const title = (titleEl?.textContent || '').trim();\n    const author = (authorEl?.textContent || '').trim();\n    const cover = img?.getAttribute('data-src') || img?.getAttribute('src') || '';\n    const extension = card.getAttribute('extension') || '';\n    const filesize = card.getAttribute('filesize') || '';\n    const year = card.getAttribute('year') || '';\n    results.push({ id: fullUrl, title: title, author: author, cover: cover, url: fullUrl, extension: extension, fileSize: filesize, year: year });\n  }\n  return JSON.stringify(results);\n})();",
+                    "description": "\u63d0\u53d6\u641c\u7d22\u7ed3\u679c"
+                }
+            ]
+        },
+        "getMangaDetail": {
+            "description": "\u83b7\u53d6\u7535\u5b50\u4e66\u8be6\u60c5",
+            "actions": [
+                {
+                    "type": "navigate",
+                    "url": "{{mangaUrl}}",
+                    "timeout": 30000,
+                    "waitAfterLoad": 15000
+                },
+                {
+                    "type": "wait",
+                    "condition": "element",
+                    "selector": "h1",
+                    "timeout": 5000
+                },
+                {
+                    "type": "script",
+                    "code": "(() => { const h1 = document.querySelector('h1'); const authorEl = document.querySelector('a[href*=\"/author/\"]'); const categoryEl = document.querySelector('.property_categories .property_value'); const title = h1?.textContent?.trim() || ''; const author = authorEl?.textContent?.trim() || ''; const categories = categoryEl?.textContent?.trim() || ''; return JSON.stringify({ id: '', title: title, author: author, description: '', cover: '', categories: categories, tags: categories }); })();",
+                    "description": "\u63d0\u53d6\u7535\u5b50\u4e66\u8be6\u60c5"
+                }
+            ]
+        },
+        "getBookDetail": {
+            "description": "\u83b7\u53d6\u7535\u5b50\u4e66\u8be6\u60c5\uff08\u7535\u5b50\u4e66\u4e13\u7528\uff09",
+            "actions": [
+                {
+                    "type": "navigate",
+                    "url": "{{mangaUrl}}",
+                    "timeout": 30000,
+                    "waitAfterLoad": 15000
+                },
+                {
+                    "type": "wait",
+                    "condition": "element",
+                    "selector": "h1",
+                    "timeout": 10000
+                },
+                {
+                    "type": "script",
+                    "code": "(() => {\n  const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim();\n  const h1 = document.querySelector('h1');\n  const authorEl = document.querySelector('a[href*=\"/author/\"]');\n  const categoryEl = document.querySelector('.property_categories .property_value');\n  const yearEl = document.querySelector('.property_year .property_value');\n  const publisherEl = document.querySelector('.property_publisher .property_value');\n  const languageEl = document.querySelector('.property_language .property_value');\n  const isbnEl = document.querySelector('.property_isbn .property_value');\n\n  const title = clean(h1?.textContent);\n  const author = clean(authorEl?.textContent);\n  const categories = clean(categoryEl?.textContent);\n  const year = clean(yearEl?.textContent);\n  const publisher = clean(publisherEl?.textContent);\n  const language = clean(languageEl?.textContent);\n  const isbn = clean(isbnEl?.textContent);\n\n  let cover = '';\n  try {\n    const meta = document.querySelector('meta[property=\"og:image\"], meta[name=\"twitter:image\"]');\n    if (meta) cover = meta.getAttribute('content') || '';\n  } catch (_) {}\n  if (!cover) {\n    const zCover = document.querySelector('z-cover');\n    if (zCover && zCover.shadowRoot) {\n      const img = zCover.shadowRoot.querySelector('img');\n      if (img) cover = img.getAttribute('src') || img.getAttribute('data-src') || '';\n    }\n  }\n  if (!cover) {\n    const img = document.querySelector('.details-info img, .row img, img[src*=\"cover\"]');\n    if (img) cover = img.getAttribute('src') || img.getAttribute('data-src') || '';\n  }\n\n  const description = [publisher ? `\u51fa\u7248\u793e: ${publisher}` : '', year ? `\u5e74\u4efd: ${year}` : '', language ? `\u8bed\u8a00: ${language}` : '', isbn ? `ISBN: ${isbn}` : ''].filter(Boolean).join(' | ');\n\n  let readerUrl = '';
+  const readerBtn = document.querySelector('.reader-link');
+  if (readerBtn) { readerUrl = readerBtn.href || readerBtn.getAttribute('href') || ''; }
+  if (!readerUrl) {
+    const allLinks = document.querySelectorAll('a[href*="reader."]');
+    if (allLinks.length > 0) { readerUrl = allLinks[0].href || ''; }
+  }
+  console.log('[getBookDetail] readerUrl=' + (readerUrl || 'empty'));
+
+  const downloadLinks = [];\n  const allDlBtns = document.querySelectorAll('a.dlButton:not(.reader-link), a[href*=\"/dl/\"]');\n  for (let i = 0; i < allDlBtns.length; i += 1) {\n    const el = allDlBtns[i];\n    const href = el.getAttribute('href') || '';\n    const m2 = href.match(/\\.(epub|pdf|mobi|azw3|txt|djvu)/i);\n    if (m2 && href && href !== '#') {\n      try { const absUrl = new URL(href, location.href).toString(); downloadLinks.push({ url: absUrl, format: m2[1].toLowerCase() }); } catch(_) {}\n    }\n  }\n  console.log('[getBookDetail] downloadLinks=' + downloadLinks.length);\n\n  return JSON.stringify({\n    id: '',\n    title: title,\n    author: author,\n    description: description,\n    cover: cover,\n    categories: categories,\n    tags: categories,\n    year: year,\n    publisher: publisher,\n    language: language,\n    isbn: isbn,\n    readerUrl: readerUrl,\n    downloadLinks: downloadLinks\n  });\n})();",
+                    "description": "\u63d0\u53d6\u7535\u5b50\u4e66\u8be6\u60c5"
+                }
+            ]
+        },
+        "getChapterList": {
+            "description": "\u83b7\u53d6\u4e0b\u8f7d\u9009\u9879\uff08\u7535\u5b50\u4e66\u683c\u5f0f\u5217\u8868\uff09",
+            "actions": [
+                {
+                    "type": "navigate",
+                    "url": "{{mangaUrl}}",
+                    "timeout": 30000,
+                    "waitAfterLoad": 15000
+                },
+                {
+                    "type": "wait",
+                    "condition": "element",
+                    "selector": "h1",
+                    "timeout": 15000
+                },
+                {
+                    "type": "script",
+                    "code": "(() => {\n  const clean = (v) => String(v || '').replace(/\\s+/g, ' ').trim();\n  const toAbs = (v) => { try { return new URL(String(v || ''), location.href).toString(); } catch (_) { return String(v || ''); } };\n  const prefers = String(((globalThis && globalThis.__preferredFormat) || '')).toLowerCase();\n  const candidates = [];\n  const seen = {};\n  const btns = document.querySelectorAll('a.dlButton:not(.reader-link), a[href*=\"/dl/\"], a[href*=\"/download/\"]');\n  for (let i = 0; i < btns.length; i += 1) {\n    const el = btns[i];\n    const href = el.getAttribute('href') || '';\n    const text = clean(el.textContent);\n    const m = href.match(/\\.(epub|pdf|mobi|azw3|txt|djvu)/i);\n    const format = m ? m[1].toLowerCase() : (text.match(/(epub|pdf|mobi|azw3|txt|djvu)/i) || ['',''])[1].toLowerCase();\n    const url = toAbs(href);\n    if (url && url !== '#' && !url.startsWith('javascript:') && !seen[url]) {\n      seen[url] = true;\n      candidates.push({ id: String(candidates.length + 1), title: format ? format.toUpperCase() : (text || '\\u4e0b\\u8f7d'), url: url, format: format, order: candidates.length + 1, recommended: format === prefers ? 1 : 0 });\n    }\n  }\n  if (candidates.length === 0) {\n    const allLinks = document.querySelectorAll('a[href]');\n    for (let i = 0; i < allLinks.length; i += 1) {\n      const link = allLinks[i];\n      const href = link.getAttribute('href') || '';\n      const m = href.match(/\\.(epub|pdf|mobi|azw3|txt|djvu)(?:\\b|\\?)/i);\n      if (m) {\n        const url = toAbs(href);\n        if (url && !seen[url]) {\n          seen[url] = true;\n          const format = m[1].toLowerCase();\n          candidates.push({ id: String(candidates.length + 1), title: format.toUpperCase(), url: url, format: format, order: candidates.length + 1, recommended: format === prefers ? 1 : 0 });\n        }\n      }\n    }\n  }\n  candidates.sort((a, b) => (b.recommended - a.recommended) || (a.order - b.order));\n  console.log('[getChapterList] found ' + candidates.length + ' download links');\n  return JSON.stringify(candidates);\n})();",
+                    "description": "\u63d0\u53d6\u4e0b\u8f7d\u94fe\u63a5\uff08\u6392\u9664\u5728\u7ebf\u9605\u8bfb\u5668\u94fe\u63a5\uff09"
+                }
+            ]
+        },
+        "getPageList": {
+            "description": "\u83b7\u53d6\u4e0b\u8f7d\u94fe\u63a5\u6216\u5728\u7ebf\u9605\u8bfb\u94fe\u63a5",
+            "actions": [
+                {
+                    "type": "script",
+                    "code": "(() => {\n  const url = String((globalThis && globalThis.__currentUrl) || location.href);\n  const m = url.match(/\\.(epub|pdf|mobi|azw3|txt|djvu)/i);\n  const format = m ? m[1].toLowerCase() : '';\n  console.log('[getPageList] url=' + url.substring(0, 100) + ' format=' + format);\n  return JSON.stringify([{ id: '1', url: url, format: format }]);\n})();",
+                    "description": "\u5c06\u5f53\u524d\u94fe\u63a5\u4f5c\u4e3a\u4e0b\u8f7d\u9875\u9762\u8fd4\u56de"
+                }
+            ]
+        },
+        "getImageUrl": {
+            "description": "\u83b7\u53d6\u5c01\u9762\u56fe\u7247URL",
+            "actions": [
+                {
+                    "type": "direct",
+                    "description": "\u76f4\u63a5\u8fd4\u56de\u56fe\u7247URL",
+                    "extract": {
+                        "type": "passthrough",
+                        "field": "url"
+                    }
+                }
+            ]
+        }
+    },
+    "tabs": [
+        {
+            "id": "popular",
+            "type": "popular",
+            "name": "\u63a8\u8350",
+            "enabled": true,
+            "order": 0,
+            "requiresLogin": false
+        },
+        {
+            "id": "search",
+            "type": "search",
+            "name": "\u641c\u7d22",
+            "enabled": true,
+            "order": 1,
+            "requiresLogin": false
+        }
+    ],
+    "filters": {
+        "language": {
+            "type": "select",
+            "name": "\u8bed\u8a00",
+            "default": "",
+            "options": [
+                {
+                    "value": "",
+                    "label": "\u5168\u90e8"
+                },
+                {
+                    "value": "chinese",
+                    "label": "\u4e2d\u6587"
+                },
+                {
+                    "value": "english",
+                    "label": "\u82f1\u6587"
+                },
+                {
+                    "value": "japanese",
+                    "label": "\u65e5\u6587"
+                },
+                {
+                    "value": "korean",
+                    "label": "\u97e9\u6587"
+                },
+                {
+                    "value": "russian",
+                    "label": "\u4fc4\u6587"
+                },
+                {
+                    "value": "german",
+                    "label": "\u5fb7\u6587"
+                },
+                {
+                    "value": "french",
+                    "label": "\u6cd5\u6587"
+                }
+            ]
+        },
+        "extension": {
+            "type": "select",
+            "name": "\u683c\u5f0f",
+            "default": "",
+            "options": [
+                {
+                    "value": "",
+                    "label": "\u5168\u90e8"
+                },
+                {
+                    "value": "epub",
+                    "label": "EPUB"
+                },
+                {
+                    "value": "pdf",
+                    "label": "PDF"
+                },
+                {
+                    "value": "mobi",
+                    "label": "MOBI"
+                },
+                {
+                    "value": "azw3",
+                    "label": "AZW3"
+                },
+                {
+                    "value": "djvu",
+                    "label": "DJVU"
+                },
+                {
+                    "value": "txt",
+                    "label": "TXT"
+                }
+            ]
+        },
+        "year": {
+            "type": "select",
+            "name": "\u5e74\u4efd",
+            "default": "",
+            "options": [
+                {
+                    "value": "",
+                    "label": "\u5168\u90e8"
+                },
+                {
+                    "value": "2024",
+                    "label": "2024"
+                },
+                {
+                    "value": "2023",
+                    "label": "2023"
+                },
+                {
+                    "value": "2022",
+                    "label": "2022"
+                },
+                {
+                    "value": "2021",
+                    "label": "2021"
+                },
+                {
+                    "value": "2020",
+                    "label": "2020"
+                }
+            ]
+        }
+    },
+    "imageProcessing": {
+        "urlTransform": {
+            "enabled": false
+        },
+        "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://zh.chris101.ru"
+        }
+    },
+    "notes": [
+        "Z-Library\u662f\u5168\u7403\u6700\u5927\u7684\u7535\u5b50\u4e66\u56fe\u4e66\u9986",
+        "\u9700\u8981\u79d1\u5b66\u7f51\u7edc\u624d\u80fd\u8bbf\u95ee",
+        "\u5982\u679c\u4e3b\u7ad9\u65e0\u6cd5\u8bbf\u95ee\uff0c\u8bf7\u5728\u8bbe\u7f6e\u4e2d\u5207\u6362\u955c\u50cf\u7ad9\u70b9",
+        "\u767b\u5f55\u540e\u53ef\u83b7\u5f97\u66f4\u591a\u4e0b\u8f7d\u914d\u989d",
+        "\u652f\u6301EPUB\u3001PDF\u3001MOBI\u7b49\u591a\u79cd\u683c\u5f0f"
+    ],
+    "changelog": [
+        {
+            "version": "1.0.0",
+            "date": "2025-01-14",
+            "changes": [
+                "\u521d\u59cb\u7248\u672c",
+                "\u652f\u6301\u641c\u7d22\u7535\u5b50\u4e66",
+                "\u652f\u6301\u67e5\u770b\u7535\u5b50\u4e66\u8be6\u60c5",
+                "\u652f\u6301\u591a\u955c\u50cf\u7ad9\u70b9\u5207\u6362",
+                "\u5f3a\u5236\u4f7f\u7528PC UA\u4ee5\u83b7\u5f97\u5b8c\u6574\u529f\u80fd"
+            ]
+        }
+    ]
+}

@@ -18,6 +18,8 @@ import { DownloadStatus } from '../Types/StatusEnums';
 import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
 import { OnlineArchiveCreateResult, OnlineArchiveMetadata, OnlineArchivePageFile, OnlineMangaArchiveService } from './OnlineMangaArchiveService';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
+import { CookieManager } from '../Managers/CookieManager';
+import util from '@ohos.util';
 
 const TAG = 'DownloadManager';
 const DOWNLOAD_BACKGROUND_TASK_OWNER = 'download_manager_queue';
@@ -1604,7 +1606,131 @@ export class MangaDownloadManager {
   }
 
   /**
+   * 从 base64 数据创建电子书下载任务
+   * 适用于需要通过 WebView 获取文件内容的场景（如 ZLibrary Cloudflare 保护）
+   * 调用方先通过 WebView fetch 获取 base64 数据，再传入此方法完成保存和任务管理
+   */
+  public async createEBookDownloadTaskFromData(
+    bookId: string,
+    bookTitle: string,
+    base64Data: string,
+    fileFormat: string,
+    sourceId?: number
+  ): Promise<string> {
+    try {
+      if (!this.context) {
+        throw new Error('应用上下文未设置');
+      }
+
+      const taskId = `ebook_${bookId}_${Date.now()}`;
+      const savePath = `${this.context.filesDir}/ebooks/${bookId}`;
+      await this.ensureDirectory(savePath);
+      const safeTitle = bookTitle.replace(/[/\\:*?"<>|]/g, '_');
+      const filePath = `${savePath}/${safeTitle}.${fileFormat}`;
+
+      const taskInfo: DownloadTaskInfo = {
+        id: taskId,
+        mangaId: bookId,
+        chapterId: bookId,
+        chapterTitle: fileFormat.toUpperCase(),
+        mangaTitle: bookTitle,
+        urls: ['<from-webview-data>'],
+        savePath: filePath,
+        status: TaskStatus.DOWNLOADING,
+        progress: 50,
+        downloadedCount: 0,
+        totalCount: 1,
+        createdTime: Date.now(),
+        taskType: DownloadTaskType.EBOOK,
+        fileFormat: fileFormat,
+        sourceId: sourceId
+      };
+
+      this.tasks.set(taskId, taskInfo);
+      await this.saveTaskToDatabase(taskInfo);
+
+      const displayName = `${bookTitle} (${fileFormat.toUpperCase()})`;
+      await this.notificationManager.sendDownloadProgressNotification(taskId, displayName, 50, 100);
+
+      // 解码 base64 并写入文件
+      const base64Helper: util.Base64Helper = new util.Base64Helper();
+      const fileBytes: Uint8Array = base64Helper.decodeSync(base64Data);
+      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      fs.writeSync(file.fd, fileBytes.buffer as ArrayBuffer);
+      fs.closeSync(file.fd);
+
+      logger.info(TAG, `WebView 数据下载完成: ${filePath}, 大小: ${fileBytes.length} bytes`);
+
+      // 标记完成
+      taskInfo.status = TaskStatus.COMPLETED;
+      taskInfo.progress = 100;
+      taskInfo.downloadedCount = 1;
+      taskInfo.completedTime = Date.now();
+      await this.updateTaskInDatabase(taskInfo);
+
+      await this.notificationManager.sendDownloadCompleteNotification(taskId, displayName);
+      logger.info(TAG, `电子书下载任务完成: ${taskId}`);
+
+      return taskId;
+    } catch (error) {
+      const err = error as BusinessError;
+      logger.error(TAG, `从数据创建电子书下载任务失败: ${err.message}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 注册已下载完成的电子书文件为下载任务
+   * 适用于页面已通过其他方式（如 WebView cookies + HTTP）完成文件下载的场景
+   * 文件已存在于 filePath，此方法仅创建任务记录并发送通知
+   */
+  public async registerEBookDownloadTask(
+    bookId: string,
+    bookTitle: string,
+    filePath: string,
+    fileFormat: string,
+    sourceId?: number
+  ): Promise<string> {
+    try {
+      const taskId = `ebook_${bookId}_${Date.now()}`;
+      const displayName = `${bookTitle} (${fileFormat.toUpperCase()})`;
+
+      const taskInfo: DownloadTaskInfo = {
+        id: taskId,
+        mangaId: bookId,
+        chapterId: bookId,
+        chapterTitle: fileFormat.toUpperCase(),
+        mangaTitle: bookTitle,
+        urls: ['<pre-downloaded>'],
+        savePath: filePath,
+        status: TaskStatus.COMPLETED,
+        progress: 100,
+        downloadedCount: 1,
+        totalCount: 1,
+        createdTime: Date.now(),
+        completedTime: Date.now(),
+        taskType: DownloadTaskType.EBOOK,
+        fileFormat: fileFormat,
+        sourceId: sourceId
+      };
+
+      this.tasks.set(taskId, taskInfo);
+      await this.saveTaskToDatabase(taskInfo);
+      await this.notificationManager.sendDownloadCompleteNotification(taskId, displayName);
+
+      logger.info(TAG, `已注册预下载电子书任务: ${taskId}, 路径: ${filePath}`);
+      return taskId;
+    } catch (error) {
+      const err = error as BusinessError;
+      logger.error(TAG, `注册预下载电子书任务失败: ${err.message}`);
+      throw error as Error;
+    }
+  }
+
+  /**
    * 下载电子书任务
+   * 当 sourceId 可用时，使用 HTTP 下载并携带 cookies（支持需要认证的图源如 ZLibrary）
+   * 否则使用系统下载 API
    */
   private async downloadEBookTask(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
@@ -1613,33 +1739,34 @@ export class MangaDownloadManager {
       return;
     }
 
+    const displayName = `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`;
+
     try {
       logger.info(TAG, `开始下载电子书: ${taskId}`);
       task.status = TaskStatus.DOWNLOADING;
       await this.updateTaskInDatabase(task);
 
       // 发送开始下载通知
-      await this.notificationManager.sendDownloadProgressNotification(
-        taskId,
-        `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`,
-        0,
-        100
-      );
+      await this.notificationManager.sendDownloadProgressNotification(taskId, displayName, 0, 100);
 
-      // 下载文件
       const downloadUrl = task.urls[0];
-      await this.downloadFileWithProgress(downloadUrl, task.savePath, (progress: number) => {
-        task.progress = progress;
-        // 每10%更新一次通知
-        if (progress % 10 === 0) {
-          this.notificationManager.sendDownloadProgressNotification(
-            taskId,
-            `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`,
-            progress,
-            100
-          );
-        }
-      });
+
+      // 判断是否需要携带 cookies（有 sourceId 且 URL 不是本地文件）
+      const needsCookies = task.sourceId !== undefined && task.sourceId > 0 && downloadUrl.startsWith('http');
+
+      if (needsCookies) {
+        // 使用 HTTP 下载并携带 cookies
+        logger.info(TAG, `使用 HTTP 下载（携带 cookies）: sourceId=${task.sourceId}`);
+        await this.downloadEBookWithCookies(downloadUrl, task.savePath, task.sourceId!, task.mangaId);
+      } else {
+        // 使用系统下载 API（无 cookies）
+        await this.downloadFileWithProgress(downloadUrl, task.savePath, (progress: number) => {
+          task.progress = progress;
+          if (progress % 10 === 0) {
+            this.notificationManager.sendDownloadProgressNotification(taskId, displayName, progress, 100);
+          }
+        });
+      }
 
       // 下载完成
       task.status = TaskStatus.COMPLETED;
@@ -1647,35 +1774,90 @@ export class MangaDownloadManager {
       task.downloadedCount = 1;
       task.completedTime = Date.now();
       await this.updateTaskInDatabase(task);
-      
+
       // 发送完成通知
-      await this.notificationManager.sendDownloadCompleteNotification(
-        taskId,
-        `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`
-      );
-      
+      await this.notificationManager.sendDownloadCompleteNotification(taskId, displayName);
+
       logger.info(TAG, `电子书下载完成: ${taskId}, 保存路径: ${task.savePath}`);
     } catch (error) {
       const err = error as Error;
       task.status = TaskStatus.FAILED;
       task.error = err.message;
       await this.updateTaskInDatabase(task);
-      
+
       // 发送失败通知
-      await this.notificationManager.sendDownloadFailedNotification(
-        taskId,
-        `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`,
-        err.message
-      );
-      
+      await this.notificationManager.sendDownloadFailedNotification(taskId, displayName, err.message);
+
       logger.error(TAG, `电子书下载失败: ${taskId}, ${err.message}`);
     } finally {
       // 从活动下载中移除
       this.activeDownloads.delete(taskId);
-      
+
       // 继续处理队列
       this.processQueue();
     }
+  }
+
+  /**
+   * 使用 HTTP 下载电子书并携带 cookies
+   * 适用于需要认证的图源（如 ZLibrary）
+   * 包含重试逻辑以应对临时 503 错误
+   */
+  private async downloadEBookWithCookies(url: string, filePath: string, sourceId: number, bookUrl?: string): Promise<void> {
+    const cookieManager = CookieManager.getInstance();
+    const cookieStr = await cookieManager.getCookieStringForUrl(sourceId, url);
+
+    // 使用真实的浏览器 headers 以通过反爬检查
+    const buildHeaders = (): Record<string, string> => {
+      const h: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': bookUrl || url,
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      };
+      if (cookieStr.length > 0) {
+        h['Cookie'] = cookieStr;
+      }
+      return h;
+    };
+
+    if (cookieStr.length > 0) {
+      logger.info(TAG, `电子书下载携带 cookies: ${cookieStr.substring(0, 80)}...`);
+    }
+
+    // 重试逻辑：最多重试 3 次，应对临时 503 错误
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      if (attempt > 0) {
+        const delayMs = 2000 * attempt;
+        logger.info(TAG, `电子书下载重试 ${attempt + 1}/${maxRetries}，等待 ${delayMs}ms`);
+        await this.sleep(delayMs);
+        // 重新获取 cookies（可能已更新）
+        const freshCookies = await cookieManager.getCookieStringForUrl(sourceId, url);
+        if (freshCookies.length > 0) {
+          logger.info(TAG, `重试使用更新的 cookies`);
+        }
+      }
+      try {
+        await this.downloadFileWithHttp(url, filePath, buildHeaders());
+        logger.info(TAG, `HTTP 电子书下载完成: ${filePath}`);
+        return;
+      } catch (error) {
+        lastError = error as Error;
+        const errMsg = lastError.message;
+        if (errMsg.includes('503') && attempt < maxRetries - 1) {
+          logger.warn(TAG, `电子书下载遇到 503，将重试 (${attempt + 1}/${maxRetries})`);
+          continue;
+        }
+        throw lastError;
+      }
+    }
+    throw lastError || new Error('电子书下载失败');
   }
 
   /**

@@ -86,6 +86,7 @@ import {
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
+import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
 
 const TAG = 'EpubWebViewReaderPage';
@@ -134,6 +135,8 @@ export struct EpubWebViewReaderPage {
   private context: common.UIAbilityContext | null = null;
   private coverComponentId: string = '';
   private routerBackOnClose: boolean = false;
+  private readerHostMode: string = '';
+  private readerInstanceId: string = '';
 
   // ──── 安全区 ────
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -312,6 +315,7 @@ export struct EpubWebViewReaderPage {
   onPageShow(): void {
     this.isPageVisible = true;
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EpubWebViewReaderPage');
+    WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext ?? undefined);
     WindowManager.reapplyCurrentDisplayMode(24);
     void this.refreshCameraCutoutTopInset('show');
     this.updateVolumeKeyListener();
@@ -346,6 +350,8 @@ export struct EpubWebViewReaderPage {
     } catch (_ignored) {}
     this.coverComponentId = params.coverComponentId ?? '';
     this.routerBackOnClose = params.routerBackOnClose === true;
+    this.readerHostMode = params.readerHostMode || '';
+    this.readerInstanceId = params.readerInstanceId || '';
     this.shouldAutoStartReadAloudFromRoute = params.autoStartReadAloud === true;
     this.shouldAutoOpenReadAloudPlayerFromRoute = params.autoOpenReadAloudPlayer === true;
     this.routeReadAloudAutoStartAttempts = 0;
@@ -3833,16 +3839,27 @@ export struct EpubWebViewReaderPage {
       this.closeReaderRoute();
       return;
     }
-    this.closeReaderRoute();
     const params: EBookReaderParams = {
       bookId: bookId,
       coverComponentId: this.coverComponentId,
-      forceReaderKit: true
+      forceReaderKit: true,
+      readerHostMode: this.readerHostMode,
+      readerInstanceId: this.readerInstanceId,
+      readerTitle: this.ebook?.metadata.title || ''
     };
+    if (this.isHostedByIsolatedReaderAbility()) {
+      this.pathStack.replacePathByName('EBookReaderPage', params, false);
+      return;
+    }
+    this.closeReaderRoute();
     openEBookReaderRouterPage(this.getUIContext(), params, TAG);
   }
 
   private closeReaderRoute(): void {
+    if (this.isHostedByIsolatedReaderAbility()) {
+      void this.terminateIsolatedReaderAbility('close_reader_route');
+      return;
+    }
     if (this.routerBackOnClose) {
       const router = this.getUIContext()?.getRouter();
       if (router) {
@@ -3852,6 +3869,26 @@ export struct EpubWebViewReaderPage {
       logger.warn(TAG, 'Router 返回不可用，回退到 NavPathStack.pop');
     }
     this.pathStack.pop();
+  }
+
+  private isHostedByIsolatedReaderAbility(): boolean {
+    return this.readerHostMode === READER_ABILITY_HOST_MULTITON;
+  }
+
+  private async terminateIsolatedReaderAbility(reason: string): Promise<void> {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, `独立 EPUB 阅读器退出失败，回退页面栈: reason=${reason}`);
+        this.pathStack.pop();
+        return;
+      }
+      logger.info(TAG, `独立 EPUB 阅读器实例退出: reason=${reason}, instanceId=${this.readerInstanceId}`);
+      await hostContext.terminateSelf();
+    } catch (error) {
+      logger.error(TAG, `独立 EPUB 阅读器实例退出异常: ${String(error)}`);
+      this.pathStack.pop();
+    }
   }
 
   private async goBack(): Promise<void> {
@@ -3864,6 +3901,12 @@ export struct EpubWebViewReaderPage {
     await this.persistPageReadingSettings('go_back');
     await this.saveReadingProgress('go_back');
     const coverCmpId = this.coverComponentId;
+    if (this.isHostedByIsolatedReaderAbility()) {
+      logger.info(TAG, `独立 EPUB 阅读器退出不挂载关闭动画层，封面组件ID: ${coverCmpId}`);
+      cancelTransition();
+      await this.terminateIsolatedReaderAbility('go_back_isolated_reader');
+      return;
+    }
     if (coverCmpId) {
       try {
         await startBookCloseTransitionWithComponentId('epub_webview_reader_root', coverCmpId);
@@ -5317,6 +5360,7 @@ export struct EpubWebViewReaderPage {
       .id('epub_webview_reader_root')
       .backgroundColor(Color.Black)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
       .focusable(true)
       .defaultFocus(true)
       .onKeyEvent((event: KeyEvent) => {
@@ -5349,5 +5393,6 @@ export struct EpubWebViewReaderPage {
         this.isLoading = false;
       }
     })
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
   }
 }

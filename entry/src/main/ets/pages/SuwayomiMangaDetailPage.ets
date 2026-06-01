@@ -13,6 +13,7 @@ import { ComicDetailInfo, ChapterInfo } from '../Framework/Source/SourceExecutor
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
 import { SuwayomiImage } from '../components/SuwayomiImage';
 import { MangaReaderContentType, MangaReaderPageParams } from './MangaReaderPage';
+import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 
@@ -433,9 +434,10 @@ export struct SuwayomiMangaDetailPage {
       chapterId: RemoteLibraryMangaBridge.buildSuwayomiChapterId(chapter.id),
       pageIndex: pageIndex >= 0 ? pageIndex : 0,
       fromPage: 'SuwayomiMangaDetailPage',
-      contentType: MangaReaderContentType.Suwayomi
+      contentType: MangaReaderContentType.Suwayomi,
+      readerTitle: this.mangaDetail?.title || ''
     };
-    this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+    openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG);
   }
 
   private continueReading(): void {

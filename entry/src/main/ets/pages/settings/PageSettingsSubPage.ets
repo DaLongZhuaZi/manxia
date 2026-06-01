@@ -122,6 +122,7 @@ export struct PageSettingsSubPage {
   @State novelDetailPageType: DetailPageType = DetailPageType.DEFAULT;
   @State recommendationEnabled: boolean = true;
   @State shelfContentEnabled: boolean = true;
+  @State readerPageMultitonEnabled: boolean = true;
   @State nonMainPageGlobalBackgroundEnabled: boolean = true;
   @State backgroundBlurEnabled: boolean = false;
   @State backgroundBlurIconType: BackgroundBlurIconType = 'shield';
@@ -251,6 +252,10 @@ export struct PageSettingsSubPage {
     this.novelDetailPageType = novelType as DetailPageType;
     this.recommendationEnabled = this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true);
     this.shelfContentEnabled = this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true);
+    this.readerPageMultitonEnabled = this.settingsManager.getBoolean(
+      SettingKeys.READER_PAGE_MULTITON_ENABLED,
+      true
+    );
     this.nonMainPageGlobalBackgroundEnabled = this.settingsManager.getBoolean(
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
       true
@@ -265,13 +270,17 @@ export struct PageSettingsSubPage {
     );
     this.backgroundBlurIconType = savedBackgroundBlurIconType === 'logo' ? 'logo' : 'shield';
     AppStorage.setOrCreate(
+      SettingKeys.READER_PAGE_MULTITON_ENABLED,
+      this.readerPageMultitonEnabled
+    );
+    AppStorage.setOrCreate(
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
       this.nonMainPageGlobalBackgroundEnabled
     );
     AppStorage.setOrCreate('backgroundBlurEnabled', this.backgroundBlurEnabled);
     AppStorage.setOrCreate('backgroundBlurIconType', this.backgroundBlurIconType);
 
-    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, backgroundBlur=${this.backgroundBlurEnabled}, blurIcon=${this.backgroundBlurIconType}`);
+    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, readerMultiton=${this.readerPageMultitonEnabled}, backgroundBlur=${this.backgroundBlurEnabled}, blurIcon=${this.backgroundBlurIconType}`);
   }
 
   private applyPendingSearchTarget(): void {
@@ -405,11 +414,16 @@ export struct PageSettingsSubPage {
     this.settingsManager.setString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, this.novelDetailPageType);
     this.settingsManager.setBoolean(SettingKeys.RECOMMENDATION_ENABLED, this.recommendationEnabled);
     this.settingsManager.setBoolean(SettingKeys.SHELF_CONTENT_ENABLED, this.shelfContentEnabled);
+    this.settingsManager.setBoolean(SettingKeys.READER_PAGE_MULTITON_ENABLED, this.readerPageMultitonEnabled);
     this.settingsManager.setBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, this.backgroundBlurEnabled);
     this.settingsManager.setString(SettingKeys.BACKGROUND_BLUR_ICON_TYPE, this.backgroundBlurIconType);
     this.settingsManager.setBoolean(
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
       this.nonMainPageGlobalBackgroundEnabled
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.READER_PAGE_MULTITON_ENABLED,
+      this.readerPageMultitonEnabled
     );
     AppStorage.setOrCreate(
       SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
@@ -418,7 +432,7 @@ export struct PageSettingsSubPage {
     AppStorage.setOrCreate('backgroundBlurEnabled', this.backgroundBlurEnabled);
     AppStorage.setOrCreate('backgroundBlurIconType', this.backgroundBlurIconType);
 
-    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, backgroundBlur=${this.backgroundBlurEnabled}, blurIcon=${this.backgroundBlurIconType}`);
+    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, readerMultiton=${this.readerPageMultitonEnabled}, backgroundBlur=${this.backgroundBlurEnabled}, blurIcon=${this.backgroundBlurIconType}`);
 
     promptAction.showToast({
       message: '设置已保存',
@@ -740,6 +754,7 @@ export struct PageSettingsSubPage {
             this.novelDetailPageType = DetailPageType.DEFAULT;
             this.recommendationEnabled = true;
             this.shelfContentEnabled = true;
+            this.readerPageMultitonEnabled = true;
             this.nonMainPageGlobalBackgroundEnabled = true;
             this.backgroundBlurEnabled = false;
             this.backgroundBlurIconType = 'shield';
@@ -1196,7 +1211,7 @@ export struct PageSettingsSubPage {
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .padding({ left: 4 })
 
-              Text('选择在不同场景下使用的详情页类型')
+              Text('选择在不同场景下使用的详情页类型与阅读器打开方式')
                 .fontSize(13)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1234,6 +1249,51 @@ export struct PageSettingsSubPage {
                   this.saveSettings();
                 }
               )
+
+              Row() {
+                Column({ space: 4 }) {
+                  Text('阅读器页面多开')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('漫画、电子书、小说阅读器使用独立任务实例；关闭后回到主实例打开')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.readerPageMultitonEnabled })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    this.readerPageMultitonEnabled = isOn;
+                    this.saveSettings();
+                  })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
+              .onClick(() => {
+                this.readerPageMultitonEnabled = !this.readerPageMultitonEnabled;
+                this.saveSettings();
+              })
 
               // 相关推荐开关
               Row() {

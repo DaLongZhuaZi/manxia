@@ -5,4 +5,7 @@ export interface EBookReaderParams {
   forceReaderKit?: boolean;
   autoStartReadAloud?: boolean;
   autoOpenReadAloudPlayer?: boolean;
+  readerHostMode?: string;
+  readerInstanceId?: string;
+  readerTitle?: string;
 }

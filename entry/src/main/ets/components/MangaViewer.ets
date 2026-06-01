@@ -169,6 +169,69 @@ class MangaPageDataSource implements IDataSource {
 }
 
 /**
+ * 水平连续滚动页序数据源。
+ * 只保存页索引，避免 CONTINUOUS_SCROLL 一次性构建整章页面。
+ */
+class ContinuousPageIndexDataSource implements IDataSource {
+  private pageIndices: number[] = [];
+  private listeners: DataChangeListener[] = [];
+
+  constructor(pageIndices: number[] = []) {
+    this.pageIndices = pageIndices;
+  }
+
+  totalCount(): number {
+    return this.pageIndices.length;
+  }
+
+  getData(index: number): number {
+    return this.pageIndices[index];
+  }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (this.listeners.indexOf(listener) < 0) {
+      this.listeners.push(listener);
+    }
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const pos = this.listeners.indexOf(listener);
+    if (pos >= 0) {
+      this.listeners.splice(pos, 1);
+    }
+  }
+
+  setPageIndices(pageIndices: number[]): void {
+    this.pageIndices = pageIndices;
+    this.notifyDataReload();
+  }
+
+  notifyDataReload(): void {
+    this.listeners.forEach((listener: DataChangeListener) => {
+      listener.onDataReloaded();
+    });
+  }
+
+  notifyDataAdd(index: number): void {
+    this.listeners.forEach((listener: DataChangeListener) => {
+      listener.onDataAdd(index);
+    });
+  }
+
+  notifyDataChange(index: number): void {
+    this.listeners.forEach((listener: DataChangeListener) => {
+      listener.onDataChange(index);
+    });
+  }
+
+  notifyDataDelete(index: number): void {
+    this.listeners.forEach((listener: DataChangeListener) => {
+      listener.onDataDelete(index);
+    });
+  }
+}
+
+/**
  * 动画选项
  */
 export interface AnimateOptions {
@@ -663,6 +726,11 @@ export struct MangaViewer {
 
   // LazyForEach 数据源（ArkUI 要求 IDataSource 实例）
   private pageDataSource: MangaPageDataSource = new MangaPageDataSource([]);
+  private continuousHorizontalDataSource: ContinuousPageIndexDataSource = new ContinuousPageIndexDataSource([]);
+  private continuousHorizontalDataSourceKey: string = '';
+  private continuousHorizontalWidthCache: Map<string, number> = new Map();
+  private continuousHorizontalWidthCacheKey: string = '';
+  private lastReadingSettingsSideEffectKey: string = '';
   
   // [新增] 条漫多章节懒加载数据源
   private webtoonDataSource: WebtoonLazyDataSource = new WebtoonLazyDataSource([]);
@@ -704,6 +772,7 @@ export struct MangaViewer {
 
     // 初始化屏幕尺寸
     this.initScreenSize();
+    this.lastReadingSettingsSideEffectKey = this.getReadingSettingsSideEffectKey();
 
     this.initializeImageStates();
     // 初始化双页模式的左右页索引
@@ -733,6 +802,7 @@ export struct MangaViewer {
     // 初始化 LazyForEach 数据源
     if (this.chapter && this.chapter.pages) {
       this.pageDataSource.setPages(this.chapter.pages);
+      this.updateContinuousHorizontalDataSourceIfNeeded();
     }
 
     // 初始化条漫多章节数据
@@ -819,6 +889,8 @@ export struct MangaViewer {
     if (this.chapter && this.chapter.pages && this.chapter.pages.length > 0) {
       logger.info(TAG, `🔄 重新加载章节: ${this.chapter.title}，页面数: ${this.chapter.pages.length}`);
       this.preloadManager.setPageInfo(this.currentPageIndex, this.chapter.pages.length);
+      this.pageDataSource.setPages(this.chapter.pages);
+      this.updateContinuousHorizontalDataSourceIfNeeded();
       this.chapter.pages.forEach((page, index) => {
         this.imageLoadStateManager.initPage(page.id, index);
       });
@@ -4136,7 +4208,24 @@ export struct MangaViewer {
   /**
    * 监听阅读设置变化：模式或方向改变时，重新计算双页索引
    */
+  private getReadingSettingsSideEffectKey(): string {
+    const mode: string = this.readingSettings.readingMode.toString();
+    const direction: string = this.readingSettings.readingDirection.toString();
+    const spacing: number = this.readingSettings.pageSpacing !== undefined ? this.readingSettings.pageSpacing : 16;
+    const portraitLayout: string = (this.readingSettings.doublePagePortraitLayout || DoublePagePortraitLayout.VERTICAL).toString();
+    const webtoonLeftMargin: number = this.readingSettings.webtoonLeftMargin !== undefined ? this.readingSettings.webtoonLeftMargin : 0;
+    const webtoonRightMargin: number = this.readingSettings.webtoonRightMargin !== undefined ? this.readingSettings.webtoonRightMargin : 0;
+    return `${mode}_${direction}_${spacing}_${portraitLayout}_${webtoonLeftMargin}_${webtoonRightMargin}`;
+  }
+
   private onReadingSettingsChange(): void {
+    const sideEffectKey: string = this.getReadingSettingsSideEffectKey();
+    if (sideEffectKey === this.lastReadingSettingsSideEffectKey) {
+      logger.debug(TAG, `忽略重复阅读设置副作用: mode=${this.readingSettings.readingMode.toString()}, direction=${this.readingSettings.readingDirection.toString()}`);
+      return;
+    }
+    this.lastReadingSettingsSideEffectKey = sideEffectKey;
+
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       this.updateDoublePageIndices();
       if (this.isDoublePageVerticalPortraitMode()) {
@@ -4147,6 +4236,7 @@ export struct MangaViewer {
       this.rightPageIndex = -1;
       this.currentWebtoonPage = this.viewCurrentPageIndex;
       this.visiblePageIndices = [this.viewCurrentPageIndex];
+      this.updateContinuousHorizontalDataSourceIfNeeded();
       this.triggerUnifiedPreload();
       setTimeout(() => {
         this.jumpToPageImmediate(this.viewCurrentPageIndex);
@@ -6026,9 +6116,16 @@ export struct MangaViewer {
       // 水平连续滚动
       Scroll(this.scroller) {
         Row() {
-          ForEach(this.getContinuousHorizontalPageOrder(), (pageIndex: number) => {
-            this.buildContinuousPageImage(this.chapter.pages[pageIndex], pageIndex, true)
-          }, (pageIndex: number) => this.chapter.pages[pageIndex].id)
+          LazyForEach(this.continuousHorizontalDataSource, (pageIndex: number) => {
+            if (pageIndex >= 0 && pageIndex < this.chapter.pages.length) {
+              this.buildContinuousPageImage(this.chapter.pages[pageIndex], pageIndex, true)
+            }
+          }, (pageIndex: number) => {
+            if (pageIndex >= 0 && pageIndex < this.chapter.pages.length) {
+              return this.chapter.pages[pageIndex].id;
+            }
+            return `continuous_invalid_${pageIndex}`;
+          })
         }
         .height('100%')
         .scale({ x: this.webtoonZoomScale, y: this.webtoonZoomScale, centerX: this.webtoonScaleCenterX, centerY: this.webtoonScaleCenterY })
@@ -6150,7 +6247,7 @@ export struct MangaViewer {
       // 按优先级选择图片源：PixelMap > 本地缓存 > 原始资源
       if (this.pagePixelMaps.has(page.id)) {
         Image(this.pagePixelMaps.get(page.id))
-          .width(isHorizontal ? undefined : '100%')
+          .width('100%')
           .height(isHorizontal ? '100%' : undefined)
           .objectFit(ImageFit.Contain)
           .draggable(false)
@@ -6163,7 +6260,7 @@ export struct MangaViewer {
       } else if (page.sourceType === ImageSourceType.LOCAL) {
         if (this.localImageCache.has(page.id)) {
           Image(this.localImageCache.get(page.id)!)
-            .width(isHorizontal ? undefined : '100%')
+            .width('100%')
             .height(isHorizontal ? '100%' : undefined)
             .objectFit(ImageFit.Contain)
             .draggable(false)
@@ -6178,7 +6275,7 @@ export struct MangaViewer {
             })
         } else {
           Image(this.getImageResource(page))
-            .width(isHorizontal ? undefined : '100%')
+            .width('100%')
             .height(isHorizontal ? '100%' : undefined)
             .objectFit(ImageFit.Contain)
             .draggable(false)
@@ -6195,13 +6292,13 @@ export struct MangaViewer {
       } else if (page.sourceType === ImageSourceType.NETWORK) {
         // 网络图片：PixelMap未加载时显示占位图
         Image($r('app.media.ic_image'))
-          .width(isHorizontal ? undefined : '100%')
+          .width('100%')
           .height(isHorizontal ? '100%' : this.getEstimatedImageHeight(page))
           .objectFit(ImageFit.Contain)
           .draggable(false)
       } else {
         Image(this.getImageResource(page))
-          .width(isHorizontal ? undefined : '100%')
+          .width('100%')
           .height(isHorizontal ? '100%' : undefined)
           .objectFit(ImageFit.Contain)
           .draggable(false)
@@ -6250,7 +6347,7 @@ export struct MangaViewer {
         })
       }
     }
-    .width(isHorizontal ? undefined : '100%')
+    .width(isHorizontal ? this.getStableContinuousHorizontalItemWidth(page) : '100%')
     .height(isHorizontal ? '100%' : undefined)
     .alignContent(Alignment.Center)
     .key(`continuous_${page.id}`)
@@ -6802,6 +6899,53 @@ export struct MangaViewer {
     return pageOrder;
   }
 
+  private getContinuousHorizontalDataSourceKey(): string {
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return '';
+    }
+    const firstPage: MangaPage = this.chapter.pages[0];
+    const lastPage: MangaPage = this.chapter.pages[this.chapter.pages.length - 1];
+    const directionKey: string = this.isContinuousHorizontalRTL() ? 'rtl' : 'ltr';
+    return `${this.chapter.id}_${this.chapter.pages.length}_${firstPage.id}_${lastPage.id}_${directionKey}`;
+  }
+
+  private updateContinuousHorizontalDataSourceIfNeeded(): void {
+    const nextKey: string = this.getContinuousHorizontalDataSourceKey();
+    if (nextKey === this.continuousHorizontalDataSourceKey) {
+      return;
+    }
+    this.continuousHorizontalDataSourceKey = nextKey;
+    this.continuousHorizontalDataSource.setPageIndices(this.getContinuousHorizontalPageOrder());
+  }
+
+  private getContinuousHorizontalWidthCacheKey(): string {
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return '';
+    }
+    const screenHeightKey: number = Math.floor((this.screenHeight && this.screenHeight > 0) ? this.screenHeight : 800);
+    return `${this.chapter.id}_${this.chapter.pages.length}_${screenHeightKey}`;
+  }
+
+  private ensureContinuousHorizontalWidthCache(): void {
+    const nextKey: string = this.getContinuousHorizontalWidthCacheKey();
+    if (nextKey === this.continuousHorizontalWidthCacheKey) {
+      return;
+    }
+    this.continuousHorizontalWidthCacheKey = nextKey;
+    this.continuousHorizontalWidthCache.clear();
+  }
+
+  private getStableContinuousHorizontalItemWidth(page: MangaPage): number {
+    this.ensureContinuousHorizontalWidthCache();
+    const cachedWidth: number | undefined = this.continuousHorizontalWidthCache.get(page.id);
+    if (cachedWidth !== undefined && cachedWidth > 0) {
+      return cachedWidth;
+    }
+    const width: number = Math.max(1, Math.floor(this.getEstimatedImageWidthForHorizontal(page)));
+    this.continuousHorizontalWidthCache.set(page.id, width);
+    return width;
+  }
+
   private getContinuousHorizontalVisualIndex(pageIndex: number): number {
     if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
       return 0;
@@ -6820,7 +6964,7 @@ export struct MangaViewer {
     const spacing = this.readingSettings.pageSpacing || 16;
     let totalWidth = 0;
     for (let index = 0; index < this.chapter.pages.length; index++) {
-      totalWidth += this.getEstimatedImageWidthForHorizontal(this.chapter.pages[index]);
+      totalWidth += this.getStableContinuousHorizontalItemWidth(this.chapter.pages[index]);
       if (index < this.chapter.pages.length - 1) {
         totalWidth += spacing;
       }
@@ -6852,10 +6996,10 @@ export struct MangaViewer {
       const logicalIndex = this.isContinuousHorizontalRTL()
         ? this.chapter.pages.length - 1 - index
         : index;
-      currentLeft += this.getEstimatedImageWidthForHorizontal(this.chapter.pages[logicalIndex]) + spacing;
+      currentLeft += this.getStableContinuousHorizontalItemWidth(this.chapter.pages[logicalIndex]) + spacing;
     }
 
-    const pageWidth = this.getEstimatedImageWidthForHorizontal(this.chapter.pages[pageIndex]);
+    const pageWidth = this.getStableContinuousHorizontalItemWidth(this.chapter.pages[pageIndex]);
     const scaledLeft = currentLeft * scaleFactor;
     const scaledRight = (currentLeft + pageWidth) * scaleFactor;
     const targetX = this.isContinuousHorizontalRTL()
@@ -6868,6 +7012,7 @@ export struct MangaViewer {
     if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
       return 0;
     }
+    this.updateContinuousHorizontalDataSourceIfNeeded();
 
     const spacing = this.readingSettings.pageSpacing || 16;
     const scaleFactor = this.getContinuousHorizontalScaleFactor();
@@ -6877,9 +7022,14 @@ export struct MangaViewer {
     let currentLeft = 0;
     let fallbackPageIndex = this.chapter.pages.length - 1;
     let nearestDistance = Number.POSITIVE_INFINITY;
+    const totalCount: number = this.continuousHorizontalDataSource.totalCount();
 
-    for (const pageIndex of this.getContinuousHorizontalPageOrder()) {
-      const pageWidth = this.getEstimatedImageWidthForHorizontal(this.chapter.pages[pageIndex]);
+    for (let visualIndex = 0; visualIndex < totalCount; visualIndex++) {
+      const pageIndex: number = this.continuousHorizontalDataSource.getData(visualIndex);
+      if (pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
+        continue;
+      }
+      const pageWidth = this.getStableContinuousHorizontalItemWidth(this.chapter.pages[pageIndex]);
       const itemLeft = currentLeft * scaleFactor;
       const itemRight = (currentLeft + pageWidth) * scaleFactor;
       const itemCenter = (itemLeft + itemRight) / 2;
@@ -9713,8 +9863,14 @@ export struct MangaViewer {
       try {
         const imageInfo = pixelMap.getImageInfoSync();
         if (imageInfo && imageInfo.size && imageInfo.size.width > 0 && imageInfo.size.height > 0) {
+          const oldWidth: number = page.width !== undefined ? page.width : 0;
+          const oldHeight: number = page.height !== undefined ? page.height : 0;
           page.width = imageInfo.size.width;
           page.height = imageInfo.size.height;
+          if (this.isWebtoonMode() &&
+            (oldWidth !== imageInfo.size.width || oldHeight !== imageInfo.size.height)) {
+            this.invalidateWebtoonPositionCache();
+          }
           const previousState: ImageLoadState | undefined = this.imageLoadStates.get(pageId);
           const nextState: ImageLoadState = {
             isLoading: previousState ? previousState.isLoading : false,
@@ -9735,6 +9891,13 @@ export struct MangaViewer {
       const dataIndex = this.findWebtoonDataIndex(pageId);
       if (dataIndex >= 0) {
         this.webtoonDataSource.notifyDataChange(dataIndex);
+        return;
+      }
+    }
+    if (this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL) {
+      const visualIndex: number = this.getContinuousHorizontalVisualIndex(pageIndex);
+      if (visualIndex >= 0 && visualIndex < this.continuousHorizontalDataSource.totalCount()) {
+        this.continuousHorizontalDataSource.notifyDataChange(visualIndex);
         return;
       }
     }
@@ -9823,14 +9986,14 @@ export struct MangaViewer {
     const pm: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
     const fsPath: string | undefined = this.getFsPathFromPage(page);
     const inputStr: string = typeof input === 'string' ? String(input) : (fsPath ? fsPath : 'PixelMap');
-    logger.info(TAG, `开始显示图片: id=${page.id}, type=${page.sourceType.toString()}, input=${inputStr}, pixelMap=${pm ? true : false}`);
+    logger.debug(TAG, `开始显示图片: id=${page.id}, type=${page.sourceType.toString()}, input=${inputStr}, pixelMap=${pm ? true : false}`);
   }
 
   private logImageDisplayAfter(page: MangaPage, success: boolean): void {
     const pm: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
     const fsPath: string | undefined = this.getFsPathFromPage(page);
     const resStr: string = String(this.getImageResource(page));
-    logger.info(TAG, `图片显示结束: id=${page.id}, success=${success}, type=${page.sourceType.toString()}, resource=${resStr}, path=${fsPath ? fsPath : 'N/A'}, pixelMap=${pm ? true : false}`);
+    logger.debug(TAG, `图片显示结束: id=${page.id}, success=${success}, type=${page.sourceType.toString()}, resource=${resStr}, path=${fsPath ? fsPath : 'N/A'}, pixelMap=${pm ? true : false}`);
   }
 
   /**
@@ -10185,6 +10348,7 @@ export struct MangaViewer {
     if (!this.scroller || !this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
       return;
     }
+    this.updateContinuousHorizontalDataSourceIfNeeded();
     const containerWidth = this.getContinuousHorizontalViewportWidth();
     const spacing = this.readingSettings.pageSpacing || 16;
     const scaleFactor = this.getContinuousHorizontalScaleFactor();
@@ -10192,14 +10356,22 @@ export struct MangaViewer {
     const visibleIndices: number[] = [];
     const scrollLeft = this.scrollPosition;
     const scrollRight = scrollLeft + containerWidth;
+    const totalCount: number = this.continuousHorizontalDataSource.totalCount();
 
     let currentLeft = 0;
-    for (const pageIndex of this.getContinuousHorizontalPageOrder()) {
+    for (let visualIndex = 0; visualIndex < totalCount; visualIndex++) {
+      const pageIndex: number = this.continuousHorizontalDataSource.getData(visualIndex);
+      if (pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
+        continue;
+      }
       const page: MangaPage = this.chapter.pages[pageIndex];
-      const pw: number = this.getEstimatedImageWidthForHorizontal(page);
+      const pw: number = this.getStableContinuousHorizontalItemWidth(page);
       const itemLeft = currentLeft * scaleFactor;
       const itemRight = (currentLeft + pw) * scaleFactor;
 
+      if (itemLeft > scrollRight + containerWidth) {
+        break;
+      }
       if (itemRight >= scrollLeft - containerWidth && itemLeft <= scrollRight + containerWidth) {
         visibleIndices.push(pageIndex);
       }
@@ -10298,27 +10470,32 @@ export struct MangaViewer {
       const activeChapterId = (this.currentChapterId && this.chapterBoundaries.some((b: ChapterBoundary) => b.chapterId === this.currentChapterId))
         ? this.currentChapterId
         : this.chapter.id;
-      let currentTop = 0;
+      const rangeStart: number = scrollTop - containerHeight;
+      const rangeEnd: number = scrollBottom + containerHeight;
+      const firstCandidateIndex: number = this.findFirstWebtoonVisibleCandidate(rangeStart);
 
-      for (let i = 0; i < this.webtoonDataItems.length; i++) {
+      for (let i = firstCandidateIndex; i >= 0 && i < this.webtoonDataItems.length; i++) {
         const item = this.webtoonDataItems[i];
         if (!item) {
           continue;
         }
+        const itemTop: number = this.calculateWebtoonItemScrollPosition(i);
+        if (itemTop > rangeEnd) {
+          break;
+        }
+        const itemBottom: number = itemTop + this.getWebtoonItemEstimatedHeight(item);
         if (item.type === 'page' && item.page) {
-          const ph: number = this.getEstimatedImageHeight(item.page);
-          const itemTop = currentTop;
-          const itemBottom = itemTop + ph;
-          if (itemBottom >= scrollTop - containerHeight && itemTop <= scrollBottom + containerHeight) {
+          if (itemBottom >= rangeStart && itemTop <= rangeEnd) {
             visibleItemIndices.push(i);
             const itemChapterId = item.chapterId || this.chapter.id;
             if (itemChapterId === activeChapterId) {
               visibleIndices.push(item.pageIndex !== undefined ? item.pageIndex : 0);
             }
           }
-          currentTop = itemBottom + spacing;
         } else if (item.type === 'chapter_divider') {
-          currentTop += 120 + spacing;
+          if (itemBottom >= rangeStart && itemTop <= rangeEnd) {
+            visibleItemIndices.push(i);
+          }
         }
       }
 
@@ -12435,6 +12612,48 @@ export struct MangaViewer {
     }
 
     return position;
+  }
+
+  private getWebtoonItemEstimatedHeight(item: WebtoonDataItem): number {
+    if (item.type === 'page' && item.page) {
+      return this.getEstimatedImageHeight(item.page);
+    }
+    if (item.type === 'chapter_divider') {
+      return 120;
+    }
+    return 0;
+  }
+
+  private ensureWebtoonPositionCache(): void {
+    if (!this.webtoonPositionCacheValid ||
+      this.webtoonItemPositionCache.length !== this.webtoonDataItems.length + 1) {
+      this.rebuildWebtoonPositionCache();
+    }
+  }
+
+  private findFirstWebtoonVisibleCandidate(rangeStart: number): number {
+    if (this.webtoonDataItems.length === 0) {
+      return -1;
+    }
+    this.ensureWebtoonPositionCache();
+    let low: number = 0;
+    let high: number = this.webtoonDataItems.length - 1;
+    let result: number = -1;
+
+    while (low <= high) {
+      const mid: number = Math.floor((low + high) / 2);
+      const itemEnd: number = (mid + 1 < this.webtoonItemPositionCache.length)
+        ? this.webtoonItemPositionCache[mid + 1]
+        : this.calculateWebtoonItemScrollPosition(mid) + this.getWebtoonItemEstimatedHeight(this.webtoonDataItems[mid]);
+      if (itemEnd >= rangeStart) {
+        result = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    return result >= 0 ? result : Math.max(0, this.webtoonDataItems.length - 1);
   }
   
   /**
