@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源更新管理器
  * 负责检查图源仓库更新、管理更新状态
@@ -97,7 +98,7 @@ export class SourceUpdateManager {
       
       const localIndexStr = (await this.preferences.get('localIndex', '')) as string;
       if (localIndexStr && localIndexStr.length > 0) {
-        this.localIndex = JSON.parse(localIndexStr) as SourceRepoIndex;
+        this.localIndex = SafeUtils.parseObj(localIndexStr) as SourceRepoIndex;
       }
       
       logger.debug(TAG, `加载设置: hasUpdate=${this.hasUpdate}, repoUrl=${this.repoUrl}`);
@@ -244,7 +245,7 @@ export class SourceUpdateManager {
 
       if (response.responseCode === 200) {
         const data = response.result as string;
-        return JSON.parse(data) as SourceRepoIndex;
+        return SafeUtils.parseObj(data) as SourceRepoIndex;
       } else {
         logger.warn(TAG, `获取远程索引失败: HTTP ${response.responseCode}`);
         return null;

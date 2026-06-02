@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/ReaderKitViewerComponent.ets
 /**
  * Reader Kit 阅读器组件
@@ -11,7 +13,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { display, font } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { getReaderKitRuntimeDisabledReason, isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
 
 const TAG = 'ReaderKitViewerComponent';
@@ -235,7 +237,7 @@ export struct ReaderKitViewerComponent {
     if (fontPath && fontPath.length > 0) {
       try {
         const fontUri = fontPath.startsWith('file://') ? fontPath : `file://${fontPath}`;
-        font.registerFont({
+        this.getUIContext().getFont().registerFont({
           familyName: settings.fontFamily,
           familySrc: fontUri
         });
@@ -286,7 +288,7 @@ export struct ReaderKitViewerComponent {
       if (fontPath && fontPath.length > 0) {
         try {
           const fontUri = fontPath.startsWith('file://') ? fontPath : `file://${fontPath}`;
-          font.registerFont({
+          this.getUIContext().getFont().registerFont({
             familyName: settings.fontFamily,
             familySrc: fontUri
           });
@@ -369,11 +371,11 @@ export struct ReaderKitViewerComponent {
         openTarget = `/${filePath}`;
       }
 
-      let file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
-      let stat = fileIo.statSync(file.fd);
+      let file = SafeFileUtils.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      let stat = SafeFileUtils.statSync(file.fd);
       let buffer = new ArrayBuffer(stat.size);
-      let readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      let readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
 
       if (readLen !== stat.size) {
         throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
@@ -388,11 +390,11 @@ export struct ReaderKitViewerComponent {
         if (filePath.startsWith('file://')) {
           const stripped = filePath.substring(7);
           const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
-          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
-          const stat = fileIo.statSync(file.fd);
+          const file = SafeFileUtils.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = SafeFileUtils.statSync(file.fd);
           const buffer = new ArrayBuffer(stat.size);
-          const readLen = fileIo.readSync(file.fd, buffer);
-          fileIo.closeSync(file);
+          const readLen = SafeFileUtils.readSync(file.fd, buffer);
+          SafeFileUtils.closeSync(file);
 
           if (readLen !== stat.size) {
             throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
@@ -412,9 +414,9 @@ export struct ReaderKitViewerComponent {
     const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
     const fileName = this.getFileName(filePath);
     const target = `${context.filesDir}/${fileName}`;
-    const file = fileIo.openSync(target, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
-    fileIo.writeSync(file.fd, fileBuffer);
-    fileIo.closeSync(file.fd);
+    const file = SafeFileUtils.openSync(target, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+    SafeFileUtils.writeSync(file.fd, fileBuffer);
+    SafeFileUtils.closeSync(file.fd);
     return target;
   }
 
@@ -433,7 +435,7 @@ export struct ReaderKitViewerComponent {
       return -1;
     }
     try {
-      const parsedData = JSON.parse(pageDataJson) as ReaderKitPageDataJson;
+      const parsedData = SafeUtils.parseObj(pageDataJson) as ReaderKitPageDataJson;
       if (!parsedData) {
         return -1;
       }
@@ -1011,7 +1013,7 @@ export struct ReaderKitViewerComponent {
         try {
           // 如果保存的是 JSON 格式的 PageDataInfo，尝试解析
           if (this.initialDomPos.startsWith('{')) {
-            const savedData = JSON.parse(this.initialDomPos) as ReaderKitSavedPositionData;
+            const savedData = SafeUtils.parseObj(this.initialDomPos) as ReaderKitSavedPositionData;
             const resourceIndex = savedData.resourceIndex;
             if (typeof resourceIndex === 'number' && this.isFiniteNumber(resourceIndex) && resourceIndex >= 0) {
               startIndex = Math.floor(resourceIndex);

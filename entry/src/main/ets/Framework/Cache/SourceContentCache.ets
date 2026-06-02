@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源内容缓存管理器
  * 缓存图源详情页的所有工作流数据（热门、最新、搜索、筛选等）
@@ -7,6 +8,8 @@
 import { logger } from '../../Utils/Logger';
 import { ComicInfo } from '../Source/SourceExecutor';
 import { preferences } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
+import { uiContextManager } from '../Managers/UIContextManager';
 
 const TAG = 'SourceContentCache';
 
@@ -51,6 +54,14 @@ export class SourceContentCache {
     maxAge: 30 * 60 * 1000,  // 30分钟
     maxEntries: 20            // 每个图源最多20个缓存条目
   };
+
+  private getAbilityContext(): common.UIAbilityContext {
+    const context = uiContextManager.getAbilityContext();
+    if (!context) {
+      throw new Error('SourceContentCache 获取 AbilityContext 失败');
+    }
+    return context;
+  }
 
   private constructor() {
     this.loadCacheFromStorage();
@@ -253,11 +264,11 @@ export class SourceContentCache {
    */
   private async loadCacheFromStorage(): Promise<void> {
     try {
-      const dataPreferences = await preferences.getPreferences(getContext(), 'source_content_cache');
+      const dataPreferences = await preferences.getPreferences(this.getAbilityContext(), 'source_content_cache');
       const cacheJson = await dataPreferences.get('cache_data', '{}') as string;
       
       if (cacheJson && cacheJson !== '{}') {
-        const cacheData = JSON.parse(cacheJson) as Record<string, CachedContent>;
+        const cacheData = SafeUtils.parseObj(cacheJson) as Record<string, CachedContent>;
         
         // 恢复到Map
         Object.entries(cacheData).forEach((entry: [string, CachedContent]) => {
@@ -279,7 +290,7 @@ export class SourceContentCache {
    */
   private async saveCacheToStorage(): Promise<void> {
     try {
-      const dataPreferences = await preferences.getPreferences(getContext(), 'source_content_cache');
+      const dataPreferences = await preferences.getPreferences(this.getAbilityContext(), 'source_content_cache');
       
       // 转换Map为普通对象
       const cacheData: Record<string, CachedContent> = {};
@@ -304,7 +315,7 @@ export class SourceContentCache {
     logger.info(TAG, '已清空所有缓存');
     
     try {
-      const dataPreferences = await preferences.getPreferences(getContext(), 'source_content_cache');
+      const dataPreferences = await preferences.getPreferences(this.getAbilityContext(), 'source_content_cache');
       await dataPreferences.delete('cache_data');
       await dataPreferences.flush();
     } catch (error) {

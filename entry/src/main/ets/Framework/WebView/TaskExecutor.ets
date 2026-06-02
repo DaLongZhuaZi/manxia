@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 任务执行引擎
  * 负责执行任务定义中的步骤，支持顺序执行、并行执行和条件执行
@@ -522,7 +523,7 @@ export class TaskExecutor {
       if (value === undefined) return match;
       return typeof value === 'string' ? value : String(value);
     });
-    return JSON.parse(replacedStr) as Action;
+    return SafeUtils.parseObj(replacedStr) as Action;
   }
 
   /**

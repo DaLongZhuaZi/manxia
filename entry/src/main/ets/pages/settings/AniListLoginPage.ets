@@ -1,3 +1,4 @@
+﻿import { UIContext } from '@ohos.arkui.UIContext';
 /**
  * AniList 登录页面
  * 使用 WebView 进行 OAuth2 授权
@@ -106,7 +107,7 @@ export struct AniListLoginPage {
 
   private showSuccessToast(): void {
     import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showToast({
+      AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
         message: `登录成功: ${this.aniListTracker.getAuthState().username}`,
         duration: 2000
       });

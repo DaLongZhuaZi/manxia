@@ -1,4 +1,4 @@
-// 文件路径: src/main/ets/Framework/Managers/PreviewerEnvironmentManager.ets
+﻿// 文件路径: src/main/ets/Framework/Managers/PreviewerEnvironmentManager.ets
 /**
  * 漫画阅读器设置面板组件
  * 提供阅读模式、阅读方向、亮度调节、滤镜效果、页面间距等配置选项

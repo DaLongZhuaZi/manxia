@@ -1,4 +1,5 @@
-﻿/**
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
+/**
  * 字典规则管理页面
  * 管理在线词典查询规则
  * 
@@ -90,13 +91,13 @@ export struct NovelDictRulePage {
 
   async saveRule(): Promise<void> {
     if (!this.formName.trim() || !this.formUrlRule.trim()) {
-      promptAction.showToast({ message: '请填写规则名称和 URL 规则' });
+      this.getUIContext().getPromptAction().showToast({ message: '请填写规则名称和 URL 规则' });
       return;
     }
 
     // 验证URL规则包含占位符
     if (!this.formUrlRule.includes('{{key}}')) {
-      promptAction.showToast({ message: 'URL 规则必须包含 {{key}} 占位符' });
+      this.getUIContext().getPromptAction().showToast({ message: 'URL 规则必须包含 {{key}} 占位符' });
       return;
     }
 
@@ -110,22 +111,22 @@ export struct NovelDictRulePage {
 
       if (this.editingRule) {
         await this.ruleManager.updateRule(this.editingRule.id, params);
-        promptAction.showToast({ message: '规则已更新' });
+        this.getUIContext().getPromptAction().showToast({ message: '规则已更新' });
       } else {
         await this.ruleManager.addRule(params);
-        promptAction.showToast({ message: '规则已添加' });
+        this.getUIContext().getPromptAction().showToast({ message: '规则已添加' });
       }
 
       this.showAddDialog = false;
       this.resetForm();
       this.loadRules();
     } catch (error) {
-      promptAction.showToast({ message: `保存失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `保存失败: ${String(error)}` });
     }
   }
 
   async deleteRule(rule: DictRule): Promise<void> {
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '确认删除',
       message: `确定要删除规则 "${rule.name}" 吗？`,
       buttons: [
@@ -135,7 +136,7 @@ export struct NovelDictRulePage {
     }).then(async (result) => {
       if (result.index === 1) {
         await this.ruleManager.deleteRule(rule.id);
-        promptAction.showToast({ message: '已删除' });
+        this.getUIContext().getPromptAction().showToast({ message: '已删除' });
         this.loadRules();
       }
     });
@@ -182,7 +183,7 @@ export struct NovelDictRulePage {
    * 显示导入选项菜单
    */
   showImportOptions(): void {
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '选择导入方式',
       buttons: [
         { text: '从剪贴板导入', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -209,14 +210,14 @@ export struct NovelDictRulePage {
         const text = data.getPrimaryText();
         if (text) {
           const result = await this.ruleManager.importFromJSON(text);
-          promptAction.showToast({
+          this.getUIContext().getPromptAction().showToast({
             message: `导入完成: ${result.success}/${result.total} 成功`
           });
           this.loadRules();
         }
       }
     } catch (error) {
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
     }
   }
 
@@ -225,9 +226,9 @@ export struct NovelDictRulePage {
    */
   async importFromFile(): Promise<void> {
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context) {
-        promptAction.showToast({ message: '无法获取应用上下文' });
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取应用上下文' });
         return;
       }
 
@@ -249,23 +250,23 @@ export struct NovelDictRulePage {
       logger.info(TAG, `用户选择了文件: ${fileUri}`);
       
       // 读取文件内容
-      const file = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(file.fd);
+      const file = SafeFileUtils.openSync(fileUri, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       const fileSize = stat.size;
       
       if (fileSize > 50 * 1024 * 1024) {
-        fs.closeSync(file);
-        promptAction.showToast({ message: '文件过大，最大支持50MB' });
+        SafeFileUtils.closeSync(file);
+        this.getUIContext().getPromptAction().showToast({ message: '文件过大，最大支持50MB' });
         return;
       }
       
       const buffer = new ArrayBuffer(fileSize);
-      fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       const uint8Array = new Uint8Array(buffer);
       const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-      const jsonContent = decoder.decode(uint8Array);
+      const jsonContent = decoder.decodeToString(uint8Array);
       
       logger.info(TAG, `读取到文件内容，长度: ${jsonContent.length}`);
       
@@ -273,18 +274,18 @@ export struct NovelDictRulePage {
       const result = await this.ruleManager.importFromJSON(jsonContent);
       
       if (result.success > 0) {
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: `导入完成: ${result.success}/${result.total} 成功`
         });
         this.loadRules();
       } else {
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: `导入失败: ${result.errors.join(', ')}`
         });
       }
     } catch (error) {
       logger.error(TAG, `从文件导入失败: ${String(error)}`);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
     }
   }
 
@@ -294,14 +295,14 @@ export struct NovelDictRulePage {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, json);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       await systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: '已复制到剪贴板' });
+      this.getUIContext().getPromptAction().showToast({ message: '已复制到剪贴板' });
     } catch (error) {
-      promptAction.showToast({ message: `导出失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导出失败: ${String(error)}` });
     }
   }
 
   async resetToDefault(): Promise<void> {
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '确认重置',
       message: '确定要重置为默认规则吗？这将删除所有自定义规则。',
       buttons: [
@@ -311,7 +312,7 @@ export struct NovelDictRulePage {
     }).then(async (result) => {
       if (result.index === 1) {
         await this.ruleManager.resetToDefault();
-        promptAction.showToast({ message: '已重置为默认规则' });
+        this.getUIContext().getPromptAction().showToast({ message: '已重置为默认规则' });
         this.loadRules();
       }
     });

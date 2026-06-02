@@ -1,4 +1,5 @@
-﻿/**
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
+/**
  * RSS subscription source management page.
  * Supports source CRUD, import, reorder and refresh actions.
  */
@@ -157,14 +158,14 @@ export struct RssSubscriptionManagementPage {
     this.isLoading = true;
     try {
       logger.info(TAG, '开始初始化订阅源管理页');
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await getRssSubscriptionInitializer().initialize(context);
       await this.loadSources();
       this.triggerAutoDueRefresh();
       logger.info(TAG, '订阅源管理页初始化完成');
     } catch (error) {
       logger.error(TAG, `初始化订阅源管理页失败: ${String(error)}`);
-      promptAction.showToast({ message: `初始化失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `初始化失败: ${String(error)}` });
     }
     this.isLoading = false;
   }
@@ -188,7 +189,7 @@ export struct RssSubscriptionManagementPage {
       logger.info(TAG, `加载订阅源列表完成: ${this.sources.length} 个`);
     } catch (error) {
       logger.warn(TAG, `加载订阅源列表失败: ${String(error)}`);
-      promptAction.showToast({ message: '加载订阅源失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '加载订阅源失败' });
     }
   }
 
@@ -415,11 +416,11 @@ export struct RssSubscriptionManagementPage {
     const target = groupName.trim();
     const targetGroupList = this.normalizeGroupNames(target);
     if (target.length === 0 || targetGroupList.length === 0) {
-      promptAction.showToast({ message: '分组名称不能为空' });
+      this.getUIContext().getPromptAction().showToast({ message: '分组名称不能为空' });
       return;
     }
     if (this.filteredSources.length === 0) {
-      promptAction.showToast({ message: '当前筛选结果为空，无法执行分组操作' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前筛选结果为空，无法执行分组操作' });
       return;
     }
     this.isBatchOperating = true;
@@ -451,11 +452,11 @@ export struct RssSubscriptionManagementPage {
         changedCount++;
       }
       await this.loadSources();
-      promptAction.showToast({ message: `分组操作完成，已变更 ${changedCount} 个订阅源` });
+      this.getUIContext().getPromptAction().showToast({ message: `分组操作完成，已变更 ${changedCount} 个订阅源` });
       logger.info(TAG, `批量分组操作完成: action=${action}, target=${target}, 变更=${changedCount}`);
     } catch (error) {
       logger.error(TAG, `批量分组操作失败: action=${action}, ${String(error)}`);
-      promptAction.showToast({ message: `分组操作失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `分组操作失败: ${String(error)}` });
     }
     this.isBatchOperating = false;
   }
@@ -464,11 +465,11 @@ export struct RssSubscriptionManagementPage {
     const normalizedOld = oldName.trim();
     const normalizedNew = newName.trim();
     if (normalizedOld.length === 0 || normalizedNew.length === 0) {
-      promptAction.showToast({ message: '分组名称不能为空' });
+      this.getUIContext().getPromptAction().showToast({ message: '分组名称不能为空' });
       return;
     }
     if (normalizedOld === normalizedNew) {
-      promptAction.showToast({ message: '新旧分组名称相同，无需修改' });
+      this.getUIContext().getPromptAction().showToast({ message: '新旧分组名称相同，无需修改' });
       return;
     }
     this.isBatchOperating = true;
@@ -488,11 +489,11 @@ export struct RssSubscriptionManagementPage {
         changedCount++;
       }
       await this.loadSources();
-      promptAction.showToast({ message: `分组重命名完成，已变更 ${changedCount} 个订阅源` });
+      this.getUIContext().getPromptAction().showToast({ message: `分组重命名完成，已变更 ${changedCount} 个订阅源` });
       logger.info(TAG, `重命名分组完成: ${normalizedOld} -> ${normalizedNew}, 变更=${changedCount}`);
     } catch (error) {
       logger.error(TAG, `重命名分组失败: ${normalizedOld} -> ${normalizedNew}, ${String(error)}`);
-      promptAction.showToast({ message: `重命名失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `重命名失败: ${String(error)}` });
     }
     this.isBatchOperating = false;
   }
@@ -500,7 +501,7 @@ export struct RssSubscriptionManagementPage {
   private async removeGroupAcrossSources(groupName: string): Promise<void> {
     const normalizedName = groupName.trim();
     if (normalizedName.length === 0) {
-      promptAction.showToast({ message: '分组名称不能为空' });
+      this.getUIContext().getPromptAction().showToast({ message: '分组名称不能为空' });
       return;
     }
     this.isBatchOperating = true;
@@ -520,11 +521,11 @@ export struct RssSubscriptionManagementPage {
         changedCount++;
       }
       await this.loadSources();
-      promptAction.showToast({ message: `已从 ${changedCount} 个订阅源移除分组` });
+      this.getUIContext().getPromptAction().showToast({ message: `已从 ${changedCount} 个订阅源移除分组` });
       logger.info(TAG, `删除分组标签完成: group=${normalizedName}, 变更=${changedCount}`);
     } catch (error) {
       logger.error(TAG, `删除分组标签失败: ${normalizedName}, ${String(error)}`);
-      promptAction.showToast({ message: `删除分组失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `删除分组失败: ${String(error)}` });
     }
     this.isBatchOperating = false;
   }
@@ -582,7 +583,7 @@ export struct RssSubscriptionManagementPage {
     }
     entries.push({ text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') } as BatchActionButton);
 
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: `${title}（${safePageIndex + 1}/${Math.max(totalPages, 1)}）`,
       buttons: this.toActionMenuButtons(entries)
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
@@ -615,7 +616,7 @@ export struct RssSubscriptionManagementPage {
   private showRenameGroupMenu(): void {
     const groups = this.getAllGroupNames();
     if (groups.length === 0) {
-      promptAction.showToast({ message: '当前没有可重命名的分组' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前没有可重命名的分组' });
       return;
     }
     this.showPagedGroupPicker('选择要重命名的分组', groups, 0, (oldName: string) => {
@@ -627,11 +628,11 @@ export struct RssSubscriptionManagementPage {
   private showDeleteGroupMenu(): void {
     const groups = this.getAllGroupNames();
     if (groups.length === 0) {
-      promptAction.showToast({ message: '当前没有可删除的分组' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前没有可删除的分组' });
       return;
     }
     this.showPagedGroupPicker('选择要删除的分组', groups, 0, (targetGroup: string) => {
-      promptAction.showDialog({
+      this.getUIContext().getPromptAction().showDialog({
         title: '确认删除分组标签',
         message: `确认从全部订阅源中移除分组「${targetGroup}」？`,
         buttons: [
@@ -655,7 +656,7 @@ export struct RssSubscriptionManagementPage {
       { text: '删除分组', color: $r('sys.color.ohos_id_color_text_primary') } as BatchActionButton,
       { text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') } as BatchActionButton
     ];
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '分组操作',
       buttons
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
@@ -689,7 +690,7 @@ export struct RssSubscriptionManagementPage {
     const input = this.groupInputText.trim();
     const renameOldName = this.groupRenameOldName;
     if (input.length === 0) {
-      promptAction.showToast({ message: '请输入分组名称' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入分组名称' });
       return;
     }
     this.closeGroupInputDialog();
@@ -824,12 +825,12 @@ export struct RssSubscriptionManagementPage {
     const articleStyle = Math.max(0, parseInt(this.editArticleStyleText || '0', 10) || 0);
 
     if (name.length === 0 || url.length === 0) {
-      promptAction.showToast({ message: '名称和 URL 不能为空' });
+      this.getUIContext().getPromptAction().showToast({ message: '名称和 URL 不能为空' });
       return;
     }
 
     if (this.showAdvancedConfig && ruleArticles.length > 0 && ruleTitle.length === 0 && ruleLink.length === 0) {
-      promptAction.showToast({ message: '规则模式下建议至少配置标题规则或链接规则' });
+      this.getUIContext().getPromptAction().showToast({ message: '规则模式下建议至少配置标题规则或链接规则' });
     }
     if (this.showAdvancedConfig && ruleArticles.length === 0) {
       const hasOtherRuleField = ruleTitle.length > 0
@@ -840,7 +841,7 @@ export struct RssSubscriptionManagementPage {
         || ruleImage.length > 0
         || ruleNextPage.length > 0;
       if (hasOtherRuleField) {
-        promptAction.showToast({ message: '已填写规则字段，但缺少 ruleArticles 列表规则' });
+        this.getUIContext().getPromptAction().showToast({ message: '已填写规则字段，但缺少 ruleArticles 列表规则' });
         return;
       }
     }
@@ -878,16 +879,16 @@ export struct RssSubscriptionManagementPage {
       if (this.editingSourceId.length === 0) {
         const created = await this.manager.addSource(name, url, groupName);
         await this.manager.updateSource(created.id, updatePayload);
-        promptAction.showToast({ message: '已新增订阅源' });
+        this.getUIContext().getPromptAction().showToast({ message: '已新增订阅源' });
       } else {
         await this.manager.updateSource(this.editingSourceId, updatePayload);
-        promptAction.showToast({ message: '已更新订阅源' });
+        this.getUIContext().getPromptAction().showToast({ message: '已更新订阅源' });
       }
       this.showEditDialog = false;
       await this.loadSources();
     } catch (error) {
       logger.error(TAG, `保存订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `保存失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `保存失败: ${String(error)}` });
     }
   }
 
@@ -908,10 +909,10 @@ export struct RssSubscriptionManagementPage {
       logger.info(TAG, `删除订阅源: ${sourceToDelete.name}`);
       await this.manager.deleteSource(sourceToDelete.id);
       await this.loadSources();
-      promptAction.showToast({ message: '已删除' });
+      this.getUIContext().getPromptAction().showToast({ message: '已删除' });
     } catch (error) {
       logger.error(TAG, `删除订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `删除失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${String(error)}` });
     }
   }
 
@@ -923,7 +924,7 @@ export struct RssSubscriptionManagementPage {
       }
     } catch (error) {
       logger.error(TAG, `调整订阅源顺序失败: ${String(error)}`);
-      promptAction.showToast({ message: `排序失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `排序失败: ${String(error)}` });
     }
   }
 
@@ -946,7 +947,7 @@ export struct RssSubscriptionManagementPage {
       this.applyFilter();
     } catch (error) {
       logger.error(TAG, `更新订阅源启用状态失败: ${String(error)}`);
-      promptAction.showToast({ message: `更新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `更新失败: ${String(error)}` });
     }
   }
 
@@ -955,14 +956,14 @@ export struct RssSubscriptionManagementPage {
       logger.info(TAG, `开始刷新订阅源: ${source.name}`);
       const result = await this.manager.refreshSource(source.id);
       if (result.success) {
-        promptAction.showToast({ message: `刷新成功: ${result.insertedCount}/${result.itemCount}` });
+        this.getUIContext().getPromptAction().showToast({ message: `刷新成功: ${result.insertedCount}/${result.itemCount}` });
       } else {
-        promptAction.showToast({ message: `刷新失败: ${result.error || result.statusCode}` });
+        this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${result.error || result.statusCode}` });
       }
       await this.loadSources();
     } catch (error) {
       logger.error(TAG, `刷新订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `刷新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${String(error)}` });
     }
   }
 
@@ -987,12 +988,12 @@ export struct RssSubscriptionManagementPage {
       });
       const successCount = results.filter((item) => item.success).length;
       const failCount = results.length - successCount;
-      promptAction.showToast({ message: `刷新完成，成功 ${successCount}，失败 ${failCount}` });
+      this.getUIContext().getPromptAction().showToast({ message: `刷新完成，成功 ${successCount}，失败 ${failCount}` });
       logger.info(TAG, `批量刷新订阅源完成: 成功=${successCount}, 失败=${failCount}`);
       await this.loadSources();
     } catch (error) {
       logger.error(TAG, `批量刷新订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `批量刷新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `批量刷新失败: ${String(error)}` });
     }
     this.isRefreshing = false;
     this.progressText = '';
@@ -1013,18 +1014,18 @@ export struct RssSubscriptionManagementPage {
         this.progressText = `${progress.current}/${progress.total} ${progress.sourceName} ${detail}`;
       });
       if (results.length === 0) {
-        promptAction.showToast({ message: '暂无到期订阅源' });
+        this.getUIContext().getPromptAction().showToast({ message: '暂无到期订阅源' });
         logger.info(TAG, '刷新到期订阅源完成: 无到期源');
       } else {
         const successCount = results.filter((item) => item.success).length;
         const failCount = results.length - successCount;
-        promptAction.showToast({ message: `到期刷新完成，成功 ${successCount}，失败 ${failCount}` });
+        this.getUIContext().getPromptAction().showToast({ message: `到期刷新完成，成功 ${successCount}，失败 ${failCount}` });
         logger.info(TAG, `刷新到期订阅源完成: 总数=${results.length}, 成功=${successCount}, 失败=${failCount}`);
       }
       await this.loadSources();
     } catch (error) {
       logger.error(TAG, `刷新到期订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `到期刷新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `到期刷新失败: ${String(error)}` });
     }
     this.isRefreshing = false;
     this.progressText = '';
@@ -1035,7 +1036,7 @@ export struct RssSubscriptionManagementPage {
       return;
     }
     if (this.sources.length === 0) {
-      promptAction.showToast({ message: '当前没有可操作的订阅源' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前没有可操作的订阅源' });
       return;
     }
 
@@ -1052,7 +1053,7 @@ export struct RssSubscriptionManagementPage {
         changedCount++;
       }
       await this.loadSources();
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: `${enabled ? '已启用' : '已禁用'} ${changedCount} 个订阅源`
       });
       logger.info(
@@ -1061,7 +1062,7 @@ export struct RssSubscriptionManagementPage {
       );
     } catch (error) {
       logger.error(TAG, `批量更新订阅源启用状态失败: ${String(error)}`);
-      promptAction.showToast({ message: `批量操作失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `批量操作失败: ${String(error)}` });
     }
     this.isBatchOperating = false;
   }
@@ -1075,7 +1076,7 @@ export struct RssSubscriptionManagementPage {
       { text: '全部禁用', color: $r('sys.color.ohos_id_color_text_primary') } as BatchActionButton,
       { text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') } as BatchActionButton
     ];
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '批量操作订阅源',
       buttons
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
@@ -1096,18 +1097,18 @@ export struct RssSubscriptionManagementPage {
     try {
       const sources = await this.manager.getAllSources(false);
       if (sources.length === 0) {
-        promptAction.showToast({ message: '当前没有可导出的订阅源' });
+        this.getUIContext().getPromptAction().showToast({ message: '当前没有可导出的订阅源' });
         return;
       }
       const content = JSON.stringify(sources, null, 2);
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, content);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       await systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: `已复制 ${sources.length} 个订阅源 JSON` });
+      this.getUIContext().getPromptAction().showToast({ message: `已复制 ${sources.length} 个订阅源 JSON` });
       logger.info(TAG, `导出订阅源到剪贴板完成: 数量=${sources.length}, 内容长度=${content.length}`);
     } catch (error) {
       logger.error(TAG, `导出订阅源到剪贴板失败: ${String(error)}`);
-      promptAction.showToast({ message: `导出失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导出失败: ${String(error)}` });
     }
   }
 
@@ -1116,21 +1117,21 @@ export struct RssSubscriptionManagementPage {
       const systemPasteboard: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
       const data: pasteboard.PasteData = await systemPasteboard.getData();
       if (!data.hasType(pasteboard.MIMETYPE_TEXT_PLAIN)) {
-        promptAction.showToast({ message: '剪贴板中没有文本内容' });
+        this.getUIContext().getPromptAction().showToast({ message: '剪贴板中没有文本内容' });
         return;
       }
       const text: string = data.getPrimaryText();
       const normalized = text ? text.trim() : '';
       if (normalized.length === 0) {
-        promptAction.showToast({ message: '剪贴板文本为空' });
+        this.getUIContext().getPromptAction().showToast({ message: '剪贴板文本为空' });
         return;
       }
       this.importText = normalized;
-      promptAction.showToast({ message: '已从剪贴板读取内容' });
+      this.getUIContext().getPromptAction().showToast({ message: '已从剪贴板读取内容' });
       logger.info(TAG, `读取剪贴板导入内容成功: 长度=${normalized.length}`);
     } catch (error) {
       logger.error(TAG, `读取剪贴板导入内容失败: ${String(error)}`);
-      promptAction.showToast({ message: `读取剪贴板失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `读取剪贴板失败: ${String(error)}` });
     }
   }
 
@@ -1178,7 +1179,7 @@ export struct RssSubscriptionManagementPage {
       );
     } catch (error) {
       logger.error(TAG, `规则预览失败: ${source.name}, ${String(error)}`);
-      promptAction.showToast({ message: `规则预览失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `规则预览失败: ${String(error)}` });
     }
     this.isRulePreviewLoading = false;
   }
@@ -1267,7 +1268,7 @@ export struct RssSubscriptionManagementPage {
 
   private presentImportResult(mode: string, result: RssImportResult): void {
     const summary = this.buildImportResultMessage(`${mode}导入完成`, result);
-    promptAction.showToast({ message: summary });
+    this.getUIContext().getPromptAction().showToast({ message: summary });
     this.logImportErrors(mode, result);
 
     if (result.failed > 0 && result.errors.length > 0) {
@@ -1281,7 +1282,7 @@ export struct RssSubscriptionManagementPage {
   private async importSourcesFromPaste(): Promise<void> {
     const text = this.importText.trim();
     if (text.length === 0) {
-      promptAction.showToast({ message: '请输入导入 JSON 内容' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入导入 JSON 内容' });
       return;
     }
     try {
@@ -1297,14 +1298,14 @@ export struct RssSubscriptionManagementPage {
       );
     } catch (error) {
       logger.error(TAG, `粘贴导入订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
     }
   }
 
   private async importSourcesFromUrl(): Promise<void> {
     const url = this.importUrl.trim();
     if (url.length === 0) {
-      promptAction.showToast({ message: '请输入网络导入链接' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入网络导入链接' });
       return;
     }
     try {
@@ -1321,7 +1322,7 @@ export struct RssSubscriptionManagementPage {
     } catch (error) {
       const errorText = this.resolveErrorText(error as PageErrorValue);
       logger.error(TAG, `网络导入订阅源失败: ${errorText}`);
-      promptAction.showToast({ message: `网络导入失败: ${errorText}` });
+      this.getUIContext().getPromptAction().showToast({ message: `网络导入失败: ${errorText}` });
       this.importErrorTitle = '网络导入失败详情';
       this.importErrorSummary = `网络导入失败: ${errorText}`;
       this.importErrorList = this.copyErrorList([errorText]);
@@ -1333,9 +1334,9 @@ export struct RssSubscriptionManagementPage {
     let file: fs.File | null = null;
     try {
       logger.info(TAG, `开始文件导入订阅源: 策略=${this.importConflictPolicy}`);
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context) {
-        promptAction.showToast({ message: '无法获取应用上下文' });
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取应用上下文' });
         logger.error(TAG, '文件导入失败: 无法获取 UIAbilityContext');
         return;
       }
@@ -1351,8 +1352,8 @@ export struct RssSubscriptionManagementPage {
       }
 
       const fileUri = selectResult[0];
-      file = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(file.fd);
+      file = SafeFileUtils.openSync(fileUri, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       const fileSize = stat.size;
       if (fileSize <= 0) {
         throw new Error('文件内容为空');
@@ -1363,8 +1364,8 @@ export struct RssSubscriptionManagementPage {
       }
 
       const buffer = new ArrayBuffer(fileSize);
-      const readLen = fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       file = null;
       if (readLen <= 0) {
         throw new Error('文件读取失败');
@@ -1372,7 +1373,7 @@ export struct RssSubscriptionManagementPage {
 
       const uint8Array = new Uint8Array(buffer, 0, readLen);
       const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-      const text = decoder.decode(uint8Array).trim();
+      const text = decoder.decodeToString(uint8Array).trim();
       if (text.length === 0) {
         throw new Error('文件内容为空');
       }
@@ -1386,10 +1387,10 @@ export struct RssSubscriptionManagementPage {
       );
     } catch (error) {
       logger.error(TAG, `文件导入订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `文件导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `文件导入失败: ${String(error)}` });
     } finally {
       if (file) {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
       }
     }
   }

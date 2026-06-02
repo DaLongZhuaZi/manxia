@@ -4,9 +4,8 @@
   */
 
 import { logger } from '../Utils/Logger';
-import { curves, componentSnapshot, font, promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
+import { curves, promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
-import measure from '@ohos.measure';
 import { display } from '@kit.ArkUI';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
@@ -392,7 +391,7 @@ export struct TextReaderComponent {
     if (fontPath && fontPath.length > 0) {
       try {
         const fontUri = fontPath.startsWith('file://') ? fontPath : `file://${fontPath}`;
-        font.registerFont({
+        this.getUIContext().getFont().registerFont({
           familyName: this.settings.textStyle.fontFamily,
           familySrc: fontUri
         });
@@ -1076,7 +1075,7 @@ export struct TextReaderComponent {
       this.relayoutOpacity = 1;
       return;
     }
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 90,
       curve: Curve.EaseOut
     }, () => {
@@ -1085,7 +1084,7 @@ export struct TextReaderComponent {
   }
 
   private finishRelayoutAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 120,
       curve: Curve.EaseIn
     }, () => {
@@ -2178,7 +2177,7 @@ export struct TextReaderComponent {
     const fontSizePx = this.vp2px(this.getEffectiveFontSize());
     const letterSpacingPx = this.vp2px(this.settings.textStyle.letterSpacing);
     
-    const result = measure.measureTextSize({
+    const result = this.getUIContext().getMeasureUtils().measureTextSize({
       textContent: text,
       fontSize: `${fontSizePx}px`,
       fontFamily: this.settings.textStyle.fontFamily,
@@ -3353,14 +3352,14 @@ export struct TextReaderComponent {
       clearTimeout(this.highlightThoughtPopupHideTimer);
       this.highlightThoughtPopupHideTimer = -1;
     }
-    animateTo({ duration: 180, curve: curves.cubicBezierCurve(0.22, 0.92, 0.28, 1.08) }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: curves.cubicBezierCurve(0.22, 0.92, 0.28, 1.08) }, () => {
       this.highlightThoughtPopupMaskOpacity = 1;
       this.highlightThoughtPopupOpacity = 1;
       this.highlightThoughtPopupScale = 1.04;
       this.highlightThoughtPopupTranslateY = -3;
     });
     this.highlightThoughtPopupTimer = setTimeout(() => {
-      animateTo({ duration: 120, curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1) }, () => {
+      this.getUIContext().animateTo({ duration: 120, curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1) }, () => {
         this.highlightThoughtPopupScale = 1;
         this.highlightThoughtPopupTranslateY = 0;
       });
@@ -3380,12 +3379,12 @@ export struct TextReaderComponent {
     if (!this.showHighlightThoughtPopup) {
       return;
     }
-    animateTo({ duration: 90, curve: curves.cubicBezierCurve(0.4, 0, 0.2, 1) }, () => {
+    this.getUIContext().animateTo({ duration: 90, curve: curves.cubicBezierCurve(0.4, 0, 0.2, 1) }, () => {
       this.highlightThoughtPopupScale = 1.02;
       this.highlightThoughtPopupTranslateY = -2;
     });
     this.highlightThoughtPopupTimer = setTimeout(() => {
-      animateTo({ duration: 170, curve: Curve.EaseIn }, () => {
+      this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseIn }, () => {
         this.highlightThoughtPopupMaskOpacity = 0;
         this.highlightThoughtPopupOpacity = 0;
         this.highlightThoughtPopupScale = 0.9;
@@ -4037,7 +4036,7 @@ export struct TextReaderComponent {
     const targetOffset = direction * this.componentWidth;
     const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止动画期间数据变化
     
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 300,
       curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
     }, () => {
@@ -4077,7 +4076,7 @@ export struct TextReaderComponent {
     this.startAnimationTimeout();// 启动动画超时保护
     const capturedVersion = this.paginationVersion;
     
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 150,
       curve: Curve.EaseOut
     }, () => {
@@ -4097,7 +4096,7 @@ export struct TextReaderComponent {
       this.currentPageIndex = targetPageIndex;
       this.updatePageContents();
       
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 150,
         curve: Curve.EaseIn
       }, () => {
@@ -4155,7 +4154,7 @@ export struct TextReaderComponent {
     
     logger.info(TAG, `completeSlidePageTurn: 开始动画，targetOffset=${targetOffset}`);
     
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
     }, () => {
@@ -4177,7 +4176,7 @@ export struct TextReaderComponent {
   * 滑动回弹动画
   */
   private animateSlideBack(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -4224,7 +4223,7 @@ export struct TextReaderComponent {
     this.transitionChapterName = nextChapter?.title || `第 ${nextChapterIndex + 1} 章`;
     
     // 第一步：滑动到过渡页
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 150,
       curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
     }, () => {
@@ -4269,7 +4268,7 @@ export struct TextReaderComponent {
           }
           
           this.slideOffset = this.componentWidth;
-          animateTo({
+          this.getUIContext().animateTo({
             duration: 150,
             curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
           }, () => {
@@ -4329,7 +4328,7 @@ export struct TextReaderComponent {
     this.shouldJumpToLastPage = true;
     
     // 第一步：滑动到过渡页
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 150,
       curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
     }, () => {
@@ -4373,7 +4372,7 @@ export struct TextReaderComponent {
           }
           
           this.slideOffset = -this.componentWidth;
-          animateTo({
+          this.getUIContext().animateTo({
             duration: 150,
             curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
           }, () => {
@@ -4641,7 +4640,7 @@ export struct TextReaderComponent {
       // 传递 pageIndex 以便在 PixelMap 中渲染页码
       // 传递 pageIndex 以便在 PixelMap 中渲染页码
       // 传递 pageIndex 以便在 PixelMap 中渲染页码
-      const pixelMap: image.PixelMap = await componentSnapshot.createFromBuilder(
+      const pixelMap: image.PixelMap = await this.getUIContext().getComponentSnapshot().createFromBuilder(
         () => { this.buildPageForSnapshot(pageContent, width, height, pageIndex); }
       );
       
@@ -5172,7 +5171,7 @@ export struct TextReaderComponent {
         this.completeSlidePageTurn(deltaX < 0);
       } else {
         // 回弹
-        animateTo({
+        this.getUIContext().animateTo({
           duration: 200,
           curve: Curve.EaseOut
         }, () => {
@@ -5456,7 +5455,7 @@ export struct TextReaderComponent {
       
       const targetOffset = this.isForward ? -halfWidth : halfWidth;
       
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 300,
         curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
       }, () => {
@@ -5476,14 +5475,14 @@ export struct TextReaderComponent {
       this.isAnimating = true;
       this.startAnimationTimeout();
       
-      animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
         this.slideOpacity = 0;
       });
       
       setTimeout(() => {
         this.dualPageBaseIndex = targetBase;
         this.updateDualPageContents();
-        animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
+        this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
           this.slideOpacity = 1;
         });
         setTimeout(() => {
@@ -5595,7 +5594,7 @@ export struct TextReaderComponent {
     
     const targetOffset = this.isForward ? -halfWidth : halfWidth;
     
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 300,
       curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
     }, () => {
@@ -6224,7 +6223,7 @@ export struct TextReaderComponent {
     .scrollable(ScrollDirection.Vertical)
     .scrollBar(BarState.Auto)
     .edgeEffect(EdgeEffect.Spring)
-    .onScroll((xOffset: number, yOffset: number) => {
+    .onDidScroll((xOffset: number, yOffset: number) => {
       const previousOffsetY = Math.max(0, this.scrollOffset);
       let nextOffsetY = Math.max(0, this.scrollOffset + yOffset);
       try {
@@ -6839,7 +6838,7 @@ export struct TextReaderComponent {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.selectedText);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: '已复制', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '已复制', duration: 1500 });
     }
     this.clearSelection();
   }
@@ -6850,7 +6849,7 @@ export struct TextReaderComponent {
   private addPurifyRuleFromSelection(): void {
     if (this.selectedText) {
       this.onAddPurifyRule(this.selectedText);
-      promptAction.showToast({ message: '已添加净化规则', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '已添加净化规则', duration: 1500 });
     }
     this.clearSelection();
   }
@@ -6889,7 +6888,7 @@ export struct TextReaderComponent {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, safeText);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: '系统分享失败，已复制到剪贴板', duration: 1800 });
+      this.getUIContext().getPromptAction().showToast({ message: '系统分享失败，已复制到剪贴板', duration: 1800 });
     } finally {
       this.clearSelection();
     }
@@ -6908,19 +6907,19 @@ export struct TextReaderComponent {
   private startReadAloudFromSelection(): void {
     const startCharIndex = this.getReadAloudStartCharIndexFromSelection();
     if (startCharIndex < 0) {
-      promptAction.showToast({ message: '未获取到有效选区', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '未获取到有效选区', duration: 1500 });
       this.clearSelection();
       return;
     }
     this.onStartReadAloudFromCharIndex(startCharIndex);
-    promptAction.showToast({ message: '已从所选句开始听书', duration: 1500 });
+    this.getUIContext().getPromptAction().showToast({ message: '已从所选句开始听书', duration: 1500 });
     this.clearSelection();
   }
 
   private addHighlightFromSelection(withThought: boolean): void {
     const range = this.getGlobalSelectionRange();
     if (!range || !this.selectedText) {
-      promptAction.showToast({ message: '未获取到有效选区', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '未获取到有效选区', duration: 1500 });
       this.clearSelection();
       return;
     }
@@ -6937,7 +6936,7 @@ export struct TextReaderComponent {
   private addThoughtFromSelection(): void {
     const range = this.getGlobalSelectionRange();
     if (!range || !this.selectedText) {
-      promptAction.showToast({ message: '未获取到有效选区', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '未获取到有效选区', duration: 1500 });
       this.clearSelection();
       return;
     }
@@ -7066,7 +7065,7 @@ export struct TextReaderComponent {
     // 使用当前页面内容作为选中文本（用户可以在菜单中选择操作）
     this.selectedText = this.currentPageContent;
     
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '选择操作',
       buttons: [
         { text: '百科搜索', color: '#007AFF' },
@@ -7098,7 +7097,7 @@ export struct TextReaderComponent {
    * 显示百科搜索输入对话框
    */
   private showEncyclopediaInputDialog(): void {
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '百科搜索',
       message: '请输入要搜索的关键词',
       buttons: [
@@ -7117,7 +7116,7 @@ export struct TextReaderComponent {
    * 显示添加净化规则输入对话框
    */
   private showPurifyRuleInputDialog(): void {
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '添加净化规则',
       message: '请输入要净化的文本内容',
       buttons: [
@@ -7127,7 +7126,7 @@ export struct TextReaderComponent {
     }).then((result: promptAction.ShowDialogSuccessResponse) => {
       if (result.index === 1) {
         // 用户点击添加
-        promptAction.showToast({ message: '请在设置中手动添加净化规则', duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: '请在设置中手动添加净化规则', duration: 2000 });
       }
     }).catch(() => {});
   }

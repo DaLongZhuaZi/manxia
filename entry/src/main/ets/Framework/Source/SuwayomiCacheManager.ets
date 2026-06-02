@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * Suwayomi 图片缓存管理器
  * 将 Suwayomi 服务器上的漫画图片缓存到本地 Download/com.dlzz.manxia/suwayomi 目录
@@ -111,7 +112,7 @@ export class SuwayomiCacheManager {
   public isPageCached(mangaTitle: string, chapterTitle: string, pageIndex: number): boolean {
     try {
       const pagePath = this.getPageCachePath(mangaTitle, chapterTitle, pageIndex);
-      fs.accessSync(pagePath);
+      SafeFileUtils.accessSync(pagePath);
       return true;
     } catch (error) {
       return false;
@@ -181,9 +182,9 @@ export class SuwayomiCacheManager {
 
       if (response.responseCode === 200 && response.result) {
         // 保存到文件
-        const file = fs.openSync(pagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.writeSync(file.fd, response.result as ArrayBuffer);
-        fs.closeSync(file.fd);
+        const file = SafeFileUtils.openSync(pagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
+        SafeFileUtils.closeSync(file.fd);
         logger.debug(TAG, `页面缓存成功: ${pageIndex} -> ${pagePath}`);
         return true;
       } else {
@@ -240,7 +241,7 @@ export class SuwayomiCacheManager {
   public getCachedPagePath(mangaTitle: string, chapterTitle: string, pageIndex: number): string | null {
     try {
       const pagePath = this.getPageCachePath(mangaTitle, chapterTitle, pageIndex);
-      fs.accessSync(pagePath);
+      SafeFileUtils.accessSync(pagePath);
       return pagePath;
     } catch (error) {
       return null;
@@ -253,7 +254,7 @@ export class SuwayomiCacheManager {
   public deleteChapterCache(mangaTitle: string, chapterTitle: string): boolean {
     try {
       const chapterPath = this.getChapterCachePath(mangaTitle, chapterTitle);
-      fs.rmdirSync(chapterPath);
+      SafeFileUtils.rmdirSync(chapterPath);
       logger.info(TAG, `章节缓存已删除: ${chapterPath}`);
       return true;
     } catch (error) {
@@ -268,7 +269,7 @@ export class SuwayomiCacheManager {
   public deleteMangaCache(mangaTitle: string): boolean {
     try {
       const mangaPath = this.getMangaCachePath(mangaTitle);
-      fs.rmdirSync(mangaPath);
+      SafeFileUtils.rmdirSync(mangaPath);
       logger.info(TAG, `漫画缓存已删除: ${mangaPath}`);
       return true;
     } catch (error) {
@@ -363,7 +364,7 @@ export class SuwayomiCacheManager {
   public isCoverCached(mangaId: string, coverUrl: string): boolean {
     try {
       const cachePath = this.getCoverCachePath(mangaId, coverUrl);
-      fs.accessSync(cachePath);
+      SafeFileUtils.accessSync(cachePath);
       return true;
     } catch (error) {
       return false;
@@ -376,7 +377,7 @@ export class SuwayomiCacheManager {
   public getCachedCoverPath(mangaId: string, coverUrl: string): string | null {
     try {
       const cachePath = this.getCoverCachePath(mangaId, coverUrl);
-      fs.accessSync(cachePath);
+      SafeFileUtils.accessSync(cachePath);
       return cachePath;
     } catch (error) {
       return null;
@@ -419,9 +420,9 @@ export class SuwayomiCacheManager {
       httpRequest.destroy();
 
       if (response.responseCode === 200 && response.result) {
-        const file = fs.openSync(cachePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.writeSync(file.fd, response.result as ArrayBuffer);
-        fs.closeSync(file.fd);
+        const file = SafeFileUtils.openSync(cachePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
+        SafeFileUtils.closeSync(file.fd);
         logger.debug(TAG, `封面缓存成功: ${mangaId} -> ${cachePath}`);
         return cachePath;
       } else {
@@ -454,7 +455,7 @@ export class SuwayomiCacheManager {
   public isSourceIconCached(sourceId: string, iconUrl: string): boolean {
     try {
       const cachePath = this.getSourceIconCachePath(sourceId, iconUrl);
-      fs.accessSync(cachePath);
+      SafeFileUtils.accessSync(cachePath);
       return true;
     } catch (error) {
       return false;
@@ -467,7 +468,7 @@ export class SuwayomiCacheManager {
   public getCachedSourceIconPath(sourceId: string, iconUrl: string): string | null {
     try {
       const cachePath = this.getSourceIconCachePath(sourceId, iconUrl);
-      fs.accessSync(cachePath);
+      SafeFileUtils.accessSync(cachePath);
       return cachePath;
     } catch (error) {
       return null;
@@ -510,9 +511,9 @@ export class SuwayomiCacheManager {
       httpRequest.destroy();
 
       if (response.responseCode === 200 && response.result) {
-        const file = fs.openSync(cachePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.writeSync(file.fd, response.result as ArrayBuffer);
-        fs.closeSync(file.fd);
+        const file = SafeFileUtils.openSync(cachePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
+        SafeFileUtils.closeSync(file.fd);
         logger.debug(TAG, `图源图标缓存成功: ${sourceId} -> ${cachePath}`);
         return cachePath;
       } else {
@@ -538,11 +539,11 @@ export class SuwayomiCacheManager {
     try {
       // 统计封面缓存
       const coverDir = this.getCoverCacheDir();
-      const coverFiles = fs.listFileSync(coverDir);
+      const coverFiles = SafeFileUtils.listFileSync(coverDir);
       coverCount = coverFiles.length;
       for (const file of coverFiles) {
         try {
-          const stat = fs.statSync(`${coverDir}/${file}`);
+          const stat = SafeFileUtils.statSync(`${coverDir}/${file}`);
           totalSize += stat.size;
         } catch (e) {
           // ignore
@@ -551,11 +552,11 @@ export class SuwayomiCacheManager {
 
       // 统计图源图标缓存
       const iconDir = this.getSourceIconCacheDir();
-      const iconFiles = fs.listFileSync(iconDir);
+      const iconFiles = SafeFileUtils.listFileSync(iconDir);
       iconCount = iconFiles.length;
       for (const file of iconFiles) {
         try {
-          const stat = fs.statSync(`${iconDir}/${file}`);
+          const stat = SafeFileUtils.statSync(`${iconDir}/${file}`);
           totalSize += stat.size;
         } catch (e) {
           // ignore
@@ -579,10 +580,10 @@ export class SuwayomiCacheManager {
   public clearCoverCache(): boolean {
     try {
       const coverDir = this.getCoverCacheDir();
-      const files = fs.listFileSync(coverDir);
+      const files = SafeFileUtils.listFileSync(coverDir);
       for (const file of files) {
         try {
-          fs.unlinkSync(`${coverDir}/${file}`);
+          SafeFileUtils.unlinkSync(`${coverDir}/${file}`);
         } catch (e) {
           // ignore
         }
@@ -601,10 +602,10 @@ export class SuwayomiCacheManager {
   public clearSourceIconCache(): boolean {
     try {
       const iconDir = this.getSourceIconCacheDir();
-      const files = fs.listFileSync(iconDir);
+      const files = SafeFileUtils.listFileSync(iconDir);
       for (const file of files) {
         try {
-          fs.unlinkSync(`${iconDir}/${file}`);
+          SafeFileUtils.unlinkSync(`${iconDir}/${file}`);
         } catch (e) {
           // ignore
         }
@@ -643,17 +644,17 @@ export class SuwayomiCacheManager {
   }
 
   private clearDirectoryContents(path: string): void {
-    const entries: string[] = fs.listFileSync(path);
+    const entries: string[] = SafeFileUtils.listFileSync(path);
     for (let index = 0; index < entries.length; index++) {
       const entry = entries[index];
       const entryPath = `${path}/${entry}`;
       try {
-        const stat = fs.statSync(entryPath);
+        const stat = SafeFileUtils.statSync(entryPath);
         if (stat.isDirectory()) {
           this.clearDirectoryContents(entryPath);
-          fs.rmdirSync(entryPath);
+          SafeFileUtils.rmdirSync(entryPath);
         } else {
-          fs.unlinkSync(entryPath);
+          SafeFileUtils.unlinkSync(entryPath);
         }
       } catch (_error) {
       }

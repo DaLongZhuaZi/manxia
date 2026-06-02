@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { KomgaConfig, KomgaInstanceConfig, KOMGA_DEFAULT_CHAPTER_TEMPLATE } from './KomgaModels';
 import { getContext } from '../../GlobalContext';
@@ -102,7 +103,7 @@ export async function loadKomgaConfig(): Promise<KomgaConfig> {
     if (!rawText) {
       return createEmptyKomgaConfig();
     }
-    return normalizeKomgaConfig(JSON.parse(rawText) as ESObject);
+    return normalizeKomgaConfig(SafeUtils.parseObj(rawText) as ESObject);
   } catch (error) {
     logger.error(TAG, `加载 Komga 配置失败: ${String(error)}`);
     return createEmptyKomgaConfig();

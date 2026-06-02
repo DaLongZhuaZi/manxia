@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Cache/CacheConfigManager.ets
 /**
  * 缓存配置管理器
@@ -158,7 +159,7 @@ export class CacheConfigManager {
     try {
       const configStr = await this.preferences.get('config', '');
       if (configStr) {
-        const savedConfig = JSON.parse(configStr as string) as CacheConfig;
+        const savedConfig = SafeUtils.parseObj(configStr as string) as CacheConfig;
         this.config = this.mergeConfig(this.cloneConfig(DEFAULT_CONFIG), savedConfig);
         logger.debug(TAG, '从存储加载配置');
       } else {

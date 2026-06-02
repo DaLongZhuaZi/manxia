@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 书籍过渡动画全局覆盖层组件
  * 
  * 功能：
@@ -10,7 +10,7 @@
 
 import { logger } from '../Utils/Logger';
 import { image } from '@kit.ImageKit';
-import { componentUtils, componentSnapshot } from '@kit.ArkUI';
+import { UIContext } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
@@ -117,6 +117,7 @@ export class TransitionController {
   // 当前状态
   private currentState: GlobalTransitionState = new GlobalTransitionState();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private uiContext: UIContext | null = null;
   
   // 保存翻开动画的封面位置，用于关闭动画复用
   private lastOpenCoverPosition: CoverPosition | null = null;
@@ -148,6 +149,14 @@ export class TransitionController {
       TransitionController.instance = new TransitionController();
     }
     return TransitionController.instance;
+  }
+
+  public setUIContext(uiContext: UIContext | null): void {
+    this.uiContext = uiContext;
+  }
+
+  public getUIContext(): UIContext | null {
+    return this.uiContext;
   }
   
   /**
@@ -757,6 +766,7 @@ export struct BookTransitionOverlay {
   
   aboutToAppear(): void {
     logger.info(TAG, '覆盖层组件初始化');
+    this.controller.setUIContext(this.getUIContext());
     
     // 注册状态变化回调
     this.stateListenerId = this.controller.setStateChangeCallback((state: GlobalTransitionState) => {
@@ -770,6 +780,7 @@ export struct BookTransitionOverlay {
 
   aboutToDisappear(): void {
     this.controller.removeStateChangeCallback(this.stateListenerId);
+    this.controller.setUIContext(null);
     this.stateListenerId = -1;
     this.clearSafetyTimeout();
   }
@@ -987,6 +998,15 @@ export function isTransitioning(): boolean {
 
 function getTransitionOverlayCoordinateOffset(): TransitionCoordinateOffset {
   try {
+    const uiContext = TransitionController.getInstance().getUIContext();
+    if (!uiContext) {
+      return {
+        x: 0,
+        y: 0,
+        useScreenOffset: false
+      };
+    }
+    const componentUtils = uiContext.getComponentUtils();
     const rootRectInfo = componentUtils.getRectangleById(BOOK_TRANSITION_OVERLAY_ROOT_ID);
     if (rootRectInfo) {
       return {
@@ -1017,15 +1037,21 @@ export function getCoverPositionById(componentId: string): CoverPosition {
   }
   
   try {
+    const uiContext = TransitionController.getInstance().getUIContext();
+    if (!uiContext) {
+      logger.warn(TAG, 'UIContext 不可用，使用默认位置');
+      return DEFAULT_COVER_POSITION;
+    }
+    const componentUtils = uiContext.getComponentUtils();
     const rectInfo = componentUtils.getRectangleById(componentId);
     if (rectInfo) {
       const overlayOffset = getTransitionOverlayCoordinateOffset();
       const sourceOffset = overlayOffset.useScreenOffset ? rectInfo.screenOffset : rectInfo.windowOffset;
       const position: CoverPosition = {
-        x: px2vp(Number(sourceOffset.x) - overlayOffset.x),
-        y: px2vp(Number(sourceOffset.y) - overlayOffset.y),
-        width: px2vp(rectInfo.size.width),
-        height: px2vp(rectInfo.size.height)
+        x: uiContext.px2vp(Number(sourceOffset.x) - overlayOffset.x),
+        y: uiContext.px2vp(Number(sourceOffset.y) - overlayOffset.y),
+        width: uiContext.px2vp(rectInfo.size.width),
+        height: uiContext.px2vp(rectInfo.size.height)
       };
       
       // 检查尺寸是否有效（组件可能不在当前页面）
@@ -1034,7 +1060,7 @@ export function getCoverPositionById(componentId: string): CoverPosition {
         return DEFAULT_COVER_POSITION;
       }
       
-      logger.info(TAG, `获取组件位置成功: id=${componentId}, pos=(${position.x}, ${position.y}), size=${position.width}x${position.height}, source=${overlayOffset.useScreenOffset ? 'screenOffset' : 'windowOffset'}, overlayOffset=(${px2vp(overlayOffset.x)}, ${px2vp(overlayOffset.y)}), window=(${px2vp(Number(rectInfo.windowOffset.x))}, ${px2vp(Number(rectInfo.windowOffset.y))}), screen=(${px2vp(Number(rectInfo.screenOffset.x))}, ${px2vp(Number(rectInfo.screenOffset.y))})`);
+      logger.info(TAG, `获取组件位置成功: id=${componentId}, pos=(${position.x}, ${position.y}), size=${position.width}x${position.height}, source=${overlayOffset.useScreenOffset ? 'screenOffset' : 'windowOffset'}, overlayOffset=(${uiContext.px2vp(overlayOffset.x)}, ${uiContext.px2vp(overlayOffset.y)}), window=(${uiContext.px2vp(Number(rectInfo.windowOffset.x))}, ${uiContext.px2vp(Number(rectInfo.windowOffset.y))}), screen=(${uiContext.px2vp(Number(rectInfo.screenOffset.x))}, ${uiContext.px2vp(Number(rectInfo.screenOffset.y))})`);
       return position;
     }
   } catch (error) {
@@ -1098,8 +1124,14 @@ export async function captureComponent(componentId: string): Promise<CaptureResu
       return undefined;
     }
     
-    logger.info(TAG, `📷 [组件截图] 调用 componentSnapshot.get...`);
-    const pixelMap = await componentSnapshot.get(componentId);
+    const uiContext = TransitionController.getInstance().getUIContext();
+    if (!uiContext) {
+      logger.warn(TAG, '📷 [组件截图] UIContext 不可用，无法截图');
+      return undefined;
+    }
+
+    logger.info(TAG, `📷 [组件截图] 调用 ComponentSnapshot.get...`);
+    const pixelMap = await uiContext.getComponentSnapshot().get(componentId);
     
     if (pixelMap) {
       const imageInfo = await pixelMap.getImageInfo();
@@ -1167,7 +1199,7 @@ async function saveCompressedScreenshot(
   
   try {
     // 使用应用缓存目录
-    const context = getContext();
+    const context = TransitionController.getInstance().getUIContext()?.getHostContext();
     if (!context || !context.cacheDir) {
       logger.error(TAG, `📸 [压缩截图] 无法获取应用上下文`);
       return '';
@@ -1225,7 +1257,7 @@ async function saveCompressedScreenshot(
     };
     
     logger.info(TAG, `📸 [压缩截图] 开始打包...`);
-    const arrayBuffer = await imagePacker.packing(pixelMap, packOptions);
+    const arrayBuffer = await imagePacker.packToData(pixelMap, packOptions);
     const sizeKB = Math.round(arrayBuffer.byteLength / 1024);
     logger.info(TAG, `📸 [压缩截图] 打包完成，大小: ${sizeKB}KB`);
     

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
@@ -191,7 +192,7 @@ export class SubscriptionDataManager {
     }
 
     try {
-      const parsed = JSON.parse(trimmedText) as SubscriptionCondition[];
+      const parsed = SafeUtils.parseArr(trimmedText) as SubscriptionCondition[];
       if (!Array.isArray(parsed)) {
         return [];
       }
@@ -227,7 +228,7 @@ export class SubscriptionDataManager {
     }
 
     try {
-      const parsed = JSON.parse(trimmedText) as SubscriptionAction[];
+      const parsed = SafeUtils.parseArr(trimmedText) as SubscriptionAction[];
       if (!Array.isArray(parsed)) {
         return [];
       }

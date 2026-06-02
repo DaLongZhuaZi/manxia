@@ -1,3 +1,4 @@
+﻿import { common } from '@kit.AbilityKit';
 /**
  * 认证处理器
  * 处理JWT令牌、Cookie等认证方式
@@ -59,7 +60,7 @@ export class AuthenticationHandler {
     }
 
     try {
-      const context = getContext(this);
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
       this.preferencesStore = await preferences.getPreferences(context, 'auth_storage');
     } catch (error) {
       logger.error(TAG, `初始化Preferences失败: ${error}`);

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 小说书源校验器
  * 批量校验书源可用性
@@ -839,7 +840,7 @@ export class NovelSourceValidator {
       return '';
     }
     try {
-      const parsed = JSON.parse(rawContent) as AudioValidationJsonValue;
+      const parsed = SafeUtils.parseObj(rawContent) as AudioValidationJsonValue;
       const urlHints: string[] = [];
       this.collectAudioUrlHints(parsed, urlHints);
       for (let index = 0; index < urlHints.length; index++) {

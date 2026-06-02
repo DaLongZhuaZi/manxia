@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/EBookSettingsPage.ets
 /**
  * 电子书设置页面
@@ -6,7 +7,7 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, UIContext } from '@kit.ArkUI';
-import { picker } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
@@ -1515,11 +1516,12 @@ export struct EBookSettingsPage {
       }
 
       // 创建图片选择器
-      const photoSelectOptions = new picker.PhotoSelectOptions();
-      photoSelectOptions.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-      photoSelectOptions.maxSelectNumber = 1;
+      const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = {
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 1
+      };
 
-      const photoPicker = new picker.PhotoViewPicker(context);
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const selectResult = await photoPicker.select(photoSelectOptions);
       
       if (!selectResult || selectResult.photoUris.length === 0) {
@@ -1593,7 +1595,7 @@ export struct EBookSettingsPage {
   private showToast(message: string): void {
     try {
       import('@kit.ArkUI').then((arkUI) => {
-        arkUI.promptAction.showToast({ message: message, duration: 2000 });
+        AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({ message: message, duration: 2000 });
       });
     } catch (error) {
       logger.error(TAG, `显示Toast失败: ${String(error)}`);
@@ -2507,11 +2509,12 @@ export struct EBookSettingsPage {
         throw new Error('无法获取应用上下文');
       }
 
-      const photoSelectOptions = new picker.PhotoSelectOptions();
-      photoSelectOptions.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-      photoSelectOptions.maxSelectNumber = 1;
+      const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = {
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 1
+      };
 
-      const photoPicker = new picker.PhotoViewPicker(context);
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const selectResult = await photoPicker.select(photoSelectOptions);
 
       if (selectResult && selectResult.photoUris.length > 0) {
@@ -2543,18 +2546,18 @@ export struct EBookSettingsPage {
       logger.info(TAG, `准备复制图片: ${sourceUri} -> ${destPath}`);
 
       // 打开源文件（PhotoViewPicker 返回的 URI 需要只读权限打开）
-      const srcFile = fs.openSync(sourceUri, fs.OpenMode.READ_ONLY);
+      const srcFile = SafeFileUtils.openSync(sourceUri, fs.OpenMode.READ_ONLY);
       logger.info(TAG, `源文件打开成功, fd: ${srcFile.fd}`);
 
       // 使用 copyFileSync(fd, path) 方式复制
-      fs.copyFileSync(srcFile.fd, destPath);
+      SafeFileUtils.copyFileSync(srcFile.fd, destPath);
       logger.info(TAG, `copyFileSync 完成`);
 
       // 关闭源文件
-      fs.closeSync(srcFile);
+      SafeFileUtils.closeSync(srcFile);
 
       // 验证复制结果
-      const stat = fs.statSync(destPath);
+      const stat = SafeFileUtils.statSync(destPath);
       logger.info(TAG, `图片复制成功: ${destPath}, 大小: ${stat.size} 字节`);
 
       return destPath;

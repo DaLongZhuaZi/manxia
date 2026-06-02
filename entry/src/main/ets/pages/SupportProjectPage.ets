@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/pages/SupportProjectPage.ets
+﻿// 文件路径: entry/src/main/ets/pages/SupportProjectPage.ets
 /**
  * 支持本项目页面
  * 展示赞赏二维码和赞助链接，支持保存二维码到相册
@@ -131,9 +131,10 @@ struct SupportProjectPage {
     }
     this.isSavingQrcode = true;
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const resourceMgr = context.resourceManager;
-      const rawFile: Uint8Array = await resourceMgr.getMediaContent($r('app.media.mm_reward_qrcode'));
+      const qrcodeResource = $r('app.media.mm_reward_qrcode');
+      const rawFile: Uint8Array = await resourceMgr.getMediaContent(qrcodeResource.id);
 
       // 写入临时文件
       const tempPath: string = `${context.cacheDir}/mm_reward_qrcode.webp`;
@@ -158,7 +159,7 @@ struct SupportProjectPage {
         await fs.copyFile(srcFile.fd, destFile.fd);
         await fs.close(srcFile);
         await fs.close(destFile);
-        promptAction.showToast({ message: '二维码已保存到相册' });
+        this.getUIContext().getPromptAction().showToast({ message: '二维码已保存到相册' });
         logger.info(TAG, '二维码已保存到相册');
       }
     } catch (error) {
@@ -167,7 +168,7 @@ struct SupportProjectPage {
         logger.info(TAG, '用户取消保存');
       } else {
         logger.error(TAG, '保存二维码失败', String(error));
-        promptAction.showToast({ message: '保存失败，请重试' });
+        this.getUIContext().getPromptAction().showToast({ message: '保存失败，请重试' });
       }
     } finally {
       this.isSavingQrcode = false;
@@ -178,11 +179,11 @@ struct SupportProjectPage {
 
   private async openAfdianPage(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await context.openLink(this.afdianUrl, { appLinkingOnly: false });
     } catch (error) {
       logger.error(TAG, '打开爱发电页面失败', String(error));
-      promptAction.showToast({ message: '无法打开浏览器，请手动访问 afdian.com/a/dalongzz', duration: 3000 });
+      this.getUIContext().getPromptAction().showToast({ message: '无法打开浏览器，请手动访问 afdian.com/a/dalongzz', duration: 3000 });
     }
   }
 
@@ -191,7 +192,7 @@ struct SupportProjectPage {
       const pasteboardData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.afdianUrl);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       await systemPasteboard.setData(pasteboardData);
-      promptAction.showToast({ message: '链接已复制' });
+      this.getUIContext().getPromptAction().showToast({ message: '链接已复制' });
     } catch (error) {
       logger.error(TAG, '复制链接失败', String(error));
     }

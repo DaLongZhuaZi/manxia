@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 大文件流式JSON解析器
  * 用于安全导入大型书源JSON文件（50M~100M+）
@@ -146,13 +148,13 @@ export class LargeFileJSONParser<T = object> {
     
     try {
       // 获取文件大小
-      const stat = fs.statSync(filePath);
+      const stat = SafeFileUtils.statSync(filePath);
       const totalSize = stat.size;
       
       logger.info(TAG, `开始解析大文件: ${filePath}, 大小: ${this.formatSize(totalSize)}`);
       
       // 打开文件
-      file = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
+      file = SafeFileUtils.openSync(filePath, fs.OpenMode.READ_ONLY);
       
       // 流式解析
       await this.parseFileStream(file, totalSize, result);
@@ -167,7 +169,7 @@ export class LargeFileJSONParser<T = object> {
     } finally {
       if (file) {
         try {
-          fs.closeSync(file);
+          SafeFileUtils.closeSync(file);
         } catch (e) {
           logger.warn(TAG, `关闭文件失败: ${String(e)}`);
         }
@@ -205,7 +207,7 @@ export class LargeFileJSONParser<T = object> {
     // 读取并处理文件
     while (offset < totalSize) {
       // 读取一块数据
-      const readLen = fs.readSync(file.fd, buffer, { offset: offset });
+      const readLen = SafeFileUtils.readSync(file.fd, buffer, { offset: offset });
       if (readLen <= 0) {
         break;
       }
@@ -378,7 +380,7 @@ export class LargeFileJSONParser<T = object> {
         return null;
       }
       
-      return JSON.parse(trimmed) as T;
+      return SafeUtils.parseObj(trimmed) as T;
     } catch (error) {
       const errorMsg = `JSON解析失败: ${String(error).substring(0, 100)}`;
       result.errors.push(errorMsg);
@@ -426,15 +428,15 @@ export class LargeFileJSONParser<T = object> {
    */
   static async estimateObjectCount(filePath: string): Promise<number> {
     try {
-      const stat = fs.statSync(filePath);
+      const stat = SafeFileUtils.statSync(filePath);
       const totalSize = stat.size;
       
       // 采样前1MB来估算
       const sampleSize = Math.min(1024 * 1024, totalSize);
-      const file = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.READ_ONLY);
       const buffer = new ArrayBuffer(sampleSize);
-      const readLen = fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       // 计算采样中的 { 数量
       const uint8Array = new Uint8Array(buffer, 0, readLen);

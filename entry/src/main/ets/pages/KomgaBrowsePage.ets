@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
@@ -108,11 +109,11 @@ export struct KomgaBrowsePage {
   }
 
   private toast(message: string): void {
-    promptAction.showToast({ message: message, duration: 1800 });
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 1800 });
   }
 
   private revealPageContent(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 260,
       curve: Curve.EaseOut
     }, () => {
@@ -189,7 +190,7 @@ export struct KomgaBrowsePage {
       this.searchQuery = store.getSync('searchQuery', '') as string;
       this.showFilters = store.getSync('showFilters', false) as boolean;
       this.filters = filtersText.length > 0
-        ? normalizeKomgaBrowseFilters(JSON.parse(filtersText) as ESObject)
+        ? normalizeKomgaBrowseFilters(SafeUtils.parseObj(filtersText) as ESObject)
         : createDefaultKomgaBrowseFilters();
     } catch (error) {
       logger.warn(TAG, `读取 Komga 浏览偏好失败: ${String(error)}`);

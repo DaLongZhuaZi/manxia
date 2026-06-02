@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: src/main/ets/Framework/Storage/StorageAnalyzer.ets
 /**
  * 存储分析器
@@ -561,7 +562,7 @@ export class StorageAnalyzer {
       const fullPath = `${basePath}/${subPath}`;
       
       try {
-        fs.accessSync(fullPath);
+        SafeFileUtils.accessSync(fullPath);
       } catch {
         return { size: 0, count: 0 };
       }
@@ -581,11 +582,11 @@ export class StorageAnalyzer {
     let totalCount = 0;
     
     try {
-      const entries = fs.listFileSync(dirPath);
+      const entries = SafeFileUtils.listFileSync(dirPath);
       for (const entry of entries) {
         const fullPath = `${dirPath}/${entry}`;
         try {
-          const stat = fs.statSync(fullPath);
+          const stat = SafeFileUtils.statSync(fullPath);
           if (stat.isDirectory()) {
             const subInfo = await this.calculateDirSize(fullPath);
             totalSize += subInfo.size;
@@ -1079,24 +1080,24 @@ export class StorageAnalyzer {
 
     try {
       try {
-        fs.accessSync(dirPath);
+        SafeFileUtils.accessSync(dirPath);
       } catch {
         // 目录不存在，直接返回
         return result;
       }
 
-      const entries = fs.listFileSync(dirPath);
+      const entries = SafeFileUtils.listFileSync(dirPath);
       for (const entry of entries) {
         const fullPath = `${dirPath}/${entry}`;
         try {
-          const stat = fs.statSync(fullPath);
+          const stat = SafeFileUtils.statSync(fullPath);
           if (stat.isDirectory()) {
             const subResult = await this.deleteDownloadDirRecursive(fullPath);
             result.clearedSize += subResult.size;
             result.clearedCount += subResult.count;
           } else {
             result.clearedSize += stat.size;
-            fs.unlinkSync(fullPath);
+            SafeFileUtils.unlinkSync(fullPath);
             result.clearedCount++;
           }
         } catch (error) {
@@ -1119,18 +1120,18 @@ export class StorageAnalyzer {
     let totalCount = 0;
 
     try {
-      const entries = fs.listFileSync(dirPath);
+      const entries = SafeFileUtils.listFileSync(dirPath);
       for (const entry of entries) {
         const fullPath = `${dirPath}/${entry}`;
         try {
-          const stat = fs.statSync(fullPath);
+          const stat = SafeFileUtils.statSync(fullPath);
           if (stat.isDirectory()) {
             const subResult = await this.deleteDownloadDirRecursive(fullPath);
             totalSize += subResult.size;
             totalCount += subResult.count;
           } else {
             totalSize += stat.size;
-            fs.unlinkSync(fullPath);
+            SafeFileUtils.unlinkSync(fullPath);
             totalCount++;
           }
         } catch {
@@ -1138,7 +1139,7 @@ export class StorageAnalyzer {
         }
       }
       // 删除空目录
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
       totalCount++;
     } catch {
       // 忽略错误

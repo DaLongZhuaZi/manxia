@@ -1,3 +1,5 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 备份与恢复页面
  * 支持导出和导入所有应用数据
@@ -538,7 +540,7 @@ struct BackupPage {
       const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
       
       // 显示确认对话框
-      AlertDialog.show({
+      this.getUIContext().showAlertDialog({
         title: '确认导入备份',
         message: `确定要导入备份文件吗？\n\n文件名: ${fileName}\n\n⚠️ 恢复备份将覆盖当前数据！`,
         autoCancel: true,
@@ -561,7 +563,7 @@ struct BackupPage {
       
     } catch (error) {
       logger.error(TAG, `从URI导入备份失败: ${error}`);
-      promptAction.showToast({ message: `导入失败: ${error}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${error}` });
       this.finalizeTrackedTransferImport('import_failed');
     }
   }
@@ -580,15 +582,15 @@ struct BackupPage {
       const tempPath = sandboxManager.getDirectory('temp') + '/temp_restore_' + Date.now() + '.mxbak';
       
       // 复制文件
-      const srcFile = fileIo.openSync(readablePath, fileIo.OpenMode.READ_ONLY);
-      const stat = fileIo.statSync(srcFile.fd);
+      const srcFile = SafeFileUtils.openSync(readablePath, fileIo.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(srcFile.fd);
       const buffer = new ArrayBuffer(stat.size);
-      fileIo.readSync(srcFile.fd, buffer);
-      fileIo.closeSync(srcFile);
+      SafeFileUtils.readSync(srcFile.fd, buffer);
+      SafeFileUtils.closeSync(srcFile);
       
-      const dstFile = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-      fileIo.writeSync(dstFile.fd, buffer);
-      fileIo.closeSync(dstFile);
+      const dstFile = SafeFileUtils.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(dstFile.fd, buffer);
+      SafeFileUtils.closeSync(dstFile);
       
       logger.info(TAG, `备份文件已复制到: ${tempPath}, 大小: ${stat.size} 字节`);
       
@@ -597,12 +599,12 @@ struct BackupPage {
       
       // 删除临时文件
       try {
-        fileIo.unlinkSync(tempPath);
+        SafeFileUtils.unlinkSync(tempPath);
       } catch (e) {
         logger.warn(TAG, `删除临时文件失败: ${e}`);
       }
       
-      promptAction.showToast({ message: '备份恢复成功！' });
+      this.getUIContext().getPromptAction().showToast({ message: '备份恢复成功！' });
       logger.info(TAG, '备份恢复成功');
       this.finalizeTrackedTransferImport('imported');
       
@@ -611,7 +613,7 @@ struct BackupPage {
       
     } catch (error) {
       logger.error(TAG, `执行恢复失败: ${error}`);
-      promptAction.showToast({ message: `恢复失败: ${error}` });
+      this.getUIContext().getPromptAction().showToast({ message: `恢复失败: ${error}` });
       this.finalizeTrackedTransferImport('import_failed');
     } finally {
       this.isRestoringBackup = false;
@@ -973,7 +975,7 @@ struct BackupPage {
   // 持久化保存WebDAV配置
   async persistWebDAVSettings(settings: WebDAVSettings): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const options: preferences.Options = { name: 'webdav_settings' };
       const dataPreferences: preferences.Preferences = await preferences.getPreferences(context, options);
       
@@ -1001,7 +1003,7 @@ struct BackupPage {
   // 从本地存储加载WebDAV配置
   async loadPersistedWebDAVSettings(): Promise<WebDAVSettings | null> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const options: preferences.Options = { name: 'webdav_settings' };
       const dataPreferences: preferences.Preferences = await preferences.getPreferences(context, options);
       
@@ -1102,7 +1104,7 @@ struct BackupPage {
   private showWebDAVErrorDialog(error: string, basePath: string): void {
     const analysis = WebDAVErrorAnalyzer.analyze(error, undefined, basePath);
     
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: `❌ ${analysis.title}`,
       message: `${analysis.description}\n\n💡 建议：\n${analysis.suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
       autoCancel: true,
@@ -1125,7 +1127,7 @@ struct BackupPage {
     try {
       logger.info(TAG, '开始WebDAV Native模块测试');
       
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '正在运行Native测试...',
         duration: 2000
       });
@@ -1143,7 +1145,7 @@ struct BackupPage {
       logger.info(TAG, `Native测试结果:\n${summary}`);
 
       // 显示测试结果对话框
-      AlertDialog.show({
+      this.getUIContext().showAlertDialog({
         title: 'WebDAV Native 测试结果',
         message: summary,
         autoCancel: true,
@@ -1155,7 +1157,7 @@ struct BackupPage {
       });
     } catch (error) {
       logger.error(TAG, `Native测试失败: ${error}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: `Native测试失败: ${error}`,
         duration: 3000
       });
@@ -1593,7 +1595,7 @@ struct BackupPage {
       const jsonPath = `${tempDir}/backup.json`;
       const jsonBuffer = await sandboxManager.readFile(jsonPath);
       const jsonContent = new util.TextDecoder('utf-8').decodeToString(new Uint8Array(jsonBuffer));
-      const backupData = JSON.parse(jsonContent) as BackupData;
+      const backupData = SafeUtils.parseObj(jsonContent) as BackupData;
       
       // 清理临时目录
       await sandboxManager.deleteDirectory(tempDir);
@@ -3581,7 +3583,7 @@ struct BackupPage {
         .height(36)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
-          AlertDialog.show({
+          this.getUIContext().showAlertDialog({
             title: '删除连接',
             message: `确定要删除 "${conn.name || conn.host}" 吗？`,
             primaryButton: { value: '取消', action: () => {} },
@@ -4073,7 +4075,7 @@ struct BackupPage {
     if (!this.ftpClient) return;
     
     // 使用简单的输入对话框
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '新建文件夹',
       message: '请输入文件夹名称',
       primaryButton: {
@@ -4115,7 +4117,7 @@ struct BackupPage {
   async deleteFTPItem(file: FTPFileInfo): Promise<void> {
     if (!this.ftpClient) return;
     
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '确认删除',
       message: `确定要删除 "${file.name}" 吗？`,
       primaryButton: {
@@ -4151,12 +4153,12 @@ struct BackupPage {
   // FTP连接配置持久化方法
   async loadFTPConnections(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const options: preferences.Options = { name: 'ftp_connections' };
       const dataPreferences: preferences.Preferences = await preferences.getPreferences(context, options);
       
       const connectionsJson = await dataPreferences.get('connections', '[]') as string;
-      this.savedFTPConnections = JSON.parse(connectionsJson) as SavedFTPConnection[];
+      this.savedFTPConnections = SafeUtils.parseArr(connectionsJson) as SavedFTPConnection[];
       logger.info(TAG, `加载了 ${this.savedFTPConnections.length} 个FTP连接配置`);
     } catch (e) {
       logger.error(TAG, `加载FTP连接配置失败: ${e}`);
@@ -4166,7 +4168,7 @@ struct BackupPage {
   
   async saveFTPConnections(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const options: preferences.Options = { name: 'ftp_connections' };
       const dataPreferences: preferences.Preferences = await preferences.getPreferences(context, options);
       

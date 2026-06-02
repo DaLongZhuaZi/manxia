@@ -1,3 +1,4 @@
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: src/main/ets/Framework/Cache/ImageCacheManager.ets
 /**
  * 图片缓存管理器
@@ -786,7 +787,7 @@ export class ImageCacheManager {
     try {
       const imagePackerApi = image.createImagePacker();
       const packOpts: image.PackingOption = { format: 'image/jpeg', quality: 95 };
-      const data = await imagePackerApi.packing(pixelMap, packOpts);
+      const data = await imagePackerApi.packToData(pixelMap, packOpts);
       return data;
     } catch (error) {
       const errorMsg = `PixelMap转ArrayBuffer失败: ${error}`;
@@ -904,7 +905,7 @@ export class ImageCacheManager {
       };
       
       const imagePacker = image.createImagePacker();
-      const imageBuffer = await imagePacker.packing(pixelMap, packOpts);
+      const imageBuffer = await imagePacker.packToData(pixelMap, packOpts);
       
       // 写入文件
       await this.sandboxManager.writeFile(filePath, imageBuffer);
@@ -1524,7 +1525,7 @@ export class ImageCacheManager {
         const filePath = `${coversDir}/${file}`;
         // 检查是否为目录，跳过目录（如source_X）
         try {
-          const stat = fs.statSync(filePath);
+          const stat = SafeFileUtils.statSync(filePath);
           if (stat.isDirectory()) {
             logger.debug(TAG, `跳过目录: ${file}`);
             continue;

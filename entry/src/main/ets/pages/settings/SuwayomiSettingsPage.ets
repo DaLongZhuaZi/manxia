@@ -1,3 +1,4 @@
+import { UIContext } from '@ohos.arkui.UIContext';
 /**
  * Suwayomi 设置页面
  * 配置服务器地址、认证信息，支持图源模式和服务器模式
@@ -191,7 +192,7 @@ export struct SuwayomiSettingsPage {
 
   private showToast(message: string): void {
     import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showToast({
+      AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
         message: message,
         duration: 2000
       });
@@ -428,7 +429,7 @@ export struct SuwayomiSettingsPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])

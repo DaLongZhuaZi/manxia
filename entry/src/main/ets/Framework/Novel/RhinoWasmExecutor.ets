@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Rhino WASM执行器
  * 
@@ -838,7 +839,7 @@ export class RhinoWasmExecutor {
     },
     getLoginInfoMap: function() {
       try {
-        return JSON.parse(window._loginInfo || '{}');
+        return SafeUtils.parseObj(window._loginInfo || '{}');
       } catch(e) {
         return {};
       }
@@ -848,7 +849,7 @@ export class RhinoWasmExecutor {
     },
     getLoginHeaderMap: function() {
       try {
-        return JSON.parse(window._loginHeader || '{}');
+        return SafeUtils.parseObj(window._loginHeader || '{}');
       } catch(e) {
         return {};
       }
@@ -975,7 +976,7 @@ export class RhinoWasmExecutor {
     }
     // 书源中的用法：getArguments(open_argument, 'server')
     try {
-      var obj = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+      var obj = typeof jsonStr === 'string' ? SafeUtils.parseObj(jsonStr) : jsonStr;
       if (key === '' || key === undefined) {
         return obj;
       }
@@ -989,7 +990,7 @@ export class RhinoWasmExecutor {
   window.getArgument = function(key) {
     try {
       var varStr = window.source.getVariable() || '{}';
-      var obj = JSON.parse(varStr);
+      var obj = SafeUtils.parseObj(varStr);
       return obj[key] || '';
     } catch(e) {
       return '';
@@ -1000,7 +1001,7 @@ export class RhinoWasmExecutor {
   window.setArgument = function(key, value) {
     try {
       var varStr = window.source.getVariable() || '{}';
-      var obj = JSON.parse(varStr);
+      var obj = SafeUtils.parseObj(varStr);
       obj[key] = value;
       window.source.setVariable(JSON.stringify(obj));
       return JSON.stringify(obj);
@@ -1121,7 +1122,7 @@ export class RhinoWasmExecutor {
   if (!String.prototype.toJSON) {
     String.prototype.toJSON = function() {
       try {
-        return JSON.parse(this);
+        return SafeUtils.parseObj(this);
       } catch(e) {
         return {};
       }
@@ -1137,7 +1138,7 @@ export class RhinoWasmExecutor {
   // ========== 执行脚本 ==========
   window.executeScript = function(taskId, script, contextJson) {
     try {
-      var ctx = contextJson ? JSON.parse(contextJson) : {};
+      var ctx = contextJson ? SafeUtils.parseObj(contextJson) : {};
       
       // 设置全局变量
       window.result = ctx.result || '';
@@ -1154,7 +1155,7 @@ export class RhinoWasmExecutor {
       // 设置arguments（表单数据等）
       if (ctx.result) {
         try {
-          window._arguments = JSON.parse(ctx.result);
+          window._arguments = SafeUtils.parseObj(ctx.result);
         } catch(e) {
           window._arguments = {};
         }
@@ -1426,7 +1427,7 @@ window.cache = {
 // ========== 执行脚本 ==========
 window.executeScript = function(taskId, script, contextJson) {
   try {
-    const ctx = contextJson ? JSON.parse(contextJson) : {};
+    const ctx = contextJson ? SafeUtils.parseObj(contextJson) : {};
     
     // 设置上下文变量
     window.result = ctx.result || '';
@@ -1540,9 +1541,9 @@ console.log('[RhinoSandbox] Offline mode initialized');
         let parsed = result;
         // 如果结果是字符串形式的JSON（被引号包裹），需要先解析一次
         if (parsed.startsWith('"') && parsed.endsWith('"')) {
-          parsed = JSON.parse(parsed);
+          parsed = SafeUtils.parseObj(parsed);
         }
-        const status = JSON.parse(parsed) as SandboxStatus;
+        const status = SafeUtils.parseObj(parsed) as SandboxStatus;
         return status;
       } else {
         logger.debug(TAG, 'getSandboxStatus返回空结果');
@@ -1591,7 +1592,7 @@ console.log('[RhinoSandbox] Offline mode initialized');
       try {
         const resultStr = await this.webviewController.runJavaScript(`getTaskResult('${taskId}')`);
         if (resultStr) {
-          const result = JSON.parse(resultStr) as RhinoExecuteResult;
+          const result = SafeUtils.parseObj(resultStr) as RhinoExecuteResult;
           
           if (!result.pending) {
             // 任务已完成
@@ -1716,9 +1717,9 @@ console.log('[RhinoSandbox] Offline mode initialized');
         // runJavaScript可能返回双重JSON编码的字符串
         let parsedResult = result;
         if (parsedResult.startsWith('"') && parsedResult.endsWith('"')) {
-          parsedResult = JSON.parse(parsedResult);
+          parsedResult = SafeUtils.parseObj(parsedResult);
         }
-        const parsed = JSON.parse(parsedResult) as RhinoExecuteResult;
+        const parsed = SafeUtils.parseObj(parsedResult) as RhinoExecuteResult;
         logger.debug(TAG, `解析结果: success=${parsed.success}, result=${parsed.result?.substring(0, 100)}, error=${parsed.error}`);
         
         if (!parsed.pending) {

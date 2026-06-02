@@ -32,15 +32,15 @@ export function resolveGuideHighlightRectInRoot(
       if (rootRectInfo) {
         originX = Number(rootRectInfo.windowOffset.x);
         originY = Number(rootRectInfo.windowOffset.y);
-        rootWidth = px2vp(Number(rootRectInfo.size.width));
-        rootHeight = px2vp(Number(rootRectInfo.size.height));
+        rootWidth = uiContext.px2vp(Number(rootRectInfo.size.width));
+        rootHeight = uiContext.px2vp(Number(rootRectInfo.size.height));
       }
     }
 
-    const rawX = px2vp(Number(rectInfo.windowOffset.x) - originX);
-    const rawY = px2vp(Number(rectInfo.windowOffset.y) - originY);
-    const rawWidth = px2vp(Number(rectInfo.size.width));
-    const rawHeight = px2vp(Number(rectInfo.size.height));
+    const rawX = uiContext.px2vp(Number(rectInfo.windowOffset.x) - originX);
+    const rawY = uiContext.px2vp(Number(rectInfo.windowOffset.y) - originY);
+    const rawWidth = uiContext.px2vp(Number(rectInfo.size.width));
+    const rawHeight = uiContext.px2vp(Number(rectInfo.size.height));
     const visibleRight = rootWidth > 0 ? Math.min(rootWidth, rawX + rawWidth) : rawX + rawWidth;
     const visibleBottom = rootHeight > 0 ? Math.min(rootHeight, rawY + rawHeight) : rawY + rawHeight;
     const clippedX = Math.max(0, rawX);
@@ -90,10 +90,10 @@ export function ensureGuideAnchorVisibleInScroller(
       return { available: true, scrolled: false };
     }
 
-    const viewportTop: number = px2vp(Number(viewportRect.windowOffset.y)) + topPaddingVp;
-    const viewportBottom: number = px2vp(Number(viewportRect.windowOffset.y) + Number(viewportRect.size.height)) - bottomPaddingVp;
-    const anchorTop: number = px2vp(Number(anchorRect.windowOffset.y));
-    const anchorBottom: number = anchorTop + px2vp(Number(anchorRect.size.height));
+    const viewportTop: number = uiContext.px2vp(Number(viewportRect.windowOffset.y)) + topPaddingVp;
+    const viewportBottom: number = uiContext.px2vp(Number(viewportRect.windowOffset.y) + Number(viewportRect.size.height)) - bottomPaddingVp;
+    const anchorTop: number = uiContext.px2vp(Number(anchorRect.windowOffset.y));
+    const anchorBottom: number = anchorTop + uiContext.px2vp(Number(anchorRect.size.height));
 
     let deltaY: number = 0;
     if (anchorTop < viewportTop) {

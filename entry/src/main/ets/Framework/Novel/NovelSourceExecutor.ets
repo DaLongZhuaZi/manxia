@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 小说源执行器
  * 负责执行书源的搜索、获取详情、目录、正文等操作
@@ -522,7 +523,7 @@ export class NovelSourceExecutor {
 
     if (trimmedText.startsWith('{') && trimmedText.endsWith('}')) {
       try {
-        const parsed = JSON.parse(trimmedText) as Record<string, string | number | boolean | null>;
+        const parsed = SafeUtils.parseObj(trimmedText) as Record<string, string | number | boolean | null>;
         const keys = Object.keys(parsed);
         for (let i = 0; i < keys.length; i++) {
           const key = keys[i];
@@ -1217,7 +1218,7 @@ export class NovelSourceExecutor {
     // 合并书源配置的请求头
     if (this.source.header) {
       try {
-        const sourceHeaders = JSON.parse(this.source.header) as Record<string, string>;
+        const sourceHeaders = SafeUtils.parseObj(this.source.header) as Record<string, string>;
         Object.keys(sourceHeaders).forEach(key => {
           headers[key] = sourceHeaders[key];
         });
@@ -1591,7 +1592,7 @@ export class NovelSourceExecutor {
     }
 
     try {
-      const parsed = JSON.parse(trimmedContent) as Object;
+      const parsed = SafeUtils.parseObj(trimmedContent) as Object;
       const directName = this.readObjectStringField(parsed, ['name', 'title', 'book_name', 'bookTitle']);
       if (directName) {
         return directName;

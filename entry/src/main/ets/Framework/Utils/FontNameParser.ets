@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Utils/FontNameParser.ets
 /**
  * TTF/OTF 字体名称解析器
@@ -83,14 +84,14 @@ export interface FontNameInfo {
 export async function parseFontName(filePath: string): Promise<FontNameInfo> {
   try {
     // 读取字体文件
-    const file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
-    const stat = fileIo.statSync(file.fd);
+    const file = SafeFileUtils.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+    const stat = SafeFileUtils.statSync(file.fd);
     
     // 只读取前64KB用于解析名称表，大多数字体的name表都在这个范围内
     const readSize = Math.min(stat.size, 65536);
     const buffer = new ArrayBuffer(readSize);
-    fileIo.readSync(file.fd, buffer);
-    fileIo.closeSync(file);
+    SafeFileUtils.readSync(file.fd, buffer);
+    SafeFileUtils.closeSync(file);
     
     const dataView = new DataView(buffer);
     
@@ -130,10 +131,10 @@ export async function parseFontName(filePath: string): Promise<FontNameInfo> {
     
     // 如果name表超出已读取范围，需要重新读取
     if (nameTableOffset + nameTableLength > readSize) {
-      const file2 = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      const file2 = SafeFileUtils.openSync(filePath, fileIo.OpenMode.READ_ONLY);
       const fullBuffer = new ArrayBuffer(nameTableOffset + nameTableLength);
-      fileIo.readSync(file2.fd, fullBuffer);
-      fileIo.closeSync(file2);
+      SafeFileUtils.readSync(file2.fd, fullBuffer);
+      SafeFileUtils.closeSync(file2);
       return parseNameTable(new DataView(fullBuffer), nameTableOffset);
     }
     

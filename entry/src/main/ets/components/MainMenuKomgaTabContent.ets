@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
@@ -108,7 +109,7 @@ export struct MainMenuKomgaTabContent {
   }
 
   private toast(message: string): void {
-    promptAction.showToast({ message: message, duration: 1800 });
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 1800 });
   }
 
   private getHostContext(): common.UIAbilityContext {
@@ -210,7 +211,7 @@ export struct MainMenuKomgaTabContent {
       this.showFilters = store.getSync('showFilters', false) as boolean;
       const filtersText = store.getSync('filters', '') as string;
       this.filters = filtersText.length > 0
-        ? normalizeKomgaBrowseFilters(JSON.parse(filtersText) as ESObject)
+        ? normalizeKomgaBrowseFilters(SafeUtils.parseObj(filtersText) as ESObject)
         : createDefaultKomgaBrowseFilters();
       logger.info(TAG, `已读取 Komga 主标签偏好: browseMode=${this.browseMode}, contentType=${this.contentType}, feedType=${this.feedType}, displayMode=${this.displayMode}, queryLength=${this.searchQuery.length}, filters=${this.buildFilterSummary(this.filters)}`);
     } catch (error) {
@@ -383,11 +384,11 @@ export struct MainMenuKomgaTabContent {
     if (this.refreshHintTimer >= 0) {
       clearTimeout(this.refreshHintTimer);
     }
-    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
       this.refreshHintVisible = true;
     });
     this.refreshHintTimer = setTimeout(() => {
-      animateTo({ duration: 260, curve: Curve.EaseIn }, () => {
+      this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseIn }, () => {
         this.refreshHintVisible = false;
       });
       this.refreshHintTimer = -1;
@@ -487,7 +488,7 @@ export struct MainMenuKomgaTabContent {
       return;
     }
     logger.info(TAG, `Komga 主标签浏览模式切换: ${this.browseMode} -> ${mode}`);
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.browseMode = mode;
     });
     void this.loadItems(true, false);
@@ -521,14 +522,14 @@ export struct MainMenuKomgaTabContent {
       return;
     }
     logger.info(TAG, `Komga 主标签显示模式切换: ${this.displayMode} -> ${displayMode}`);
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.displayMode = displayMode;
     });
     void this.savePreferences();
   }
 
   private toggleFilterPanel(): void {
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.showFilters = !this.showFilters;
     });
     void this.savePreferences();

@@ -1,4 +1,4 @@
-import { HdsNavDestination } from '@kit.UIDesignKit';
+﻿import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction, UIContext, curves } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
@@ -160,13 +160,13 @@ export struct SubscriptionManagementPage {
         this.settingsManager.syncToAppStorage();
       }
       await this.typeShelfManager.initialize();
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await getSubscriptionInitializer().initialize(context);
       await this.loadData();
       logger.info(TAG, `统一内容跟踪管理页初始化完成: 规则=${this.rules.length}`);
     } catch (error) {
       logger.error(TAG, `统一内容跟踪管理页初始化失败: ${String(error)}`);
-      promptAction.showToast({ message: `打开提醒管理失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `打开提醒管理失败: ${String(error)}` });
     }
     this.isLoading = false;
   }
@@ -588,10 +588,10 @@ export struct SubscriptionManagementPage {
     this.isBusy = true;
     try {
       await this.loadData();
-      promptAction.showToast({ message: '规则列表已刷新' });
+      this.getUIContext().getPromptAction().showToast({ message: '规则列表已刷新' });
     } catch (error) {
       logger.warn(TAG, `刷新内容跟踪规则失败: ${String(error)}`);
-      promptAction.showToast({ message: `刷新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${String(error)}` });
     }
     this.isBusy = false;
   }
@@ -604,10 +604,10 @@ export struct SubscriptionManagementPage {
     try {
       const results = await this.manager.maybeRunDueRules('manual');
       await this.loadData();
-      promptAction.showToast({ message: this.buildRunDueToast(results.length) });
+      this.getUIContext().getPromptAction().showToast({ message: this.buildRunDueToast(results.length) });
     } catch (error) {
       logger.error(TAG, `手动执行到期内容跟踪规则失败: ${String(error)}`);
-      promptAction.showToast({ message: `批量检查失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `批量检查失败: ${String(error)}` });
     }
     this.isBusy = false;
   }
@@ -742,19 +742,19 @@ export struct SubscriptionManagementPage {
         await this.manager.saveRuleWithCreateOptions(editingRule, options);
         this.closeCreateDialog();
         await this.loadData();
-        promptAction.showToast({ message: '提醒规则已更新，之后会在 APP 回到前台时补查' });
+        this.getUIContext().getPromptAction().showToast({ message: '提醒规则已更新，之后会在 APP 回到前台时补查' });
         this.isBusy = false;
         return;
       }
       if (this.createMode === SubscriptionCreateMode.SHELF) {
         if (this.createSelectedShelfId.length <= 0) {
-          promptAction.showToast({ message: '请先选择书架' });
+          this.getUIContext().getPromptAction().showToast({ message: '请先选择书架' });
           this.isBusy = false;
           return;
         }
         const targetShelf = this.findShelfById(this.createSelectedShelfId);
         if (targetShelf === null) {
-          promptAction.showToast({ message: '所选书架不存在' });
+          this.getUIContext().getPromptAction().showToast({ message: '所选书架不存在' });
           this.isBusy = false;
           return;
         }
@@ -762,7 +762,7 @@ export struct SubscriptionManagementPage {
           ? SubscriptionTargetType.DYNAMIC_SHELF
           : SubscriptionTargetType.SHELF;
         if (this.hasExistingTargetRule(targetType, targetShelf.id, SubscriptionProviderType.NONE)) {
-          promptAction.showToast({ message: '这个书架已经有提醒了' });
+          this.getUIContext().getPromptAction().showToast({ message: '这个书架已经有提醒了' });
           this.isBusy = false;
           return;
         }
@@ -773,7 +773,7 @@ export struct SubscriptionManagementPage {
           SubscriptionProviderType.SUWAYOMI,
           SubscriptionProviderType.SUWAYOMI
         )) {
-          promptAction.showToast({ message: 'Suwayomi 书库已经有提醒了' });
+          this.getUIContext().getPromptAction().showToast({ message: 'Suwayomi 书库已经有提醒了' });
           this.isBusy = false;
           return;
         }
@@ -786,7 +786,7 @@ export struct SubscriptionManagementPage {
           targetId,
           SubscriptionProviderType.KOMGA
         )) {
-          promptAction.showToast({ message: '这个 Komga 远程库已经有提醒了' });
+          this.getUIContext().getPromptAction().showToast({ message: '这个 Komga 远程库已经有提醒了' });
           this.isBusy = false;
           return;
         }
@@ -798,10 +798,10 @@ export struct SubscriptionManagementPage {
       }
       this.closeCreateDialog();
       await this.loadData();
-      promptAction.showToast({ message: '提醒规则已创建，之后会在 APP 回到前台时补查' });
+      this.getUIContext().getPromptAction().showToast({ message: '提醒规则已创建，之后会在 APP 回到前台时补查' });
     } catch (error) {
       logger.error(TAG, `创建内容跟踪规则失败: ${String(error)}`);
-      promptAction.showToast({ message: `创建提醒失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `创建提醒失败: ${String(error)}` });
     }
     this.isBusy = false;
   }
@@ -823,10 +823,10 @@ export struct SubscriptionManagementPage {
     try {
       await this.manager.setRuleEnabled(rule.id, !rule.enabled);
       await this.loadData();
-      promptAction.showToast({ message: !rule.enabled ? '提醒已开启，APP 回到前台时会自动补查' : '提醒已暂停' });
+      this.getUIContext().getPromptAction().showToast({ message: !rule.enabled ? '提醒已开启，APP 回到前台时会自动补查' : '提醒已暂停' });
     } catch (error) {
       logger.warn(TAG, `切换规则启用状态失败: ${String(error)}`);
-      promptAction.showToast({ message: `操作失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `操作失败: ${String(error)}` });
     }
     this.isBusy = false;
   }
@@ -839,10 +839,10 @@ export struct SubscriptionManagementPage {
     try {
       const result = await this.manager.runRuleNow(rule.id, 'manual');
       await this.loadData();
-      promptAction.showToast({ message: this.buildRunRuleToast(result) });
+      this.getUIContext().getPromptAction().showToast({ message: this.buildRunRuleToast(result) });
     } catch (error) {
       logger.error(TAG, `立即执行内容跟踪规则失败: ${String(error)}`);
-      promptAction.showToast({ message: `执行失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `执行失败: ${String(error)}` });
     }
     this.runningRuleId = '';
   }
@@ -924,10 +924,10 @@ export struct SubscriptionManagementPage {
         this.closeCreateDialog();
       }
       await this.loadData();
-      promptAction.showToast({ message: '提醒已删除' });
+      this.getUIContext().getPromptAction().showToast({ message: '提醒已删除' });
     } catch (error) {
       logger.error(TAG, `删除内容跟踪规则失败: ${String(error)}`);
-      promptAction.showToast({ message: `删除失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${String(error)}` });
     }
     this.isBusy = false;
   }
@@ -956,7 +956,7 @@ export struct SubscriptionManagementPage {
       this.previewTarget = await this.manager.previewRuleTarget(rule.id);
     } catch (error) {
       logger.warn(TAG, `预览内容跟踪规则目标失败: ${String(error)}`);
-      promptAction.showToast({ message: `查看失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `查看失败: ${String(error)}` });
     }
     this.isPreviewLoading = false;
   }
@@ -1370,10 +1370,10 @@ export struct SubscriptionManagementPage {
 
   private showCreateTargetStageBlockedToast(): void {
     if (this.createMode === SubscriptionCreateMode.SHELF) {
-      promptAction.showToast({ message: this.shelves.length > 0 ? '请先选择书架' : '当前还没有可用书架' });
+      this.getUIContext().getPromptAction().showToast({ message: this.shelves.length > 0 ? '请先选择书架' : '当前还没有可用书架' });
       return;
     }
-    promptAction.showToast({ message: '请先完成当前步骤' });
+    this.getUIContext().getPromptAction().showToast({ message: '请先完成当前步骤' });
   }
 
   private switchCreateDialogStage(stage: SubscriptionCreateDialogStage): void {

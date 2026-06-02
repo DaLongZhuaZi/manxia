@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
 import { logger } from '../../Utils/Logger';
@@ -77,30 +78,30 @@ export class PdfImportService {
     const targetPath = `${targetDir}/${safeFileName}`;
 
     try {
-      fs.mkdirSync(targetDir, true);
+      SafeFileUtils.mkdirSync(targetDir, true);
     } catch (_error) {
     }
 
-    const sourceFile = fs.openSync(sourceUri, fs.OpenMode.READ_ONLY);
+    const sourceFile = SafeFileUtils.openSync(sourceUri, fs.OpenMode.READ_ONLY);
     try {
       await fs.copyFile(sourceFile.fd, targetPath);
     } catch (error) {
       try {
-        fs.unlinkSync(targetPath);
+        SafeFileUtils.unlinkSync(targetPath);
       } catch (_cleanupError) {
       }
       throw error as Error;
     } finally {
       try {
-        fs.closeSync(sourceFile);
+        SafeFileUtils.closeSync(sourceFile);
       } catch (_closeError) {
       }
     }
 
-    const stat = fs.statSync(targetPath);
+    const stat = SafeFileUtils.statSync(targetPath);
     if (stat.size <= 0) {
       try {
-        fs.unlinkSync(targetPath);
+        SafeFileUtils.unlinkSync(targetPath);
       } catch (_cleanupError) {
       }
       throw new Error('PDF文件内容为空');
@@ -190,7 +191,7 @@ export class PdfImportService {
       ? preferredOutputDir.trim()
       : `${filesDir}/${PDF_OUTPUT_DIR_NAME}`;
     try {
-      fs.mkdirSync(outputDir, true);
+      SafeFileUtils.mkdirSync(outputDir, true);
     } catch (_error) {
     }
     return outputDir;

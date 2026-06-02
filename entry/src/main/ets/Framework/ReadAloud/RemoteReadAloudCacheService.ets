@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { preferences } from '@kit.ArkData';
@@ -321,24 +323,24 @@ function sanitizePathPart(raw: string): string {
 }
 
 function readFileBytes(path: string): Uint8Array {
-  const stat = fs.statSync(path);
-  const file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+  const stat = SafeFileUtils.statSync(path);
+  const file = SafeFileUtils.openSync(path, fs.OpenMode.READ_ONLY);
   try {
     const buffer = new ArrayBuffer(stat.size);
-    fs.readSync(file.fd, buffer);
+    SafeFileUtils.readSync(file.fd, buffer);
     return new Uint8Array(buffer);
   } finally {
-    fs.closeSync(file);
+    SafeFileUtils.closeSync(file);
   }
 }
 
 function safeReadJson<T>(path: string): T | null {
-  if (!path || !fs.accessSync(path)) {
+  if (!path || !SafeFileUtils.accessSync(path)) {
     return null;
   }
   try {
     const text = new util.TextDecoder('utf-8').decodeToString(readFileBytes(path));
-    return JSON.parse(text) as T;
+    return SafeUtils.parseObj(text) as T;
   } catch (error) {
     logger.warn(TAG, `读取 JSON 失败: path=${path}, error=${String(error)}`);
     return null;
@@ -369,14 +371,14 @@ function ensureDirExists(path: string): void {
   if (!path || path.length <= 0) {
     return;
   }
-  if (fs.accessSync(path)) {
-    const stat = fs.statSync(path);
+  if (SafeFileUtils.accessSync(path)) {
+    const stat = SafeFileUtils.statSync(path);
     if (!stat.isDirectory()) {
       throw new Error(`READ_ALOUD_CACHE_PATH_IS_NOT_DIRECTORY: ${path}`);
     }
     return;
   }
-  fs.mkdirSync(path, true);
+  SafeFileUtils.mkdirSync(path, true);
 }
 
 function writeFileBytes(path: string, bytes: Uint8Array): void {
@@ -386,19 +388,19 @@ function writeFileBytes(path: string, bytes: Uint8Array): void {
   }
   const tempPath = `${path}.tmp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
   try {
-    const file = fs.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+    const file = SafeFileUtils.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
     try {
       const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
         ? bytes.buffer
         : bytes.slice().buffer;
       if (bytes.byteLength > 0) {
-        fs.writeSync(file.fd, buffer);
+        SafeFileUtils.writeSync(file.fd, buffer);
       }
     } finally {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
     deleteFileIfExists(path);
-    fs.renameSync(tempPath, path);
+    SafeFileUtils.renameSync(tempPath, path);
   } catch (error) {
     deleteFileIfExists(tempPath);
     throw error as Error;
@@ -467,10 +469,10 @@ function buildSegmentMetaPath(filePath: string): string {
 
 function safeStatSize(path: string): number {
   try {
-    if (!path || !fs.accessSync(path)) {
+    if (!path || !SafeFileUtils.accessSync(path)) {
       return 0;
     }
-    const stat = fs.statSync(path);
+    const stat = SafeFileUtils.statSync(path);
     return stat.isFile() ? stat.size : 0;
   } catch (_error) {
     return 0;
@@ -479,15 +481,15 @@ function safeStatSize(path: string): number {
 
 function sumDirectoryBytes(path: string): number {
   try {
-    if (!path || !fs.accessSync(path)) {
+    if (!path || !SafeFileUtils.accessSync(path)) {
       return 0;
     }
-    const stat = fs.statSync(path);
+    const stat = SafeFileUtils.statSync(path);
     if (stat.isFile()) {
       return stat.size;
     }
     let total = 0;
-    const children = fs.listFileSync(path);
+    const children = SafeFileUtils.listFileSync(path);
     for (let index = 0; index < children.length; index++) {
       total += sumDirectoryBytes(`${path}/${children[index]}`);
     }
@@ -499,19 +501,19 @@ function sumDirectoryBytes(path: string): number {
 
 function deleteDirRecursive(path: string): void {
   try {
-    if (!path || !fs.accessSync(path)) {
+    if (!path || !SafeFileUtils.accessSync(path)) {
       return;
     }
-    const stat = fs.statSync(path);
+    const stat = SafeFileUtils.statSync(path);
     if (stat.isFile()) {
-      fs.unlinkSync(path);
+      SafeFileUtils.unlinkSync(path);
       return;
     }
-    const children = fs.listFileSync(path);
+    const children = SafeFileUtils.listFileSync(path);
     for (let index = 0; index < children.length; index++) {
       deleteDirRecursive(`${path}/${children[index]}`);
     }
-    fs.rmdirSync(path);
+    SafeFileUtils.rmdirSync(path);
   } catch (error) {
     logger.warn(TAG, `删除目录失败: path=${path}, error=${String(error)}`);
   }
@@ -519,8 +521,8 @@ function deleteDirRecursive(path: string): void {
 
 function deleteFileIfExists(path: string): void {
   try {
-    if (path && fs.accessSync(path)) {
-      fs.unlinkSync(path);
+    if (path && SafeFileUtils.accessSync(path)) {
+      SafeFileUtils.unlinkSync(path);
     }
   } catch (error) {
     logger.warn(TAG, `删除文件失败: path=${path}, error=${String(error)}`);
@@ -531,7 +533,7 @@ function cleanupEmptyParentDirs(path: string, stopPath: string): void {
   let current = path;
   while (current.length > 0 && current.startsWith(stopPath) && current !== stopPath) {
     try {
-      if (!fs.accessSync(current)) {
+      if (!SafeFileUtils.accessSync(current)) {
         const nextSlash = current.lastIndexOf('/');
         if (nextSlash <= 0) {
           return;
@@ -539,15 +541,15 @@ function cleanupEmptyParentDirs(path: string, stopPath: string): void {
         current = current.substring(0, nextSlash);
         continue;
       }
-      const stat = fs.statSync(current);
+      const stat = SafeFileUtils.statSync(current);
       if (!stat.isDirectory()) {
         return;
       }
-      const children = fs.listFileSync(current);
+      const children = SafeFileUtils.listFileSync(current);
       if (children.length > 0) {
         return;
       }
-      fs.rmdirSync(current);
+      SafeFileUtils.rmdirSync(current);
     } catch (_error) {
       return;
     }
@@ -626,7 +628,7 @@ export class RemoteReadAloudCacheService {
 
     const bookRootPath = this.buildBookRootPath(identity.bookId);
     const chapters = this.buildEmptyChapterSummaries(identity.chapters);
-    if (!fs.accessSync(bookRootPath)) {
+    if (!SafeFileUtils.accessSync(bookRootPath)) {
       return {
         supported: true,
         bookId: identity.bookId,
@@ -805,7 +807,7 @@ async clearBookCache(content: UnifiedContent | null): Promise<void> {
       return;
     }
     const bookRootPath = this.buildBookRootPath(identity.bookId);
-    if (!fs.accessSync(bookRootPath)) {
+    if (!SafeFileUtils.accessSync(bookRootPath)) {
       return;
     }
     const currentReferences = this.collectSegmentReferencesFromBookRoot(bookRootPath);
@@ -824,7 +826,7 @@ async clearChapterCache(content: UnifiedContent | null, chapterIndex: number): P
       return;
     }
     const chapterRootPath = `${this.buildBookRootPath(identity.bookId)}/chapter_${chapterIndex}`;
-    if (!fs.accessSync(chapterRootPath)) {
+    if (!SafeFileUtils.accessSync(chapterRootPath)) {
       return;
     }
     const currentReferences = this.collectSegmentReferencesFromBookRoot(chapterRootPath);
@@ -956,7 +958,7 @@ async clearChapterCache(content: UnifiedContent | null, chapterIndex: number): P
     const targetSegmentsRaw = this.buildExpectedSegments(chapterContent, remoteSettings);
     const currentManifestPath = this.buildChapterManifestPath(identity.bookId, chapterIndex, currentContentDigest, currentRemoteDigest);
     const chapterRootPath = `${this.buildBookRootPath(identity.bookId)}/chapter_${chapterIndex}`;
-    const descriptors = fs.accessSync(chapterRootPath)
+    const descriptors = SafeFileUtils.accessSync(chapterRootPath)
       ? this.collectManifestDescriptors(chapterRootPath)
           .filter((descriptor: RemoteReadAloudManifestDescriptor) => descriptor.chapterIndex === chapterIndex)
       : [];
@@ -1461,7 +1463,7 @@ async clearChapterCache(content: UnifiedContent | null, chapterIndex: number): P
     const sourceSegment = sourceManifest.segments.find((item: RemoteTtsManifestSegmentRecord) =>
       Math.max(0, Math.floor(item.index ?? 0)) === Math.max(0, Math.floor(sourceSegmentIndex))
     ) ?? null;
-    if (!sourceSegment || !sourceSegment.filePath || !fs.accessSync(sourceSegment.filePath)) {
+    if (!sourceSegment || !sourceSegment.filePath || !SafeFileUtils.accessSync(sourceSegment.filePath)) {
       throw new Error('READ_ALOUD_CACHE_SOURCE_SEGMENT_MISSING');
     }
 
@@ -1546,7 +1548,7 @@ async clearChapterCache(content: UnifiedContent | null, chapterIndex: number): P
       const baseSnapshot = hasBookScopedSettings
         ? this.settingsManager.getJSON<TextReaderSettings>(settingsKey, DEFAULT_TEXT_READER_SETTINGS)
         : this.settingsManager.getJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, DEFAULT_TEXT_READER_SETTINGS);
-      const nextSnapshot = JSON.parse(JSON.stringify(baseSnapshot)) as TextReaderSettings;
+      const nextSnapshot = SafeUtils.parseObj(JSON.stringify(baseSnapshot)) as TextReaderSettings;
       const baseReadAloudSettings = normalizeReadAloudSettings(
         nextSnapshot.readAloud ?? nextReadAloudSettings
       );
@@ -2009,10 +2011,10 @@ async clearChapterCache(content: UnifiedContent | null, chapterIndex: number): P
 
   private walkManifests(path: string, output: RemoteReadAloudManifestDescriptor[]): void {
     try {
-      if (!path || !fs.accessSync(path)) {
+      if (!path || !SafeFileUtils.accessSync(path)) {
         return;
       }
-      const stat = fs.statSync(path);
+      const stat = SafeFileUtils.statSync(path);
       if (stat.isFile()) {
         if (!path.endsWith('/manifest.json') && !path.endsWith('\\manifest.json')) {
           return;
@@ -2050,7 +2052,7 @@ async clearChapterCache(content: UnifiedContent | null, chapterIndex: number): P
         });
         return;
       }
-      const children = fs.listFileSync(path);
+      const children = SafeFileUtils.listFileSync(path);
       for (let index = 0; index < children.length; index++) {
         this.walkManifests(`${path}/${children[index]}`, output);
       }
@@ -2228,7 +2230,7 @@ async clearChapterCache(content: UnifiedContent | null, chapterIndex: number): P
       if (!raw || raw.length <= 0) {
         return null;
       }
-      const parsed = JSON.parse(raw) as Array<string>;
+      const parsed = SafeUtils.parseArr(raw) as Array<string>;
       if (!Array.isArray(parsed)) {
         return null;
       }

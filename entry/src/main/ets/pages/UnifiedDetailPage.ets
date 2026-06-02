@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/UnifiedDetailPage.ets
 /**
  * 统一详情页
@@ -874,7 +876,7 @@ export struct UnifiedDetailPage {
       return null;
     }
     try {
-      return JSON.parse(text) as OnlineEBookExtendedData;
+      return SafeUtils.parseObj(text) as OnlineEBookExtendedData;
     } catch (error) {
       logger.warn(TAG, `解析在线电子书扩展数据失败: ${String(error)}`);
       return null;
@@ -1163,7 +1165,7 @@ export struct UnifiedDetailPage {
       if (cleanResult.startsWith('"') && cleanResult.endsWith('"')) {
         cleanResult = cleanResult.slice(1, -1).replace(/\\"/g, '"');
       }
-      const parsed = JSON.parse(cleanResult) as Record<string, ESObject>;
+      const parsed = SafeUtils.parseObj(cleanResult) as Record<string, ESObject>;
       return {
         url: String(parsed['url'] || ''),
         title: String(parsed['title'] || ''),
@@ -1234,7 +1236,7 @@ export struct UnifiedDetailPage {
     const sourceIdText: string = this.normalizeTrackingText(this.content.sourceId || this.pageParams?.sourceId);
     const numericSourceId: number = Number(sourceIdText);
     if (!(numericSourceId > 0)) {
-      promptAction.showToast({ message: '缺少在线电子书图源信息', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '缺少在线电子书图源信息', duration: 1500 });
       return;
     }
     const params: OnlineEBookDetailPageParams = {
@@ -1691,13 +1693,13 @@ export struct UnifiedDetailPage {
 
       const sharePath: string = await this.resolveLocalContentSharePath();
       if (sharePath.length <= 0) {
-        promptAction.showToast({ message: '未找到可分享的本地文件', duration: 1800 });
+        this.getUIContext().getPromptAction().showToast({ message: '未找到可分享的本地文件', duration: 1800 });
         return;
       }
 
       const normalizedPath: string = this.normalizeShareFilePath(sharePath);
       if (!this.isExistingSharePath(normalizedPath)) {
-        promptAction.showToast({ message: '本地文件不存在，无法分享', duration: 1800 });
+        this.getUIContext().getPromptAction().showToast({ message: '本地文件不存在，无法分享', duration: 1800 });
         logger.warn(TAG, `本地分享失败，文件不存在: ${normalizedPath}`);
         return;
       }
@@ -1718,7 +1720,7 @@ export struct UnifiedDetailPage {
     } catch (error) {
       const errorMessage: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `本地文件分享失败: ${errorMessage}`);
-      promptAction.showToast({ message: `分享失败: ${errorMessage}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `分享失败: ${errorMessage}`, duration: 2000 });
     }
   }
 
@@ -1916,7 +1918,7 @@ export struct UnifiedDetailPage {
       return false;
     }
     try {
-      return fs.accessSync(normalizedPath);
+      return SafeFileUtils.accessSync(normalizedPath);
     } catch (error) {
       return false;
     }
@@ -1928,7 +1930,7 @@ export struct UnifiedDetailPage {
       return false;
     }
     try {
-      const stat: fs.Stat = fs.statSync(normalizedPath);
+      const stat: fs.Stat = SafeFileUtils.statSync(normalizedPath);
       return stat.isDirectory();
     } catch (error) {
       return false;
@@ -2309,7 +2311,7 @@ export struct UnifiedDetailPage {
         const sfwEnabled = ContentFilterManager.getInstance().isSFWModeEnabled();
         if (sfwEnabled) {
           logger.warn(TAG, 'SFW模式已启用，阻止访问NSFW内容');
-          promptAction.showToast({
+          this.getUIContext().getPromptAction().showToast({
             message: 'SFW模式已启用，无法查看此内容',
             duration: 2000
           });
@@ -3185,7 +3187,7 @@ export struct UnifiedDetailPage {
     
     logger.debug(TAG, `loadNovelContent: sourceId=${sourceId}, bookUrl=${bookUrl}`);
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
       enableDirectoryParsing = await store.get(NOVEL_SETTING_ENABLE_DIRECTORY_PARSING, true) as boolean;
       enableReplaceRules = await store.get(NOVEL_SETTING_ENABLE_REPLACE_RULES, true) as boolean;
@@ -3393,7 +3395,7 @@ export struct UnifiedDetailPage {
       return [];
     }
     try {
-      const parsed = JSON.parse(rawValue) as Array<string>;
+      const parsed = SafeUtils.parseArr(rawValue) as Array<string>;
       if (!Array.isArray(parsed)) {
         return [];
       }
@@ -3415,7 +3417,7 @@ export struct UnifiedDetailPage {
       return null;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
       const raw = await store.get(key, '') as string;
       if (!raw || raw.length === 0) {
@@ -4248,14 +4250,14 @@ export struct UnifiedDetailPage {
       const shouldStop = await this.checkDuplicateAndExecute(async () => {
         try {
           await this.setFavoriteStatus(true);
-          promptAction.showToast({ message: '已添加到收藏', duration: 1500 });
+          this.getUIContext().getPromptAction().showToast({ message: '已添加到收藏', duration: 1500 });
         } catch (error) {
           logger.error(TAG, `Failed to add to favorites: ${String(error)}`);
           this.isFavorite = previousState;
           if (this.content) {
             this.content.isFavorite = previousState;
           }
-          promptAction.showToast({ message: '操作失败', duration: 1500 });
+          this.getUIContext().getPromptAction().showToast({ message: '操作失败', duration: 1500 });
         }
       }, '收藏');
 
@@ -4266,7 +4268,7 @@ export struct UnifiedDetailPage {
 
     try {
       await this.setFavoriteStatus(targetState);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: targetState ? '已添加到收藏' : '已取消收藏',
         duration: 1500
       });
@@ -4274,7 +4276,7 @@ export struct UnifiedDetailPage {
       logger.error(TAG, `Failed to toggle favorite state: ${String(error)}`);
       this.isFavorite = previousState;
       this.content.isFavorite = previousState;
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '操作失败',
         duration: 1500
       });
@@ -4767,14 +4769,14 @@ export struct UnifiedDetailPage {
       }
 
       if (savedCount > 0) {
-        promptAction.showToast({ message: `已保存 ${savedCount} 个章节` });
+        this.getUIContext().getPromptAction().showToast({ message: `已保存 ${savedCount} 个章节` });
         await this.loadCacheStatus();
       } else {
-        promptAction.showToast({ message: '保存失败' });
+        this.getUIContext().getPromptAction().showToast({ message: '保存失败' });
       }
     } catch (error) {
       logger.error(TAG, `保存部分缓存章节失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '保存失败' });
     } finally {
       this.isDownloading = false;
     }
@@ -4894,7 +4896,7 @@ export struct UnifiedDetailPage {
     if (!this.shouldShowChapterListExpandToggle()) {
       return;
     }
-    animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
       this.isChapterListExpanded = !this.isChapterListExpanded;
     });
   }
@@ -5034,10 +5036,10 @@ export struct UnifiedDetailPage {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, cleanText);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: '已复制', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '已复制', duration: 1500 });
     } catch (error) {
       logger.error(TAG, `复制到剪贴板失败: ${String(error)}`);
-      promptAction.showToast({ message: '复制失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '复制失败', duration: 1500 });
     }
   }
   
@@ -5944,7 +5946,7 @@ export struct UnifiedDetailPage {
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .height(36)
             .width('100%')
-            .id('guide_unified_detail_primary_action')
+            .id('' as string)
             .enabled(!this.isReadActionBusy())
             .onClick(() => this.continueReading())
 
@@ -5981,7 +5983,7 @@ export struct UnifiedDetailPage {
     }
     .alignItems(VerticalAlign.Top)
     .width('100%')
-    .id('guide_unified_detail_header')
+    .id('' as string)
     .padding(16)
   }
 
@@ -6307,7 +6309,7 @@ export struct UnifiedDetailPage {
 
   private toggleTagChipExpansion(tagChipId: string): void {
     const expanded = this.isTagChipExpanded(tagChipId);
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       const nextIds: string[] = [];
       for (let index = 0; index < this.expandedTagChipIds.length; index++) {
         const currentId = this.expandedTagChipIds[index];
@@ -6323,7 +6325,7 @@ export struct UnifiedDetailPage {
   }
 
   private toggleDescriptionExpanded(): void {
-    animateTo({ duration: 240, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseInOut }, () => {
       this.showFullDescription = !this.showFullDescription;
     });
   }
@@ -6524,7 +6526,7 @@ export struct UnifiedDetailPage {
     .clip(true)
     .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
     .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-    .id('guide_unified_detail_description')
+    .id('' as string)
   }
 
   @Builder
@@ -6832,7 +6834,7 @@ export struct UnifiedDetailPage {
     .clip(true)
     .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
     .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-    .id('guide_unified_detail_action_bar')
+    .id('' as string)
     }
   }
 
@@ -6849,13 +6851,13 @@ export struct UnifiedDetailPage {
       const success = await this.dataManager.updateContentNSFW(targetContentId, newNSFW);
       if (success) {
         this.content.isNSFW = newNSFW;
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: newNSFW ? '已标记为NSFW' : '已取消NSFW标记',
           duration: 1500
         });
         logger.info(TAG, `NSFW标记更新成功: ${targetContentId}, isNSFW=${newNSFW}`);
       } else {
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: 'NSFW标记更新失败',
           duration: 1500
         });
@@ -6863,7 +6865,7 @@ export struct UnifiedDetailPage {
       }
     } catch (error) {
       logger.error(TAG, `切换NSFW标记异常: ${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '操作失败，请重试',
         duration: 1500
       });
@@ -7176,14 +7178,14 @@ export struct UnifiedDetailPage {
       );
 
       if (success) {
-        promptAction.showToast({ message: '缓存已清理', duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: '缓存已清理', duration: 2000 });
         await this.loadCacheStatus();
       } else {
-        promptAction.showToast({ message: '清理失败', duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: '清理失败', duration: 2000 });
       }
     } catch (error) {
       logger.error(TAG, `清理缓存失败: ${String(error)}`);
-      promptAction.showToast({ message: '清理失败', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '清理失败', duration: 2000 });
     }
   }
 
@@ -7218,7 +7220,7 @@ export struct UnifiedDetailPage {
                 .rotate({ angle: this.isShelfContentExpanded ? 0 : -90 })
                 .animation({ duration: 250, curve: Curve.EaseInOut })
                 .onClick(() => {
-                  animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
                     this.isShelfContentExpanded = !this.isShelfContentExpanded;
                   });
                 })
@@ -7227,7 +7229,7 @@ export struct UnifiedDetailPage {
           .width('100%')
           .onClick(() => {
             if (this.shelfContentItems.length > 0) {
-              animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+              this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
                 this.isShelfContentExpanded = !this.isShelfContentExpanded;
               });
             }
@@ -7258,7 +7260,7 @@ export struct UnifiedDetailPage {
                         .borderRadius(14)
                         .animation({ duration: 200, curve: Curve.EaseInOut })
                         .onClick(() => {
-                          animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+                          this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
                             this.shelfContentFilter = tab.key;
                           });
                         })
@@ -7386,7 +7388,7 @@ export struct UnifiedDetailPage {
                 .rotate({ angle: this.isRecommendationsExpanded ? 0 : -90 })
                 .animation({ duration: 250, curve: Curve.EaseInOut })
                 .onClick(() => {
-                  animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
                     this.isRecommendationsExpanded = !this.isRecommendationsExpanded;
                   });
                 })
@@ -7395,7 +7397,7 @@ export struct UnifiedDetailPage {
           .width('100%')
           .onClick(() => {
             if (this.recommendedItems.length > 0) {
-              animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+              this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
                 this.isRecommendationsExpanded = !this.isRecommendationsExpanded;
               });
             }
@@ -7657,7 +7659,7 @@ export struct UnifiedDetailPage {
     .clip(true)
     .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
     .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-    .id('guide_unified_detail_chapter_section')
+    .id('' as string)
   }
 
   private openMangaSettings(): void {
@@ -7680,7 +7682,7 @@ export struct UnifiedDetailPage {
     const mangaId = this.pageParams.contentId;
     const sourceId = this.pageParams.sourceId;
     if (!sourceId || Number(sourceId) <= 0) {
-      promptAction.showToast({ message: '缺少图源信息', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '缺少图源信息', duration: 2000 });
       return;
     }
 
@@ -7743,9 +7745,9 @@ export struct UnifiedDetailPage {
           const addedCount = newChapterCount - currentChapterCount;
 
           if (addedCount > 0) {
-            promptAction.showToast({ message: `新增 ${addedCount} 个新章节`, duration: 2000 });
+            this.getUIContext().getPromptAction().showToast({ message: `新增 ${addedCount} 个新章节`, duration: 2000 });
           } else {
-            promptAction.showToast({ message: '信息已更新', duration: 1500 });
+            this.getUIContext().getPromptAction().showToast({ message: '信息已更新', duration: 1500 });
           }
 
           if (this.content) {
@@ -7769,7 +7771,7 @@ export struct UnifiedDetailPage {
         },
         onError: (error: string) => {
           logger.error(TAG, `[重新获取] 失败: ${error}`);
-          promptAction.showToast({ message: `获取失败: ${error}`, duration: 2000 });
+          this.getUIContext().getPromptAction().showToast({ message: `获取失败: ${error}`, duration: 2000 });
         }
       };
 
@@ -7777,7 +7779,7 @@ export struct UnifiedDetailPage {
       logger.info(TAG, '重新获取在线漫画信息完成');
     } catch (error) {
       logger.error(TAG, `重新获取在线漫画信息异常: ${String(error)}`);
-      promptAction.showToast({ message: `获取失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `获取失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isRefetchingManga = false;
     }
@@ -7808,14 +7810,14 @@ export struct UnifiedDetailPage {
             this.content.coverUrl = newCoverUrl;
           }
           await this.dataManager.updateComicCoverUrl(mangaId, newCoverUrl);
-          promptAction.showToast({ message: '封面已更新', duration: 1500 });
+          this.getUIContext().getPromptAction().showToast({ message: '封面已更新', duration: 1500 });
         } else {
-          promptAction.showToast({ message: '获取封面失败', duration: 2000 });
+          this.getUIContext().getPromptAction().showToast({ message: '获取封面失败', duration: 2000 });
         }
       }
     } catch (error) {
       logger.error(TAG, `重新获取封面失败: ${String(error)}`);
-      promptAction.showToast({ message: `获取失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `获取失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isRefetchingCover = false;
     }
@@ -7848,7 +7850,7 @@ export struct UnifiedDetailPage {
 
   private async openInBrowser(): Promise<void> {
     if (!this.isOnlineManga() || !this.pageParams) {
-      promptAction.showToast({ message: '无法获取网页地址', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '无法获取网页地址', duration: 2000 });
       return;
     }
 
@@ -7859,7 +7861,7 @@ export struct UnifiedDetailPage {
       const externalId = comicInfo?.externalId || mangaId;
       const sourceInfo: SourceInfo | null = await this.getSourceInfoById(sourceId);
       if (!sourceInfo || !sourceInfo.baseUrl) {
-        promptAction.showToast({ message: '无法获取图源信息', duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取图源信息', duration: 2000 });
         return;
       }
 
@@ -7878,7 +7880,7 @@ export struct UnifiedDetailPage {
       await context.startAbility(want);
     } catch (error) {
       logger.error(TAG, `打开浏览器失败: ${String(error)}`);
-      promptAction.showToast({ message: `打开失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `打开失败: ${String(error)}`, duration: 2000 });
     }
   }
 
@@ -7912,7 +7914,7 @@ export struct UnifiedDetailPage {
 
     const sourceId = this.getCurrentNovelSourceId();
     if (!sourceId) {
-      promptAction.showToast({ message: '缺少书源信息' });
+      this.getUIContext().getPromptAction().showToast({ message: '缺少书源信息' });
       return;
     }
 
@@ -7927,7 +7929,7 @@ export struct UnifiedDetailPage {
     }
 
     if (chapters.length === 0) {
-      promptAction.showToast({ message: this.isCurrentNovelAudioSource() ? '无可缓存的章节音频' : '无可缓存的章节' });
+      this.getUIContext().getPromptAction().showToast({ message: this.isCurrentNovelAudioSource() ? '无可缓存的章节音频' : '无可缓存的章节' });
       return;
     }
 
@@ -7938,7 +7940,7 @@ export struct UnifiedDetailPage {
     this.downloadCurrentChapterTitle = '';
 
     const novelCacheBookId = this.getNovelCacheBookId(sourceId, this.content.id);
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: this.isCurrentNovelAudioSource()
         ? `开始缓存 ${chapters.length} 章音频...`
         : `开始缓存 ${chapters.length} 章...`
@@ -7953,14 +7955,14 @@ export struct UnifiedDetailPage {
         startIndex: selectedIndexes[0],
         endIndex: selectedIndexes[selectedIndexes.length - 1]
       });
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: this.isCurrentNovelAudioSource()
           ? '听书缓存任务已创建，后台继续处理中...'
           : '缓存任务已创建，后台继续处理中...'
       });
     } catch (error) {
       logger.error(TAG, `缓存小说选中章节失败: ${String(error)}`);
-      promptAction.showToast({ message: `缓存失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `缓存失败: ${String(error)}` });
       this.isDownloading = false;
       this.downloadProgressCurrent = 0;
       this.downloadProgressTotal = 0;
@@ -7974,7 +7976,7 @@ export struct UnifiedDetailPage {
 
     const sourceId = Number(this.pageParams?.sourceId);
     if (!sourceId || sourceId <= 0) {
-      promptAction.showToast({ message: '缺少图源信息' });
+      this.getUIContext().getPromptAction().showToast({ message: '缺少图源信息' });
       return;
     }
 
@@ -7983,7 +7985,7 @@ export struct UnifiedDetailPage {
       .map((idx: number) => this.content!.chapters[idx]);
 
     if (chaptersToDownload.length === 0) {
-      promptAction.showToast({ message: '选中的章节已全部缓存' });
+      this.getUIContext().getPromptAction().showToast({ message: '选中的章节已全部缓存' });
       return;
     }
 
@@ -7993,7 +7995,7 @@ export struct UnifiedDetailPage {
     this.downloadProgressTotal = chaptersToDownload.length;
     this.downloadCurrentChapterTitle = '';
 
-    promptAction.showToast({ message: `开始缓存 ${chaptersToDownload.length} 章...` });
+    this.getUIContext().getPromptAction().showToast({ message: `开始缓存 ${chaptersToDownload.length} 章...` });
 
     try {
       const downloadChapters: MangaChapterDownloadItem[] = [];
@@ -8013,10 +8015,10 @@ export struct UnifiedDetailPage {
         sourceId,
         downloadChapters
       );
-      promptAction.showToast({ message: '缓存任务已创建，后台继续处理中...' });
+      this.getUIContext().getPromptAction().showToast({ message: '缓存任务已创建，后台继续处理中...' });
     } catch (error) {
       logger.error(TAG, `缓存漫画选中章节失败: ${String(error)}`);
-      promptAction.showToast({ message: `缓存失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `缓存失败: ${String(error)}` });
       this.isDownloading = false;
       this.downloadProgressCurrent = 0;
       this.downloadProgressTotal = 0;
@@ -8091,10 +8093,10 @@ export struct UnifiedDetailPage {
         this.content.id,
         sourceId
       );
-      promptAction.showToast({ message: '漫画缓存已清理' });
+      this.getUIContext().getPromptAction().showToast({ message: '漫画缓存已清理' });
       await this.loadCacheStatus();
     } catch (error) {
-      promptAction.showToast({ message: `清理漫画缓存失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `清理漫画缓存失败: ${String(error)}` });
     }
   }
 
@@ -8107,13 +8109,13 @@ export struct UnifiedDetailPage {
       const sourceId = this.getCurrentNovelSourceId();
       const novelCacheBookId = this.getNovelCacheBookId(sourceId, this.content.id);
       await this.novelCacheManager.clearBookCache(novelCacheBookId);
-      promptAction.showToast({ message: `${this.isCurrentNovelAudioSource() ? '听书缓存' : '小说缓存'}已清理` });
+      this.getUIContext().getPromptAction().showToast({ message: `${this.isCurrentNovelAudioSource() ? '听书缓存' : '小说缓存'}已清理` });
       this.content.chapters.forEach((ch: UnifiedChapter) => {
         ch.isDownloaded = false;
       });
       await this.loadCacheStatus();
     } catch (error) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: `${this.isCurrentNovelAudioSource() ? '清理听书缓存失败' : '清理小说缓存失败'}: ${String(error)}`
       });
     }
@@ -8571,7 +8573,7 @@ export struct UnifiedDetailPage {
    */
   private openCoverPreview(): void {
     if (!this.content?.coverUrl) {
-      promptAction.showToast({ message: '无封面图片', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '无封面图片', duration: 2000 });
       return;
     }
     
@@ -8582,7 +8584,7 @@ export struct UnifiedDetailPage {
     
     // 延迟执行动画，确保 UI 已渲染
     setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 300,
         curve: curves.springMotion(0.6, 0.9)
       }, () => {
@@ -8596,7 +8598,7 @@ export struct UnifiedDetailPage {
    * 关闭封面预览（带动画）
    */
   private closeCoverPreview(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -8771,18 +8773,18 @@ export struct UnifiedDetailPage {
   private async saveCoverToGallery(): Promise<void> {
     const coverUrl = this.getRawCoverImagePath();
     if (!coverUrl) {
-      promptAction.showToast({ message: '无封面图片', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '无封面图片', duration: 2000 });
       return;
     }
     if (coverUrl.startsWith('app.media.')) {
-      promptAction.showToast({ message: '内置资源封面暂不支持保存', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '内置资源封面暂不支持保存', duration: 2000 });
       return;
     }
     
     this.isSavingCover = true;
     
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       let localFilePath: string;
       
       // 判断是本地文件还是网络图片
@@ -8801,9 +8803,9 @@ export struct UnifiedDetailPage {
         
         const imageData = response.result as ArrayBuffer;
         localFilePath = `${context.cacheDir}/save_cover_${Date.now()}.jpg`;
-        const tempFile = fs.openSync(localFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.writeSync(tempFile.fd, imageData);
-        fs.closeSync(tempFile);
+        const tempFile = SafeFileUtils.openSync(localFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(tempFile.fd, imageData);
+        SafeFileUtils.closeSync(tempFile);
       } else {
         // 本地文件：直接使用
         localFilePath = coverUrl.startsWith('file://') ? coverUrl.substring(7) : coverUrl;
@@ -8840,18 +8842,18 @@ export struct UnifiedDetailPage {
         await fs.copyFile(srcFile.fd, destFile.fd);
         
         // 关闭文件
-        fs.closeSync(destFile);
-        fs.closeSync(srcFile);
+        SafeFileUtils.closeSync(destFile);
+        SafeFileUtils.closeSync(srcFile);
         
         logger.info(TAG, `封面已保存到相册: ${desFileUris[0]}`);
-        promptAction.showToast({ message: '已保存到相册', duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: '已保存到相册', duration: 2000 });
       } else {
         logger.info(TAG, '用户取消保存');
       }
       
     } catch (error) {
       logger.error(TAG, `保存封面失败: ${String(error)}`);
-      promptAction.showToast({ message: `保存失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `保存失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isSavingCover = false;
     }
@@ -8864,16 +8866,16 @@ export struct UnifiedDetailPage {
   private async shareCover(): Promise<void> {
     const coverUrl = this.getRawCoverImagePath();
     if (!coverUrl) {
-      promptAction.showToast({ message: '无封面图片', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '无封面图片', duration: 2000 });
       return;
     }
     if (coverUrl.startsWith('app.media.')) {
-      promptAction.showToast({ message: '内置资源封面暂不支持分享', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '内置资源封面暂不支持分享', duration: 2000 });
       return;
     }
     
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       let localFilePath: string;
       
       // 判断是本地文件还是网络图片
@@ -8892,9 +8894,9 @@ export struct UnifiedDetailPage {
         
         const imageData = response.result as ArrayBuffer;
         localFilePath = `${context.cacheDir}/share_cover_${Date.now()}.jpg`;
-        const tempFile = fs.openSync(localFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.writeSync(tempFile.fd, imageData);
-        fs.closeSync(tempFile);
+        const tempFile = SafeFileUtils.openSync(localFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(tempFile.fd, imageData);
+        SafeFileUtils.closeSync(tempFile);
       } else {
         // 本地文件：直接使用
         localFilePath = coverUrl.startsWith('file://') ? coverUrl.substring(7) : coverUrl;
@@ -8924,7 +8926,7 @@ export struct UnifiedDetailPage {
       
     } catch (error) {
       logger.error(TAG, `分享封面失败: ${String(error)}`);
-      promptAction.showToast({ message: `分享失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `分享失败: ${String(error)}`, duration: 2000 });
     }
   }
 
@@ -9202,7 +9204,7 @@ export struct UnifiedDetailPage {
       .clip(true)
       .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
       .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-      .id('guide_unified_detail_tracking')
+      .id('' as string)
     }
   }
 
@@ -9504,7 +9506,7 @@ export struct UnifiedDetailPage {
         }
         .width('100%')
         .height('100%')
-        .id('guide_unified_detail_root')
+        .id('' as string)
         .padding({ top: this.statusBarHeight })
         
         // 封面预览弹窗
@@ -9842,7 +9844,7 @@ export struct UnifiedDetailPage {
    */
   private async generateCoverForContent(title: string, fontScale: number): Promise<void> {
     if (!this.content || !title.trim()) {
-      promptAction.showToast({ message: '请输入标题', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入标题', duration: 2000 });
       return;
     }
 
@@ -9854,22 +9856,23 @@ export struct UnifiedDetailPage {
       const coverPath = await this.coverGenerator.generateCover(
         this.content.id,
         title,
-        () => { this.buildCoverForSnapshot(title, fontScale); }
+        () => { this.buildCoverForSnapshot(title, fontScale); },
+        this.getUIContext()
       );
       
       if (coverPath) {
         await this.updateContentCover(coverPath);
         // 强制刷新封面显示
         this.coverRefreshKey = Date.now();
-        promptAction.showToast({ message: '封面生成成功', duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: '封面生成成功', duration: 2000 });
         logger.info(TAG, `封面生成成功: ${coverPath}`);
       } else {
-        promptAction.showToast({ message: '封面生成失败', duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: '封面生成失败', duration: 2000 });
         logger.warn(TAG, '封面生成失败');
       }
     } catch (error) {
       logger.error(TAG, `生成封面异常: ${String(error)}`);
-      promptAction.showToast({ message: `生成失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `生成失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isGeneratingCover = false;
     }
@@ -10061,13 +10064,13 @@ export struct UnifiedDetailPage {
       await this.loadContent();
       
       if (this.isFromChangeSource) {
-        promptAction.showToast({ message: `已切换到: ${source.sourceName}，点“替换原小说”按钮进行替换` });
+        this.getUIContext().getPromptAction().showToast({ message: `已切换到: ${source.sourceName}，点“替换原小说”按钮进行替换` });
       } else {
-        promptAction.showToast({ message: `已切换到: ${source.sourceName}` });
+        this.getUIContext().getPromptAction().showToast({ message: `已切换到: ${source.sourceName}` });
       }
     } catch (error) {
       logger.error(TAG, `切换书源失败: ${String(error)}`);
-      promptAction.showToast({ message: '切换失败，请重试' });
+      this.getUIContext().getPromptAction().showToast({ message: '切换失败，请重试' });
       // 失败时重置换源标记
       this.isFromChangeSource = false;
       this.originalBookInfo = null;
@@ -10281,7 +10284,7 @@ export struct UnifiedDetailPage {
       // 9. 检查更新书架状态
       await this.checkIfInShelf();
       
-      promptAction.showToast({ 
+      this.getUIContext().getPromptAction().showToast({ 
         message: `已替换为「${this.content?.sourceName || '新书源'}」的版本`, 
         duration: 2500 
       });
@@ -10293,7 +10296,7 @@ export struct UnifiedDetailPage {
       
     } catch (error) {
       logger.error(TAG, `替换小说失败: ${String(error)}`);
-      promptAction.showToast({ message: `替换失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `替换失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isLoading = false;
     }
@@ -10389,7 +10392,7 @@ export struct UnifiedDetailPage {
 
     // 如果已在书架中，提示用户
     if (this.isInShelf) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: this.currentShelfName ? `已在「${this.currentShelfName}」中` : '已在书架中',
         duration: 1500
       });
@@ -10545,13 +10548,13 @@ export struct UnifiedDetailPage {
           // 加载同书架内容
           this.loadShelfContent();
 
-          promptAction.showToast({
+          this.getUIContext().getPromptAction().showToast({
             message: `已添加到「${shelf.name}」书架`,
             duration: 1500
           });
         } catch (error) {
           logger.error(TAG, `添加到书架失败: ${String(error)}`);
-          promptAction.showToast({
+          this.getUIContext().getPromptAction().showToast({
             message: '添加失败，请重试',
             duration: 1500
           });
@@ -10569,7 +10572,7 @@ export struct UnifiedDetailPage {
       await doAddToShelf();
     } catch (error) {
       logger.error(TAG, `添加到书架失败: ${String(error)}`);
-      promptAction.showToast({ 
+      this.getUIContext().getPromptAction().showToast({ 
         message: '添加失败，请重试',
         duration: 1500 
       });
@@ -10591,13 +10594,13 @@ export struct UnifiedDetailPage {
         await this.setFavoriteStatus(true);
         this.isInShelf = true;
         this.currentShelfName = '';
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: '已添加到默认书架',
           duration: 1500
         });
       } catch (error) {
         logger.error(TAG, `添加到收藏失败: ${String(error)}`);
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: '添加失败，请重试',
           duration: 1500
         });
@@ -10654,7 +10657,7 @@ export struct UnifiedDetailPage {
     if (!sourceCover) {
       return '';
     }
-    const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const hostContext = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
     if (!hostContext || !hostContext.filesDir) {
       return '';
     }

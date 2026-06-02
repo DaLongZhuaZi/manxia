@@ -1,3 +1,4 @@
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 import { http } from '@kit.NetworkKit';
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
@@ -38,7 +39,7 @@ export class LibraryCoverManager {
       LibraryCoverManager.ensureDir(typeDir);
 
       if (LibraryCoverManager.isManagedCoverPathByFilesDir(normalizedSource, filesDir) &&
-          fs.accessSync(normalizedSource)) {
+          SafeFileUtils.accessSync(normalizedSource)) {
         return normalizedSource;
       }
 
@@ -55,7 +56,7 @@ export class LibraryCoverManager {
         return null;
       }
 
-      if (!fs.accessSync(normalizedSource)) {
+      if (!SafeFileUtils.accessSync(normalizedSource)) {
         logger.warn(TAG, `封面源文件不存在: ${normalizedSource}`);
         return null;
       }
@@ -72,10 +73,10 @@ export class LibraryCoverManager {
         return targetPath;
       }
 
-      if (fs.accessSync(targetPath)) {
-        fs.unlinkSync(targetPath);
+      if (SafeFileUtils.accessSync(targetPath)) {
+        SafeFileUtils.unlinkSync(targetPath);
       }
-      fs.copyFileSync(normalizedSource, targetPath);
+      SafeFileUtils.copyFileSync(normalizedSource, targetPath);
       return targetPath;
     } catch (error) {
       logger.error(TAG, `持久化封面失败: ${String(error)}`);
@@ -104,10 +105,10 @@ export class LibraryCoverManager {
       if (!normalizedPath || !LibraryCoverManager.isManagedCoverPathByFilesDir(normalizedPath, filesDir)) {
         return false;
       }
-      if (!fs.accessSync(normalizedPath)) {
+      if (!SafeFileUtils.accessSync(normalizedPath)) {
         return false;
       }
-      fs.unlinkSync(normalizedPath);
+      SafeFileUtils.unlinkSync(normalizedPath);
       return true;
     } catch (error) {
       logger.warn(TAG, `删除封面失败: ${String(error)}`);
@@ -141,11 +142,11 @@ export class LibraryCoverManager {
         return false;
       }
 
-      const file = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      const file = SafeFileUtils.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
       try {
-        fs.writeSync(file.fd, response.result as ArrayBuffer);
+        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
       } finally {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
       }
       return true;
     } catch (error) {
@@ -163,32 +164,32 @@ export class LibraryCoverManager {
     let file: fs.File | null = null;
     let pixelMap: image.PixelMap | null = null;
     try {
-      if (LibraryCoverManager.samePath(sourcePath, targetPath) && fs.accessSync(sourcePath)) {
+      if (LibraryCoverManager.samePath(sourcePath, targetPath) && SafeFileUtils.accessSync(sourcePath)) {
         return sourcePath;
       }
 
-      file = fs.openSync(sourcePath, fs.OpenMode.READ_ONLY);
+      file = SafeFileUtils.openSync(sourcePath, fs.OpenMode.READ_ONLY);
       const imageSource = image.createImageSource(file.fd);
       pixelMap = await imageSource.createPixelMap({
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888
       });
 
       const imagePacker = image.createImagePacker();
-      const packedBuffer = await imagePacker.packing(pixelMap, {
+      const packedBuffer = await imagePacker.packToData(pixelMap, {
         format: 'image/webp',
         quality: 90
       });
       imagePacker.release();
       imageSource.release();
 
-      if (fs.accessSync(targetPath)) {
-        fs.unlinkSync(targetPath);
+      if (SafeFileUtils.accessSync(targetPath)) {
+        SafeFileUtils.unlinkSync(targetPath);
       }
-      const outputFile = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      const outputFile = SafeFileUtils.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
       try {
-        fs.writeSync(outputFile.fd, packedBuffer);
+        SafeFileUtils.writeSync(outputFile.fd, packedBuffer);
       } finally {
-        fs.closeSync(outputFile);
+        SafeFileUtils.closeSync(outputFile);
       }
 
       logger.info(TAG, `灏侀潰宸叉爣鍑嗗寲涓?WebP: source='${sourcePath}', target='${targetPath}'`);
@@ -203,7 +204,7 @@ export class LibraryCoverManager {
       }
       try {
         if (file) {
-          fs.closeSync(file);
+          SafeFileUtils.closeSync(file);
         }
       } catch (_error) {
       }
@@ -234,8 +235,8 @@ export class LibraryCoverManager {
   }
 
   private static ensureDir(path: string): void {
-    if (!fs.accessSync(path)) {
-      fs.mkdirSync(path, true);
+    if (!SafeFileUtils.accessSync(path)) {
+      SafeFileUtils.mkdirSync(path, true);
     }
   }
 

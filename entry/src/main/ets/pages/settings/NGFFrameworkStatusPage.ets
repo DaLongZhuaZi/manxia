@@ -1,4 +1,4 @@
-import { HdsNavDestination } from '@kit.UIDesignKit';
+﻿import { HdsNavDestination } from '@kit.UIDesignKit';
 import { promptAction } from '@kit.ArkUI';
 import { ThemeAwareHelper, ThemeAwareState } from '../../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
@@ -242,7 +242,7 @@ export struct NGFFrameworkStatusPage {
     this.moduleCards = this.buildModuleCards();
 
     if (showToast) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: 'NGF状态已刷新',
         duration: 1300
       });
@@ -870,7 +870,7 @@ export struct NGFFrameworkStatusPage {
         })
         .onClick(() => {
           this.triggerEventProbe();
-          promptAction.showToast({
+          this.getUIContext().getPromptAction().showToast({
             message: '已发送事件总线探针',
             duration: 1200
           });

@@ -1,3 +1,4 @@
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/NovelImportDialog.ets
 /**
  * 小说(TXT)导入对话框
@@ -10,12 +11,12 @@ import { logger } from '../../Utils/Logger';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 import { getNovelTxtTocRuleManager, TxtTocRule, TxtChapter } from '../Novel/NovelTxtTocRuleManager';
 import { NovelReplaceRuleManager, ReplaceRule, ReplaceScope } from '../Novel/NovelReplaceRuleManager';
-import { fileIo, picker } from '@kit.CoreFileKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { util } from '@kit.ArkTS';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
 import { image } from '@kit.ImageKit';
-import { componentSnapshot } from '@kit.ArkUI';
 
 const TAG = 'NovelImportDialog';
 
@@ -157,7 +158,7 @@ export struct NovelImportDialog {
       const coverPath = `${this.folderPath}/cover.webp`;
       
       // 使用 componentSnapshot.createFromBuilder 生成 PixelMap
-      const pixelMap = await componentSnapshot.createFromBuilder(
+      const pixelMap = await this.getUIContext().getComponentSnapshot().createFromBuilder(
         () => { this.buildCoverForSnapshot(title); }
       );
       
@@ -200,7 +201,7 @@ export struct NovelImportDialog {
       }
       
       // 使用 componentSnapshot.createFromBuilder 生成 PixelMap
-      const pixelMap = await componentSnapshot.createFromBuilder(
+      const pixelMap = await this.getUIContext().getComponentSnapshot().createFromBuilder(
         () => { this.buildCoverForSnapshot(title); }
       );
       
@@ -302,7 +303,7 @@ export struct NovelImportDialog {
         quality: 90
       };
       
-      const arrayBuffer = await imagePacker.packing(pixelMap, packOptions);
+      const arrayBuffer = await imagePacker.packToData(pixelMap, packOptions);
       const file = await fileIo.open(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       await fileIo.write(file.fd, arrayBuffer);
       await fileIo.close(file.fd);
@@ -321,9 +322,9 @@ export struct NovelImportDialog {
    */
   private async selectCustomCover(): Promise<void> {
     try {
-      const photoPicker = new picker.PhotoViewPicker();
-      const selectOptions: picker.PhotoSelectOptions = {
-        MIMEType: picker.PhotoViewMIMETypes.IMAGE_TYPE,
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
+      const selectOptions: photoAccessHelper.PhotoSelectOptions = {
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
         maxSelectNumber: 1
       };
       
@@ -1106,15 +1107,15 @@ export struct NovelImportDialog {
         openTarget = `/${this.filePath}`;
       }
       
-      const file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
-      const stat = fileIo.statSync(file.fd);
+      const file = SafeFileUtils.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       // 读取完整文件内容用于章节检测（最大10MB，超过则只读取前10MB）
       const maxReadSize = 10 * 1024 * 1024; // 10MB
       const readSize = Math.min(stat.size, maxReadSize);
       
       this.rawFileBuffer = new ArrayBuffer(readSize);
-      fileIo.readSync(file.fd, this.rawFileBuffer);
-      fileIo.closeSync(file);
+      SafeFileUtils.readSync(file.fd, this.rawFileBuffer);
+      SafeFileUtils.closeSync(file);
       
       if (stat.size > maxReadSize) {
         logger.warn(TAG, `文件过大(${stat.size}字节)，只读取前${maxReadSize}字节用于章节检测`);

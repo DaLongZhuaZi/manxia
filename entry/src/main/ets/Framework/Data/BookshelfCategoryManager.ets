@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 分类书架管理器
  * 类似iOS App Library的分类视图功能
@@ -82,11 +83,11 @@ export class BookshelfCategoryManager {
     try {
       // 加载分类列表
       const categoriesJson: string = this.settingsManager.getString(CATEGORIES_KEY, '[]');
-      this.categories = JSON.parse(categoriesJson) as BookshelfCategory[];
+      this.categories = SafeUtils.parseArr(categoriesJson) as BookshelfCategory[];
 
       // 加载内容-分类映射
       const mapJson: string = this.settingsManager.getString(ITEM_CATEGORY_MAP_KEY, '{}');
-      const mapObj: Record<string, CategoryItem> = JSON.parse(mapJson) as Record<string, CategoryItem>;
+      const mapObj: Record<string, CategoryItem> = SafeUtils.parseObj(mapJson) as Record<string, CategoryItem>;
       this.itemCategoryMap = new Map(Object.entries(mapObj));
 
       // 确保有默认分类

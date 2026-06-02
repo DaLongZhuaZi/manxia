@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 小说详情页面
  * 展示书籍详情和章节列表
  * 使用 HdsNavDestination 实现统一的导航体验
@@ -151,7 +151,7 @@ export struct NovelDetailPage {
         await this.settingsManager.setJSON<TextReaderSettings>(settingsKey, settings);
         this.novelSettings = settings;
         logger.info(TAG, `淇濆瓨涔︾睄涓撳睘璁剧疆: ${this.bookId}`);
-        promptAction.showToast({ message: '璁剧疆宸蹭繚瀛? });
+        this.getUIContext().getPromptAction().showToast({ message: '璁剧疆宸蹭繚瀛? });
         return;
       } */
       // 尝试获取书籍详情
@@ -178,7 +178,7 @@ export struct NovelDetailPage {
         const sfwEnabled = ContentFilterManager.getInstance().isSFWModeEnabled();
         if (sfwEnabled && this.book.isNSFW) {
           logger.warn(TAG, 'SFW模式已启用，阻止访问NSFW内容');
-          promptAction.showToast({
+          this.getUIContext().getPromptAction().showToast({
             message: 'SFW模式已启用，无法查看NSFW内容',
             duration: 2000
           });
@@ -939,7 +939,8 @@ export struct NovelDetailPage {
         const generatedPath = await this.coverGenerator.generateCover(
           bookId,
           this.book.name,
-          () => { this.buildNovelCoverForSnapshot(this.book!.name); }
+          () => { this.buildNovelCoverForSnapshot(this.book!.name); },
+          this.getUIContext()
         );
         if (generatedPath) {
           coverLocalPath = generatedPath;
@@ -984,9 +985,9 @@ export struct NovelDetailPage {
     }
     
     if (this.isFavorite) {
-      promptAction.showToast({ message: coverLocalPath ? '已加入书架（已生成封面）' : '已加入书架' });
+      this.getUIContext().getPromptAction().showToast({ message: coverLocalPath ? '已加入书架（已生成封面）' : '已加入书架' });
     } else {
-      promptAction.showToast({ message: '已从书架移除' });
+      this.getUIContext().getPromptAction().showToast({ message: '已从书架移除' });
     }
   }
 
@@ -1159,7 +1160,7 @@ export struct NovelDetailPage {
     // 重新加载书籍信息
     await this.loadBookInfo();
     
-    promptAction.showToast({ message: `已切换到: ${source.sourceName}` });
+    this.getUIContext().getPromptAction().showToast({ message: `已切换到: ${source.sourceName}` });
   }
 
   /**
@@ -1197,11 +1198,11 @@ export struct NovelDetailPage {
         this.downloadProgress = 100;
         // 刷新缓存状态
         this.cachedChapterIndexes = await this.cacheManager.getCachedChapterIndexes(this.bookId, this.chapters.length);
-        promptAction.showToast({ message: '下载完成' });
+        this.getUIContext().getPromptAction().showToast({ message: '下载完成' });
       },
       onError: (error: string) => {
         this.isDownloading = false;
-        promptAction.showToast({ message: `下载失败: ${error}` });
+        this.getUIContext().getPromptAction().showToast({ message: `下载失败: ${error}` });
       }
     });
   }
@@ -1211,7 +1212,7 @@ export struct NovelDetailPage {
    */
   async showDownloadOptions(): Promise<void> {
     if (this.chapters.length === 0) {
-      promptAction.showToast({ message: '没有可下载的章节' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有可下载的章节' });
       return;
     }
     
@@ -1251,7 +1252,7 @@ export struct NovelDetailPage {
    */
   private showNovelSettingsPanelWithAnimation(): void {
     this.showNovelSettingsPanel = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -1264,7 +1265,7 @@ export struct NovelDetailPage {
    * 隐藏小说设置面板（带动画）
    */
   private hideNovelSettingsPanelWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -1371,7 +1372,7 @@ export struct NovelDetailPage {
         await this.settingsManager.setJSON<TextReaderSettings>(settingsKey, settings);
         this.novelSettings = settings;
         logger.info(TAG, `Saved book-specific novel settings: ${this.bookId}`);
-        promptAction.showToast({ message: '设置已保存' });
+        this.getUIContext().getPromptAction().showToast({ message: '设置已保存' });
         return;
       }
       // 保存为全局设置
@@ -1388,10 +1389,10 @@ export struct NovelDetailPage {
       }
       
       this.novelSettings = settings;
-      promptAction.showToast({ message: '设置已保存' });
+      this.getUIContext().getPromptAction().showToast({ message: '设置已保存' });
     } catch (error) {
       logger.error(TAG, `保存小说设置失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存设置失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '保存设置失败' });
     }
   }
 

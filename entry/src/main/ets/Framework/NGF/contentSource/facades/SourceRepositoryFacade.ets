@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../../../Utils/SafeUtils';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { getContext, isInitialized as isGlobalContextInitialized } from '../../../../GlobalContext';
@@ -84,7 +86,7 @@ export class SourceRepositoryFacade implements ISourceRepository {
   }
 
   private parseIndexJson(indexJson: string): NGFSourceRepositoryIndex {
-    const parsed = JSON.parse(indexJson) as Partial<NGFSourceRepositoryIndex>;
+    const parsed = SafeUtils.parseObj(indexJson) as Partial<NGFSourceRepositoryIndex>;
     const version = parsed.version && typeof parsed.version === 'string' ? parsed.version : '1.0.0';
     const lastUpdate = parsed.lastUpdate && typeof parsed.lastUpdate === 'number'
       ? parsed.lastUpdate
@@ -149,7 +151,7 @@ export class SourceRepositoryFacade implements ISourceRepository {
     }
 
     try {
-      fs.mkdirSync(repositoryDir, true);
+      SafeFileUtils.mkdirSync(repositoryDir, true);
     } catch {
       logger.warn(TAG, `创建仓库目录失败: ${repositoryDir}`);
     }
@@ -157,31 +159,31 @@ export class SourceRepositoryFacade implements ISourceRepository {
 
   private exists(path: string): boolean {
     try {
-      return fs.accessSync(path);
+      return SafeFileUtils.accessSync(path);
     } catch {
       return false;
     }
   }
 
   private readText(path: string): string {
-    const file = fs.openSync(path, fs.OpenMode.READ_ONLY);
-    const stat = fs.statSync(path);
+    const file = SafeFileUtils.openSync(path, fs.OpenMode.READ_ONLY);
+    const stat = SafeFileUtils.statSync(path);
     if (stat.size <= 0) {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
       return '';
     }
     const buffer = new ArrayBuffer(Number(stat.size));
-    fs.readSync(file.fd, buffer);
-    fs.closeSync(file);
+    SafeFileUtils.readSync(file.fd, buffer);
+    SafeFileUtils.closeSync(file);
     const decoder = new util.TextDecoder('utf-8');
     return decoder.decodeToString(new Uint8Array(buffer));
   }
 
   private writeText(path: string, content: string): boolean {
     try {
-      const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, content);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(file.fd, content);
+      SafeFileUtils.closeSync(file);
       return true;
     } catch {
       return false;

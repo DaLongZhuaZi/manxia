@@ -1,7 +1,7 @@
-{
+﻿{
   "float": [
     {
-      "name": "page_text_font_size",
+      "name": "app_page_text_font_size",
       "value": "50fp"
     }
   ]

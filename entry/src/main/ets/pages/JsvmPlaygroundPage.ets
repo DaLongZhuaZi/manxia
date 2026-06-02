@@ -1,3 +1,4 @@
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * JSVM Playground - JavaScript 代码运行测试页面
  * 提供类似IDE的代码编辑和执行环境，用于测试JSVM引擎功能
@@ -223,7 +224,7 @@ export struct JsvmPlaygroundPage {
 var host = ['https://v1.gyks.cf'];
 function getArguments(open_argument, key) {
   try {
-    open_argument = JSON.parse(open_argument);
+    open_argument = SafeUtils.parseObj(open_argument);
   } catch (e) {
     open_argument = { server: host[0] };
   }
@@ -349,7 +350,7 @@ result`,
     }
     
     if (!this.codeInput.trim()) {
-      promptAction.showToast({ message: '请输入代码' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入代码' });
       return;
     }
     
@@ -434,7 +435,7 @@ result`,
         // 设置书源信息
         quickjs.setSourceInfo('https://test.example.com', 'TestSource', '');
         logger.info(TAG, 'QuickJS引擎初始化成功');
-        promptAction.showToast({ message: 'QuickJS引擎初始化成功' });
+        this.getUIContext().getPromptAction().showToast({ message: 'QuickJS引擎初始化成功' });
         
         // 注册清理逻辑到生命周期管理器
         class QuickjsDisposable implements Disposable {
@@ -458,12 +459,12 @@ result`,
         this.lifecycle.registerResource(new QuickjsDisposable(this.quickjsInitialized));
       } else {
         this.quickjsStatus = '初始化失败';
-        promptAction.showToast({ message: 'QuickJS引擎初始化失败' });
+        this.getUIContext().getPromptAction().showToast({ message: 'QuickJS引擎初始化失败' });
       }
     } catch (e) {
       this.quickjsStatus = `错误: ${String(e)}`;
       logger.error(TAG, `QuickJS初始化异常: ${String(e)}`);
-      promptAction.showToast({ message: `QuickJS初始化异常: ${String(e)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `QuickJS初始化异常: ${String(e)}` });
     }
   }
 
@@ -476,7 +477,7 @@ result`,
     }
     
     if (!this.codeInput.trim()) {
-      promptAction.showToast({ message: '请输入代码' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入代码' });
       return;
     }
     
@@ -641,7 +642,7 @@ result`,
         this.rhinoSandboxStatus = '已就绪';
         this.rhinoSandboxMode = status.rhinoSandboxMode || 'offline';
         logger.info(TAG, `[RhinoSandbox] 初始化成功, 模式: ${this.rhinoSandboxMode}`);
-        promptAction.showToast({ message: `Rhino沙箱初始化成功 (${this.rhinoSandboxMode}模式)` });
+        this.getUIContext().getPromptAction().showToast({ message: `Rhino沙箱初始化成功 (${this.rhinoSandboxMode}模式)` });
         
         // 注册清理逻辑到生命周期管理器
         class RhinoDisposable implements Disposable {
@@ -666,12 +667,12 @@ result`,
       } else {
         this.rhinoSandboxStatus = '初始化失败';
         logger.error(TAG, '[RhinoSandbox] 初始化失败');
-        promptAction.showToast({ message: 'Rhino沙箱初始化失败' });
+        this.getUIContext().getPromptAction().showToast({ message: 'Rhino沙箱初始化失败' });
       }
     } catch (e) {
       this.rhinoSandboxStatus = `错误: ${String(e)}`;
       logger.error(TAG, `[RhinoSandbox] 初始化异常: ${String(e)}`);
-      promptAction.showToast({ message: `Rhino沙箱初始化异常: ${String(e)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `Rhino沙箱初始化异常: ${String(e)}` });
     }
   }
 
@@ -684,7 +685,7 @@ result`,
     }
     
     if (!this.codeInput.trim()) {
-      promptAction.showToast({ message: '请输入代码' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入代码' });
       return;
     }
     
@@ -1122,7 +1123,7 @@ result`,
       `, {});
       if (bookSourceResult.success) {
         try {
-          const parsed = JSON.parse(bookSourceResult.result) as Record<string, string>;
+          const parsed = SafeUtils.parseObj(bookSourceResult.result) as Record<string, string>;
           if (parsed['name'] === '斗破苍穹' && parsed['author'] === '天蚕土豆') {
             results.push('✅ 书源解析: 斗破苍穹 - 天蚕土豆');
             passCount++;
@@ -1173,7 +1174,7 @@ result`,
   private loadExample(example: CodeExample): void {
     this.codeInput = example.code;
     this.showExamples = false;
-    promptAction.showToast({ message: `已加载: ${example.name}` });
+    this.getUIContext().getPromptAction().showToast({ message: `已加载: ${example.name}` });
   }
 
   /**
@@ -1204,10 +1205,10 @@ result`,
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       await systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: '已复制到剪贴板' });
+      this.getUIContext().getPromptAction().showToast({ message: '已复制到剪贴板' });
     } catch (error) {
       logger.error(TAG, `复制失败: ${String(error)}`);
-      promptAction.showToast({ message: '复制失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '复制失败' });
     }
   }
 
@@ -1310,7 +1311,7 @@ result`,
       message += '3. 重新编译项目';
     }
     
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: 'JSVM 引擎信息',
       message: message,
       buttons: [{ text: '确定', color: '#007AFF' }]
@@ -1656,7 +1657,7 @@ result`,
               logger.info(TAG, '[Settings] Rhino引擎已重置，将在下次执行时重新初始化');
             }
             
-            promptAction.showToast({ 
+            this.getUIContext().getPromptAction().showToast({ 
               message: isOn ? 'WebView沙箱已启用，将使用完整Rhino WASM' : 'WebView沙箱已禁用，将使用NativeJsEngine' 
             });
           })
@@ -1738,7 +1739,7 @@ result`,
           this.executionHistory = [];
           this.expandedHistoryIds.clear();
           logger.info(TAG, '[Settings] 执行历史已清除');
-          promptAction.showToast({ message: '执行历史已清除' });
+          this.getUIContext().getPromptAction().showToast({ message: '执行历史已清除' });
         })
     }
     .width('100%')

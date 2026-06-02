@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 卡片数据同步工具
  * 用于从应用主进程向桌面卡片同步阅读目标和最近阅读数据
@@ -435,7 +436,7 @@ export class WidgetDataSync {
       };
 
       if (existingStr) {
-        const existing = JSON.parse(existingStr) as WidgetData;
+        const existing = SafeUtils.parseObj(existingStr) as WidgetData;
         data.recentReads = existing.recentReads || [];
       }
 
@@ -472,7 +473,7 @@ export class WidgetDataSync {
       };
 
       if (existingStr) {
-        const existing = JSON.parse(existingStr) as WidgetData;
+        const existing = SafeUtils.parseObj(existingStr) as WidgetData;
         data.goals = existing.goals || data.goals;
       }
 
@@ -518,7 +519,7 @@ export class WidgetDataSync {
     try {
       const pref = await preferences.getPreferences(this.context, FORM_STORAGE);
       const formIdsStr = (await pref.get('formIds', '[]')) as string;
-      const formIds: string[] = JSON.parse(formIdsStr);
+      const formIds: string[] = SafeUtils.parseObj(formIdsStr);
       
       const widgetPref = await preferences.getPreferences(this.context, WIDGET_DATA_STORE);
       const dataStr = (await widgetPref.get('widgetData', '')) as string;
@@ -551,7 +552,7 @@ export class WidgetDataSync {
 
     if (dataStr) {
       try {
-        const data = JSON.parse(dataStr) as WidgetData;
+        const data = SafeUtils.parseObj(dataStr) as WidgetData;
         goals = data.goals || goals;
         recentReads = data.recentReads || [];
       } catch (e) {

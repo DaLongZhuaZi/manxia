@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * 封面缓存管理器
  * 负责管理漫画封面的本地缓存
@@ -76,8 +77,8 @@ export class CoverCacheManager {
       this.pendingContextLogged = false;
       
       // 确保基础目录存在
-      if (!fs.accessSync(this.coverBasePath)) {
-        fs.mkdirSync(this.coverBasePath);
+      if (!SafeFileUtils.accessSync(this.coverBasePath)) {
+        SafeFileUtils.mkdirSync(this.coverBasePath);
         logger.info(TAG, `创建封面基础目录: ${this.coverBasePath}`);
       }
       
@@ -169,8 +170,8 @@ export class CoverCacheManager {
       await this.ensureSourcePkg(sourceId);
       
       const dirPath = this.getSourceCoverDir(sourceId);
-      if (!fs.accessSync(dirPath)) {
-        fs.mkdirSync(dirPath);
+      if (!SafeFileUtils.accessSync(dirPath)) {
+        SafeFileUtils.mkdirSync(dirPath);
         logger.debug(TAG, `创建图源目录: ${dirPath}`);
       }
       return true;
@@ -291,7 +292,7 @@ export class CoverCacheManager {
       // 检查文件是否存在
       for (const externalId of externalIds) {
         const path = pathMap.get(externalId);
-        if (path && fs.accessSync(path)) {
+        if (path && SafeFileUtils.accessSync(path)) {
           result.set(externalId, path);
         } else {
           result.set(externalId, null);
@@ -326,7 +327,7 @@ export class CoverCacheManager {
       const recordKey = this.getCoverRecordKey(sourceId, externalId);
       if (isPhotos18) {
         const cachedRecord = this.photos18CoverRecords.get(recordKey);
-        if (cachedRecord && cachedRecord.localPath && fs.accessSync(cachedRecord.localPath)) {
+        if (cachedRecord && cachedRecord.localPath && SafeFileUtils.accessSync(cachedRecord.localPath)) {
           if (!cachedRecord.referer || cachedRecord.referer === normalizedReferer || normalizedReferer.length === 0) {
             return cachedRecord.localPath;
           }
@@ -335,7 +336,7 @@ export class CoverCacheManager {
       const tempManga = await this.getTempManga(sourceId, externalId);
       if (tempManga && tempManga.localCoverPath) {
         // 检查文件是否存在
-        if (fs.accessSync(tempManga.localCoverPath)) {
+        if (SafeFileUtils.accessSync(tempManga.localCoverPath)) {
           if (isPhotos18) {
             const cacheRecord: CoverCacheRecord = {
               localPath: tempManga.localCoverPath,
@@ -506,7 +507,7 @@ export class CoverCacheManager {
 
       
       // 如果文件已存在，直接返回
-      if (fs.accessSync(localPath)) {
+      if (SafeFileUtils.accessSync(localPath)) {
         logger.debug(TAG, `封面已存在: ${localPath}`);
         await this.updateLocalCoverPath(sourceId, externalId, localPath);
         return localPath;
@@ -631,11 +632,11 @@ export class CoverCacheManager {
       
       if (response.responseCode === 200) {
         // 保存文件
-        const file = fs.openSync(localPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        const file = SafeFileUtils.openSync(localPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
         if (typeof response.result === 'object' && response.result instanceof ArrayBuffer) {
-          fs.writeSync(file.fd, response.result);
+          SafeFileUtils.writeSync(file.fd, response.result);
         }
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
         
         logger.info(TAG, `封面下载成功: ${localPath}`);
         httpRequest.destroy();
@@ -725,8 +726,8 @@ export class CoverCacheManager {
           const tempManga = record as TempMangaDatabaseRecord;
           if (tempManga.localCoverPath) {
             try {
-              if (fs.accessSync(tempManga.localCoverPath)) {
-                fs.unlinkSync(tempManga.localCoverPath);
+              if (SafeFileUtils.accessSync(tempManga.localCoverPath)) {
+                SafeFileUtils.unlinkSync(tempManga.localCoverPath);
                 cleanedCount++;
               }
               await this.clearLocalCoverPath(tempManga.sourceId, tempManga.externalId);
@@ -765,7 +766,7 @@ export class CoverCacheManager {
       if (pkg) {
         const safePkg = pkg.replace(/[^a-zA-Z0-9._-]/g, '_');
         const pkgPath = `${this.coverBasePath}/${safePkg}`;
-        if (fs.accessSync(pkgPath)) {
+        if (SafeFileUtils.accessSync(pkgPath)) {
           const stat = this.countDirectoryStats(pkgPath);
           totalCount += stat.count;
           totalSize += stat.size;
@@ -774,7 +775,7 @@ export class CoverCacheManager {
       
       // 统计旧格式目录（基于 sourceId）- 兼容旧数据
       const oldPath = `${this.coverBasePath}/source_${sourceId}`;
-      if (fs.accessSync(oldPath)) {
+      if (SafeFileUtils.accessSync(oldPath)) {
         const stat = this.countDirectoryStats(oldPath);
         totalCount += stat.count;
         totalSize += stat.size;
@@ -794,13 +795,13 @@ export class CoverCacheManager {
    */
   private countDirectoryStats(dirPath: string): CoverStats {
     try {
-      const files = fs.listFileSync(dirPath);
+      const files = SafeFileUtils.listFileSync(dirPath);
       let totalSize = 0;
       
       for (const fileName of files) {
         const filePath = `${dirPath}/${fileName}`;
         try {
-          const stat = fs.statSync(filePath);
+          const stat = SafeFileUtils.statSync(filePath);
           totalSize += stat.size;
         } catch (error) {
           // 忽略错误
@@ -833,14 +834,14 @@ export class CoverCacheManager {
       if (pkg) {
         const safePkg = pkg.replace(/[^a-zA-Z0-9._-]/g, '_');
         const pkgPath = `${this.coverBasePath}/${safePkg}`;
-        if (fs.accessSync(pkgPath)) {
+        if (SafeFileUtils.accessSync(pkgPath)) {
           deletedCount += this.deleteFilesInDirectory(pkgPath);
         }
       }
       
       // 删除旧格式目录（基于 sourceId）- 兼容旧数据
       const oldPath = `${this.coverBasePath}/source_${sourceId}`;
-      if (fs.accessSync(oldPath)) {
+      if (SafeFileUtils.accessSync(oldPath)) {
         deletedCount += this.deleteFilesInDirectory(oldPath);
       }
       
@@ -861,13 +862,13 @@ export class CoverCacheManager {
    */
   private deleteFilesInDirectory(dirPath: string): number {
     try {
-      const files = fs.listFileSync(dirPath);
+      const files = SafeFileUtils.listFileSync(dirPath);
       let deletedCount = 0;
       
       for (const fileName of files) {
         const filePath = `${dirPath}/${fileName}`;
         try {
-          fs.unlinkSync(filePath);
+          SafeFileUtils.unlinkSync(filePath);
           deletedCount++;
         } catch (error) {
           logger.warn(TAG, `删除封面文件失败: ${filePath}`);
@@ -890,7 +891,7 @@ export class CoverCacheManager {
         return stats;
       }
       
-      if (!fs.accessSync(this.coverBasePath)) {
+      if (!SafeFileUtils.accessSync(this.coverBasePath)) {
         return stats;
       }
       
@@ -914,7 +915,7 @@ export class CoverCacheManager {
         logger.warn(TAG, `获取图源映射失败: ${dbError}`);
       }
       
-      const dirs = fs.listFileSync(this.coverBasePath);
+      const dirs = SafeFileUtils.listFileSync(this.coverBasePath);
       
       for (const dirName of dirs) {
         let sourceId: number | undefined;
@@ -966,7 +967,7 @@ export class CoverCacheManager {
       if (pkg) {
         const safePkg = pkg.replace(/[^a-zA-Z0-9._-]/g, '_');
         const pkgPath = `${this.coverBasePath}/${safePkg}`;
-        if (fs.accessSync(pkgPath)) {
+        if (SafeFileUtils.accessSync(pkgPath)) {
           this.deleteDirectory(pkgPath);
           logger.info(TAG, `已删除图源封面(pkg格式): ${pkgPath}`);
         }
@@ -974,7 +975,7 @@ export class CoverCacheManager {
       
       // 删除旧格式目录（基于 sourceId）- 兼容旧数据
       const sourcePath = `${this.coverBasePath}/source_${sourceId}`;
-      if (fs.accessSync(sourcePath)) {
+      if (SafeFileUtils.accessSync(sourcePath)) {
         this.deleteDirectory(sourcePath);
         logger.info(TAG, `已删除图源封面(旧格式): ${sourcePath}`);
       }
@@ -997,23 +998,23 @@ export class CoverCacheManager {
    */
   private deleteDirectory(dirPath: string): void {
     try {
-      if (!fs.accessSync(dirPath)) {
+      if (!SafeFileUtils.accessSync(dirPath)) {
         return;
       }
 
-      const files = fs.listFileSync(dirPath);
+      const files = SafeFileUtils.listFileSync(dirPath);
       for (const file of files) {
         const filePath = `${dirPath}/${file}`;
-        const stat = fs.statSync(filePath);
+        const stat = SafeFileUtils.statSync(filePath);
         
         if (stat.isDirectory()) {
           this.deleteDirectory(filePath);
         } else {
-          fs.unlinkSync(filePath);
+          SafeFileUtils.unlinkSync(filePath);
         }
       }
       
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
     } catch (error) {
       logger.error(TAG, `删除目录失败: ${dirPath}, ${error}`);
     }

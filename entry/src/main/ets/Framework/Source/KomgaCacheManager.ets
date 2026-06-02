@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 import fs from '@ohos.file.fs';
 import { http } from '@kit.NetworkKit';
 import { getContext } from '../../GlobalContext';
@@ -21,7 +22,7 @@ export class KomgaCacheManager {
   public getCachedCoverPath(itemKey: string, coverUrl: string): string | null {
     try {
       const cachePath = this.getCoverCachePath(itemKey, coverUrl);
-      fs.accessSync(cachePath);
+      SafeFileUtils.accessSync(cachePath);
       return cachePath;
     } catch (_error) {
       return null;
@@ -31,7 +32,7 @@ export class KomgaCacheManager {
   public getCachedPagePath(mangaKey: string, chapterKey: string, pageIndex: number): string | null {
     try {
       const cachePath = this.getPageCachePath(mangaKey, chapterKey, pageIndex);
-      fs.accessSync(cachePath);
+      SafeFileUtils.accessSync(cachePath);
       return cachePath;
     } catch (_error) {
       return null;
@@ -64,11 +65,11 @@ export class KomgaCacheManager {
       }
 
       const filePath = this.getCoverCachePath(itemKey, coverUrl);
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       try {
-        fs.writeSync(file.fd, response.result as ArrayBuffer);
+        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
       } finally {
-        fs.closeSync(file.fd);
+        SafeFileUtils.closeSync(file.fd);
       }
       return filePath;
     } catch (error) {
@@ -111,11 +112,11 @@ export class KomgaCacheManager {
       }
 
       const filePath = this.getPageCachePath(mangaKey, chapterKey, pageIndex);
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       try {
-        fs.writeSync(file.fd, response.result as ArrayBuffer);
+        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
       } finally {
-        fs.closeSync(file.fd);
+        SafeFileUtils.closeSync(file.fd);
       }
       return filePath;
     } catch (error) {
@@ -208,9 +209,9 @@ export class KomgaCacheManager {
 
   private ensureDirectory(path: string): void {
     try {
-      fs.accessSync(path);
+      SafeFileUtils.accessSync(path);
     } catch (_error) {
-      fs.mkdirSync(path, true);
+      SafeFileUtils.mkdirSync(path, true);
     }
   }
 
@@ -235,17 +236,17 @@ export class KomgaCacheManager {
   }
 
   private clearDirectoryContents(path: string): void {
-    const entries: string[] = fs.listFileSync(path);
+    const entries: string[] = SafeFileUtils.listFileSync(path);
     for (let index = 0; index < entries.length; index++) {
       const entry = entries[index];
       const entryPath = `${path}/${entry}`;
       try {
-        const stat = fs.statSync(entryPath);
+        const stat = SafeFileUtils.statSync(entryPath);
         if (stat.isDirectory()) {
           this.clearDirectoryContents(entryPath);
-          fs.rmdirSync(entryPath);
+          SafeFileUtils.rmdirSync(entryPath);
         } else {
-          fs.unlinkSync(entryPath);
+          SafeFileUtils.unlinkSync(entryPath);
         }
       } catch (_error) {
       }

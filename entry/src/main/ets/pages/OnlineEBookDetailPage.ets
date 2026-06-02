@@ -1617,7 +1617,7 @@ export struct OnlineEBookDetailPage {
       const bookTitle: string = this.dlBookTitle;
       const fileFormat: string = this.dlFileFormat;
       const safeTitle: string = bookTitle.replace(/[/\\:*?"<>|]/g, '_');
-      const hostCtx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const hostCtx = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const saveDir: string = `${hostCtx.filesDir}/ebooks/${this.bookId}`;
       fs.mkdirSync(saveDir, true);
       const filePath: string = `${saveDir}/${safeTitle}.${fileFormat}`;
@@ -1708,7 +1708,7 @@ export struct OnlineEBookDetailPage {
         this.importErrorMessage = '';
         this.downloadPhase = 'completed';
         this.downloadButtonState = DownloadButtonState.COMPLETED;
-        promptAction.showToast({ message: `已导入书库: ${importedBook.metadata.title}`, duration: 1600 });
+        this.getUIContext().getPromptAction().showToast({ message: `已导入书库: ${importedBook.metadata.title}`, duration: 1600 });
       }
 
       if (openAfterImport && this.importedBookId.length > 0) {
@@ -1737,7 +1737,7 @@ export struct OnlineEBookDetailPage {
     };
     const opened = openEBookReaderRouterPage(this.getUIContext(), params, TAG);
     if (!opened) {
-      promptAction.showToast({ message: '无法打开本地阅读器', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '无法打开本地阅读器', duration: 1500 });
     }
   }
 

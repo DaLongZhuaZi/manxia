@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Legado书源解析器
  * 解析和验证Legado书源JSON配置
@@ -33,7 +34,7 @@ export class LegadoSourceParser {
    */
   parseFromJSON(jsonStr: string): LegadoBookSource | null {
     try {
-      const parsed: Object = JSON.parse(jsonStr);
+      const parsed: Object = SafeUtils.parseObj(jsonStr);
       
       // 检查是否为数组（批量导入）
       if (Array.isArray(parsed)) {
@@ -56,7 +57,7 @@ export class LegadoSourceParser {
    */
   parseMultipleFromJSON(jsonStr: string): LegadoBookSource[] {
     try {
-      const parsed: Object = JSON.parse(jsonStr);
+      const parsed: Object = SafeUtils.parseObj(jsonStr);
       
       if (Array.isArray(parsed)) {
         const sources: LegadoBookSource[] = [];
@@ -269,7 +270,7 @@ export class LegadoSourceParser {
     // 检查是否为JSON格式
     if (exploreUrl.trim().startsWith('[')) {
       try {
-        const parsed: Object = JSON.parse(exploreUrl);
+        const parsed: Object = SafeUtils.parseObj(exploreUrl);
         const parsedArray = parsed as Record<string, Object>[];
         for (let i = 0; i < parsedArray.length; i++) {
           const item = parsedArray[i];

@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源仓库管理器
  * 负责管理extensions-source文件夹下的图源仓库
@@ -182,7 +184,7 @@ export class SourceRepositoryManager {
 
   private async ensureSavedRepositoriesFileExists(): Promise<void> {
     try {
-      const exists = fileIo.accessSync(this.savedRepositoriesPath);
+      const exists = SafeFileUtils.accessSync(this.savedRepositoriesPath);
       if (!exists) {
         this.writeSavedRepositoriesToFile([]);
         logger.info(TAG, '创建空的 saved_repositories.json');
@@ -236,15 +238,15 @@ export class SourceRepositoryManager {
    */
   private async ensureDirectoryExists(dirPath: string): Promise<void> {
     try {
-      const exists = fileIo.accessSync(dirPath);
+      const exists = SafeFileUtils.accessSync(dirPath);
       if (!exists) {
-        fileIo.mkdirSync(dirPath);
+        SafeFileUtils.mkdirSync(dirPath);
         logger.info(TAG, `创建目录: ${dirPath}`);
       }
     } catch (error) {
       // 目录不存在，创建它
       try {
-        fileIo.mkdirSync(dirPath);
+        SafeFileUtils.mkdirSync(dirPath);
         logger.info(TAG, `创建目录: ${dirPath}`);
       } catch (mkdirError) {
         const errorMsg = `创建目录失败: ${dirPath} - ${String(mkdirError)}`;
@@ -259,7 +261,7 @@ export class SourceRepositoryManager {
    */
   private async ensureIndexFileExists(): Promise<void> {
     try {
-      const exists = fileIo.accessSync(this.indexFilePath);
+      const exists = SafeFileUtils.accessSync(this.indexFilePath);
       if (!exists) {
         // 创建空的索引文件
         const emptyIndex: SourceRepositoryIndex = {
@@ -294,9 +296,9 @@ export class SourceRepositoryManager {
         return;
       }
       logger.warn(TAG, 'NGF facade 保存索引失败，回退旧写入路径');
-      const file = fileIo.openSync(this.indexFilePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, jsonContent);
-      fileIo.closeSync(file);
+      const file = SafeFileUtils.openSync(this.indexFilePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(file.fd, jsonContent);
+      SafeFileUtils.closeSync(file);
       logger.info(TAG, '索引文件保存成功');
     } catch (error) {
       const errorMsg = `保存索引文件失败: ${String(error)}`;
@@ -313,14 +315,14 @@ export class SourceRepositoryManager {
       const indexJsonFromNgf = ngfSourceRepositoryFacade.readIndexJson().trim();
       if (indexJsonFromNgf.length > 0) {
         try {
-          const parsedByNgf = JSON.parse(indexJsonFromNgf) as SourceRepositoryIndex;
+          const parsedByNgf = SafeUtils.parseObj(indexJsonFromNgf) as SourceRepositoryIndex;
           if (parsedByNgf.sources && parsedByNgf.sources.length > 0) {
             return parsedByNgf;
           }
 
           let hasLegacyIndexFile = false;
           try {
-            hasLegacyIndexFile = fileIo.accessSync(this.indexFilePath);
+            hasLegacyIndexFile = SafeFileUtils.accessSync(this.indexFilePath);
           } catch {
             hasLegacyIndexFile = false;
           }
@@ -334,14 +336,14 @@ export class SourceRepositoryManager {
         }
       }
 
-      const file = fileIo.openSync(this.indexFilePath, fileIo.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(this.indexFilePath, fileIo.OpenMode.READ_ONLY);
       const buffer = new ArrayBuffer(10 * 1024 * 1024); // 10MB
-      const readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
 
       const jsonContent: string = this.decodeToString(buffer, readLen);
 
-      return JSON.parse(jsonContent) as SourceRepositoryIndex;
+      return SafeUtils.parseObj(jsonContent) as SourceRepositoryIndex;
     } catch (error) {
       logger.error(TAG, '读取索引文件失败', String(error));
       // 返回空索引
@@ -407,7 +409,7 @@ export class SourceRepositoryManager {
       }
 
       const responseData = response.result as string;
-      const repositoryData = JSON.parse(responseData) as SourceRepositoryEntry[];
+      const repositoryData = SafeUtils.parseArr(responseData) as SourceRepositoryEntry[];
       
       log('info', `获取到 ${repositoryData.length} 个图源`);
       progressCallback?.onProgress(10, 100, `获取到 ${repositoryData.length} 个图源`);
@@ -622,12 +624,12 @@ export class SourceRepositoryManager {
         const fileName = `${pkg}.json`;
         const filePath = `${this.repositoryDir}/${fileName}`;
 
-        const file = fileIo.openSync(
+        const file = SafeFileUtils.openSync(
           filePath,
           fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
         );
-        fileIo.writeSync(file.fd, config);
-        fileIo.closeSync(file);
+        SafeFileUtils.writeSync(file.fd, config);
+        SafeFileUtils.closeSync(file);
         logger.info(TAG, `图源文件保存成功: ${fileName}`);
       } catch (error) {
         logger.warn(TAG, `保存图源文件失败: ${pkg}`, String(error));
@@ -653,12 +655,12 @@ export class SourceRepositoryManager {
         const fileName = `${pkg}.${iconInfo.ext}`;
         const filePath = `${iconsDir}/${fileName}`;
 
-        const file = fileIo.openSync(
+        const file = SafeFileUtils.openSync(
           filePath,
           fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
         );
-        fileIo.writeSync(file.fd, iconInfo.data);
-        fileIo.closeSync(file);
+        SafeFileUtils.writeSync(file.fd, iconInfo.data);
+        SafeFileUtils.closeSync(file);
         logger.info(TAG, `图源图标保存成功: ${fileName}`);
       } catch (error) {
         logger.warn(TAG, `保存图源图标失败: ${pkg}`, String(error));
@@ -689,7 +691,7 @@ export class SourceRepositoryManager {
       const iconPath = `${this.repositoryDir}/icons/${pkg}.${ext}`;
       try {
         // fileIo.accessSync 如果文件存在不抛异常，不存在则抛异常
-        fileIo.accessSync(iconPath);
+        SafeFileUtils.accessSync(iconPath);
         // 如果没有抛异常，说明文件存在
         logger.debug(TAG, `找到图源图标: ${iconPath}`);
         return iconPath;
@@ -714,8 +716,8 @@ export class SourceRepositoryManager {
     // 删除 JSON 配置文件
     const jsonPath = `${this.repositoryDir}/${pkg}.json`;
     try {
-      if (fileIo.accessSync(jsonPath)) {
-        fileIo.unlinkSync(jsonPath);
+      if (SafeFileUtils.accessSync(jsonPath)) {
+        SafeFileUtils.unlinkSync(jsonPath);
         logger.info(TAG, `已删除图源配置文件: ${pkg}.json`);
       }
     } catch (e) {
@@ -727,8 +729,8 @@ export class SourceRepositoryManager {
     for (const ext of formats) {
       const iconPath = `${this.repositoryDir}/icons/${pkg}.${ext}`;
       try {
-        if (fileIo.accessSync(iconPath)) {
-          fileIo.unlinkSync(iconPath);
+        if (SafeFileUtils.accessSync(iconPath)) {
+          SafeFileUtils.unlinkSync(iconPath);
           logger.info(TAG, `已删除图源图标: ${pkg}.${ext}`);
         }
       } catch (_) {
@@ -790,19 +792,19 @@ export class SourceRepositoryManager {
   async getSavedRepositories(): Promise<SavedRepository[]> {
     try {
       await this.ensureSavedRepositoriesFileExists();
-      const exists = fileIo.accessSync(this.savedRepositoriesPath);
+      const exists = SafeFileUtils.accessSync(this.savedRepositoriesPath);
       if (!exists) {
         return [];
       }
 
-      const file = fileIo.openSync(this.savedRepositoriesPath, fileIo.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(this.savedRepositoriesPath, fileIo.OpenMode.READ_ONLY);
       const buffer = new ArrayBuffer(1024 * 1024); // 1MB
-      const readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
 
       const jsonContent: string = this.decodeToString(buffer, readLen);
 
-      return JSON.parse(jsonContent) as SavedRepository[];
+      return SafeUtils.parseArr(jsonContent) as SavedRepository[];
     } catch (error) {
       logger.warn(TAG, '读取已保存仓库失败', String(error));
       return [];
@@ -851,7 +853,7 @@ export class SourceRepositoryManager {
       }
 
       const filePath = `${this.repositoryDir}/${pkg}.json`;
-      const exists = fileIo.accessSync(filePath);
+      const exists = SafeFileUtils.accessSync(filePath);
       
       if (!exists) {
         return {
@@ -861,10 +863,10 @@ export class SourceRepositoryManager {
       }
 
       // 读取图源文件
-      const file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(filePath, fileIo.OpenMode.READ_ONLY);
       const buffer = new ArrayBuffer(1024 * 1024); // 1MB
-      const readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
 
       const jsonContent: string = this.decodeToString(buffer, readLen);
 
@@ -903,12 +905,12 @@ export class SourceRepositoryManager {
 
   private writeSavedRepositoriesToFile(repos: SavedRepository[]): void {
     const jsonContent = JSON.stringify(repos, null, 2);
-    const file = fileIo.openSync(
+    const file = SafeFileUtils.openSync(
       this.savedRepositoriesPath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
     );
-    fileIo.writeSync(file.fd, jsonContent);
-    fileIo.closeSync(file);
+    SafeFileUtils.writeSync(file.fd, jsonContent);
+    SafeFileUtils.closeSync(file);
   }
 
   private async importNewSources(sources: SourceRepositoryEntry[]): Promise<void> {

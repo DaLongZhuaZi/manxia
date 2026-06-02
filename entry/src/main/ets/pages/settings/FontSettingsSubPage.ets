@@ -176,7 +176,7 @@ export struct FontSettingsSubPage {
 
   private async importCustomFont(): Promise<void> {
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const documentPicker = new picker.DocumentViewPicker(context);
       const options = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
@@ -187,13 +187,13 @@ export struct FontSettingsSubPage {
         
         // 传递空字符串，让FontManager自动解析字体文件内部的真实名称
         // 这样可以正确显示中文、日文等多语言字体名称
-        const customFont = await this.fontManager.addCustomFont('', filePath);
+        const customFont = await this.fontManager.addCustomFont('', filePath, this.getUIContext());
         this.customFonts = this.fontManager.getCustomFonts();
-        promptAction.showToast({ message: `字体 "${customFont.displayName}" 导入成功` });
+        this.getUIContext().getPromptAction().showToast({ message: `字体 "${customFont.displayName}" 导入成功` });
       }
     } catch (error) {
       logger.error(TAG, `导入字体失败: ${String(error)}`);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
     }
   }
 
@@ -201,9 +201,9 @@ export struct FontSettingsSubPage {
     try {
       await this.fontManager.removeCustomFont(fontId);
       this.customFonts = this.fontManager.getCustomFonts();
-      promptAction.showToast({ message: '字体已删除' });
+      this.getUIContext().getPromptAction().showToast({ message: '字体已删除' });
     } catch (error) {
-      promptAction.showToast({ message: String(error) });
+      this.getUIContext().getPromptAction().showToast({ message: String(error) });
     }
   }
 
@@ -211,19 +211,19 @@ export struct FontSettingsSubPage {
     try {
       switch (scene) {
         case FontScene.APP_UI:
-          await this.fontManager.setAppFont(fontType, fontId);
+          await this.fontManager.setAppFont(fontType, fontId, this.getUIContext());
           break;
         case FontScene.NOVEL:
-          await this.fontManager.setNovelFont(fontType, fontId);
+          await this.fontManager.setNovelFont(fontType, fontId, this.getUIContext());
           break;
         case FontScene.EBOOK:
-          await this.fontManager.setEbookFont(fontType, fontId);
+          await this.fontManager.setEbookFont(fontType, fontId, this.getUIContext());
           break;
       }
       this.settings = this.fontManager.getSettings();
-      promptAction.showToast({ message: '字体已更新' });
+      this.getUIContext().getPromptAction().showToast({ message: '字体已更新' });
     } catch (error) {
-      promptAction.showToast({ message: `设置失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `设置失败: ${String(error)}` });
     }
   }
 
@@ -267,7 +267,7 @@ export struct FontSettingsSubPage {
     })
     .animation({ duration: 250, curve: Curve.EaseInOut })
     .onClick(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 250,
         curve: Curve.EaseInOut
       }, () => {
@@ -527,7 +527,7 @@ export struct FontSettingsSubPage {
       .onClick(async () => {
         await this.fontManager.resetToDefault();
         this.settings = this.fontManager.getSettings();
-        promptAction.showToast({ message: '已重置为默认设置' });
+        this.getUIContext().getPromptAction().showToast({ message: '已重置为默认设置' });
       })
   }
 
@@ -727,7 +727,7 @@ export struct FontSettingsSubPage {
         .height('100%')
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .edgeEffect(EdgeEffect.Spring)

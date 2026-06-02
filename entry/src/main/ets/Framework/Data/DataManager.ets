@@ -1,3 +1,5 @@
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Data/DataManager.ets
 /**
  * 数据管理核心类
@@ -808,7 +810,7 @@ export class DataManager {
     const tagsJson: string = (obj.tags as string) || '[]';
     let tags: string[] = [];
     try {
-      const parsed: ESObject = JSON.parse(tagsJson) as ESObject;
+      const parsed: ESObject = SafeUtils.parseObj(tagsJson) as ESObject;
       const keys: string[] = Object.keys(parsed);
       if (keys.length > 0) {
         const values: string[] = [];
@@ -2811,7 +2813,7 @@ export class DataManager {
       };
 
       const imagePacker = image.createImagePacker();
-      const imageBuffer: ArrayBuffer = await imagePacker.packing(pixelMap, packOpts);
+      const imageBuffer: ArrayBuffer = await imagePacker.packToData(pixelMap, packOpts);
 
       // 写入文件到沙箱
       await this.sandboxManager.writeFile(localPath, imageBuffer);
@@ -3422,7 +3424,7 @@ export class DataManager {
               logger.info(TAG, `章节信息: title=${chapter.title}, downloadPath=${chapter.downloadPath}`);
               if (chapter.downloadPath) {
                 try {
-                  fs.accessSync(chapter.downloadPath);
+                  SafeFileUtils.accessSync(chapter.downloadPath);
                   logger.info(TAG, `开始删除章节目录: ${chapter.downloadPath}`);
                   // 递归删除目录
                   this.deleteDirectoryRecursive(chapter.downloadPath);
@@ -3464,12 +3466,12 @@ export class DataManager {
                 const sanitizedTitle = this.sanitizeFileName(actualComicInfo.title);
                 // 检查manga子目录
                 const mangaSubPath = `${downloadDirPath}/manga/${sanitizedTitle}`;
-                if (fs.accessSync(mangaSubPath)) {
+                if (SafeFileUtils.accessSync(mangaSubPath)) {
                   mangaPath = mangaSubPath;
                 } else {
                   // 检查根目录
                   const rootPath = `${downloadDirPath}/${sanitizedTitle}`;
-                  if (fs.accessSync(rootPath)) {
+                  if (SafeFileUtils.accessSync(rootPath)) {
                     mangaPath = rootPath;
                   }
                 }
@@ -3479,7 +3481,7 @@ export class DataManager {
             // 删除漫画主目录
             if (mangaPath) {
               try {
-                if (fs.accessSync(mangaPath)) {
+                if (SafeFileUtils.accessSync(mangaPath)) {
                   this.deleteDirectoryRecursive(mangaPath);
                   logger.info(TAG, `删除Download漫画目录: ${mangaPath}`);
                 }
@@ -3882,7 +3884,7 @@ export class DataManager {
     try {
       const record = await this.getSetting('source:pinned_list');
       if (record && record.settingValue) {
-        const ids = JSON.parse(record.settingValue) as number[];
+        const ids = SafeUtils.parseArr(record.settingValue) as number[];
         return ids;
       }
       return [];
@@ -4139,7 +4141,7 @@ export class DataManager {
       return null;
     }
     try {
-      const parsed: Record<string, Object> = JSON.parse(record.settingValue);
+      const parsed: Record<string, Object> = SafeUtils.parseObj(record.settingValue);
       const username: string = parsed['username'] as string;
       const password: string = parsed['password'] as string;
       if (!username || !password) {
@@ -4176,7 +4178,7 @@ export class DataManager {
           const configJson = configRow.configJson as string;
           if (configJson) {
             try {
-              const config: ESObject = JSON.parse(configJson) as ESObject;
+              const config: ESObject = SafeUtils.parseObj(configJson) as ESObject;
               const metadata: ESObject = config.metadata as ESObject;
               if (metadata && metadata.id) {
                 const extractedPkg = metadata.id as string;
@@ -4409,7 +4411,7 @@ export class DataManager {
         }
         
         try {
-          const config: ESObject = JSON.parse(configJson) as ESObject;
+          const config: ESObject = SafeUtils.parseObj(configJson) as ESObject;
           const metadata: ESObject = config.metadata as ESObject;
           
           if (metadata && metadata.id) {
@@ -4532,7 +4534,7 @@ export class DataManager {
    */
   async importSourceFromJSON(jsonContent: string): Promise<string> {
     try {
-      const config: ESObject = JSON.parse(jsonContent) as ESObject;
+      const config: ESObject = SafeUtils.parseObj(jsonContent) as ESObject;
       
       // 验证必需字段
       const metadata: ESObject = config.metadata as ESObject;
@@ -4629,7 +4631,7 @@ export class DataManager {
         logger.debug(TAG, `读取图源配置，长度: ${configJson.length}, 前100字符: ${configJson.substring(0, 100)}`);
         
         try {
-          const config: ESObject = JSON.parse(configJson) as ESObject;
+          const config: ESObject = SafeUtils.parseObj(configJson) as ESObject;
           logger.info(TAG, `图源配置解析成功: ${row.name}`);
           
           // 调试：检查workflows字段
@@ -4670,7 +4672,7 @@ export class DataManager {
         const configJson: string | null | undefined = row.configJson as string;
         
         if (configJson) {
-          const config: ESObject = JSON.parse(configJson) as ESObject;
+          const config: ESObject = SafeUtils.parseObj(configJson) as ESObject;
           
           // 调试：检查workflows字段
           const workflows: ESObject | undefined = config.workflows as ESObject;
@@ -4710,7 +4712,7 @@ export class DataManager {
           logger.info(TAG, `按名称找到图源: "${sourceName}", ID=${sourceId}`);
           const resultObj: SourceConfigResult = {
             id: sourceId,
-            config: JSON.parse(configJson) as ESObject
+            config: SafeUtils.parseObj(configJson) as ESObject
           };
           return resultObj;
         }
@@ -4864,7 +4866,7 @@ export class DataManager {
         const normalizedExistingCoverUrl = existingCoverUrl.startsWith('file://')
           ? existingCoverUrl.substring(7)
           : existingCoverUrl;
-        if (fs.accessSync(normalizedExistingCoverUrl)) {
+        if (SafeFileUtils.accessSync(normalizedExistingCoverUrl)) {
           incomingCoverUrl = existingCoverUrl;
         }
         logger.debug(TAG, `保留已持久化封面路径: ${incomingCoverUrl}`);
@@ -5668,23 +5670,23 @@ export class DataManager {
    */
   private deleteDirectoryRecursive(dirPath: string): void {
     try {
-      if (!fs.accessSync(dirPath)) {
+      if (!SafeFileUtils.accessSync(dirPath)) {
         return;
       }
       
-      const entries = fs.listFileSync(dirPath);
+      const entries = SafeFileUtils.listFileSync(dirPath);
       for (const entry of entries) {
         const fullPath = `${dirPath}/${entry}`;
-        const stat = fs.statSync(fullPath);
+        const stat = SafeFileUtils.statSync(fullPath);
         
         if (stat.isDirectory()) {
           this.deleteDirectoryRecursive(fullPath);
         } else {
-          fs.unlinkSync(fullPath);
+          SafeFileUtils.unlinkSync(fullPath);
         }
       }
       
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
     } catch (error) {
       logger.warn(TAG, `递归删除目录失败 ${dirPath}: ${error}`);
     }

@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/LogManagerPage.ets
 /**
  * 日志管理页面
@@ -274,9 +275,9 @@ struct LogManagerPage {
 
       // 创建临时文件
       const tempFilePath = `${context.cacheDir}/${fileName}`;
-      const file = fs.openSync(tempFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, logContent);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(tempFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, logContent);
+      SafeFileUtils.closeSync(file);
 
       logger.info(TAG, `临时日志文件已创建: ${tempFilePath}`);
 
@@ -292,17 +293,17 @@ struct LogManagerPage {
         logger.info(TAG, `用户选择保存位置: ${targetUri}`);
 
         // 复制文件到用户选择的位置
-        const tempFile = fs.openSync(tempFilePath, fs.OpenMode.READ_ONLY);
-        const targetFile = fs.openSync(targetUri, fs.OpenMode.WRITE_ONLY);
+        const tempFile = SafeFileUtils.openSync(tempFilePath, fs.OpenMode.READ_ONLY);
+        const targetFile = SafeFileUtils.openSync(targetUri, fs.OpenMode.WRITE_ONLY);
         
         const buffer = new ArrayBuffer(4096);
         let readLen = 0;
-        while ((readLen = fs.readSync(tempFile.fd, buffer)) > 0) {
-          fs.writeSync(targetFile.fd, buffer, { length: readLen });
+        while ((readLen = SafeFileUtils.readSync(tempFile.fd, buffer)) > 0) {
+          SafeFileUtils.writeSync(targetFile.fd, buffer, { length: readLen });
         }
         
-        fs.closeSync(tempFile);
-        fs.closeSync(targetFile);
+        SafeFileUtils.closeSync(tempFile);
+        SafeFileUtils.closeSync(targetFile);
 
         logger.info(TAG, `日志导出成功: ${targetUri}`);
       } else {
@@ -310,7 +311,7 @@ struct LogManagerPage {
       }
 
       // 清理临时文件
-      fs.unlinkSync(tempFilePath);
+      SafeFileUtils.unlinkSync(tempFilePath);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

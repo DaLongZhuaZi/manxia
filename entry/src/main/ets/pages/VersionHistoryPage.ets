@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/pages/VersionHistoryPage.ets
+﻿// 文件路径: entry/src/main/ets/pages/VersionHistoryPage.ets
 /**
  * 版本记录页面
  * 展示漫匣与漫匣图源仓库提交记录，支持展开详情与文件增删统计
@@ -144,12 +144,12 @@ struct VersionHistoryPage {
 
   private async initializeData(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await this.versionHistoryManager.initialize(context);
       await this.refreshCommitHistory(true);
     } catch (error) {
       logger.error(TAG, `初始化版本记录失败: ${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '初始化版本记录失败',
         duration: 2500
       });
@@ -179,7 +179,7 @@ struct VersionHistoryPage {
       this.lastRefreshAt = Date.now();
     } catch (error) {
       logger.error(TAG, `刷新版本记录失败: ${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '刷新失败，请稍后重试',
         duration: 2500
       });
@@ -223,11 +223,11 @@ struct VersionHistoryPage {
       return;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await context.openLink(url, { appLinkingOnly: false });
     } catch (error) {
       logger.error(TAG, `打开链接失败: ${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '无法打开链接，请稍后重试',
         duration: 2000
       });

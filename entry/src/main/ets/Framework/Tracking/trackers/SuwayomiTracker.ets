@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../../Utils/SafeUtils';
 /**
  * Suwayomi 跟踪器
  * 支持两种模式：
@@ -8,6 +9,7 @@
 import { http } from '@kit.NetworkKit';
 import { preferences } from '@kit.ArkData';
 import { logger } from '../../../Utils/Logger';
+import { common } from '@kit.AbilityKit';
 import { BaseTracker, TrackerAuthState } from './BaseTracker';
 import {
   TrackRecord,
@@ -16,6 +18,7 @@ import {
   UpdateTrackRecordParams,
   TrackerId
 } from '../TrackingModels';
+import { uiContextManager } from '../../Managers/UIContextManager';
 
 const TAG = 'SuwayomiTracker';
 
@@ -141,6 +144,14 @@ export class SuwayomiTracker extends BaseTracker {
   };
   private _isInitialized: boolean = false;
 
+  private getAbilityContext(): common.UIAbilityContext {
+    const context = uiContextManager.getAbilityContext();
+    if (!context) {
+      throw new Error('SuwayomiTracker 获取 AbilityContext 失败');
+    }
+    return context;
+  }
+
   constructor() {
     super(TrackerId.SUWAYOMI, 'Suwayomi');
   }
@@ -162,7 +173,7 @@ export class SuwayomiTracker extends BaseTracker {
    */
   private async loadConfig(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(getContext(), { name: 'suwayomi_config' });
+      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
       const serverUrl = store.getSync('serverUrl', '') as string;
       const username = store.getSync('username', '') as string;
       const password = store.getSync('password', '') as string;
@@ -188,7 +199,7 @@ export class SuwayomiTracker extends BaseTracker {
    */
   public async saveConfig(config: SuwayomiConfig): Promise<boolean> {
     try {
-      const store = preferences.getPreferencesSync(getContext(), { name: 'suwayomi_config' });
+      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
       store.putSync('serverUrl', config.serverUrl);
       store.putSync('username', config.username);
       store.putSync('password', config.password);
@@ -281,7 +292,7 @@ export class SuwayomiTracker extends BaseTracker {
       if (response.responseCode === 200) {
         const responseText = response.result as string;
         this.log(`GraphQL 响应: ${responseText.substring(0, 200)}`);
-        const result = JSON.parse(responseText) as GraphQLResponse;
+        const result = SafeUtils.parseObj(responseText) as GraphQLResponse;
         if (result.errors && result.errors.length > 0) {
           const errorMsg = result.errors[0].message;
           this.logError(`GraphQL 错误: ${errorMsg}`);

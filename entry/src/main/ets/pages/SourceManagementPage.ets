@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 图源管理页面
  * 提供图源的搜索、启用/禁用、置顶、测试、删除等功能
  * 使用 HdsNavDestination 实现统一的导航体验
@@ -520,7 +520,7 @@ export struct SourceManagementPage {
    * 显示提示
    */
   private showToast(message: string): void {
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: message,
       duration: 2000
     });

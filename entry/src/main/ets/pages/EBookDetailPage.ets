@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/pages/EBookDetailPage.ets
+﻿// 文件路径: entry/src/main/ets/pages/EBookDetailPage.ets
 /**
  * 电子书详情页
  * 显示电子书的详细信息、章节列表、阅读进度等
@@ -239,7 +239,7 @@ export struct EBookDetailPage {
       const sfwEnabled = ContentFilterManager.getInstance().isSFWModeEnabled();
       if (sfwEnabled && ebook.isNSFW) {
         logger.warn(TAG, 'SFW模式已启用，阻止访问NSFW内容');
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: 'SFW模式已启用，无法查看NSFW内容',
           duration: 2000
         });

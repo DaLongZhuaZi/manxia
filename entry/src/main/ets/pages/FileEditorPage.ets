@@ -1,3 +1,4 @@
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 文件编辑器页面
  * 支持多种编程语言和文件格式的编辑
@@ -155,7 +156,7 @@ export struct FileEditorPage {
     try {
       const settings = AppStorage.get<string>('editorSettings');
       if (settings) {
-        const parsed = JSON.parse(settings) as Record<string, boolean | number | string>;
+        const parsed = SafeUtils.parseObj(settings) as Record<string, boolean | number | string>;
         this.showLineNumbers = parsed['showLineNumbers'] as boolean ?? true;
         this.showMinimap = parsed['showMinimap'] as boolean ?? true;
         this.wordWrap = parsed['wordWrap'] as boolean ?? false;
@@ -221,7 +222,7 @@ export struct FileEditorPage {
    * 关闭设置面板
    */
   private closeSettingsPanel(): void {
-    animateTo({ duration: 200 }, () => {
+    this.getUIContext().animateTo({ duration: 200 }, () => {
       this.settingsPanelOpacity = 0;
     });
     setTimeout(() => {
@@ -257,7 +258,7 @@ export struct FileEditorPage {
       logger.info(TAG, `文件加载成功: ${this.fileName}, 语言: ${this.language}, 内容长度: ${this.content.length}`);
     } catch (e) {
       logger.error(TAG, `加载文件失败: ${e}`);
-      promptAction.showToast({ message: `加载失败: ${e}` });
+      this.getUIContext().getPromptAction().showToast({ message: `加载失败: ${e}` });
     } finally {
       this.isLoading = false;
     }
@@ -278,11 +279,11 @@ export struct FileEditorPage {
       await fileEditorService.writeFile(this.filePath, this.content);
       this.originalContent = this.content;
       this.isDirty = false;
-      promptAction.showToast({ message: '保存成功' });
+      this.getUIContext().getPromptAction().showToast({ message: '保存成功' });
       logger.info(TAG, '文件保存成功');
     } catch (e) {
       logger.error(TAG, `保存文件失败: ${e}`);
-      promptAction.showToast({ message: `保存失败: ${e}` });
+      this.getUIContext().getPromptAction().showToast({ message: `保存失败: ${e}` });
     } finally {
       this.isSaving = false;
     }
@@ -293,7 +294,7 @@ export struct FileEditorPage {
    */
   private showSaveAsDialog(): void {
     // TODO: 实现文件选择器
-    promptAction.showToast({ message: '请先指定文件路径' });
+    this.getUIContext().getPromptAction().showToast({ message: '请先指定文件路径' });
   }
   
   /**
@@ -325,7 +326,7 @@ export struct FileEditorPage {
       this.editorController.goToLine(this.searchResults[0].line);
     }
     
-    promptAction.showToast({ message: `找到 ${this.searchResults.length} 个结果` });
+    this.getUIContext().getPromptAction().showToast({ message: `找到 ${this.searchResults.length} 个结果` });
   }
   
   /**
@@ -366,7 +367,7 @@ export struct FileEditorPage {
       }
       this.isDirty = true;
       this.syncCurrentTabState();
-      promptAction.showToast({ message: `替换了 ${result.replacedCount} 处` });
+      this.getUIContext().getPromptAction().showToast({ message: `替换了 ${result.replacedCount} 处` });
     }
   }
   
@@ -483,7 +484,7 @@ export struct FileEditorPage {
     const tab = this.tabs.find(t => t.id === tabId);
     if (!tab) return;
     
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '未保存的更改',
       message: `文件 "${tab.fileName}" 有未保存的更改，是否保存？`,
       primaryButton: {
@@ -542,7 +543,7 @@ export struct FileEditorPage {
    */
   private handleBack(): void {
     if (this.hasUnsavedChanges()) {
-      AlertDialog.show({
+      this.getUIContext().showAlertDialog({
         title: '未保存的更改',
         message: '有文件尚未保存，是否保存后退出？',
         primaryButton: {
@@ -1010,7 +1011,7 @@ export struct FileEditorPage {
                 this.closeSettingsPanel();
               })
               .onAppear(() => {
-                animateTo({ duration: 200 }, () => {
+                this.getUIContext().animateTo({ duration: 200 }, () => {
                   this.settingsPanelOpacity = 1;
                 });
               })
@@ -1263,7 +1264,7 @@ export struct FileEditorPage {
             .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
             .borderRadius(8)
             .onClick(() => {
-              animateTo({ duration: 200 }, () => {
+              this.getUIContext().animateTo({ duration: 200 }, () => {
                 this.newFileDialogOpacity = 0;
               });
               setTimeout(() => {
@@ -1290,7 +1291,7 @@ export struct FileEditorPage {
     .justifyContent(FlexAlign.Center)
     .opacity(this.newFileDialogOpacity)
     .onClick(() => {
-      animateTo({ duration: 200 }, () => {
+      this.getUIContext().animateTo({ duration: 200 }, () => {
         this.newFileDialogOpacity = 0;
       });
       setTimeout(() => {
@@ -1304,7 +1305,7 @@ export struct FileEditorPage {
    */
   private createNewFile(): void {
     if (!this.newFileName.trim()) {
-      promptAction.showToast({ message: '请输入文件名' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入文件名' });
       return;
     }
     
@@ -1316,7 +1317,7 @@ export struct FileEditorPage {
     this.addTab('', fileName, '', language, false);
     
     // 关闭对话框
-    animateTo({ duration: 200 }, () => {
+    this.getUIContext().animateTo({ duration: 200 }, () => {
       this.newFileDialogOpacity = 0;
     });
     setTimeout(() => {
@@ -1324,7 +1325,7 @@ export struct FileEditorPage {
       this.newFileName = '';
     }, 200);
     
-    promptAction.showToast({ message: '新建文件成功' });
+    this.getUIContext().getPromptAction().showToast({ message: '新建文件成功' });
   }
   
   /**
@@ -1334,7 +1335,7 @@ export struct FileEditorPage {
     this.showNewFileDialog = true;
     this.newFileName = '';
     setTimeout(() => {
-      animateTo({ duration: 200 }, () => {
+      this.getUIContext().animateTo({ duration: 200 }, () => {
         this.newFileDialogOpacity = 1;
       });
     }, 10);
@@ -1345,7 +1346,7 @@ export struct FileEditorPage {
    */
   private async exportFile(): Promise<void> {
     if (!this.content) {
-      promptAction.showToast({ message: '没有内容可导出' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有内容可导出' });
       return;
     }
     
@@ -1363,12 +1364,12 @@ export struct FileEditorPage {
         await fileIo.write(destFile.fd, buffer.buffer);
         await fileIo.close(destFile);
         
-        promptAction.showToast({ message: '文件导出成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '文件导出成功' });
         logger.info(TAG, `文件导出成功: ${uris[0]}`);
       }
     } catch (error) {
       logger.error(TAG, `导出文件失败: ${error}`);
-      promptAction.showToast({ message: `导出文件失败: ${error}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导出文件失败: ${error}` });
     }
   }
   
@@ -1389,7 +1390,7 @@ export struct FileEditorPage {
         const existingTab = this.tabs.find(t => t.filePath === uri);
         if (existingTab) {
           this.switchToTab(existingTab.id);
-          promptAction.showToast({ message: '文件已打开' });
+          this.getUIContext().getPromptAction().showToast({ message: '文件已打开' });
           return;
         }
         
@@ -1408,19 +1409,19 @@ export struct FileEditorPage {
         await fileIo.close(sourceFile);
         
         const decoder = new util.TextDecoder('utf-8');
-        const content = decoder.decodeWithStream(new Uint8Array(buffer));
+        const content = decoder.decodeToString(new Uint8Array(buffer));
         this.isLoading = false;
         
         // 添加到标签页
         this.addTab(uri, fileName, content, language, false);
         
         logger.info(TAG, `文件导入成功: ${fileName}, 大小: ${stat.size} bytes`);
-        promptAction.showToast({ message: '文件导入成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '文件导入成功' });
       }
     } catch (error) {
       this.isLoading = false;
       logger.error(TAG, `导入文件失败: ${error}`);
-      promptAction.showToast({ message: `导入文件失败: ${error}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入文件失败: ${error}` });
     }
   }
   

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 漫画图源API请求引擎
  * 处理HTTP/GraphQL API请求，支持JSON数据提取
@@ -185,7 +186,7 @@ export class MangaSourceAPIEngine {
       if (typeof response.result === 'string') {
         logger.debug(TAG, `响应字符串长度: ${response.result.length}, 前100字符: ${response.result.substring(0, 100)}`);
         try {
-          responseData = JSON.parse(response.result) as ESObject;
+          responseData = SafeUtils.parseObj(response.result) as ESObject;
           logger.debug(TAG, `JSON解析成功`);
         } catch (e) {
           logger.warn(TAG, `JSON解析失败: ${e}`);

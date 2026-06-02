@@ -279,7 +279,7 @@ export struct NovelBookshelfPage {
    */
   async clearBrowseHistory(): Promise<void> {
     await this.settingsManager.clearBrowseHistory();
-    promptAction.showToast({ message: '历史浏览已清空' });
+    this.getUIContext().getPromptAction().showToast({ message: '历史浏览已清空' });
   }
 
   /**
@@ -358,7 +358,7 @@ export struct NovelBookshelfPage {
   async deleteSelectedBooks(): Promise<void> {
     if (this.selectedBookIds.length === 0) return;
     
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '确认删除',
       message: `确定要删除选中的 ${this.selectedBookIds.length} 本书籍吗？`,
       buttons: [
@@ -374,7 +374,7 @@ export struct NovelBookshelfPage {
         this.isEditMode = false;
         // 重新加载书籍列表以确保数据同步
         await this.loadBooks();
-        promptAction.showToast({ message: '删除成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '删除成功' });
       }
     });
   }
@@ -391,7 +391,7 @@ export struct NovelBookshelfPage {
       buttons.push(btn);
     }
     
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '移动到分组',
       buttons: buttons as [ActionButton, ActionButton?, ActionButton?, ActionButton?, ActionButton?, ActionButton?]
     }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
@@ -418,7 +418,7 @@ export struct NovelBookshelfPage {
         }
         this.selectedBookIds = [];
         this.isEditMode = false;
-        promptAction.showToast({ message: `已移动到"${groupName}"` });
+        this.getUIContext().getPromptAction().showToast({ message: `已移动到"${groupName}"` });
       }
     }).catch(() => {});
   }
@@ -447,7 +447,7 @@ export struct NovelBookshelfPage {
       }
       this.selectedBookIds = [];
       this.isEditMode = false;
-      promptAction.showToast({ message: `已移动到"${newGroupName}"` });
+      this.getUIContext().getPromptAction().showToast({ message: `已移动到"${newGroupName}"` });
     });
   }
 
@@ -1198,7 +1198,7 @@ export struct NovelBookshelfPage {
     .backgroundColor('#FF4444')
     .justifyContent(FlexAlign.Center)
     .onClick(() => {
-      promptAction.showDialog({
+      this.getUIContext().getPromptAction().showDialog({
         title: '确认删除',
         message: `确定要删除"${book.name}"吗？`,
         buttons: [
@@ -1209,7 +1209,7 @@ export struct NovelBookshelfPage {
         if (result.index === 1) {
           await this.dataManager.deleteBook(book.id);
           await this.loadBooks();
-          promptAction.showToast({ message: '删除成功' });
+          this.getUIContext().getPromptAction().showToast({ message: '删除成功' });
         }
       });
     })

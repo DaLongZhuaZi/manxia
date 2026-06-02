@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 小说书源登录页面
  * 支持两种登录方式：
  * 1. loginUi - 表单登录
@@ -82,7 +82,7 @@ export struct NovelSourceLoginPage {
     
     // 确保NovelLoginManager已初始化
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await this.loginManager.initialize(context);
     } catch (error) {
       logger.warn(TAG, `初始化登录管理器失败: ${String(error)}`);
@@ -172,14 +172,14 @@ export struct NovelSourceLoginPage {
       const result = await this.loginManager.login(this.source, this.formData);
       
       if (result.success) {
-        promptAction.showToast({ message: result.message || '登录成功' });
+        this.getUIContext().getPromptAction().showToast({ message: result.message || '登录成功' });
         this.pathStack.pop();
       } else {
-        promptAction.showToast({ message: result.message || '登录失败' });
+        this.getUIContext().getPromptAction().showToast({ message: result.message || '登录失败' });
       }
     } catch (error) {
       logger.error(TAG, `登录失败: ${String(error)}`);
-      promptAction.showToast({ message: '登录失败: ' + String(error) });
+      this.getUIContext().getPromptAction().showToast({ message: '登录失败: ' + String(error) });
     }
     this.isLoading = false;
   }
@@ -195,11 +195,11 @@ export struct NovelSourceLoginPage {
       this.loginManager.putLoginInfo(this.source.bookSourceUrl, JSON.stringify(this.formData));
       await this.loginManager.savePersistedData();
       
-      promptAction.showToast({ message: '保存成功' });
+      this.getUIContext().getPromptAction().showToast({ message: '保存成功' });
       logger.info(TAG, `保存表单数据: ${this.source.bookSourceName}`);
     } catch (error) {
       logger.error(TAG, `保存失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存失败: ' + String(error) });
+      this.getUIContext().getPromptAction().showToast({ message: '保存失败: ' + String(error) });
     }
   }
 
@@ -392,21 +392,20 @@ export struct NovelSourceLoginPage {
     
     try {
       // 获取WebView中的Cookie
-      const cookieManager = webview.WebCookieManager;
-      const cookies = cookieManager.fetchCookieSync(this.webViewUrl);
+      const cookies: string = webview.WebCookieManager.fetchCookieSync(this.webViewUrl) as string;
       
       logger.info(TAG, `获取到Cookie: ${cookies}`);
       
       if (cookies) {
         // 解析Cookie字符串
         const cookieMap: Record<string, string> = {};
-        const cookieParts = cookies.split(';');
+        const cookieParts: string[] = cookies.split(';');
         for (let i = 0; i < cookieParts.length; i++) {
-          const part = cookieParts[i].trim();
-          const eqIndex = part.indexOf('=');
+          const part: string = cookieParts[i].trim();
+          const eqIndex: number = part.indexOf('=');
           if (eqIndex > 0) {
-            const key = part.substring(0, eqIndex).trim();
-            const value = part.substring(eqIndex + 1).trim();
+            const key: string = part.substring(0, eqIndex).trim();
+            const value: string = part.substring(eqIndex + 1).trim();
             cookieMap[key] = value;
           }
         }
@@ -415,14 +414,14 @@ export struct NovelSourceLoginPage {
         this.loginManager.setCookies(this.source.bookSourceUrl, cookieMap);
         this.loginManager.setLoggedIn(this.source.bookSourceUrl, true, cookieMap);
         
-        promptAction.showToast({ message: '登录成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '登录成功' });
         this.pathStack.pop();
       } else {
-        promptAction.showToast({ message: '未检测到登录信息，请先登录' });
+        this.getUIContext().getPromptAction().showToast({ message: '未检测到登录信息，请先登录' });
       }
     } catch (error) {
       logger.error(TAG, `获取Cookie失败: ${String(error)}`);
-      promptAction.showToast({ message: '获取登录信息失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '获取登录信息失败' });
     }
   }
 
@@ -679,13 +678,13 @@ export struct NovelSourceLoginPage {
       const result = await this.loginManager.executeButtonAction(this.source, action, this.formData);
       
       if (result.success) {
-        promptAction.showToast({ message: result.message || '操作成功' });
+        this.getUIContext().getPromptAction().showToast({ message: result.message || '操作成功' });
       } else {
-        promptAction.showToast({ message: result.message || '操作失败' });
+        this.getUIContext().getPromptAction().showToast({ message: result.message || '操作失败' });
       }
     } catch (error) {
       logger.error(TAG, `执行按钮操作失败: ${String(error)}`);
-      promptAction.showToast({ message: '操作失败: ' + String(error) });
+      this.getUIContext().getPromptAction().showToast({ message: '操作失败: ' + String(error) });
     }
     
     this.isLoading = false;

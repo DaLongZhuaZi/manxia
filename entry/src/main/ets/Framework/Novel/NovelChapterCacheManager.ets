@@ -1,3 +1,5 @@
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 小说章节缓存管理器
  * 负责章节内容的缓存、下载和离线阅读支持
@@ -111,10 +113,10 @@ export class NovelChapterCacheManager {
         try {
           // 确保目录存在
           try {
-            fileIo.accessSync(novelDir);
+            SafeFileUtils.accessSync(novelDir);
           } catch (e) {
             // 目录不存在，创建它
-            fileIo.mkdirSync(novelDir);
+            SafeFileUtils.mkdirSync(novelDir);
           }
           
           // 创建.nomedia文件防止媒体扫描
@@ -150,11 +152,11 @@ export class NovelChapterCacheManager {
     try {
       const nomediaPath = `${folderPath}/.nomedia`;
       try {
-        fileIo.accessSync(nomediaPath);
+        SafeFileUtils.accessSync(nomediaPath);
       } catch (e) {
         // 文件不存在，创建它
-        const file = fileIo.openSync(nomediaPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-        fileIo.closeSync(file);
+        const file = SafeFileUtils.openSync(nomediaPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+        SafeFileUtils.closeSync(file);
         logger.debug(TAG, `.nomedia文件已创建: ${nomediaPath}`);
       }
     } catch (error) {
@@ -433,7 +435,7 @@ export class NovelChapterCacheManager {
       return '';
     }
     try {
-      const parsed = JSON.parse(rawContent) as AudioJsonValue;
+      const parsed = SafeUtils.parseObj(rawContent) as AudioJsonValue;
       const urlHints: string[] = [];
       this.collectAudioUrlHints(parsed, urlHints);
       for (let index = 0; index < urlHints.length; index++) {
@@ -486,7 +488,7 @@ export class NovelChapterCacheManager {
     const source = this.sourceManager.getSource(sourceId);
     if (source && source.header && source.header.trim().length > 0) {
       try {
-        const parsed = JSON.parse(source.header) as Record<string, string>;
+        const parsed = SafeUtils.parseObj(source.header) as Record<string, string>;
         const keys = Object.keys(parsed);
         for (let index = 0; index < keys.length; index++) {
           const key = keys[index];
@@ -562,7 +564,7 @@ export class NovelChapterCacheManager {
       if (!rawText || rawText.trim().length <= 0) {
         return emptyIndex;
       }
-      const parsed = JSON.parse(rawText) as Record<string, Object>;
+      const parsed = SafeUtils.parseObj(rawText) as Record<string, Object>;
       const updateTime = Number(parsed['updateTime']) || 0;
       const itemsRaw = parsed['items'];
       const items: AudioChapterCacheItem[] = [];
@@ -1343,7 +1345,7 @@ export class NovelChapterCacheManager {
             try {
               const rawIndexText = await this.sandboxManager.readTextFile(audioIndexPath);
               if (rawIndexText && rawIndexText.trim().length > 0) {
-                const parsed = JSON.parse(rawIndexText) as Record<string, Object>;
+                const parsed = SafeUtils.parseObj(rawIndexText) as Record<string, Object>;
                 const itemsValue = parsed['items'];
                 const filteredItems: AudioChapterCacheItem[] = [];
                 let changed = false;
@@ -1552,9 +1554,9 @@ export class NovelChapterCacheManager {
           if (typeof contentBuffer === 'string') {
             contentStr = contentBuffer;
           } else {
-            contentStr = new util.TextDecoder().decode(new Uint8Array(contentBuffer));
+            contentStr = new util.TextDecoder().decodeToString(new Uint8Array(contentBuffer));
           }
-          const chapterData = JSON.parse(contentStr) as ChapterListCacheData;
+          const chapterData = SafeUtils.parseObj(contentStr) as ChapterListCacheData;
           const cacheAgeMs = Date.now() - chapterData.updateTime;
           if (cacheAgeMs > maxAgeMs) {
             logger.info(

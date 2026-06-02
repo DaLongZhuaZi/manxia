@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/Framework/Components/PrivacyAuthDialogComponent.ets
+﻿// 文件路径: entry/src/main/ets/Framework/Components/PrivacyAuthDialogComponent.ets
 // 职责: 隐私模式密码验证对话框组件，从MainMenuPage提取的独立组件
 
 import { promptAction } from '@kit.ArkUI';
@@ -134,7 +134,7 @@ export struct PrivacyAuthDialogComponent {
           return;
         }
         this.closePrivacyAuthDialog(true);
-        promptAction.showToast({ message: '隐私密码已初始化，已进入隐私书库' });
+        this.getUIContext().getPromptAction().showToast({ message: '隐私密码已初始化，已进入隐私书库' });
         this.onAuthSuccess?.();
         return;
       }
@@ -150,7 +150,7 @@ export struct PrivacyAuthDialogComponent {
       const success: boolean = await this.privacyModeManager.enterPrivacyModeWithPassword(password);
       if (success) {
         this.closePrivacyAuthDialog(true);
-        promptAction.showToast({ message: '已进入隐私书库' });
+        this.getUIContext().getPromptAction().showToast({ message: '已进入隐私书库' });
         this.onAuthSuccess?.();
       } else {
         this.privacyAuthErrorMessage = '密码错误，请重试';

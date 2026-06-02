@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/EpubParser.ets
 // 职责: EPUB格式电子书解析器
 
@@ -125,18 +126,18 @@ export class EpubParser extends EBookParser {
         openTarget = `/${filePath}`;
       }
 
-      const file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
-      const stat = fileIo.statSync(file.fd);
-      fileIo.closeSync(file);
+      const file = SafeFileUtils.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
+      SafeFileUtils.closeSync(file);
       return stat.size;
     } catch (firstError) {
       try {
         if (filePath.startsWith('file://')) {
           const stripped = filePath.substring(7);
           const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
-          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
-          const stat = fileIo.statSync(file.fd);
-          fileIo.closeSync(file);
+          const file = SafeFileUtils.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = SafeFileUtils.statSync(file.fd);
+          SafeFileUtils.closeSync(file);
           return stat.size;
         }
         return 0;

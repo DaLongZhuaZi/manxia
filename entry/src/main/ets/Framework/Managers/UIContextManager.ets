@@ -1,4 +1,4 @@
-// 文件路径: src/main/ets/Framework/Managers/UIContextManager.ets
+﻿// 文件路径: src/main/ets/Framework/Managers/UIContextManager.ets
 /**
  * UI上下文管理器
  * 负责管理应用中的UI上下文，提供统一的UI操作接口

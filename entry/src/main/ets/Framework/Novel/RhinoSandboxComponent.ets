@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Rhino沙箱WebView组件
  * 
@@ -12,6 +13,7 @@ import { logger } from '../../Utils/Logger';
 import { getRhinoWasmExecutor, RhinoWasmExecutor } from './RhinoWasmExecutor';
 
 const TAG = 'RhinoSandboxComponent';
+const RHINO_SANDBOX_USER_AGENT: string = 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36 RhinoSandbox/1.0';
 
 /**
  * 沙箱事件回调接口
@@ -66,6 +68,7 @@ export struct RhinoSandboxWebView {
     
     // 将控制器传递给执行器
     this.executor.setWebviewController(this.controller);
+    this.controller.setCustomUserAgent(RHINO_SANDBOX_USER_AGENT);
   }
 
   aboutToDisappear() {
@@ -93,9 +96,6 @@ export struct RhinoSandboxWebView {
         .cacheMode(CacheMode.Default)
         
         // 注意：网页调试功能已在aboutToAppear中通过setWebDebuggingAccess启用
-        
-        // 设置User-Agent
-        .userAgent('Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36 RhinoSandbox/1.0')
         
         // ==================== 页面生命周期事件 ====================
         .onPageBegin((event) => {
@@ -216,7 +216,7 @@ export struct RhinoSandboxWebView {
    */
   private handleSandboxEvent(eventJson: string): void {
     try {
-      const event = JSON.parse(eventJson) as {
+      const event = SafeUtils.parseObj(eventJson) as {
         event: string;
         data: Record<string, ESObject>;
         timestamp: number;

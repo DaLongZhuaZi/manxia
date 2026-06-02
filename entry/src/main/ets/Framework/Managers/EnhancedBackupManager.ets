@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 增强版备份管理器
  * 支持完整的数据备份、用户选择、tar打包
@@ -344,7 +346,7 @@ export class EnhancedBackupManager {
         const jsonPath = `${tempDir}/backup.json`;
         const backupData: BackupData = await this.loadJSON(jsonPath);
         
-        const stat = fs.statSync(filePath);
+        const stat = SafeFileUtils.statSync(filePath);
         
         const metadata: BackupMetadata = {
           version: backupData.version,
@@ -393,7 +395,7 @@ export class EnhancedBackupManager {
     try {
       const proxySettingsStr = this.settingsManager.getString('network_proxy_settings', '');
       if (proxySettingsStr) {
-        const proxySettings = JSON.parse(proxySettingsStr) as ProxyConfigBackup;
+        const proxySettings = SafeUtils.parseObj(proxySettingsStr) as ProxyConfigBackup;
         proxyConfig = {
           enabled: proxySettings.enabled || false,
           httpEnabled: proxySettings.httpEnabled !== undefined ? proxySettings.httpEnabled : true,
@@ -585,7 +587,7 @@ export class EnhancedBackupManager {
       const context = getGlobalContext();
       const ftpPrefs = await preferences.getPreferences(context, 'ftp_connections');
       const connectionsJson = await ftpPrefs.get('connections', '[]') as string;
-      const connections = JSON.parse(connectionsJson) as FTPConnectionBackup[];
+      const connections = SafeUtils.parseArr(connectionsJson) as FTPConnectionBackup[];
       if (connections.length > 0) {
         result.ftp = { connections: connections };
         logger.info(TAG, `导出FTP连接: ${connections.length}个`);
@@ -922,8 +924,8 @@ export class EnhancedBackupManager {
       if (options.includeCoverImages) {
         logger.info(TAG, '正在复制媒体文件: 封面');
         const coversDir = `${tempDir}/covers`;
-        if (!fs.accessSync(coversDir)) {
-          fs.mkdirSync(coversDir, true);
+        if (!SafeFileUtils.accessSync(coversDir)) {
+          SafeFileUtils.mkdirSync(coversDir, true);
         }
         // [修复] 传入备份根目录，漫画放在根目录/manga下而不是covers/manga下
         await this.copyCoverImages(coversDir, tempDir, backupData.manga.library, backupData.novel?.library);
@@ -936,8 +938,8 @@ export class EnhancedBackupManager {
       if (options.includeChapterImages) {
         logger.info(TAG, '正在复制媒体文件: 章节');
         const chaptersDir = `${tempDir}/chapters`;
-        if (!fs.accessSync(chaptersDir)) {
-          fs.mkdirSync(chaptersDir, true);
+        if (!SafeFileUtils.accessSync(chaptersDir)) {
+          SafeFileUtils.mkdirSync(chaptersDir, true);
         }
         await this.copyChapterImages(chaptersDir);
         logger.info(TAG, '媒体文件复制完成: 章节');
@@ -946,8 +948,8 @@ export class EnhancedBackupManager {
       if (options.includeEBookFiles) {
         logger.info(TAG, '正在复制媒体文件: 电子书');
         const ebooksDir = `${tempDir}/ebooks`;
-        if (!fs.accessSync(ebooksDir)) {
-          fs.mkdirSync(ebooksDir, true);
+        if (!SafeFileUtils.accessSync(ebooksDir)) {
+          SafeFileUtils.mkdirSync(ebooksDir, true);
         }
         await this.copyEBookFiles(ebooksDir, backupData.ebook.library);
         logger.info(TAG, '媒体文件复制完成: 电子书');
@@ -983,14 +985,14 @@ export class EnhancedBackupManager {
     const filesDir = this.sandboxManager.getDirectory('files');
     const iconsSourceDir = `${filesDir}/extensions-source/icons`;
     
-    if (!fs.accessSync(iconsSourceDir)) {
+    if (!SafeFileUtils.accessSync(iconsSourceDir)) {
       logger.warn(TAG, `图源icon目录不存在: ${iconsSourceDir}`);
       return;
     }
     
     const iconsTargetDir = `${tempDir}/icons`;
-    if (!fs.accessSync(iconsTargetDir)) {
-      fs.mkdirSync(iconsTargetDir, true);
+    if (!SafeFileUtils.accessSync(iconsTargetDir)) {
+      SafeFileUtils.mkdirSync(iconsTargetDir, true);
     }
     
     try {
@@ -1017,7 +1019,7 @@ export class EnhancedBackupManager {
         return;
       }
       
-      const customFontsRaw = JSON.parse(customFontsStr) as Array<Record<string, Object>>;
+      const customFontsRaw = SafeUtils.parseArr(customFontsStr) as Array<Record<string, Object>>;
       if (customFontsRaw.length === 0) {
         logger.debug(TAG, '自定义字体列表为空');
         return;
@@ -1026,8 +1028,8 @@ export class EnhancedBackupManager {
       logger.info(TAG, `找到 ${customFontsRaw.length} 个自定义字体需要备份`);
       
       const fontsTargetDir = `${tempDir}/fonts`;
-      if (!fs.accessSync(fontsTargetDir)) {
-        fs.mkdirSync(fontsTargetDir, true);
+      if (!SafeFileUtils.accessSync(fontsTargetDir)) {
+        SafeFileUtils.mkdirSync(fontsTargetDir, true);
       }
       
       let copiedCount = 0;
@@ -1040,7 +1042,7 @@ export class EnhancedBackupManager {
         
         logger.info(TAG, `检查字体文件: ${filePath}`);
         
-        if (!fs.accessSync(filePath)) {
+        if (!SafeFileUtils.accessSync(filePath)) {
           logger.warn(TAG, `字体文件不存在: ${filePath}`);
           continue;
         }
@@ -1050,7 +1052,7 @@ export class EnhancedBackupManager {
         const targetPath = `${fontsTargetDir}/${fileName}`;
         
         try {
-          fs.copyFileSync(filePath, targetPath);
+          SafeFileUtils.copyFileSync(filePath, targetPath);
           copiedCount++;
           logger.info(TAG, `已复制字体文件: ${fileName}`);
         } catch (copyError) {
@@ -1062,8 +1064,8 @@ export class EnhancedBackupManager {
       
       // [修复] 验证字体目录和文件是否正确创建
       try {
-        if (fs.accessSync(fontsTargetDir)) {
-          const fontFiles = fs.listFileSync(fontsTargetDir);
+        if (SafeFileUtils.accessSync(fontsTargetDir)) {
+          const fontFiles = SafeFileUtils.listFileSync(fontsTargetDir);
           logger.info(TAG, `[验证] 字体目录存在: ${fontsTargetDir}, 包含文件: ${fontFiles.join(', ') || '空'}`);
         } else {
           logger.error(TAG, `[验证失败] 字体目录不存在: ${fontsTargetDir}`);
@@ -1086,7 +1088,7 @@ export class EnhancedBackupManager {
     
     logger.debug(TAG, `检查图源封面目录: ${sourceCoversDir}`);
     
-    if (!fs.accessSync(sourceCoversDir)) {
+    if (!SafeFileUtils.accessSync(sourceCoversDir)) {
       logger.warn(TAG, `图源封面目录不存在: ${sourceCoversDir}`);
       return;
     }
@@ -1095,13 +1097,13 @@ export class EnhancedBackupManager {
     
     try {
       // 列出所有封面子目录
-      const coverDirs = fs.listFileSync(sourceCoversDir);
+      const coverDirs = SafeFileUtils.listFileSync(sourceCoversDir);
       logger.debug(TAG, `封面目录下的子目录: ${coverDirs.join(', ')}`);
       
       // 直接复制所有封面子目录（不仅限于已知图源）
       for (const dirName of coverDirs) {
         const sourcePath = `${sourceCoversDir}/${dirName}`;
-        const stat = fs.statSync(sourcePath);
+        const stat = SafeFileUtils.statSync(sourcePath);
         
         if (!stat.isDirectory()) continue;
         
@@ -1110,8 +1112,8 @@ export class EnhancedBackupManager {
         
         // 创建目标目录
         const targetDir = `${coversDir}/${dirName}`;
-        if (!fs.accessSync(targetDir)) {
-          fs.mkdirSync(targetDir, true);
+        if (!SafeFileUtils.accessSync(targetDir)) {
+          SafeFileUtils.mkdirSync(targetDir, true);
         }
         
         // 复制封面文件
@@ -1133,8 +1135,8 @@ export class EnhancedBackupManager {
    */
   private async exportNovelSourcesToFiles(tempDir: string, novelSources: NovelSourceBackup[]): Promise<void> {
     const legadoDir = `${tempDir}/legadoextensions`;
-    if (!fs.accessSync(legadoDir)) {
-      fs.mkdirSync(legadoDir, true);
+    if (!SafeFileUtils.accessSync(legadoDir)) {
+      SafeFileUtils.mkdirSync(legadoDir, true);
     }
     
     let exportedCount = 0;
@@ -1148,7 +1150,7 @@ export class EnhancedBackupManager {
         let sourceConfig: Record<string, Object> | null = null;
         if (source.configJson) {
           try {
-            sourceConfig = JSON.parse(source.configJson) as Record<string, Object>;
+            sourceConfig = SafeUtils.parseObj(source.configJson) as Record<string, Object>;
             // 仌configJson中获取书源名称
             if (sourceConfig['bookSourceName']) {
               sourceName = String(sourceConfig['bookSourceName']);
@@ -1188,9 +1190,9 @@ export class EnhancedBackupManager {
         
         // 写入JSON文件（数组格式，兼容Legado导入）
         const jsonContent = JSON.stringify([sourceConfig], null, 2);
-        const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.writeSync(file.fd, jsonContent);
-        fs.closeSync(file);
+        const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(file.fd, jsonContent);
+        SafeFileUtils.closeSync(file);
         
         exportedCount++;
         logger.debug(TAG, `已导出书源: ${source.bookSourceName}`);
@@ -1215,17 +1217,17 @@ export class EnhancedBackupManager {
     try {
       // 复制漫画相关文件（包括封面和章节图片）
       const comicsDir = this.sandboxManager.getDirectory('comics');
-      logger.debug(TAG, `漫画目录: ${comicsDir}, 存在: ${fs.accessSync(comicsDir)}`);
+      logger.debug(TAG, `漫画目录: ${comicsDir}, 存在: ${SafeFileUtils.accessSync(comicsDir)}`);
       
       // [新增] 获取Download同步目录
       const downloadDirPath = AppStorage.get<string>('downloadSyncDirPath');
       logger.debug(TAG, `Download同步目录: ${downloadDirPath || '未配置'}`);
       
-      if (fs.accessSync(comicsDir)) {
+      if (SafeFileUtils.accessSync(comicsDir)) {
         // [修复] 漫画放在备份根目录/manga下，而不是covers/manga下
         const mangaTarget = `${backupRootDir}/manga`;
-        if (!fs.accessSync(mangaTarget)) {
-          fs.mkdirSync(mangaTarget, true);
+        if (!SafeFileUtils.accessSync(mangaTarget)) {
+          SafeFileUtils.mkdirSync(mangaTarget, true);
         }
         
         // 方法1：基于数据库记录的漫画列表
@@ -1251,20 +1253,20 @@ export class EnhancedBackupManager {
               logger.debug(TAG, `检查Download漫画目录: ${downloadMangaDirInManga}`);
               
               let foundDir = '';
-              if (fs.accessSync(downloadMangaDirInManga)) {
+              if (SafeFileUtils.accessSync(downloadMangaDirInManga)) {
                 foundDir = downloadMangaDirInManga;
-              } else if (fs.accessSync(downloadMangaDirInMangaOriginal)) {
+              } else if (SafeFileUtils.accessSync(downloadMangaDirInMangaOriginal)) {
                 foundDir = downloadMangaDirInMangaOriginal;
-              } else if (fs.accessSync(downloadMangaDir)) {
+              } else if (SafeFileUtils.accessSync(downloadMangaDir)) {
                 foundDir = downloadMangaDir;
-              } else if (fs.accessSync(downloadMangaDirOriginal)) {
+              } else if (SafeFileUtils.accessSync(downloadMangaDirOriginal)) {
                 foundDir = downloadMangaDirOriginal;
               }
               
               if (foundDir) {
                 const targetMangaDir = `${mangaTarget}/download_import/${sanitizedTitle}`;
-                if (!fs.accessSync(targetMangaDir)) {
-                  fs.mkdirSync(targetMangaDir, true);
+                if (!SafeFileUtils.accessSync(targetMangaDir)) {
+                  SafeFileUtils.mkdirSync(targetMangaDir, true);
                 }
                 const count = await this.copyDirectoryRecursive(foundDir, targetMangaDir);
                 totalFiles += count;
@@ -1302,10 +1304,10 @@ export class EnhancedBackupManager {
                 }
               }
               
-              if (mangaDir && fs.accessSync(mangaDir)) {
+              if (mangaDir && SafeFileUtils.accessSync(mangaDir)) {
                 const targetMangaDir = `${mangaTarget}/download_import/${sanitizedTitle}`;
-                if (!fs.accessSync(targetMangaDir)) {
-                  fs.mkdirSync(targetMangaDir, true);
+                if (!SafeFileUtils.accessSync(targetMangaDir)) {
+                  SafeFileUtils.mkdirSync(targetMangaDir, true);
                 }
                 const count = await this.copyDirectoryRecursive(mangaDir, targetMangaDir);
                 totalFiles += count;
@@ -1338,12 +1340,12 @@ export class EnhancedBackupManager {
             }
             
             const mangaDir = `${comicsDir}/${sourceName}/${comicName}`;
-            logger.debug(TAG, `检查漫画目录: ${mangaDir}, 存在: ${fs.accessSync(mangaDir)}`);
+            logger.debug(TAG, `检查漫画目录: ${mangaDir}, 存在: ${SafeFileUtils.accessSync(mangaDir)}`);
             
-            if (fs.accessSync(mangaDir)) {
+            if (SafeFileUtils.accessSync(mangaDir)) {
               const targetMangaDir = `${mangaTarget}/${sourceName}/${comicName}`;
-              if (!fs.accessSync(targetMangaDir)) {
-                fs.mkdirSync(targetMangaDir, true);
+              if (!SafeFileUtils.accessSync(targetMangaDir)) {
+                SafeFileUtils.mkdirSync(targetMangaDir, true);
               }
               const count = await this.copyDirectoryRecursive(mangaDir, targetMangaDir);
               totalFiles += count;
@@ -1364,28 +1366,28 @@ export class EnhancedBackupManager {
         // 方法2：直接遍历comics目录，备份所有源的所有漫画（兜底策略）
         logger.debug(TAG, `扫描comics目录查找额外文件`);
         try {
-          const sourceEntries = fs.listFileSync(comicsDir);
+          const sourceEntries = SafeFileUtils.listFileSync(comicsDir);
           logger.debug(TAG, `找到 ${sourceEntries.length} 个源目录`);
           
           for (const sourceEntry of sourceEntries) {
             const sourcePath = `${comicsDir}/${sourceEntry}`;
-            const stat = fs.statSync(sourcePath);
+            const stat = SafeFileUtils.statSync(sourcePath);
             
             if (stat.isDirectory()) {
-              const comicEntries = fs.listFileSync(sourcePath);
+              const comicEntries = SafeFileUtils.listFileSync(sourcePath);
               logger.debug(TAG, `Source ${sourceEntry}: ${comicEntries.length} comics`);
               
               for (const comicEntry of comicEntries) {
                 const comicPath = `${sourcePath}/${comicEntry}`;
-                const comicStat = fs.statSync(comicPath);
+                const comicStat = SafeFileUtils.statSync(comicPath);
                 
                 if (comicStat.isDirectory()) {
                   const targetPath = `${mangaTarget}/${sourceEntry}/${comicEntry}`;
                   
                   // 检查是否已经复制过
-                  if (!fs.accessSync(targetPath)) {
-                    if (!fs.accessSync(`${mangaTarget}/${sourceEntry}`)) {
-                      fs.mkdirSync(`${mangaTarget}/${sourceEntry}`, true);
+                  if (!SafeFileUtils.accessSync(targetPath)) {
+                    if (!SafeFileUtils.accessSync(`${mangaTarget}/${sourceEntry}`)) {
+                      SafeFileUtils.mkdirSync(`${mangaTarget}/${sourceEntry}`, true);
                     }
                     const count = await this.copyDirectoryRecursive(comicPath, targetPath);
                     if (count > 0) {
@@ -1410,8 +1412,8 @@ export class EnhancedBackupManager {
       // [重构] 复制小说封面（使用文件夹结构，每本小说一个文件夹）
       const novelCoversDir = `${filesDir}/novel_covers`;
       const novelTarget = `${coversDir}/novel`;
-      if (!fs.accessSync(novelTarget)) {
-        fs.mkdirSync(novelTarget, true);
+      if (!SafeFileUtils.accessSync(novelTarget)) {
+        SafeFileUtils.mkdirSync(novelTarget, true);
       }
       
       if (novelList && novelList.length > 0) {
@@ -1420,16 +1422,16 @@ export class EnhancedBackupManager {
             const sanitizedName = novel.name.replace(/[\\/:*?"<>|]/g, '_');
             const novelFolderPath = `${novelTarget}/${sanitizedName}`;
             
-            if (!fs.accessSync(novelFolderPath)) {
-              fs.mkdirSync(novelFolderPath, true);
+            if (!SafeFileUtils.accessSync(novelFolderPath)) {
+              SafeFileUtils.mkdirSync(novelFolderPath, true);
             }
             
             // 复制封面图片（如果有本地封面）
-            if (novel.coverLocalPath && fs.accessSync(novel.coverLocalPath)) {
+            if (novel.coverLocalPath && SafeFileUtils.accessSync(novel.coverLocalPath)) {
               const coverExt = novel.coverLocalPath.includes('.') ? 
                 novel.coverLocalPath.substring(novel.coverLocalPath.lastIndexOf('.')) : '.jpg';
               const coverTargetPath = `${novelFolderPath}/cover${coverExt}`;
-              fs.copyFileSync(novel.coverLocalPath, coverTargetPath);
+              SafeFileUtils.copyFileSync(novel.coverLocalPath, coverTargetPath);
               totalFiles++;
               logger.debug(TAG, `已复制小说封面: ${sanitizedName}`);
             }
@@ -1442,7 +1444,7 @@ export class EnhancedBackupManager {
           }
         }
         logger.info(TAG, `已复制 ${totalDirs} 本小说（文件夹结构）`);
-      } else if (fs.accessSync(novelCoversDir)) {
+      } else if (SafeFileUtils.accessSync(novelCoversDir)) {
         // 回退：直接复制整个目录
         const count = await this.copyDirectoryRecursive(novelCoversDir, novelTarget);
         totalFiles += count;
@@ -1452,11 +1454,11 @@ export class EnhancedBackupManager {
       
       // 复制电子书封面
       const ebookCoversDir = `${filesDir}/ebook_covers`;
-      logger.debug(TAG, `Ebook covers directory: ${ebookCoversDir}, exists: ${fs.accessSync(ebookCoversDir)}`);
-      if (fs.accessSync(ebookCoversDir)) {
+      logger.debug(TAG, `Ebook covers directory: ${ebookCoversDir}, exists: ${SafeFileUtils.accessSync(ebookCoversDir)}`);
+      if (SafeFileUtils.accessSync(ebookCoversDir)) {
         const ebookTarget = `${coversDir}/ebook`;
-        if (!fs.accessSync(ebookTarget)) {
-          fs.mkdirSync(ebookTarget, true);
+        if (!SafeFileUtils.accessSync(ebookTarget)) {
+          SafeFileUtils.mkdirSync(ebookTarget, true);
         }
         const count = await this.copyDirectoryRecursive(ebookCoversDir, ebookTarget);
         totalFiles += count;
@@ -1482,10 +1484,10 @@ export class EnhancedBackupManager {
     try {
       // 复制漫画章节图片缓存
       const mangaCacheDir = `${cacheDir}/manga_images`;
-      if (fs.accessSync(mangaCacheDir)) {
+      if (SafeFileUtils.accessSync(mangaCacheDir)) {
         const mangaTarget = `${targetDir}/manga`;
-        if (!fs.accessSync(mangaTarget)) {
-          fs.mkdirSync(mangaTarget, true);
+        if (!SafeFileUtils.accessSync(mangaTarget)) {
+          SafeFileUtils.mkdirSync(mangaTarget, true);
         }
         const count = await this.copyDirectoryRecursive(mangaCacheDir, mangaTarget);
         totalFiles += count;
@@ -1496,7 +1498,7 @@ export class EnhancedBackupManager {
       
       // 复制其他图片缓存
       const imagesDir = `${cacheDir}/images`;
-      if (fs.accessSync(imagesDir)) {
+      if (SafeFileUtils.accessSync(imagesDir)) {
         const count = await this.copyDirectoryRecursive(imagesDir, targetDir);
         totalFiles += count;
         logger.info(TAG, `Copied ${count} cached images`);
@@ -1538,8 +1540,8 @@ export class EnhancedBackupManager {
           
           // 创建电子书专属文件夹
           const ebookFolderPath = `${targetDir}/${sanitizedTitle}`;
-          if (!fs.accessSync(ebookFolderPath)) {
-            fs.mkdirSync(ebookFolderPath, true);
+          if (!SafeFileUtils.accessSync(ebookFolderPath)) {
+            SafeFileUtils.mkdirSync(ebookFolderPath, true);
           }
           
           // [修复] 保留原始文件名，而不是使用书名作为文件名
@@ -1555,14 +1557,14 @@ export class EnhancedBackupManager {
           const sourcePath = ebook.filePath;
           const targetFilePath = `${ebookFolderPath}/${newFileName}`;
           
-          if (fs.accessSync(sourcePath)) {
+          if (SafeFileUtils.accessSync(sourcePath)) {
             await fs.copyFile(sourcePath, targetFilePath);
             logger.debug(TAG, `已复制电子书文件: ${newFileName}`);
           } else {
             // 尝试在Download目录查找
             if (downloadDirPath) {
               const downloadPath = `${downloadDirPath}/ebooks/${originalFileName}`;
-              if (fs.accessSync(downloadPath)) {
+              if (SafeFileUtils.accessSync(downloadPath)) {
                 await fs.copyFile(downloadPath, targetFilePath);
                 logger.debug(TAG, `已从Download复制电子书文件: ${newFileName}`);
               } else {
@@ -1576,7 +1578,7 @@ export class EnhancedBackupManager {
           }
           
           // 复制封面图片
-          if (ebook.coverPath && fs.accessSync(ebook.coverPath)) {
+          if (ebook.coverPath && SafeFileUtils.accessSync(ebook.coverPath)) {
             const coverExt = ebook.coverPath.includes('.') ? ebook.coverPath.substring(ebook.coverPath.lastIndexOf('.')) : '.jpg';
             const coverTargetPath = `${ebookFolderPath}/cover${coverExt}`;
             await fs.copyFile(ebook.coverPath, coverTargetPath);
@@ -1603,23 +1605,23 @@ export class EnhancedBackupManager {
    * @returns 复制的文件数量
    */
   private async copyDirectoryRecursive(sourceDir: string, targetDir: string): Promise<number> {
-    if (!fs.accessSync(targetDir)) {
-      fs.mkdirSync(targetDir, true);
+    if (!SafeFileUtils.accessSync(targetDir)) {
+      SafeFileUtils.mkdirSync(targetDir, true);
     }
     
     let fileCount = 0;
-    const entries = fs.listFileSync(sourceDir);
+    const entries = SafeFileUtils.listFileSync(sourceDir);
     
     for (const entry of entries) {
       const sourcePath = `${sourceDir}/${entry}`;
       const targetPath = `${targetDir}/${entry}`;
       
-      const stat = fs.statSync(sourcePath);
+      const stat = SafeFileUtils.statSync(sourcePath);
       if (stat.isDirectory()) {
         const subCount = await this.copyDirectoryRecursive(sourcePath, targetPath);
         fileCount += subCount;
       } else {
-        fs.copyFileSync(sourcePath, targetPath);
+        SafeFileUtils.copyFileSync(sourcePath, targetPath);
         fileCount++;
       }
     }
@@ -1637,7 +1639,7 @@ export class EnhancedBackupManager {
     // [修复] 首先列出临时目录内容，用于调试
     let tempContents: string[] = [];
     try {
-      tempContents = fs.listFileSync(tempDir);
+      tempContents = SafeFileUtils.listFileSync(tempDir);
       logger.info(TAG, `临时目录内容: ${tempContents.join(', ')}`);
     } catch (e) {
       logger.warn(TAG, `无法列出临时目录: ${e}`);
@@ -1658,7 +1660,7 @@ export class EnhancedBackupManager {
     } else {
       // 尝试使用accessSync检查
       try {
-        const fontsDirExists = fs.accessSync(fontsDir);
+        const fontsDirExists = SafeFileUtils.accessSync(fontsDir);
         logger.info(TAG, `accessSync检查字体目录: ${fontsDir}, 存在: ${fontsDirExists}`);
         if (fontsDirExists) {
           await this.restoreCustomFonts(fontsDir);
@@ -1671,7 +1673,7 @@ export class EnhancedBackupManager {
     // [修复] 恢复漫画（独立try-catch）
     try {
       const mangaDir = `${tempDir}/manga`;
-      if (fs.accessSync(mangaDir)) {
+      if (SafeFileUtils.accessSync(mangaDir)) {
         await this.restoreMangaFromBackup(mangaDir);
       }
     } catch (mangaError) {
@@ -1681,7 +1683,7 @@ export class EnhancedBackupManager {
     // [修复] 恢复封面（独立try-catch）
     try {
       const coversDir = `${tempDir}/covers`;
-      if (fs.accessSync(coversDir)) {
+      if (SafeFileUtils.accessSync(coversDir)) {
         await this.restoreCoverImages(coversDir);
         await this.restoreMangaSourceCovers(coversDir);
       }
@@ -1692,7 +1694,7 @@ export class EnhancedBackupManager {
     // [修复] 恢复章节图片（独立try-catch）
     try {
       const chaptersDir = `${tempDir}/chapters`;
-      if (fs.accessSync(chaptersDir)) {
+      if (SafeFileUtils.accessSync(chaptersDir)) {
         await this.restoreChapterImages(chaptersDir);
       }
     } catch (chaptersError) {
@@ -1702,7 +1704,7 @@ export class EnhancedBackupManager {
     // [修复] 恢复电子书（独立try-catch）
     try {
       const ebooksDir = `${tempDir}/ebooks`;
-      if (fs.accessSync(ebooksDir)) {
+      if (SafeFileUtils.accessSync(ebooksDir)) {
         await this.restoreEBookFiles(ebooksDir);
       }
     } catch (ebooksError) {
@@ -1712,7 +1714,7 @@ export class EnhancedBackupManager {
     // [修复] 恢复书源文件（独立try-catch）
     try {
       const legadoDir = `${tempDir}/legadoextensions`;
-      if (fs.accessSync(legadoDir)) {
+      if (SafeFileUtils.accessSync(legadoDir)) {
         await this.restoreNovelSourcesFromFiles(legadoDir);
       }
     } catch (legadoError) {
@@ -1722,7 +1724,7 @@ export class EnhancedBackupManager {
     // [修复] 恢复图源icon文件（独立try-catch）
     try {
       const iconsDir = `${tempDir}/icons`;
-      if (fs.accessSync(iconsDir)) {
+      if (SafeFileUtils.accessSync(iconsDir)) {
         await this.restoreSourceIcons(iconsDir);
       }
     } catch (iconsError) {
@@ -1741,11 +1743,11 @@ export class EnhancedBackupManager {
     
     // 确保目标目录存在
     const parentDir = `${filesDir}/extensions-source`;
-    if (!fs.accessSync(parentDir)) {
-      fs.mkdirSync(parentDir, true);
+    if (!SafeFileUtils.accessSync(parentDir)) {
+      SafeFileUtils.mkdirSync(parentDir, true);
     }
-    if (!fs.accessSync(targetDir)) {
-      fs.mkdirSync(targetDir, true);
+    if (!SafeFileUtils.accessSync(targetDir)) {
+      SafeFileUtils.mkdirSync(targetDir, true);
     }
     
     try {
@@ -1771,8 +1773,8 @@ export class EnhancedBackupManager {
     
     // 确保目标目录存在
     try {
-      if (!fs.accessSync(targetDir)) {
-        fs.mkdirSync(targetDir, true);
+      if (!SafeFileUtils.accessSync(targetDir)) {
+        SafeFileUtils.mkdirSync(targetDir, true);
         logger.info(TAG, `已创建字体目标目录`);
       } else {
         logger.info(TAG, `字体目标目录已存在`);
@@ -1784,7 +1786,7 @@ export class EnhancedBackupManager {
     
     // 检查源目录是否存在
     try {
-      if (!fs.accessSync(fontsDir)) {
+      if (!SafeFileUtils.accessSync(fontsDir)) {
         logger.warn(TAG, `字体源目录不存在: ${fontsDir}`);
         return;
       }
@@ -1796,7 +1798,7 @@ export class EnhancedBackupManager {
     // 列出源目录中的文件
     let sourceFiles: string[] = [];
     try {
-      sourceFiles = fs.listFileSync(fontsDir);
+      sourceFiles = SafeFileUtils.listFileSync(fontsDir);
       logger.info(TAG, `源目录中的字体文件(${sourceFiles.length}个): ${sourceFiles.join(', ') || '空'}`);
     } catch (e) {
       logger.error(TAG, `无法列出源目录文件: ${e}`);
@@ -1816,17 +1818,17 @@ export class EnhancedBackupManager {
       
       try {
         // 检查是否是文件
-        const stat = fs.statSync(sourcePath);
+        const stat = SafeFileUtils.statSync(sourcePath);
         if (stat.isDirectory()) {
           logger.debug(TAG, `跳过目录: ${fileName}`);
           continue;
         }
         
         logger.info(TAG, `正在复制: ${sourcePath} -> ${targetPath}`);
-        fs.copyFileSync(sourcePath, targetPath);
+        SafeFileUtils.copyFileSync(sourcePath, targetPath);
         
         // 验证复制成功
-        if (fs.accessSync(targetPath)) {
+        if (SafeFileUtils.accessSync(targetPath)) {
           copiedCount++;
           logger.info(TAG, `✓ 已复制字体文件: ${fileName}`);
         } else {
@@ -1841,7 +1843,7 @@ export class EnhancedBackupManager {
     
     // 验证目标目录中的文件
     try {
-      const targetFiles = fs.listFileSync(targetDir);
+      const targetFiles = SafeFileUtils.listFileSync(targetDir);
       logger.info(TAG, `[最终验证] 目标目录中的字体文件: ${targetFiles.join(', ') || '空'}`);
     } catch (e) {
       logger.warn(TAG, `无法列出目标目录文件: ${e}`);
@@ -1858,17 +1860,17 @@ export class EnhancedBackupManager {
     const filesDir = this.sandboxManager.getDirectory('files');
     const targetCoversDir = `${filesDir}/covers`;
     
-    if (!fs.accessSync(targetCoversDir)) {
-      fs.mkdirSync(targetCoversDir, true);
+    if (!SafeFileUtils.accessSync(targetCoversDir)) {
+      SafeFileUtils.mkdirSync(targetCoversDir, true);
     }
     
     let restoredCount = 0;
     
     try {
-      const entries = fs.listFileSync(coversDir);
+      const entries = SafeFileUtils.listFileSync(coversDir);
       for (const entry of entries) {
         const sourcePath = `${coversDir}/${entry}`;
-        const stat = fs.statSync(sourcePath);
+        const stat = SafeFileUtils.statSync(sourcePath);
         
         // 跳过非目录项和特殊目录（manga, ebook, novel等）
         if (!stat.isDirectory()) continue;
@@ -1876,8 +1878,8 @@ export class EnhancedBackupManager {
         
         // 这是图源封面目录（以pkg命名）
         const targetDir = `${targetCoversDir}/${entry}`;
-        if (!fs.accessSync(targetDir)) {
-          fs.mkdirSync(targetDir, true);
+        if (!SafeFileUtils.accessSync(targetDir)) {
+          SafeFileUtils.mkdirSync(targetDir, true);
         }
         
         const count = await this.copyDirectoryRecursive(sourcePath, targetDir);
@@ -1900,7 +1902,7 @@ export class EnhancedBackupManager {
     let failedCount = 0;
     
     try {
-      const files = fs.listFileSync(legadoDir);
+      const files = SafeFileUtils.listFileSync(legadoDir);
       
       for (const file of files) {
         if (!file.endsWith('.json')) continue;
@@ -1909,7 +1911,7 @@ export class EnhancedBackupManager {
         
         try {
           // 读取JSON文件
-          const content = fs.readTextSync(filePath);
+          const content = SafeFileUtils.readTextSync(filePath);
           
           // 使用NovelSourceManager导入
           const novelSourceModule = await import('../Novel/NovelSourceManager');
@@ -1945,27 +1947,27 @@ export class EnhancedBackupManager {
     }
     
     const downloadMangaTarget = `${downloadDirPath}/manga`;
-    if (!fs.accessSync(downloadMangaTarget)) {
-      fs.mkdirSync(downloadMangaTarget, true);
+    if (!SafeFileUtils.accessSync(downloadMangaTarget)) {
+      SafeFileUtils.mkdirSync(downloadMangaTarget, true);
     }
     
     // 遍历备份中的漫画目录
-    const sourceEntries = fs.listFileSync(mangaSource);
+    const sourceEntries = SafeFileUtils.listFileSync(mangaSource);
     for (const sourceEntry of sourceEntries) {
       const sourcePath = `${mangaSource}/${sourceEntry}`;
-      const stat = fs.statSync(sourcePath);
+      const stat = SafeFileUtils.statSync(sourcePath);
       
       if (stat.isDirectory()) {
         if (sourceEntry === 'download_import') {
           // download_import下的漫画恢复到Download/漫匣/manga目录
-          const importEntries = fs.listFileSync(sourcePath);
+          const importEntries = SafeFileUtils.listFileSync(sourcePath);
           for (const importEntry of importEntries) {
             const importPath = `${sourcePath}/${importEntry}`;
-            const importStat = fs.statSync(importPath);
+            const importStat = SafeFileUtils.statSync(importPath);
             if (importStat.isDirectory()) {
               const targetPath = `${downloadMangaTarget}/${importEntry}`;
-              if (!fs.accessSync(targetPath)) {
-                fs.mkdirSync(targetPath, true);
+              if (!SafeFileUtils.accessSync(targetPath)) {
+                SafeFileUtils.mkdirSync(targetPath, true);
               }
               await this.copyDirectoryRecursive(importPath, targetPath);
               logger.info(TAG, `已恢复漫画: ${importEntry}`);
@@ -1974,8 +1976,8 @@ export class EnhancedBackupManager {
         } else {
           // 其他源的漫画
           const targetPath = `${downloadMangaTarget}/${sourceEntry}`;
-          if (!fs.accessSync(targetPath)) {
-            fs.mkdirSync(targetPath, true);
+          if (!SafeFileUtils.accessSync(targetPath)) {
+            SafeFileUtils.mkdirSync(targetPath, true);
           }
           await this.copyDirectoryRecursive(sourcePath, targetPath);
           logger.info(TAG, `已恢复漫画: ${sourceEntry}`);
@@ -1996,32 +1998,32 @@ export class EnhancedBackupManager {
     try {
       // 恢复漫画封面和章节图片
       const mangaSource = `${sourceDir}/manga`;
-      if (fs.accessSync(mangaSource)) {
+      if (SafeFileUtils.accessSync(mangaSource)) {
         // [重构] 优先恢复到Download/漫匹/manga目录（Download同步模式）
         if (downloadDirPath) {
           const downloadMangaTarget = `${downloadDirPath}/manga`;
-          if (!fs.accessSync(downloadMangaTarget)) {
-            fs.mkdirSync(downloadMangaTarget, true);
+          if (!SafeFileUtils.accessSync(downloadMangaTarget)) {
+            SafeFileUtils.mkdirSync(downloadMangaTarget, true);
           }
           
           // 遍历备份中的漫画目录
-          const sourceEntries = fs.listFileSync(mangaSource);
+          const sourceEntries = SafeFileUtils.listFileSync(mangaSource);
           for (const sourceEntry of sourceEntries) {
             const sourcePath = `${mangaSource}/${sourceEntry}`;
-            const stat = fs.statSync(sourcePath);
+            const stat = SafeFileUtils.statSync(sourcePath);
             
             if (stat.isDirectory()) {
               // 检查是否为download_import目录
               if (sourceEntry === 'download_import') {
                 // download_import下的漫画恢复到Download/漫匣/manga目录
-                const importEntries = fs.listFileSync(sourcePath);
+                const importEntries = SafeFileUtils.listFileSync(sourcePath);
                 for (const importEntry of importEntries) {
                   const importPath = `${sourcePath}/${importEntry}`;
-                  const importStat = fs.statSync(importPath);
+                  const importStat = SafeFileUtils.statSync(importPath);
                   if (importStat.isDirectory()) {
                     const targetPath = `${downloadMangaTarget}/${importEntry}`;
-                    if (!fs.accessSync(targetPath)) {
-                      fs.mkdirSync(targetPath, true);
+                    if (!SafeFileUtils.accessSync(targetPath)) {
+                      SafeFileUtils.mkdirSync(targetPath, true);
                     }
                     await this.copyDirectoryRecursive(importPath, targetPath);
                     logger.info(TAG, `已恢复Download漫画: ${importEntry}`);
@@ -2030,8 +2032,8 @@ export class EnhancedBackupManager {
               } else {
                 // 其他源的漫画恢复到Download/漫匣/manga目录
                 const targetPath = `${downloadMangaTarget}/${sourceEntry}`;
-                if (!fs.accessSync(targetPath)) {
-                  fs.mkdirSync(targetPath, true);
+                if (!SafeFileUtils.accessSync(targetPath)) {
+                  SafeFileUtils.mkdirSync(targetPath, true);
                 }
                 await this.copyDirectoryRecursive(sourcePath, targetPath);
                 logger.info(TAG, `Restored manga source: ${sourceEntry}`);
@@ -2042,8 +2044,8 @@ export class EnhancedBackupManager {
         } else {
           // 回退：恢复到沙盒comics目录
           const mangaTarget = this.sandboxManager.getDirectory('comics');
-          if (!fs.accessSync(mangaTarget)) {
-            fs.mkdirSync(mangaTarget, true);
+          if (!SafeFileUtils.accessSync(mangaTarget)) {
+            SafeFileUtils.mkdirSync(mangaTarget, true);
           }
           await this.copyDirectoryRecursive(mangaSource, mangaTarget);
           logger.info(TAG, 'Restored manga covers to sandbox');
@@ -2052,15 +2054,15 @@ export class EnhancedBackupManager {
       
       // 恢复小说封面（优先使用Download目录）
       const novelSource = `${sourceDir}/novel`;
-      if (fs.accessSync(novelSource)) {
+      if (SafeFileUtils.accessSync(novelSource)) {
         let novelTarget: string;
         if (downloadDirPath) {
           novelTarget = `${downloadDirPath}/novel`;
         } else {
           novelTarget = `${filesDir}/novel_covers`;
         }
-        if (!fs.accessSync(novelTarget)) {
-          fs.mkdirSync(novelTarget, true);
+        if (!SafeFileUtils.accessSync(novelTarget)) {
+          SafeFileUtils.mkdirSync(novelTarget, true);
         }
         await this.copyDirectoryRecursive(novelSource, novelTarget);
         logger.info(TAG, `已恢复小说封面到: ${novelTarget}`);
@@ -2069,10 +2071,10 @@ export class EnhancedBackupManager {
       // 电子书封面已在restoreEBookFiles中处理（文件夹结构）
       // 这里只处理旧格式的电子书封面
       const ebookSource = `${sourceDir}/ebook`;
-      if (fs.accessSync(ebookSource)) {
+      if (SafeFileUtils.accessSync(ebookSource)) {
         const ebookTarget = `${filesDir}/ebook_covers`;
-        if (!fs.accessSync(ebookTarget)) {
-          fs.mkdirSync(ebookTarget, true);
+        if (!SafeFileUtils.accessSync(ebookTarget)) {
+          SafeFileUtils.mkdirSync(ebookTarget, true);
         }
         await this.copyDirectoryRecursive(ebookSource, ebookTarget);
         logger.info(TAG, '已恢复电子书封面（旧格式）');
@@ -2091,10 +2093,10 @@ export class EnhancedBackupManager {
     try {
       // 恢复漫画章节图片
       const mangaSource = `${sourceDir}/manga`;
-      if (fs.accessSync(mangaSource)) {
+      if (SafeFileUtils.accessSync(mangaSource)) {
         const mangaTarget = `${cacheDir}/manga_images`;
-        if (!fs.accessSync(mangaTarget)) {
-          fs.mkdirSync(mangaTarget, true);
+        if (!SafeFileUtils.accessSync(mangaTarget)) {
+          SafeFileUtils.mkdirSync(mangaTarget, true);
         }
         await this.copyDirectoryRecursive(mangaSource, mangaTarget);
         logger.info(TAG, 'Restored manga chapter images');
@@ -2102,10 +2104,10 @@ export class EnhancedBackupManager {
       
       // 恢复其他图片缓存
       const imagesSource = `${sourceDir}/images`;
-      if (fs.accessSync(imagesSource)) {
+      if (SafeFileUtils.accessSync(imagesSource)) {
         const imagesTarget = `${cacheDir}/images`;
-        if (!fs.accessSync(imagesTarget)) {
-          fs.mkdirSync(imagesTarget, true);
+        if (!SafeFileUtils.accessSync(imagesTarget)) {
+          SafeFileUtils.mkdirSync(imagesTarget, true);
         }
         await this.copyDirectoryRecursive(imagesSource, imagesTarget);
         logger.info(TAG, 'Restored cached images');
@@ -2130,30 +2132,30 @@ export class EnhancedBackupManager {
       targetBaseDir = `${this.sandboxManager.getDirectory('files')}/ebooks`;
     }
     
-    if (!fs.accessSync(targetBaseDir)) {
-      fs.mkdirSync(targetBaseDir, true);
+    if (!SafeFileUtils.accessSync(targetBaseDir)) {
+      SafeFileUtils.mkdirSync(targetBaseDir, true);
     }
     
     try {
       // 检查备份中的电子书结构
-      const entries = fs.listFileSync(sourceDir);
+      const entries = SafeFileUtils.listFileSync(sourceDir);
       
       for (const entry of entries) {
         const sourcePath = `${sourceDir}/${entry}`;
-        const stat = fs.statSync(sourcePath);
+        const stat = SafeFileUtils.statSync(sourcePath);
         
         if (stat.isDirectory()) {
           // 新的文件夹结构：每个电子书一个文件夹
           const targetFolderPath = `${targetBaseDir}/${entry}`;
-          if (!fs.accessSync(targetFolderPath)) {
-            fs.mkdirSync(targetFolderPath, true);
+          if (!SafeFileUtils.accessSync(targetFolderPath)) {
+            SafeFileUtils.mkdirSync(targetFolderPath, true);
           }
           await this.copyDirectoryRecursive(sourcePath, targetFolderPath);
           logger.info(TAG, `已恢复电子书文件夹: ${entry}`);
         } else {
           // 旧的单文件结构：直接复制文件
           const targetFilePath = `${targetBaseDir}/${entry}`;
-          fs.copyFileSync(sourcePath, targetFilePath);
+          SafeFileUtils.copyFileSync(sourcePath, targetFilePath);
           logger.info(TAG, `已恢复电子书文件: ${entry}`);
         }
       }
@@ -2188,7 +2190,7 @@ export class EnhancedBackupManager {
           // 方式1：检查manga子目录
           for (const ext of coverFormats) {
             const testPath = `${downloadDirPath}/manga/${sanitizedTitle}/cover.${ext}`;
-            if (fs.accessSync(testPath)) {
+            if (SafeFileUtils.accessSync(testPath)) {
               newCoverLocalPath = testPath;
               foundCover = true;
               break;
@@ -2199,7 +2201,7 @@ export class EnhancedBackupManager {
           if (!foundCover) {
             for (const ext of coverFormats) {
               const testPath = `${downloadDirPath}/${sanitizedTitle}/cover.${ext}`;
-              if (fs.accessSync(testPath)) {
+              if (SafeFileUtils.accessSync(testPath)) {
                 newCoverLocalPath = testPath;
                 foundCover = true;
                 break;
@@ -2210,9 +2212,9 @@ export class EnhancedBackupManager {
           // 方式3：检查漫画目录下的第一张图片作为封面
           if (!foundCover) {
             const mangaDir = `${downloadDirPath}/manga/${sanitizedTitle}`;
-            if (fs.accessSync(mangaDir)) {
+            if (SafeFileUtils.accessSync(mangaDir)) {
               try {
-                const files = fs.listFileSync(mangaDir);
+                const files = SafeFileUtils.listFileSync(mangaDir);
                 for (const file of files) {
                   const lowerFile = file.toLowerCase();
                   if (lowerFile.endsWith('.jpg') || lowerFile.endsWith('.jpeg') || 
@@ -2287,11 +2289,11 @@ export class EnhancedBackupManager {
               newDownloadPath = `${mangaDir}/${chapterFolderName}`;
               
               // 验证新路径是否存在
-              if (!fs.accessSync(newDownloadPath)) {
+              if (!SafeFileUtils.accessSync(newDownloadPath)) {
                 // 如果新路径不存在，尝试在漫画目录下查找
-                if (fs.accessSync(mangaDir)) {
+                if (SafeFileUtils.accessSync(mangaDir)) {
                   try {
-                    const files = fs.listFileSync(mangaDir);
+                    const files = SafeFileUtils.listFileSync(mangaDir);
                     // 查找匹配的章节目录
                     for (const file of files) {
                       if (file === chapterFolderName || file.includes(chapterFolderName)) {
@@ -2300,7 +2302,7 @@ export class EnhancedBackupManager {
                       }
                     }
                     // 如果还是找不到，使用漫画目录本身（适用于单章节漫画）
-                    if (!fs.accessSync(newDownloadPath) && files.length > 0) {
+                    if (!SafeFileUtils.accessSync(newDownloadPath) && files.length > 0) {
                       // 检查是否有图片文件直接在漫画目录下
                       const hasImages = files.some(f => {
                         const lf = f.toLowerCase();
@@ -2317,7 +2319,7 @@ export class EnhancedBackupManager {
                 }
               }
               
-              logger.info(TAG, `章节路径更新: ${chapter.title}, 旧=${oldPath}, 新=${newDownloadPath}, 存在=${fs.accessSync(newDownloadPath)}`);
+              logger.info(TAG, `章节路径更新: ${chapter.title}, 旧=${oldPath}, 新=${newDownloadPath}, 存在=${SafeFileUtils.accessSync(newDownloadPath)}`);
             }
           }
           
@@ -2439,10 +2441,10 @@ export class EnhancedBackupManager {
           
           // 方式1：检查novel子目录
           const novelFolderPath = `${baseDir}/${sanitizedName}`;
-          if (fs.accessSync(novelFolderPath)) {
+          if (SafeFileUtils.accessSync(novelFolderPath)) {
             for (const ext of coverFormats) {
               const testPath = `${novelFolderPath}/cover.${ext}`;
-              if (fs.accessSync(testPath)) {
+              if (SafeFileUtils.accessSync(testPath)) {
                 newCoverLocalPath = testPath;
                 foundCover = true;
                 break;
@@ -2455,7 +2457,7 @@ export class EnhancedBackupManager {
             const sandboxNovelCovers = `${this.sandboxManager.getDirectory('files')}/novel_covers`;
             for (const ext of coverFormats) {
               const testPath = `${sandboxNovelCovers}/${sanitizedName}.${ext}`;
-              if (fs.accessSync(testPath)) {
+              if (SafeFileUtils.accessSync(testPath)) {
                 newCoverLocalPath = testPath;
                 foundCover = true;
                 break;
@@ -2539,9 +2541,9 @@ export class EnhancedBackupManager {
         let newFilePath = '';
         
         // [修复] 在文件夹中查找电子书文件
-        if (fs.accessSync(ebookFolderPath)) {
+        if (SafeFileUtils.accessSync(ebookFolderPath)) {
           try {
-            const files = fs.listFileSync(ebookFolderPath);
+            const files = SafeFileUtils.listFileSync(ebookFolderPath);
             // 优先查找原始文件名
             if (originalFileName && files.includes(originalFileName)) {
               newFilePath = `${ebookFolderPath}/${originalFileName}`;
@@ -2563,17 +2565,17 @@ export class EnhancedBackupManager {
           }
         }
         
-        logger.debug(TAG, `电子书恢复: ${item.title}, 基础目录=${baseDir}, 文件路径=${newFilePath}, 文件存在=${fs.accessSync(newFilePath)}`);
+        logger.debug(TAG, `电子书恢复: ${item.title}, 基础目录=${baseDir}, 文件路径=${newFilePath}, 文件存在=${SafeFileUtils.accessSync(newFilePath)}`);
         
         // 新的封面路径：/ebooks/书名/cover.xxx 或 cover_时间戳.xxx
         let newCoverPath = '';
-        if (fs.accessSync(ebookFolderPath)) {
+        if (SafeFileUtils.accessSync(ebookFolderPath)) {
           // 检查封面文件是否存在
           const coverFormats = ['jpg', 'jpeg', 'png', 'webp'];
           // 方式1：检查标准封面文件名
           for (const coverExt of coverFormats) {
             const testPath = `${ebookFolderPath}/cover.${coverExt}`;
-            if (fs.accessSync(testPath)) {
+            if (SafeFileUtils.accessSync(testPath)) {
               newCoverPath = testPath;
               break;
             }
@@ -2581,7 +2583,7 @@ export class EnhancedBackupManager {
           // 方式2：检查带时间戳的封面文件名（cover_时间戳.xxx）
           if (!newCoverPath) {
             try {
-              const files = fs.listFileSync(ebookFolderPath);
+              const files = SafeFileUtils.listFileSync(ebookFolderPath);
               for (const file of files) {
                 if (file.startsWith('cover_') || file.startsWith('cover.')) {
                   const lowerFile = file.toLowerCase();
@@ -2601,9 +2603,9 @@ export class EnhancedBackupManager {
         // 方式3：检查沙盒封面目录
         if (!newCoverPath) {
           const sandboxCoverDir = `${this.sandboxManager.getDirectory('files')}/ebook_covers`;
-          if (fs.accessSync(sandboxCoverDir)) {
+          if (SafeFileUtils.accessSync(sandboxCoverDir)) {
             try {
-              const files = fs.listFileSync(sandboxCoverDir);
+              const files = SafeFileUtils.listFileSync(sandboxCoverDir);
               for (const file of files) {
                 const lowerFile = file.toLowerCase();
                 if (lowerFile.endsWith('.jpg') || lowerFile.endsWith('.jpeg') || 
@@ -2809,7 +2811,7 @@ export class EnhancedBackupManager {
           author: String(manga['author'] || ''),
           artist: String(manga['artist'] || ''),
           description: String(manga['description'] || ''),
-          genre: JSON.parse(String(manga['genre'] || '[]')),
+          genre: SafeUtils.parseObj(String(manga['genre'] || '[]')),
           status: String(manga['status'] || ''),
           coverUrl: String(manga['coverUrl'] || ''),
           coverLocalPath: String(manga['coverLocalPath'] || ''),
@@ -3751,7 +3753,7 @@ export class EnhancedBackupManager {
       return '{}';
     }
     try {
-      JSON.parse(trimmed);
+      SafeUtils.parseObj<Object>(trimmed);
       return trimmed;
     } catch {
       return '{}';
@@ -3868,7 +3870,7 @@ export class EnhancedBackupManager {
         
         // 同时加载到内存中
         try {
-          const sourceConfig = JSON.parse(item.configJson) as LegadoBookSource;
+          const sourceConfig = SafeUtils.parseObj(item.configJson) as LegadoBookSource;
           this.novelSourceManager.loadSourceToMemory(sourceConfig);
         } catch (parseError) {
           logger.warn(TAG, `Failed to parse configJson for ${bookSourceName}: ${parseError}`);
@@ -4280,23 +4282,23 @@ export class EnhancedBackupManager {
    */
   private async createTempBackupDir(timestamp: number): Promise<string> {
     const tempDir = `${this.sandboxManager.getDirectory('cache')}/backup_temp_${timestamp}`;
-    if (!fs.accessSync(tempDir)) {
-      fs.mkdirSync(tempDir, true);
+    if (!SafeFileUtils.accessSync(tempDir)) {
+      SafeFileUtils.mkdirSync(tempDir, true);
     }
     return tempDir;
   }
 
   private async createTempRestoreDir(): Promise<string> {
     const tempDir = `${this.sandboxManager.getDirectory('cache')}/restore_temp_${Date.now()}`;
-    if (!fs.accessSync(tempDir)) {
-      fs.mkdirSync(tempDir, true);
+    if (!SafeFileUtils.accessSync(tempDir)) {
+      SafeFileUtils.mkdirSync(tempDir, true);
     }
     return tempDir;
   }
 
   private async cleanupTempDir(dir: string): Promise<void> {
     try {
-      if (fs.accessSync(dir)) {
+      if (SafeFileUtils.accessSync(dir)) {
         // 递归删除目录及其所有内容
         this.deleteDirectoryRecursive(dir);
         logger.debug(TAG, `已清理临时目录: ${dir}`);
@@ -4311,23 +4313,23 @@ export class EnhancedBackupManager {
    */
   private deleteDirectoryRecursive(dirPath: string): void {
     try {
-      if (!fs.accessSync(dirPath)) {
+      if (!SafeFileUtils.accessSync(dirPath)) {
         return;
       }
       
-      const entries = fs.listFileSync(dirPath);
+      const entries = SafeFileUtils.listFileSync(dirPath);
       for (const entry of entries) {
         const fullPath = `${dirPath}/${entry}`;
-        const stat = fs.statSync(fullPath);
+        const stat = SafeFileUtils.statSync(fullPath);
         
         if (stat.isDirectory()) {
           this.deleteDirectoryRecursive(fullPath);
         } else {
-          fs.unlinkSync(fullPath);
+          SafeFileUtils.unlinkSync(fullPath);
         }
       }
       
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
     } catch (error) {
       logger.warn(TAG, `递归删除目录失败 ${dirPath}: ${error}`);
     }
@@ -4335,8 +4337,8 @@ export class EnhancedBackupManager {
 
   private async getBackupsDirectory(): Promise<string> {
     const backupsDir = `${this.sandboxManager.getDirectory('files')}/backups`;
-    if (!fs.accessSync(backupsDir)) {
-      fs.mkdirSync(backupsDir, true);
+    if (!SafeFileUtils.accessSync(backupsDir)) {
+      SafeFileUtils.mkdirSync(backupsDir, true);
     }
     return backupsDir;
   }
@@ -4348,7 +4350,7 @@ export class EnhancedBackupManager {
 
   private async loadJSON(path: string): Promise<BackupData> {
     const content = await this.sandboxManager.readTextFile(path);
-    return JSON.parse(content) as BackupData;
+    return SafeUtils.parseObj(content) as BackupData;
   }
 
   private validateBackupData(data: BackupData): void {
@@ -4533,9 +4535,9 @@ export class EnhancedBackupManager {
       
       // 确保backup文件夹存在
       try {
-        fs.accessSync(backupFolderPath);
+        SafeFileUtils.accessSync(backupFolderPath);
       } catch (e) {
-        fs.mkdirSync(backupFolderPath);
+        SafeFileUtils.mkdirSync(backupFolderPath);
         logger.info(TAG, `创建backup文件夹: ${backupFolderPath}`);
       }
 
@@ -4578,9 +4580,9 @@ export class EnhancedBackupManager {
       const xmlContent = MetadataXmlGenerator.generateComicInfoXml(metadata);
       const xmlPath = `${targetDir}/ComicInfo.xml`;
       
-      const file = fs.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, xmlContent);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, xmlContent);
+      SafeFileUtils.closeSync(file);
       
       logger.debug(TAG, `已生成漫画元数据: ${xmlPath}`);
     } catch (error) {
@@ -4612,9 +4614,9 @@ export class EnhancedBackupManager {
       const xmlContent = MetadataXmlGenerator.generateEBookMetadataXml(metadata);
       const xmlPath = `${targetDir}/metadata.xml`;
       
-      const file = fs.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, xmlContent);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, xmlContent);
+      SafeFileUtils.closeSync(file);
       
       logger.debug(TAG, `已生成电子书元数据: ${xmlPath}`);
     } catch (error) {
@@ -4647,9 +4649,9 @@ export class EnhancedBackupManager {
       const xmlContent = MetadataXmlGenerator.generateNovelMetadataXml(metadata);
       const xmlPath = `${targetDir}/metadata.xml`;
       
-      const file = fs.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, xmlContent);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, xmlContent);
+      SafeFileUtils.closeSync(file);
       
       logger.debug(TAG, `已生成小说元数据: ${xmlPath}`);
     } catch (error) {
@@ -4677,13 +4679,13 @@ export class EnhancedBackupManager {
       
       let fontSettings: Record<string, Object> = {};
       if (fontSettingsStr) {
-        fontSettings = JSON.parse(fontSettingsStr) as Record<string, Object>;
+        fontSettings = SafeUtils.parseObj(fontSettingsStr) as Record<string, Object>;
       }
       
       // 获取自定义字体列表
       const customFonts: CustomFontBackup[] = [];
       if (customFontsStr) {
-        const customFontsRaw = JSON.parse(customFontsStr) as Array<Record<string, Object>>;
+        const customFontsRaw = SafeUtils.parseArr(customFontsStr) as Array<Record<string, Object>>;
         for (const font of customFontsRaw) {
           const filePath = String(font['filePath'] || '');
           // 从路径中提取文件名
@@ -4766,8 +4768,8 @@ export class EnhancedBackupManager {
         
         // [修复] 先检查字体目录是否存在并列出文件
         try {
-          if (fs.accessSync(fontsDir)) {
-            const existingFiles = fs.listFileSync(fontsDir);
+          if (SafeFileUtils.accessSync(fontsDir)) {
+            const existingFiles = SafeFileUtils.listFileSync(fontsDir);
             logger.info(TAG, `字体目录存在，包含文件: ${existingFiles.join(', ') || '空'}`);
           } else {
             logger.warn(TAG, `字体目录不存在: ${fontsDir}，字体文件可能未正确恢复`);
@@ -4787,7 +4789,7 @@ export class EnhancedBackupManager {
           // 检查字体文件是否存在
           let fileExists = false;
           try {
-            fileExists = fs.accessSync(fontPath);
+            fileExists = SafeFileUtils.accessSync(fontPath);
           } catch (e) {
             fileExists = false;
           }

@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/DownloadManagerPage.ets
 /**
  * 下载管理页面
@@ -146,7 +147,7 @@ struct DownloadManagerPage {
   }
 
   onReady(): void {
-    const hostContext = this.getUIContext().getHostContext();
+    const hostContext = (this.getUIContext().getHostContext() as common.UIAbilityContext);
     if (hostContext) {
       this.hostContext = hostContext as common.UIAbilityContext;
       this.onlineArchiveService.setContext(this.hostContext);
@@ -592,7 +593,7 @@ struct DownloadManagerPage {
       if (this.hostContext) {
         const privatePath = `${this.hostContext.filesDir}/downloads`;
         try {
-          fs.accessSync(privatePath);
+          SafeFileUtils.accessSync(privatePath);
           const privateNodes = this.scanDirectoryTree(privatePath, '', 0);
           const privateSize = this.sumTreeSize(privateNodes);
           const privateFiles = this.sumTreeFileCount(privateNodes);
@@ -623,7 +624,7 @@ struct DownloadManagerPage {
   private scanDirectoryTree(fullPath: string, relativePath: string, depth: number): FileStructureNode[] {
     const result: FileStructureNode[] = [];
     try {
-      const entries: string[] = fs.listFileSync(fullPath);
+      const entries: string[] = SafeFileUtils.listFileSync(fullPath);
       for (const entry of entries) {
         if (entry.startsWith('.')) {
           continue;
@@ -631,7 +632,7 @@ struct DownloadManagerPage {
         const entryRelative = relativePath !== '' ? `${relativePath}/${entry}` : entry;
         const entryFull = `${fullPath}/${entry}`;
         try {
-          const stat = fs.statSync(entryFull);
+          const stat = SafeFileUtils.statSync(entryFull);
           if (stat.isDirectory()) {
             const children = this.scanDirectoryTree(entryFull, entryRelative, depth + 1);
             const dirSize = this.sumTreeSize(children);

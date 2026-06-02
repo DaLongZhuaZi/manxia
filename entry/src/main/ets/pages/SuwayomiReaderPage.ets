@@ -399,8 +399,9 @@ export struct SuwayomiReaderPage {
     // 获取屏幕尺寸
     try {
       const displayInfo = display.getDefaultDisplaySync();
-      this.screenWidth = px2vp(displayInfo.width);
-      this.screenHeight = px2vp(displayInfo.height);
+      const uiContext = this.getUIContext();
+      this.screenWidth = uiContext.px2vp(displayInfo.width);
+      this.screenHeight = uiContext.px2vp(displayInfo.height);
     } catch (e) {
       this.screenWidth = 360;
       this.screenHeight = 780;
@@ -442,7 +443,7 @@ export struct SuwayomiReaderPage {
   private toggleControls(): void {
     if (this.showControls) {
       // 隐藏控制栏
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 200,
         curve: Curve.EaseOut
       }, () => {
@@ -454,7 +455,7 @@ export struct SuwayomiReaderPage {
     } else {
       // 显示控制栏
       this.showControls = true;
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 200,
         curve: Curve.EaseOut
       }, () => {
@@ -510,7 +511,7 @@ export struct SuwayomiReaderPage {
 
   private showToast(message: string): void {
     import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showToast({
+      AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
         message: message,
         duration: 1500
       });

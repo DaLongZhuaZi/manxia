@@ -19,7 +19,6 @@ import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelpe
 import { BuiltInThemeResources } from '../Framework/Theme/BuiltInThemeResources';
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
-import { promptAction } from '@kit.ArkUI';
 
 const TAG = 'WelcomeGuidePage';
 const SOURCE_REPO_URL = 'https://raw.githubusercontent.com/DaLongZhuaZi/manxia-extensions-source/master/index.main.json';
@@ -34,6 +33,18 @@ interface GuideStepContent {
   icon: ResourceStr;
   buttonText: string;
   showSkip: boolean;
+}
+
+interface WelcomeGuidePageParams {
+  singleGuidePreview?: boolean;
+  singleGuideStep?: number;
+}
+
+interface MainMenuRouteParams {
+  targetPage?: string;
+  targetTab?: number;
+  openSourceRepoDialog?: boolean;
+  fromGuide: boolean;
 }
 
 type GuideBottomBarStyle = 'hds' | 'custom';
@@ -80,6 +91,7 @@ struct WelcomeGuidePage {
   @State private guideDuplicateDetectionEnabled: boolean = true;
   @State private customExperienceHintText: string = '继续后会应用这些体验设置。';
   @State private customExperienceSettingsReady: boolean = false;
+  @State private singleGuidePreviewEnabled: boolean = false;
 
   private uiContext: UIContext | undefined = undefined;
   private notificationPermissionAutoRequested: boolean = false;
@@ -123,7 +135,7 @@ struct WelcomeGuidePage {
     };
     steps.set(GuideStep.DATA_IMPORT, dataImportContent);
 
-    if (this.sourceFeaturesEnabled) {
+    if (this.sourceFeaturesEnabled || this.singleGuidePreviewEnabled) {
       const imageSourceGuideContent: GuideStepContent = {
         title: '图源说明',
         subtitle: '了解图源支持情况',
@@ -187,8 +199,50 @@ struct WelcomeGuidePage {
     return this.guideFlowMode === GuideFlowMode.SOURCE_FEATURE_ONLY;
   }
 
+  private isSingleGuidePreview(): boolean {
+    return this.singleGuidePreviewEnabled;
+  }
+
+  private resolveSingleGuideStep(params: WelcomeGuidePageParams | null): GuideStep | null {
+    if (!params || params.singleGuidePreview !== true) {
+      return null;
+    }
+
+    if (params.singleGuideStep === GuideStep.IMAGE_SOURCE_GUIDE) {
+      return GuideStep.IMAGE_SOURCE_GUIDE;
+    }
+
+    if (params.singleGuideStep === GuideStep.BOOK_SOURCE_GUIDE) {
+      return GuideStep.BOOK_SOURCE_GUIDE;
+    }
+
+    return null;
+  }
+
+  private applySingleGuidePreviewFromRoute(): boolean {
+    const router = this.uiContext?.getRouter();
+    if (!router) {
+      return false;
+    }
+
+    const params = router.getParams() as WelcomeGuidePageParams | null;
+    const previewStep = this.resolveSingleGuideStep(params);
+    if (previewStep === null) {
+      this.singleGuidePreviewEnabled = false;
+      return false;
+    }
+
+    this.singleGuidePreviewEnabled = true;
+    this.guideFlowMode = GuideFlowMode.FULL;
+    this.currentStep = previewStep;
+    logger.info(TAG, `进入单页引导预览: step=${previewStep}`);
+    return true;
+  }
+
   private async handleStepEntered(step: GuideStep): Promise<void> {
-    this.guideFlowMode = this.welcomeGuideManager.getActiveGuideFlow();
+    if (!this.isSingleGuidePreview()) {
+      this.guideFlowMode = this.welcomeGuideManager.getActiveGuideFlow();
+    }
 
     if (step === GuideStep.CUSTOM_EXPERIENCE) {
       await this.initializeCustomExperienceSettingsIfNeeded();
@@ -326,7 +380,7 @@ struct WelcomeGuidePage {
       this.guideBottomBarStyleIndex = previousIndex;
       this.buttonClickTrigger = this.buttonClickTrigger + 1;
       logger.error(TAG, `保存引导底栏样式失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存底栏样式失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存底栏样式失败', duration: 1500 });
     }
   }
 
@@ -347,7 +401,7 @@ struct WelcomeGuidePage {
       this.guideLibraryDisplayModeIndex = previousIndex;
       this.buttonClickTrigger = this.buttonClickTrigger + 1;
       logger.error(TAG, `保存引导书库样式失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存书库样式失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存书库样式失败', duration: 1500 });
     }
   }
 
@@ -359,7 +413,7 @@ struct WelcomeGuidePage {
       AppStorage.setOrCreate(SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED, enabled);
     } catch (error) {
       logger.error(TAG, `保存全局自定义背景设置失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存全局背景设置失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存全局背景设置失败', duration: 1500 });
     }
   }
 
@@ -371,7 +425,7 @@ struct WelcomeGuidePage {
       AppStorage.setOrCreate('backgroundBlurEnabled', enabled);
     } catch (error) {
       logger.error(TAG, `保存后台隐私遮罩设置失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存后台隐私遮罩设置失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存后台隐私遮罩设置失败', duration: 1500 });
     }
   }
 
@@ -381,7 +435,7 @@ struct WelcomeGuidePage {
       await this.interactionManager.setVibrationEnabled(enabled);
     } catch (error) {
       logger.error(TAG, `保存震动反馈设置失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存震动反馈设置失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存震动反馈设置失败', duration: 1500 });
     }
   }
 
@@ -392,7 +446,7 @@ struct WelcomeGuidePage {
       this.settingsManager.syncToAppStorage();
     } catch (error) {
       logger.error(TAG, `保存重复检测设置失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存重复检测设置失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存重复检测设置失败', duration: 1500 });
     }
   }
 
@@ -437,12 +491,17 @@ struct WelcomeGuidePage {
       this.fontState = newState;
     });
 
-    // 加载当前步骤（从WelcomeGuideManager获取最新状态）
-    this.currentStep = this.welcomeGuideManager.getCurrentStep();
-    this.guideFlowMode = this.welcomeGuideManager.getActiveGuideFlow();
-    logger.info(TAG, `欢迎引导页面加载，当前引导步骤: ${this.currentStep}`);
-    void this.handleStepEntered(this.currentStep);
-    void this.syncCurrentStepFromManager('aboutToAppear');
+    if (this.applySingleGuidePreviewFromRoute()) {
+      logger.info(TAG, `欢迎引导页面以单页预览模式加载，当前步骤: ${this.currentStep}`);
+      void this.handleStepEntered(this.currentStep);
+    } else {
+      // 加载当前步骤（从WelcomeGuideManager获取最新状态）
+      this.currentStep = this.welcomeGuideManager.getCurrentStep();
+      this.guideFlowMode = this.welcomeGuideManager.getActiveGuideFlow();
+      logger.info(TAG, `欢迎引导页面加载，当前引导步骤: ${this.currentStep}`);
+      void this.handleStepEntered(this.currentStep);
+      void this.syncCurrentStepFromManager('aboutToAppear');
+    }
 
     // 启动入场动画
     this.startEntranceAnimation();
@@ -450,6 +509,9 @@ struct WelcomeGuidePage {
 
   onPageShow(): void {
     logger.lifecycle(TAG, '欢迎引导页面显示');
+    if (this.isSingleGuidePreview()) {
+      return;
+    }
     void this.syncCurrentStepFromManager('onPageShow', true);
   }
 
@@ -597,6 +659,12 @@ struct WelcomeGuidePage {
       return;
     }
 
+    if (this.isSingleGuidePreview()) {
+      logger.debug(TAG, '执行单页引导预览关闭');
+      this.closeSingleGuidePreview();
+      return;
+    }
+
     switch (this.currentStep) {
       case GuideStep.WELCOME:
         // 欢迎页，进入主题选择
@@ -724,6 +792,73 @@ struct WelcomeGuidePage {
     }
 
     this.navigateToMainMenu();
+  }
+
+  private closeSingleGuidePreview(): void {
+    try {
+      const router = this.uiContext?.getRouter();
+      if (router) {
+        router.back();
+        return;
+      }
+    } catch (error) {
+      logger.warn(TAG, `单页引导预览返回上一页失败: ${String(error)}`);
+    }
+
+    this.navigateToMainMenu();
+  }
+
+  private navigateToNovelSourceManagement(): void {
+    try {
+      const router = this.uiContext?.getRouter();
+      if (!router) {
+        logger.warn(TAG, 'Router不可用，无法跳转到小说书源管理页面');
+        return;
+      }
+
+      const params: MainMenuRouteParams = {
+        targetPage: 'NovelSourceManagementPage',
+        fromGuide: !this.isSingleGuidePreview()
+      };
+
+      router.pushUrl({
+        url: 'pages/MainMenuPage',
+        params
+      }).then(() => {
+        logger.info(TAG, '导航到小说书源管理页面成功');
+      }).catch((error: Error) => {
+        logger.error(TAG, '导航到小说书源管理页面失败', error.message);
+      });
+    } catch (error) {
+      logger.error(TAG, '导航到小说书源管理页面异常', String(error));
+    }
+  }
+
+  private navigateToSourceManagementDialog(): void {
+    try {
+      const router = this.uiContext?.getRouter();
+      if (!router) {
+        logger.warn(TAG, 'Router不可用，无法跳转到图源管理弹窗');
+        return;
+      }
+
+      const params: MainMenuRouteParams = {
+        targetTab: 3,
+        openSourceRepoDialog: true,
+        fromGuide: false
+      };
+
+      router.pushUrl({
+        url: 'pages/MainMenuPage',
+        params
+      }).then(() => {
+        logger.info(TAG, '导航到图源标签并打开图源管理弹窗成功');
+      }).catch((error: Error) => {
+        logger.error(TAG, '导航到图源标签并打开图源管理弹窗失败', error.message);
+      });
+    } catch (error) {
+      logger.error(TAG, '导航到图源管理弹窗异常', String(error));
+    }
   }
 
   /**
@@ -931,13 +1066,13 @@ struct WelcomeGuidePage {
       const systemPasteboard = pasteboard.getSystemPasteboard();
       systemPasteboard.setData(pasteboardData).then(() => {
         logger.info(TAG, '图源仓库URL已复制到剪贴板');
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: '已复制到剪贴板',
           duration: 2000
         });
       }).catch((error: Error) => {
         logger.error(TAG, '复制到剪贴板失败', error.message);
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: '复制失败',
           duration: 2000
         });
@@ -983,6 +1118,17 @@ struct WelcomeGuidePage {
       buttonText: '继续',
       showSkip: false
     };
+
+    if (this.isSingleGuidePreview()) {
+      return {
+        title: defaultContent.title,
+        subtitle: defaultContent.subtitle,
+        description: defaultContent.description,
+        icon: defaultContent.icon,
+        buttonText: '完成',
+        showSkip: false
+      };
+    }
 
     if (this.isSourceFeatureOnlyFlow() && this.currentStep === GuideStep.BOOK_SOURCE_GUIDE) {
       return {
@@ -1111,6 +1257,82 @@ struct WelcomeGuidePage {
     .width('100%')
     .padding({ left: 32, right: 32 })
     .margin({ bottom: 28 })
+  }
+
+  @Builder
+  private buildBookSourceGuideActionSection() {
+    Column() {
+      Button() {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.text_book_closed'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+
+          Text('前往书源管理')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .justifyContent(FlexAlign.Center)
+        .width('100%')
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      .borderRadius(22)
+      .enabled(!this.isAnimating)
+      .opacity(this.isAnimating ? 0.6 : 1.0)
+      .onClick(() => {
+        if (!this.isAnimating) {
+          this.navigateToNovelSourceManagement();
+        }
+      })
+    }
+    .width('100%')
+    .padding({ left: 32, right: 32 })
+    .margin({ bottom: 32 })
+  }
+
+  @Builder
+  private buildImageSourceGuideActionSection() {
+    Column() {
+      Button() {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+
+          Text('前往图源管理')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .justifyContent(FlexAlign.Center)
+        .width('100%')
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      .borderRadius(22)
+      .enabled(!this.isAnimating)
+      .opacity(this.isAnimating ? 0.6 : 1.0)
+      .onClick(() => {
+        if (!this.isAnimating) {
+          this.navigateToSourceManagementDialog();
+        }
+      })
+    }
+    .width('100%')
+    .padding({ left: 32, right: 32 })
+    .margin({ bottom: 32 })
   }
 
   @Builder
@@ -1437,7 +1659,7 @@ struct WelcomeGuidePage {
   aboutToDisappear(): void {
     logger.lifecycle(TAG, '欢迎引导页面即将销毁');
     this.customExperienceSettingsInitialized = false;
-    if (this.isSourceFeatureOnlyFlow()) {
+    if (!this.isSingleGuidePreview() && this.isSourceFeatureOnlyFlow()) {
       void this.welcomeGuideManager.finishSourceFeatureGuide();
     }
     this.lifecycle.destroy();
@@ -1650,7 +1872,9 @@ struct WelcomeGuidePage {
               .lineHeight(24)
               .padding({ left: 32, right: 32 })
               .margin({
-                bottom: (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE && this.sourceFeaturesEnabled) ||
+                bottom: (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE &&
+                  (this.sourceFeaturesEnabled || this.isSingleGuidePreview())) ||
+                  this.currentStep === GuideStep.BOOK_SOURCE_GUIDE ||
                   this.currentStep === GuideStep.CUSTOM_EXPERIENCE ||
                   this.currentStep === GuideStep.ANALYTICS_PERMISSION ||
                   this.currentStep === GuideStep.LIBRARY_INTRO
@@ -1659,7 +1883,8 @@ struct WelcomeGuidePage {
               })
 
             // 图源说明页面的可复制URL文本框
-            if (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE && this.sourceFeaturesEnabled) {
+            if (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE &&
+              (this.sourceFeaturesEnabled || this.isSingleGuidePreview())) {
               Column() {
                 Text('图源仓库地址')
                   .fontSize(12)
@@ -1696,7 +1921,15 @@ struct WelcomeGuidePage {
               }
               .width('100%')
               .padding({ left: 32, right: 32 })
-              .margin({ bottom: 32 })
+              .margin({ bottom: 12 })
+            }
+
+            if (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE) {
+              this.buildImageSourceGuideActionSection()
+            }
+
+            if (this.currentStep === GuideStep.BOOK_SOURCE_GUIDE) {
+              this.buildBookSourceGuideActionSection()
             }
 
             if (this.currentStep === GuideStep.CUSTOM_EXPERIENCE) {

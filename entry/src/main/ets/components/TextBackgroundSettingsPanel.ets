@@ -1,3 +1,5 @@
+import { common } from '@kit.AbilityKit';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * 小说阅读器背景设置面板
  * 独立对话框，提供预设主题、自定义背景图片、图片不透明度、文字颜色等设置
@@ -18,7 +20,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { picker } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { curves, UIContext, display } from '@kit.ArkUI';
 import { promptAction } from '@kit.ArkUI';
@@ -214,9 +216,9 @@ export struct TextBackgroundSettingsPanel {
    */
   private async selectBackgroundImage(): Promise<void> {
     try {
-      const photoPicker = new picker.PhotoViewPicker();
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const result = await photoPicker.select({
-        MIMEType: picker.PhotoViewMIMETypes.IMAGE_TYPE,
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
         maxSelectNumber: 1
       });
 
@@ -258,17 +260,17 @@ export struct TextBackgroundSettingsPanel {
 
   private async copyImageToSandbox(sourceUri: string): Promise<string | null> {
     try {
-      const context = getContext(this);
-      const cacheDir = context.cacheDir;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
+      const cacheDir: string = context.cacheDir;
       const timestamp = Date.now();
       const randomStr = Math.random().toString(36).substring(2, 8);
       const extension = this.getFileExtension(sourceUri);
       const destFileName = `bg_${timestamp}_${randomStr}${extension}`;
       const destPath = `${cacheDir}/${destFileName}`;
 
-      const sourceFile = fs.openSync(sourceUri, fs.OpenMode.READ_ONLY);
-      fs.copyFileSync(sourceFile.fd, destPath);
-      fs.closeSync(sourceFile);
+      const sourceFile = SafeFileUtils.openSync(sourceUri, fs.OpenMode.READ_ONLY);
+      SafeFileUtils.copyFileSync(sourceFile.fd, destPath);
+      SafeFileUtils.closeSync(sourceFile);
       return destPath;
     } catch (error) {
       logger.error(TAG, `复制图片失败: ${String(error)}`);
@@ -285,7 +287,7 @@ export struct TextBackgroundSettingsPanel {
   private deleteImageFile(path: string): void {
     try {
       if (path.includes('/bg_images/')) {
-        fs.unlinkSync(path);
+        SafeFileUtils.unlinkSync(path);
       }
     } catch (error) {
       logger.warn(TAG, `删除图片文件失败: ${String(error)}`);
@@ -293,7 +295,7 @@ export struct TextBackgroundSettingsPanel {
   }
 
   private showDeleteConfirmDialog(index: number): void {
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '删除背景图片',
       message: '确定要删除这张背景图片吗？',
       buttons: [

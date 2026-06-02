@@ -219,7 +219,7 @@ export struct TrackingSettingsDialogComponent {
 
   private async ensureContentTrackingReady(): Promise<boolean> {
     try {
-      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const hostContext = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!hostContext) {
         return false;
       }
@@ -989,7 +989,7 @@ export struct TrackingSettingsDialogComponent {
       this.trackingSupported = false;
       this.trackingUnsupportedReason = '没能读到提醒状态';
       if (showToastOnError) {
-        promptAction.showToast({ message: `没能读到提醒状态: ${String(error)}`, duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: `没能读到提醒状态: ${String(error)}`, duration: 2000 });
       }
     } finally {
       this.isTrackingLoading = false;
@@ -1078,7 +1078,7 @@ export struct TrackingSettingsDialogComponent {
       await this.refreshTrackingState(true);
     }
     if (!this.trackingSupported) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: this.trackingUnsupportedReason.length > 0 ? this.trackingUnsupportedReason : '这类内容暂时还不能添加提醒',
         duration: 2000
       });
@@ -1088,7 +1088,7 @@ export struct TrackingSettingsDialogComponent {
     this.fillTrackingDialogFromRule(this.trackingRule);
     this.trackingSettingsActiveTab = 0;
     this.showTrackingSettingsDialog = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 260,
       curve: Curve.EaseOut
     }, () => {
@@ -1100,7 +1100,7 @@ export struct TrackingSettingsDialogComponent {
 
 
   private closeTrackingSettingsDialog(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
@@ -1120,7 +1120,7 @@ export struct TrackingSettingsDialogComponent {
     }
     const targetInfo = this.trackingTargetInfo;
     if (targetInfo === null || !targetInfo.supported) {
-      promptAction.showToast({ message: '这类内容暂时还不能在这里开启提醒', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '这类内容暂时还不能在这里开启提醒', duration: 2000 });
       return;
     }
 
@@ -1140,7 +1140,7 @@ export struct TrackingSettingsDialogComponent {
 
       await this.refreshTrackingState();
       this.closeTrackingSettingsDialog();
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: hadExistingRule
           ? '提醒设置已更新，之后会在 APP 回到前台时补查'
           : '已为当前内容开启提醒，之后会在 APP 回到前台时补查',
@@ -1148,7 +1148,7 @@ export struct TrackingSettingsDialogComponent {
       });
     } catch (error) {
       logger.error(TAG, `保存内容跟踪配置失败: ${String(error)}`);
-      promptAction.showToast({ message: `保存失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `保存失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isTrackingBusy = false;
     }
@@ -1163,13 +1163,13 @@ export struct TrackingSettingsDialogComponent {
     try {
       const result = await this.subscriptionManager.runRuleNow(this.trackingRule.id, 'detail_page_manual');
       await this.refreshTrackingState();
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: result.message.length > 0 ? result.message : '已开始检查当前内容',
         duration: 2000
       });
     } catch (error) {
       logger.error(TAG, `立即执行内容跟踪失败: ${String(error)}`);
-      promptAction.showToast({ message: `执行失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `执行失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isTrackingBusy = false;
     }
@@ -1184,7 +1184,7 @@ export struct TrackingSettingsDialogComponent {
     try {
       await this.subscriptionManager.setRuleEnabled(this.trackingRule.id, !this.trackingRule.enabled);
       await this.refreshTrackingState();
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: this.trackingRule !== null && this.trackingRule.enabled
           ? '已开启更新提醒，APP 回到前台时会自动补查'
           : '已暂停更新提醒',
@@ -1192,7 +1192,7 @@ export struct TrackingSettingsDialogComponent {
       });
     } catch (error) {
       logger.error(TAG, `切换内容跟踪启用状态失败: ${String(error)}`);
-      promptAction.showToast({ message: `操作失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `操作失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isTrackingBusy = false;
     }
@@ -1206,7 +1206,7 @@ export struct TrackingSettingsDialogComponent {
     const ruleName = this.trackingRule.name.length > 0
       ? this.trackingRule.name
       : (this.content ? this.content.title : '当前内容');
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '关闭更新提醒',
       message: `确认关闭「${ruleName}」的更新提醒？`,
       buttons: [
@@ -1230,10 +1230,10 @@ export struct TrackingSettingsDialogComponent {
       await this.subscriptionManager.deleteRule(this.trackingRule.id);
       this.closeTrackingSettingsDialog();
       await this.refreshTrackingState();
-      promptAction.showToast({ message: '已关闭当前内容的更新提醒', duration: 1800 });
+      this.getUIContext().getPromptAction().showToast({ message: '已关闭当前内容的更新提醒', duration: 1800 });
     } catch (error) {
       logger.error(TAG, `删除内容跟踪规则失败: ${String(error)}`);
-      promptAction.showToast({ message: `删除失败: ${String(error)}`, duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${String(error)}`, duration: 2000 });
     } finally {
       this.isTrackingBusy = false;
     }
@@ -1269,7 +1269,7 @@ export struct TrackingSettingsDialogComponent {
       .clip(true)
       .border({ width: this.getSectionBorderWidth(), color: this.getSectionBorderColor() })
       .shadow({ radius: this.getSectionRadius() + 4, color: this.getSectionShadowColor(), offsetX: 0, offsetY: 8 })
-      .id('guide_unified_detail_tracking')
+      .id('' as string)
     }
   }
 
@@ -1501,7 +1501,7 @@ export struct TrackingSettingsDialogComponent {
     if (this.trackingSettingsActiveTab === index) {
       return;
     }
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.trackingSettingsActiveTab = index;
     });
   }

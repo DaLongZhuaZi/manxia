@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 小说书源管理页面
  * 导入、删除、测试书源
@@ -1260,7 +1262,7 @@ export struct NovelSourceManagementPage {
     // 重新加载并应用筛选（只显示启用的书源）
     this.applyFilterForSortMode();
     this.isSortMode = true;
-    promptAction.showToast({ message: '已进入排序模式，点击上下箭头调整顺序' });
+    this.getUIContext().getPromptAction().showToast({ message: '已进入排序模式，点击上下箭头调整顺序' });
   }
 
   /**
@@ -1297,11 +1299,11 @@ export struct NovelSourceManagementPage {
       const enabledSourceIds = this.filteredSources.map(s => s.id);
       const count = await this.sourceManager.batchUpdateSourceOrder(enabledSourceIds);
       
-      promptAction.showToast({ message: `已保存 ${count} 个书源的排序` });
+      this.getUIContext().getPromptAction().showToast({ message: `已保存 ${count} 个书源的排序` });
       this.exitSortMode();
     } catch (error) {
       logger.error(TAG, `保存排序失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存排序失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '保存排序失败' });
     } finally {
       this.isSavingOrder = false;
       this.isOperating = false;
@@ -1370,7 +1372,7 @@ export struct NovelSourceManagementPage {
         count++;
       }
     }
-    promptAction.showToast({ message: `已${enabled ? '启用' : '禁用'} ${count} 个书源` });
+    this.getUIContext().getPromptAction().showToast({ message: `已${enabled ? '启用' : '禁用'} ${count} 个书源` });
     this.loadSources();
   }
 
@@ -1993,7 +1995,7 @@ export struct NovelSourceManagementPage {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
 
-        Text('点击右上角"导入"添加书源')
+        Text('前往右上角更多菜单中"导入书源"')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -3681,7 +3683,7 @@ export struct NovelSourceManagementPage {
     }
 
     try {
-      const parsed: Object = JSON.parse(trimmedContent) as Object;
+      const parsed: Object = SafeUtils.parseObj(trimmedContent) as Object;
       if (Array.isArray(parsed)) {
         return [];
       }
@@ -3806,16 +3808,16 @@ export struct NovelSourceManagementPage {
     this.operatingMessage = `正在处理文件 ${fileProcessed}/${fileCount}...`;
     logger.info(TAG, `处理文件 ${fileProcessed}/${fileCount}: ${fileUri}`);
 
-    const file: fs.File = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
+    const file: fs.File = SafeFileUtils.openSync(fileUri, fs.OpenMode.READ_ONLY);
     try {
-      const stat: fs.Stat = fs.statSync(file.fd);
+      const stat: fs.Stat = SafeFileUtils.statSync(file.fd);
       const fileSize: number = stat.size;
       logger.info(TAG, `文件大小: ${fileSize} 字节`);
 
       const maxBufferSize = 50 * 1024 * 1024;
       const bufferSize = Math.min(fileSize, maxBufferSize);
       const buffer = new ArrayBuffer(bufferSize);
-      const readLen: number = fs.readSync(file.fd, buffer);
+      const readLen: number = SafeFileUtils.readSync(file.fd, buffer);
       if (readLen < fileSize) {
         logger.warn(TAG, `文件过大，只读取了 ${readLen}/${fileSize} 字节`);
       }
@@ -3825,7 +3827,7 @@ export struct NovelSourceManagementPage {
 
       const uint8Array = new Uint8Array(buffer, 0, readLen);
       const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-      const jsonContent = decoder.decode(uint8Array);
+      const jsonContent = decoder.decodeToString(uint8Array);
 
       logger.debug(TAG, `读取到JSON内容，长度: ${jsonContent.length}`);
       this.operatingMessage = `正在导入文件 ${fileProcessed}/${fileCount} 的书源...`;
@@ -3836,19 +3838,19 @@ export struct NovelSourceManagementPage {
       logger.info(TAG, `文件 ${fileProcessed} 导入完成: 成功${successCount}个, 失败${failCount}个`);
       return [successCount, failCount];
     } finally {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
   }
 
   async importFromNetwork(): Promise<void> {
     const rawInput = this.importUrl.trim();
     if (rawInput.length === 0) {
-      promptAction.showToast({ message: '请输入网络导入链接' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入网络导入链接' });
       return;
     }
     const normalizedUrl = this.resolveNetworkImportUrl(rawInput);
     if (!this.isHttpUrl(normalizedUrl)) {
-      promptAction.showToast({ message: '链接格式不正确，请输入 http/https 或 legado://import/... 链接' });
+      this.getUIContext().getPromptAction().showToast({ message: '链接格式不正确，请输入 http/https 或 legado://import/... 链接' });
       return;
     }
 
@@ -3867,17 +3869,17 @@ export struct NovelSourceManagementPage {
       this.importUrl = '';
       if (successCount > 0) {
         this.loadSources();
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: `成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}${fetchedCount > 1 ? `（共拉取 ${fetchedCount} 个远程文件）` : ''}`
         });
       } else {
-        promptAction.showToast({ message: '导入失败，请检查链接或内容格式' });
+        this.getUIContext().getPromptAction().showToast({ message: '导入失败，请检查链接或内容格式' });
       }
       logger.info(TAG, `网络导入书源完成: 成功${successCount}个, 失败${failCount}个, 拉取${fetchedCount}个远程文件`);
     } catch (error) {
       const errorText = this.resolveImportErrorText(error as ImportErrorValue);
       logger.error(TAG, `网络导入书源失败: ${errorText}`);
-      promptAction.showToast({ message: `网络导入失败: ${errorText}` });
+      this.getUIContext().getPromptAction().showToast({ message: `网络导入失败: ${errorText}` });
     } finally {
       this.isImporting = false;
       this.isOperating = false;
@@ -3887,7 +3889,7 @@ export struct NovelSourceManagementPage {
 
   async doImport(): Promise<void> {
     if (!this.importText.trim()) {
-      promptAction.showToast({ message: '请输入书源JSON' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入书源JSON' });
       return;
     }
 
@@ -3905,15 +3907,15 @@ export struct NovelSourceManagementPage {
       if (successCount > 0) {
         this.loadSources();
         this.importText = '';
-        promptAction.showToast({ 
+        this.getUIContext().getPromptAction().showToast({ 
           message: `成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}` 
         });
       } else {
-        promptAction.showToast({ message: '导入失败，请检查JSON格式' });
+        this.getUIContext().getPromptAction().showToast({ message: '导入失败，请检查JSON格式' });
       }
     } catch (error) {
       logger.error(TAG, `导入失败: ${String(error)}`);
-      promptAction.showToast({ message: '导入失败: ' + String(error) });
+      this.getUIContext().getPromptAction().showToast({ message: '导入失败: ' + String(error) });
     }
     
     this.isImporting = false;
@@ -3928,7 +3930,7 @@ export struct NovelSourceManagementPage {
 
   private openDeleteConfirmDialog(payload: DeleteDialogPayload): void {
     if (payload.sourceIds.length === 0) {
-      promptAction.showToast({ message: '没有可删除的书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有可删除的书源' });
       return;
     }
     this.pendingDeleteSourceIds = payload.sourceIds.slice();
@@ -3946,7 +3948,7 @@ export struct NovelSourceManagementPage {
   private async confirmDeleteDialogAction(): Promise<void> {
     if (this.pendingDeleteSourceIds.length === 0) {
       this.dismissDeleteConfirmDialog();
-      promptAction.showToast({ message: '没有可删除的书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有可删除的书源' });
       return;
     }
     this.isOperating = true;
@@ -3974,9 +3976,9 @@ export struct NovelSourceManagementPage {
     this.loadSources();
 
     if (successCount > 0) {
-      promptAction.showToast({ message: `已删除 ${successCount} 个书源` });
+      this.getUIContext().getPromptAction().showToast({ message: `已删除 ${successCount} 个书源` });
     } else {
-      promptAction.showToast({ message: '删除失败，请稍后重试' });
+      this.getUIContext().getPromptAction().showToast({ message: '删除失败，请稍后重试' });
     }
   }
 
@@ -3996,9 +3998,9 @@ export struct NovelSourceManagementPage {
   async importFromFile(): Promise<void> {
     try {
       // 获取UIAbilityContext
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context) {
-        promptAction.showToast({ message: '无法获取应用上下文' });
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取应用上下文' });
         logger.error(TAG, '无法获取UIAbilityContext');
         return;
       }
@@ -4059,16 +4061,16 @@ export struct NovelSourceManagementPage {
         const message = fileCount > 1 
           ? `从 ${fileCount} 个文件成功导入 ${totalSuccessCount} 个书源${totalFailCount > 0 ? `，${totalFailCount} 个失败` : ''}`
           : `成功导入 ${totalSuccessCount} 个书源${totalFailCount > 0 ? `，${totalFailCount} 个失败` : ''}`;
-        promptAction.showToast({ message });
+        this.getUIContext().getPromptAction().showToast({ message });
         logger.info(TAG, `书源导入完成: 共处理${fileCount}个文件, 成功${totalSuccessCount}个书源, 失败${totalFailCount}个`);
       } else {
-        promptAction.showToast({ message: '导入失败，请检查JSON格式' });
+        this.getUIContext().getPromptAction().showToast({ message: '导入失败，请检查JSON格式' });
         logger.error(TAG, '书源导入失败: 没有成功导入任何书源');
       }
     } catch (error) {
       const errorText = this.resolveImportErrorText(error as ImportErrorValue);
       logger.error(TAG, `从文件导入书源失败: ${errorText}`);
-      promptAction.showToast({ message: '导入失败: ' + errorText });
+      this.getUIContext().getPromptAction().showToast({ message: '导入失败: ' + errorText });
     }
     
     this.isImporting = false;
@@ -4107,7 +4109,7 @@ export struct NovelSourceManagementPage {
       // 获取书源的原始JSON
       const rawSource = this.sourceManager.getSource(source.id);
       if (!rawSource) {
-        promptAction.showToast({ message: '书源不存在' });
+        this.getUIContext().getPromptAction().showToast({ message: '书源不存在' });
         return;
       }
       
@@ -4125,7 +4127,7 @@ export struct NovelSourceManagementPage {
       this.pathStack.pushPathByName('FileEditorPage', params);
     } catch (err) {
       logger.error(TAG, `编辑书源配置失败: ${String(err)}`);
-      promptAction.showToast({ message: '打开编辑器失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '打开编辑器失败' });
     }
   }
 
@@ -4135,7 +4137,7 @@ export struct NovelSourceManagementPage {
   async toggleSourcePin(source: NovelSourceInfo): Promise<void> {
     const rawSource = this.sourceManager.getSource(source.id);
     if (!rawSource) {
-      promptAction.showToast({ message: '书源不存在' });
+      this.getUIContext().getPromptAction().showToast({ message: '书源不存在' });
       return;
     }
     
@@ -4147,11 +4149,11 @@ export struct NovelSourceManagementPage {
     try {
       const dataManager = getNovelDataManager();
       await dataManager.saveSource(rawSource);
-      promptAction.showToast({ message: newWeight > 0 ? '已置顶' : '已取消置顶' });
+      this.getUIContext().getPromptAction().showToast({ message: newWeight > 0 ? '已置顶' : '已取消置顶' });
       this.loadSources();
     } catch (error) {
       logger.error(TAG, `置顶失败: ${String(error)}`);
-      promptAction.showToast({ message: '操作失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '操作失败' });
     }
   }
 
@@ -4241,7 +4243,7 @@ export struct NovelSourceManagementPage {
   private confirmValidationSetupDialog(): void {
     const keyword = this.validationKeywordInput.trim();
     if (keyword.length === 0) {
-      promptAction.showToast({ message: '请输入校验关键词' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入校验关键词' });
       return;
     }
     const normalizedConcurrency = this.normalizeValidationConcurrency(this.validationConcurrencyInput);
@@ -4274,7 +4276,7 @@ export struct NovelSourceManagementPage {
     const scope = this.resolveValidationDialogScope(sourceIds);
     const targetCount = scope.validateAll ? this.allSources.length : scope.sourceIds.length;
     if (targetCount === 0) {
-      promptAction.showToast({ message: '暂无可校验的书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '暂无可校验的书源' });
       return;
     }
     this.validationDialogScope = scope;
@@ -4291,13 +4293,13 @@ export struct NovelSourceManagementPage {
    */
   async doValidateSources(sourceIds?: string[], config?: Partial<ValidationConfig>): Promise<void> {
     if (this.isValidating) {
-      promptAction.showToast({ message: '正在校验中...' });
+      this.getUIContext().getPromptAction().showToast({ message: '正在校验中...' });
       return;
     }
 
     const idsToValidate = sourceIds ? sourceIds.slice() : this.allSources.map(s => s.id);
     if (idsToValidate.length === 0) {
-      promptAction.showToast({ message: '暂无可校验的书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '暂无可校验的书源' });
       return;
     }
     
@@ -4309,7 +4311,7 @@ export struct NovelSourceManagementPage {
     const validator = getNovelSourceValidator();
     
     // 设置 UIAbility 上下文（后台长时任务所需）
-    const context = getContext(this) as common.UIAbilityContext;
+    const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
     validator.setContext(context);
     
     // 后台长时任务由 NovelSourceValidator 内部统一申请和释放，避免重复持有
@@ -4451,7 +4453,7 @@ export struct NovelSourceManagementPage {
         themeState: this.themeState,
         onCancel: () => {
           validator.cancelValidation();
-          promptAction.showToast({ message: '正在取消校验...' });
+          this.getUIContext().getPromptAction().showToast({ message: '正在取消校验...' });
         },
         onControllerReady: (ctrl: ValidationProgressController) => {
           this.validationProgressController = ctrl;
@@ -4484,7 +4486,7 @@ export struct NovelSourceManagementPage {
    */
   async closeInvalidSources(): Promise<void> {
     if (this.lastValidationInvalidSourceIds.length === 0) {
-      promptAction.showToast({ message: '没有失效的书源需要关闭' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有失效的书源需要关闭' });
       return;
     }
 
@@ -4529,7 +4531,7 @@ export struct NovelSourceManagementPage {
       ? `已关闭 ${successCount} 个失效书源，${failCount} 个失败`
       : `已关闭 ${successCount} 个失效书源`;
     
-    promptAction.showToast({ message });
+    this.getUIContext().getPromptAction().showToast({ message });
     
     // 关闭对话框
     if (this.validationDialogController) {
@@ -4598,7 +4600,7 @@ export struct NovelSourceManagementPage {
    */
   async batchPinSources(pin: boolean): Promise<void> {
     if (this.selectedSourceIds.size === 0) {
-      promptAction.showToast({ message: '请先选择书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择书源' });
       return;
     }
 
@@ -4619,7 +4621,7 @@ export struct NovelSourceManagementPage {
       }
     }
 
-    promptAction.showToast({ message: `已${pin ? '置顶' : '取消置顶'} ${count} 个书源` });
+    this.getUIContext().getPromptAction().showToast({ message: `已${pin ? '置顶' : '取消置顶'} ${count} 个书源` });
     this.selectedSourceIds = new Set();
     this.loadSources();
   }
@@ -4629,7 +4631,7 @@ export struct NovelSourceManagementPage {
    */
   async batchSetEnabled(enabled: boolean): Promise<void> {
     if (this.selectedSourceIds.size === 0) {
-      promptAction.showToast({ message: '请先选择书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择书源' });
       return;
     }
 
@@ -4643,7 +4645,7 @@ export struct NovelSourceManagementPage {
       }
     }
 
-    promptAction.showToast({ message: `已${enabled ? '启用' : '禁用'} ${count} 个书源` });
+    this.getUIContext().getPromptAction().showToast({ message: `已${enabled ? '启用' : '禁用'} ${count} 个书源` });
     this.selectedSourceIds = new Set();
     this.loadSources();
   }
@@ -4653,7 +4655,7 @@ export struct NovelSourceManagementPage {
    */
   async batchValidateSources(): Promise<void> {
     if (this.selectedSourceIds.size === 0) {
-      promptAction.showToast({ message: '请先选择书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择书源' });
       return;
     }
 
@@ -4670,7 +4672,7 @@ export struct NovelSourceManagementPage {
    */
   batchDeleteSources(): void {
     if (this.selectedSourceIds.size === 0) {
-      promptAction.showToast({ message: '请先选择书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择书源' });
       return;
     }
 
@@ -4696,7 +4698,7 @@ export struct NovelSourceManagementPage {
   private confirmGroupInputAndAdd(): void {
     const groupName = this.groupInputValue.trim();
     if (groupName.length === 0) {
-      promptAction.showToast({ message: '请输入分组名称' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入分组名称' });
       return;
     }
     this.showGroupInputDialog = false;
@@ -4715,12 +4717,12 @@ export struct NovelSourceManagementPage {
     
     try {
       const count = await this.sourceManager.addSourcesToGroup(sourceIds, groupName);
-      promptAction.showToast({ message: `已将 ${count} 个书源添加到分组 "${groupName}"` });
+      this.getUIContext().getPromptAction().showToast({ message: `已将 ${count} 个书源添加到分组 "${groupName}"` });
       this.selectedSourceIds = new Set();
       this.isMultiSelectMode = false;
       this.loadSources();
     } catch (error) {
-      promptAction.showToast({ message: `添加失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `添加失败: ${String(error)}` });
     }
     
     this.isOperating = false;
@@ -4736,13 +4738,13 @@ export struct NovelSourceManagementPage {
 
   private openGroupPickerDialog(mode: GroupPickerMode): void {
     if (this.selectedSourceIds.size === 0) {
-      promptAction.showToast({ message: '请先选择书源' });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择书源' });
       return;
     }
 
     const existingGroups = this.sourceManager.getAllGroups();
     if (mode === 'remove' && existingGroups.length === 0) {
-      promptAction.showToast({ message: '暂无分组' });
+      this.getUIContext().getPromptAction().showToast({ message: '暂无分组' });
       return;
     }
 
@@ -4789,12 +4791,12 @@ export struct NovelSourceManagementPage {
     
     try {
       const count = await this.sourceManager.removeSourcesFromGroup(sourceIds, groupName);
-      promptAction.showToast({ message: `已从分组 "${groupName}" 移除 ${count} 个书源` });
+      this.getUIContext().getPromptAction().showToast({ message: `已从分组 "${groupName}" 移除 ${count} 个书源` });
       this.selectedSourceIds = new Set();
       this.isMultiSelectMode = false;
       this.loadSources();
     } catch (error) {
-      promptAction.showToast({ message: `移除失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `移除失败: ${String(error)}` });
     }
     
     this.isOperating = false;
@@ -4808,7 +4810,7 @@ export struct NovelSourceManagementPage {
     const existingGroups = this.sourceManager.getAllGroups();
     
     if (existingGroups.length === 0) {
-      promptAction.showToast({ message: '暂无分组' });
+      this.getUIContext().getPromptAction().showToast({ message: '暂无分组' });
       return;
     }
 
@@ -4885,7 +4887,7 @@ export struct NovelSourceManagementPage {
     
     try {
       const count = await this.sourceManager.renameGroup(oldName, newName);
-      promptAction.showToast({ message: `已将 ${count} 个书源的分组从 "${oldName}" 改为 "${newName}"` });
+      this.getUIContext().getPromptAction().showToast({ message: `已将 ${count} 个书源的分组从 "${oldName}" 改为 "${newName}"` });
       this.loadSources();
     } catch (error) {
       logger.error(TAG, `重命名分组失败: ${String(error)}`);
@@ -4930,7 +4932,7 @@ export struct NovelSourceManagementPage {
         }
       }
       
-      promptAction.showToast({ message: `已合并 ${sourceGroups.length} 个分组，影响 ${totalCount} 个书源` });
+      this.getUIContext().getPromptAction().showToast({ message: `已合并 ${sourceGroups.length} 个分组，影响 ${totalCount} 个书源` });
       this.loadSources();
     } catch (error) {
       logger.error(TAG, `合并分组失败: ${String(error)}`);
@@ -4997,7 +4999,7 @@ export struct NovelSourceManagementPage {
         }
       }
       
-      promptAction.showToast({ message: `拆分完成：组一 ${group1Count} 个，组二 ${group2Count} 个` });
+      this.getUIContext().getPromptAction().showToast({ message: `拆分完成：组一 ${group1Count} 个，组二 ${group2Count} 个` });
       this.loadSources();
     } catch (error) {
       logger.error(TAG, `拆分分组失败: ${String(error)}`);
@@ -5017,7 +5019,7 @@ export struct NovelSourceManagementPage {
     
     try {
       const count = await this.sourceManager.deleteGroup(groupName);
-      promptAction.showToast({ message: `已删除分组 "${groupName}"，影响 ${count} 个书源` });
+      this.getUIContext().getPromptAction().showToast({ message: `已删除分组 "${groupName}"，影响 ${count} 个书源` });
       this.loadSources();
     } catch (error) {
       logger.error(TAG, `删除分组失败: ${String(error)}`);

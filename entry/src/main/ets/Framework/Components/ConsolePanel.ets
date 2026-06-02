@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: src/main/ets/Framework/Components/ConsolePanel.ets
 /**
  * 控制台面板组件
@@ -431,9 +432,9 @@ export struct ConsolePanelComponent {
       ].join('\n');
 
       // 使用HarmonyOS的文件写入API
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, content);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, content);
+      SafeFileUtils.closeSync(file);
       logger.info('ConsolePanel', `错误日志已保存到: ${fileName}`);
     } catch (error) {
       logger.error('ConsolePanel', '生成日志文件失败: ' + (error as Error).message);
@@ -473,9 +474,9 @@ export struct ConsolePanelComponent {
       ].join('\n');
 
       // 使用HarmonyOS的文件写入API
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, content);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, content);
+      SafeFileUtils.closeSync(file);
       logger.info('ConsolePanel', `完整日志已保存到: ${fileName}`);
     } catch (error) {
       logger.error('ConsolePanel', '导出日志文件失败: ' + (error as Error).message);
@@ -540,9 +541,9 @@ export struct ConsolePanelComponent {
       ].join('\n');
 
       // 使用HarmonyOS的文件写入API
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, content);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, content);
+      SafeFileUtils.closeSync(file);
       logger.warn('ConsolePanel', `📊 性能报告已保存到: ${fileName}`);
     } catch (error) {
       logger.error('ConsolePanel', '生成性能报告失败: ' + (error as Error).message);

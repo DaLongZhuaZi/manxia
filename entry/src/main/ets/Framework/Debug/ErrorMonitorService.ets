@@ -1,4 +1,5 @@
-﻿// 文件路径: entry/src/main/ets/Framework/Debug/ErrorMonitorService.ets
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+// 文件路径: entry/src/main/ets/Framework/Debug/ErrorMonitorService.ets
 /**
  * 错误监控服务
  * 通过 LogCollector 监听 ERROR/FATAL 级别日志，
@@ -196,7 +197,7 @@ export class ErrorMonitorService {
 
     try {
       // 若路径存在且是目录，listFileSync 可正常执行
-      fs.listFileSync(this.errorLogsDir);
+      SafeFileUtils.listFileSync(this.errorLogsDir);
       return;
     } catch {
       // 路径不存在或不是目录，继续修复
@@ -204,12 +205,12 @@ export class ErrorMonitorService {
 
     try {
       // 若存在同名文件，先尝试删除
-      fs.unlinkSync(this.errorLogsDir);
+      SafeFileUtils.unlinkSync(this.errorLogsDir);
     } catch {
       // 忽略，可能本来就不存在
     }
 
-    fs.mkdirSync(this.errorLogsDir, true);
+    SafeFileUtils.mkdirSync(this.errorLogsDir, true);
   }
 
   private onLogEntry(entry: LogEntry): void {
@@ -442,12 +443,12 @@ export class ErrorMonitorService {
   }
 
   private writeTextFile(filePath: string, content: string): void {
-    const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
     try {
-      fs.writeSync(file.fd, content);
+      SafeFileUtils.writeSync(file.fd, content);
     } finally {
       try {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
       } catch {
         // ignore close failure
       }
@@ -513,7 +514,7 @@ export class ErrorMonitorService {
       }
       const logsDir = downloadDirManager.ensureDirectory('logs');
       const targetPath = `${logsDir}/${fileName}`;
-      fs.copyFileSync(sourcePath, targetPath);
+      SafeFileUtils.copyFileSync(sourcePath, targetPath);
       console.log(`[NGF] ${TAG}: 错误日志已复制到 Download 目录`);
     } catch {
       // 复制失败不影响主流程
@@ -522,7 +523,7 @@ export class ErrorMonitorService {
 
   private cleanOldErrorLogs(): void {
     try {
-      const files = fs.listFileSync(this.errorLogsDir);
+      const files = SafeFileUtils.listFileSync(this.errorLogsDir);
       const errorFiles = files.filter((f: string) => f.startsWith('error_') && f.endsWith('.txt'));
 
       if (errorFiles.length <= 20) {
@@ -533,7 +534,7 @@ export class ErrorMonitorService {
       const toDelete = errorFiles.slice(0, errorFiles.length - 20);
       for (const fileName of toDelete) {
         try {
-          fs.unlinkSync(`${this.errorLogsDir}/${fileName}`);
+          SafeFileUtils.unlinkSync(`${this.errorLogsDir}/${fileName}`);
         } catch {
           // ignore
         }

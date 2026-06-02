@@ -1,3 +1,4 @@
+import { UIContext } from '@ohos.arkui.UIContext';
 // 文件路径: entry/src/main/ets/pages/settings/TrackingSettingsSubPage.ets
 /**
  * 进度记录与服务器设置子页面
@@ -5,7 +6,7 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
@@ -385,25 +386,23 @@ export struct TrackingSettingsSubPage {
   }
 
   private showAccountDialog(tracker: TrackerInfo, username: string): void {
-    import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showDialog({
-        title: tracker.name,
-        message: `已登录账户: ${username}`,
-        buttons: [
-          {
-            text: '登出',
-            color: '#FF6B6B'
-          },
-          {
-            text: '取消',
-            color: '#999999'
-          }
-        ]
-      }).then((result) => {
-        if (result.index === 0) {
-          this.handleLogout(tracker);
+    this.getUIContext().getPromptAction().showDialog({
+      title: tracker.name,
+      message: `已登录账户: ${username}`,
+      buttons: [
+        {
+          text: '登出',
+          color: '#FF6B6B'
+        },
+        {
+          text: '取消',
+          color: '#999999'
         }
-      });
+      ]
+    }).then((result: promptAction.ShowDialogSuccessResponse) => {
+      if (result.index === 0) {
+        this.handleLogout(tracker);
+      }
     });
   }
 
@@ -423,7 +422,7 @@ export struct TrackingSettingsSubPage {
     }
     this.refreshTrackerStatus();
     import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showToast({
+      AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
         message: `已从 ${tracker.name} 登出`,
         duration: 2000
       });
@@ -432,7 +431,7 @@ export struct TrackingSettingsSubPage {
 
   private showComingSoonToast(serviceName: string): void {
     import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showToast({
+      AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
         message: `${serviceName} 登录功能即将推出`,
         duration: 2000
       });
@@ -874,7 +873,7 @@ export struct TrackingSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])

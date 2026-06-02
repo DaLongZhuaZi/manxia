@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Managers/FontManager.ets
 /**
  * 全局字体管理器
@@ -5,12 +7,13 @@
  * 支持系统字体和自定义字体文件
  */
 
-import font from '@ohos.font';
+import { UIContext } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { parseFontName, extractFileNameWithoutExt, FontNameInfo } from '../Utils/FontNameParser';
+import { uiContextManager } from './UIContextManager';
 
 const TAG = 'FontManager';
 const PREFERENCES_NAME = 'font_settings';
@@ -215,7 +218,7 @@ export class FontManager {
       // 加载自定义字体列表
       await this.loadCustomFonts();
       
-      // 注册已保存的自定义字体
+      // 注册已保存的自定义字体。冷启动早期可能还没有 UIContext，此时会延迟到页面可用后重试。
       await this.registerSavedCustomFonts();
       
       this.isInitialized = true;
@@ -235,15 +238,15 @@ export class FontManager {
    */
   private async ensureFontsDir(): Promise<void> {
     try {
-      const exists = fileIo.accessSync(this.fontsDirPath);
+      const exists = SafeFileUtils.accessSync(this.fontsDirPath);
       if (!exists) {
-        fileIo.mkdirSync(this.fontsDirPath);
+        SafeFileUtils.mkdirSync(this.fontsDirPath);
         logger.info(TAG, `创建字体目录: ${this.fontsDirPath}`);
       }
     } catch (error) {
       // 目录不存在，创建它
       try {
-        fileIo.mkdirSync(this.fontsDirPath);
+        SafeFileUtils.mkdirSync(this.fontsDirPath);
         logger.info(TAG, `创建字体目录: ${this.fontsDirPath}`);
       } catch (mkdirError) {
         logger.error(TAG, `创建字体目录失败: ${String(mkdirError)}`);
@@ -261,7 +264,7 @@ export class FontManager {
       const settingsJson = await this.preferences.get('settings', '') as string;
       logger.info(TAG, `加载字体设置JSON: ${settingsJson ? settingsJson.substring(0, 200) : '空'}`);
       if (settingsJson) {
-        const saved = JSON.parse(settingsJson) as FontSettings;
+        const saved = SafeUtils.parseObj(settingsJson) as FontSettings;
         this.settings = this.mergeSettings(saved);
         logger.info(TAG, `字体设置加载成功: appFontType=${this.settings.appFontType}, appSystemFontId=${this.settings.appSystemFontId}, appCustomFontId=${this.settings.appCustomFontId}`);
       } else {
@@ -296,7 +299,7 @@ export class FontManager {
     try {
       const fontsJson = await this.preferences.get('custom_fonts', '') as string;
       if (fontsJson) {
-        this.customFonts = JSON.parse(fontsJson) as CustomFont[];
+        this.customFonts = SafeUtils.parseArr(fontsJson) as CustomFont[];
         logger.info(TAG, `加载了 ${this.customFonts.length} 个自定义字体`);
       }
     } catch (error) {
@@ -322,10 +325,19 @@ export class FontManager {
   /**
    * 注册已保存的自定义字体
    */
-  private async registerSavedCustomFonts(): Promise<void> {
+  private async registerSavedCustomFonts(uiContext?: UIContext | null): Promise<void> {
+    const targetUIContext: UIContext | null = uiContext ?? uiContextManager.getUIContext();
+    if (!targetUIContext) {
+      this.customFonts.forEach((customFont: CustomFont) => {
+        customFont.isRegistered = false;
+      });
+      logger.warn(TAG, 'UIContext 不可用，已延迟注册已保存的自定义字体');
+      return;
+    }
+
     for (const customFont of this.customFonts) {
       try {
-        await this.registerFont(customFont);
+        await this.registerFont(customFont, targetUIContext);
         customFont.isRegistered = true;
       } catch (error) {
         logger.warn(TAG, `注册字体 ${customFont.displayName} 失败: ${String(error)}`);
@@ -335,13 +347,33 @@ export class FontManager {
   }
 
   /**
+   * 在当前 UIContext 中重新注册所有自定义字体。
+   * API23 的字体注册绑定 UIContext，冷启动初始化早于页面创建时需要在页面出现后重放注册。
+   */
+  public async registerCustomFontsForCurrentUIContext(): Promise<void> {
+    await this.registerCustomFontsForUIContext(uiContextManager.getUIContext());
+  }
+
+  /**
+   * 在指定 UIContext 中重新注册所有自定义字体。
+   */
+  public async registerCustomFontsForUIContext(uiContext: UIContext | null): Promise<void> {
+    await this.registerSavedCustomFonts(uiContext);
+    this.syncToAppStorage();
+  }
+
+  /**
    * 注册字体到系统
    */
-  private async registerFont(customFont: CustomFont): Promise<void> {
+  private async registerFont(customFont: CustomFont, uiContext?: UIContext | null): Promise<void> {
     try {
+      const targetUIContext: UIContext | null = uiContext ?? uiContextManager.getUIContext();
+      if (!targetUIContext) {
+        throw new Error('UIContext 不可用，无法注册字体');
+      }
       // 使用file://协议的URI格式
-      const fontUri = `file://${customFont.filePath}`;
-      font.registerFont({
+      const fontUri = customFont.filePath.startsWith('file://') ? customFont.filePath : `file://${customFont.filePath}`;
+      targetUIContext.getFont().registerFont({
         familyName: customFont.familyName,
         familySrc: fontUri
       });
@@ -352,11 +384,24 @@ export class FontManager {
   }
 
   /**
+   * 确保指定自定义字体已注册到当前或指定 UIContext。
+   */
+  private async ensureCustomFontRegistered(fontId: string, scene: FontScene, uiContext?: UIContext | null): Promise<void> {
+    const customFont = this.customFonts.find((font: CustomFont) => font.id === fontId);
+    if (!customFont) {
+      throw new Error(`未找到${scene}自定义字体: ${fontId}`);
+    }
+
+    await this.registerFont(customFont, uiContext);
+    customFont.isRegistered = true;
+  }
+
+  /**
    * 添加自定义字体
    * @param displayName 用户提供的显示名称（如果为空则自动解析）
    * @param sourceFilePath 源字体文件路径
    */
-  async addCustomFont(displayName: string, sourceFilePath: string): Promise<CustomFont> {
+  async addCustomFont(displayName: string, sourceFilePath: string, uiContext?: UIContext | null): Promise<CustomFont> {
     const id = `custom_${Date.now()}`;
     
     // 获取文件扩展名
@@ -408,7 +453,7 @@ export class FontManager {
       };
 
       // 注册字体
-      await this.registerFont(customFont);
+      await this.registerFont(customFont, uiContext);
       customFont.isRegistered = true;
       
       // 添加到列表
@@ -420,7 +465,7 @@ export class FontManager {
     } catch (error) {
       // 清理可能已复制的文件
       try {
-        fileIo.unlinkSync(localFilePath);
+        SafeFileUtils.unlinkSync(localFilePath);
       } catch (e) {
         // 忽略清理错误
       }
@@ -464,20 +509,20 @@ export class FontManager {
   private async copyFontFile(sourcePath: string, destPath: string): Promise<void> {
     try {
       // 打开源文件
-      const sourceFile = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
+      const sourceFile = SafeFileUtils.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
       
       // 创建目标文件
-      const destFile = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      const destFile = SafeFileUtils.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       
       // 读取并写入
-      const stat = fileIo.statSync(sourceFile.fd);
+      const stat = SafeFileUtils.statSync(sourceFile.fd);
       const buffer = new ArrayBuffer(stat.size);
-      fileIo.readSync(sourceFile.fd, buffer);
-      fileIo.writeSync(destFile.fd, buffer);
+      SafeFileUtils.readSync(sourceFile.fd, buffer);
+      SafeFileUtils.writeSync(destFile.fd, buffer);
       
       // 关闭文件
-      fileIo.closeSync(sourceFile);
-      fileIo.closeSync(destFile);
+      SafeFileUtils.closeSync(sourceFile);
+      SafeFileUtils.closeSync(destFile);
       
       logger.info(TAG, `字体文件复制完成: ${stat.size} 字节`);
     } catch (error) {
@@ -509,7 +554,7 @@ export class FontManager {
 
     // 删除字体文件
     try {
-      fileIo.unlinkSync(customFont.filePath);
+      SafeFileUtils.unlinkSync(customFont.filePath);
       logger.info(TAG, `字体文件已删除: ${customFont.filePath}`);
     } catch (error) {
       logger.warn(TAG, `删除字体文件失败: ${String(error)}`);
@@ -614,7 +659,10 @@ export class FontManager {
   /**
    * 设置APP界面字体
    */
-  async setAppFont(fontType: FontType, fontId: string): Promise<void> {
+  async setAppFont(fontType: FontType, fontId: string, uiContext?: UIContext | null): Promise<void> {
+    if (fontType === FontType.CUSTOM) {
+      await this.ensureCustomFontRegistered(fontId, FontScene.APP_UI, uiContext);
+    }
     this.settings.appFontType = fontType;
     if (fontType === FontType.SYSTEM) {
       this.settings.appSystemFontId = fontId;
@@ -637,7 +685,10 @@ export class FontManager {
   /**
    * 设置小说阅读字体
    */
-  async setNovelFont(fontType: FontType, fontId: string): Promise<void> {
+  async setNovelFont(fontType: FontType, fontId: string, uiContext?: UIContext | null): Promise<void> {
+    if (fontType === FontType.CUSTOM) {
+      await this.ensureCustomFontRegistered(fontId, FontScene.NOVEL, uiContext);
+    }
     this.settings.novelFontType = fontType;
     if (fontType === FontType.SYSTEM) {
       this.settings.novelSystemFontId = fontId;
@@ -669,7 +720,10 @@ export class FontManager {
   /**
    * 设置电子书阅读字体
    */
-  async setEbookFont(fontType: FontType, fontId: string): Promise<void> {
+  async setEbookFont(fontType: FontType, fontId: string, uiContext?: UIContext | null): Promise<void> {
+    if (fontType === FontType.CUSTOM) {
+      await this.ensureCustomFontRegistered(fontId, FontScene.EBOOK, uiContext);
+    }
     this.settings.ebookFontType = fontType;
     if (fontType === FontType.SYSTEM) {
       this.settings.ebookSystemFontId = fontId;

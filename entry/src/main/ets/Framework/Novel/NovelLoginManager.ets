@@ -1,3 +1,5 @@
+﻿import { UIContext } from '@ohos.arkui.UIContext';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 小说书源登录管理器
  * 处理书源的登录逻辑、Cookie管理
@@ -120,7 +122,7 @@ export class NovelLoginManager {
       const statusJson = await this.dataPreferences.get(LOGIN_STATUS_STORAGE_KEY, '') as string;
       logger.debug(TAG, `加载持久化数据: statusJson长度=${statusJson ? statusJson.length : 0}`);
       if (statusJson) {
-        const statusArray = JSON.parse(statusJson) as SourceLoginStatus[];
+        const statusArray = SafeUtils.parseArr(statusJson) as SourceLoginStatus[];
         statusArray.forEach((status: SourceLoginStatus) => {
           this.loginStatus.set(status.sourceId, status);
           if (status.cookies) {
@@ -136,7 +138,7 @@ export class NovelLoginManager {
       // 加载登录信息
       const loginInfoJson = await this.dataPreferences.get(LOGIN_INFO_STORAGE_KEY, '') as string;
       if (loginInfoJson) {
-        const loginInfoMap = JSON.parse(loginInfoJson) as Record<string, string>;
+        const loginInfoMap = SafeUtils.parseObj(loginInfoJson) as Record<string, string>;
         const keys = Object.keys(loginInfoMap);
         for (let i = 0; i < keys.length; i++) {
           this.loginInfoStore.set(keys[i], loginInfoMap[keys[i]]);
@@ -147,7 +149,7 @@ export class NovelLoginManager {
       // 加载登录头信息
       const loginHeaderJson = await this.dataPreferences.get(LOGIN_HEADER_STORAGE_KEY, '') as string;
       if (loginHeaderJson) {
-        const loginHeaderMap = JSON.parse(loginHeaderJson) as Record<string, string>;
+        const loginHeaderMap = SafeUtils.parseObj(loginHeaderJson) as Record<string, string>;
         const keys = Object.keys(loginHeaderMap);
         for (let i = 0; i < keys.length; i++) {
           this.loginHeaderStore.set(keys[i], loginHeaderMap[keys[i]]);
@@ -158,7 +160,7 @@ export class NovelLoginManager {
       // 加载书源变量
       const sourceVariableJson = await this.dataPreferences.get(SOURCE_VARIABLE_STORAGE_KEY, '') as string;
       if (sourceVariableJson) {
-        const sourceVariableMap = JSON.parse(sourceVariableJson) as Record<string, string>;
+        const sourceVariableMap = SafeUtils.parseObj(sourceVariableJson) as Record<string, string>;
         const keys = Object.keys(sourceVariableMap);
         for (let i = 0; i < keys.length; i++) {
           this.sourceVariableStore.set(keys[i], sourceVariableMap[keys[i]]);
@@ -169,7 +171,7 @@ export class NovelLoginManager {
       // 加载书源数据
       const sourceDataJson = await this.dataPreferences.get(SOURCE_DATA_STORAGE_KEY, '') as string;
       if (sourceDataJson) {
-        const sourceDataMap = JSON.parse(sourceDataJson) as Record<string, string>;
+        const sourceDataMap = SafeUtils.parseObj(sourceDataJson) as Record<string, string>;
         const keys = Object.keys(sourceDataMap);
         for (let i = 0; i < keys.length; i++) {
           this.sourceDataStore.set(keys[i], sourceDataMap[keys[i]]);
@@ -180,7 +182,7 @@ export class NovelLoginManager {
       // 加载登录表单数据
       const loginFormDataJson = await this.dataPreferences.get(LOGIN_FORM_DATA_STORAGE_KEY, '') as string;
       if (loginFormDataJson) {
-        const loginFormDataMap = JSON.parse(loginFormDataJson) as Record<string, Record<string, string>>;
+        const loginFormDataMap = SafeUtils.parseObj(loginFormDataJson) as Record<string, Record<string, string>>;
         const keys = Object.keys(loginFormDataMap);
         for (let i = 0; i < keys.length; i++) {
           this.loginFormDataStore.set(keys[i], loginFormDataMap[keys[i]]);
@@ -292,7 +294,7 @@ export class NovelLoginManager {
       
       logger.debug(TAG, `预处理后的loginUi: ${jsonStr.substring(0, 200)}...`);
       
-      const parsed = JSON.parse(jsonStr) as LegadoLoginUiItem[];
+      const parsed = SafeUtils.parseArr(jsonStr) as LegadoLoginUiItem[];
       return parsed.map((item): LoginUiItem => {
         const uiItem: LoginUiItem = {
           type: item.type as 'text' | 'password' | 'button' | 'checkbox' | 'spinner',
@@ -457,7 +459,7 @@ export class NovelLoginManager {
     if (result.success) {
       // 解析结果
       try {
-        const loginResult = JSON.parse(result.result) as Record<string, ESObject>;
+        const loginResult = SafeUtils.parseObj(result.result) as Record<string, ESObject>;
         if (loginResult['success']) {
           this.setLoggedIn(source.bookSourceUrl, true, loginResult['cookies'] as Record<string, string>);
           return { 
@@ -598,7 +600,7 @@ export class NovelLoginManager {
     
     try {
       // 尝试解析为JSON
-      const result = JSON.parse(resultStr) as Record<string, ESObject>;
+      const result = SafeUtils.parseObj(resultStr) as Record<string, ESObject>;
       
       // 检查是否有loginHeader需要保存
       if (result['loginHeader']) {
@@ -637,7 +639,7 @@ export class NovelLoginManager {
     for (const toast of toasts) {
       try {
         const duration = toast.type === 'long' ? 3500 : 2000;
-        promptAction.showToast({
+        AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
           message: toast.msg,
           duration: duration
         });
@@ -883,7 +885,7 @@ export class NovelLoginManager {
     const info = this.getLoginInfo(sourceId);
     if (!info) return {};
     try {
-      return JSON.parse(info) as Record<string, string>;
+      return SafeUtils.parseObj(info) as Record<string, string>;
     } catch (e) {
       return {};
     }
@@ -904,7 +906,7 @@ export class NovelLoginManager {
     this.loginHeaderStore.set(sourceId, header);
     // 如果header中包含Cookie，也保存到cookies中
     try {
-      const headerMap = JSON.parse(header) as Record<string, string>;
+      const headerMap = SafeUtils.parseObj(header) as Record<string, string>;
       const cookie = headerMap['Cookie'] || headerMap['cookie'];
       if (cookie) {
         this.parseCookieString(sourceId, cookie);
@@ -929,7 +931,7 @@ export class NovelLoginManager {
     const header = this.getLoginHeader(sourceId);
     if (!header) return {};
     try {
-      return JSON.parse(header) as Record<string, string>;
+      return SafeUtils.parseObj(header) as Record<string, string>;
     } catch (e) {
       return {};
     }

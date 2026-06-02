@@ -1,4 +1,4 @@
-import { common } from '@kit.AbilityKit';
+﻿import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { Manga } from '../Models/MangaModels';
@@ -102,7 +102,7 @@ export struct KomgaMangaDetailPage {
   }
 
   private toast(message: string): void {
-    promptAction.showToast({ message: message, duration: 1800 });
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 1800 });
   }
 
   private getEffectiveInstanceId(): string {

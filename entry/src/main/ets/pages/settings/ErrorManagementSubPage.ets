@@ -1,3 +1,4 @@
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/settings/ErrorManagementSubPage.ets
 /**
  * 错误管理子页面
@@ -323,7 +324,7 @@ export struct ErrorManagementSubPage {
     this.showClearRangePanel = true;
     this.clearPanelOpacity = 0;
     this.clearPanelScale = 0.92;
-    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
       this.clearPanelOpacity = 1;
       this.clearPanelScale = 1;
     });
@@ -334,7 +335,7 @@ export struct ErrorManagementSubPage {
       clearTimeout(this.clearPanelCloseTimer);
       this.clearPanelCloseTimer = -1;
     }
-    animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
       this.clearPanelOpacity = 0;
       this.clearPanelScale = 0.92;
     });
@@ -406,7 +407,7 @@ export struct ErrorManagementSubPage {
     this.isClearing = true;
     this.closeClearRangePanel();
 
-    animateTo({ duration: 180, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseInOut }, () => {
       this.recordsListOpacity = 0;
       this.recordsListScale = 0.98;
     });
@@ -425,7 +426,7 @@ export struct ErrorManagementSubPage {
 
       this.recordsListOpacity = 0;
       this.recordsListScale = 1.02;
-      animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
         this.recordsListOpacity = 1;
         this.recordsListScale = 1;
       });
@@ -578,7 +579,7 @@ export struct ErrorManagementSubPage {
       return [];
     }
     try {
-      return fs.listFileSync(dirPath);
+      return SafeFileUtils.listFileSync(dirPath);
     } catch {
       return [];
     }
@@ -591,7 +592,7 @@ export struct ErrorManagementSubPage {
     this.increaseDeleteScopeCount(stats, scope);
     stats.attemptedDeletes++;
     try {
-      fs.unlinkSync(filePath);
+      SafeFileUtils.unlinkSync(filePath);
       stats.successfulDeletes++;
     } catch (error) {
       stats.failedDeletes++;
@@ -685,9 +686,9 @@ export struct ErrorManagementSubPage {
       throw new Error('无法获取应用上下文');
     }
     const tempPath = `${context.cacheDir}/${fileName}`;
-    const tmpFile = fs.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-    fs.writeSync(tmpFile.fd, content);
-    fs.closeSync(tmpFile);
+    const tmpFile = SafeFileUtils.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+    SafeFileUtils.writeSync(tmpFile.fd, content);
+    SafeFileUtils.closeSync(tmpFile);
 
     const documentPicker = new picker.DocumentViewPicker(context);
     const opts = new picker.DocumentSaveOptions();
@@ -695,18 +696,18 @@ export struct ErrorManagementSubPage {
     const result = await documentPicker.save(opts);
     if (result && result.length > 0) {
       const targetUri = result[0];
-      const src = fs.openSync(tempPath, fs.OpenMode.READ_ONLY);
-      const dst = fs.openSync(targetUri, fs.OpenMode.WRITE_ONLY);
+      const src = SafeFileUtils.openSync(tempPath, fs.OpenMode.READ_ONLY);
+      const dst = SafeFileUtils.openSync(targetUri, fs.OpenMode.WRITE_ONLY);
       const buf = new ArrayBuffer(4096);
       let readLen = 0;
-      while ((readLen = fs.readSync(src.fd, buf)) > 0) {
-        fs.writeSync(dst.fd, buf, { length: readLen });
+      while ((readLen = SafeFileUtils.readSync(src.fd, buf)) > 0) {
+        SafeFileUtils.writeSync(dst.fd, buf, { length: readLen });
       }
-      fs.closeSync(src);
-      fs.closeSync(dst);
+      SafeFileUtils.closeSync(src);
+      SafeFileUtils.closeSync(dst);
       logger.info(TAG, `错误报告已导出 ${targetUri}`);
     }
-    fs.unlinkSync(tempPath);
+    SafeFileUtils.unlinkSync(tempPath);
   }
 
   // ─── 工具 ───
@@ -1667,7 +1668,7 @@ export struct ErrorManagementSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])

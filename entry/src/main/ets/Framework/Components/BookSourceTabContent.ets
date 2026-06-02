@@ -1,4 +1,4 @@
-// 文件路径: src/main/ets/Framework/Components/BookSourceTabContent.ets
+﻿// 文件路径: src/main/ets/Framework/Components/BookSourceTabContent.ets
 // 职责: 书源标签页内容组件，从MainMenuPage提取的独立组件
 
 import { logger } from '../../Utils/Logger';
@@ -167,7 +167,7 @@ export struct BookSourceTabContent {
       await this.ensureBookSourceCacheReady();
       if (!this.bookSourceModuleInitialized) {
         this.isLoadingBookSource = this.bookSourceBooks.length === 0;
-        const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+        const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
         const initializer = getNovelInitializer();
         if (!initializer.isReady()) {
           logger.info(TAG, '初始化小说模块...');

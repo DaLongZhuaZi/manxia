@@ -26,6 +26,9 @@ import { AntiCrawlerConfig, CloudflareConfig, CaptchaConfig, IpBlockConfig } fro
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 
 const TAG: string = 'SourceSettingsPage';
 const COPYMANGA_SOURCE_PKG: string = 'com.manxia.extension.zh.copymangawebview';
@@ -1128,10 +1131,12 @@ export struct SourceSettingsPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Scroll(this.scroller) {
@@ -1178,8 +1183,19 @@ export struct SourceSettingsPage {
               .width(this.isLandscape ? '48%' : '100%')
               .padding(16)
               .margin({ bottom: 16 })
-              .borderRadius(12)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
             }
 
             // 图源自定义设置分组（仅当有自定义设置时显示）
@@ -1312,8 +1328,19 @@ export struct SourceSettingsPage {
               .width(this.isLandscape ? '48%' : '100%')
               .padding(16)
               .margin({ bottom: 16 })
-              .borderRadius(12)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+              .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+              .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+              .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+              .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+              .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+              .clip(true)
+              .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+              .shadow({
+                radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+                color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+                offsetX: 0,
+                offsetY: 8
+              })
             }
 
             // 基础设置分组
@@ -1627,8 +1654,19 @@ export struct SourceSettingsPage {
             .width(this.isLandscape ? '48%' : '100%')
             .padding(16)
             .margin({ bottom: 16 })
-            .borderRadius(12)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
 
             // UserAgent设置分组
             Column() {
@@ -1735,8 +1773,19 @@ export struct SourceSettingsPage {
             .width(this.isLandscape ? '48%' : '100%')
             .padding(16)
             .margin({ bottom: 16 })
-            .borderRadius(12)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
 
             // 登录设置分组
             Column() {
@@ -1891,8 +1940,19 @@ export struct SourceSettingsPage {
             }
             .width(this.isLandscape ? '48%' : '100%')
             .padding(16)
-            .borderRadius(12)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
 
             // 漫画默认阅读设置分组（仅漫画图源显示）
             if (this.sourceType === 'manga') {
@@ -2071,8 +2131,19 @@ export struct SourceSettingsPage {
             .width(this.isLandscape ? '48%' : '100%')
             .padding(16)
             .margin({ top: 16 })
-            .borderRadius(12)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
             }
 
             // 电子书默认阅读设置分组（仅电子书图源显示）
@@ -2294,8 +2365,19 @@ export struct SourceSettingsPage {
             .width(this.isLandscape ? '48%' : '100%')
             .padding(16)
             .margin({ top: 16 })
-            .borderRadius(12)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
             }
           }
           .width('100%')

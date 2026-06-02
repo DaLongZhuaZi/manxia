@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Tab内容缓存管理器
  * 持久化缓存书源(BOOK_SOURCE)、Suwayomi 和 Komga 三个 Tab 的完整内容数据
@@ -116,21 +117,21 @@ export class TabContentCacheManager {
       // 加载书源缓存
       const bookSourceJson = await dataPreferences.get(this.BOOK_SOURCE_KEY, '') as string;
       if (bookSourceJson) {
-        this.bookSourceCache = JSON.parse(bookSourceJson) as BookSourceCacheData;
+        this.bookSourceCache = SafeUtils.parseObj(bookSourceJson) as BookSourceCacheData;
         logger.info(TAG, `加载书源缓存: ${this.bookSourceCache.bookSourceBooks.length} 本书, 书源: ${this.bookSourceCache.selectedBookSourceName}`);
       }
 
       // 加载Suwayomi缓存
       const suwayomiJson = await dataPreferences.get(this.SUWAYOMI_KEY, '') as string;
       if (suwayomiJson) {
-        this.suwayomiCache = JSON.parse(suwayomiJson) as SuwayomiCacheData;
+        this.suwayomiCache = SafeUtils.parseObj(suwayomiJson) as SuwayomiCacheData;
         logger.info(TAG, `加载Suwayomi缓存: ${this.suwayomiCache.mangas.length} 部漫画, ${this.suwayomiCache.categories.length} 个分类`);
       }
 
       // 加载Komga缓存
       const komgaJson = await dataPreferences.get(this.KOMGA_KEY, '') as string;
       if (komgaJson) {
-        this.komgaCache = JSON.parse(komgaJson) as KomgaCacheData;
+        this.komgaCache = SafeUtils.parseObj(komgaJson) as KomgaCacheData;
         logger.info(TAG, `加载Komga缓存: ${this.komgaCache.items.length} 个条目, ${this.komgaCache.instances.length} 个实例`);
       }
 

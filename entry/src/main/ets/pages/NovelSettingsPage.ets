@@ -188,7 +188,7 @@ export struct NovelSettingsPage {
   async loadSettings(): Promise<void> {
     this.isLoading = true;
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
       
       this.settings = {
@@ -212,7 +212,7 @@ export struct NovelSettingsPage {
    */
   async saveSettings(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
       
       await store.put('searchConcurrency', this.settings.searchConcurrency);
@@ -226,7 +226,7 @@ export struct NovelSettingsPage {
       logger.info(TAG, `设置保存完成`);
     } catch (error) {
       logger.error(TAG, `保存设置失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存设置失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '保存设置失败' });
     }
   }
 
@@ -435,7 +435,7 @@ export struct NovelSettingsPage {
           (value: boolean) => {
             this.settings.autoRefreshSource = value;
             this.saveSettings();
-            promptAction.showToast({ message: value ? '已开启自动刷新' : '已关闭自动刷新' });
+            this.getUIContext().getPromptAction().showToast({ message: value ? '已开启自动刷新' : '已关闭自动刷新' });
           }
         )
         
@@ -451,7 +451,7 @@ export struct NovelSettingsPage {
           (value: boolean) => {
             this.settings.enableSearchHistory = value;
             this.saveSettings();
-            promptAction.showToast({ message: value ? '已开启搜索历史' : '已关闭搜索历史' });
+            this.getUIContext().getPromptAction().showToast({ message: value ? '已开启搜索历史' : '已关闭搜索历史' });
           }
         )
         
@@ -551,7 +551,7 @@ export struct NovelSettingsPage {
   showConcurrencyPicker(): void {
     const options: number[] = [1, 3, 5, 8, 10, 15, 20];
     
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '选择搜索并发数',
       buttons: [
         { text: '1 个书源', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -565,7 +565,7 @@ export struct NovelSettingsPage {
       if (result.index >= 0 && result.index < values.length) {
         this.settings.searchConcurrency = values[result.index];
         this.saveSettings();
-        promptAction.showToast({ message: `已设置为同时搜索 ${this.settings.searchConcurrency} 个书源` });
+        this.getUIContext().getPromptAction().showToast({ message: `已设置为同时搜索 ${this.settings.searchConcurrency} 个书源` });
       }
     }).catch(() => {
       // 用户取消
@@ -576,7 +576,7 @@ export struct NovelSettingsPage {
    * 显示章节数选择器
    */
   showChapterCountPicker(): void {
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '选择默认加载章节数',
       buttons: [
         { text: '20 章', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -591,7 +591,7 @@ export struct NovelSettingsPage {
         this.settings.defaultLoadChapters = values[result.index];
         this.saveSettings();
         const msg = this.settings.defaultLoadChapters >= 9999 ? '已设置为加载全部章节' : `已设置为每次加载 ${this.settings.defaultLoadChapters} 章`;
-        promptAction.showToast({ message: msg });
+        this.getUIContext().getPromptAction().showToast({ message: msg });
       }
     }).catch(() => {
       // 用户取消
@@ -602,7 +602,7 @@ export struct NovelSettingsPage {
    * 显示搜索历史条数选择器
    */
   showHistoryCountPicker(): void {
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '选择最大搜索历史条数',
       buttons: [
         { text: '10 条', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -617,7 +617,7 @@ export struct NovelSettingsPage {
         this.settings.maxSearchHistory = values[result.index];
         this.saveSettings();
         const msg = this.settings.maxSearchHistory >= 9999 ? '已设置为不限制搜索历史条数' : `已设置为最多保存 ${this.settings.maxSearchHistory} 条记录`;
-        promptAction.showToast({ message: msg });
+        this.getUIContext().getPromptAction().showToast({ message: msg });
       }
     }).catch(() => {
       // 用户取消

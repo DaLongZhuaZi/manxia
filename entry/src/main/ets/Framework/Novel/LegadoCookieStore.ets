@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Legado Cookie存储管理
  * 提供Cookie的持久化存储和管理功能
@@ -68,7 +69,7 @@ export class LegadoCookieStore {
     
     try {
       const cookieData = await this.dataPreferences.get('cookies', '{}');
-      const parsed = JSON.parse(cookieData as string) as Record<string, Record<string, CookieItem>>;
+      const parsed = SafeUtils.parseObj(cookieData as string) as Record<string, Record<string, CookieItem>>;
       
       for (const domain of Object.keys(parsed)) {
         const domainCookies = new Map<string, CookieItem>();

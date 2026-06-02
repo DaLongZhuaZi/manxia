@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 局域网传书功能模型定义
  */
@@ -701,7 +702,7 @@ export function buildTransferNativeRtcCandidateSignalPayload(
 
 export function parseTransferNativeRtcSdpSignalPayload(text: string): TransferNativeRtcSdpSignalPayload | null {
   try {
-    const parsed = JSON.parse(text) as TransferNativeRtcSdpSignalPayload;
+    const parsed = SafeUtils.parseObj(text) as TransferNativeRtcSdpSignalPayload;
     const sdpType = typeof parsed.sdpType === 'string' ? parsed.sdpType : '';
     const sdp = typeof parsed.sdp === 'string' ? parsed.sdp : '';
     if (sdp.length <= 0) {
@@ -721,7 +722,7 @@ export function parseTransferNativeRtcCandidateSignalPayload(
   text: string
 ): TransferNativeRtcCandidateSignalPayload | null {
   try {
-    const parsed = JSON.parse(text) as TransferNativeRtcCandidateSignalPayload;
+    const parsed = SafeUtils.parseObj(text) as TransferNativeRtcCandidateSignalPayload;
     const candidate = typeof parsed.candidate === 'string' ? parsed.candidate : '';
     const sdpMid = typeof parsed.sdpMid === 'string' ? parsed.sdpMid : '';
     const sdpMLineIndex = typeof parsed.sdpMLineIndex === 'number' && Number.isFinite(parsed.sdpMLineIndex) ?
@@ -770,7 +771,7 @@ export function buildTransferLanAccessDataChannelMessage(payloadText: string): s
 
 export function parseTransferLanAccessSignalPayload(text: string): TransferLanAccessSignalPayload | null {
   try {
-    const parsed = JSON.parse(text) as TransferLanAccessSignalPayload;
+    const parsed = SafeUtils.parseObj(text) as TransferLanAccessSignalPayload;
     const url = typeof parsed.url === 'string' ? parsed.url.trim() : '';
     const pairCode = typeof parsed.pairCode === 'string' ? parsed.pairCode.trim() : '';
     const serviceStatus = normalizeTransferServerStatus(
@@ -796,7 +797,7 @@ export function parseTransferLanAccessSignalPayload(text: string): TransferLanAc
 
 export function parseTransferDataChannelFileMessage(text: string): TransferDataChannelFileMessage | null {
   try {
-    const parsed = JSON.parse(text) as TransferDataChannelFileMessage;
+    const parsed = SafeUtils.parseObj(text) as TransferDataChannelFileMessage;
     const normalizedType = normalizeTransferDataChannelFileMessageType(
       typeof parsed.type === 'string' ? parsed.type : ''
     );

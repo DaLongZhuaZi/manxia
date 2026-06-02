@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Managers/AppGuideManager.ets
 /**
  * 应用内引导管理器
@@ -1112,7 +1113,7 @@ export class AppGuideManager {
 
     try {
       const raw = await this.preferencesStore.get(GUIDE_FLOW_STATE_KEY, '[]') as string;
-      const parsed = JSON.parse(raw) as PersistedAppGuideFlowState[];
+      const parsed = SafeUtils.parseArr(raw) as PersistedAppGuideFlowState[];
       if (!Array.isArray(parsed)) {
         return;
       }

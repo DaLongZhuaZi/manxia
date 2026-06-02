@@ -1,7 +1,7 @@
-{
+﻿{
   "string": [
     {
-      "name": "module_desc",
+      "name": "app_module_desc",
       "value": "module description"
     },
     {

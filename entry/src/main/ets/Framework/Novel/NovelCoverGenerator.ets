@@ -7,7 +7,7 @@
 
 import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { componentSnapshot } from '@kit.ArkUI';
+import { UIContext } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 
 const TAG = 'NovelCoverGenerator';
@@ -95,7 +95,7 @@ export class NovelCoverGenerator {
    * @param builderFunc 构建封面组件的函数
    * @returns 生成的封面路径，失败返回空字符串
    */
-  async generateCover(bookId: string, title: string, builderFunc: () => void): Promise<string> {
+  async generateCover(bookId: string, title: string, builderFunc: () => void, uiContext: UIContext): Promise<string> {
     if (!this.isInitialized) {
       logger.error(TAG, '封面生成器未初始化');
       return '';
@@ -105,7 +105,7 @@ export class NovelCoverGenerator {
       logger.info(TAG, `开始生成封面: ${title}`);
       
       // 使用 componentSnapshot.createFromBuilder 生成 PixelMap
-      const pixelMap = await componentSnapshot.createFromBuilder(builderFunc);
+      const pixelMap = await uiContext.getComponentSnapshot().createFromBuilder(builderFunc);
       
       if (!pixelMap) {
         logger.warn(TAG, '封面生成失败: PixelMap 为空');
@@ -171,7 +171,7 @@ export class NovelCoverGenerator {
         quality: 90
       };
       
-      const arrayBuffer = await imagePacker.packing(pixelMap, packOptions);
+      const arrayBuffer = await imagePacker.packToData(pixelMap, packOptions);
       
       // 写入文件
       const file = await fileIo.open(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);

@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 // 文件路径：entry/src/main/ets/Utils/AvifTranscoder.ets
 /**
  * 全局 AVIF 转换工具
@@ -308,7 +309,7 @@ export class AvifTranscoder {
       fd = file.fd;
       const bufferSize: number = 64;
       const buffer: ArrayBuffer = new ArrayBuffer(bufferSize as number);
-      const readLen: number = fileIo.readSync(fd, buffer);
+      const readLen: number = SafeFileUtils.readSync(fd, buffer);
       if (readLen < 16) {
         return { isIsobmff: false, compatibleBrands: [] } as AvifHeaderInfo;
       }

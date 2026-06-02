@@ -2,6 +2,7 @@
  * 全局搜索页面
  * 搜索所有内容（本地+在线漫画、电子书、小说）
  */
+import { common } from '@kit.AbilityKit';
 import { ComicInfo } from '../Framework/Data/DataManager';
 import { EBook } from '../Models/EBookModels';
 import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
@@ -11,6 +12,7 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
+import { SafeUtils } from '../Utils/SafeUtils';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { NovelDetailPageParams } from './NovelBookshelfPage';
 import {
@@ -361,8 +363,13 @@ export struct GlobalSearchPage {
    */
   private async loadSearchPreferences(): Promise<void> {
     try {
-      const context = getContext(this);
-      const store = await preferences.getPreferences(context, SEARCH_PREFS_NAME);
+      const hostContext = this.getUIContext()?.getHostContext();
+      if (!hostContext) {
+        logger.warn(TAG, '加载搜索偏好失败: 页面上下文不可用');
+        return;
+      }
+      const context = hostContext as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, { name: SEARCH_PREFS_NAME });
       
       const contentType = await store.get('contentType', SearchContentType.ALL) as string;
       const sourceType = await store.get('sourceType', SearchSourceType.LOCAL) as string;
@@ -373,8 +380,8 @@ export struct GlobalSearchPage {
       
       this.contentTypeFilter = contentType as SearchContentType;
       this.sourceTypeFilter = sourceType as SearchSourceType;
-      this.selectedMangaSources = JSON.parse(mangaSources) as string[];
-      this.selectedNovelSources = JSON.parse(novelSources) as string[];
+      this.selectedMangaSources = SafeUtils.parseArr<string[]>(mangaSources);
+      this.selectedNovelSources = SafeUtils.parseArr<string[]>(novelSources);
       this.enableSuwayomi = suwayomi;
       this.showSourceExpanded = expanded;
       this.applySourceFeatureVisibility();
@@ -390,8 +397,13 @@ export struct GlobalSearchPage {
    */
   private async saveSearchPreferences(): Promise<void> {
     try {
-      const context = getContext(this);
-      const store = await preferences.getPreferences(context, SEARCH_PREFS_NAME);
+      const hostContext = this.getUIContext()?.getHostContext();
+      if (!hostContext) {
+        logger.warn(TAG, '保存搜索偏好失败: 页面上下文不可用');
+        return;
+      }
+      const context = hostContext as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, { name: SEARCH_PREFS_NAME });
       const effectiveSourceType = this.getEffectiveSourceTypeFilter();
       const shouldShowSourceExpanded = this.sourceFeaturesEnabled ? this.showSourceExpanded : false;
       const shouldEnableSuwayomi = this.sourceFeaturesEnabled ? this.enableSuwayomi : false;
@@ -1511,7 +1523,7 @@ export struct GlobalSearchPage {
               }
               .width('100%')
               .layoutWeight(1)
-              .id('guide_global_search_content_area')
+              .id('guide_global_search_content_area' as string)
             } else {
               // 竖屏模式：使用列表布局
               Scroll() {
@@ -1529,7 +1541,7 @@ export struct GlobalSearchPage {
               .layoutWeight(1)
               .scrollBar(BarState.Auto)
               .edgeEffect(EdgeEffect.Spring)
-              .id('guide_global_search_content_area')
+              .id('guide_global_search_content_area' as string)
               .onScrollStart(() => {
                 this.onResultsScrollStart();
               })
@@ -1556,7 +1568,7 @@ export struct GlobalSearchPage {
             .width('100%')
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
-            .id('guide_global_search_content_area')
+            .id('guide_global_search_content_area' as string)
           } else if (this.searchKeyword && this.isSearchInProgress()) {
             // 正在搜索：只让结果区进入骨架态，保留顶部输入与筛选区域稳定可交互。
             this.buildInitialSearchLoadingState()
@@ -1628,7 +1640,7 @@ export struct GlobalSearchPage {
             .width('100%')
             .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
             .alignItems(HorizontalAlign.Start)
-            .id('guide_global_search_content_area')
+            .id('guide_global_search_content_area' as string)
           }
         }
         .width('100%')
@@ -1733,7 +1745,7 @@ export struct GlobalSearchPage {
       .layoutWeight(1)
       .scrollBar(BarState.Auto)
       .edgeEffect(EdgeEffect.Spring)
-      .id('guide_global_search_content_area')
+      .id('guide_global_search_content_area' as string)
       .onScrollStart(() => {
         this.onResultsScrollStart();
       })
@@ -1757,7 +1769,7 @@ export struct GlobalSearchPage {
       .layoutWeight(1)
       .scrollBar(BarState.Auto)
       .edgeEffect(EdgeEffect.Spring)
-      .id('guide_global_search_content_area')
+      .id('guide_global_search_content_area' as string)
       .onScrollStart(() => {
         this.onResultsScrollStart();
       })

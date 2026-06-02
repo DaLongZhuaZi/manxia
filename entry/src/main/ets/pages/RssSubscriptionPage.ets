@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RSS subscription feed page.
  * Shows aggregated entries from all subscription sources.
  */
@@ -83,14 +83,14 @@ export struct RssSubscriptionPage {
     this.isLoading = true;
     try {
       logger.info(TAG, '开始初始化订阅源页面');
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await getRssSubscriptionInitializer().initialize(context);
       await this.loadAllData();
       this.triggerAutoDueRefresh();
       logger.info(TAG, '订阅源页面初始化完成');
     } catch (error) {
       logger.error(TAG, `初始化订阅源页面失败: ${String(error)}`);
-      promptAction.showToast({ message: `初始化失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `初始化失败: ${String(error)}` });
     }
     this.isLoading = false;
   }
@@ -113,7 +113,7 @@ export struct RssSubscriptionPage {
       await this.loadItemsOnly();
     } catch (error) {
       logger.warn(TAG, `加载订阅源总数据失败: ${String(error)}`);
-      promptAction.showToast({ message: '加载订阅流失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '加载订阅流失败' });
     }
   }
 
@@ -136,7 +136,7 @@ export struct RssSubscriptionPage {
       this.applySearchFilter();
     } catch (error) {
       logger.warn(TAG, `加载订阅条目失败: ${String(error)}`);
-      promptAction.showToast({ message: '加载订阅条目失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '加载订阅条目失败' });
     }
   }
 
@@ -206,12 +206,12 @@ export struct RssSubscriptionPage {
         const failedItem = failedResults[i];
         logger.warn(TAG, `订阅源刷新失败明细: source=${failedItem.sourceName}, error=${failedItem.error || '未知错误'}`);
       }
-      promptAction.showToast({ message: `刷新完成，成功 ${success}，失败 ${failed}` });
+      this.getUIContext().getPromptAction().showToast({ message: `刷新完成，成功 ${success}，失败 ${failed}` });
       logger.info(TAG, `批量刷新订阅源完成: 成功=${success}, 失败=${failed}`);
       await this.loadAllData();
     } catch (error) {
       logger.error(TAG, `批量刷新订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `刷新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${String(error)}` });
     }
     this.progressText = '';
     this.isRefreshing = false;
@@ -232,7 +232,7 @@ export struct RssSubscriptionPage {
         this.progressText = `${progress.current}/${progress.total} ${progress.sourceName} ${detail}`;
       });
       if (results.length === 0) {
-        promptAction.showToast({ message: '暂无到期订阅源' });
+        this.getUIContext().getPromptAction().showToast({ message: '暂无到期订阅源' });
         logger.info(TAG, '刷新到期订阅源完成: 无到期源');
       } else {
         const success = results.filter((item) => item.success).length;
@@ -242,13 +242,13 @@ export struct RssSubscriptionPage {
           const failedItem = failedResults[i];
           logger.warn(TAG, `到期刷新失败明细: source=${failedItem.sourceName}, error=${failedItem.error || '未知错误'}`);
         }
-        promptAction.showToast({ message: `到期刷新完成，成功 ${success}，失败 ${failed}` });
+        this.getUIContext().getPromptAction().showToast({ message: `到期刷新完成，成功 ${success}，失败 ${failed}` });
         logger.info(TAG, `刷新到期订阅源完成: 总数=${results.length}, 成功=${success}, 失败=${failed}`);
       }
       await this.loadAllData();
     } catch (error) {
       logger.error(TAG, `刷新到期订阅源失败: ${String(error)}`);
-      promptAction.showToast({ message: `到期刷新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `到期刷新失败: ${String(error)}` });
     }
     this.progressText = '';
     this.isRefreshing = false;
@@ -263,10 +263,10 @@ export struct RssSubscriptionPage {
       logger.info(TAG, `开始标记全部已读: sourceId=${this.selectedSourceId || 'all'}`);
       await this.manager.markAllRead(this.selectedSourceId || undefined);
       await this.loadItemsOnly();
-      promptAction.showToast({ message: '已标记为已读' });
+      this.getUIContext().getPromptAction().showToast({ message: '已标记为已读' });
     } catch (error) {
       logger.error(TAG, `标记全部已读失败: ${String(error)}`);
-      promptAction.showToast({ message: `操作失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `操作失败: ${String(error)}` });
     }
     this.isBatchOperating = false;
   }
@@ -281,14 +281,14 @@ export struct RssSubscriptionPage {
       const deletedCount = await this.manager.clearReadItems(this.selectedSourceId || undefined);
       await this.loadItemsOnly();
       if (deletedCount > 0) {
-        promptAction.showToast({ message: `已清理 ${deletedCount} 条已读内容` });
+        this.getUIContext().getPromptAction().showToast({ message: `已清理 ${deletedCount} 条已读内容` });
       } else {
-        promptAction.showToast({ message: '当前没有可清理的已读条目' });
+        this.getUIContext().getPromptAction().showToast({ message: '当前没有可清理的已读条目' });
       }
       logger.info(TAG, `清理已读条目完成: sourceId=${this.selectedSourceId || 'all'}, 删除=${deletedCount}`);
     } catch (error) {
       logger.error(TAG, `清理已读条目失败: ${String(error)}`);
-      promptAction.showToast({ message: `清理失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `清理失败: ${String(error)}` });
     }
     this.isBatchOperating = false;
   }
@@ -311,7 +311,7 @@ export struct RssSubscriptionPage {
       return;
     }
     const scopeText = this.getBatchScopeText();
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: `批量操作（${scopeText}）`,
       buttons: [
         { text: '标记已读', color: $r('sys.color.ohos_id_color_text_primary_activated') },
@@ -361,7 +361,7 @@ export struct RssSubscriptionPage {
       this.unreadCount = await this.manager.getUnreadCount(this.selectedSourceId || undefined);
     } catch (error) {
       logger.error(TAG, `更新已读状态失败: itemId=${item.id}, ${String(error)}`);
-      promptAction.showToast({ message: `更新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `更新失败: ${String(error)}` });
     }
   }
 
@@ -373,7 +373,7 @@ export struct RssSubscriptionPage {
       this.updateLocalItemState(item.id, currentRead, nextStarred);
     } catch (error) {
       logger.error(TAG, `更新收藏状态失败: itemId=${item.id}, ${String(error)}`);
-      promptAction.showToast({ message: `更新失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `更新失败: ${String(error)}` });
     }
   }
 

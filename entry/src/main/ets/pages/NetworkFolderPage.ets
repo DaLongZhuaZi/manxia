@@ -242,7 +242,7 @@ export struct NetworkFolderPage {
     logger.info(TAG, '开始初始化网络文件夹页面');
     this.isInitializing = true;
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await this.manager.initialize(context);
       this.reloadConnections();
       this.restoreLastSelection();
@@ -267,7 +267,7 @@ export struct NetworkFolderPage {
   private playPageEnterAnimation(): void {
     this.pageReady = false;
     setTimeout(() => {
-      animateTo({ duration: 320, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseOut }, () => {
         this.pageReady = true;
       });
     }, 40);
@@ -345,7 +345,7 @@ export struct NetworkFolderPage {
 
   private async playRouteExitAnimation(offsetX: number): Promise<void> {
     return new Promise<void>((resolve) => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 180,
         curve: Curve.EaseInOut,
         onFinish: () => {
@@ -363,7 +363,7 @@ export struct NetworkFolderPage {
     this.routeOpacity = 0;
     this.routeTranslateX = offsetX;
     this.routeScale = 0.985;
-    animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
       this.routeOpacity = 1;
       this.routeTranslateX = 0;
       this.routeScale = 1;
@@ -372,7 +372,7 @@ export struct NetworkFolderPage {
 
   private async playDirectoryExitAnimation(offsetX: number): Promise<void> {
     return new Promise<void>((resolve) => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 160,
         curve: Curve.EaseInOut,
         onFinish: () => {
@@ -390,7 +390,7 @@ export struct NetworkFolderPage {
     this.directoryOpacity = 0;
     this.directoryTranslateX = offsetX;
     this.directoryScale = 0.992;
-    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
       this.directoryOpacity = 1;
       this.directoryTranslateX = 0;
       this.directoryScale = 1;
@@ -600,7 +600,7 @@ export struct NetworkFolderPage {
       },
       {
         enableBackgroundRunning: true,
-        context: getContext(this) as common.UIAbilityContext,
+        context: (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext,
         notification: {
           scene: TaskNotificationScene.NETWORK_CACHE,
           targetName: entry.name
@@ -659,7 +659,7 @@ export struct NetworkFolderPage {
       },
       {
         enableBackgroundRunning: true,
-        context: getContext(this) as common.UIAbilityContext,
+        context: (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext,
         notification: {
           scene: TaskNotificationScene.NETWORK_CACHE,
           targetName: entry.name
@@ -796,7 +796,7 @@ export struct NetworkFolderPage {
     this.favDialogScale = 0.96;
     this.favDialogTranslateY = 24;
     setTimeout(() => {
-      animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
         this.favDialogBackdropOpacity = 1;
         this.favDialogOpacity = 1;
         this.favDialogScale = 1;
@@ -807,7 +807,7 @@ export struct NetworkFolderPage {
 
   private async hideFavoritesDialog(): Promise<void> {
     return new Promise<void>((resolve) => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 180,
         curve: Curve.EaseIn,
         onFinish: () => {
@@ -867,7 +867,7 @@ export struct NetworkFolderPage {
     this.scanScale = 0.96;
     this.scanTranslateY = 24;
     setTimeout(() => {
-      animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
         this.scanBackdropOpacity = 1;
         this.scanOpacity = 1;
         this.scanScale = 1;
@@ -878,7 +878,7 @@ export struct NetworkFolderPage {
 
   private async hideScanPanel(): Promise<void> {
     return new Promise<void>((resolve) => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 180,
         curve: Curve.EaseIn,
         onFinish: () => {
@@ -1341,7 +1341,7 @@ export struct NetworkFolderPage {
   }
 
   private showDeleteConnectionDialog(connection: NetworkFolderConnection): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '删除连接',
       message: `确定删除“${connection.name}”吗？该连接关联的目录缓存和文件缓存也会一起清理。`,
       primaryButton: {
@@ -1359,7 +1359,7 @@ export struct NetworkFolderPage {
   }
 
   private showClearAllCacheDialog(): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '清理全部缓存',
       message: '这会删除所有网络目录缓存和下载缓存，是否继续？',
       primaryButton: {
@@ -1377,7 +1377,7 @@ export struct NetworkFolderPage {
   }
 
   private showDeleteCachedFileDialog(detail: NetworkFolderDownloadCacheDetail): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '删除缓存文件',
       message: `确定删除缓存文件“${detail.fileName}”吗？该操作会移除本地缓存文件和缓存记录。`,
       primaryButton: {
@@ -1461,7 +1461,7 @@ export struct NetworkFolderPage {
     this.dialogScale = 0.96;
     this.dialogTranslateY = 24;
     setTimeout(() => {
-      animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
         this.dialogBackdropOpacity = 1;
         this.dialogOpacity = 1;
         this.dialogScale = 1;
@@ -1472,7 +1472,7 @@ export struct NetworkFolderPage {
 
   private async hideConnectionDialog(): Promise<void> {
     return new Promise<void>((resolve) => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 180,
         curve: Curve.EaseIn,
         onFinish: () => {
@@ -1503,7 +1503,7 @@ export struct NetworkFolderPage {
   private toggleDialogStatusExpand(): void {
     if (this.dialogStatusExpanded) {
       this.dialogStatusExpanded = false;
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 180,
         curve: Curve.EaseInOut,
         onFinish: () => {
@@ -1527,7 +1527,7 @@ export struct NetworkFolderPage {
     this.dialogStatusDetailOpacity = 0;
     this.dialogStatusDetailTranslateY = -6;
     const targetHeight = this.getDialogStatusExpandedHeight();
-    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
       this.dialogStatusDetailHeight = targetHeight;
       this.dialogStatusDetailOpacity = 1;
       this.dialogStatusDetailTranslateY = 0;

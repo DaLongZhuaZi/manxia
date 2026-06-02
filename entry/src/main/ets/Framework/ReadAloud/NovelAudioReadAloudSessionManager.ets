@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 import { media } from '@kit.MediaKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { logger } from '../../Utils/Logger';
@@ -977,7 +979,7 @@ export class NovelAudioReadAloudSessionManager {
       return '';
     }
     try {
-      const parsed = JSON.parse(rawContent) as AudioJsonValue;
+      const parsed = SafeUtils.parseObj(rawContent) as AudioJsonValue;
       const urlHints: string[] = [];
       this.collectAudioUrlHints(parsed, urlHints);
       for (let index = 0; index < urlHints.length; index++) {
@@ -1102,7 +1104,7 @@ export class NovelAudioReadAloudSessionManager {
     const path = this.localAudioSourcePath;
     const fd = this.localAudioSourceFile.fd;
     try {
-      fileIo.closeSync(fd);
+      SafeFileUtils.closeSync(fd);
     } catch (error) {
       logger.warn(TAG, `关闭本地音频文件句柄失败: 原因=${reason}, 路径=${path}, 错误=${String(error)}`);
     }
@@ -1119,11 +1121,11 @@ export class NovelAudioReadAloudSessionManager {
     this.releaseLocalAudioSourceFile('bind_local_audio_source');
     let localFile: fileIo.File | null = null;
     try {
-      localFile = fileIo.openSync(localPath, fileIo.OpenMode.READ_ONLY);
-      const stat = fileIo.statSync(localFile.fd);
+      localFile = SafeFileUtils.openSync(localPath, fileIo.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(localFile.fd);
       const fileSize = Math.floor(stat.size);
       if (fileSize <= 0) {
-        fileIo.closeSync(localFile.fd);
+        SafeFileUtils.closeSync(localFile.fd);
         logger.warn(TAG, `本地音频文件大小异常，回退URL模式: 路径=${localPath}, 大小=${fileSize}`);
         return false;
       }
@@ -1139,7 +1141,7 @@ export class NovelAudioReadAloudSessionManager {
     } catch (error) {
       if (localFile) {
         try {
-          fileIo.closeSync(localFile.fd);
+          SafeFileUtils.closeSync(localFile.fd);
         } catch (_closeError) {
         }
       }

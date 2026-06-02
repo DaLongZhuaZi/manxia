@@ -1,4 +1,4 @@
-// 文件路径: src/main/ets/Framework/Animation/AnimatedComponent.ets
+﻿// 文件路径: src/main/ets/Framework/Animation/AnimatedComponent.ets
 /**
  * 传统动画组件
  * 提供统一的动画接口和状态管理，支持传统动画系统

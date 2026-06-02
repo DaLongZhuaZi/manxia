@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Legado URL解析器
  * 处理URL模板变量替换、请求参数解析、JS规则执行
@@ -1067,7 +1068,7 @@ export class LegadoUrlAnalyzer {
     
     // 步骤1: 首先尝试标准JSON解析
     try {
-      return JSON.parse(jsonStr) as LegadoUrlOption;
+      return SafeUtils.parseObj(jsonStr) as LegadoUrlOption;
     } catch (e) {
       // 标准解析失败，尝试宽松解析
     }
@@ -1108,7 +1109,7 @@ export class LegadoUrlAnalyzer {
       
       logger.debug(TAG, `宽松JSON修复: 原始=${optionStr.substring(0, 100)}, 修复后=${fixedJson.substring(0, 100)}`);
       
-      return JSON.parse(fixedJson) as LegadoUrlOption;
+      return SafeUtils.parseObj(fixedJson) as LegadoUrlOption;
     } catch (e2) {
       // 步骤3: 如果还是失败，尝试手动解析关键字段
       try {
@@ -1191,7 +1192,7 @@ export class LegadoUrlAnalyzer {
         let headersJson = headersMatch[1];
         headersJson = headersJson.replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$-]*)\s*:/g, '$1"$2":');
         headersJson = headersJson.replace(/'([^'\\]*)'/g, '"$1"');
-        option.headers = JSON.parse(headersJson) as Record<string, string>;
+        option.headers = SafeUtils.parseObj(headersJson) as Record<string, string>;
       } catch (e) {
         // 忽略headers解析失败
       }

@@ -1,3 +1,5 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 主题设置页面
  * 提供自定义主题功能：图片选择、裁剪、模糊效果、主色调提取、深色模式适配
@@ -1173,8 +1175,8 @@ export struct ThemeSettingsPage {
       return;
     }
     const pathToDelete: string = this.splashDraftImagePaths[index];
-    if (pathToDelete.length > 0 && fs.accessSync(pathToDelete)) {
-      fs.unlinkSync(pathToDelete);
+    if (pathToDelete.length > 0 && SafeFileUtils.accessSync(pathToDelete)) {
+      SafeFileUtils.unlinkSync(pathToDelete);
     }
     const nextPaths: string[] = [];
     let idx: number = 0;
@@ -1197,12 +1199,12 @@ export struct ThemeSettingsPage {
       throw new Error('无法获取UIAbilityContext');
     }
     const themesDir: string = `${context.filesDir}/custom_themes`;
-    if (!fs.accessSync(themesDir)) {
-      fs.mkdirSync(themesDir);
+    if (!SafeFileUtils.accessSync(themesDir)) {
+      SafeFileUtils.mkdirSync(themesDir);
     }
     const draftDir: string = `${themesDir}/splash_drafts`;
-    if (!fs.accessSync(draftDir)) {
-      fs.mkdirSync(draftDir);
+    if (!SafeFileUtils.accessSync(draftDir)) {
+      SafeFileUtils.mkdirSync(draftDir);
     }
     const timestamp: number = Date.now();
     const draftPath: string = `${draftDir}/draft_${timestamp}_${this.splashDraftImagePaths.length + 1}.webp`;
@@ -1211,11 +1213,11 @@ export struct ThemeSettingsPage {
       quality: 85
     };
     const imagePacker = image.createImagePacker();
-    const file = fs.openSync(draftPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    const file = SafeFileUtils.openSync(draftPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
     try {
       await imagePacker.packToFile(this.processedSplashImagePixelMap, file.fd, packOpts);
     } finally {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
       imagePacker.release();
     }
     const nextDrafts: string[] = [];
@@ -1237,11 +1239,11 @@ export struct ThemeSettingsPage {
       quality: 85
     };
     const imagePacker = image.createImagePacker();
-    const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    const file = SafeFileUtils.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
     try {
       await imagePacker.packToFile(this.processedSplashImagePixelMap, file.fd, packOpts);
     } finally {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
       imagePacker.release();
     }
   }
@@ -1258,7 +1260,7 @@ export struct ThemeSettingsPage {
     while (index < sourcePaths.length) {
       const sourcePath: string = sourcePaths[index];
       let resolvedPath: string = this.resolveSplashSourcePath(sourcePath);
-      if (!(resolvedPath.length > 0 && fs.accessSync(resolvedPath))) {
+      if (!(resolvedPath.length > 0 && SafeFileUtils.accessSync(resolvedPath))) {
         try {
           await this.importSplashSourceToDraftIfNeeded(sourcePath);
           resolvedPath = this.resolveSplashSourcePath(sourcePath);
@@ -1267,10 +1269,10 @@ export struct ThemeSettingsPage {
           logger.warn(TAG, `导入开屏原图用于保存失败: ${message}`);
         }
       }
-      if (resolvedPath.length > 0 && fs.accessSync(resolvedPath)) {
+      if (resolvedPath.length > 0 && SafeFileUtils.accessSync(resolvedPath)) {
         const targetPath: string = `${themesDir}/${themeId}_splash_${index + 1}.webp`;
         if (resolvedPath !== targetPath) {
-          fs.copyFileSync(resolvedPath, targetPath);
+          SafeFileUtils.copyFileSync(resolvedPath, targetPath);
         }
         generatedPaths.push(targetPath);
       } else {
@@ -1290,14 +1292,14 @@ export struct ThemeSettingsPage {
     let idx: number = 0;
     while (idx < this.splashDraftImagePaths.length) {
       const path: string = this.splashDraftImagePaths[idx];
-      if (path && path.length > 0 && fs.accessSync(path)) {
-        fs.unlinkSync(path);
+      if (path && path.length > 0 && SafeFileUtils.accessSync(path)) {
+        SafeFileUtils.unlinkSync(path);
       }
       idx = idx + 1;
     }
     this.splashDraftSelections.forEach((selection: BackgroundDraftSelection) => {
-      if (selection.appliedPath.length > 0 && fs.accessSync(selection.appliedPath)) {
-        fs.unlinkSync(selection.appliedPath);
+      if (selection.appliedPath.length > 0 && SafeFileUtils.accessSync(selection.appliedPath)) {
+        SafeFileUtils.unlinkSync(selection.appliedPath);
       }
     });
     this.splashDraftSelections.clear();
@@ -1342,7 +1344,7 @@ export struct ThemeSettingsPage {
 
   private resolveBackgroundDraftSourcePath(originalPath: string): string {
     const selection: BackgroundDraftSelection | undefined = this.backgroundDraftSelections.get(originalPath);
-    if (selection && selection.appliedPath.length > 0 && fs.accessSync(selection.appliedPath)) {
+    if (selection && selection.appliedPath.length > 0 && SafeFileUtils.accessSync(selection.appliedPath)) {
       return selection.appliedPath;
     }
     return originalPath;
@@ -1367,11 +1369,11 @@ export struct ThemeSettingsPage {
       quality: quality
     };
     const imagePacker = image.createImagePacker();
-    const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    const file = SafeFileUtils.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
     try {
       await imagePacker.packToFile(pixelMap, file.fd, packOpts);
     } finally {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
       imagePacker.release();
     }
   }
@@ -1390,16 +1392,16 @@ export struct ThemeSettingsPage {
       throw new Error('无法获取UIAbilityContext');
     }
     const themesDir: string = `${context.filesDir}/custom_themes`;
-    if (!fs.accessSync(themesDir)) {
-      fs.mkdirSync(themesDir);
+    if (!SafeFileUtils.accessSync(themesDir)) {
+      SafeFileUtils.mkdirSync(themesDir);
     }
     const draftDir: string = `${themesDir}/background_drafts`;
-    if (!fs.accessSync(draftDir)) {
-      fs.mkdirSync(draftDir);
+    if (!SafeFileUtils.accessSync(draftDir)) {
+      SafeFileUtils.mkdirSync(draftDir);
     }
     const oldSelection: BackgroundDraftSelection | undefined = this.backgroundDraftSelections.get(activePath);
-    if (oldSelection && oldSelection.appliedPath.length > 0 && fs.accessSync(oldSelection.appliedPath)) {
-      fs.unlinkSync(oldSelection.appliedPath);
+    if (oldSelection && oldSelection.appliedPath.length > 0 && SafeFileUtils.accessSync(oldSelection.appliedPath)) {
+      SafeFileUtils.unlinkSync(oldSelection.appliedPath);
     }
     const targetPath: string = `${draftDir}/draft_${Date.now()}_${this.backgroundDraftImagePaths.indexOf(activePath) + 1}.webp`;
     await this.packPixelMapToWebp(this.selectedImagePixelMap, targetPath, 88);
@@ -1443,8 +1445,8 @@ export struct ThemeSettingsPage {
 
   private cleanupBackgroundDraftFiles(): void {
     this.backgroundDraftSelections.forEach((selection: BackgroundDraftSelection) => {
-      if (selection.appliedPath.length > 0 && fs.accessSync(selection.appliedPath)) {
-        fs.unlinkSync(selection.appliedPath);
+      if (selection.appliedPath.length > 0 && SafeFileUtils.accessSync(selection.appliedPath)) {
+        SafeFileUtils.unlinkSync(selection.appliedPath);
       }
     });
     this.backgroundDraftSelections.clear();
@@ -1501,7 +1503,7 @@ export struct ThemeSettingsPage {
 
   private resolveSplashSourcePath(originalPath: string): string {
     const selection: BackgroundDraftSelection | undefined = this.splashDraftSelections.get(originalPath);
-    if (selection && selection.appliedPath.length > 0 && fs.accessSync(selection.appliedPath)) {
+    if (selection && selection.appliedPath.length > 0 && SafeFileUtils.accessSync(selection.appliedPath)) {
       return selection.appliedPath;
     }
     return originalPath;
@@ -1513,7 +1515,7 @@ export struct ThemeSettingsPage {
     }
     this.registerSplashSourceIfNeeded(originalPath);
     const existingSelection: BackgroundDraftSelection | undefined = this.splashDraftSelections.get(originalPath);
-    if (existingSelection && existingSelection.appliedPath.length > 0 && fs.accessSync(existingSelection.appliedPath)) {
+    if (existingSelection && existingSelection.appliedPath.length > 0 && SafeFileUtils.accessSync(existingSelection.appliedPath)) {
       return;
     }
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
@@ -1521,18 +1523,18 @@ export struct ThemeSettingsPage {
       throw new Error('无法获取UIAbilityContext');
     }
     const themesDir: string = `${context.filesDir}/custom_themes`;
-    if (!fs.accessSync(themesDir)) {
-      fs.mkdirSync(themesDir);
+    if (!SafeFileUtils.accessSync(themesDir)) {
+      SafeFileUtils.mkdirSync(themesDir);
     }
     const draftDir: string = `${themesDir}/splash_drafts`;
-    if (!fs.accessSync(draftDir)) {
-      fs.mkdirSync(draftDir);
+    if (!SafeFileUtils.accessSync(draftDir)) {
+      SafeFileUtils.mkdirSync(draftDir);
     }
     const targetPath: string = `${draftDir}/source_${Date.now()}_${this.splashSourceImagePaths.indexOf(originalPath) + 1}.webp`;
     let copied: boolean = false;
-    if (fs.accessSync(originalPath)) {
+    if (SafeFileUtils.accessSync(originalPath)) {
       try {
-        fs.copyFileSync(originalPath, targetPath);
+        SafeFileUtils.copyFileSync(originalPath, targetPath);
         copied = true;
       } catch (error) {
         const message: string = error instanceof Error ? error.message : String(error);
@@ -1540,7 +1542,7 @@ export struct ThemeSettingsPage {
       }
     }
     if (!copied) {
-      const file = fs.openSync(originalPath, fs.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(originalPath, fs.OpenMode.READ_ONLY);
       const imageSource = image.createImageSource(file.fd);
       try {
         const decodingOptions: image.DecodingOptions = {
@@ -1553,7 +1555,7 @@ export struct ThemeSettingsPage {
           sourcePixelMap.release();
         }
       } finally {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
         imageSource.release();
       }
     }
@@ -1578,16 +1580,16 @@ export struct ThemeSettingsPage {
       throw new Error('无法获取UIAbilityContext');
     }
     const themesDir: string = `${context.filesDir}/custom_themes`;
-    if (!fs.accessSync(themesDir)) {
-      fs.mkdirSync(themesDir);
+    if (!SafeFileUtils.accessSync(themesDir)) {
+      SafeFileUtils.mkdirSync(themesDir);
     }
     const draftDir: string = `${themesDir}/splash_drafts`;
-    if (!fs.accessSync(draftDir)) {
-      fs.mkdirSync(draftDir);
+    if (!SafeFileUtils.accessSync(draftDir)) {
+      SafeFileUtils.mkdirSync(draftDir);
     }
     const oldSelection: BackgroundDraftSelection | undefined = this.splashDraftSelections.get(activePath);
-    if (oldSelection && oldSelection.appliedPath.length > 0 && fs.accessSync(oldSelection.appliedPath)) {
-      fs.unlinkSync(oldSelection.appliedPath);
+    if (oldSelection && oldSelection.appliedPath.length > 0 && SafeFileUtils.accessSync(oldSelection.appliedPath)) {
+      SafeFileUtils.unlinkSync(oldSelection.appliedPath);
     }
     const targetPath: string = `${draftDir}/draft_${Date.now()}_${this.splashSourceImagePaths.indexOf(activePath) + 1}.webp`;
     await this.packPixelMapToWebp(this.selectedSplashImagePixelMap, targetPath, 88);
@@ -1800,9 +1802,9 @@ export struct ThemeSettingsPage {
       const themesDir = `${context.filesDir}/custom_themes`;
       const themesFile = `${themesDir}/themes.json`;
       
-      if (fs.accessSync(themesFile)) {
-        const content = fs.readTextSync(themesFile);
-        this.customThemes = JSON.parse(content) as CustomTheme[];
+      if (SafeFileUtils.accessSync(themesFile)) {
+        const content = SafeFileUtils.readTextSync(themesFile);
+        this.customThemes = SafeUtils.parseArr(content) as CustomTheme[];
         // 媒体资源模式清理：默认/第二自定义主题不保留本地图片路径
         const sanitized: CustomTheme[] = [];
         let j: number = 0;
@@ -1865,8 +1867,8 @@ export struct ThemeSettingsPage {
       const themesFile = `${themesDir}/themes.json`;
       
       // 确保目录存在
-      if (!fs.accessSync(themesDir)) {
-        fs.mkdirSync(themesDir);
+      if (!SafeFileUtils.accessSync(themesDir)) {
+        SafeFileUtils.mkdirSync(themesDir);
       }
       
       // 添加或更新主题
@@ -1905,9 +1907,9 @@ export struct ThemeSettingsPage {
       }
       
       // 保存到文件
-      const file = fs.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, JSON.stringify(this.customThemes));
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(file.fd, JSON.stringify(this.customThemes));
+      SafeFileUtils.closeSync(file);
       logger.info(TAG, `已保存自定义主题: ${normalizedTheme.name}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -1958,8 +1960,8 @@ export struct ThemeSettingsPage {
       }
       const themesDir: string = `${context.filesDir}/custom_themes`;
       const themesFile: string = `${themesDir}/themes.json`;
-      if (!fs.accessSync(themesDir)) {
-        fs.mkdirSync(themesDir);
+      if (!SafeFileUtils.accessSync(themesDir)) {
+        SafeFileUtils.mkdirSync(themesDir);
       }
       const sanitizedThemes: CustomTheme[] = [];
       let idx: number = 0;
@@ -1995,9 +1997,9 @@ export struct ThemeSettingsPage {
         idx = idx + 1;
       }
       this.customThemes = sanitizedThemes;
-      const file = fs.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, JSON.stringify(this.customThemes));
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(file.fd, JSON.stringify(this.customThemes));
+      SafeFileUtils.closeSync(file);
       logger.info(TAG, '✅ 自定义主题列表已持久化');
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -2079,31 +2081,31 @@ export struct ThemeSettingsPage {
         const selected: boolean = this.isThemeSelected(theme.id);
         if (selected) {
           // 删除关联文件
-          if (theme.backgroundImagePath && theme.backgroundImagePath.length > 0 && fs.accessSync(theme.backgroundImagePath)) {
-            fs.unlinkSync(theme.backgroundImagePath);
+          if (theme.backgroundImagePath && theme.backgroundImagePath.length > 0 && SafeFileUtils.accessSync(theme.backgroundImagePath)) {
+            SafeFileUtils.unlinkSync(theme.backgroundImagePath);
             logger.info(TAG, `已删除浅色背景: ${theme.backgroundImagePath}`);
           }
-          if (theme.backgroundImagePathDark && theme.backgroundImagePathDark.length > 0 && fs.accessSync(theme.backgroundImagePathDark)) {
-            fs.unlinkSync(theme.backgroundImagePathDark);
+          if (theme.backgroundImagePathDark && theme.backgroundImagePathDark.length > 0 && SafeFileUtils.accessSync(theme.backgroundImagePathDark)) {
+            SafeFileUtils.unlinkSync(theme.backgroundImagePathDark);
             logger.info(TAG, `已删除深色背景: ${theme.backgroundImagePathDark}`);
           } else {
             // 兼容旧版本可能使用文件名约定
             const darkCandidate: string = `${themesDir}/${theme.id}_dark.webp`;
-            if (fs.accessSync(darkCandidate)) {
-              fs.unlinkSync(darkCandidate);
+            if (SafeFileUtils.accessSync(darkCandidate)) {
+              SafeFileUtils.unlinkSync(darkCandidate);
               logger.info(TAG, `已删除深色背景(兼容路径): ${darkCandidate}`);
             }
           }
-          if (theme.splashBackgroundImagePath && theme.splashBackgroundImagePath.length > 0 && fs.accessSync(theme.splashBackgroundImagePath)) {
-            fs.unlinkSync(theme.splashBackgroundImagePath);
+          if (theme.splashBackgroundImagePath && theme.splashBackgroundImagePath.length > 0 && SafeFileUtils.accessSync(theme.splashBackgroundImagePath)) {
+            SafeFileUtils.unlinkSync(theme.splashBackgroundImagePath);
             logger.info(TAG, `已删除开屏背景: ${theme.splashBackgroundImagePath}`);
           }
           const splashPathsToDelete: string[] = this.getSplashPathsFromTheme(theme);
           let splashIdx: number = 0;
           while (splashIdx < splashPathsToDelete.length) {
             const splashPath: string = splashPathsToDelete[splashIdx];
-            if (splashPath.length > 0 && splashPath !== theme.splashBackgroundImagePath && fs.accessSync(splashPath)) {
-              fs.unlinkSync(splashPath);
+            if (splashPath.length > 0 && splashPath !== theme.splashBackgroundImagePath && SafeFileUtils.accessSync(splashPath)) {
+              SafeFileUtils.unlinkSync(splashPath);
               logger.info(TAG, `已删除开屏背景(列表): ${splashPath}`);
             }
             splashIdx = splashIdx + 1;
@@ -2146,8 +2148,8 @@ export struct ThemeSettingsPage {
       const themesDir: string = `${context.filesDir}/custom_themes`;
       const themesFile: string = `${themesDir}/themes.json`;
 
-      if (!fs.accessSync(themesDir)) {
-        fs.mkdirSync(themesDir);
+      if (!SafeFileUtils.accessSync(themesDir)) {
+        SafeFileUtils.mkdirSync(themesDir);
       }
 
       // 检查默认主题是否已存在
@@ -2216,9 +2218,9 @@ export struct ThemeSettingsPage {
     };
 
     const imagePacker = image.createImagePacker();
-    const file = fs.openSync(imagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    const file = SafeFileUtils.openSync(imagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
     await imagePacker.packToFile(pixelMap, file.fd, packOpts);
-    fs.closeSync(file);
+    SafeFileUtils.closeSync(file);
     imagePacker.release();
     pixelMap.release();
   }
@@ -2268,8 +2270,8 @@ export struct ThemeSettingsPage {
       return;
     }
     const themesDir: string = `${context.filesDir}/custom_themes`;
-    if (!fs.accessSync(themesDir)) {
-      fs.mkdirSync(themesDir);
+    if (!SafeFileUtils.accessSync(themesDir)) {
+      SafeFileUtils.mkdirSync(themesDir);
     }
 
     // 检查是否已存在
@@ -2322,8 +2324,8 @@ export struct ThemeSettingsPage {
       return;
     }
     const themesDir: string = `${context.filesDir}/custom_themes`;
-    if (!fs.accessSync(themesDir)) {
-      fs.mkdirSync(themesDir);
+    if (!SafeFileUtils.accessSync(themesDir)) {
+      SafeFileUtils.mkdirSync(themesDir);
     }
 
     let exists: boolean = false;
@@ -2378,8 +2380,8 @@ export struct ThemeSettingsPage {
       }
       const themesDir: string = `${context.filesDir}/custom_themes`;
       const themesFile: string = `${themesDir}/themes.json`;
-      if (!fs.accessSync(themesDir)) {
-        fs.mkdirSync(themesDir);
+      if (!SafeFileUtils.accessSync(themesDir)) {
+        SafeFileUtils.mkdirSync(themesDir);
       }
 
       // 查找默认主题
@@ -2454,7 +2456,7 @@ export struct ThemeSettingsPage {
     
     try {
       // 打开图片文件
-      const file = fs.openSync(imageUri, fs.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(imageUri, fs.OpenMode.READ_ONLY);
       const imageSource = image.createImageSource(file.fd);
       try {
         // 获取图片信息
@@ -2513,7 +2515,7 @@ export struct ThemeSettingsPage {
         await this.syncSelectedImagePixelSize(this.selectedImagePixelMap);
         this.resetBackgroundViewfinder();
       } finally {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
         imageSource.release();
       }
       
@@ -2679,7 +2681,7 @@ export struct ThemeSettingsPage {
     this.processingProgress = 10;
 
     try {
-      const file = fs.openSync(imageUri, fs.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(imageUri, fs.OpenMode.READ_ONLY);
       const imageSource = image.createImageSource(file.fd);
       try {
         const imageInfo = await imageSource.getImageInfo();
@@ -2720,7 +2722,7 @@ export struct ThemeSettingsPage {
         this.processingProgress = 100;
         this.processingMessage = '开屏图片处理完成';
       } finally {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
         imageSource.release();
       }
       setTimeout(() => { this.isProcessing = false; }, 300);
@@ -3096,7 +3098,7 @@ export struct ThemeSettingsPage {
           const blurRadius = Math.round(this.blurLevel * 0.3);
           logger.info(TAG, `应用模糊效果，半径=${blurRadius}`);
           filter.blur(blurRadius);
-          const blurredPixelMap = await filter.getPixelMap();
+          const blurredPixelMap = await filter.getEffectPixelMap();
           workingPixelMap.release();
           workingPixelMap = blurredPixelMap;
           logger.info(TAG, '✅ 模糊效果应用完成');
@@ -3113,7 +3115,7 @@ export struct ThemeSettingsPage {
         const filter = effectKit.createEffect(workingPixelMap);
         if (filter) {
           filter.brightness(brightnessFactor);
-          const brighterPixelMap = await filter.getPixelMap();
+          const brighterPixelMap = await filter.getEffectPixelMap();
           workingPixelMap.release();
           workingPixelMap = brighterPixelMap;
           logger.info(TAG, '✅ 亮度增加完成');
@@ -3190,7 +3192,7 @@ export struct ThemeSettingsPage {
     const sourceTheme: CustomTheme | null = this.getEditingSourceTheme();
     if (!this.selectedImagePixelMap && sourceTheme === null) {
       logger.error(TAG, '没有可保存的主题');
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '请先选择背景图片',
         duration: 1600
       });
@@ -3209,8 +3211,8 @@ export struct ThemeSettingsPage {
       
       // 创建主题目录
       const themesDir = `${context.filesDir}/custom_themes`;
-      if (!fs.accessSync(themesDir)) {
-        fs.mkdirSync(themesDir);
+      if (!SafeFileUtils.accessSync(themesDir)) {
+        SafeFileUtils.mkdirSync(themesDir);
       }
       
       const themeId: string = this.isEditingCustomTheme && this.editingThemeId.length > 0
@@ -3300,7 +3302,7 @@ export struct ThemeSettingsPage {
       setTimeout(() => {
         this.isProcessing = false;
         // 显示成功提示
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: this.isEditingCustomTheme ? '主题修改已保存并应用' : '主题已保存并应用',
           duration: 2000
         });
@@ -3410,7 +3412,7 @@ export struct ThemeSettingsPage {
       if (filter) {
         const blurRadius = Math.round(blurLevel * 0.3);
         filter.blur(blurRadius);
-        const blurredPixelMap = await filter.getPixelMap();
+        const blurredPixelMap = await filter.getEffectPixelMap();
         workingPixelMap.release();
         workingPixelMap = blurredPixelMap;
       }
@@ -3422,7 +3424,7 @@ export struct ThemeSettingsPage {
       const filter = effectKit.createEffect(workingPixelMap);
       if (filter) {
         filter.brightness(brightnessFactor);
-        const brighterPixelMap = await filter.getPixelMap();
+        const brighterPixelMap = await filter.getEffectPixelMap();
         workingPixelMap.release();
         workingPixelMap = brighterPixelMap;
       }
@@ -3436,9 +3438,9 @@ export struct ThemeSettingsPage {
     
     try {
       const imagePacker = image.createImagePacker();
-      const file = fs.openSync(imagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      const file = SafeFileUtils.openSync(imagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       await imagePacker.packToFile(workingPixelMap, file.fd, packOpts);
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
       imagePacker.release();
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -3737,12 +3739,12 @@ export struct ThemeSettingsPage {
       try {
         await this.themeManager.clearCustomTheme();
         this.currentCustomThemeId = '';
-        promptAction.showToast({ message: '已关闭自定义主题，已恢复纯色主题' });
+        this.getUIContext().getPromptAction().showToast({ message: '已关闭自定义主题，已恢复纯色主题' });
         logger.info(TAG, '已关闭自定义主题，保留已保存主题列表');
       } catch (error) {
         const errorMsg: string = error instanceof Error ? error.message : String(error);
         logger.error(TAG, `关闭自定义主题失败: ${errorMsg}`);
-        promptAction.showToast({ message: '关闭失败，请稍后重试' });
+        this.getUIContext().getPromptAction().showToast({ message: '关闭失败，请稍后重试' });
       }
     }).catch((err: Error) => {
       logger.error(TAG, `显示关闭自定义主题确认对话框失败: ${err.message}`);
@@ -3826,7 +3828,7 @@ export struct ThemeSettingsPage {
     } catch (error) {
       const message: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `加载主题编辑信息失败: ${message}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '加载主题失败，请重试',
         duration: 1600
       });
@@ -6316,7 +6318,7 @@ export struct ThemeSettingsPage {
           .align(Alignment.TopStart) // 响应式：大屏居中对齐
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
-          .onScroll((_xOffset: number, _yOffset: number) => {
+          .onDidScroll((_xOffset: number, _yOffset: number) => {
             this.markSettingsScrolling();
           })
           .edgeEffect(EdgeEffect.Spring)

@@ -1,3 +1,4 @@
+import { UIContext } from '@ohos.arkui.UIContext';
 /**
  * Suwayomi 图源浏览页面
  * 专门用于浏览单个图源的漫画内容
@@ -103,7 +104,7 @@ export struct SuwayomiSourceBrowsePage {
   private updateGridColumns(): void {
     try {
       const displayInfo = display.getDefaultDisplaySync();
-      const screenWidth = px2vp(displayInfo.width);
+      const screenWidth = this.getUIContext().px2vp(displayInfo.width);
       // 每个卡片理想宽度约120vp，加上间距
       const idealCardWidth = 120;
       const padding = 32; // 左右padding各16
@@ -210,7 +211,7 @@ export struct SuwayomiSourceBrowsePage {
 
   private showToast(message: string): void {
     import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showToast({
+      AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
         message: message,
         duration: 2000
       });

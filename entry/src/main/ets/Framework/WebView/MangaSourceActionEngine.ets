@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceActionEngine.ets
 /**
  * 漫画图源操作引擎
@@ -242,7 +243,7 @@ export class MangaSourceActionEngine {
         if (saveAsField) {
           // 尝试解析JSON并保存各个字段
           try {
-            const parsed: ESObject = JSON.parse(cleanResult) as ESObject;
+            const parsed: ESObject = SafeUtils.parseObj(cleanResult) as ESObject;
             if (typeof parsed === 'object' && parsed !== null) {
               // 保存整个对象到指定变量
               context.variables[saveAsField] = cleanResult;
@@ -486,7 +487,7 @@ export class MangaSourceActionEngine {
       if (typeof variableData === 'string') {
         try {
           // 使用 JSON5 兼容的解析方式处理可能的嵌套对象
-          const parsed = JSON.parse(variableData) as Record<string, Object> | Array<Record<string, Object>>;
+          const parsed = SafeUtils.parseArr(variableData) as Record<string, Object> | Array<Record<string, Object>>;
           logger.debug(TAG, `变量数据解析成功，类型: ${Array.isArray(parsed) ? 'array' : typeof parsed}`);
           return parsed as Record<string, string | string[]> | Array<Record<string, string>>;
         } catch (e) {
@@ -988,7 +989,7 @@ export class MangaSourceActionEngine {
 
             // 尝试解析JSON结果
             if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
-              const parsedResult = JSON.parse(result) as T;
+              const parsedResult = SafeUtils.parseObj(result) as T;
               resolve(parsedResult);
             } else {
               // 对于非JSON结果，进行类型转换
@@ -1049,7 +1050,7 @@ export class MangaSourceActionEngine {
               return;
             }
             if (result.trim().startsWith('{') || result.trim().startsWith('[')) {
-              const parsed = JSON.parse(result) as T;
+              const parsed = SafeUtils.parseObj(result) as T;
               resolve(parsed);
             } else {
               resolve(result as T);
@@ -1254,7 +1255,7 @@ export class MangaSourceActionEngine {
       const networkHeadersStr: string | undefined = context.variables['__networkHeaders__'];
       if (networkHeadersStr && networkHeadersStr.length > 0) {
         try {
-          const networkHeaders: Record<string, string> = JSON.parse(networkHeadersStr) as Record<string, string>;
+          const networkHeaders: Record<string, string> = SafeUtils.parseObj(networkHeadersStr) as Record<string, string>;
           const netHeaderKeys: string[] = Object.keys(networkHeaders);
           for (let ni = 0; ni < netHeaderKeys.length; ni++) {
             const nKey: string = netHeaderKeys[ni];
@@ -1276,7 +1277,7 @@ export class MangaSourceActionEngine {
           const template = configHeaders['__template__'];
           const replaced = this.replaceVariables(template, context.variables);
           try {
-            const parsed = JSON.parse(replaced) as Record<string, string>;
+            const parsed = SafeUtils.parseObj(replaced) as Record<string, string>;
             const parsedKeys: string[] = Object.keys(parsed);
             for (let i = 0; i < parsedKeys.length; i++) {
               const k: string = parsedKeys[i];

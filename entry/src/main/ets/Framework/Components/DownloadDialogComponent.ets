@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/Framework/Components/DownloadDialogComponent.ets
+﻿// 文件路径: entry/src/main/ets/Framework/Components/DownloadDialogComponent.ets
 // 职责: 下载/缓存章节选择对话框组件，从UnifiedDetailPage提取的独立组件
 
 import { promptAction, curves } from '@kit.ArkUI';
@@ -139,7 +139,7 @@ export struct DownloadDialogComponent {
 
     const selectedCount = this.getSelectedChapterCount();
     if (selectedCount === 0) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: this.content.contentType === UnifiedContentType.NOVEL && this.isCurrentNovelAudioSource?.()
           ? '未选择要缓存的音频章节'
           : '未选择要缓存的章节'

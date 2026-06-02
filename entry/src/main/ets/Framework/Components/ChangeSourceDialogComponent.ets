@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/Framework/Components/ChangeSourceDialogComponent.ets
+﻿// 文件路径: entry/src/main/ets/Framework/Components/ChangeSourceDialogComponent.ets
 // 职责: 换源对话框组件，从UnifiedDetailPage提取的独立组件
 
 import { promptAction } from '@kit.ArkUI';
@@ -98,7 +98,7 @@ export struct ChangeSourceDialogComponent {
 
     const keyword = this.changeSourceKeyword.trim();
     if (!keyword) {
-      promptAction.showToast({ message: '请输入搜索关键词' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入搜索关键词' });
       return;
     }
 

@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/PdfToMangaImporter.ets
 /**
  * PDF转漫画导入器
@@ -454,14 +455,14 @@ export class PdfToMangaImporter {
     try {
       // 创建漫画目录
       try {
-        fileIo.mkdirSync(mangaDir, true);
+        SafeFileUtils.mkdirSync(mangaDir, true);
       } catch (e) {
         // 目录可能已存在
       }
 
       // 创建章节目录
       try {
-        fileIo.mkdirSync(chapterDir, true);
+        SafeFileUtils.mkdirSync(chapterDir, true);
       } catch (e) {
         // 目录可能已存在
       }
@@ -488,7 +489,7 @@ export class PdfToMangaImporter {
       quality: quality
     };
     const imagePackerApi = image.createImagePacker();
-    const file = fileIo.openSync(
+    const file = SafeFileUtils.openSync(
       outputPath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
     );
@@ -496,7 +497,7 @@ export class PdfToMangaImporter {
       await imagePackerApi.packToFile(pixelMap, file.fd, packOpts);
     } finally {
       try {
-        fileIo.closeSync(file);
+        SafeFileUtils.closeSync(file);
       } catch (closeError) {
         logger.warn(TAG, `关闭图片输出文件失败: ${String(closeError)}`);
       }
@@ -561,7 +562,7 @@ export class PdfToMangaImporter {
         // 获取文件信息
         let fileSize = 0;
         try {
-          const stat = fileIo.statSync(finalPath);
+          const stat = SafeFileUtils.statSync(finalPath);
           fileSize = stat.size;
         } catch (e) {
           // 忽略
@@ -640,11 +641,11 @@ export class PdfToMangaImporter {
       const xmlContent = this.generateComicInfoXml(comicInfo);
       const xmlPath = `${chapterDir}/ComicInfo.xml`;
 
-      const file = fileIo.openSync(xmlPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      const file = SafeFileUtils.openSync(xmlPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
       const encoder = new TextEncoder();
       const buffer = encoder.encode(xmlContent);
-      fileIo.writeSync(file.fd, buffer.buffer);
-      fileIo.closeSync(file);
+      SafeFileUtils.writeSync(file.fd, buffer.buffer);
+      SafeFileUtils.closeSync(file);
 
       logger.info(TAG, `ComicInfo.xml 已写入: ${xmlPath}`);
     } catch (error) {
@@ -708,7 +709,7 @@ export class PdfToMangaImporter {
       const coverPath = `${coverDir}/cover${this.getImageExtension(firstPage.imagePath)}`;
 
       // 复制第一页图片作为封面
-      fileIo.copyFileSync(firstPage.imagePath, coverPath);
+      SafeFileUtils.copyFileSync(firstPage.imagePath, coverPath);
       
       logger.info(TAG, `封面已生成: ${coverPath}`);
       return coverPath;

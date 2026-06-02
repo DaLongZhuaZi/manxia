@@ -1,4 +1,4 @@
-// 文件路径: src/main/ets/Framework/Loading/LoadingPage.ets
+﻿// 文件路径: src/main/ets/Framework/Loading/LoadingPage.ets
 /**
  * 加载状态页面组件
  * 负责显示应用启动和初始化过程中的详细加载进度和状态信息

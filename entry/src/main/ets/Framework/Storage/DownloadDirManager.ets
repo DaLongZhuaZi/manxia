@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * Download目录管理器
  * 管理应用在系统Download文件夹中的专属目录
@@ -168,9 +169,9 @@ export class DownloadDirManager {
   private createInitFile(): void {
     try {
       const initFilePath = `${this.downloadDirPath}/.manxia_init`;
-      const file = fs.openSync(initFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
-      fs.writeSync(file.fd, `漫匣应用目录初始化文件\n创建时间: ${new Date().toISOString()}`);
-      fs.closeSync(file.fd);
+      const file = SafeFileUtils.openSync(initFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
+      SafeFileUtils.writeSync(file.fd, `漫匣应用目录初始化文件\n创建时间: ${new Date().toISOString()}`);
+      SafeFileUtils.closeSync(file.fd);
       logger.info(TAG, `初始化文件已创建: ${initFilePath}`);
     } catch (error) {
       logger.warn(TAG, `创建初始化文件失败: ${String(error)}`);
@@ -189,13 +190,13 @@ export class DownloadDirManager {
       ? relativePath
       : `${this.downloadDirPath}/${relativePath}`;
     try {
-      const stat = fs.statSync(fullPath);
+      const stat = SafeFileUtils.statSync(fullPath);
       if (!stat.isDirectory()) {
         throw new Error('路径不是目录');
       }
     } catch (error) {
       // 目录不存在，创建它
-      fs.mkdirSync(fullPath, true);
+      SafeFileUtils.mkdirSync(fullPath, true);
       logger.debug(TAG, `目录已创建: ${fullPath}`);
     }
     return fullPath;
@@ -265,7 +266,7 @@ export class DownloadDirManager {
     }
     try {
       const fullPath = `${this.downloadDirPath}/${relativePath}`;
-      fs.accessSync(fullPath);
+      SafeFileUtils.accessSync(fullPath);
       return true;
     } catch (error) {
       return false;
@@ -281,7 +282,7 @@ export class DownloadDirManager {
     }
     try {
       const fullPath = relativePath ? `${this.downloadDirPath}/${relativePath}` : this.downloadDirPath;
-      return fs.listFileSync(fullPath);
+      return SafeFileUtils.listFileSync(fullPath);
     } catch (error) {
       logger.warn(TAG, `列出文件失败: ${String(error)}`);
       return [];
@@ -297,7 +298,7 @@ export class DownloadDirManager {
     }
     try {
       const fullPath = `${this.downloadDirPath}/${relativePath}`;
-      fs.unlinkSync(fullPath);
+      SafeFileUtils.unlinkSync(fullPath);
       logger.debug(TAG, `文件已删除: ${fullPath}`);
       return true;
     } catch (error) {
@@ -315,7 +316,7 @@ export class DownloadDirManager {
     }
     try {
       const fullPath = `${this.downloadDirPath}/${relativePath}`;
-      fs.rmdirSync(fullPath);
+      SafeFileUtils.rmdirSync(fullPath);
       logger.debug(TAG, `目录已删除: ${fullPath}`);
       return true;
     } catch (error) {

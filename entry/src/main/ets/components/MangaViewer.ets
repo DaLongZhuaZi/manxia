@@ -6135,7 +6135,7 @@ export struct MangaViewer {
       .height('100%')
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
-      .onScroll((xOffset: number, yOffset: number) => {
+      .onDidScroll((xOffset: number, yOffset: number) => {
         this.handleContinuousHorizontalScroll(xOffset);
       })
       .onScrollStart(() => {
@@ -6191,7 +6191,7 @@ export struct MangaViewer {
       .height('100%')
       .scrollable(ScrollDirection.Vertical)
       .scrollBar(BarState.Off)
-      .onScroll((xOffset: number, yOffset: number) => {
+      .onDidScroll((xOffset: number, yOffset: number) => {
         this.handleWebtoonScroll(yOffset);
       })
       .onScrollStart(() => {
@@ -8435,7 +8435,7 @@ export struct MangaViewer {
     .scrollBar(BarState.Off)
     .width('100%')
     .height('100%')
-    .onScroll((xOffset: number, yOffset: number) => {
+    .onDidScroll((xOffset: number, yOffset: number) => {
       this.handleWebtoonScroll(yOffset);
       // [性能优化] 对重型操作进行节流，避免滚动卡顿
       this.throttledWebtoonHeavyOperations();
@@ -8843,7 +8843,7 @@ export struct MangaViewer {
     .scrollBar(BarState.Off)
     .width('100%')
     .height('100%')
-    .onScroll((xOffset: number, yOffset: number) => {
+    .onDidScroll((xOffset: number, yOffset: number) => {
       this.handleWebtoonScroll(yOffset);
       // [性能优化] 对重型操作进行节流，避免滚动卡顿
       this.throttledWebtoonHeavyOperations();

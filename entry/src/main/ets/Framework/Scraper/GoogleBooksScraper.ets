@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Scraper/GoogleBooksScraper.ets
 /**
  * Google Books 刮削器
@@ -156,7 +157,7 @@ export class GoogleBooksScraper {
       url += '&printType=books';
 
       const response = await this.makeRequest(url);
-      const data: GoogleBooksSearchResponse = JSON.parse(response) as GoogleBooksSearchResponse;
+      const data: GoogleBooksSearchResponse = SafeUtils.parseObj(response) as GoogleBooksSearchResponse;
 
       const results: ScrapedMetadata[] = [];
       if (data.items) {
@@ -200,7 +201,7 @@ export class GoogleBooksScraper {
       }
 
       const response = await this.makeRequest(url);
-      const volume: GoogleBooksVolume = JSON.parse(response) as GoogleBooksVolume;
+      const volume: GoogleBooksVolume = SafeUtils.parseObj(response) as GoogleBooksVolume;
 
       const metadata = this.convertVolumeToMetadata(volume);
 

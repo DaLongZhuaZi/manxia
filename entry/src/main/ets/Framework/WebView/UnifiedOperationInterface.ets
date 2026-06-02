@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 统一操作接口
  * 提供WebView配置系统的统一操作入口
@@ -388,7 +389,7 @@ export class UnifiedOperationInterface {
       if (data && Object.keys(data).includes('url') && Object.keys(data).includes('policy')) {
         const securityData = data as SecurityOperationData;
         const policyData: PolicyValueData = {
-          policy: JSON.parse(securityData.policy) as SecurityPolicyConfiguration,
+          policy: SafeUtils.parseObj(securityData.policy) as SecurityPolicyConfiguration,
           metadata: { source: 'validation' } as ValidationMetadata
         };
         const result = this.securityParser.validate(policyData.policy);

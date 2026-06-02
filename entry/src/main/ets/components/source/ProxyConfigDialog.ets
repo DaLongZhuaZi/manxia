@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 代理配置对话框（图源网络代理）
  * 统一用于 MainMenuPage / SourceManagementPage
  */
@@ -245,7 +245,7 @@ export struct ProxyConfigDialog {
       this.updateLocalSourceProxy(sourceId, requireProxy);
     } catch (error) {
       logger.error(TAG, `更新图源代理开关失败: sourceId=${sourceId}, error=${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '更新图源代理失败，请重试',
         duration: 1500
       });

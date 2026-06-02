@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 深度链接跳转对话框
  * 通过 DeepLinkDialogManager.show() 从任何页面调用
  */
@@ -28,7 +28,7 @@ export struct DeepLinkDialog {
   onCancel: () => void = () => {};
 
   private showToast(message: string): void {
-    promptAction.showToast({ message, duration: 2000 });
+    this.getUIContext().getPromptAction().showToast({ message, duration: 2000 });
   }
 
   private handleInputChange(value: string): void {

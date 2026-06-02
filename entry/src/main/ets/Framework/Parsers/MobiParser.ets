@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { logger } from '../../Utils/Logger';
@@ -692,28 +693,28 @@ sup, .noteref { font-size: 0.75em; vertical-align: super; text-indent: 0; }`;
 function writeTextFile(path: string, content: string): void {
   const encoder = new util.TextEncoder();
   const encoded = encoder.encodeInto(content);
-  const file = fileIo.openSync(path,
+  const file = SafeFileUtils.openSync(path,
     fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-  fileIo.writeSync(file.fd, encoded.buffer as ArrayBuffer);
-  fileIo.closeSync(file);
+  SafeFileUtils.writeSync(file.fd, encoded.buffer as ArrayBuffer);
+  SafeFileUtils.closeSync(file);
 }
 
 function writeBinaryFile(path: string, data: Uint8Array): void {
-  const file = fileIo.openSync(path,
+  const file = SafeFileUtils.openSync(path,
     fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
   try {
     const output = new ArrayBuffer(data.byteLength);
     const outputView = new Uint8Array(output);
     outputView.set(data);
-    fileIo.writeSync(file.fd, output);
+    SafeFileUtils.writeSync(file.fd, output);
   } finally {
-    fileIo.closeSync(file);
+    SafeFileUtils.closeSync(file);
   }
 }
 
 function pathExists(path: string): boolean {
   try {
-    fileIo.statSync(path);
+    SafeFileUtils.statSync(path);
     return true;
   } catch {
     return false;
@@ -724,7 +725,7 @@ function ensureDirectory(path: string): void {
   let statChecked = false;
   let statIsDirectory = false;
   try {
-    const stat = fileIo.statSync(path);
+    const stat = SafeFileUtils.statSync(path);
     statChecked = true;
     statIsDirectory = stat.isDirectory();
   } catch (_statError) {
@@ -737,10 +738,10 @@ function ensureDirectory(path: string): void {
   }
 
   try {
-    fileIo.mkdirSync(path, true);
+    SafeFileUtils.mkdirSync(path, true);
   } catch (error) {
     try {
-      const stat = fileIo.statSync(path);
+      const stat = SafeFileUtils.statSync(path);
       if (stat.isDirectory()) {
         return;
       }
@@ -751,14 +752,14 @@ function ensureDirectory(path: string): void {
 }
 
 function readUtf8TextFile(path: string): string {
-  const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+  const file = SafeFileUtils.openSync(path, fileIo.OpenMode.READ_ONLY);
   try {
-    const stat = fileIo.statSync(file.fd);
+    const stat = SafeFileUtils.statSync(file.fd);
     const buffer = new ArrayBuffer(stat.size);
-    fileIo.readSync(file.fd, buffer);
+    SafeFileUtils.readSync(file.fd, buffer);
     return new util.TextDecoder('utf-8', { ignoreBOM: true }).decodeToString(new Uint8Array(buffer));
   } finally {
-    fileIo.closeSync(file);
+    SafeFileUtils.closeSync(file);
   }
 }
 
@@ -793,22 +794,22 @@ function findCachedCoverPath(extractRoot: string): string {
 
 function isCachedImageFileUsable(path: string): boolean {
   try {
-    const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    const file = SafeFileUtils.openSync(path, fileIo.OpenMode.READ_ONLY);
     try {
-      const stat = fileIo.statSync(file.fd);
+      const stat = SafeFileUtils.statSync(file.fd);
       const headerLength = Math.min(32, Math.max(0, stat.size));
       if (headerLength <= 0) {
         return false;
       }
       const buffer = new ArrayBuffer(headerLength);
-      const readLength = fileIo.readSync(file.fd, buffer);
+      const readLength = SafeFileUtils.readSync(file.fd, buffer);
       if (readLength <= 0) {
         return false;
       }
       const header = new Uint8Array(buffer, 0, Math.min(readLength, headerLength));
       return detectImageExtension(header).length > 0;
     } finally {
-      fileIo.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
   } catch (error) {
     logger.warn(TAG, `检查缓存图片失败: ${path}, error=${String(error)}`);
@@ -824,7 +825,7 @@ function isCachedImageDirectoryUsable(extractRoot: string): boolean {
 
   let fileNames: string[] = [];
   try {
-    fileNames = fileIo.listFileSync(imageDir);
+    fileNames = SafeFileUtils.listFileSync(imageDir);
   } catch (error) {
     logger.warn(TAG, `读取缓存图片目录失败，将重建 MOBI 缓存: ${String(error)}`);
     return false;
@@ -1737,11 +1738,11 @@ export async function convertMobiToExtractedDir(filePath: string): Promise<MobiC
     const normalizedPath = filePath.startsWith('file://') ? filePath.substring(7) : filePath;
 
     // --- Read file ---
-    const fileHandle = fileIo.openSync(normalizedPath, fileIo.OpenMode.READ_ONLY);
-    const stat = fileIo.statSync(fileHandle.fd);
+    const fileHandle = SafeFileUtils.openSync(normalizedPath, fileIo.OpenMode.READ_ONLY);
+    const stat = SafeFileUtils.statSync(fileHandle.fd);
     const buffer = new ArrayBuffer(stat.size);
-    fileIo.readSync(fileHandle.fd, buffer);
-    fileIo.closeSync(fileHandle);
+    SafeFileUtils.readSync(fileHandle.fd, buffer);
+    SafeFileUtils.closeSync(fileHandle);
 
     const dv = new DataView(buffer);
 
@@ -1832,11 +1833,11 @@ export async function convertMobiToExtractedDir(filePath: string): Promise<MobiC
     if (pathExists(opfPath) && isCachedImageDirectoryUsable(extractRoot) && isMobiConversionCacheCurrent(extractRoot)) {
       let cachedChapters = 1;
       try {
-        const f = fileIo.openSync(opfPath, fileIo.OpenMode.READ_ONLY);
-        const s = fileIo.statSync(f.fd);
+        const f = SafeFileUtils.openSync(opfPath, fileIo.OpenMode.READ_ONLY);
+        const s = SafeFileUtils.statSync(f.fd);
         const b = new ArrayBuffer(s.size);
-        fileIo.readSync(f.fd, b);
-        fileIo.closeSync(f);
+        SafeFileUtils.readSync(f.fd, b);
+        SafeFileUtils.closeSync(f);
         const opfText = decodeBytes(new Uint8Array(b), ENCODING_UTF8);
         const itemrefMatches = opfText.match(/<itemref /g);
         cachedChapters = itemrefMatches ? itemrefMatches.length : 1;

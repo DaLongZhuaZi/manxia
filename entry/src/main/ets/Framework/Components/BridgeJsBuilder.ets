@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * EPUB Bridge JS Builder
  * Extracted from EpubWebViewReaderComponent to reduce component state explosion.
@@ -409,7 +410,7 @@ export class BridgeJsBuilder {
       window.__mnxApplyPurifyRules = function(payloadJson) {
         var rules = [];
         try {
-          rules = JSON.parse(String(payloadJson || '[]'));
+          rules = SafeUtils.parseObj(String(payloadJson || '[]'));
         } catch (_error) {
           rules = [];
         }
@@ -556,7 +557,7 @@ export class BridgeJsBuilder {
             pageIndex: state.currentPage || 0
           };
           if (window.__mnxGoToPageImmediate && targetPage.pageIndex !== (state.currentPage || 0)) {
-            state = JSON.parse(window.__mnxGoToPageImmediate(targetPage.pageIndex));
+            state = SafeUtils.parseObj(window.__mnxGoToPageImmediate(targetPage.pageIndex));
           }
         }
         if (window.__mnxUpdateFootnoteLayer) {
@@ -676,7 +677,7 @@ export class BridgeJsBuilder {
         if (followed && window.__mnxSeekToTextOffset) {
           try {
             var followTarget = Math.max(start, Math.min(Math.max(start, end - 1), progress));
-            state = JSON.parse(window.__mnxSeekToTextOffset(followTarget));
+            state = SafeUtils.parseObj(window.__mnxSeekToTextOffset(followTarget));
           } catch (_seekError) {
             state = window.__mnxRefreshPagination ? window.__mnxRefreshPagination() : state;
           }
@@ -752,7 +753,7 @@ export class BridgeJsBuilder {
       window.__mnxApplyEpubHighlights = function(payloadJson) {
         var ranges = [];
         try {
-          ranges = JSON.parse(String(payloadJson || '[]'));
+          ranges = SafeUtils.parseObj(String(payloadJson || '[]'));
         } catch (_error) {
           ranges = [];
         }
@@ -1646,7 +1647,7 @@ export class BridgeJsBuilder {
           });
         }
         var nearest = window.__mnxFindNearestPageIndex(absoluteOffset);
-        var response = JSON.parse(window.__mnxGoToPageImmediate(nearest.pageIndex));
+        var response = SafeUtils.parseObj(window.__mnxGoToPageImmediate(nearest.pageIndex));
         response.found = true;
         return JSON.stringify(response);
       };

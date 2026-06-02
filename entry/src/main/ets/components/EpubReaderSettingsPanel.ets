@@ -1,4 +1,4 @@
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
+﻿import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import {
   EBookReadingSettings,
   DEFAULT_EBOOK_READING_SETTINGS,

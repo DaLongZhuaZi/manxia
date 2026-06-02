@@ -1,4 +1,4 @@
-import { HdsNavDestination } from '@kit.UIDesignKit';
+﻿import { HdsNavDestination } from '@kit.UIDesignKit';
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
@@ -992,7 +992,7 @@ struct TransferPageContent {
 
   private resolveAbilityContext(): common.UIAbilityContext | null {
     try {
-      const hostContext = this.getUIContext().getHostContext();
+      const hostContext = (this.getUIContext().getHostContext() as common.UIAbilityContext);
       if (hostContext) {
         return hostContext as common.UIAbilityContext;
       }

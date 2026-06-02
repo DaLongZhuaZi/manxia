@@ -1,10 +1,12 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 // 文件路径：entry/src/main/ets/pages/DataManagementPage.ets
 /**
  * 数据管理页面
  * 提供漫画文件导入、解压缩、XML解析和数据库导入功能
  */
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, UIContext, promptAction, componentSnapshot } from '@kit.ArkUI';
+import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -850,7 +852,7 @@ struct DataManagementPage {
     this.downloadDirPath = DownloadDirManager.getPath();
     this.downloadDirUri = DownloadDirManager.getUri();
     try {
-      const filenames = fs.listFileSync(this.downloadDirPath);
+      const filenames = SafeFileUtils.listFileSync(this.downloadDirPath);
       this.downloadDirFiles = filenames;
       this.downloadDirFileCount = filenames.length;
     } catch (error) {
@@ -920,7 +922,7 @@ struct DataManagementPage {
     const sourcePath = this.resolveLocalImportPath(sourceUri);
     const targetDir = DownloadDirManager.ensureDirectory(relativeDir);
     const targetPath = `${targetDir}/${this.buildNetworkImportSafeFileName(displayName)}`;
-    fs.copyFileSync(sourcePath, targetPath);
+    SafeFileUtils.copyFileSync(sourcePath, targetPath);
     logger.info(TAG, `网络文件夹缓存文件已转存到 Download 应用目录: ${targetPath}`);
     this.syncDownloadDirStateFromManager();
     return targetPath;
@@ -932,12 +934,12 @@ struct DataManagementPage {
       if (!ready) {
         return;
       }
-      promptAction.showToast({ message: `目录连接成功，共 ${this.downloadDirFileCount} 个文件` });
+      this.getUIContext().getPromptAction().showToast({ message: `目录连接成功，共 ${this.downloadDirFileCount} 个文件` });
       return;
 
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
       if (!context) {
-        promptAction.showToast({ message: '无法获取上下文' });
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取上下文' });
         return;
       }
       
@@ -960,9 +962,9 @@ struct DataManagementPage {
           // 在目录下创建一个测试文件来验证权限
           try {
             const testFilePath = new fileUri.FileUri(uri + '/.manxia_init').path;
-            const file = fs.openSync(testFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
-            fs.writeSync(file.fd, '漫匣应用目录初始化文件');
-            fs.closeSync(file.fd);
+            const file = SafeFileUtils.openSync(testFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
+            SafeFileUtils.writeSync(file.fd, '漫匣应用目录初始化文件');
+            SafeFileUtils.closeSync(file.fd);
             logger.info(TAG, `成功创建初始化文件: ${testFilePath}`);
           } catch (writeError) {
             logger.warn(TAG, `创建初始化文件失败: ${String(writeError)}`);
@@ -970,25 +972,25 @@ struct DataManagementPage {
           
           // 列出目录下的文件
           try {
-            const filenames = fs.listFileSync(this.downloadDirPath);
+            const filenames = SafeFileUtils.listFileSync(this.downloadDirPath);
             this.downloadDirFiles = filenames;
             this.downloadDirFileCount = filenames.length;
             logger.info(TAG, `Download目录下共有 ${filenames.length} 个文件`);
-            promptAction.showToast({ message: `目录创建成功，共 ${filenames.length} 个文件` });
+            this.getUIContext().getPromptAction().showToast({ message: `目录创建成功，共 ${filenames.length} 个文件` });
           } catch (listError) {
             logger.warn(TAG, `列出文件失败: ${String(listError)}`);
             this.downloadDirFiles = [];
             this.downloadDirFileCount = 0;
-            promptAction.showToast({ message: '目录创建成功' });
+            this.getUIContext().getPromptAction().showToast({ message: '目录创建成功' });
           }
         }
       }).catch((err: Error) => {
         logger.error(TAG, `DOWNLOAD模式失败: ${err.message}`);
-        promptAction.showToast({ message: `创建失败: ${err.message}` });
+        this.getUIContext().getPromptAction().showToast({ message: `创建失败: ${err.message}` });
       });
     } catch (error) {
       logger.error(TAG, `访问Download目录失败: ${String(error)}`);
-      promptAction.showToast({ message: `访问失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `访问失败: ${String(error)}` });
     }
   }
 
@@ -1006,7 +1008,7 @@ struct DataManagementPage {
    */
   private async scanDownloadDir(): Promise<void> {
     if (!this.downloadDirPath) {
-      promptAction.showToast({ message: '请先访问Download目录' });
+      this.getUIContext().getPromptAction().showToast({ message: '请先访问Download目录' });
       return;
     }
     
@@ -1017,7 +1019,7 @@ struct DataManagementPage {
     this.pendingNovelFiles = [];
     
     try {
-      const filenames = fs.listFileSync(this.downloadDirPath);
+      const filenames = SafeFileUtils.listFileSync(this.downloadDirPath);
       this.downloadDirFiles = filenames;
       this.downloadDirFileCount = filenames.length;
       
@@ -1042,10 +1044,10 @@ struct DataManagementPage {
                           this.pendingPdfFiles.length + this.pendingNovelFiles.length;
       
       logger.info(TAG, `扫描完成: 漫画=${this.pendingMangaFiles.length}, 电子书=${this.pendingEbookFiles.length}, PDF=${this.pendingPdfFiles.length}, 小说=${this.pendingNovelFiles.length}`);
-      promptAction.showToast({ message: `扫描完成，发现 ${totalPending} 个可导入文件` });
+      this.getUIContext().getPromptAction().showToast({ message: `扫描完成，发现 ${totalPending} 个可导入文件` });
     } catch (error) {
       logger.error(TAG, `扫描目录失败: ${String(error)}`);
-      promptAction.showToast({ message: `扫描失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `扫描失败: ${String(error)}` });
     } finally {
       this.isScanning = false;
     }
@@ -1057,7 +1059,7 @@ struct DataManagementPage {
    */
   private async importMangaFromDownloadDir(): Promise<void> {
     if (this.pendingMangaFiles.length === 0) {
-      promptAction.showToast({ message: '没有待导入的漫画文件' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有待导入的漫画文件' });
       return;
     }
     
@@ -1137,7 +1139,7 @@ struct DataManagementPage {
     }
     
     this.updateProgress(ImportStatus.COMPLETED, `完成: 成功 ${successCount}/${total}`, 100);
-    promptAction.showToast({ message: `导入完成: 成功 ${successCount}` });
+    this.getUIContext().getPromptAction().showToast({ message: `导入完成: 成功 ${successCount}` });
     this.pendingMangaFiles = [];
     
     if (successCount > 0) {
@@ -1170,7 +1172,7 @@ struct DataManagementPage {
     // 在Download目录创建漫画文件夹
     const folderName = this.sanitizeFolderName(group.title);
     const mangaPath = `${this.downloadDirPath}/${folderName}`;
-    try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
+    try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
     
     let firstCoverPath = '';
     
@@ -1178,20 +1180,20 @@ struct DataManagementPage {
     for (let i = 0; i < group.chapters.length; i++) {
       const chapter = group.chapters[i];
       const chapterPath = `${mangaPath}/${this.sanitizeFolderName(chapter.title)}`;
-      try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
       
       // 解析并复制文件
       const parsed = await this.parseArchiveStructureWithPasswordRetry(chapter.fileUri);
       const imageFiles: string[] = [];
       
       if (parsed.extractedPath) {
-        const files = fs.listFileSync(parsed.extractedPath);
+        const files = SafeFileUtils.listFileSync(parsed.extractedPath);
         for (const file of files) {
           if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
             const srcPath = `${parsed.extractedPath}/${file}`;
             const destPath = `${chapterPath}/${file}`;
             try {
-              fs.copyFileSync(srcPath, destPath);
+              SafeFileUtils.copyFileSync(srcPath, destPath);
               imageFiles.push(file);
             } catch (e) {
               logger.warn(TAG, `复制文件失败: ${file}`);
@@ -1228,7 +1230,7 @@ struct DataManagementPage {
       const coverPath = `${mangaPath}/cover${ext}`;
       
       try {
-        fs.copyFileSync(firstCoverPath, coverPath);
+        SafeFileUtils.copyFileSync(firstCoverPath, coverPath);
         await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
         logger.info(TAG, `封面已保存: ${coverPath}`);
       } catch (e) {
@@ -1286,7 +1288,7 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.IDLE, '请配置导入选项', 20);
     } catch (error) {
       logger.error(TAG, `解析失败: ${filename}`, String(error));
-      promptAction.showToast({ message: `解析失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `解析失败: ${String(error)}` });
       this.pendingMangaFiles = [];
     }
   }
@@ -1305,8 +1307,8 @@ struct DataManagementPage {
       const mangaPath = `${this.downloadDirPath}/${folderName}`;
       const chapterPath = `${mangaPath}/第1话`;
       
-      try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
-      try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
       
       // 处理章节
       const chapterInput: ChapterInfoInput = {
@@ -1323,13 +1325,13 @@ struct DataManagementPage {
       // 复制图片文件和ComicInfo.xml
       const imageFiles: string[] = [];
       if (parsed.extractedPath) {
-        const files = fs.listFileSync(parsed.extractedPath);
+        const files = SafeFileUtils.listFileSync(parsed.extractedPath);
         for (const file of files) {
           if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
             const srcPath = `${parsed.extractedPath}/${file}`;
             const destPath = `${chapterPath}/${file}`;
             try {
-              fs.copyFileSync(srcPath, destPath);
+              SafeFileUtils.copyFileSync(srcPath, destPath);
               imageFiles.push(file);
             } catch (e) {
               logger.warn(TAG, `复制文件失败: ${file}`);
@@ -1342,7 +1344,7 @@ struct DataManagementPage {
           const comicInfoSrc = `${parsed.extractedPath}/ComicInfo.xml`;
           const comicInfoDest = `${mangaPath}/ComicInfo.xml`;
           try {
-            fs.copyFileSync(comicInfoSrc, comicInfoDest);
+            SafeFileUtils.copyFileSync(comicInfoSrc, comicInfoDest);
             logger.info(TAG, `ComicInfo.xml已复制: ${comicInfoDest}`);
           } catch (e) {
             logger.warn(TAG, `复制ComicInfo.xml失败: ${String(e)}`);
@@ -1384,7 +1386,7 @@ struct DataManagementPage {
         const coverPath = `${mangaPath}/cover${ext}`;
         
         try {
-          fs.copyFileSync(firstImagePath, coverPath);
+          SafeFileUtils.copyFileSync(firstImagePath, coverPath);
           // 更新数据库中的封面路径
           await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
           logger.info(TAG, `封面已保存: ${coverPath}`);
@@ -1394,7 +1396,7 @@ struct DataManagementPage {
       }
       
       this.updateProgress(ImportStatus.COMPLETED, '导入完成', 100);
-      promptAction.showToast({ message: '导入成功' });
+      this.getUIContext().getPromptAction().showToast({ message: '导入成功' });
       this.pendingMangaFiles = [];
       
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
@@ -1406,7 +1408,7 @@ struct DataManagementPage {
     } catch (error) {
       logger.error(TAG, `导入失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
     }
   }
   
@@ -1414,7 +1416,7 @@ struct DataManagementPage {
    * 询问用户是否删除原文件
    */
   private askDeleteSourceFile(fileUri: string, title: string): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '删除原文件',
       message: `漫画"${title}"已成功导入。\n是否删除原压缩包文件以节省空间？`,
       primaryButton: {
@@ -1446,12 +1448,12 @@ struct DataManagementPage {
         filePath = fileUri.replace('file://', '');
       }
       
-      fs.unlinkSync(filePath);
+      SafeFileUtils.unlinkSync(filePath);
       logger.info(TAG, `原文件已删除: ${filePath}`);
-      promptAction.showToast({ message: '原文件已删除' });
+      this.getUIContext().getPromptAction().showToast({ message: '原文件已删除' });
     } catch (error) {
       logger.error(TAG, `删除原文件失败: ${String(error)}`);
-      promptAction.showToast({ message: `删除失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${String(error)}` });
     }
   }
   
@@ -1477,22 +1479,22 @@ struct DataManagementPage {
     const mangaPath = `${this.downloadDirPath}/${folderName}`;
     const chapterPath = `${mangaPath}/第1话`;
     
-    try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
-    try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+    try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
+    try { SafeFileUtils.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
     
     // 从临时目录复制文件到Download目录
     const tempExtractedPath = parsed.extractedPath;
     const imageFiles: string[] = [];
     
     if (tempExtractedPath) {
-      const files = fs.listFileSync(tempExtractedPath);
+      const files = SafeFileUtils.listFileSync(tempExtractedPath);
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
           const srcPath = `${tempExtractedPath}/${file}`;
           const destPath = `${chapterPath}/${file}`;
           try {
-            fs.copyFileSync(srcPath, destPath);
+            SafeFileUtils.copyFileSync(srcPath, destPath);
             imageFiles.push(file);
           } catch (e) {
             logger.warn(TAG, `复制文件失败: ${file}`);
@@ -1505,7 +1507,7 @@ struct DataManagementPage {
         const comicInfoSrc = `${tempExtractedPath}/ComicInfo.xml`;
         const comicInfoDest = `${mangaPath}/ComicInfo.xml`;
         try {
-          fs.copyFileSync(comicInfoSrc, comicInfoDest);
+          SafeFileUtils.copyFileSync(comicInfoSrc, comicInfoDest);
           logger.info(TAG, `ComicInfo.xml已复制: ${comicInfoDest}`);
         } catch (e) {
           logger.warn(TAG, `复制ComicInfo.xml失败: ${String(e)}`);
@@ -1554,7 +1556,7 @@ struct DataManagementPage {
       const coverPath = `${mangaPath}/cover${ext}`;
       
       try {
-        fs.copyFileSync(firstImagePath, coverPath);
+        SafeFileUtils.copyFileSync(firstImagePath, coverPath);
         // 更新数据库中的封面路径
         await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
         logger.info(TAG, `封面已保存: ${coverPath}`);
@@ -1616,17 +1618,17 @@ struct DataManagementPage {
    */
   private async importEbooksFromDownloadDir(): Promise<void> {
     if (this.pendingEbookFiles.length === 0) {
-      promptAction.showToast({ message: '没有待导入的电子书文件' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有待导入的电子书文件' });
       return;
     }
     
     // 创建电子书专属文件夹
     const ebooksPath = `${this.downloadDirPath}/ebooks`;
-    try { fs.mkdirSync(ebooksPath); } catch (e) { /* 已存在 */ }
+    try { SafeFileUtils.mkdirSync(ebooksPath); } catch (e) { /* 已存在 */ }
     
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (!context) {
-      promptAction.showToast({ message: '无法获取上下文' });
+      this.getUIContext().getPromptAction().showToast({ message: '无法获取上下文' });
       return;
     }
     
@@ -1648,7 +1650,7 @@ struct DataManagementPage {
         const safeFilename = filename.replace(/[<>:"/\\|?*]/g, '_');
         const targetPath = `${ebooksPath}/${timestamp}_${safeFilename}`;
         
-        fs.copyFileSync(sourcePath, targetPath);
+        SafeFileUtils.copyFileSync(sourcePath, targetPath);
         logger.info(TAG, `电子书复制成功: ${targetPath}`);
         
         // 继续导入流程
@@ -1664,7 +1666,7 @@ struct DataManagementPage {
     }
     
     this.updateProgress(ImportStatus.COMPLETED, `电子书导入完成: 成功 ${successCount}/${totalFiles}`, 100);
-    promptAction.showToast({ message: `电子书导入完成: 成功 ${successCount}` });
+    this.getUIContext().getPromptAction().showToast({ message: `电子书导入完成: 成功 ${successCount}` });
   }
 
   /**
@@ -1672,7 +1674,7 @@ struct DataManagementPage {
    */
   private async importPdfsFromDownloadDir(): Promise<void> {
     if (this.pendingPdfFiles.length === 0) {
-      promptAction.showToast({ message: '没有待导入的PDF文件' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有待导入的PDF文件' });
       return;
     }
     
@@ -1690,7 +1692,7 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.IDLE, `配置PDF导入 (${i + 1}/${pendingFiles.length})`, 10);
       await this.handlePdfImportWithCategorySelection(pendingFiles[i]);
     }
-    promptAction.showToast({ message: `已处理 ${pendingFiles.length} 个PDF导入请求` });
+    this.getUIContext().getPromptAction().showToast({ message: `已处理 ${pendingFiles.length} 个PDF导入请求` });
   }
 
   /**
@@ -1769,7 +1771,7 @@ struct DataManagementPage {
         logger.info(TAG, '未授权公共目录权限，开始申请...');
         const granted = await this.requestPublicDirectoryPermissions();
         if (!granted) {
-          promptAction.showToast({ message: '需要授权公共目录权限才能创建应用文件夹' });
+          this.getUIContext().getPromptAction().showToast({ message: '需要授权公共目录权限才能创建应用文件夹' });
           return;
         }
       }
@@ -1782,11 +1784,11 @@ struct DataManagementPage {
           
           // 尝试创建文件夹
           try {
-            fs.accessSync(this.appDownloadFolderPath);
+            SafeFileUtils.accessSync(this.appDownloadFolderPath);
             logger.info(TAG, `下载目录应用文件夹已存在: ${this.appDownloadFolderPath}`);
           } catch (accessError) {
             // 文件夹不存在，创建它
-            fs.mkdirSync(this.appDownloadFolderPath);
+            SafeFileUtils.mkdirSync(this.appDownloadFolderPath);
             logger.info(TAG, `已创建下载目录应用文件夹: ${this.appDownloadFolderPath}`);
           }
         } catch (error) {
@@ -1801,10 +1803,10 @@ struct DataManagementPage {
           this.appDocumentsFolderPath = `${documentsPath}/${DataManagementPage.APP_FOLDER_NAME}`;
           
           try {
-            fs.accessSync(this.appDocumentsFolderPath);
+            SafeFileUtils.accessSync(this.appDocumentsFolderPath);
             logger.info(TAG, `文档目录应用文件夹已存在: ${this.appDocumentsFolderPath}`);
           } catch (accessError) {
-            fs.mkdirSync(this.appDocumentsFolderPath);
+            SafeFileUtils.mkdirSync(this.appDocumentsFolderPath);
             logger.info(TAG, `已创建文档目录应用文件夹: ${this.appDocumentsFolderPath}`);
           }
         } catch (error) {
@@ -1814,11 +1816,11 @@ struct DataManagementPage {
       
       // 显示结果
       if (this.appDownloadFolderPath || this.appDocumentsFolderPath) {
-        promptAction.showToast({ message: '应用文件夹创建成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '应用文件夹创建成功' });
       }
     } catch (error) {
       logger.error(TAG, `创建应用文件夹失败: ${String(error)}`);
-      promptAction.showToast({ message: `创建失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `创建失败: ${String(error)}` });
     }
   }
 
@@ -2502,7 +2504,7 @@ struct DataManagementPage {
       let pendingShareFiles: string[] = [];
       if (typeof rawShareFiles === 'string') {
         try {
-          pendingShareFiles = JSON.parse(rawShareFiles) as string[];
+          pendingShareFiles = SafeUtils.parseArr(rawShareFiles) as string[];
         } catch {
           logger.warn(TAG, '解析pendingShareFiles JSON失败');
           pendingShareFiles = [];
@@ -3175,7 +3177,7 @@ struct DataManagementPage {
    */
   private showToast(message: string): void {
     try {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: message,
         duration: 2000
       });
@@ -3260,39 +3262,39 @@ struct DataManagementPage {
       // 确保目录存在
       let dirExists = false;
       try {
-        dirExists = fs.accessSync(targetDir);
+        dirExists = SafeFileUtils.accessSync(targetDir);
       } catch {
         dirExists = false;
       }
       
       if (!dirExists) {
-        fs.mkdirSync(targetDir, true);
+        SafeFileUtils.mkdirSync(targetDir, true);
       }
       
       // 复制文件
-      const srcFile = fs.openSync(uri, fs.OpenMode.READ_ONLY);
-      const destFile = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      const srcFile = SafeFileUtils.openSync(uri, fs.OpenMode.READ_ONLY);
+      const destFile = SafeFileUtils.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
       
       const BUFFER_SIZE = 4096;
       const buffer = new ArrayBuffer(BUFFER_SIZE);
       let totalBytes = 0;
       let readLen: number;
       
-      while ((readLen = fs.readSync(srcFile.fd, buffer)) > 0) {
+      while ((readLen = SafeFileUtils.readSync(srcFile.fd, buffer)) > 0) {
         if (readLen === BUFFER_SIZE) {
-          fs.writeSync(destFile.fd, buffer);
+          SafeFileUtils.writeSync(destFile.fd, buffer);
         } else {
           const lastChunk = buffer.slice(0, readLen);
-          fs.writeSync(destFile.fd, lastChunk);
+          SafeFileUtils.writeSync(destFile.fd, lastChunk);
         }
         totalBytes += readLen;
       }
       
-      fs.closeSync(srcFile);
-      fs.closeSync(destFile);
+      SafeFileUtils.closeSync(srcFile);
+      SafeFileUtils.closeSync(destFile);
       
       if (totalBytes === 0) {
-        try { fs.unlinkSync(targetPath); } catch {}
+        try { SafeFileUtils.unlinkSync(targetPath); } catch {}
         return null;
       }
       
@@ -3347,14 +3349,14 @@ struct DataManagementPage {
       // 确保目录存在（使用 fs 模块）
       let dirExists = false;
       try {
-        dirExists = fs.accessSync(targetDir);
+        dirExists = SafeFileUtils.accessSync(targetDir);
       } catch {
         dirExists = false;
       }
       
       if (!dirExists) {
         try {
-          fs.mkdirSync(targetDir, true); // 递归创建目录
+          SafeFileUtils.mkdirSync(targetDir, true); // 递归创建目录
           logger.info(TAG, `创建目录成功: ${targetDir}`);
         } catch (mkdirError) {
           logger.error(TAG, `创建目录失败: ${String(mkdirError)}`);
@@ -3370,14 +3372,14 @@ struct DataManagementPage {
       // 使用 fs 模块打开源文件（官方文档推荐）
       // 注意：file://docs URI 的临时权限只允许打开一次，不能关闭后重新打开
       logger.info(TAG, `准备打开源文件: ${uri}`);
-      const srcFile = fs.openSync(uri, fs.OpenMode.READ_ONLY);
+      const srcFile = SafeFileUtils.openSync(uri, fs.OpenMode.READ_ONLY);
       logger.info(TAG, `源文件打开成功，fd: ${srcFile.fd}`);
       
       // 直接开始复制，不要先读取验证
       logger.info(TAG, `准备创建目标文件: ${targetPath}`);
       
       try {
-        const destFile = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        const destFile = SafeFileUtils.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
         logger.info(TAG, `目标文件创建成功，fd: ${destFile.fd}`);
         
         const BUFFER_SIZE = 4096;
@@ -3385,26 +3387,26 @@ struct DataManagementPage {
         let totalBytes = 0;
         let readLen: number;
         
-        while ((readLen = fs.readSync(srcFile.fd, buffer)) > 0) {
+        while ((readLen = SafeFileUtils.readSync(srcFile.fd, buffer)) > 0) {
           if (readLen === BUFFER_SIZE) {
-            fs.writeSync(destFile.fd, buffer);
+            SafeFileUtils.writeSync(destFile.fd, buffer);
           } else {
             // 最后一块，只写入实际读取的部分
             const lastChunk = buffer.slice(0, readLen);
-            fs.writeSync(destFile.fd, lastChunk);
+            SafeFileUtils.writeSync(destFile.fd, lastChunk);
           }
           totalBytes += readLen;
         }
         
-        fs.closeSync(srcFile);
-        fs.closeSync(destFile);
+        SafeFileUtils.closeSync(srcFile);
+        SafeFileUtils.closeSync(destFile);
         
         logger.info(TAG, `文件复制成功: ${targetPath}，大小: ${totalBytes} 字节`);
         
         if (totalBytes === 0) {
           logger.error(TAG, '复制后文件大小为 0');
           try {
-            fs.unlinkSync(targetPath);
+            SafeFileUtils.unlinkSync(targetPath);
           } catch {}
           this.showToast('文件内容为空');
           this.updateProgress(ImportStatus.ERROR, '文件内容为空', 0);
@@ -3423,7 +3425,7 @@ struct DataManagementPage {
       } catch (destError) {
         // 关闭源文件
         try {
-          fs.closeSync(srcFile);
+          SafeFileUtils.closeSync(srcFile);
         } catch {}
         logger.error(TAG, `创建目标文件失败: ${String(destError)}`);
         this.updateProgress(ImportStatus.ERROR, `创建目标文件失败: ${String(destError)}`, 0);
@@ -3502,7 +3504,7 @@ struct DataManagementPage {
   private async tryExtractEBookCover(ebook: EBook, filePath: string): Promise<void> {
     try {
       // 获取封面保存目录
-      const context = getContext(this);
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
       const coverDir = `${context.filesDir}/ebook_covers`;
       
       logger.info(TAG, `尝试提取电子书封面: ${ebook.metadata.title}`);
@@ -3522,7 +3524,7 @@ struct DataManagementPage {
       logger.warn(TAG, `封面提取异常: ${String(error)}，尝试生成封面`);
       // 封面提取失败不影响导入流程，尝试生成封面
       try {
-        const context = getContext(this);
+        const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
         const coverDir = `${context.filesDir}/ebook_covers`;
         await this.generateEBookCover(ebook, coverDir);
       } catch (genError) {
@@ -3622,7 +3624,7 @@ struct DataManagementPage {
       logger.info(TAG, `开始生成封面: ${ebook.metadata.title}`);
       
       // 使用 componentSnapshot.createFromBuilder 生成 PixelMap
-      const pixelMap = await componentSnapshot.createFromBuilder(
+      const pixelMap = await this.getUIContext().getComponentSnapshot().createFromBuilder(
         () => { this.buildCoverForSnapshot(ebook.metadata.title); }
       );
       
@@ -3657,7 +3659,7 @@ struct DataManagementPage {
       // 确保目录存在
       const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
       try {
-        fileIo.mkdirSync(dirPath, true);
+        SafeFileUtils.mkdirSync(dirPath, true);
       } catch (e) {
         // 目录可能已存在，忽略错误
       }
@@ -3749,11 +3751,11 @@ struct DataManagementPage {
   }
 
   private writeImageBufferToFile(filePath: string, imageData: ArrayBuffer): void {
-    const file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    const file = SafeFileUtils.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
     try {
-      fileIo.writeSync(file.fd, imageData);
+      SafeFileUtils.writeSync(file.fd, imageData);
     } finally {
-      fileIo.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
   }
 
@@ -3852,7 +3854,7 @@ struct DataManagementPage {
       }
 
       // 使用 fileIo.openSync 打开 URI（华为官方示例使用 fileIo 而不是 fs）
-      const srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+      const srcFile = SafeFileUtils.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
       logger.info(TAG, `源文件打开成功，fd: ${srcFile.fd}`);
       
       // 华为官方示例的读取方法：先读取一次获取实际大小，再重新读取
@@ -3860,25 +3862,25 @@ struct DataManagementPage {
       let buffer = new ArrayBuffer(BUFFER_SIZE);
       
       // 第一次读取，获取实际读取的字节数
-      let readOut = fileIo.readSync(srcFile.fd, buffer, { offset: 0 });
+      let readOut = SafeFileUtils.readSync(srcFile.fd, buffer, { offset: 0 });
       logger.info(TAG, `第一次读取: ${readOut} 字节`);
       
       if (readOut > 0) {
         // 如果第一次读取成功，创建正确大小的 buffer 重新读取
         // 注意：需要重新打开文件，因为文件指针已经移动
-        fileIo.closeSync(srcFile);
+        SafeFileUtils.closeSync(srcFile);
         
-        const srcFile2 = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+        const srcFile2 = SafeFileUtils.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
         
         // 如果文件较大，需要循环读取
-        const destFile = fileIo.openSync(targetPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+        const destFile = SafeFileUtils.openSync(targetPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
         
         let totalBytes = 0;
         let currentOffset = 0;
         
         while (true) {
           const chunkBuffer = new ArrayBuffer(BUFFER_SIZE);
-          const bytesRead = fileIo.readSync(srcFile2.fd, chunkBuffer, { offset: currentOffset });
+          const bytesRead = SafeFileUtils.readSync(srcFile2.fd, chunkBuffer, { offset: currentOffset });
           
           if (bytesRead <= 0) {
             break;
@@ -3886,11 +3888,11 @@ struct DataManagementPage {
           
           // 写入读取的数据
           if (bytesRead === BUFFER_SIZE) {
-            fileIo.writeSync(destFile.fd, chunkBuffer);
+            SafeFileUtils.writeSync(destFile.fd, chunkBuffer);
           } else {
             // 最后一块，只写入实际读取的部分
             const lastChunk = chunkBuffer.slice(0, bytesRead);
-            fileIo.writeSync(destFile.fd, lastChunk);
+            SafeFileUtils.writeSync(destFile.fd, lastChunk);
           }
           
           totalBytes += bytesRead;
@@ -3902,8 +3904,8 @@ struct DataManagementPage {
           }
         }
         
-        fileIo.closeSync(srcFile2);
-        fileIo.closeSync(destFile);
+        SafeFileUtils.closeSync(srcFile2);
+        SafeFileUtils.closeSync(destFile);
         
         if (totalBytes > 0) {
           logger.info(TAG, `文件复制成功，大小: ${totalBytes} 字节，目标: ${targetPath}`);
@@ -3914,15 +3916,15 @@ struct DataManagementPage {
       // 如果上面的方法失败，尝试使用 fs.copyFile
       logger.warn(TAG, `fileIo 读取失败，尝试 fs.copyFile`);
       try {
-        fileIo.closeSync(srcFile);
+        SafeFileUtils.closeSync(srcFile);
       } catch {}
       
       try {
-        const srcFile3 = fs.openSync(srcUri, fs.OpenMode.READ_ONLY);
+        const srcFile3 = SafeFileUtils.openSync(srcUri, fs.OpenMode.READ_ONLY);
         await fs.copyFile(srcFile3.fd, targetPath, 0);
-        fs.closeSync(srcFile3);
+        SafeFileUtils.closeSync(srcFile3);
         
-        const destStat = fs.statSync(targetPath);
+        const destStat = SafeFileUtils.statSync(targetPath);
         if (destStat.size > 0) {
           logger.info(TAG, `fs.copyFile 成功，文件大小: ${destStat.size} 字节`);
           return targetPath;
@@ -4028,7 +4030,7 @@ struct DataManagementPage {
             }
             
             // 使用新标题生成封面
-            const context = getContext(this);
+            const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
             const coverDir = `${context.filesDir}/ebook_covers`;
             
             // 临时更新 ebook 的标题用于生成封面
@@ -4075,17 +4077,17 @@ struct DataManagementPage {
     }
     
     // 复制文件
-    const srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
-    const dstFile = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+    const srcFile = SafeFileUtils.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+    const dstFile = SafeFileUtils.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
     
     const buffer = new ArrayBuffer(4096);
     let readLen = 0;
-    while ((readLen = fileIo.readSync(srcFile.fd, buffer)) > 0) {
-      fileIo.writeSync(dstFile.fd, buffer, { length: readLen });
+    while ((readLen = SafeFileUtils.readSync(srcFile.fd, buffer)) > 0) {
+      SafeFileUtils.writeSync(dstFile.fd, buffer, { length: readLen });
     }
     
-    fileIo.closeSync(srcFile);
-    fileIo.closeSync(dstFile);
+    SafeFileUtils.closeSync(srcFile);
+    SafeFileUtils.closeSync(dstFile);
     
     return targetPath;
   }
@@ -6855,7 +6857,7 @@ struct DataManagementPage {
       
       // 检查ComicInfo.xml文件是否存在
       try {
-        const stat = fs.statSync(comicInfoPath);
+        const stat = SafeFileUtils.statSync(comicInfoPath);
         if (!stat.isFile()) {
           logger.warn(TAG, `ComicInfo.xml不是文件: ${comicInfoPath}`);
           return this.getDefaultComicInfo();
@@ -6866,7 +6868,7 @@ struct DataManagementPage {
       }
 
       // 读取XML文件内容
-      const xmlContent = fs.readTextSync(comicInfoPath, { encoding: 'utf-8' });
+      const xmlContent = SafeFileUtils.readTextSync(comicInfoPath, { encoding: 'utf-8' });
       logger.info(TAG, `读取ComicInfo.xml成功，内容长度: ${xmlContent.length}`);
 
       // 使用ComicInfoParser解析XML内容

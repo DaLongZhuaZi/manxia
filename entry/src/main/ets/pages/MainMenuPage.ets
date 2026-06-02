@@ -1,3 +1,5 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 // 文件路径: src/main/ets/pages/MainMenuPage.ets
 // 职责: 漫画阅读应用主入口页面，采用底部导航栏设计，参考Mihon、komikku等现代漫画阅读软件
 
@@ -34,6 +36,7 @@ import {
   HoldingAwarenessSource,
   HoldingUiAnchor
 } from '../Framework/Managers/HoldingAwarenessManager';
+import { uiContextManager } from '../Framework/Managers/UIContextManager';
 
 // 导入页面组件
 // 测试页面导入已移除，测试功能仍保留在代码中但不再从主菜单导航
@@ -591,6 +594,7 @@ struct MainMenuPage {
   @State private targetPage: string = '';
   @State private targetTab: number = -1;
   @State private guideTargetPageOpened: boolean = false;
+  private targetOpenSourceRepoDialog: boolean = false;
   @State private appGuideStep: AppGuideStep | null = null;
   @State private appGuideHighlightRect: GuideHighlightRect | null = null;
 
@@ -788,6 +792,8 @@ struct MainMenuPage {
   @State syncLogMessages: string[] = []; // 同步日志消息
   @State syncProgress: number = 0; // 同步进度 (0-100)
   @State syncProgressMessage: string = ''; // 同步进度消息
+  private readonly SOURCE_REPO_SELECTOR_EXPANDED_HEIGHT: number = 200;
+  private readonly SOURCE_REPO_SELECTOR_ANIMATION_DURATION: number = 220;
   private sourceRepoDialogController: CustomDialogController | undefined = undefined;
   private repositoryManager: SourceRepositoryManager = SourceRepositoryManager.getInstance();
 
@@ -850,6 +856,7 @@ struct MainMenuPage {
   @State proxyDialogTab: 'settings' | 'sources' | 'test' = 'settings'; // 代理对话框当前标签页
   @State proxyTestSites: ProxyTestSite[] = []; // 代理测试网站列表
   @State customTestUrl: string = ''; // 自定义测试URL
+  private sourceSearchDialogController: CustomDialogController | undefined = undefined;
   private proxyDialogController: CustomDialogController | undefined = undefined;
   private sourceManager: SourceManager = SourceManager.getInstance(); // 图源管理器
   private sourceUpdateManager: SourceUpdateManager = SourceUpdateManager.getInstance(); // 图源更新管理器
@@ -909,6 +916,10 @@ struct MainMenuPage {
   private readonly NORMAL_TOP_BAR_HEIGHT_WITH_MARGIN: number = 88;
   private readonly TABLET_TOP_BAR_HEIGHT_WITH_MARGIN: number = 72;
   private readonly TABLET_SIDE_BAR_WIDTH: number = 84;
+  private readonly HDS_SIDE_BAR_VERTICAL_PADDING: number = 16;
+  private readonly HDS_SIDE_BAR_EDGE_MARGIN: number = 16;
+  private readonly HDS_SIDE_BAR_MAX_HEIGHT: number = 360;
+  private readonly HDS_SIDE_BAR_FLOATING_PADDING: number = 16;
   
   // Bottom bar follow-scroll state
   @State private bottomBarOffsetY: number = 0;
@@ -1478,6 +1489,8 @@ struct MainMenuPage {
   }
 
   aboutToAppear() {
+    uiContextManager.setUIContext(this.uiContext);
+    void FontManager.getInstance().registerCustomFontsForCurrentUIContext();
     this.startNavStackReturnWatch();
     void this.holdingAwarenessManager.resume();
     this.logHoldingAwareFloatingSearchDecision('页面即将出现');
@@ -1653,8 +1666,8 @@ struct MainMenuPage {
     // 初始化响应式布局
     this.initializeResponsiveLayout();
 
-    // 处理引导跳转
-    if (this.fromGuide) {
+    // 处理路由目标跳转
+    if (this.fromGuide || this.targetPage.length > 0 || this.targetTab >= 0 || this.targetOpenSourceRepoDialog) {
       this.handleGuideNavigation();
     }
 
@@ -2607,11 +2620,17 @@ struct MainMenuPage {
     if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'left') {
       return 0;
     }
+    if (this.isHdsSideTabNavigationActive()) {
+      return 0;
+    }
     return this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
   }
 
   private getTabletTopNavigationRightInset(): number {
     if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'right') {
+      return 0;
+    }
+    if (this.isHdsSideTabNavigationActive()) {
       return 0;
     }
     return this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
@@ -2895,7 +2914,7 @@ struct MainMenuPage {
       this.bottomBarIndicatorGlowStrength = 1;
       return;
     }
-    animateTo({
+    this.getUIContext().animateTo({
       duration: this.BOTTOM_BAR_INDICATOR_SHOW_DURATION,
       curve: Curve.EaseOut
     }, () => {
@@ -2913,7 +2932,7 @@ struct MainMenuPage {
       if (this.isBottomBarIndicatorDragging) {
         return;
       }
-      animateTo({
+      this.getUIContext().animateTo({
         duration: this.BOTTOM_BAR_INDICATOR_HIDE_DURATION,
         curve: Curve.EaseInOut
       }, () => {
@@ -2945,7 +2964,7 @@ struct MainMenuPage {
   private pulseBottomBarIndicator(progress?: number): void {
     this.showBottomBarIndicator(progress, true);
     this.clearBottomBarIndicatorPulseTimer();
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 110,
       curve: Curve.EaseOut
     }, () => {
@@ -2955,7 +2974,7 @@ struct MainMenuPage {
       this.bottomBarIndicatorOpacity = 1;
     });
     this.bottomBarIndicatorPulseTimer = setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 170,
         curve: Curve.EaseOut
       }, () => {
@@ -3012,16 +3031,73 @@ struct MainMenuPage {
   }
 
   private getAdaptiveSideOperationBarY(): number {
-    return this.statusBarHeight + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
+    if (this.isHdsSideTabNavigationActive()) {
+      return this.getAdaptiveHdsSideOperationBarY();
+    }
+    return 0;
   }
 
   private getAdaptiveSideOperationBarHeight(): number {
     const viewportHeight: number = this.getMainMenuViewportHeight();
-    const h: number = viewportHeight
-      - this.statusBarHeight
-      - this.navigationBarHeight
-      - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
-    return h > this.BOTTOM_BAR_HEIGHT ? h : this.BOTTOM_BAR_HEIGHT;
+    return viewportHeight > 0 ? viewportHeight : this.BOTTOM_BAR_HEIGHT;
+  }
+
+  private getAdaptiveHdsSideOperationBarY(): number {
+    const topInset: number = this.getAdaptiveHdsSideOperationBarTopInset();
+    const availableHeight: number = this.getAvailableAdaptiveHdsSideOperationBarHeight();
+    const containerHeight: number = this.getAdaptiveHdsSideOperationBarContainerHeight();
+    const centeredOffset: number = Math.max(0, (availableHeight - containerHeight) / 2);
+    return topInset + centeredOffset;
+  }
+
+  private getPreferredAdaptiveHdsSideOperationBarHeight(): number {
+    const tabCount: number = Math.max(1, this.cachedVisibleTabConfigs.length + 1);
+    return tabCount * this.BOTTOM_BAR_HEIGHT + this.HDS_SIDE_BAR_VERTICAL_PADDING;
+  }
+
+  private getAvailableAdaptiveHdsSideOperationBarHeight(): number {
+    const viewportHeight: number = this.getMainMenuViewportHeight();
+    if (viewportHeight <= 0) {
+      return this.getPreferredAdaptiveHdsSideOperationBarHeight();
+    }
+    const availableHeight: number = viewportHeight
+      - this.getAdaptiveHdsSideOperationBarTopInset()
+      - this.getAdaptiveHdsSideOperationBarBottomInset();
+    return availableHeight > this.BOTTOM_BAR_HEIGHT ? availableHeight : this.BOTTOM_BAR_HEIGHT;
+  }
+
+  private getAdaptiveHdsSideOperationBarTopInset(): number {
+    return this.HDS_SIDE_BAR_EDGE_MARGIN;
+  }
+
+  private getAdaptiveHdsSideOperationBarBottomInset(): number {
+    return Math.max(0, this.navigationBarHeight) + this.HDS_SIDE_BAR_EDGE_MARGIN;
+  }
+
+  private getAdaptiveHdsSideOperationBarHeight(): number {
+    const preferredHeight: number = this.getPreferredAdaptiveHdsSideOperationBarHeight();
+    const availableHeight: number = this.getAvailableAdaptiveHdsSideOperationBarHeight();
+    const maxBarHeight: number = Math.max(this.BOTTOM_BAR_HEIGHT, availableHeight - this.HDS_SIDE_BAR_FLOATING_PADDING);
+    const limitedHeight: number = Math.min(preferredHeight, maxBarHeight, this.HDS_SIDE_BAR_MAX_HEIGHT);
+    return Math.max(this.BOTTOM_BAR_HEIGHT, limitedHeight);
+  }
+
+  private getAdaptiveHdsSideOperationBarContainerHeight(): number {
+    const availableHeight: number = this.getAvailableAdaptiveHdsSideOperationBarHeight();
+    const desiredHeight: number = this.getAdaptiveHdsSideOperationBarHeight() + this.HDS_SIDE_BAR_FLOATING_PADDING;
+    return Math.max(this.BOTTOM_BAR_HEIGHT, Math.min(desiredHeight, availableHeight));
+  }
+
+  private isAdaptiveHdsSideOperationBarScrollable(): boolean {
+    return this.getPreferredAdaptiveHdsSideOperationBarHeight() > this.getAdaptiveHdsSideOperationBarHeight() + 0.5;
+  }
+
+  private getAdaptiveSideOperationBarTopPadding(): number {
+    return 4;
+  }
+
+  private getAdaptiveSideOperationBarBottomPadding(): number {
+    return this.navigationBarHeight + this.TABLET_TOP_BAR_VERTICAL_MARGIN;
   }
 
   private getAdaptiveLeftOperationBarX(): number {
@@ -3235,6 +3311,21 @@ struct MainMenuPage {
     return this.getAdaptiveTopOperationBarY() + (this.BOTTOM_BAR_HEIGHT - this.FLOAT_SEARCH_BUTTON_SIZE) / 2;
   }
 
+  private shouldShowFloatingSearchButton(): boolean {
+    return !this.isSideTabNavigationActive();
+  }
+
+  private openGlobalSearchPage(): void {
+    try {
+      this.pathStack.pushPath({ name: 'GlobalSearchPage' });
+      logger.info(TAG, '导航到全局搜索页面');
+    } catch (error) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '导航到搜索页面失败', message);
+      this.showToast('打开搜索页面失败');
+    }
+  }
+
   private shouldShowPrivacyExitButton(): boolean {
     return this.isPrivacyMode;
   }
@@ -3421,7 +3512,7 @@ struct MainMenuPage {
     const nextIndex = (currentIndex + 1) % types.length;
     
     // 使用动画过渡切换类型筛选
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: Curve.EaseInOut
     }, () => {
@@ -3763,7 +3854,7 @@ struct MainMenuPage {
       }
 
       // 初始化更新管理器
-      const context = this.getUIContext().getHostContext() as common.Context;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.Context;
       if (context) {
         await this.sourceUpdateManager.initialize(context);
       }
@@ -3810,7 +3901,7 @@ struct MainMenuPage {
    */
   private async markRepositoryCommitVersion(url: string): Promise<void> {
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context) {
         logger.warn(TAG, '无法获取上下文，跳过图源仓库版本标记');
         return;
@@ -3946,7 +4037,7 @@ struct MainMenuPage {
   private async importSource(): Promise<void> {
     try {
       // 获取UIAbilityContext
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context) {
         this.showToast('无法获取应用上下文');
         logger.error(TAG, '无法获取UIAbilityContext');
@@ -3978,15 +4069,15 @@ struct MainMenuPage {
       this.showToast('开始导入图源...');
       
       // 读取文件内容
-      const file = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(fileUri, fs.OpenMode.READ_ONLY);
       const buffer = new ArrayBuffer(1024 * 1024); // 1MB缓冲区
-      const readLen = fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       // 使用TextDecoder正确解码UTF-8
       const uint8Array = new Uint8Array(buffer, 0, readLen);
       const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-      const jsonContent = decoder.decode(uint8Array);
+      const jsonContent = decoder.decodeToString(uint8Array);
       
       logger.debug(TAG, `读取到JSON内容，长度: ${jsonContent.length}`);
       
@@ -4012,7 +4103,7 @@ struct MainMenuPage {
    */
   private async initializeRepositoryManager(): Promise<void> {
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await this.repositoryManager.initialize(context);
       await this.versionHistoryManager.initialize(context as common.Context);
       await this.loadSavedRepositories();
@@ -4065,6 +4156,21 @@ struct MainMenuPage {
     const parsedUrl = this.parseAndFixRepoUrl(value);
     this.sourceRepoUrl = parsedUrl;
     this.syncSelectedRepositoryFromUrl(parsedUrl);
+  }
+
+  private toggleRepositorySelector(): void {
+    const nextVisible = !this.showRepositorySelector;
+    if (!nextVisible) {
+      this.showDeleteRepoPopup = false;
+      this.repositoryToDelete = null;
+    }
+
+    this.getUIContext().animateTo({
+      duration: this.SOURCE_REPO_SELECTOR_ANIMATION_DURATION,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.showRepositorySelector = nextVisible;
+    });
   }
 
   private openProxyConfigDialog(): void {
@@ -4333,8 +4439,55 @@ struct MainMenuPage {
     
     // 加载图源的搜索类型配置
     await this.loadSourceSearchTypes(source);
-    
-    this.showSourceSearchDialog = true;
+
+    this.openSourceSearchDialog();
+  }
+
+  private openSourceSearchDialog(): void {
+    try {
+      if (this.sourceSearchDialogController) {
+        this.sourceSearchDialogController.close();
+      }
+
+      this.showSourceSearchDialog = true;
+      this.sourceSearchDialogController = new CustomDialogController({
+        builder: () => {
+          this.buildSourceSearchDialog();
+        },
+        alignment: DialogAlignment.Center,
+        autoCancel: true,
+        cornerRadius: this.getSettingsAnalyticsCardRadius(),
+        customStyle: true,
+        cancel: () => {
+          this.resetSourceSearchDialogState();
+          this.sourceSearchDialogController = undefined;
+        }
+      });
+      this.sourceSearchDialogController.open();
+    } catch (error) {
+      logger.error(TAG, '打开图源搜索弹窗失败', String(error));
+      this.resetSourceSearchDialogState();
+      this.showToast('打开搜索弹窗失败，请重试');
+    }
+  }
+
+  private resetSourceSearchDialogState(): void {
+    this.showSourceSearchDialog = false;
+    this.searchTargetSource = null;
+    this.sourceSearchInput = '';
+    this.sourceSearchTypes = [];
+    this.selectedSourceSearchType = 'search';
+    this.sourceSearchPlaceholder = '输入关键词搜索';
+  }
+
+  private closeSourceSearchDialog(): void {
+    try {
+      this.sourceSearchDialogController?.close();
+    } catch (error) {
+      logger.warn(TAG, '关闭图源搜索弹窗失败', String(error));
+    }
+    this.sourceSearchDialogController = undefined;
+    this.resetSourceSearchDialogState();
   }
 
   /**
@@ -4350,7 +4503,7 @@ struct MainMenuPage {
       // 尝试从图源配置中读取searchConfig
       const sourceRecord: ComicSourceDatabaseRecord | null = await DataManager.getInstance().getComicSourceByName(source.name);
       if (sourceRecord && sourceRecord.configJson) {
-        const configJson: Record<string, Object> = JSON.parse(sourceRecord.configJson) as Record<string, Object>;
+        const configJson: Record<string, Object> = SafeUtils.parseObj(sourceRecord.configJson) as Record<string, Object>;
         const searchConfig: SearchConfig | undefined = configJson['searchConfig'] as SearchConfig | undefined;
         if (searchConfig && searchConfig.types && Array.isArray(searchConfig.types) && searchConfig.types.length > 0) {
           this.sourceSearchTypes = searchConfig.types;
@@ -4483,11 +4636,7 @@ struct MainMenuPage {
     if (keyword.includes('//')) {
       const handled = await this.executeGlobalSourceSearch(keyword);
       if (handled) {
-        // 关闭对话框并清空输入
-        this.showSourceSearchDialog = false;
-        this.searchTargetSource = null;
-        this.sourceSearchInput = '';
-        this.selectedSourceSearchType = 'search';
+        this.closeSourceSearchDialog();
         return;
       }
       // 如果前缀格式解析失败，继续执行普通搜索
@@ -4506,10 +4655,7 @@ struct MainMenuPage {
         searchType: this.selectedSourceSearchType
       };
       this.pathStack.pushPathByName('SourceDetailPage', params);
-      this.showSourceSearchDialog = false;
-      this.searchTargetSource = null;
-      this.sourceSearchInput = '';
-      this.selectedSourceSearchType = 'search';
+      this.closeSourceSearchDialog();
     } catch (err) {
       logger.error(TAG, '打开图源详情页失败', String(err));
       this.showToast('打开图源详情页失败');
@@ -4542,7 +4688,7 @@ struct MainMenuPage {
       logger.info(TAG, `编辑图源配置: ${source.name} (pkg: ${source.pkg})`);
       
       // 构建图源JSON文件路径
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const filesDir = context.filesDir;
       const sourceJsonPath = `${filesDir}/extensions-source/${source.pkg}.json`;
       
@@ -4854,7 +5000,7 @@ struct MainMenuPage {
       : LibraryViewMode.LIST;
     
     // 使用动画过渡切换视图模式
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: Curve.EaseInOut
     }, () => {
@@ -5019,7 +5165,7 @@ struct MainMenuPage {
   private async loadRecentNovelList(): Promise<NovelBook[]> {
     try {
       if (!this.novelDataManager) {
-        const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+        const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
         this.novelDataManager = getNovelDataManager();
         await this.novelDataManager.initialize(context);
       }
@@ -5202,7 +5348,7 @@ struct MainMenuPage {
       try {
         const hasScheme: boolean = path.indexOf('file://') === 0;
         const actualPath: string = hasScheme ? path.substring(7) : path;
-        file = fs.openSync(actualPath, fs.OpenMode.READ_ONLY);
+        file = SafeFileUtils.openSync(actualPath, fs.OpenMode.READ_ONLY);
         const src: image.ImageSource = image.createImageSource(file.fd);
         if (!src) {
           return null;
@@ -5218,7 +5364,7 @@ struct MainMenuPage {
       } finally {
         if (file) {
           try {
-            fs.closeSync(file);
+            SafeFileUtils.closeSync(file);
           } catch (cerr) {
             // 静默处理
           }
@@ -5620,7 +5766,7 @@ struct MainMenuPage {
 
       // 初始化小说数据管理器
       if (!this.novelDataManager) {
-        const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+        const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
         this.novelDataManager = getNovelDataManager();
         await this.novelDataManager.initialize(context);
       }
@@ -5712,7 +5858,7 @@ struct MainMenuPage {
   private toggleLibraryContentType(type: LibraryContentType): void {
     if (this.libraryContentType !== type) {
       // 使用动画过渡切换内容类型
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 250,
         curve: Curve.EaseInOut
       }, () => {
@@ -5780,7 +5926,7 @@ struct MainMenuPage {
   }
 
   private animateLibraryCollectionLayout(update: () => void): void {
-    animateTo(this.getLibraryCollectionLayoutAnimationOptions(), () => {
+    this.getUIContext().animateTo(this.getLibraryCollectionLayoutAnimationOptions(), () => {
       update();
     });
   }
@@ -5810,7 +5956,7 @@ struct MainMenuPage {
     if (this.libraryFilterType === filterType) {
       return;
     }
-    animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
       this.libraryFilterType = filterType;
       this.applyLibraryFilterForAllTypes();
     });
@@ -5974,7 +6120,7 @@ struct MainMenuPage {
       this.showLibrarySortPopup = false;
       return;
     }
-    animateTo({ duration: 260, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseInOut }, () => {
       this.libraryDefaultSortType = sortType;
     });
     this.showLibrarySortPopup = false;
@@ -6724,7 +6870,7 @@ struct MainMenuPage {
       try {
         // 确保 novelDataManager 已初始化
         if (!this.novelDataManager) {
-          const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
           this.novelDataManager = getNovelDataManager();
           await this.novelDataManager.initialize(context);
           logger.debug(TAG, '静默刷新时初始化 novelDataManager');
@@ -6813,8 +6959,9 @@ struct MainMenuPage {
           this.fromGuide = params['fromGuide'] as boolean ?? false;
           this.targetPage = params['targetPage'] as string ?? '';
           this.targetTab = params['targetTab'] as number ?? -1;
+          this.targetOpenSourceRepoDialog = params['openSourceRepoDialog'] as boolean ?? false;
 
-          logger.info(TAG, `路由参数: fromGuide=${this.fromGuide}, targetPage=${this.targetPage}, targetTab=${this.targetTab}`);
+          logger.info(TAG, `路由参数: fromGuide=${this.fromGuide}, targetPage=${this.targetPage}, targetTab=${this.targetTab}, openSourceRepoDialog=${this.targetOpenSourceRepoDialog}`);
         }
       }
 
@@ -7044,7 +7191,7 @@ struct MainMenuPage {
       
       logger.info(TAG, `显示JSON导入对话框: ${fileName}`);
       if (this.sourceFeaturesEnabled && isStrictJsonFile) {
-        promptAction.showActionMenu({
+        this.getUIContext().getPromptAction().showActionMenu({
           title: `导入${fileTypeLabel}文件\n${fileName}`,
           buttons: [
             { text: '导入为书源', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -7066,7 +7213,7 @@ struct MainMenuPage {
         return;
       }
 
-      promptAction.showActionMenu({
+      this.getUIContext().getPromptAction().showActionMenu({
         title: `${isStrictJsonFile ? '导入' : '打开'}${fileTypeLabel}文件\n${fileName}`,
         buttons: [
           { text: '使用文件编辑器打开', color: $r('sys.color.ohos_id_color_text_primary') }
@@ -7093,11 +7240,11 @@ struct MainMenuPage {
       const readablePath = this.resolveReadableImportPath(jsonUri);
       
       // 读取JSON文件内容
-      const file = fs.openSync(readablePath, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(file.fd);
+      const file = SafeFileUtils.openSync(readablePath, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
-      fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       // 转换为字符串
       const textDecoder = util.TextDecoder.create('utf-8');
@@ -7139,11 +7286,11 @@ struct MainMenuPage {
       const readablePath = this.resolveReadableImportPath(jsonUri);
       
       // 读取JSON文件内容
-      const file = fs.openSync(readablePath, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(file.fd);
+      const file = SafeFileUtils.openSync(readablePath, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
-      fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       // 转换为字符串
       const textDecoder = util.TextDecoder.create('utf-8');
@@ -7186,11 +7333,11 @@ struct MainMenuPage {
       const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
       
       // 读取文件内容（外部URI无法直接被编辑器访问）
-      const file = fs.openSync(readablePath, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(file.fd);
+      const file = SafeFileUtils.openSync(readablePath, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
-      fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       // 转换为字符串
       const textDecoder = util.TextDecoder.create('utf-8');
@@ -7226,7 +7373,7 @@ struct MainMenuPage {
       const fontName = fileName.replace(/\.(ttf|otf|ttc|woff|woff2)$/i, '');
       
       // 显示确认对话框
-      AlertDialog.show({
+      this.getUIContext().showAlertDialog({
         title: '导入字体',
         message: `确定要导入字体文件吗？\n\n文件名: ${fileName}`,
         autoCancel: true,
@@ -7262,7 +7409,7 @@ struct MainMenuPage {
       
       // 使用FontManager导入字体
       const fontManager = FontManager.getInstance();
-      const customFont = await fontManager.addCustomFont(displayName, readablePath);
+      const customFont = await fontManager.addCustomFont(displayName, readablePath, this.getUIContext());
       
       this.showToast(`成功导入字体: ${customFont.displayName}`);
       logger.info(TAG, `字体导入成功: ${customFont.displayName}, familyName=${customFont.familyName}`);
@@ -7292,11 +7439,11 @@ struct MainMenuPage {
       const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
       
       // 读取文件内容（外部URI无法直接被编辑器访问）
-      const file = fs.openSync(readablePath, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(file.fd);
+      const file = SafeFileUtils.openSync(readablePath, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
-      fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       // 转换为字符串
       const textDecoder = util.TextDecoder.create('utf-8');
@@ -7329,7 +7476,7 @@ struct MainMenuPage {
       const rawShareFiles = AppStorage.get<string | string[]>('pendingShareFiles');
       if (typeof rawShareFiles === 'string') {
         try {
-          pendingShareFiles = JSON.parse(rawShareFiles) as string[];
+          pendingShareFiles = SafeUtils.parseArr(rawShareFiles) as string[];
         } catch {
           pendingShareFiles = [];
         }
@@ -7421,14 +7568,28 @@ struct MainMenuPage {
           logger.info(TAG, `切换到标签页: ${this.targetTab}`);
         }
 
+        if (this.targetOpenSourceRepoDialog) {
+          this.targetOpenSourceRepoDialog = false;
+          this.targetTab = -1;
+          setTimeout(() => {
+            void this.openSourceRepoDialog();
+          }, 300);
+        }
+
         // 处理目标页面
         if (this.targetPage.length > 0) {
           logger.info(TAG, `导航到目标页面: ${this.targetPage}`);
           this.pathStack.pushPath({ name: this.targetPage });
           this.guideTargetPageOpened = true;
 
-          // 监听页面返回事件，当用户从目标页面返回时，返回到引导页面
-          this.setupGuideReturnListener();
+          if (this.fromGuide) {
+            // 监听页面返回事件，当用户从目标页面返回时，返回到引导页面
+            this.setupGuideReturnListener();
+          } else {
+            this.targetPage = '';
+            this.targetTab = -1;
+            this.guideTargetPageOpened = false;
+          }
         }
       } catch (error) {
         logger.error(TAG, '处理引导导航失败', String(error));
@@ -7890,9 +8051,9 @@ struct MainMenuPage {
         return false;
       }
 
-      const viewportTop = px2vp(Number(viewportRect.windowOffset.y));
-      const viewportHeight = px2vp(Number(viewportRect.size.height));
-      const anchorTop = px2vp(Number(anchorRect.windowOffset.y));
+      const viewportTop = this.uiContext.px2vp(Number(viewportRect.windowOffset.y));
+      const viewportHeight = this.uiContext.px2vp(Number(viewportRect.size.height));
+      const anchorTop = this.uiContext.px2vp(Number(anchorRect.windowOffset.y));
       const desiredAnchorTop = viewportTop + Math.max(104, Math.min(156, viewportHeight * 0.28));
       const currentOffsetY = Number(this.settingsScroller.currentOffset()?.yOffset ?? 0);
       const targetOffsetY = Math.max(0, currentOffsetY + (anchorTop - desiredAnchorTop));
@@ -8076,7 +8237,7 @@ struct MainMenuPage {
    */
   private async requestNotificationPermission(): Promise<void> {
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const notificationManager = AppNotificationManager.getInstance();
       const hasPermission = await notificationManager.requestPermission(context);
 
@@ -8152,7 +8313,7 @@ struct MainMenuPage {
       return;
     }
 
-    animateTo({
+    this.getUIContext().animateTo({
       duration: this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION,
       curve: Curve.EaseOut
     }, () => {
@@ -8220,7 +8381,7 @@ struct MainMenuPage {
       PageWindowCoordinator.applyRootMainMenu(uiContext);
       this.scheduleMainMenuWindowInsetsResync();
       this.restoreBottomBarAfterMainMenuReturn();
-      animateTo({
+      this.getUIContext().animateTo({
         duration: this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION,
         curve: Curve.EaseOut
       }, () => {
@@ -8369,7 +8530,7 @@ struct MainMenuPage {
         this.showCategoryDetail) {
       logger.info(TAG, '书架详情视图中，拦截返回事件，返回书架列表');
       // 用动画关闭详情
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 300,
         curve: Curve.EaseIn
       }, () => {
@@ -9036,7 +9197,7 @@ struct MainMenuPage {
   }
 
   private animateLibraryMultiSelectState(update: () => void): void {
-    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
       this.hideLibraryRefreshFloatingBarImmediately();
       this.hideMangaContextMenu();
       this.hideEBookContextMenu();
@@ -9302,7 +9463,7 @@ struct MainMenuPage {
       this.showToast('请选择要删除的内容');
       return;
     }
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '确认删除',
       message: `确定要删除选中的 ${selectedCount} 项内容吗？\n\n此操作将删除这些内容的所有数据和文件，且不可恢复。`,
       autoCancel: true,
@@ -9621,7 +9782,7 @@ struct MainMenuPage {
       return;
     }
     // 使用 AlertDialog 确认删除
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '确认删除',
       message: `确定要删除选中的 ${this.ebookMultiSelect.selectedIds.size} 本电子书吗？此操作不可恢复。`,
       autoCancel: true,
@@ -9712,7 +9873,7 @@ struct MainMenuPage {
       this.showToast('请选择要删除的小说');
       return;
     }
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '确认删除',
       message: `确定要删除选中的 ${this.novelMultiSelect.selectedIds.size} 本小说吗？此操作不可恢复。`,
       autoCancel: true,
@@ -9795,7 +9956,7 @@ struct MainMenuPage {
   }
 
   private animateDiscoverMultiSelectState(update: () => void): void {
-    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
       this.hideLibraryRefreshFloatingBarImmediately();
       this.hideMangaContextMenu();
       this.hideEBookContextMenu();
@@ -10028,7 +10189,7 @@ struct MainMenuPage {
       this.showToast('请选择要删除的漫画');
       return;
     }
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '确认删除',
       message: `确定要删除选中的 ${this.discoverMangaMultiSelect.selectedIds.size} 本漫画吗？\n\n此操作将删除漫画的所有数据和文件，且不可恢复。`,
       autoCancel: true,
@@ -10170,7 +10331,7 @@ struct MainMenuPage {
       this.showToast('请选择要删除的电子书');
       return;
     }
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '确认删除',
       message: `确定要删除选中的 ${this.discoverEBookMultiSelect.selectedIds.size} 本电子书吗？\n\n此操作将删除电子书的所有数据和文件，且不可恢复。`,
       autoCancel: true,
@@ -10232,7 +10393,7 @@ struct MainMenuPage {
       this.showToast('请选择要删除的小说');
       return;
     }
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '确认删除',
       message: `确定要删除选中的 ${this.discoverNovelMultiSelect.selectedIds.size} 本小说吗？\n\n此操作将删除小说的所有数据和文件，且不可恢复。`,
       autoCancel: true,
@@ -10692,7 +10853,7 @@ struct MainMenuPage {
     }
 
     try {
-      return fs.accessSync(normalizedPath);
+      return SafeFileUtils.accessSync(normalizedPath);
     } catch (_error) {
       return false;
     }
@@ -10705,9 +10866,9 @@ struct MainMenuPage {
     }
 
     try {
-      if (fs.accessSync(normalizedPath)) {
+      if (SafeFileUtils.accessSync(normalizedPath)) {
         try {
-          fs.listFileSync(normalizedPath);
+          SafeFileUtils.listFileSync(normalizedPath);
           return normalizedPath;
         } catch (_error) {
           // 当前路径不是目录，继续回退到父目录。
@@ -10741,7 +10902,7 @@ struct MainMenuPage {
     }
 
     try {
-      const entries: string[] = fs.listFileSync(coverDir);
+      const entries: string[] = SafeFileUtils.listFileSync(coverDir);
       if (!entries || entries.length === 0) {
         return '';
       }
@@ -11072,7 +11233,7 @@ struct MainMenuPage {
 
       let entries: string[] = [];
       try {
-        entries = fs.listFileSync(currentDir);
+        entries = SafeFileUtils.listFileSync(currentDir);
       } catch (_error) {
         continue;
       }
@@ -11090,7 +11251,7 @@ struct MainMenuPage {
           continue;
         }
         try {
-          fs.listFileSync(fullPath);
+          SafeFileUtils.listFileSync(fullPath);
           subDirectories.push(fullPath);
         } catch (_error) {
         }
@@ -11145,10 +11306,10 @@ struct MainMenuPage {
     let imageSource: image.ImageSource | null = null;
     let pixelMap: image.PixelMap | null = null;
     try {
-      if (!fs.accessSync(normalizedPath)) {
+      if (!SafeFileUtils.accessSync(normalizedPath)) {
         return false;
       }
-      file = fs.openSync(normalizedPath, fs.OpenMode.READ_ONLY);
+      file = SafeFileUtils.openSync(normalizedPath, fs.OpenMode.READ_ONLY);
       imageSource = image.createImageSource(file.fd);
       pixelMap = await imageSource.createPixelMap({
         sampleSize: 8,
@@ -11176,7 +11337,7 @@ struct MainMenuPage {
       }
       try {
         if (file !== null) {
-          fs.closeSync(file);
+          SafeFileUtils.closeSync(file);
         }
       } catch (_fileCloseError) {
       }
@@ -11189,7 +11350,7 @@ struct MainMenuPage {
       return '';
     }
     try {
-      if (!fs.accessSync(filePath)) {
+      if (!SafeFileUtils.accessSync(filePath)) {
         return '';
       }
     } catch (_error) {
@@ -11400,21 +11561,21 @@ struct MainMenuPage {
   }
 
   private writeRepairImageBufferToFile(filePath: string, imageData: ArrayBuffer): void {
-    const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
     try {
-      fs.writeSync(file.fd, imageData);
+      SafeFileUtils.writeSync(file.fd, imageData);
     } finally {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
   }
 
   private ensureLocalDirectory(dirPath: string): void {
     try {
-      if (!fs.accessSync(dirPath)) {
-        fs.mkdirSync(dirPath, true);
+      if (!SafeFileUtils.accessSync(dirPath)) {
+        SafeFileUtils.mkdirSync(dirPath, true);
       }
     } catch (_error) {
-      fs.mkdirSync(dirPath, true);
+      SafeFileUtils.mkdirSync(dirPath, true);
     }
   }
 
@@ -11557,7 +11718,7 @@ struct MainMenuPage {
 
   private getFilesDirForCoverRepair(): string {
     try {
-      const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const hostContext = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       return hostContext.filesDir || '';
     } catch (_error) {
       return '';
@@ -12173,14 +12334,7 @@ struct MainMenuPage {
     .accessibilityText('搜索')
     .accessibilityDescription('打开全局搜索页面')
     .onClick(() => {
-      try {
-        this.pathStack.pushPath({ name: 'GlobalSearchPage' });
-        logger.info(TAG, '导航到全局搜索页面');
-      } catch (error) {
-        const message: string = error instanceof Error ? error.message : String(error);
-        logger.error(TAG, '导航到搜索页面失败', message);
-        this.showToast('打开搜索页面失败');
-      }
+      this.openGlobalSearchPage();
     })
   }
 
@@ -13612,7 +13766,7 @@ struct MainMenuPage {
     })
     .clip(true)
     .onClick(() => {
-      animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
         this.isShelfEditMode = !this.isShelfEditMode;
       });
     })
@@ -14638,7 +14792,7 @@ struct MainMenuPage {
     }
 
     const fromValue = this.shelfGridColumnsSetting;
-    animateTo({ duration: 320, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseInOut }, () => {
       this.shelfGridColumnsSetting = nextValue;
       AppStorage.setOrCreate(SettingKeys.LIBRARY_SHELF_GRID_COLUMNS, nextValue);
     });
@@ -14655,7 +14809,7 @@ struct MainMenuPage {
     }
 
     const fromValue = this.libraryDefaultGridColumnsSetting;
-    animateTo({ duration: 280, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.EaseInOut }, () => {
       this.libraryDefaultGridColumnsSetting = nextValue;
       AppStorage.setOrCreate(SettingKeys.LIBRARY_DEFAULT_GRID_COLUMNS, nextValue);
     });
@@ -14670,7 +14824,7 @@ struct MainMenuPage {
       return;
     }
 
-    animateTo({ duration: 200, curve: Curve.Linear }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.Linear }, () => {
       this.hideWoodShelfTexture = hidden;
       AppStorage.setOrCreate(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, hidden);
     });
@@ -14683,7 +14837,7 @@ struct MainMenuPage {
     if (this.libraryRenewedCoverEnabledSetting === enabled) {
       return;
     }
-    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
       this.libraryRenewedCoverEnabledSetting = enabled;
       AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_DIRECT_COVER_ENABLED, enabled);
     });
@@ -14699,7 +14853,7 @@ struct MainMenuPage {
     if (this.libraryCoverTypeMarkerEnabledSetting === enabled) {
       return;
     }
-    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
       this.libraryCoverTypeMarkerEnabledSetting = enabled;
       AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED, enabled);
     });
@@ -14718,7 +14872,7 @@ struct MainMenuPage {
     AppStorage.setOrCreate(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, hideWood);
     this.persistShelfGridColumnsSetting(columns);
     this.persistHideWoodShelfTextureSetting(hideWood);
-    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.isShelfEditMode = false;
     });
     this.showToast('已保存当前书架显示设置');
@@ -14732,7 +14886,7 @@ struct MainMenuPage {
       return;
     }
 
-    animateTo({ duration: 200, curve: Curve.Linear }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.Linear }, () => {
       this.shelfToolbarPlacementSetting = normalized;
       AppStorage.setOrCreate(SettingKeys.LIBRARY_SHELF_TOOLBAR_PLACEMENT, normalized);
     });
@@ -14753,7 +14907,7 @@ struct MainMenuPage {
       return;
     }
 
-    animateTo({ duration: 180, curve: Curve.Linear }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.Linear }, () => {
       if (target === 'author') {
         this.libraryGridAuthorDisplayModeSetting = normalized;
         AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_AUTHOR_DISPLAY_MODE, normalized);
@@ -15111,7 +15265,7 @@ struct MainMenuPage {
     this.shelfDetailContentDeferred = true;
     this.showCategoryDetail = true;
     this.categoryDetailAnimationProgress = 0;
-    animateTo({ duration: 260, curve: Curve.Linear }, () => {
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.Linear }, () => {
       this.shelfDetailTransitionScale = 1;
       this.shelfDetailTransitionOpacity = 1;
       this.categoryDetailAnimationProgress = 1;
@@ -15126,7 +15280,7 @@ struct MainMenuPage {
   private beginShelfDetailExitAnimation(): void {
     this.exitAllLibraryMultiSelectModes();
     this.shelfDetailContentDeferred = false;
-    animateTo({ duration: 200, curve: Curve.Linear }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.Linear }, () => {
       this.shelfDetailTransitionScale = 1.06;
       this.shelfDetailTransitionOpacity = 0;
       this.categoryDetailAnimationProgress = 0;
@@ -15510,7 +15664,7 @@ struct MainMenuPage {
           .translate({ x: -32, y: 2 })
           .onClick(() => {
             this.shelfToDelete = shelf;
-            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.showDeleteShelfDialog = true;
             });
           })
@@ -15553,7 +15707,7 @@ struct MainMenuPage {
         // 编辑模式下：点击书架进行重命名
         this.renamingShelf = shelf;
         this.renameShelfName = shelf.name;
-        animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+        this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
           this.showRenameShelfDialog = true;
         });
         return;
@@ -15674,7 +15828,7 @@ struct MainMenuPage {
     .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_add_shelf'), offsetY: 4 })
     .border({ width: 1, color: this.getShelfCardBorderColorById('system_add_shelf') })
     .onClick(() => {
-      animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
         this.showAddShelfDialog = true;
       });
     })
@@ -15691,26 +15845,26 @@ struct MainMenuPage {
           .width('100%')
           .height('100%')
           .borderRadius(10)
-          .linearGradient(this.getShelfCardSurfaceGradientById(`system_type_${ShelfType}`))
+          .linearGradient(this.getShelfCardSurfaceGradientById('system_manage_shelf'))
 
         Column()
           .width('100%')
           .height(1)
-          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById(`system_type_${ShelfType}`))
+          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById('system_manage_shelf'))
 
         Column()
           .width('100%')
           .height(1)
           .align(Alignment.Bottom)
-          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById(`system_type_${ShelfType}`))
+          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById('system_manage_shelf'))
 
         if (this.shouldShowShelfBaseDecoration()) {
           Row()
             .width('100%')
             .height(16)
-            .backgroundColor(this.getShelfBaseLayerColorById(`system_type_${ShelfType}`))
+            .backgroundColor(this.getShelfBaseLayerColorById('system_manage_shelf'))
             .borderRadius(8)
-            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById(`system_type_${ShelfType}`) })
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById('system_manage_shelf') })
             .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
@@ -15743,15 +15897,15 @@ struct MainMenuPage {
     .width('100%')
     .height(this.getShelfCardFixedHeight())
     .padding(10)
-    .backgroundColor(this.getShelfCardBackgroundColorById(`system_type_${ShelfType}`))
-    .backgroundBlurStyle(this.getShelfCardBlurStyleById(`system_type_${ShelfType}`), this.getShelfCardBlurOptionsById(`system_type_${ShelfType}`))
-    .backgroundEffect(this.getShelfCardBackgroundEffectById(`system_type_${ShelfType}`))
+    .backgroundColor(this.getShelfCardBackgroundColorById('system_manage_shelf'))
+    .backgroundBlurStyle(this.getShelfCardBlurStyleById('system_manage_shelf'), this.getShelfCardBlurOptionsById('system_manage_shelf'))
+    .backgroundEffect(this.getShelfCardBackgroundEffectById('system_manage_shelf'))
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
-    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById(`system_type_${ShelfType}`), offsetY: 4 })
-    .border({ width: 1, color: this.getShelfCardBorderColorById(`system_type_${ShelfType}`) })
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_manage_shelf'), offsetY: 4 })
+    .border({ width: 1, color: this.getShelfCardBorderColorById('system_manage_shelf') })
     .onClick(() => {
-      animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
         this.isShelfEditMode = !this.isShelfEditMode;
       });
     })
@@ -16162,26 +16316,26 @@ struct MainMenuPage {
           .width('100%')
           .height('100%')
           .borderRadius(10)
-          .linearGradient(this.getShelfCardSurfaceGradientById('system_manage_shelf'))
+          .linearGradient(this.getShelfCardSurfaceGradientById(`system_type_${shelfType}`))
 
         Column()
           .width('100%')
           .height(1)
-          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById('system_manage_shelf'))
+          .backgroundColor(this.getShelfCardSurfaceTopEdgeColorById(`system_type_${shelfType}`))
 
         Column()
           .width('100%')
           .height(1)
           .align(Alignment.Bottom)
-          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById('system_manage_shelf'))
+          .backgroundColor(this.getShelfCardSurfaceBottomEdgeColorById(`system_type_${shelfType}`))
 
         if (this.shouldShowShelfBaseDecoration()) {
           Row()
             .width('100%')
             .height(16)
-            .backgroundColor(this.getShelfBaseLayerColorById('system_manage_shelf'))
+            .backgroundColor(this.getShelfBaseLayerColorById(`system_type_${shelfType}`))
             .borderRadius(8)
-            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById('system_manage_shelf') })
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColorById(`system_type_${shelfType}`) })
             .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
@@ -16276,13 +16430,13 @@ struct MainMenuPage {
     .width('100%')
     .height(this.getShelfCardFixedHeight())
     .padding(10)
-    .backgroundColor(this.getShelfCardBackgroundColorById('system_manage_shelf'))
-    .backgroundBlurStyle(this.getShelfCardBlurStyleById('system_manage_shelf'), this.getShelfCardBlurOptionsById('system_manage_shelf'))
-    .backgroundEffect(this.getShelfCardBackgroundEffectById('system_manage_shelf'))
+    .backgroundColor(this.getShelfCardBackgroundColorById(`system_type_${shelfType}`))
+    .backgroundBlurStyle(this.getShelfCardBlurStyleById(`system_type_${shelfType}`), this.getShelfCardBlurOptionsById(`system_type_${shelfType}`))
+    .backgroundEffect(this.getShelfCardBackgroundEffectById(`system_type_${shelfType}`))
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
-    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_manage_shelf'), offsetY: 4 })
-    .border({ width: 1, color: this.getShelfCardBorderColorById('system_manage_shelf') })
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById(`system_type_${shelfType}`), offsetY: 4 })
+    .border({ width: 1, color: this.getShelfCardBorderColorById(`system_type_${shelfType}`) })
     .onClick(() => {
       // 编辑模式下：默认书架不支持重命名
       if (this.isShelfEditMode) {
@@ -16399,7 +16553,7 @@ struct MainMenuPage {
       // 先设置选中的分类ID，然后用动画展开详情
       this.selectedCategoryId = category.id;
       this.updateCategoryFilteredLists();
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 300,
         curve: Curve.EaseOut
       }, () => {
@@ -16414,7 +16568,7 @@ struct MainMenuPage {
           if (!category.isDefault) {
             this.editingCategory = category;
             this.newCategoryName = category.name;
-            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.showEditCategoryDialog = true;
             });
           }
@@ -16458,7 +16612,7 @@ struct MainMenuPage {
     .width('100%')
     .onClick(() => {
       this.newCategoryName = '';
-      animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
         this.showCreateCategoryDialog = true;
       });
     })
@@ -17018,7 +17172,7 @@ struct MainMenuPage {
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .onClick(() => {
-              animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
                 this.showCreateCategoryDialog = false;
                 this.newCategoryName = '';
               });
@@ -17059,7 +17213,7 @@ struct MainMenuPage {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .onClick(() => {
-      animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
         this.showCreateCategoryDialog = false;
         this.newCategoryName = '';
       });
@@ -17110,7 +17264,7 @@ struct MainMenuPage {
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .onClick(() => {
-              animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
                 this.showEditCategoryDialog = false;
                 this.editingCategory = null;
                 this.newCategoryName = '';
@@ -17178,7 +17332,7 @@ struct MainMenuPage {
           .height(32)
           .backgroundColor(Color.Transparent)
           .onClick(() => {
-            animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
               this.showAddShelfDialog = false;
               this.resetAddShelfDialog();
             });
@@ -17285,7 +17439,7 @@ struct MainMenuPage {
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent })
           .onClick(() => {
-            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.newShelfType = ShelfType.SINGLE;
               this.newShelfContentTypes = [ShelfContentType.MANGA];
             });
@@ -17319,7 +17473,7 @@ struct MainMenuPage {
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent })
           .onClick(() => {
-            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.newShelfType = ShelfType.MIXED;
               this.newShelfContentTypes = [ShelfContentType.MANGA, ShelfContentType.EBOOK, ShelfContentType.NOVEL];
             });
@@ -17353,7 +17507,7 @@ struct MainMenuPage {
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent })
           .onClick(() => {
-            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.newShelfType = ShelfType.DYNAMIC;
               this.newShelfContentTypes = [ShelfContentType.MANGA, ShelfContentType.EBOOK, ShelfContentType.NOVEL];
             });
@@ -17382,12 +17536,12 @@ struct MainMenuPage {
           } else if (this.newShelfType === ShelfType.DYNAMIC) {
             // 动态书架进入步骤3设置筛选条件
             this.prepareDynamicFilterData();
-            animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
               this.addShelfDialogStep = 3;
             });
           } else {
             // 单一书架进入下一步选择内容类型
-            animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
               this.addShelfDialogStep = 2;
             });
           }
@@ -17424,7 +17578,7 @@ struct MainMenuPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .borderRadius(12)
           .onClick(() => {
-            animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
               this.addShelfDialogStep = 1;
             });
           })
@@ -17672,7 +17826,7 @@ struct MainMenuPage {
                 .animation({ duration: 250, curve: Curve.EaseOut })
             }
             .onClick(() => {
-              animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
                 this.dynamicFilterTabIndex = index;
                 this.dynamicFilterSearchText = '';
               });
@@ -17756,7 +17910,7 @@ struct MainMenuPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .borderRadius(12)
           .onClick(() => {
-            animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
               this.addShelfDialogStep = 1;
             });
           })
@@ -17951,7 +18105,7 @@ struct MainMenuPage {
           : ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
         .animation({ duration: 200, curve: Curve.EaseOut })
         .onClick(() => {
-          animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
             this.dynamicFilterNsfwSelection = this.dynamicFilterNsfwSelection === 'nsfw' ? 'all' : 'nsfw';
           });
         })
@@ -17981,7 +18135,7 @@ struct MainMenuPage {
           : ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
         .animation({ duration: 200, curve: Curve.EaseOut })
         .onClick(() => {
-          animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
             this.dynamicFilterNsfwSelection = this.dynamicFilterNsfwSelection === 'sfw' ? 'all' : 'sfw';
           });
         })
@@ -18191,7 +18345,7 @@ struct MainMenuPage {
     await this.typeShelfManager.createShelf(params);
     this.typeShelves = this.typeShelfManager.getShelves();
 
-    animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
       this.showAddShelfDialog = false;
       this.resetAddShelfDialog();
     });
@@ -18237,7 +18391,7 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .borderRadius(12)
             .onClick(() => {
-              animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
                 this.showDeleteShelfDialog = false;
                 this.shelfToDelete = null;
               });
@@ -18290,7 +18444,7 @@ struct MainMenuPage {
     this.deletingShelfId = shelfId;
 
     // 删除动画
-    animateTo({ duration: 300, curve: Curve.EaseIn }, () => {
+    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseIn }, () => {
       this.showDeleteShelfDialog = false;
     });
 
@@ -18336,7 +18490,7 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .borderRadius(12)
             .onClick(() => {
-              animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
                 this.showRenameShelfDialog = false;
                 this.renamingShelf = null;
                 this.renameShelfName = '';
@@ -18398,7 +18552,7 @@ struct MainMenuPage {
       this.showToast('重命名失败');
     }
 
-    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.showRenameShelfDialog = false;
       this.renamingShelf = null;
       this.renameShelfName = '';
@@ -18429,7 +18583,7 @@ struct MainMenuPage {
           .height(28)
           .backgroundColor(Color.Transparent)
           .onClick(() => {
-            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.showMoveToShelfDialog = false;
             });
           })
@@ -18497,11 +18651,11 @@ struct MainMenuPage {
               .fontColor(Color.White)
               .borderRadius(8)
               .onClick(() => {
-                animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+                this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
                   this.showMoveToShelfDialog = false;
                 });
                 setTimeout(() => {
-                  animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
                     this.showAddShelfDialog = true;
                   });
                 }, 250);
@@ -18520,7 +18674,7 @@ struct MainMenuPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .borderRadius(12)
           .onClick(() => {
-            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.showMoveToShelfDialog = false;
             });
           })
@@ -18557,7 +18711,7 @@ struct MainMenuPage {
     this.moveState.toShelfContentType = contentType;
     // 获取可用于移动的书架列表（只显示支持该内容类型的自定义书架）
     this.availableShelvesForMove = this.typeShelfManager.getShelvesForContentType(contentType);
-    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.showMoveToShelfDialog = true;
     });
   }
@@ -18577,7 +18731,7 @@ struct MainMenuPage {
     // 刷新书架列表
     this.typeShelves = this.typeShelfManager.getShelves();
 
-    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.showMoveToShelfDialog = false;
     });
 
@@ -19799,7 +19953,7 @@ struct MainMenuPage {
         })
         .clip(true)
         .onClick(() => {
-          animateTo({
+          this.getUIContext().animateTo({
             duration: 300,
             curve: Curve.EaseIn
           }, () => {
@@ -20089,7 +20243,7 @@ struct MainMenuPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .onClick(() => {
-            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
               this.showMoveToCategoryDialog = false;
             });
             this.moveState.mangaId = '';
@@ -20142,7 +20296,7 @@ struct MainMenuPage {
     }
     this.updateAllCachedLists();
 
-    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.showMoveToCategoryDialog = false;
     });
     // 清除所有移动状态
@@ -21467,7 +21621,7 @@ struct MainMenuPage {
         .onClick(() => {
           this.moveState.ebookId = ebook.id;
           this.moveState.contentType = 'ebook';
-          animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
             this.showMoveToCategoryDialog = true;
           });
         })
@@ -21505,7 +21659,7 @@ struct MainMenuPage {
         .onClick(() => {
           this.moveState.novelId = novel.id;
           this.moveState.contentType = 'novel';
-          animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
             this.showMoveToCategoryDialog = true;
           });
         })
@@ -25565,7 +25719,7 @@ struct MainMenuPage {
           })
           .clip(true)
           .onClick(() => {
-            animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+            this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
               this.discoverContentType = 'all';
               this.applyDiscoverFilter();
             });
@@ -25602,7 +25756,7 @@ struct MainMenuPage {
           .opacity(this.filteredMangaCount === 0 && this.discoverContentType !== 'manga' ? 0.5 : 1)
           .onClick(() => {
             if (this.filteredMangaCount > 0 || this.discoverContentType === 'manga') {
-              animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+              this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
                 this.discoverContentType = 'manga';
                 this.applyDiscoverFilter();
               });
@@ -25640,7 +25794,7 @@ struct MainMenuPage {
           .opacity(this.filteredEBookCount === 0 && this.discoverContentType !== 'ebook' ? 0.5 : 1)
           .onClick(() => {
             if (this.filteredEBookCount > 0 || this.discoverContentType === 'ebook') {
-              animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+              this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
                 this.discoverContentType = 'ebook';
                 this.applyDiscoverFilter();
               });
@@ -25678,7 +25832,7 @@ struct MainMenuPage {
           .opacity(this.filteredNovelCount === 0 && this.discoverContentType !== 'novel' ? 0.5 : 1)
           .onClick(() => {
             if (this.filteredNovelCount > 0 || this.discoverContentType === 'novel') {
-              animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+              this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
                 this.discoverContentType = 'novel';
                 this.applyDiscoverFilter();
               });
@@ -25865,7 +26019,7 @@ struct MainMenuPage {
       
       // 已保存仓库选择器
       if (this.savedRepositories.length > 0) {
-        Column({ space: 8 }) {
+        Column({ space: 0 }) {
           Row({ space: 8 }) {
             Text('已保存的仓库')
               .fontSize(14)
@@ -25876,77 +26030,80 @@ struct MainMenuPage {
               .fontSize(12)
               .height(24)
               .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .padding({ left: 8, right: 8 })
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
               .onClick(() => {
-                this.showRepositorySelector = !this.showRepositorySelector;
+                this.toggleRepositorySelector();
               })
           }
           .width('100%')
           .justifyContent(FlexAlign.SpaceBetween)
           
-          if (this.showRepositorySelector) {
-            List({ space: 8 }) {
-              ForEach(this.savedRepositories, (repo: SavedRepository) => {
-                ListItem() {
-                  Row({ space: 12 }) {
-                    Radio({ value: repo.id, group: 'repoGroup' })
-                      .checked(this.selectedRepositoryId === repo.id)
-                      .onChange((isChecked: boolean) => {
-                        if (isChecked) {
-                          this.applySelectedRepository(repo);
-                        }
-                      })
-                    
-                    Column({ space: 4 }) {
-                      Text(repo.name)
-                        .fontSize(14)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                        .maxLines(1)
-                        .textOverflow({ overflow: TextOverflow.Ellipsis })
-                      
-                      Text(`${repo.sourceCount} 个图源 · ${new Date(repo.lastSync).toLocaleDateString()}`)
-                        .fontSize(12)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                    }
-                    .layoutWeight(1)
-                    .alignItems(HorizontalAlign.Start)
-                  }
-                  .width('100%')
-                  .padding(12)
-                  .backgroundColor(this.selectedRepositoryId === repo.id ? 
-                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
-                    ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-                  .borderRadius(8)
-                  .onClick(() => {
-                    this.applySelectedRepository(repo);
-                  })
-                  .gesture(
-                    LongPressGesture({ repeat: false, duration: 500 })
-                      .onAction(() => {
-                        this.repositoryToDelete = repo;
-                        this.showDeleteRepoPopup = true;
-                      })
-                  )
-                  .bindPopup(this.showDeleteRepoPopup && this.repositoryToDelete?.id === repo.id, {
-                    builder: this.buildDeleteRepoPopup,
-                    placement: Placement.Top,
-                    popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
-                    onStateChange: (e) => {
-                      if (!e.isVisible) {
-                        this.showDeleteRepoPopup = false;
-                        this.repositoryToDelete = null;
+          List({ space: 8 }) {
+            ForEach(this.savedRepositories, (repo: SavedRepository) => {
+              ListItem() {
+                Row({ space: 12 }) {
+                  Radio({ value: repo.id, group: 'repoGroup' })
+                    .checked(this.selectedRepositoryId === repo.id)
+                    .onChange((isChecked: boolean) => {
+                      if (isChecked) {
+                        this.applySelectedRepository(repo);
                       }
-                    }
-                  })
+                    })
+
+                  Column({ space: 4 }) {
+                    Text(repo.name)
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                    Text(`${repo.sourceCount} 个图源 · ${new Date(repo.lastSync).toLocaleDateString()}`)
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  }
+                  .layoutWeight(1)
+                  .alignItems(HorizontalAlign.Start)
                 }
-              }, (repo: SavedRepository) => repo.id)
-            }
-            .height(200)
-            .width('100%')
+                .width('100%')
+                .padding(12)
+                .backgroundColor(this.selectedRepositoryId === repo.id
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+                .borderRadius(8)
+                .onClick(() => {
+                  this.applySelectedRepository(repo);
+                })
+                .gesture(
+                  LongPressGesture({ repeat: false, duration: 500 })
+                    .onAction(() => {
+                      this.repositoryToDelete = repo;
+                      this.showDeleteRepoPopup = true;
+                    })
+                )
+                .bindPopup(this.showDeleteRepoPopup && this.repositoryToDelete?.id === repo.id, {
+                  builder: this.buildDeleteRepoPopup,
+                  placement: Placement.Top,
+                  popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+                  onStateChange: (e) => {
+                    if (!e.isVisible) {
+                      this.showDeleteRepoPopup = false;
+                      this.repositoryToDelete = null;
+                    }
+                  }
+                })
+              }
+            }, (repo: SavedRepository) => repo.id)
           }
+          .height(this.showRepositorySelector ? this.SOURCE_REPO_SELECTOR_EXPANDED_HEIGHT : 0)
+          .opacity(this.showRepositorySelector ? 1 : 0)
+          .translate({ y: this.showRepositorySelector ? 0 : -8 })
+          .margin({ top: this.showRepositorySelector ? 8 : 0 })
+          .clip(true)
+          .width('100%')
         }
         .width('100%')
       }
@@ -26704,7 +26861,7 @@ struct MainMenuPage {
           .clip(true)
           .onClick(() => {
             // 使用动画过渡切换视图模式
-            animateTo({
+            this.getUIContext().animateTo({
               duration: 250,
               curve: Curve.EaseInOut
             }, () => {
@@ -26791,7 +26948,7 @@ struct MainMenuPage {
               // 列表视图
               if (this.sourceViewMode === LibraryViewMode.LIST) {
                 // 图源卡片列表
-                List() {
+                List({ space: 12 }) {
                   LazyForEach(this.sourceListDS, (item: SourceInfo, index: number) => {
                     ListItem() {
                       this.buildSourceCard(item)
@@ -26852,10 +27009,6 @@ struct MainMenuPage {
       }
       .width('100%')
       .height('100%')
-      // 图源搜索对话框
-      if (this.showSourceSearchDialog) {
-        this.buildSourceSearchDialog()
-      }
     }
     .width('100%')
     .height('100%')
@@ -26871,127 +27024,108 @@ struct MainMenuPage {
    */
   @Builder
   buildSourceSearchDialog() {
-    Column() {
-      Column({ space: 16 }) {
-        // 标题
-        Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.magnifyingglass'))
-            .fontSize(20)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text(`在 ${this.searchTargetSource?.name || '图源'} 中搜索`)
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        }
-        .width('100%')
-
-        // 搜索类型选择器（仅当有多个搜索类型时显示）
-        if (this.sourceSearchTypes.length > 1) {
-          Scroll() {
-            Row({ space: 8 }) {
-              ForEach(this.sourceSearchTypes, (type: SearchTypeOption) => {
-                Button(type.label)
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .height(30)
-                  .padding({ left: 12, right: 12 })
-                  .backgroundColor(this.selectedSourceSearchType === type.id
-                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                    : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                  .fontColor(this.selectedSourceSearchType === type.id
-                    ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  .borderRadius(15)
-                  .onClick(() => {
-                    this.selectedSourceSearchType = type.id;
-                    this.sourceSearchPlaceholder = type.placeholder || '输入搜索内容';
-                  })
-              }, (type: SearchTypeOption) => type.id)
-            }
-          }
-          .scrollable(ScrollDirection.Horizontal)
-          .scrollBar(BarState.Off)
-          .width('100%')
-        }
-        
-        // 搜索输入框
-        TextInput({ placeholder: this.sourceSearchPlaceholder, text: this.sourceSearchInput })
-          .width('100%')
-          .height(44)
-          .borderRadius(8)
+    Column({ space: 16 }) {
+      // 标题
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(20)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text(`在 ${this.searchTargetSource?.name || '图源'} 中搜索`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-          .onChange((value: string) => {
-            this.sourceSearchInput = value;
-          })
-          .onSubmit(() => {
-            this.executeSourceSearch();
-          })
-        
-        // 按钮
-        Row({ space: 12 }) {
-          Button('取消')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-            .height(40)
-            .borderRadius(8)
-            .layoutWeight(1)
-            .onClick(() => {
-              this.showSourceSearchDialog = false;
-              this.searchTargetSource = null;
-              this.sourceSearchInput = '';
-              this.selectedSourceSearchType = 'search';
-            })
-          
-          Button('搜索')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .height(40)
-            .borderRadius(8)
-            .layoutWeight(1)
-            .onClick(() => {
-              this.executeSourceSearch();
-            })
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      // 搜索类型选择器（仅当有多个搜索类型时显示）
+      if (this.sourceSearchTypes.length > 1) {
+        Scroll() {
+          Row({ space: 8 }) {
+            ForEach(this.sourceSearchTypes, (type: SearchTypeOption) => {
+              Button(type.label)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .height(30)
+                .padding({ left: 12, right: 12 })
+                .backgroundColor(this.selectedSourceSearchType === type.id
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                .fontColor(this.selectedSourceSearchType === type.id
+                  ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .borderRadius(15)
+                .onClick(() => {
+                  this.selectedSourceSearchType = type.id;
+                  this.sourceSearchPlaceholder = type.placeholder || '输入搜索内容';
+                })
+            }, (type: SearchTypeOption) => type.id)
+          }
         }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
         .width('100%')
       }
-      .width('85%')
-      .constraintSize({ maxWidth: 460 })
-      .padding(20)
-      .backgroundColor(this.getSettingsAnalyticsCardBackground())
-      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-      .borderRadius(this.getSettingsAnalyticsCardRadius())
-      .clip(true)
-      .border({
-        width: this.getSettingsAnalyticsCardBorderWidth(),
-        color: this.getSettingsAnalyticsCardBorderColor()
-      })
-      .shadow({
-        radius: this.getSettingsAnalyticsCardRadius() + 4,
-        color: this.getSettingsAnalyticsCardShadowColor(),
-        offsetX: 0,
-        offsetY: 8
-      })
-      .onClick(() => {})
-      .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.scale({ x: 0.9, y: 0.9 })))
+
+      // 搜索输入框
+      TextInput({ placeholder: this.sourceSearchPlaceholder, text: this.sourceSearchInput })
+        .width('100%')
+        .height(44)
+        .borderRadius(8)
+        .fontFamily(this.appFontFamily)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .onChange((value: string) => {
+          this.sourceSearchInput = value;
+        })
+        .onSubmit(() => {
+          this.executeSourceSearch();
+        })
+
+      // 按钮
+      Row({ space: 12 }) {
+        Button('取消')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .height(40)
+          .borderRadius(8)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.closeSourceSearchDialog();
+          })
+
+        Button('搜索')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .height(40)
+          .borderRadius(8)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.executeSourceSearch();
+          })
+      }
+      .width('100%')
     }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(14, 20, 31, 0.28)')
-    .position({ x: 0, y: 0 })
-    .transition(TransitionEffect.OPACITY.animation({ duration: 150 }))
-    .onClick(() => {
-      this.showSourceSearchDialog = false;
-      this.searchTargetSource = null;
-      this.sourceSearchInput = '';
-      this.selectedSourceSearchType = 'search';
+    .width('85%')
+    .constraintSize({ maxWidth: 460 })
+    .padding(20)
+    .backgroundColor(this.getSettingsAnalyticsCardBackground())
+    .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+    .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+    .borderRadius(this.getSettingsAnalyticsCardRadius())
+    .clip(true)
+    .border({
+      width: this.getSettingsAnalyticsCardBorderWidth(),
+      color: this.getSettingsAnalyticsCardBorderColor()
+    })
+    .shadow({
+      radius: this.getSettingsAnalyticsCardRadius() + 4,
+      color: this.getSettingsAnalyticsCardShadowColor(),
+      offsetX: 0,
+      offsetY: 8
     })
   }
 
@@ -28665,35 +28799,120 @@ struct MainMenuPage {
   }
 
   @Builder
+  buildAdaptiveSideSearchButton() {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(25)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+    }
+    .width('100%')
+    .height(40)
+    .borderRadius(10)
+    .backgroundColor(Color.Transparent)
+    .stateStyles({
+      pressed: {
+        .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
+          ? 'rgba(255, 255, 255, 0.10)'
+          : 'rgba(0, 0, 0, 0.06)')
+        .scale({ x: 0.96, y: 0.96 })
+      }
+    })
+    .accessibilityText('搜索')
+    .accessibilityDescription('打开全局搜索页面')
+    .onClick(() => {
+      this.openGlobalSearchPage();
+    })
+  }
+
+  @Builder
+  buildAdaptiveSideSearchArea() {
+    Column({ space: 2 }) {
+      this.buildAdaptiveSideSearchButton()
+
+      Divider()
+        .strokeWidth(1)
+        .color(ThemeAwareHelper.getTestManagementThemedColor('comp_divider', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .height(46)
+    .justifyContent(FlexAlign.Start)
+    .padding({ bottom: 3 })
+  }
+
+  @Builder
   buildAdaptiveSideOperationBar() {
-    Column() {
-      List({ scroller: this.sideTabListScroller, space: 2 }) {
-        ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
-          ListItem() {
-            this.buildAdaptiveOperationTabButton(cfg, true)
-          }
+    if (this.shouldUseHdsSideOperationBar()) {
+      HdsStyleBottomBar({
+        selectedIndex: this.getActualTabsIndexForTabIndex(this.currentTabIndex),
+        visibleTabConfigs: this.getHdsBottomBarTabConfigs(),
+        tabBarOpacity: this.getTabBarOpacity(),
+        themeType: this.themeState.currentTheme,
+        hasSourceUpdate: this.hasSourceUpdate,
+        isPrivacyMode: this.isPrivacyMode,
+        vertical: true,
+        barPosition: this.getEffectiveTabletTopBarPosition() === 'right' ? BarPosition.End : BarPosition.Start,
+        showSearchTab: true,
+        verticalScrollable: this.isAdaptiveHdsSideOperationBarScrollable(),
+        verticalBarHeight: this.getAdaptiveHdsSideOperationBarHeight(),
+        verticalContainerHeight: this.getAdaptiveHdsSideOperationBarContainerHeight(),
+        searchCallback: (): void => {
+          this.openGlobalSearchPage();
+        },
+        onChangeCallback: (actualIndex: number): void => {
+          this.changeMainContentToActualIndex(actualIndex);
+        },
+        longPressCallback: (tabIndex: number): void => {
+          void this.handleTabButtonLongPress(tabIndex);
+        },
+        controllerRefCallback: (controller: HdsTabsController): void => {
+          this.hdsTabsController = controller;
+        },
+        setSyncingCallback: (setter: (syncing: boolean) => void): void => {
+          this.hdsSetSyncing = setter;
+        }
+      })
+      .width(this.TABLET_SIDE_BAR_WIDTH)
+      .height(this.getAdaptiveHdsSideOperationBarContainerHeight())
+      .opacity(this.getTabBarOpacity())
+    } else {
+      Column({ space: 6 }) {
+        this.buildAdaptiveSideSearchArea()
+
+        List({ scroller: this.sideTabListScroller, space: 2 }) {
+          ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
+            ListItem() {
+              this.buildAdaptiveOperationTabButton(cfg, true)
+            }
+          })
+        }
+        .width('100%')
+        .height('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .onAppear(() => {
+          this.scrollSideTabToCenter(this.currentTabIndex);
         })
       }
-      .width('100%')
-      .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
-      .onAppear(() => {
-        this.scrollSideTabToCenter(this.currentTabIndex);
+      .width(this.TABLET_SIDE_BAR_WIDTH)
+      .height(this.getAdaptiveSideOperationBarHeight())
+      .padding({
+        top: this.getAdaptiveSideOperationBarTopPadding(),
+        bottom: this.getAdaptiveSideOperationBarBottomPadding(),
+        left: 8,
+        right: 8
       })
+      .borderRadius(this.getGlassRadius())
+      .backgroundColor(Color.Transparent)
+      .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+        colorMode: ThemeColorMode.SYSTEM,
+        adaptiveColor: AdaptiveColor.DEFAULT,
+        scale: 1.0
+      })
+      .shadow({ radius: 16, color: this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)', offsetX: 0, offsetY: -4 })
+      .opacity(this.getTabBarOpacity())
     }
-    .width(this.TABLET_SIDE_BAR_WIDTH)
-    .height(this.getAdaptiveSideOperationBarHeight())
-    .padding({ top: 8, bottom: 8, left: 8, right: 8 })
-    .borderRadius(this.getGlassRadius())
-    .backgroundColor(Color.Transparent)
-    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
-      colorMode: ThemeColorMode.SYSTEM,
-      adaptiveColor: AdaptiveColor.DEFAULT,
-      scale: 1.0
-    })
-    .shadow({ radius: 16, color: this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)', offsetX: 0, offsetY: -4 })
-    .opacity(this.getTabBarOpacity())
   }
 
   private triggerHapticFeedback(): void {
@@ -28706,6 +28925,14 @@ struct MainMenuPage {
     }
     const effectivePosition = this.getEffectiveTabletTopBarPosition();
     return effectivePosition === 'left' || effectivePosition === 'right';
+  }
+
+  private isHdsSideTabNavigationActive(): boolean {
+    return false;
+  }
+
+  private shouldUseHdsSideOperationBar(): boolean {
+    return false;
   }
 
   private scrollSideTabToCenter(tabIndex: number): void {
@@ -29537,7 +29764,7 @@ struct MainMenuPage {
       this.bottomBarOffsetY = targetOffset;
       return;
     }
-    animateTo({
+    this.getUIContext().animateTo({
       duration: duration,
       curve: curve
     }, () => {
@@ -29560,7 +29787,7 @@ struct MainMenuPage {
 
     this.bottomBarBounceTabIndex = tabIndex;
     this.bottomBarBounceScale = 0.92;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 110,
       curve: Curve.EaseOut
     }, () => {
@@ -29568,7 +29795,7 @@ struct MainMenuPage {
     });
 
     this.bottomBarBounceTimer = setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 180,
         curve: Curve.EaseOut
       }, () => {
@@ -29676,14 +29903,14 @@ struct MainMenuPage {
 
     this.resetBottomBarScrollState();
     if (this.isOverlayBottomNavTab(tabIndex)) {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 200,
         curve: Curve.EaseOut
       }, () => {
         this.bottomBarOffsetY = this.getBottomBarTravelDistance();
       });
     } else {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 200,
         curve: Curve.EaseOut
       }, () => {
@@ -29819,7 +30046,8 @@ struct MainMenuPage {
             })
             .onChange((actualIndex: number) => {
               this.handleMainContentIndexChanged(actualIndex);
-              if (this.bottomBarStyle === 'hds' && this.hdsTabsController !== null && this.hdsSetSyncing !== null) {
+              if (!this.useTopTabsNavigation && this.bottomBarStyle === 'hds' &&
+                this.hdsTabsController !== null && this.hdsSetSyncing !== null) {
                 this.hdsSetSyncing(true);
                 this.hdsTabsController.changeIndex(actualIndex);
                 this.hdsSetSyncing(false);
@@ -29875,15 +30103,17 @@ struct MainMenuPage {
           .key(`shelfPreviewSlider_${this.barRenderKey}`)
         }
 
-        Column() {
-          this.buildFloatingSearchButton()
+        if (this.shouldShowFloatingSearchButton()) {
+          Column() {
+            this.buildFloatingSearchButton()
+          }
+          .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .position({ x: this.getFloatingSearchButtonX(), y: this.getFloatingSearchButtonY() })
+          .animation({ duration: 220, curve: Curve.EaseInOut })
+          .zIndex(20)
+          .key(`floatingSearch_${this.barRenderKey}`)
         }
-        .width(this.FLOAT_SEARCH_BUTTON_SIZE)
-        .height(this.FLOAT_SEARCH_BUTTON_SIZE)
-        .position({ x: this.getFloatingSearchButtonX(), y: this.getFloatingSearchButtonY() })
-        .animation({ duration: 220, curve: Curve.EaseInOut })
-        .zIndex(20)
-        .key(`floatingSearch_${this.barRenderKey}`)
 
         if (this.shouldAttachLibraryFloatingBar()) {
           Column() {
@@ -29925,7 +30155,7 @@ struct MainMenuPage {
               this.hdsSetSyncing = setter;
             }
           })
-          .id('guide_main_bottom_bar_horizontal')
+          .id('' as string)
           .width(this.getBottomBarWidth())
           .height(this.BOTTOM_BAR_HEIGHT)
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
@@ -29940,7 +30170,7 @@ struct MainMenuPage {
           Column() {
             this.buildHorizontalTabBar()
           }
-          .id('guide_main_bottom_bar_horizontal')
+          .id('' as string)
           .width(this.getBottomBarWidth())
           .height(this.BOTTOM_BAR_HEIGHT)
           .borderRadius(this.getGlassRadius())
@@ -29980,7 +30210,7 @@ struct MainMenuPage {
           Column() {
             this.buildAdaptiveTopOperationBar()
           }
-          .id('guide_main_bottom_bar_top')
+          .id('' as string)
           .position({ x: this.getBottomBarX(), y: this.getAdaptiveTopOperationBarY() })
           .zIndex(15)
           .key(`adaptiveTopOperationBar_${this.barRenderKey}`)
@@ -29990,7 +30220,7 @@ struct MainMenuPage {
           Column() {
             this.buildAdaptiveTopOperationBar()
           }
-          .id('guide_main_bottom_bar_top')
+          .id('' as string)
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
           .zIndex(15)
           .key(`adaptiveBottomOperationBar_${this.barRenderKey}`)
@@ -30000,7 +30230,7 @@ struct MainMenuPage {
           Column() {
             this.buildAdaptiveSideOperationBar()
           }
-          .id('guide_main_bottom_bar_side')
+          .id('' as string)
           .position({ x: this.getAdaptiveLeftOperationBarX(), y: this.getAdaptiveSideOperationBarY() })
           .zIndex(15)
           .key(`adaptiveLeftOperationBar_${this.barRenderKey}`)
@@ -30010,7 +30240,7 @@ struct MainMenuPage {
           Column() {
             this.buildAdaptiveSideOperationBar()
           }
-          .id('guide_main_bottom_bar_side')
+          .id('' as string)
           .position({ x: this.getAdaptiveRightOperationBarX(), y: this.getAdaptiveSideOperationBarY() })
           .zIndex(15)
           .key(`adaptiveRightOperationBar_${this.barRenderKey}`)

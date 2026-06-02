@@ -1,4 +1,4 @@
-import { logger } from '../../Utils/Logger';
+﻿import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';

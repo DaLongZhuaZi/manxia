@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 小说听书页面（播放器样式）
  */
@@ -457,7 +458,7 @@ export struct NovelReadAloudPage {
       return;
     }
     if (this.sourceId.length <= 0) {
-      promptAction.showToast({ message: '当前章节缺少书源信息，无法缓存', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前章节缺少书源信息，无法缓存', duration: 1500 });
       return;
     }
     this.isCachingCurrentChapterAudio = true;
@@ -465,14 +466,14 @@ export struct NovelReadAloudPage {
       const alreadyCached = await this.cacheManager.isAudioChapterCached(this.bookId, this.currentChapterIndex);
       if (alreadyCached) {
         this.audioChapterCached = true;
-        promptAction.showToast({ message: '当前章节已缓存音频', duration: 1200 });
+        this.getUIContext().getPromptAction().showToast({ message: '当前章节已缓存音频', duration: 1200 });
         return;
       }
 
       const chapter = this.getCurrentChapterForCache();
       const success = await this.cacheManager.cacheChapter(this.sourceId, this.bookId, chapter);
       if (!success) {
-        promptAction.showToast({ message: '缓存本章音频失败', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '缓存本章音频失败', duration: 1500 });
         return;
       }
 
@@ -486,10 +487,10 @@ export struct NovelReadAloudPage {
           logger.warn(TAG, `切换到本地缓存音频失败: ${String(error)}`);
         }
       }
-      promptAction.showToast({ message: '本章音频已缓存', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '本章音频已缓存', duration: 1200 });
     } catch (error) {
       logger.error(TAG, `缓存当前音频章节失败: ${String(error)}`);
-      promptAction.showToast({ message: '缓存本章音频失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '缓存本章音频失败', duration: 1500 });
     } finally {
       this.isCachingCurrentChapterAudio = false;
     }
@@ -610,7 +611,7 @@ export struct NovelReadAloudPage {
       return '';
     }
     try {
-      const parsed = JSON.parse(rawContent) as AudioJsonValue;
+      const parsed = SafeUtils.parseObj(rawContent) as AudioJsonValue;
       const urlHints: string[] = [];
       this.collectAudioUrlHints(parsed, urlHints);
       for (let index = 0; index < urlHints.length; index++) {
@@ -821,7 +822,7 @@ export struct NovelReadAloudPage {
 
   private async playAudioPlayback(): Promise<void> {
     if (!this.audioSourceUrl || this.audioSourceUrl.length <= 0) {
-      promptAction.showToast({ message: '当前章节无可播放音频', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前章节无可播放音频', duration: 1500 });
       return;
     }
     const player = await this.ensureAudioPlayer();
@@ -990,7 +991,7 @@ export struct NovelReadAloudPage {
   private async toggleReadAloud(): Promise<void> {
     if (this.isAudioSourceMode()) {
       if (!this.audioSourceUrl || this.audioSourceUrl.length <= 0) {
-        promptAction.showToast({ message: '当前章节无可播放音频', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '当前章节无可播放音频', duration: 1500 });
         return;
       }
       if (this.readAloudPlaying) {
@@ -1002,7 +1003,7 @@ export struct NovelReadAloudPage {
       return;
     }
     if (!this.chapterContent || this.chapterContent.length <= 0) {
-      promptAction.showToast({ message: '当前章节无可朗读内容', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前章节无可朗读内容', duration: 1500 });
       return;
     }
     if (!this.readAloudSettings.enabled) {

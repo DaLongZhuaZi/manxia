@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ZLibrary在线阅读器页面
  * 通过WebView打开ZLibrary的在线阅读器
  * 不支持进度记录
@@ -43,7 +43,7 @@ export struct ZLibraryReaderPage {
       logger.debug(TAG, `主题切换: ${theme}`);
     });
     
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: 'ZLibrary在线阅读不支持进度记录',
       duration: 3000
     });
@@ -114,7 +114,10 @@ export struct ZLibraryReaderPage {
             .imageAccess(true)
             .mixedMode(MixedMode.All)
             .cacheMode(CacheMode.Default)
-            .userAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            .onControllerAttached(() => {
+              this.webViewController.setCustomUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+            })
+            
             .onProgressChange((event) => {
               if (event && event.newProgress !== undefined) {
                 this.loadProgress = event.newProgress;

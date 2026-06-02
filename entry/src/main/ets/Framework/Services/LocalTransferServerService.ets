@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 局域网传书本地服务
  *
@@ -2155,7 +2156,7 @@ export class LocalTransferServerService {
           let payload = { ok: response.ok, message: text };
           if (text && text.trim().length > 0) {
             try {
-              payload = JSON.parse(text);
+              payload = SafeUtils.parseObj(text);
             } catch (_parseError) {
             }
           }
@@ -2393,7 +2394,7 @@ export class LocalTransferServerService {
 
         wsClient.onmessage = (event) => {
           try {
-            const payload = JSON.parse(String(event.data || '{}'));
+            const payload = SafeUtils.parseObj(String(event.data || '{}'));
             handleWsPayload(payload);
           } catch (_error) {
           }

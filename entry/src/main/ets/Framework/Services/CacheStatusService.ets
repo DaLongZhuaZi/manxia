@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * 缓存状态服务
  * 提供统一接口查询漫画/小说的缓存状态
@@ -211,7 +212,7 @@ export class CacheStatusService {
 
   private fileExists(path: string): boolean {
     try {
-      return fs.accessSync(path);
+      return SafeFileUtils.accessSync(path);
     } catch (_error) {
       return false;
     }
@@ -219,7 +220,7 @@ export class CacheStatusService {
 
   private getFileSize(path: string): number {
     try {
-      const stat = fs.statSync(path);
+      const stat = SafeFileUtils.statSync(path);
       return stat.size;
     } catch (_error) {
       return 0;
@@ -247,7 +248,7 @@ export class CacheStatusService {
 
       try {
         this.deleteFileIfExists(archivePath);
-        fs.renameSync(tempPath, archivePath);
+        SafeFileUtils.renameSync(tempPath, archivePath);
         this.deleteArchiveTempFiles(archivePath);
         logger.info(TAG, `已恢复未完成CBZ缓存: ${tempPath} -> ${archivePath}`);
         return archivePath;
@@ -261,7 +262,7 @@ export class CacheStatusService {
   private deleteFileIfExists(path: string): void {
     try {
       if (this.fileExists(path)) {
-        fs.unlinkSync(path);
+        SafeFileUtils.unlinkSync(path);
       }
     } catch (error) {
       logger.warn(TAG, `删除缓存文件失败: ${path}, ${String(error)}`);

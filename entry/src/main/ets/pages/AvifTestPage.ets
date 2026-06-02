@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AVIF 图片查看器
  * 支持AVIF图片的导入、查看和导出（转换为PNG/WebP）
  */
@@ -80,7 +80,7 @@ export struct AvifTestPage {
   private imageBuffer: ArrayBuffer | null = null;
 
   aboutToAppear(): void {
-    this.context = getContext(this) as common.UIAbilityContext;
+    this.context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
     this.initTheme();
     this.initResponsive();
     this.checkAvifSupport();
@@ -132,7 +132,7 @@ export struct AvifTestPage {
   }
 
   private showToast(message: string): void {
-    promptAction.showToast({ message, duration: 2000 });
+    this.getUIContext().getPromptAction().showToast({ message, duration: 2000 });
   }
 
   private clearImage(): void {

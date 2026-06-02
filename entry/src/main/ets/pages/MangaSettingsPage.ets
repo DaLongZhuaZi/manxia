@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/pages/MangaSettingsPage.ets
 /*
 职责: 漫画设置页面，提供针对单部漫画的阅读设置配置（独立页面，不再复用阅读设置对话框）
@@ -5,7 +6,7 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { UIContext } from '@kit.ArkUI';
-import { picker } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -418,7 +419,7 @@ struct MangaSettingsPage {
 
       try {
         const actualPath: string = hasScheme ? rawPath.substring(7) : rawPath;
-        const stat: fs.Stat = fs.statSync(actualPath);
+        const stat: fs.Stat = SafeFileUtils.statSync(actualPath);
         logger.debug(TAG, `设置页封面路径规范化成功: raw='${rawPath}', display='${displayPath}', size=${stat.size}`);
       } catch (statErr) {
         logger.warn(TAG, `设置页封面路径规范化检查失败: raw='${rawPath}', display='${displayPath}', 原始错误=${String(statErr)}`);
@@ -583,11 +584,12 @@ struct MangaSettingsPage {
       }
 
       // 创建图片选择器
-      const photoSelectOptions = new picker.PhotoSelectOptions();
-      photoSelectOptions.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-      photoSelectOptions.maxSelectNumber = 1;
+      const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = {
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 1
+      };
 
-      const photoPicker = new picker.PhotoViewPicker(context);
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const selectResult = await photoPicker.select(photoSelectOptions);
       
       if (!selectResult || selectResult.photoUris.length === 0) {

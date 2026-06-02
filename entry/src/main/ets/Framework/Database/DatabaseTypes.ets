@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Database/DatabaseTypes.ets
 /**
  * 数据库类型定义
@@ -802,7 +803,7 @@ export function safeJsonParse<T>(jsonString: string, defaultValue: T): T {
   }
   
   try {
-    return JSON.parse(jsonString) as T;
+    return SafeUtils.parseObj(jsonString) as T;
   } catch (error) {
     logger.warn(TAG, `JSON解析失败: ${error}, 使用默认值`);
     return defaultValue;

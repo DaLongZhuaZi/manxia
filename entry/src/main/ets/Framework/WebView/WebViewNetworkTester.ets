@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/WebViewNetworkTester.ets
 /**
  * WebView网络连接测试工具
@@ -252,7 +253,7 @@ export class WebViewNetworkTester {
         });
       });
 
-      const pageInfo = JSON.parse(scriptResult);
+      const pageInfo = SafeUtils.parseObj(scriptResult);
       result.title = pageInfo.title;
       result.userAgent = pageInfo.userAgent;
       result.cookieCount = pageInfo.cookieCount;

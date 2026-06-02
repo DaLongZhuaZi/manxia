@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/Framework/Components/ReadAloudCacheDialogComponent.ets
+﻿// 文件路径: entry/src/main/ets/Framework/Components/ReadAloudCacheDialogComponent.ets
 // 职责: 听书缓存对话框组件，从UnifiedDetailPage提取的独立组件
 
 
@@ -286,7 +286,7 @@ export struct ReadAloudCacheDialogComponent {
   }
 
   private toggleReadAloudCacheExpanded(): void {
-    animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
       this.isReadAloudCacheExpanded = !this.isReadAloudCacheExpanded;
     });
   }
@@ -314,7 +314,7 @@ export struct ReadAloudCacheDialogComponent {
       this.readAloudCacheSummary = null;
       this.onSummaryChanged?.(null);
       if (showToastOnError) {
-        promptAction.showToast({ message: '加载听书缓存失败', duration: 1400 });
+        this.getUIContext().getPromptAction().showToast({ message: '加载听书缓存失败', duration: 1400 });
       }
     } finally {
       this.isReadAloudCacheLoading = false;
@@ -387,7 +387,7 @@ export struct ReadAloudCacheDialogComponent {
     this.syncReadAloudCachePresetDraftName();
     this.readAloudCachePresetStatusMessage = '';
     this.showReadAloudCacheDialog = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 260,
       curve: Curve.EaseOut
     }, () => {
@@ -401,7 +401,7 @@ export struct ReadAloudCacheDialogComponent {
     if (this.readAloudCacheDialogActiveTab === index) {
       return;
     }
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.readAloudCacheDialogActiveTab = index;
     });
     if (index === 1) {
@@ -416,7 +416,7 @@ export struct ReadAloudCacheDialogComponent {
   }
 
   private closeReadAloudCacheDialog(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
@@ -455,7 +455,7 @@ export struct ReadAloudCacheDialogComponent {
       logger.error(TAG, `加载听书缓存管理明细失败: chapter=${requestedChapterIndex}, error=${String(error)}`);
       this.readAloudCacheManageDetail = null;
       if (showToastOnError) {
-        promptAction.showToast({ message: '加载听书缓存管理明细失败', duration: 1400 });
+        this.getUIContext().getPromptAction().showToast({ message: '加载听书缓存管理明细失败', duration: 1400 });
       }
     } finally {
       if (requestToken === this.readAloudCacheManageLoadToken) {
@@ -465,7 +465,7 @@ export struct ReadAloudCacheDialogComponent {
   }
 
   private selectReadAloudCacheManageChapter(chapterIndex: number): void {
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.readAloudCacheManageChapterIndex = Math.max(0, chapterIndex);
       this.readAloudCacheManageDetail = null;
       this.readAloudCacheManageSelectedTargetIndex = -1;
@@ -476,13 +476,13 @@ export struct ReadAloudCacheDialogComponent {
   }
 
   private selectReadAloudCacheManageTarget(segmentIndex: number): void {
-    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
       this.readAloudCacheManageSelectedTargetIndex = this.readAloudCacheManageSelectedTargetIndex === segmentIndex ? -1 : segmentIndex;
     });
   }
 
   private toggleReadAloudCacheManageSection(section: 'chapter' | 'target' | 'source'): void {
-    animateTo({ duration: 280, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.EaseInOut }, () => {
       switch (section) {
         case 'chapter':
           this.readAloudCacheManageChapterSectionExpanded = !this.readAloudCacheManageChapterSectionExpanded;
@@ -553,11 +553,11 @@ export struct ReadAloudCacheDialogComponent {
       await this.loadReadAloudCacheSummary();
       await this.loadReadAloudCacheManageDetail();
       this.readAloudCacheManageStatusMessage = successMessage;
-      promptAction.showToast({ message: '已完成分段匹配', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '已完成分段匹配', duration: 1400 });
     } catch (error) {
       logger.error(TAG, `匹配听书分段失败: target=${targetSegmentIndex}, error=${String(error)}`);
       this.readAloudCacheManageStatusMessage = '分段匹配失败';
-      promptAction.showToast({ message: '分段匹配失败', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '分段匹配失败', duration: 1400 });
     } finally {
       this.isReadAloudCacheManageMutating = false;
     }
@@ -578,7 +578,7 @@ export struct ReadAloudCacheDialogComponent {
     const suggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment);
     if (!suggestion) {
       this.readAloudCacheManageStatusMessage = '当前没有可直接采用的建议槽位';
-      promptAction.showToast({ message: '当前没有可直接采用的建议槽位', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前没有可直接采用的建议槽位', duration: 1400 });
       return;
     }
     await this.attachReadAloudCacheSourceSegmentToTarget(
@@ -597,7 +597,7 @@ export struct ReadAloudCacheDialogComponent {
     const nextBlockedKeys = new Set(this.readAloudCacheManageBlockedSuggestionKeys);
     nextBlockedKeys.add(this.buildReadAloudCacheSuggestionPairKey(segment, suggestion.targetSegmentIndex));
     const nextSuggestion = this.getEffectiveReadAloudCacheSuggestedTarget(segment, nextBlockedKeys);
-    animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
       this.readAloudCacheManageBlockedSuggestionKeys = nextBlockedKeys;
     });
     if (nextSuggestion) {
@@ -622,11 +622,11 @@ export struct ReadAloudCacheDialogComponent {
       await this.loadReadAloudCacheSummary();
       await this.loadReadAloudCacheManageDetail();
       this.readAloudCacheManageStatusMessage = `已删除分段 S${segment.segmentIndex + 1}`;
-      promptAction.showToast({ message: '已删除分段缓存记录', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '已删除分段缓存记录', duration: 1400 });
     } catch (error) {
       logger.error(TAG, `删除听书分段失败: segment=${segment.segmentIndex}, error=${String(error)}`);
       this.readAloudCacheManageStatusMessage = '删除分段失败';
-      promptAction.showToast({ message: '删除分段失败', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '删除分段失败', duration: 1400 });
     } finally {
       this.isReadAloudCacheManageMutating = false;
     }
@@ -946,10 +946,10 @@ export struct ReadAloudCacheDialogComponent {
       if (this.showReadAloudCacheDialog && this.readAloudCacheDialogActiveTab === 1) {
         await this.loadReadAloudCacheManageDetail();
       }
-      promptAction.showToast({ message: '已保存当前书籍远程 TTS 设置', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '已保存当前书籍远程 TTS 设置', duration: 1500 });
     } catch (error) {
       logger.error(TAG, `保存当前远程TTS设置失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存当前远程 TTS 设置失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存当前远程 TTS 设置失败', duration: 1500 });
     } finally {
       this.isReadAloudCurrentSettingsSaving = false;
     }
@@ -974,10 +974,10 @@ export struct ReadAloudCacheDialogComponent {
     const chapterTitle = this.buildReadAloudCacheChapterLabel(chapterIndex);
     try {
       await this.runReadAloudPrecacheTask([chapterIndex], false);
-      promptAction.showToast({ message: `已缓存 ${chapterTitle}`, duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: `已缓存 ${chapterTitle}`, duration: 1400 });
     } catch (error) {
       logger.error(TAG, `单章听书缓存失败: chapter=${chapterIndex}, error=${String(error)}`);
-      promptAction.showToast({ message: '当前章节缓存失败', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前章节缓存失败', duration: 1400 });
     }
   }
 
@@ -988,10 +988,10 @@ export struct ReadAloudCacheDialogComponent {
     try {
       await this.remoteReadAloudCacheService.clearChapterCache(this.content, chapterIndex);
       await this.loadReadAloudCacheSummary();
-      promptAction.showToast({ message: `已清理第 ${chapterIndex + 1} 章听书缓存`, duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: `已清理第 ${chapterIndex + 1} 章听书缓存`, duration: 1400 });
     } catch (error) {
       logger.error(TAG, `清理章节听书缓存失败: chapter=${chapterIndex}, error=${String(error)}`);
-      promptAction.showToast({ message: '清理章节缓存失败', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '清理章节缓存失败', duration: 1400 });
     }
   }
 
@@ -1002,26 +1002,26 @@ export struct ReadAloudCacheDialogComponent {
     try {
       await this.remoteReadAloudCacheService.clearBookCache(this.content);
       await this.loadReadAloudCacheSummary();
-      promptAction.showToast({ message: '已清理当前小说听书缓存', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '已清理当前小说听书缓存', duration: 1400 });
     } catch (error) {
       logger.error(TAG, `清理当前小说听书缓存失败: ${String(error)}`);
-      promptAction.showToast({ message: '清理听书缓存失败', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '清理听书缓存失败', duration: 1400 });
     }
   }
 
   private async startReadAloudCacheTaskFromDialog(): Promise<void> {
     const targetIndexes = this.getSelectedReadAloudChapterIndexes();
     if (targetIndexes.length <= 0) {
-      promptAction.showToast({ message: '请先选择要缓存的章节', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择要缓存的章节', duration: 1400 });
       return;
     }
     try {
       await this.runReadAloudPrecacheTask(targetIndexes, true);
       await this.loadReadAloudCacheSummary();
-      promptAction.showToast({ message: `已完成 ${targetIndexes.length} 章听书缓存`, duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: `已完成 ${targetIndexes.length} 章听书缓存`, duration: 1500 });
     } catch (error) {
       logger.error(TAG, `批量听书缓存失败: ${String(error)}`);
-      promptAction.showToast({ message: '听书缓存任务失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '听书缓存任务失败', duration: 1500 });
     }
   }
 
@@ -1174,7 +1174,7 @@ export struct ReadAloudCacheDialogComponent {
     if (!this.shouldShowChapterListExpandToggle()) {
       return;
     }
-    animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
       this.readAloudCacheChapterListExpanded = !this.readAloudCacheChapterListExpanded;
     });
   }
@@ -2737,7 +2737,7 @@ export struct ReadAloudCacheDialogComponent {
           .borderRadius(18)
           .animation({ duration: 200, curve: Curve.EaseOut })
           .onClick(() => {
-            animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+            this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
               this.readAloudCacheSelectionMode = 'range';
             });
           })
@@ -2765,7 +2765,7 @@ export struct ReadAloudCacheDialogComponent {
           .borderRadius(18)
           .animation({ duration: 200, curve: Curve.EaseOut })
           .onClick(() => {
-            animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+            this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
               this.readAloudCacheSelectionMode = 'individual';
               this.readAloudCacheChapterListExpanded = true;
             });
@@ -2926,7 +2926,7 @@ export struct ReadAloudCacheDialogComponent {
           .height(28)
           .backgroundColor(Color.Transparent)
           .onClick(() => {
-            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+            this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
               this.readAloudCacheChapterListExpanded = !this.readAloudCacheChapterListExpanded;
             });
           })

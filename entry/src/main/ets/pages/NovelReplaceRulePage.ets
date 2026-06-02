@@ -1,3 +1,4 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * 小说替换净化规则管理页面
  * 使用 HdsNavDestination 实现统一的导航体验
@@ -97,7 +98,7 @@ export struct NovelReplaceRulePage {
 
   async saveRule(): Promise<void> {
     if (!this.formName.trim() || !this.formPattern.trim()) {
-      promptAction.showToast({ message: '请填写规则名称和匹配内容' });
+      this.getUIContext().getPromptAction().showToast({ message: '请填写规则名称和匹配内容' });
       return;
     }
 
@@ -114,27 +115,27 @@ export struct NovelReplaceRulePage {
 
       if (this.editingRule) {
         await this.ruleManager.updateRule(this.editingRule.id, params);
-        promptAction.showToast({ message: '规则已更新' });
+        this.getUIContext().getPromptAction().showToast({ message: '规则已更新' });
       } else {
         await this.ruleManager.addRule(params);
-        promptAction.showToast({ message: '规则已添加' });
+        this.getUIContext().getPromptAction().showToast({ message: '规则已添加' });
       }
 
       this.showAddDialog = false;
       this.resetForm();
       this.loadRules();
     } catch (error) {
-      promptAction.showToast({ message: `保存失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `保存失败: ${String(error)}` });
     }
   }
 
   async deleteRule(rule: ReplaceRule): Promise<void> {
     try {
       await this.ruleManager.deleteRule(rule.id);
-      promptAction.showToast({ message: '规则已删除' });
+      this.getUIContext().getPromptAction().showToast({ message: '规则已删除' });
       this.loadRules();
     } catch (error) {
-      promptAction.showToast({ message: `删除失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${String(error)}` });
     }
   }
 
@@ -157,7 +158,7 @@ export struct NovelReplaceRulePage {
    * 显示导入选项菜单
    */
   showImportOptions(): void {
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '选择导入方式',
       buttons: [
         { text: '从剪贴板导入', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -187,14 +188,14 @@ export struct NovelReplaceRulePage {
         const text = data.getPrimaryText();
         if (text) {
           const result = await this.ruleManager.importRules(text);
-          promptAction.showToast({ 
+          this.getUIContext().getPromptAction().showToast({ 
             message: `导入完成: ${result.success}/${result.total} 成功` 
           });
           this.loadRules();
         }
       }
     } catch (error) {
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
     }
   }
 
@@ -203,9 +204,9 @@ export struct NovelReplaceRulePage {
    */
   async importFromFile(): Promise<void> {
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context) {
-        promptAction.showToast({ message: '无法获取应用上下文' });
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取应用上下文' });
         return;
       }
 
@@ -227,23 +228,23 @@ export struct NovelReplaceRulePage {
       logger.info(TAG, `用户选择了文件: ${fileUri}`);
       
       // 读取文件内容
-      const file = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(file.fd);
+      const file = SafeFileUtils.openSync(fileUri, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       const fileSize = stat.size;
       
       if (fileSize > 50 * 1024 * 1024) {
-        fs.closeSync(file);
-        promptAction.showToast({ message: '文件过大，最大支持50MB' });
+        SafeFileUtils.closeSync(file);
+        this.getUIContext().getPromptAction().showToast({ message: '文件过大，最大支持50MB' });
         return;
       }
       
       const buffer = new ArrayBuffer(fileSize);
-      fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       const uint8Array = new Uint8Array(buffer);
       const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-      const jsonContent = decoder.decode(uint8Array);
+      const jsonContent = decoder.decodeToString(uint8Array);
       
       logger.info(TAG, `读取到文件内容，长度: ${jsonContent.length}`);
       
@@ -251,18 +252,18 @@ export struct NovelReplaceRulePage {
       const result = await this.ruleManager.importRules(jsonContent);
       
       if (result.success > 0) {
-        promptAction.showToast({ 
+        this.getUIContext().getPromptAction().showToast({ 
           message: `导入完成: ${result.success}/${result.total} 成功` 
         });
         this.loadRules();
       } else {
-        promptAction.showToast({ 
+        this.getUIContext().getPromptAction().showToast({ 
           message: `导入失败: ${result.errors.join(', ')}` 
         });
       }
     } catch (error) {
       logger.error(TAG, `从文件导入失败: ${String(error)}`);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
     }
   }
 
@@ -275,9 +276,9 @@ export struct NovelReplaceRulePage {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, json);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       await systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: '已复制到剪贴板' });
+      this.getUIContext().getPromptAction().showToast({ message: '已复制到剪贴板' });
     } catch (error) {
-      promptAction.showToast({ message: `导出失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导出失败: ${String(error)}` });
     }
   }
 

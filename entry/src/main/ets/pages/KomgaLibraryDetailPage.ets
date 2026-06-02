@@ -126,7 +126,7 @@ export struct KomgaLibraryDetailPage {
   }
 
   private toast(message: string): void {
-    promptAction.showToast({ message: message, duration: 1800 });
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 1800 });
   }
 
   private revealPageContent(): void {
@@ -680,9 +680,9 @@ export struct KomgaLibraryDetailPage {
         viewportRect === null || viewportRect === undefined) {
         return;
       }
-      const anchorTop = px2vp(Number(bottomAnchorRect.windowOffset.y));
-      const viewportTop = px2vp(Number(viewportRect.windowOffset.y));
-      const viewportBottom = viewportTop + px2vp(Number(viewportRect.size.height));
+      const anchorTop = uiContext.px2vp(Number(bottomAnchorRect.windowOffset.y));
+      const viewportTop = uiContext.px2vp(Number(viewportRect.windowOffset.y));
+      const viewportBottom = viewportTop + uiContext.px2vp(Number(viewportRect.size.height));
       const distanceToBottom = anchorTop - viewportBottom;
       if (distanceToBottom <= AUTO_LOAD_TRIGGER_DISTANCE_VP) {
         void this.loadLibraryItems(false);
@@ -1171,7 +1171,7 @@ export struct KomgaLibraryDetailPage {
           .id(LIBRARY_SCROLL_ID)
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)
-          .onScroll((_xOffset: number, _yOffset: number) => {
+          .onDidScroll((_xOffset: number, _yOffset: number) => {
             this.checkAutoLoadMoreNearBottom();
           })
           .onReachEnd(() => {

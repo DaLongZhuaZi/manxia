@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Worker 公网信令客户端服务
  *
@@ -302,9 +303,9 @@ export class TransferSignalClientService {
     }
 
     try {
-      const baseMessage = JSON.parse(text) as TransferSignalIncomingBaseMessage;
+      const baseMessage = SafeUtils.parseObj(text) as TransferSignalIncomingBaseMessage;
       if (baseMessage.type === 'room_state') {
-        const roomStateMessage = JSON.parse(text) as TransferSignalRoomStateMessage;
+        const roomStateMessage = SafeUtils.parseObj(text) as TransferSignalRoomStateMessage;
         this.applyRoomStateMessage(roomStateMessage);
         return;
       }
@@ -316,7 +317,7 @@ export class TransferSignalClientService {
   }
 
   private applyServerMessage(text: string): void {
-    const message = JSON.parse(text) as TransferSignalServerMessage;
+    const message = SafeUtils.parseObj(text) as TransferSignalServerMessage;
     const messageType = typeof message.type === 'string' ? message.type : '';
     const fromClientId = typeof message.fromClientId === 'string' ? message.fromClientId : '';
     const fromRole = typeof message.fromRole === 'string' ? message.fromRole : 'host';
@@ -605,7 +606,7 @@ export class TransferSignalClientService {
   }
 
   private parseCreateRoomResponse(text: string): TransferSignalRoomCreateResponse {
-    const parsed = JSON.parse(text) as TransferSignalRoomCreateResponse;
+    const parsed = SafeUtils.parseObj(text) as TransferSignalRoomCreateResponse;
     const response: TransferSignalRoomCreateResponse = {
       ok: parsed.ok === true,
       roomCode: typeof parsed.roomCode === 'string' ? parsed.roomCode : '',
@@ -623,7 +624,7 @@ export class TransferSignalClientService {
   }
 
   private parseRoomStatusResponse(text: string): TransferSignalRoomStatusResponse {
-    const parsed = JSON.parse(text) as TransferSignalRoomStatusResponse;
+    const parsed = SafeUtils.parseObj(text) as TransferSignalRoomStatusResponse;
     const response: TransferSignalRoomStatusResponse = {
       ok: parsed.ok === true,
       roomCode: typeof parsed.roomCode === 'string' ? parsed.roomCode : '',
@@ -641,7 +642,7 @@ export class TransferSignalClientService {
   }
 
   private parseCloseRoomResponse(text: string): TransferSignalCloseRoomResponse {
-    const parsed = JSON.parse(text) as TransferSignalCloseRoomResponse;
+    const parsed = SafeUtils.parseObj(text) as TransferSignalCloseRoomResponse;
     const response: TransferSignalCloseRoomResponse = {
       ok: parsed.ok === true,
       roomCode: typeof parsed.roomCode === 'string' ? parsed.roomCode : '',
@@ -655,7 +656,7 @@ export class TransferSignalClientService {
 
   private parseErrorMessage(text: string, fallbackMessage: string): string {
     try {
-      const parsed = JSON.parse(text) as TransferSignalErrorResponse;
+      const parsed = SafeUtils.parseObj(text) as TransferSignalErrorResponse;
       if (typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
         return parsed.message.trim();
       }

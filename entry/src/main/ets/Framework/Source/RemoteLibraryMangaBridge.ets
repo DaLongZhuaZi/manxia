@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
 import { logger } from '../../Utils/Logger';
@@ -175,7 +177,7 @@ export class RemoteLibraryMangaBridge {
       const store = await preferences.getPreferences(getContext(), REMOTE_LIBRARY_PREF_NAME);
       const cacheText = await store.get(REMOTE_LIBRARY_CACHE_KEY, '') as string;
       if (cacheText.length > 0) {
-        const parsed = JSON.parse(cacheText) as RemoteLibraryCacheData;
+        const parsed = SafeUtils.parseObj(cacheText) as RemoteLibraryCacheData;
         this.cacheData = {
           updatedAt: parsed.updatedAt || 0,
           mangas: this.cloneMangaList(parsed.mangas || [])
@@ -862,7 +864,7 @@ export class RemoteLibraryMangaBridge {
         : existingCoverPath;
       let accessError: string = '';
       try {
-        if (normalizedExistingCoverPath.length > 0 && fs.accessSync(normalizedExistingCoverPath)) {
+        if (normalizedExistingCoverPath.length > 0 && SafeFileUtils.accessSync(normalizedExistingCoverPath)) {
           return existingCoverPath;
         }
       } catch (error) {

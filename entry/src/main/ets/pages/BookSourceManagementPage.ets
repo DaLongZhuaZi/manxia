@@ -1,3 +1,4 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * 书源管理页面（新版）
  * 采用图源页面的现代化设计风格
@@ -135,7 +136,7 @@ export struct BookSourceManagementPage {
       logger.info(TAG, `加载了 ${this.allSources.length} 个书源`);
     } catch (error) {
       logger.error(TAG, '加载书源列表失败', String(error));
-      promptAction.showToast({ message: '加载书源失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '加载书源失败' });
     } finally {
       this.isLoading = false;
     }
@@ -243,10 +244,10 @@ export struct BookSourceManagementPage {
       this.applyFilter();
       
       logger.info(TAG, `书源"${source.name}"已${newState ? '标记' : '取消'}NSFW`);
-      promptAction.showToast({ message: `已${newState ? '标记为NSFW' : '取消NSFW标记'}` });
+      this.getUIContext().getPromptAction().showToast({ message: `已${newState ? '标记为NSFW' : '取消NSFW标记'}` });
     } catch (error) {
       logger.error(TAG, `切换书源NSFW状态失败: ${source.name}`, String(error));
-      promptAction.showToast({ message: '操作失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '操作失败' });
     }
   }
 
@@ -297,7 +298,7 @@ export struct BookSourceManagementPage {
     try {
       const ids = Array.from(this.selectedSourceIds);
       if (ids.length === 0) {
-        promptAction.showToast({ message: '请先选择书源' });
+        this.getUIContext().getPromptAction().showToast({ message: '请先选择书源' });
         return;
       }
 
@@ -310,11 +311,11 @@ export struct BookSourceManagementPage {
       }
 
       this.applyFilter();
-      promptAction.showToast({ message: `已${isNSFW ? '标记' : '取消'}${ids.length}个书源的NSFW` });
+      this.getUIContext().getPromptAction().showToast({ message: `已${isNSFW ? '标记' : '取消'}${ids.length}个书源的NSFW` });
       logger.info(TAG, `批量${isNSFW ? '标记' : '取消'}NSFW: ${ids.length}个书源`);
     } catch (error) {
       logger.error(TAG, '批量NSFW操作失败', String(error));
-      promptAction.showToast({ message: '操作失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '操作失败' });
     }
   }
 
@@ -333,10 +334,10 @@ export struct BookSourceManagementPage {
       this.applyFilter();
       
       logger.info(TAG, `书源"${source.name}"已删除`);
-      promptAction.showToast({ message: '书源已删除' });
+      this.getUIContext().getPromptAction().showToast({ message: '书源已删除' });
     } catch (error) {
       logger.error(TAG, `删除书源失败: ${source.name}`, String(error));
-      promptAction.showToast({ message: '删除失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '删除失败' });
     }
   }
 
@@ -355,7 +356,7 @@ export struct BookSourceManagementPage {
         const filePath = result[0];
         
         // 获取文件大小
-        const stat = fs.statSync(filePath);
+        const stat = SafeFileUtils.statSync(filePath);
         const fileSize = stat.size;
         const fileSizeStr = NovelSourceManager.formatFileSize(fileSize);
         
@@ -372,7 +373,7 @@ export struct BookSourceManagementPage {
       }
     } catch (error) {
       logger.error(TAG, '从文件导入失败', String(error));
-      promptAction.showToast({ message: '导入失败: ' + String(error) });
+      this.getUIContext().getPromptAction().showToast({ message: '导入失败: ' + String(error) });
       this.hideProgressDialog();
     }
   }
@@ -389,14 +390,14 @@ export struct BookSourceManagementPage {
       this.importCurrentCount = 0;
       this.importTotalCount = 0;
       
-      const file = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(filePath);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(filePath);
       const fileSize = stat.size;
       
       // 分配足够大的缓冲区
       const buffer = new ArrayBuffer(fileSize);
-      const readLen = fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       this.importStage = '解析JSON...';
       this.importProgress = 30;
@@ -485,10 +486,10 @@ export struct BookSourceManagementPage {
           (result.failedCount > 0 ? `，失败 ${result.failedCount} 个` : '') +
           (result.skippedCount > 0 ? `，跳过 ${result.skippedCount} 个` : '') +
           `\n耗时: ${(result.elapsedMs / 1000).toFixed(1)}秒`;
-        promptAction.showToast({ message, duration: 3000 });
+        this.getUIContext().getPromptAction().showToast({ message, duration: 3000 });
         await this.loadSourceList();
       } else {
-        promptAction.showToast({ message: '导入失败: ' + (result.errors[0] || '未知错误') });
+        this.getUIContext().getPromptAction().showToast({ message: '导入失败: ' + (result.errors[0] || '未知错误') });
       }
       
     } finally {
@@ -521,11 +522,11 @@ export struct BookSourceManagementPage {
         this.importText = text;
         this.showImportDialog = true;
       } else {
-        promptAction.showToast({ message: '剪贴板为空' });
+        this.getUIContext().getPromptAction().showToast({ message: '剪贴板为空' });
       }
     } catch (error) {
       logger.error(TAG, '从剪贴板导入失败', String(error));
-      promptAction.showToast({ message: '读取剪贴板失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '读取剪贴板失败' });
     }
   }
 
@@ -551,19 +552,19 @@ export struct BookSourceManagementPage {
       const failedCount = results.filter(r => !r.success).length;
       
       if (successCount > 0) {
-        promptAction.showToast({ 
+        this.getUIContext().getPromptAction().showToast({ 
           message: `成功导入${successCount}个书源${failedCount > 0 ? `，失败${failedCount}个` : ''}` 
         });
         await this.loadSourceList();
       } else {
-        promptAction.showToast({ message: '导入失败' });
+        this.getUIContext().getPromptAction().showToast({ message: '导入失败' });
       }
       
       this.showImportDialog = false;
       this.importText = '';
     } catch (error) {
       logger.error(TAG, '导入书源失败', String(error));
-      promptAction.showToast({ message: '导入失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '导入失败' });
     } finally {
       this.isImporting = false;
     }
@@ -837,7 +838,7 @@ export struct BookSourceManagementPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .onClick(() => {
             logger.info(TAG, `测试书源: ${source.name}`);
-            promptAction.showToast({ message: '测试功能开发中' });
+            this.getUIContext().getPromptAction().showToast({ message: '测试功能开发中' });
           })
         
         Button(source.isNSFW ? '取消NSFW' : 'NSFW')
@@ -855,7 +856,7 @@ export struct BookSourceManagementPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .onClick(() => {
             logger.info(TAG, `编辑书源: ${source.name}`);
-            promptAction.showToast({ message: '编辑功能开发中' });
+            this.getUIContext().getPromptAction().showToast({ message: '编辑功能开发中' });
           })
         
         Button('删除')
@@ -1049,7 +1050,7 @@ export struct BookSourceManagementPage {
   }
 
   private showImportOptions(): void {
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '导入书源',
       buttons: [
         { text: '从文件导入', color: $r('sys.color.ohos_id_color_text_primary') },

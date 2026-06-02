@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 后台任务悬浮球组件
  * 显示后台任务进度，支持拖拽移动
  */
@@ -50,7 +50,7 @@ export struct TaskFloatingBall {
 
   private showCompletionToast(): void {
     try {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '后台任务已完成',
         duration: 2000
       });

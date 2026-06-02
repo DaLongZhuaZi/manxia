@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 阅读目标卡片 - FormExtensionAbility
  * 管理卡片的生命周期和数据更新
@@ -127,7 +128,7 @@ export default class EntryFormAbility extends FormExtensionAbility {
     hilog.info(DOMAIN, TAG, `onFormEvent: formId=${formId}, message=${message}`);
     
     try {
-      const eventData = JSON.parse(message) as Record<string, Object>;
+      const eventData = SafeUtils.parseObj(message) as Record<string, Object>;
       if (eventData['action'] === 'refresh') {
         this.updateFormData(formId);
       }
@@ -240,7 +241,7 @@ export default class EntryFormAbility extends FormExtensionAbility {
 
     if (dataStr) {
       try {
-        const data = JSON.parse(dataStr) as WidgetData;
+        const data = SafeUtils.parseObj(dataStr) as WidgetData;
         goals = data.goals || goals;
         recentReads = data.recentReads || [];
       } catch (e) {
@@ -317,7 +318,7 @@ export default class EntryFormAbility extends FormExtensionAbility {
     try {
       const pref = await preferences.getPreferences(this.context, FORM_STORAGE);
       const formIdsStr = (await pref.get('formIds', '[]')) as string;
-      const ids: string[] = JSON.parse(formIdsStr);
+      const ids: string[] = SafeUtils.parseObj(formIdsStr);
 
       if (!ids.includes(formId)) {
         ids.push(formId);
@@ -340,7 +341,7 @@ export default class EntryFormAbility extends FormExtensionAbility {
     try {
       const pref = await preferences.getPreferences(this.context, FORM_STORAGE);
       const formIdsStr = (await pref.get('formIds', '[]')) as string;
-      const ids: string[] = JSON.parse(formIdsStr);
+      const ids: string[] = SafeUtils.parseObj(formIdsStr);
 
       const index = ids.indexOf(formId);
       if (index > -1) {

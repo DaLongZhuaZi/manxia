@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Debug/PerformanceAnalyzer.ets
 /**
  * 性能分析器
@@ -263,7 +264,7 @@ export class PerformanceAnalyzer {
    * 获取当前性能指标
    */
   public getMetrics(): PerformanceMetrics {
-    return JSON.parse(JSON.stringify(this.metrics));
+    return SafeUtils.parseObj(JSON.stringify(this.metrics));
   }
 
   /**

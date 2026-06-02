@@ -1,3 +1,4 @@
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件: entry/src/main/ets/pages/settings/ReadingSettingsSubPage.ets
 /**
  * 阅读设置子页面
@@ -10,7 +11,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/Th
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
-import { picker } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
@@ -1062,7 +1063,7 @@ export struct ReadingSettingsSubPage {
   }
 
   private async copyBackgroundImageToSandbox(sourceUri: string): Promise<string> {
-    const context = getContext(this) as common.UIAbilityContext;
+    const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
     const cacheDir = context.cacheDir;
     const timestamp = Date.now();
     const randomSuffix = Math.floor(Math.random() * 100000).toString();
@@ -1072,17 +1073,17 @@ export struct ReadingSettingsSubPage {
       extension = sourceUri.substring(dotIndex);
     }
     const targetPath = `${cacheDir}/novel_global_bg_${timestamp}_${randomSuffix}${extension}`;
-    const sourceFile = fs.openSync(sourceUri, fs.OpenMode.READ_ONLY);
-    fs.copyFileSync(sourceFile.fd, targetPath);
-    fs.closeSync(sourceFile);
+    const sourceFile = SafeFileUtils.openSync(sourceUri, fs.OpenMode.READ_ONLY);
+    SafeFileUtils.copyFileSync(sourceFile.fd, targetPath);
+    SafeFileUtils.closeSync(sourceFile);
     return targetPath;
   }
 
   private async selectNovelBackgroundImage(): Promise<void> {
     try {
-      const photoPicker = new picker.PhotoViewPicker();
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const result = await photoPicker.select({
-        MIMEType: picker.PhotoViewMIMETypes.IMAGE_TYPE,
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
         maxSelectNumber: 1
       });
       if (!result.photoUris || result.photoUris.length === 0) {
@@ -1096,10 +1097,10 @@ export struct ReadingSettingsSubPage {
       await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, this.textUseBgImage);
       await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, this.textBgImageOpacity);
       await this.persistGlobalNovelReaderSettings();
-      promptAction.showToast({ message: '已设置全局背景图', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '已设置全局背景图', duration: 1500 });
     } catch (error) {
       logger.error(TAG, `选择全局背景图失败: ${String(error)}`);
-      promptAction.showToast({ message: '选择背景图失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '选择背景图失败', duration: 1500 });
     }
   }
 
@@ -3737,7 +3738,7 @@ export struct ReadingSettingsSubPage {
         .width('100%')
         .height('100%')
         .align(Alignment.TopStart)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .edgeEffect(EdgeEffect.Spring)

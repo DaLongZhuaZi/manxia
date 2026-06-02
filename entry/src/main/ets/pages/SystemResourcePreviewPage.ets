@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 系统资源预览页面
  * 展示HarmonyOS系统图标和颜色资源
  * 支持按需加载和分类浏览
@@ -436,11 +436,11 @@ export struct SystemResourcePreviewPage {
     const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, fullName);
     const systemPasteboard = pasteboard.getSystemPasteboard();
     systemPasteboard.setData(pasteData).then(() => {
-      promptAction.showToast({ message: `已复制: ${fullName}` });
+      this.getUIContext().getPromptAction().showToast({ message: `已复制: ${fullName}` });
       logger.info(TAG, `复制到剪贴板: ${fullName}`);
     }).catch((err: Error) => {
       logger.error(TAG, `复制失败: ${err.message}`);
-      promptAction.showToast({ message: '复制失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '复制失败' });
     });
   }
   
@@ -568,7 +568,7 @@ export struct SystemResourcePreviewPage {
         .layoutWeight(1)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
-        .onScrollEnd(() => {
+        .onScrollStop(() => {
           if (this.hasMoreSearchResults()) {
             this.loadMoreSearchResults();
           }
@@ -681,7 +681,7 @@ export struct SystemResourcePreviewPage {
       .scrollBar(BarState.Off)
       .width('100%')
       .height(40)
-      .onScrollEnd(() => {
+      .onScrollStop(() => {
         if (this.hasMoreGroups()) {
           this.loadMoreGroups();
         }
@@ -735,7 +735,7 @@ export struct SystemResourcePreviewPage {
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-      .onScrollEnd(() => {
+      .onScrollStop(() => {
         if (this.hasMoreCurrentGridItems()) {
           this.loadMoreCurrentGridItems();
         }
@@ -790,7 +790,7 @@ export struct SystemResourcePreviewPage {
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-      .onScrollEnd(() => {
+      .onScrollStop(() => {
         if (this.hasMoreCurrentGridItems()) {
           this.loadMoreCurrentGridItems();
         }

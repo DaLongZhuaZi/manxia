@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
@@ -450,7 +452,7 @@ export class NetworkFolderManager {
               this.deleteFileIfExists(cachedEntry.localPath);
               cachedEntry.localPath = preferredPath;
             } else {
-              fs.renameSync(cachedEntry.localPath, preferredPath);
+              SafeFileUtils.renameSync(cachedEntry.localPath, preferredPath);
               cachedEntry.localPath = preferredPath;
             }
             logger.info(TAG, `已将缓存文件路径更新为原文件名策略：${entry.name}`);
@@ -529,8 +531,8 @@ export class NetworkFolderManager {
       if (this.fileExists(finalPath)) {
         this.deleteFileIfExists(finalPath);
       }
-      fs.renameSync(tempPath, finalPath);
-      const stat = fs.statSync(finalPath);
+      SafeFileUtils.renameSync(tempPath, finalPath);
+      const stat = SafeFileUtils.statSync(finalPath);
       const nextCachedEntry: CachedDownloadEntry = {
         connectionId: connectionId,
         relativePath: normalizedRelativePath,
@@ -1187,7 +1189,7 @@ export class NetworkFolderManager {
     }
 
     try {
-      const raw = fs.readTextSync(this.stateFilePath);
+      const raw = SafeFileUtils.readTextSync(this.stateFilePath);
       if (!raw || raw.trim().length === 0) {
         return;
       }
@@ -1489,11 +1491,11 @@ export class NetworkFolderManager {
         downloadCache: Array.from(this.downloadCache.values()),
         updatedAt: Date.now()
       };
-      const file = fs.openSync(this.stateFilePath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      const file = SafeFileUtils.openSync(this.stateFilePath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
       try {
-        fs.writeSync(file.fd, JSON.stringify(state));
+        SafeFileUtils.writeSync(file.fd, JSON.stringify(state));
       } finally {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
       }
     } catch (error) {
       logger.error(TAG, `持久化网络缓存状态失败：${String(error)}`);
@@ -1918,7 +1920,7 @@ export class NetworkFolderManager {
       return;
     }
     if (!this.fileExists(path)) {
-      fs.mkdirSync(path, true);
+      SafeFileUtils.mkdirSync(path, true);
     }
   }
 
@@ -1927,7 +1929,7 @@ export class NetworkFolderManager {
       return false;
     }
     try {
-      return fs.accessSync(path);
+      return SafeFileUtils.accessSync(path);
     } catch (error) {
       return false;
     }
@@ -1938,9 +1940,9 @@ export class NetworkFolderManager {
       return;
     }
     try {
-      const stat = fs.statSync(path);
+      const stat = SafeFileUtils.statSync(path);
       if (!stat.isDirectory()) {
-        fs.unlinkSync(path);
+        SafeFileUtils.unlinkSync(path);
       }
     } catch (error) {
       logger.warn(TAG, `删除缓存文件失败：${path}，原因：${String(error)}`);
@@ -1952,13 +1954,13 @@ export class NetworkFolderManager {
       return;
     }
     try {
-      const stat = fs.statSync(path);
+      const stat = SafeFileUtils.statSync(path);
       if (!stat.isDirectory()) {
-        fs.unlinkSync(path);
+        SafeFileUtils.unlinkSync(path);
         return;
       }
       this.deleteDirectoryContents(path);
-      fs.rmdirSync(path);
+      SafeFileUtils.rmdirSync(path);
     } catch (error) {
       logger.warn(TAG, `删除缓存目录失败：${path}，原因：${String(error)}`);
     }
@@ -1969,14 +1971,14 @@ export class NetworkFolderManager {
       return;
     }
     try {
-      const names = fs.listFileSync(path);
+      const names = SafeFileUtils.listFileSync(path);
       names.forEach((name: string) => {
         const childPath = `${path}/${name}`;
-        const stat = fs.statSync(childPath);
+        const stat = SafeFileUtils.statSync(childPath);
         if (stat.isDirectory()) {
           this.deleteDirectoryIfExists(childPath);
         } else {
-          fs.unlinkSync(childPath);
+          SafeFileUtils.unlinkSync(childPath);
         }
       });
     } catch (error) {
@@ -1989,7 +1991,7 @@ export class NetworkFolderManager {
       if (!raw || raw.trim().length === 0) {
         return fallback;
       }
-      return JSON.parse(raw) as T;
+      return SafeUtils.parseObj(raw) as T;
     } catch (error) {
       return fallback;
     }
