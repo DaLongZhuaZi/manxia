@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { webview } from '@kit.ArkWeb';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
@@ -627,8 +628,10 @@ export struct EpubWebViewReaderComponent {
   aboutToAppear(): void {
     this.uiContext = this.resolveUiContext();
     const dm = display.getDefaultDisplaySync();
-    this.fallbackVpW = px2vp(dm.width);
-    this.fallbackVpH = px2vp(dm.height);
+    if (this.uiContext) {
+      this.fallbackVpW = this.uiContext.px2vp(dm.width);
+      this.fallbackVpH = this.uiContext.px2vp(dm.height);
+    }
     this.pendingSpinePath = this.params.initialSpineFilePath;
     this.pendingPageOffset = this.params.initialPageOffset;
     this.pendingAnchorFragment = this.normalizeAnchorFragment(this.params.initialAnchorFragment ?? '');
@@ -774,7 +777,7 @@ export struct EpubWebViewReaderComponent {
   private parseWebViewJson(raw: string): string {
     if (raw.startsWith('"') && raw.endsWith('"')) {
       try {
-        return JSON.parse(raw) as string;
+        return SafeUtils.parseStr(raw) as string;
       } catch (_error) {
         return raw;
       }
@@ -916,7 +919,7 @@ export struct EpubWebViewReaderComponent {
         let visualScale = 1;
         try {
           const clean = this.parseWebViewJson(raw);
-          const dims = JSON.parse(clean) as ViewportDims;
+          const dims = SafeUtils.parseObj(clean) as ViewportDims;
           if (dims.w > 0) {
             vpW = dims.w;
           }
@@ -1176,7 +1179,8 @@ export struct EpubWebViewReaderComponent {
       return this.fallbackVpW;
     }
     const dm = display.getDefaultDisplaySync();
-    return px2vp(dm.width);
+    const uiContext = this.resolveUiContext();
+    return uiContext ? uiContext.px2vp(dm.width) : dm.width;
   }
 
   private getAnimationViewportHeightVp(): number {
@@ -1187,7 +1191,8 @@ export struct EpubWebViewReaderComponent {
       return this.fallbackVpH;
     }
     const dm = display.getDefaultDisplaySync();
-    return px2vp(dm.height);
+    const uiContext = this.resolveUiContext();
+    return uiContext ? uiContext.px2vp(dm.height) : dm.height;
   }
 
   private createTextSafeAnimationProfile(
@@ -1293,7 +1298,7 @@ export struct EpubWebViewReaderComponent {
   private parsePageCommandResult(raw: string, fallbackPage: number): PageCommandResult {
     try {
       const clean = this.parseWebViewJson(raw);
-      const parsed = JSON.parse(clean) as PageCommandResult;
+      const parsed = SafeUtils.parseObj(clean) as PageCommandResult;
       const pageIndex = Number(parsed.pageIndex);
       const offset = Number(parsed.offset);
       const pageCount = Number(parsed.pageCount);
@@ -1331,7 +1336,7 @@ export struct EpubWebViewReaderComponent {
     }
     try {
       const clean = this.parseWebViewJson(raw);
-      const parsed = JSON.parse(clean) as EpubPaginationSnapshot;
+      const parsed = SafeUtils.parseObj(clean) as EpubPaginationSnapshot;
       const pageCount = Number(parsed.pageCount);
       const currentPage = Number(parsed.currentPage);
       const currentOffset = Number(parsed.currentOffset);
@@ -2254,7 +2259,7 @@ export struct EpubWebViewReaderComponent {
             let pageCount = 1;
             try {
               const cleanMetrics = this.parseWebViewJson(metricsRaw);
-              const metrics = JSON.parse(cleanMetrics) as PaginationMetrics;
+              const metrics = SafeUtils.parseObj(cleanMetrics) as PaginationMetrics;
               const parsedCount = Math.floor(Number(metrics.pageCount));
               if (!isNaN(parsedCount) && parsedCount > 0) {
                 pageCount = parsedCount;
@@ -2363,7 +2368,7 @@ export struct EpubWebViewReaderComponent {
     this.runJs(detectScript, (result: string) => {
       try {
         const clean = this.parseWebViewJson(result);
-        const dimension = JSON.parse(clean) as FixedLayoutDimension;
+        const dimension = SafeUtils.parseObj(clean) as FixedLayoutDimension;
         const scaleX = vpW / (dimension.w || vpW);
         const scaleY = vpH / (dimension.h || vpH);
         const scale = Math.min(scaleX, scaleY);
@@ -3634,7 +3639,7 @@ export struct EpubWebViewReaderComponent {
     let payload: PaginationUpdatePayload | null = null;
     try {
       const clean = this.parseWebViewJson(payloadJson);
-      payload = JSON.parse(clean) as PaginationUpdatePayload;
+      payload = SafeUtils.parseObj(clean) as PaginationUpdatePayload;
     } catch (error) {
       logger.warn(TAG, `分页状态回传解析失败: ${String(error)}`);
       return;
@@ -3698,7 +3703,7 @@ export struct EpubWebViewReaderComponent {
     }
     try {
       const clean = this.parseWebViewJson(payloadJson);
-      const payload = JSON.parse(clean) as ReaderTapPayload;
+      const payload = SafeUtils.parseObj(clean) as ReaderTapPayload;
       const safeXRatio = this.clamp(Number(payload.xRatio) || 0, 0, 1);
       const safeYRatio = this.clamp(Number(payload.yRatio) || 0, 0, 1);
       this.params.callbacks.onReaderTap(safeXRatio, safeYRatio);
@@ -3710,7 +3715,7 @@ export struct EpubWebViewReaderComponent {
   private handleReaderPan(payloadJson: string): void {
     try {
       const clean = this.parseWebViewJson(payloadJson);
-      const payload = JSON.parse(clean) as ReaderPanPayload;
+      const payload = SafeUtils.parseObj(clean) as ReaderPanPayload;
       const phase = String(payload.phase ?? '');
       if (phase === 'update') {
         this.handleReaderPanUpdate(payload);
@@ -3797,7 +3802,7 @@ export struct EpubWebViewReaderComponent {
     }
     try {
       const clean = this.parseWebViewJson(payloadJson);
-      const payload = JSON.parse(clean) as ReaderSwipePayload;
+      const payload = SafeUtils.parseObj(clean) as ReaderSwipePayload;
       const deltaX = Number(payload.deltaX) || 0;
       const deltaY = Number(payload.deltaY) || 0;
       this.params.callbacks.onReaderSwipe(deltaX, deltaY);
@@ -3860,7 +3865,7 @@ export struct EpubWebViewReaderComponent {
       return null;
     }
     try {
-      const parsed = JSON.parse(clean) as EpubWebSelectionSnapshot;
+      const parsed = SafeUtils.parseObj(clean) as EpubWebSelectionSnapshot;
       const selectedText = (parsed.selectedText ?? '').trim();
       const rawStartOffset = Number(parsed.startOffset);
       const rawEndOffset = Number(parsed.endOffset);
@@ -3895,7 +3900,7 @@ export struct EpubWebViewReaderComponent {
       return null;
     }
     try {
-      const parsed = JSON.parse(clean) as EpubWebTextSnapshot;
+      const parsed = SafeUtils.parseObj(clean) as EpubWebTextSnapshot;
       const text = parsed.text ?? '';
       const rawStartOffset = Number(parsed.startOffset);
       const rawEndOffset = Number(parsed.endOffset);
@@ -4001,7 +4006,7 @@ export struct EpubWebViewReaderComponent {
           return;
         }
         try {
-          const result = JSON.parse(clean) as EpubReadAloudHighlightResult;
+          const result = SafeUtils.parseObj(clean) as EpubReadAloudHighlightResult;
           const pageCount = Math.max(1, Math.floor(Number(result.pageCount) || this.currentPageCount || 1));
           const pageIndex = Math.max(0, Math.min(pageCount - 1, Math.floor(Number(result.pageIndex) || 0)));
           if (follow && (pageIndex !== this.currentPage || pageCount !== this.currentPageCount)) {
@@ -4109,7 +4114,7 @@ export struct EpubWebViewReaderComponent {
     this.queryWebSelectionSnapshot(actionName, (snapshot: EpubWebSelectionSnapshot | null) => {
       const finalSnapshot = snapshot ?? this.webSelectionSnapshot;
       if (!finalSnapshot) {
-        promptAction.showToast({ message: '未获取到有效选区', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '未获取到有效选区', duration: 1500 });
         this.clearWebSelection();
         return;
       }
@@ -4126,7 +4131,7 @@ export struct EpubWebViewReaderComponent {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, safeText);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: '已复制', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '已复制', duration: 1500 });
     }
     this.clearWebSelection();
   }
@@ -4164,7 +4169,7 @@ export struct EpubWebViewReaderComponent {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, safeText);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: '系统分享失败，已复制到剪贴板', duration: 1800 });
+      this.getUIContext().getPromptAction().showToast({ message: '系统分享失败，已复制到剪贴板', duration: 1800 });
     } finally {
       this.clearWebSelection();
     }
@@ -4198,13 +4203,13 @@ export struct EpubWebViewReaderComponent {
     this.withWebSelectionSnapshot('add_purify_rule', (snapshot: EpubWebSelectionSnapshot) => {
       const pattern = snapshot.selectedText.trim();
       if (pattern.length <= 0) {
-        promptAction.showToast({ message: '未获取到有效选区', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '未获取到有效选区', duration: 1500 });
         return;
       }
       if (this.params.callbacks.onAddPurifyRule) {
         this.params.callbacks.onAddPurifyRule(pattern);
       }
-      promptAction.showToast({ message: '已添加净化规则', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '已添加净化规则', duration: 1500 });
       logger.info(TAG, `触发 EPUB Web 添加净化规则: textLength=${pattern.length}`);
     });
   }
@@ -4212,12 +4217,12 @@ export struct EpubWebViewReaderComponent {
   private startReadAloudFromWebSelection(): void {
     this.withWebSelectionSnapshot('start_read_aloud', (snapshot: EpubWebSelectionSnapshot) => {
       if (!this.params.callbacks.onStartReadAloudFromCharIndex) {
-        promptAction.showToast({ message: '听书功能未就绪', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '听书功能未就绪', duration: 1500 });
         return;
       }
       const startOffset = Math.max(0, Math.floor(snapshot.startOffset));
       this.params.callbacks.onStartReadAloudFromCharIndex(startOffset);
-      promptAction.showToast({ message: '已从所选句开始听书', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '已从所选句开始听书', duration: 1500 });
       logger.info(TAG, `触发 EPUB Web 从选区听书: start=${startOffset}, textLength=${snapshot.selectedText.length}`);
     });
   }
@@ -4308,7 +4313,7 @@ export struct EpubWebViewReaderComponent {
   private handleEpubHighlightTap(payloadJson: string): void {
     try {
       const clean = this.parseWebViewJson(payloadJson);
-      const payload = JSON.parse(clean) as EpubWebHighlightTapPayload;
+      const payload = SafeUtils.parseObj(clean) as EpubWebHighlightTapPayload;
       const highlightId = payload.id ?? '';
       const range = this.findHighlightRangeById(highlightId);
       if (!range) {
@@ -5034,7 +5039,7 @@ export struct EpubWebViewReaderComponent {
                 let visualScale = 1;
                 try {
                   const clean = this.parseWebViewJson(raw);
-                  const dims = JSON.parse(clean) as ViewportDims;
+                  const dims = SafeUtils.parseObj(clean) as ViewportDims;
                   if (dims.w > 0) {
                     vpW = dims.w;
                   }

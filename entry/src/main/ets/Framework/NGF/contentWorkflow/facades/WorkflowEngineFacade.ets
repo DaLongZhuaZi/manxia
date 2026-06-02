@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../../../Utils/SafeUtils';
 import { IWorkflowEngine, NGFWorkflowResult } from '../contracts/IWorkflowEngine';
 import { ngfActionExecutorFacade } from './ActionExecutorFacade';
 import { ngfRateLimitPolicyFacade } from './RateLimitPolicyFacade';
@@ -111,7 +112,7 @@ export class WorkflowEngineFacade implements IWorkflowEngine {
     }
 
     try {
-      const parsed = JSON.parse(inputJson) as Partial<NGFWorkflowInputEnvelope>;
+      const parsed = SafeUtils.parseObj(inputJson) as Partial<NGFWorkflowInputEnvelope>;
       const actionType = parsed.actionType && typeof parsed.actionType === 'string' ? parsed.actionType : 'extract';
       const actionJson = parsed.actionJson && typeof parsed.actionJson === 'string' ? parsed.actionJson : '{}';
       const contextJson = parsed.contextJson && typeof parsed.contextJson === 'string' ? parsed.contextJson : '{}';

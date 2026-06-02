@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * 下载管理器
  * 负责漫画章节的下载任务管理、队列控制、断点续传
@@ -843,9 +844,9 @@ export class MangaDownloadManager {
           const data = response.result as ArrayBuffer;
           try {
             // 写入文件
-            const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-            fs.writeSync(file.fd, data);
-            fs.closeSync(file.fd);
+            const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+            SafeFileUtils.writeSync(file.fd, data);
+            SafeFileUtils.closeSync(file.fd);
             logger.debug(TAG, `HTTP下载完成: ${filePath}, 大小: ${data.byteLength}`);
             resolve();
           } catch (writeError) {
@@ -1025,7 +1026,7 @@ export class MangaDownloadManager {
         const fileName = `${String(i + 1).padStart(4, '0')}.${ext}`;
         const filePath = `${task.savePath}/${fileName}`;
         let fileExists = false;
-        try { fs.accessSync(filePath); fileExists = true; } catch (_e) { /* not found */ }
+        try { SafeFileUtils.accessSync(filePath); fileExists = true; } catch (_e) { /* not found */ }
         if (fileExists) {
           downloadedPageFiles.push({
             pageIndex: i,
@@ -1263,20 +1264,20 @@ export class MangaDownloadManager {
 
   private deleteDirectoryRecursive(dirPath: string): void {
     try {
-      if (!fs.accessSync(dirPath)) {
+      if (!SafeFileUtils.accessSync(dirPath)) {
         return;
       }
-      const entries = fs.listFileSync(dirPath);
+      const entries = SafeFileUtils.listFileSync(dirPath);
       for (let i = 0; i < entries.length; i++) {
         const fullPath = `${dirPath}/${entries[i]}`;
-        const stat = fs.statSync(fullPath);
+        const stat = SafeFileUtils.statSync(fullPath);
         if (stat.isDirectory()) {
           this.deleteDirectoryRecursive(fullPath);
         } else {
-          fs.unlinkSync(fullPath);
+          SafeFileUtils.unlinkSync(fullPath);
         }
       }
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
     } catch (error) {
       logger.warn(TAG, `清理目录失败: ${dirPath}, ${String(error)}`);
     }
@@ -1284,7 +1285,7 @@ export class MangaDownloadManager {
 
   private getFileSizeSafe(filePath: string): number {
     try {
-      const stat = fs.statSync(filePath);
+      const stat = SafeFileUtils.statSync(filePath);
       return stat.size;
     } catch (_error) {
       return 0;
@@ -1377,13 +1378,13 @@ export class MangaDownloadManager {
    */
   private async ensureDirectory(dirPath: string): Promise<void> {
     try {
-      const stat = fs.statSync(dirPath);
+      const stat = SafeFileUtils.statSync(dirPath);
       if (!stat.isDirectory()) {
         throw new Error('路径不是目录');
       }
     } catch (error) {
       // 目录不存在，创建它
-      fs.mkdirSync(dirPath, true);
+      SafeFileUtils.mkdirSync(dirPath, true);
       logger.debug(TAG, `目录已创建: ${dirPath}`);
     }
   }
@@ -1393,7 +1394,7 @@ export class MangaDownloadManager {
    */
   private async deleteDirectory(dirPath: string): Promise<void> {
     try {
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
       logger.debug(TAG, `目录已删除: ${dirPath}`);
     } catch (error) {
       logger.warn(TAG, `删除目录失败: ${dirPath}, ${error}`);
@@ -1655,9 +1656,9 @@ export class MangaDownloadManager {
       // 解码 base64 并写入文件
       const base64Helper: util.Base64Helper = new util.Base64Helper();
       const fileBytes: Uint8Array = base64Helper.decodeSync(base64Data);
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, fileBytes.buffer as ArrayBuffer);
-      fs.closeSync(file.fd);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(file.fd, fileBytes.buffer as ArrayBuffer);
+      SafeFileUtils.closeSync(file.fd);
 
       logger.info(TAG, `WebView 数据下载完成: ${filePath}, 大小: ${fileBytes.length} bytes`);
 

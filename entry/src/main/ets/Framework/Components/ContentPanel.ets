@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 通用内容面板组件
  * 支持多种内容类型：帮助文档、更新日志、特效展示等
  * 支持多标签页、最小化悬浮球、自定义样式
@@ -472,9 +472,9 @@ export const getHelpPanelManagerV2 = getContentPanelManager;
 export type HelpPanelManagerV2 = ContentPanelManager;
 export type HelpTab = ContentTab;
 export type HelpPanelConfig = ContentPanelConfig;
-export const HelpContentSource = ContentSource;
-export const HelpPanelMode = PanelMode;
-export const HelpFontSize = PanelFontSize;
+export { ContentSource as HelpContentSource };
+export { PanelMode as HelpPanelMode };
+export { PanelFontSize as HelpFontSize };
 
 interface ContentPanelThemeState {
   currentTheme: ThemeType;
@@ -517,7 +517,7 @@ export struct ContentPanelOverlay {
       this.syncState();
       
       if (mode === PanelMode.EXPANDED && this.panelScale === 0) {
-        animateTo({ duration: 250, curve: Curve.EaseOut }, () => { 
+        this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseOut }, () => { 
           this.panelScale = 1; 
         });
       }
@@ -576,7 +576,7 @@ export struct ContentPanelOverlay {
 
   private async loadRawfileContent(path: string): Promise<string> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       logger.info(TAG, `加载rawfile: ${path}`);
       const content = await context.resourceManager.getRawFileContent(path);
       const text = new util.TextDecoder('utf-8').decodeToString(content);
@@ -753,7 +753,7 @@ export struct ContentPanelOverlay {
   }
 
   private closeWithAnimation(): void {
-    animateTo({ 
+    this.getUIContext().animateTo({ 
       duration: 200, 
       curve: Curve.EaseIn,
       onFinish: () => {
@@ -765,7 +765,7 @@ export struct ContentPanelOverlay {
   }
 
   private minimizeWithAnimation(): void {
-    animateTo({ 
+    this.getUIContext().animateTo({ 
       duration: 200, 
       curve: Curve.EaseIn,
       onFinish: () => {

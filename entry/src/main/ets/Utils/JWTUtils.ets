@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * JWT工具类
  * 提供JWT令牌的解析和验证功能
@@ -45,11 +46,11 @@ export function parseJWT(token: string): JWTToken {
     
     // 解码header
     const headerJson = base64UrlDecode(headerStr);
-    const header = JSON.parse(headerJson) as ESObject;
+    const header = SafeUtils.parseObj(headerJson) as ESObject;
     
     // 解码payload
     const payloadJson = base64UrlDecode(payloadStr);
-    const payload = JSON.parse(payloadJson) as JWTPayload;
+    const payload = SafeUtils.parseObj(payloadJson) as JWTPayload;
     
     return {
       header,

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
@@ -89,7 +90,7 @@ export struct KomgaReaderPage {
   }
 
   private toast(message: string): void {
-    promptAction.showToast({ message: message, duration: 1600 });
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 1600 });
   }
 
   private enterFullScreen(reason: string): void {
@@ -144,7 +145,7 @@ export struct KomgaReaderPage {
     }
     if (visible) {
       this.showControls = true;
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 260,
         curve: Curve.EaseOut
       }, () => {
@@ -156,7 +157,7 @@ export struct KomgaReaderPage {
       return;
     }
 
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 220,
       curve: Curve.EaseInOut
     }, () => {
@@ -258,7 +259,7 @@ export struct KomgaReaderPage {
         return;
       }
 
-      const progress: KomgaReaderProgress = JSON.parse(rawText) as KomgaReaderProgress;
+      const progress: KomgaReaderProgress = SafeUtils.parseObj(rawText) as KomgaReaderProgress;
       if (progress.bookId === this.chapterId && progress.pageIndex >= 0 && progress.pageIndex < this.pages.length) {
         this.currentPage = progress.pageIndex;
       } else {

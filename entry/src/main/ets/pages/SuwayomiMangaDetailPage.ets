@@ -1,4 +1,4 @@
-import { common } from '@kit.AbilityKit';
+﻿import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { Manga } from '../Models/MangaModels';
@@ -100,7 +100,7 @@ export struct SuwayomiMangaDetailPage {
   }
 
   private showToast(message: string): void {
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: message,
       duration: 1800
     });

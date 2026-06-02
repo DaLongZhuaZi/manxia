@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/EBookReaderPage.ets
 /**
  * 电子书阅读器页面
@@ -183,8 +184,9 @@ struct EBookReaderPage {
   private updateScreenOrientation(): void {
     try {
       const displayInfo = display.getDefaultDisplaySync();
-      this.screenWidth = px2vp(displayInfo.width);
-      const screenHeight = px2vp(displayInfo.height);
+      const uiContext = this.uiContext ?? this.getUIContext();
+      this.screenWidth = uiContext.px2vp(displayInfo.width);
+      const screenHeight = uiContext.px2vp(displayInfo.height);
       this.isLandscape = this.screenWidth > screenHeight;
       logger.info(TAG, `屏幕方向: ${this.isLandscape ? '横屏' : '竖屏'}, 宽度=${this.screenWidth}vp`);
     } catch (error) {
@@ -934,7 +936,7 @@ struct EBookReaderPage {
         // 从 domPos 中提取 resourceIndex 计算进度
         if (domPos && domPos.length > 0) {
           try {
-            const domPosObj: Record<string, number> = JSON.parse(domPos) as Record<string, number>;
+            const domPosObj: Record<string, number> = SafeUtils.parseObj(domPos) as Record<string, number>;
             if (domPosObj['resourceIndex'] !== undefined) {
               // 使用 resourceIndex 作为进度参考
               progressPercent = domPosObj['resourceIndex'];
@@ -1105,7 +1107,7 @@ struct EBookReaderPage {
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
     
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -1117,7 +1119,7 @@ struct EBookReaderPage {
    * 隐藏工具栏（带动画）
    */
   private hideToolbarWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -1135,7 +1137,7 @@ struct EBookReaderPage {
    */
   private showMoreMenuWithAnimation(): void {
     this.showMoreMenu = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: curves.springMotion(0.6, 0.9)
     }, () => {
@@ -1149,7 +1151,7 @@ struct EBookReaderPage {
    * 隐藏更多菜单（带动画）
    */
   private hideMoreMenuWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 150,
       curve: Curve.EaseOut
     }, () => {
@@ -1168,7 +1170,7 @@ struct EBookReaderPage {
   private showChapterListWithAnimation(): void {
     logger.info(TAG, `显示章节列表，当前章节索引: ${this.currentChapterIndex}`);
     this.showChapterList = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -1191,7 +1193,7 @@ struct EBookReaderPage {
    * 隐藏章节列表（带动画）
    */
   private hideChapterListWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -1207,7 +1209,7 @@ struct EBookReaderPage {
    */
   private showSettingsPanelWithAnimation(): void {
     this.showSettingsPanel = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -1221,7 +1223,7 @@ struct EBookReaderPage {
    * 隐藏设置面板（带动画）
    */
   private hideSettingsPanelWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -1239,7 +1241,7 @@ struct EBookReaderPage {
    */
   private showBookInfoDialogWithAnimation(): void {
     this.showBookInfoDialog = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -1251,7 +1253,7 @@ struct EBookReaderPage {
    * 隐藏书籍信息弹窗（带动画）
    */
   private hideBookInfoDialogWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -1267,7 +1269,7 @@ struct EBookReaderPage {
    */
   private showFontSettingsPanelWithAnimation(): void {
     this.showFontSettingsPanel = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -1280,7 +1282,7 @@ struct EBookReaderPage {
    * 隐藏字体设置面板（带动画）
    */
   private hideFontSettingsPanelWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -1297,7 +1299,7 @@ struct EBookReaderPage {
    */
   private showReadingOptionsPanelWithAnimation(): void {
     this.showReadingOptionsPanel = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -1310,7 +1312,7 @@ struct EBookReaderPage {
    * 隐藏阅读设置面板（带动画）
    */
   private hideReadingOptionsPanelWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -1832,7 +1834,7 @@ struct EBookReaderPage {
    */
   private showTextReaderSettingsWithAnimation(): void {
     this.showTextReaderSettings = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -1845,7 +1847,7 @@ struct EBookReaderPage {
    * 隐藏文本阅读器设置（带动画）
    */
   private hideTextReaderSettingsWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {

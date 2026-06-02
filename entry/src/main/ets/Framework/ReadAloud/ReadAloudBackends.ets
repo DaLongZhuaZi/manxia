@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 import { logger } from '../../Utils/Logger';
 import {
   buildXiaomiMimoStyledText,
@@ -252,7 +254,7 @@ function parseJsonObject(text: string): Record<string, Object> | null {
     return null;
   }
   try {
-    const data = JSON.parse(text) as Object;
+    const data = SafeUtils.parseObj(text) as Object;
     if (data && typeof data === 'object' && !Array.isArray(data)) {
       return data as Record<string, Object>;
     }
@@ -566,14 +568,14 @@ function ensureDirExists(path: string): void {
   if (!path || path.length <= 0) {
     return;
   }
-  if (fs.accessSync(path)) {
-    const stat = fs.statSync(path);
+  if (SafeFileUtils.accessSync(path)) {
+    const stat = SafeFileUtils.statSync(path);
     if (!stat.isDirectory()) {
       throw new Error(`REMOTE_TTS_PATH_IS_NOT_DIRECTORY: ${path}`);
     }
     return;
   }
-  fs.mkdirSync(path, true);
+  SafeFileUtils.mkdirSync(path, true);
 }
 
 function normalizeAudioExtension(format: string): string {
@@ -679,21 +681,21 @@ function estimateDurationMsByCharCount(charCount: number, speed: number): number
 }
 
 function readFileBytes(path: string): Uint8Array {
-  const stat = fs.statSync(path);
-  const file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+  const stat = SafeFileUtils.statSync(path);
+  const file = SafeFileUtils.openSync(path, fs.OpenMode.READ_ONLY);
   try {
     const buffer = new ArrayBuffer(stat.size);
-    fs.readSync(file.fd, buffer);
+    SafeFileUtils.readSync(file.fd, buffer);
     return new Uint8Array(buffer);
   } finally {
-    fs.closeSync(file);
+    SafeFileUtils.closeSync(file);
   }
 }
 
 function deleteFileIfExists(path: string): void {
   try {
-    if (path && path.length > 0 && fs.accessSync(path)) {
-      fs.unlinkSync(path);
+    if (path && path.length > 0 && SafeFileUtils.accessSync(path)) {
+      SafeFileUtils.unlinkSync(path);
     }
   } catch (_ignored) {
   }
@@ -706,22 +708,22 @@ function writeFileBytes(path: string, bytes: Uint8Array): void {
   }
   const tempPath = `${path}.tmp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
   try {
-    const file = fs.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+    const file = SafeFileUtils.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
     try {
       const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
         ? bytes.buffer
         : bytes.slice().buffer;
       if (bytes.byteLength > 0) {
-        fs.writeSync(file.fd, buffer);
+        SafeFileUtils.writeSync(file.fd, buffer);
       }
     } finally {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
 
     deleteFileIfExists(path);
-    fs.renameSync(tempPath, path);
+    SafeFileUtils.renameSync(tempPath, path);
 
-    const stat = fs.statSync(path);
+    const stat = SafeFileUtils.statSync(path);
     if (stat.size !== bytes.byteLength) {
       throw new Error(`REMOTE_TTS_WRITE_SIZE_MISMATCH: expected=${bytes.byteLength}, actual=${stat.size}`);
     }
@@ -3293,21 +3295,21 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
 
   private cleanupChapterCacheWithoutManifest(): void {
     try {
-      if (!this.chapterCacheDir || !fs.accessSync(this.chapterCacheDir)) {
+      if (!this.chapterCacheDir || !SafeFileUtils.accessSync(this.chapterCacheDir)) {
         return;
       }
-      const files = fs.listFileSync(this.chapterCacheDir);
+      const files = SafeFileUtils.listFileSync(this.chapterCacheDir);
       for (const name of files) {
         if (name === 'manifest.json') {
           continue;
         }
         const fullPath = `${this.chapterCacheDir}/${name}`;
         try {
-          const stat = fs.statSync(fullPath);
+          const stat = SafeFileUtils.statSync(fullPath);
           if (stat.isDirectory()) {
             this.deleteDir(fullPath);
           } else {
-            fs.unlinkSync(fullPath);
+            SafeFileUtils.unlinkSync(fullPath);
           }
         } catch (_ignored) {
         }
@@ -3318,31 +3320,31 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
 
   private deleteDir(path: string): void {
     try {
-      if (!fs.accessSync(path)) {
+      if (!SafeFileUtils.accessSync(path)) {
         return;
       }
-      const items = fs.listFileSync(path);
+      const items = SafeFileUtils.listFileSync(path);
       for (const item of items) {
         const child = `${path}/${item}`;
-        const stat = fs.statSync(child);
+        const stat = SafeFileUtils.statSync(child);
         if (stat.isDirectory()) {
           this.deleteDir(child);
         } else {
-          fs.unlinkSync(child);
+          SafeFileUtils.unlinkSync(child);
         }
       }
-      fs.rmdirSync(path);
+      SafeFileUtils.rmdirSync(path);
     } catch (_ignored) {
     }
   }
 
   private loadManifestFromDisk(): RemoteTtsManifest | null {
-    if (!this.manifestPath || !fs.accessSync(this.manifestPath)) {
+    if (!this.manifestPath || !SafeFileUtils.accessSync(this.manifestPath)) {
       return null;
     }
     try {
       const text = new util.TextDecoder('utf-8').decodeToString(readFileBytes(this.manifestPath));
-      const manifest = JSON.parse(text) as RemoteTtsManifest;
+      const manifest = SafeUtils.parseObj(text) as RemoteTtsManifest;
       if (!manifest || manifest.version !== REMOTE_TTS_MANIFEST_VERSION) {
         return null;
       }
@@ -3396,12 +3398,12 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
   }
 
   private loadSegmentIndexRecord(metaPath: string): RemoteTtsSegmentIndexRecord | null {
-    if (!metaPath || !fs.accessSync(metaPath)) {
+    if (!metaPath || !SafeFileUtils.accessSync(metaPath)) {
       return null;
     }
     try {
       const text = new util.TextDecoder('utf-8').decodeToString(readFileBytes(metaPath));
-      const record = JSON.parse(text) as RemoteTtsSegmentIndexRecord;
+      const record = SafeUtils.parseObj(text) as RemoteTtsSegmentIndexRecord;
       if (!record || record.version !== REMOTE_TTS_SEGMENT_INDEX_VERSION) {
         return null;
       }
@@ -3458,7 +3460,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       return null;
     }
     const paths = this.buildSegmentStoragePaths(index);
-    if (!fs.accessSync(paths.audioPath)) {
+    if (!SafeFileUtils.accessSync(paths.audioPath)) {
       return null;
     }
     const record = this.loadSegmentIndexRecord(paths.metaPath);
@@ -3474,7 +3476,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       }
     }
     try {
-      const stat = fs.statSync(paths.audioPath);
+      const stat = SafeFileUtils.statSync(paths.audioPath);
       if (stat.size <= 0) {
         logger.warn(TAG, `远程TTS缓存音频文件为空，已忽略: index=${index}, path=${paths.audioPath}`);
         return null;
@@ -3524,7 +3526,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       if (item.index < 0 || item.index >= this.queue.length) {
         continue;
       }
-      if (!item.filePath || !fs.accessSync(item.filePath)) {
+      if (!item.filePath || !SafeFileUtils.accessSync(item.filePath)) {
         continue;
       }
       const expectedPaths = this.buildSegmentStoragePaths(item.index);
@@ -3904,16 +3906,16 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     sessionToken: string
   ): Promise<void> {
     this.ensureSegmentPlayableFile(segment);
-    if (!segment.filePath || segment.filePath.length <= 0 || !fs.accessSync(segment.filePath)) {
+    if (!segment.filePath || segment.filePath.length <= 0 || !SafeFileUtils.accessSync(segment.filePath)) {
       throw new Error(`REMOTE_TTS_SEGMENT_FILE_MISSING: index=${segment.index}, path=${segment.filePath}`);
     }
-    const stat = fs.statSync(segment.filePath);
+    const stat = SafeFileUtils.statSync(segment.filePath);
     if (stat.size <= 0) {
       throw new Error(`REMOTE_TTS_SEGMENT_FILE_EMPTY: index=${segment.index}, path=${segment.filePath}`);
     }
 
     const player = await media.createAVPlayer();
-    const file = fs.openSync(segment.filePath, fs.OpenMode.READ_ONLY);
+    const file = SafeFileUtils.openSync(segment.filePath, fs.OpenMode.READ_ONLY);
     const resumeCharIndex = this.currentCharIndex;
     let stateChangeHandler: (state: media.AVPlayerState, reason: media.StateChangeReason) => void = () => {};
     let timeUpdateHandler: (timeMs: number) => void = () => {};
@@ -4059,7 +4061,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       } catch (_ignored) {
       }
       try {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
       } catch (_ignored) {
       }
     }
@@ -4090,7 +4092,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     }
     if (file) {
       try {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
       } catch (_ignored) {
       }
     }
@@ -4117,7 +4119,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     const seekModel = buildRemoteTtsSeekModel(range.start, range.end, text);
     ensureDirExists(this.sessionTempDir);
     writeFileBytes(paths.audioPath, synthesized.bytes);
-    const stat = fs.statSync(paths.audioPath);
+    const stat = SafeFileUtils.statSync(paths.audioPath);
     const segment: RemoteTtsPlayableSegment = {
       index,
       start: range.start,
@@ -4137,7 +4139,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
   }
 
   private ensureSegmentPlayableFile(segment: RemoteTtsPlayableSegment): void {
-    if (segment.filePath.length > 0 && fs.accessSync(segment.filePath)) {
+    if (segment.filePath.length > 0 && SafeFileUtils.accessSync(segment.filePath)) {
       return;
     }
     const inlineBytes = segment.inlineBytes;
@@ -4147,7 +4149,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     const fallbackPaths = this.buildSegmentStoragePaths(segment.index, true);
     ensureDirExists(this.sessionTempDir);
     writeFileBytes(fallbackPaths.audioPath, inlineBytes);
-    const stat = fs.statSync(fallbackPaths.audioPath);
+    const stat = SafeFileUtils.statSync(fallbackPaths.audioPath);
     segment.filePath = fallbackPaths.audioPath;
     segment.bytes = stat.size;
     segment.inlineBytes = undefined;
@@ -4169,7 +4171,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       try {
         ensureDirExists(this.segmentCacheDir);
         writeFileBytes(cachePaths.audioPath, synthesized.bytes);
-        const stat = fs.statSync(cachePaths.audioPath);
+        const stat = SafeFileUtils.statSync(cachePaths.audioPath);
         const segment: RemoteTtsPlayableSegment = {
           index,
           start: range.start,
@@ -4226,7 +4228,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     if (
       existing &&
       (
-        (existing.filePath.length > 0 && fs.accessSync(existing.filePath)) ||
+        (existing.filePath.length > 0 && SafeFileUtils.accessSync(existing.filePath)) ||
         (!!existing.inlineBytes && existing.inlineBytes.length > 0)
       )
     ) {
@@ -4417,7 +4419,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       return null;
     }
     try {
-      const payload = JSON.parse(text) as Object;
+      const payload = SafeUtils.parseObj(text) as Object;
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return null;
       }
@@ -4895,7 +4897,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     if (this.activeManifest.segments.length <= 1) {
       return;
     }
-    if (this.activeManifest.mergedFilePath && fs.accessSync(this.activeManifest.mergedFilePath)) {
+    if (this.activeManifest.mergedFilePath && SafeFileUtils.accessSync(this.activeManifest.mergedFilePath)) {
       return;
     }
 
@@ -4911,7 +4913,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       if (segment.index < 0 || segment.index >= this.queue.length) {
         return;
       }
-      if (!segment.filePath || !fs.accessSync(segment.filePath)) {
+      if (!segment.filePath || !SafeFileUtils.accessSync(segment.filePath)) {
         return;
       }
       if (segment.textDigest !== this.segmentDigest(segment.index)) {

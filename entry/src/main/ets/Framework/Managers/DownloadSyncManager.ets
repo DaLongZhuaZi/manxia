@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * Download同步管理器
  * 负责在APP启动时初始化Download同步目录和保留文件夹
@@ -54,7 +55,7 @@ export class DownloadSyncManager {
 
       // 检查目录是否存在
       try {
-        fs.accessSync(downloadDirPath);
+        SafeFileUtils.accessSync(downloadDirPath);
       } catch (e) {
         logger.warn(TAG, `Download同步目录不存在或无法访问: ${downloadDirPath}`);
         this.initialized = true;
@@ -85,11 +86,11 @@ export class DownloadSyncManager {
         const folderPath = `${downloadDirPath}/${folderName}`;
         
         try {
-          fs.accessSync(folderPath);
+          SafeFileUtils.accessSync(folderPath);
           existingCount++;
         } catch (e) {
           // 文件夹不存在，创建它
-          fs.mkdirSync(folderPath);
+          SafeFileUtils.mkdirSync(folderPath);
           createdCount++;
           logger.info(TAG, `创建保留文件夹: ${folderName}`);
         }
@@ -124,13 +125,13 @@ export class DownloadSyncManager {
         const actualPath = new fileUri.FileUri(targetUri).path;
         
         try {
-          fs.accessSync(actualPath);
+          SafeFileUtils.accessSync(actualPath);
           logger.debug(TAG, `.nomedia文件已存在: ${actualPath}`);
           return true;
         } catch (_) {
           // 文件不存在，创建它
-          const file = fs.openSync(actualPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-          fs.closeSync(file);
+          const file = SafeFileUtils.openSync(actualPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+          SafeFileUtils.closeSync(file);
           logger.info(TAG, `.nomedia文件已创建: ${actualPath}`);
           return true;
         }
@@ -143,12 +144,12 @@ export class DownloadSyncManager {
     try {
       const nomediaPath = `${folderPath}/.nomedia`;
       try {
-        fs.accessSync(nomediaPath);
+        SafeFileUtils.accessSync(nomediaPath);
         logger.debug(TAG, `.nomedia文件已存在（路径模式）: ${nomediaPath}`);
         return true;
       } catch (_) {
-        const file = fs.openSync(nomediaPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.closeSync(file);
+        const file = SafeFileUtils.openSync(nomediaPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.closeSync(file);
         logger.info(TAG, `.nomedia文件已创建（路径模式）: ${nomediaPath}`);
         return true;
       }
@@ -195,9 +196,9 @@ export class DownloadSyncManager {
 
     try {
       try {
-        fs.accessSync(folderPath);
+        SafeFileUtils.accessSync(folderPath);
       } catch (e) {
-        fs.mkdirSync(folderPath);
+        SafeFileUtils.mkdirSync(folderPath);
         logger.info(TAG, `创建保留文件夹: ${folderName}`);
       }
       return folderPath;

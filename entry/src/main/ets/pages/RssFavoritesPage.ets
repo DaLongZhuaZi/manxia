@@ -76,14 +76,14 @@ export struct RssFavoritesPage {
     this.isLoading = true;
     try {
       logger.info(TAG, '开始初始化 RSS 收藏页');
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await getRssSubscriptionInitializer().initialize(context);
       await this.loadData();
       this.triggerAutoDueRefresh();
       logger.info(TAG, 'RSS 收藏页初始化完成');
     } catch (error) {
       logger.error(TAG, `RSS 收藏页初始化失败: ${String(error)}`);
-      promptAction.showToast({ message: `初始化失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `初始化失败: ${String(error)}` });
     }
     this.isLoading = false;
   }
@@ -117,7 +117,7 @@ export struct RssFavoritesPage {
       logger.info(TAG, `加载 RSS 收藏完成: 条目=${list.length}`);
     } catch (error) {
       logger.error(TAG, `加载 RSS 收藏失败: ${String(error)}`);
-      promptAction.showToast({ message: '加载收藏失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '加载收藏失败' });
     }
   }
 
@@ -179,7 +179,7 @@ export struct RssFavoritesPage {
       this.updateLocalFavoriteItemState(item.id, nextRead, currentStarred);
     } catch (error) {
       logger.error(TAG, `切换已读状态失败: ${String(error)}`);
-      promptAction.showToast({ message: `操作失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `操作失败: ${String(error)}` });
     }
   }
 
@@ -191,7 +191,7 @@ export struct RssFavoritesPage {
       this.updateLocalFavoriteItemState(item.id, currentRead, nextStarred);
     } catch (error) {
       logger.error(TAG, `切换收藏状态失败: ${String(error)}`);
-      promptAction.showToast({ message: `操作失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `操作失败: ${String(error)}` });
     }
   }
 

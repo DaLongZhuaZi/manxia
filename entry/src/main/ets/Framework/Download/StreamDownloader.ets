@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * 流式下载器（场景 B-2：下载 + 处理）
  *
@@ -144,7 +145,7 @@ export class StreamDownloader {
       // 打开目标文件（CREATE | WRITE_ONLY）
       let file: fs.File | null = null;
       try {
-        file = fs.openSync(dest, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        file = SafeFileUtils.openSync(dest, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
       } catch (openErr) {
         httpRequest.destroy();
         reject(new Error(`打开目标文件失败 [${dest}]: ${String(openErr)}`));
@@ -155,7 +156,7 @@ export class StreamDownloader {
       httpRequest.on('dataReceive', (data: ArrayBuffer) => {
         try {
           if (file) {
-            fs.writeSync(file.fd, data);
+            SafeFileUtils.writeSync(file.fd, data);
           }
         } catch (writeErr) {
           logger.warn(TAG, `写入数据块失败: ${String(writeErr)}`);
@@ -165,7 +166,7 @@ export class StreamDownloader {
       // ── 传输完成 ──────────────────────────────────────────────────────────
       httpRequest.on('dataEnd', () => {
         if (file) {
-          try { fs.closeSync(file.fd); } catch {}
+          try { SafeFileUtils.closeSync(file.fd); } catch {}
           file = null;
         }
         httpRequest.destroy();
@@ -175,7 +176,7 @@ export class StreamDownloader {
       // ── 接收错误 ──────────────────────────────────────────────────────────
       httpRequest.on('dataReceiveErr', (err: Object) => {
         if (file) {
-          try { fs.closeSync(file.fd); } catch {}
+          try { SafeFileUtils.closeSync(file.fd); } catch {}
           file = null;
         }
         httpRequest.destroy();
@@ -193,7 +194,7 @@ export class StreamDownloader {
         header: requestHeaders
       }).catch((reqErr: Error) => {
         if (file) {
-          try { fs.closeSync(file.fd); } catch {}
+          try { SafeFileUtils.closeSync(file.fd); } catch {}
           file = null;
         }
         httpRequest.destroy();

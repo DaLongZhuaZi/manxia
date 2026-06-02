@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Data/EBookDataManager.ets
 /**
  * 电子书数据管理器
@@ -1143,7 +1145,7 @@ export class EBookDataManager {
         return null;
       }
 
-      const parsed = JSON.parse(settingsJson) as ImageReaderSettings;
+      const parsed = SafeUtils.parseObj(settingsJson) as ImageReaderSettings;
       const normalized = this.normalizeImageReaderSettings(parsed);
       this.rememberImageReaderSettingsSnapshot(bookId, normalized);
       logger.warn(
@@ -1174,7 +1176,7 @@ export class EBookDataManager {
         }
 
         try {
-          const normalized = this.normalizeImageReaderSettings(JSON.parse(settingsJson) as ImageReaderSettings);
+          const normalized = this.normalizeImageReaderSettings(SafeUtils.parseObj(settingsJson) as ImageReaderSettings);
           this.rememberImageReaderSettingsSnapshot(bookId, normalized);
           return normalized;
         } catch (parseError) {
@@ -1327,7 +1329,7 @@ export class EBookDataManager {
           }
           hasNonEmptySettingsJson = true;
           try {
-            const parsed = JSON.parse(settingsJson) as ImageReaderSettings;
+            const parsed = SafeUtils.parseObj(settingsJson) as ImageReaderSettings;
             const normalized = this.normalizeImageReaderSettings(parsed);
             this.rememberImageReaderSettingsSnapshot(bookId, normalized);
             selectedSettingsJson = rowSnapshot.imageReaderSettingsJson;
@@ -1835,7 +1837,7 @@ export class EBookDataManager {
     const isNSFW = Number(getRecordValue(record, 'isNSFW', 0)) === 1;
     const isPrivate = Number(getRecordValue(record, 'isPrivate', 0)) === 1;  // 读取隐私状态
 
-    const tags = JSON.parse(tagsJson) as string[];
+    const tags = SafeUtils.parseArr(tagsJson) as string[];
 
     // 获取章节列表
     const chapters = await this.getChaptersByBookId(id);
@@ -1953,7 +1955,7 @@ export class EBookDataManager {
         let finalChapterIndex = currentChapterIndex;
         if (domPos && domPos.startsWith('{')) {
           try {
-            const domPosData = JSON.parse(domPos) as Record<string, Object>;
+            const domPosData = SafeUtils.parseObj(domPos) as Record<string, Object>;
             if (typeof domPosData['resourceIndex'] === 'number') {
               finalChapterIndex = domPosData['resourceIndex'] as number;
               logger.info(TAG, `从 domPos 中恢复章节索引: ${finalChapterIndex}`);
@@ -2288,7 +2290,7 @@ export class EBookDataManager {
 
       const directoryPath = normalizedPath.substring(0, contentStart + slashIndex);
       try {
-        if (fs.accessSync(directoryPath) && fs.statSync(directoryPath).isDirectory()) {
+        if (SafeFileUtils.accessSync(directoryPath) && SafeFileUtils.statSync(directoryPath).isDirectory()) {
           target.add(directoryPath);
         }
       } catch (_error) {
@@ -2315,10 +2317,10 @@ export class EBookDataManager {
 
     const candidatePath = `${DownloadDirManager.getPath()}/ebooks/${sanitizedTitle}`;
     try {
-      if (!fs.accessSync(candidatePath)) {
+      if (!SafeFileUtils.accessSync(candidatePath)) {
         return '';
       }
-      const stat = fs.statSync(candidatePath);
+      const stat = SafeFileUtils.statSync(candidatePath);
       if (!stat.isDirectory()) {
         return '';
       }
@@ -2333,7 +2335,7 @@ export class EBookDataManager {
 
   private containsManagedEBookArtifacts(dirPath: string): boolean {
     try {
-      const entries: string[] = fs.listFileSync(dirPath);
+      const entries: string[] = SafeFileUtils.listFileSync(dirPath);
       for (const entry of entries) {
         if (/^cover([_-].+)?\.(jpg|jpeg|png|webp)$/i.test(entry)) {
           return true;
@@ -2355,16 +2357,16 @@ export class EBookDataManager {
     }
 
     try {
-      if (!fs.accessSync(normalizedPath)) {
+      if (!SafeFileUtils.accessSync(normalizedPath)) {
         return false;
       }
-      const stat = fs.statSync(normalizedPath);
+      const stat = SafeFileUtils.statSync(normalizedPath);
       if (!stat.isDirectory()) {
         return false;
       }
 
       this.deleteDirectoryRecursive(normalizedPath);
-      const deleted = !fs.accessSync(normalizedPath);
+      const deleted = !SafeFileUtils.accessSync(normalizedPath);
       if (deleted) {
         logger.info(TAG, `成功删除电子书目录: ${normalizedPath}`);
       } else {
@@ -2382,23 +2384,23 @@ export class EBookDataManager {
    */
   private deleteDirectoryRecursive(dirPath: string): void {
     try {
-      if (!fs.accessSync(dirPath)) {
+      if (!SafeFileUtils.accessSync(dirPath)) {
         return;
       }
       
-      const entries: string[] = fs.listFileSync(dirPath);
+      const entries: string[] = SafeFileUtils.listFileSync(dirPath);
       for (const entry of entries) {
         const fullPath = `${dirPath}/${entry}`;
-        const stat: fs.Stat = fs.statSync(fullPath);
+        const stat: fs.Stat = SafeFileUtils.statSync(fullPath);
         
         if (stat.isDirectory()) {
           this.deleteDirectoryRecursive(fullPath);
         } else {
-          fs.unlinkSync(fullPath);
+          SafeFileUtils.unlinkSync(fullPath);
         }
       }
       
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
     } catch (error) {
       logger.warn(TAG, `递归删除目录失败 ${dirPath}: ${error}`);
     }
@@ -2409,8 +2411,8 @@ export class EBookDataManager {
    */
   private deleteFileIfExists(filePath: string): void {
     try {
-      if (fs.accessSync(filePath)) {
-        fs.unlinkSync(filePath);
+      if (SafeFileUtils.accessSync(filePath)) {
+        SafeFileUtils.unlinkSync(filePath);
         logger.info(TAG, `成功删除文件: ${filePath}`);
       }
     } catch (e) {

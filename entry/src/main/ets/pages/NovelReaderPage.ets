@@ -1,3 +1,4 @@
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 小说阅读器页面
  * 使用 TextReaderComponent 实现专业的文本阅读体验
@@ -744,7 +745,7 @@ export struct NovelReaderPage {
     this.clearToolbarAutoHideTimer();
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -758,7 +759,7 @@ export struct NovelReaderPage {
   */
   private hideToolbarWithAnimation(): void {
     this.clearToolbarAutoHideTimer();
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -776,7 +777,7 @@ export struct NovelReaderPage {
   */
   private showChapterListWithAnimation(): void {
     this.showChapterList = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -792,7 +793,7 @@ export struct NovelReaderPage {
   * 隐藏章节列表（带动画）
   */
   private hideChapterListWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -1133,7 +1134,7 @@ export struct NovelReaderPage {
       return;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
       const rawDefaultLoadChapters = Number(await store.get('defaultLoadChapters', NOVEL_DEFAULT_PRELOAD_CHAPTERS));
       this.preloadChapterCount = this.normalizePreloadChapterCount(rawDefaultLoadChapters);
@@ -1164,7 +1165,7 @@ export struct NovelReaderPage {
       return [];
     }
     try {
-      const parsed = JSON.parse(rawValue) as Array<string>;
+      const parsed = SafeUtils.parseArr(rawValue) as Array<string>;
       if (!Array.isArray(parsed)) {
         return [];
       }
@@ -1186,7 +1187,7 @@ export struct NovelReaderPage {
       return null;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
       const raw = await store.get(this.buildScopedReplaceRuleKey(), '') as string;
       if (!raw || raw.length === 0) {
@@ -1202,7 +1203,7 @@ export struct NovelReaderPage {
   private async persistReplaceRulesEnabled(enabled: boolean, trigger: string): Promise<void> {
     this.replaceRulesEnabled = enabled;
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
       await store.put(NOVEL_SETTING_ENABLE_REPLACE_RULES, enabled);
       await store.flush();
@@ -1230,7 +1231,7 @@ export struct NovelReaderPage {
       return;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
       await store.put(this.buildScopedReplaceRuleKey(), JSON.stringify(nextRuleIds));
       await store.flush();
@@ -1800,7 +1801,7 @@ export struct NovelReaderPage {
   }
 
   private cloneTextReaderSettings(settings: TextReaderSettings): TextReaderSettings {
-    const snapshot = JSON.parse(JSON.stringify(settings)) as TextReaderSettings;
+    const snapshot = SafeUtils.parseObj(JSON.stringify(settings)) as TextReaderSettings;
     this.ensureSettingsComplete(snapshot);
     return snapshot;
   }
@@ -2891,7 +2892,7 @@ export struct NovelReaderPage {
 
   private async createCurrentNovelBookmark(): Promise<void> {
     if (!this.bookId) {
-      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '书籍信息未就绪', duration: 1500 });
       return;
     }
     try {
@@ -2904,14 +2905,14 @@ export struct NovelReaderPage {
       });
       this.currentPageBookmarkId = bookmark.id;
       this.isCurrentPageBookmarked = true;
-      promptAction.showToast({ message: '书签已添加', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已添加', duration: 1200 });
       logger.info(
         TAG,
         `小说书签添加成功: chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, paragraphIndex=${anchor.paragraphIndex ?? -1}, bookmarkId=${bookmark.id}`
       );
     } catch (error) {
       logger.error(TAG, `添加小说书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '添加书签失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '添加书签失败', duration: 1500 });
     }
   }
 
@@ -2922,21 +2923,21 @@ export struct NovelReaderPage {
       bookmarkId = this.currentPageBookmarkId;
     }
     if (!bookmarkId || bookmarkId.trim().length <= 0) {
-      promptAction.showToast({ message: '当前页暂无书签', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页暂无书签', duration: 1200 });
       return;
     }
     try {
       await this.annotationManager.deleteAnnotation(bookmarkId);
       this.currentPageBookmarkId = '';
       this.isCurrentPageBookmarked = false;
-      promptAction.showToast({ message: '书签已移除', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已移除', duration: 1200 });
       logger.info(
         TAG,
         `小说书签移除成功: chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, bookmarkId=${bookmarkId}`
       );
     } catch (error) {
       logger.error(TAG, `移除小说书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '移除书签失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '移除书签失败', duration: 1500 });
     }
   }
 
@@ -2985,7 +2986,7 @@ export struct NovelReaderPage {
       return defaultColor;
     }
     try {
-      const style = JSON.parse(styleJson) as HighlightStyle;
+      const style = SafeUtils.parseObj(styleJson) as HighlightStyle;
       if (style && style.color && style.color.trim().length > 0) {
         return style.color;
       }
@@ -3000,7 +3001,7 @@ export struct NovelReaderPage {
       return HighlightLineType.UNDERLINE;
     }
     try {
-      const style = JSON.parse(styleJson) as HighlightStyle;
+      const style = SafeUtils.parseObj(styleJson) as HighlightStyle;
       if (style && style.lineType === HighlightLineType.WAVY) {
         return HighlightLineType.WAVY;
       }
@@ -3262,7 +3263,7 @@ export struct NovelReaderPage {
 
   private openCurrentNovelAnnotationCenter(): void {
     if (!this.bookId) {
-      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '书籍信息未就绪', duration: 1500 });
       return;
     }
     const params: AnnotationCenterPageParams = {
@@ -3286,14 +3287,14 @@ export struct NovelReaderPage {
             this.pathStack.pushPathByName('AnnotationCenterPage', params);
           } catch (error) {
             logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
-            promptAction.showToast({ message: '打开灵感页面失败', duration: 1500 });
+            this.getUIContext().getPromptAction().showToast({ message: '打开灵感页面失败', duration: 1500 });
           }
         },
         this.getUIContext()
       );
     } catch (error) {
       logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
-      promptAction.showToast({ message: '打开灵感页面失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '打开灵感页面失败', duration: 1500 });
     }
   }
 
@@ -3463,7 +3464,7 @@ export struct NovelReaderPage {
 
   private async onAddNovelThought(selectedText: string, globalStart: number, globalEnd: number): Promise<void> {
     if (!this.bookId) {
-      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '书籍信息未就绪', duration: 1500 });
       return;
     }
     try {
@@ -3473,10 +3474,10 @@ export struct NovelReaderPage {
         textContent: ''
       });
       await this.refreshCurrentChapterHighlightRanges('create_thought');
-      promptAction.showToast({ message: '想法已保存', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '想法已保存', duration: 1500 });
     } catch (error) {
       logger.error(TAG, `创建小说想法失败: ${String(error)}`);
-      promptAction.showToast({ message: '想法保存失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '想法保存失败', duration: 1500 });
     }
   }
 
@@ -3487,7 +3488,7 @@ export struct NovelReaderPage {
     withThought: boolean
   ): Promise<void> {
     if (!this.bookId) {
-      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '书籍信息未就绪', duration: 1500 });
       return;
     }
 
@@ -3526,13 +3527,13 @@ export struct NovelReaderPage {
 
       await this.refreshCurrentChapterHighlightRanges('create_highlight');
       if (withThought) {
-        promptAction.showToast({ message: '划线和想法已保存', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '划线和想法已保存', duration: 1500 });
       } else {
-        promptAction.showToast({ message: '划线已保存', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '划线已保存', duration: 1500 });
       }
     } catch (error) {
       logger.error(TAG, `创建小说划线失败: ${String(error)}`);
-      promptAction.showToast({ message: '划线保存失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '划线保存失败', duration: 1500 });
     }
   }
 
@@ -3543,11 +3544,11 @@ export struct NovelReaderPage {
     withThought: boolean
   ): void {
     if (!this.bookId) {
-      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '书籍信息未就绪', duration: 1500 });
       return;
     }
 
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '选择划线样式',
       buttons: [
         { text: '下划线-琥珀', color: '#007AFF' },
@@ -3578,13 +3579,13 @@ export struct NovelReaderPage {
             textContent: '',
             linkedAnnotationId: highlight.id
           });
-          promptAction.showToast({ message: '划线和想法已保存', duration: 1500 });
+          this.getUIContext().getPromptAction().showToast({ message: '划线和想法已保存', duration: 1500 });
         } else {
-          promptAction.showToast({ message: '划线已保存', duration: 1500 });
+          this.getUIContext().getPromptAction().showToast({ message: '划线已保存', duration: 1500 });
         }
       } catch (error) {
         logger.error(TAG, `创建小说划线失败: ${String(error)}`);
-        promptAction.showToast({ message: '划线保存失败', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '划线保存失败', duration: 1500 });
       }
     }).catch(() => {});
   }
@@ -3598,7 +3599,7 @@ export struct NovelReaderPage {
     const enabledRules = dictManager.getEnabledRules();
     
     if (enabledRules.length === 0) {
-      promptAction.showToast({ message: '没有启用的字典规则，请在设置中添加', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '没有启用的字典规则，请在设置中添加', duration: 2000 });
       return;
     }
     
@@ -3617,7 +3618,7 @@ export struct NovelReaderPage {
    */
   private showDictSelectionMenu(rules: DictRule[], count: number, keyword: string): void {
     if (count === 2) {
-      promptAction.showActionMenu({
+      this.getUIContext().getPromptAction().showActionMenu({
         title: `搜索: ${keyword}`,
         buttons: [
           { text: rules[0].name, color: '#007AFF' },
@@ -3630,7 +3631,7 @@ export struct NovelReaderPage {
         }
       }).catch(() => {});
     } else if (count === 3) {
-      promptAction.showActionMenu({
+      this.getUIContext().getPromptAction().showActionMenu({
         title: `搜索: ${keyword}`,
         buttons: [
           { text: rules[0].name, color: '#007AFF' },
@@ -3644,7 +3645,7 @@ export struct NovelReaderPage {
         }
       }).catch(() => {});
     } else if (count === 4) {
-      promptAction.showActionMenu({
+      this.getUIContext().getPromptAction().showActionMenu({
         title: `搜索: ${keyword}`,
         buttons: [
           { text: rules[0].name, color: '#007AFF' },
@@ -3660,7 +3661,7 @@ export struct NovelReaderPage {
       }).catch(() => {});
     } else {
       // 5个或更多
-      promptAction.showActionMenu({
+      this.getUIContext().getPromptAction().showActionMenu({
         title: `搜索: ${keyword}`,
         buttons: [
           { text: rules[0].name, color: '#007AFF' },

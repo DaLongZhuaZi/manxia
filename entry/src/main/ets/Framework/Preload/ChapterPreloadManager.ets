@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 章节预加载管理器
  * 负责在漫画详情页后台预加载章节的页面列表和首图
@@ -585,7 +586,7 @@ export class ChapterPreloadManager {
         if (Number(s.id) === sourceId) {
           const configJson = s.configJson as string;
           if (configJson) {
-            const config: SourcePreloadConfig = JSON.parse(configJson) as SourcePreloadConfig;
+            const config: SourcePreloadConfig = SafeUtils.parseObj(configJson) as SourcePreloadConfig;
             if (config.network && config.network.headers) {
               this.applySourceHeaderMap(config.network.headers);
             }

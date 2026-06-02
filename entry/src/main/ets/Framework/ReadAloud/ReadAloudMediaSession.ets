@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 import { avSession } from '@kit.AVSessionKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
@@ -429,7 +430,7 @@ export class ReadAloudMediaSession {
       return false;
     }
     try {
-      return fileIo.accessSync(path);
+      return SafeFileUtils.accessSync(path);
     } catch (_error) {
       return false;
     }

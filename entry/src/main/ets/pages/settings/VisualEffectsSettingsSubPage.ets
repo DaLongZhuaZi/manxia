@@ -147,7 +147,7 @@ export struct VisualEffectsSettingsSubPage {
       this.applyPendingSearchTarget();
     } catch (error) {
       logger.error(TAG, 'Failed to initialize visual effects state', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '视觉效果设置初始化失败',
         duration: 1800
       });
@@ -334,7 +334,7 @@ export struct VisualEffectsSettingsSubPage {
       this.syncStateFromManager();
     } catch (error) {
       logger.error(TAG, 'Failed to update material mode', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '更新材质策略失败',
         duration: 1800
       });
@@ -355,7 +355,7 @@ export struct VisualEffectsSettingsSubPage {
       this.syncStateFromManager();
     } catch (error) {
       logger.error(TAG, 'Failed to update manual material level', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '更新手动档位失败',
         duration: 1800
       });
@@ -369,13 +369,13 @@ export struct VisualEffectsSettingsSubPage {
     try {
       await this.visualEffectsManager.refreshCapability();
       this.syncStateFromManager();
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: this.capabilityDetectError.length > 0 ? '已完成检测，当前使用保守配置' : '设备材质能力已更新',
         duration: 1800
       });
     } catch (error) {
       logger.error(TAG, 'Failed to refresh material capability', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '重新检测设备能力失败',
         duration: 1800
       });
@@ -389,13 +389,13 @@ export struct VisualEffectsSettingsSubPage {
     try {
       await this.visualEffectsManager.resetToRecommended();
       this.syncStateFromManager();
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '已恢复推荐设置',
         duration: 1600
       });
     } catch (error) {
       logger.error(TAG, 'Failed to reset visual effects settings', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '恢复推荐设置失败',
         duration: 1800
       });
@@ -953,7 +953,7 @@ export struct VisualEffectsSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])

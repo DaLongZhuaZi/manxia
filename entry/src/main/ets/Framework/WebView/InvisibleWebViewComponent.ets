@@ -75,6 +75,9 @@ export struct InvisibleWebView {
    */
   aboutToAppear() {
     logger.info(TAG, `不可见WebView组件初始化, 源ID: ${this.config.sourceId}`);
+    if (this.config.userAgent && this.config.userAgent.length > 0) {
+      this.controller.setCustomUserAgent(this.config.userAgent);
+    }
   }
 
   /**
@@ -104,7 +107,6 @@ export struct InvisibleWebView {
         .cacheMode(CacheMode.Default)
         .databaseAccess(true)
         .fileAccess(true)
-        .userAgent(this.config.userAgent)
         
         // ==================== 页面生命周期事件 ====================
         .onPageBegin((event) => {

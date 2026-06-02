@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Legado JavaScript执行引擎
  * 优先使用Native JSVM引擎执行书源中的JavaScript代码
@@ -784,7 +785,7 @@ export class LegadoJsEngine {
       // 解析结果
       if (result) {
         try {
-          const parsed = JSON.parse(result) as Record<string, ESObject>;
+          const parsed = SafeUtils.parseObj(result) as Record<string, ESObject>;
           
           // 提取toast消息
           const toasts: ToastMessage[] = [];
@@ -943,7 +944,7 @@ export class LegadoJsEngine {
               let finalResult = String(result);
               if (finalResult.startsWith('"') && finalResult.endsWith('"')) {
                 try {
-                  finalResult = JSON.parse(finalResult) as string;
+                  finalResult = SafeUtils.parseStr(finalResult) as string;
                 } catch (e) {
                   // 解析失败，保持原值
                 }
@@ -1015,7 +1016,7 @@ export class LegadoJsEngine {
     let resultVar = '';
     if (resultStr.startsWith('{') || resultStr.startsWith('[')) {
       // 尝试作为JSON对象/数组，这样JS代码可以直接访问属性如result.book_id
-      resultVar = `var result = (function() { try { return JSON.parse(${JSON.stringify(resultStr)}); } catch(e) { return ${JSON.stringify(resultStr)}; } })();`;
+      resultVar = `var result = (function() { try { return SafeUtils.parseObj(${JSON.stringify(resultStr)}); } catch(e) { return ${JSON.stringify(resultStr)}; } })();`;
     } else {
       resultVar = `var result = ${JSON.stringify(resultStr)};`;
     }
@@ -1088,18 +1089,18 @@ export class LegadoJsEngine {
         // 获取登录信息
         getLoginInfo: function() { return __injectedLoginInfo; },
         getLoginInfoMap: function() { 
-          try { return __injectedLoginInfo ? JSON.parse(__injectedLoginInfo) : {}; } 
+          try { return __injectedLoginInfo ? SafeUtils.parseObj(__injectedLoginInfo) : {}; } 
           catch(e) { return {}; } 
         },
         // 获取登录头信息
         getLoginHeader: function() { return __injectedLoginHeader; },
         getLoginHeaderMap: function() {
-          try { return __injectedLoginHeader ? JSON.parse(__injectedLoginHeader) : {}; }
+          try { return __injectedLoginHeader ? SafeUtils.parseObj(__injectedLoginHeader) : {}; }
           catch(e) { return {}; }
         },
         // 获取书源头信息
         getHeaderMap: function() {
-          try { return this.header ? JSON.parse(this.header) : {}; }
+          try { return this.header ? SafeUtils.parseObj(this.header) : {}; }
           catch(e) { return {}; }
         },
         // 登录信息存储
@@ -1350,7 +1351,7 @@ export class LegadoJsEngine {
         connect: function(url, header) {
           var headers = null;
           if (header) {
-            try { headers = JSON.parse(header); } catch(e) { headers = null; }
+            try { headers = SafeUtils.parseObj(header); } catch(e) { headers = null; }
           }
           return __syncRequest(url, 'GET', null, headers);
         },
@@ -2046,7 +2047,7 @@ export class LegadoJsEngine {
     let resultVar = '';
     if (resultStr.startsWith('{') || resultStr.startsWith('[')) {
       // 尝试作为JSON对象/数组，这样JS代码可以直接访问属性如result.book_id
-      resultVar = `var result = (function() { try { return JSON.parse(${JSON.stringify(resultStr)}); } catch(e) { return ${JSON.stringify(resultStr)}; } })();`;
+      resultVar = `var result = (function() { try { return SafeUtils.parseObj(${JSON.stringify(resultStr)}); } catch(e) { return ${JSON.stringify(resultStr)}; } })();`;
     } else {
       resultVar = `var result = ${JSON.stringify(resultStr)};`;
     }
@@ -2119,18 +2120,18 @@ export class LegadoJsEngine {
         // 获取登录信息
         getLoginInfo: function() { return __injectedLoginInfo; },
         getLoginInfoMap: function() { 
-          try { return __injectedLoginInfo ? JSON.parse(__injectedLoginInfo) : {}; } 
+          try { return __injectedLoginInfo ? SafeUtils.parseObj(__injectedLoginInfo) : {}; } 
           catch(e) { return {}; } 
         },
         // 获取登录头信息
         getLoginHeader: function() { return __injectedLoginHeader; },
         getLoginHeaderMap: function() {
-          try { return __injectedLoginHeader ? JSON.parse(__injectedLoginHeader) : {}; }
+          try { return __injectedLoginHeader ? SafeUtils.parseObj(__injectedLoginHeader) : {}; }
           catch(e) { return {}; }
         },
         // 获取书源头信息
         getHeaderMap: function() {
-          try { return this.header ? JSON.parse(this.header) : {}; }
+          try { return this.header ? SafeUtils.parseObj(this.header) : {}; }
           catch(e) { return {}; }
         },
         // 登录信息存储
@@ -2492,7 +2493,7 @@ export class LegadoJsEngine {
         
         // JSON解析
         parseJson: function(json) {
-          try { return JSON.parse(json); } catch(e) { return null; }
+          try { return SafeUtils.parseObj(json); } catch(e) { return null; }
         },
         
         // 字符串处理

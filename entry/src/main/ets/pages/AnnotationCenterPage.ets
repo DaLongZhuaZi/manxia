@@ -1,3 +1,5 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 import { LengthMetrics, promptAction, UIContext } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
@@ -494,7 +496,7 @@ export struct AnnotationCenterPage {
       const localPath = raw.substring('file://'.length);
       try {
         if (localPath.length > 0) {
-          fs.accessSync(localPath);
+          SafeFileUtils.accessSync(localPath);
         }
       } catch (error) {
         logger.warn(
@@ -509,7 +511,7 @@ export struct AnnotationCenterPage {
       return raw;
     }
     try {
-      fs.accessSync(raw);
+      SafeFileUtils.accessSync(raw);
     } catch (error) {
       logger.warn(
         TAG,
@@ -887,7 +889,7 @@ export struct AnnotationCenterPage {
       return '';
     }
     try {
-      const styleObj = JSON.parse(record.styleJson) as HighlightStylePreview;
+      const styleObj = SafeUtils.parseObj(record.styleJson) as HighlightStylePreview;
       const lineTypeText = styleObj.lineType === HighlightLineType.WAVY ? '波浪线' : '下划线';
       const colorText = styleObj.color && styleObj.color.trim().length > 0 ? styleObj.color : '';
       return colorText.length > 0 ? `${lineTypeText} / ${colorText}` : lineTypeText;
@@ -919,7 +921,7 @@ export struct AnnotationCenterPage {
   private startPageEnterAnimation(): void {
     this.pageEnterOpacity = 0;
     this.pageEnterOffsetY = 16;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 260,
       curve: Curve.EaseOut
     }, () => {
@@ -931,7 +933,7 @@ export struct AnnotationCenterPage {
   private animateVisibleRecordsIn(trigger: string): void {
     this.listOpacity = 0.2;
     this.listOffsetY = 8;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 240,
       curve: Curve.EaseOut
     }, () => {
@@ -944,7 +946,7 @@ export struct AnnotationCenterPage {
   private applyFilterWithAnimation(trigger: string): void {
     const token = this.listAnimationToken + 1;
     this.listAnimationToken = token;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 120,
       curve: Curve.EaseInOut
     }, () => {
@@ -1018,7 +1020,7 @@ export struct AnnotationCenterPage {
           logger.error(TAG, `回退加载当前内容灵感失败: ${String(fallbackError)}`);
         }
       }
-      promptAction.showToast({ message: '加载灵感失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '加载灵感失败', duration: 1500 });
       this.allRecords = [];
       this.records = [];
       this.visibleRecords = [];
@@ -1056,7 +1058,7 @@ export struct AnnotationCenterPage {
 
   private toggleSelectAllVisible(): void {
     if (this.visibleRecords.length <= 0) {
-      promptAction.showToast({ message: '当前筛选下无可选灵感', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前筛选下无可选灵感', duration: 1500 });
       return;
     }
     const allSelected = this.visibleRecords.every((record: UnifiedAnnotationRecord) => this.isSelected(record.id));
@@ -1155,18 +1157,18 @@ export struct AnnotationCenterPage {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
       const systemPasteboard = pasteboard.getSystemPasteboard();
       await systemPasteboard.setData(pasteData);
-      promptAction.showToast({ message: successMessage, duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: successMessage, duration: 1500 });
       return true;
     } catch (error) {
       logger.error(TAG, `复制灵感失败: ${String(error)}`);
-      promptAction.showToast({ message: '复制失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '复制失败', duration: 1500 });
       return false;
     }
   }
 
   private async copyRecords(records: UnifiedAnnotationRecord[], format: ShareFormatType): Promise<void> {
     if (records.length <= 0) {
-      promptAction.showToast({ message: '没有可分享的灵感', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '没有可分享的灵感', duration: 1500 });
       return;
     }
     const mergedText = this.buildMergedShareText(records, format);
@@ -1178,7 +1180,7 @@ export struct AnnotationCenterPage {
 
   private async copySelectedRecords(format: ShareFormatType = 'plain'): Promise<void> {
     if (this.selectedRecordIds.length <= 0) {
-      promptAction.showToast({ message: '请先选择灵感', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择灵感', duration: 1500 });
       return;
     }
     const selected = this.getSelectedRecordsForShare();
@@ -1191,7 +1193,7 @@ export struct AnnotationCenterPage {
 
   private openSharePreview(records: UnifiedAnnotationRecord[], format: ShareFormatType): void {
     if (records.length <= 0) {
-      promptAction.showToast({ message: '没有可分享的灵感', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '没有可分享的灵感', duration: 1500 });
       return;
     }
     this.sharePreviewTitle = records.length > 1
@@ -1203,7 +1205,7 @@ export struct AnnotationCenterPage {
     this.sharePreviewMaskOpacity = 0;
     this.sharePreviewPanelOpacity = 0;
     this.sharePreviewPanelScale = 0.96;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 220,
       curve: Curve.EaseOut
     }, () => {
@@ -1215,7 +1217,7 @@ export struct AnnotationCenterPage {
   }
 
   private closeSharePreview(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 160,
       curve: Curve.EaseIn
     }, () => {
@@ -1238,11 +1240,11 @@ export struct AnnotationCenterPage {
   private async shareTextBySystem(text: string, title: string): Promise<boolean> {
     const safeText = text ? text.trim() : '';
     if (safeText.length <= 0) {
-      promptAction.showToast({ message: '分享内容为空', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '分享内容为空', duration: 1500 });
       return false;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const shareData: systemShare.SharedData = new systemShare.SharedData({
         utd: utd.UniformDataType.PLAIN_TEXT,
         content: safeText,
@@ -1258,7 +1260,7 @@ export struct AnnotationCenterPage {
       return true;
     } catch (error) {
       logger.error(TAG, `系统分享失败: ${String(error)}`);
-      promptAction.showToast({ message: '系统分享失败，已复制到剪贴板', duration: 1800 });
+      this.getUIContext().getPromptAction().showToast({ message: '系统分享失败，已复制到剪贴板', duration: 1800 });
       await this.copyTextToClipboard(safeText, '分享内容已复制');
       return false;
     }
@@ -1274,10 +1276,10 @@ export struct AnnotationCenterPage {
   private showShareActionMenuForSelected(): void {
     const selected = this.getSelectedRecordsForShare();
     if (selected.length <= 0) {
-      promptAction.showToast({ message: '请先选择灵感', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择灵感', duration: 1500 });
       return;
     }
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: `分享已选${selected.length} 条灵感`,
       buttons: [
         { text: '预览文本', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -1299,7 +1301,7 @@ export struct AnnotationCenterPage {
   }
 
   private showShareActionMenuForRecord(record: UnifiedAnnotationRecord): void {
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '分享这条灵感',
       buttons: [
         { text: '预览文本', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -1438,12 +1440,12 @@ export struct AnnotationCenterPage {
       }
 
       logger.info(TAG, `灵感编辑保存成功: id=${target.id}, type=${type}`);
-      promptAction.showToast({ message: '灵感已更新', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '灵感已更新', duration: 1200 });
       this.cancelEdit();
       await this.loadAnnotations();
     } catch (error) {
       logger.error(TAG, `保存灵感编辑失败: id=${target.id}, error=${String(error)}`);
-      promptAction.showToast({ message: '保存失败', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存失败', duration: 1200 });
     } finally {
       this.savingEdit = false;
     }
@@ -1458,7 +1460,7 @@ export struct AnnotationCenterPage {
   }
 
   private deleteRecord(recordId: string): void {
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: '删除这条灵感？',
       buttons: [
         { text: '删除', color: '#F04438' },
@@ -1475,10 +1477,10 @@ export struct AnnotationCenterPage {
           this.cancelEdit();
         }
         await this.loadAnnotations();
-        promptAction.showToast({ message: '已删除', duration: 1200 });
+        this.getUIContext().getPromptAction().showToast({ message: '已删除', duration: 1200 });
       } catch (error) {
         logger.error(TAG, `删除灵感失败: id=${recordId}, error=${String(error)}`);
-        promptAction.showToast({ message: '删除失败', duration: 1200 });
+        this.getUIContext().getPromptAction().showToast({ message: '删除失败', duration: 1200 });
       }
     }).catch(() => {});
   }
@@ -1508,7 +1510,7 @@ export struct AnnotationCenterPage {
     const novelContext = this.readerContext?.novel;
     const book = await this.novelDataManager.getBook(record.contentId);
     if (!book) {
-      promptAction.showToast({ message: '未找到小说书籍信息', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '未找到小说书籍信息', duration: 1500 });
       logger.warn(TAG, `定位小说原文失败: 缺少书籍信息, contentId=${record.contentId}`);
       return;
     }
@@ -1522,7 +1524,7 @@ export struct AnnotationCenterPage {
       chapter = await this.novelDataManager.getChapterByIndex(book.id, 0);
     }
     if (!chapter) {
-      promptAction.showToast({ message: '未找到小说章节信息', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '未找到小说章节信息', duration: 1500 });
       logger.warn(TAG, `定位小说原文失败: 缺少章节信息, contentId=${record.contentId}, chapterIndex=${targetChapterIndex}`);
       return;
     }
@@ -1612,7 +1614,7 @@ export struct AnnotationCenterPage {
     const ebookContext = this.readerContext?.ebook;
     const ebook = await this.ebookDataManager.getEBookById(record.contentId);
     if (!ebook) {
-      promptAction.showToast({ message: '未找到电子书信息', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '未找到电子书信息', duration: 1500 });
       logger.warn(TAG, `定位电子书原页失败: 缺少书籍信息, contentId=${record.contentId}`);
       return;
     }
@@ -1641,7 +1643,7 @@ export struct AnnotationCenterPage {
         : 0;
       const entry = imageEntries[safePageIndex];
       if (!entry) {
-        promptAction.showToast({ message: '未找到该灵感对应的图片页', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '未找到该灵感对应的图片页', duration: 1500 });
         return;
       }
 
@@ -1754,7 +1756,7 @@ export struct AnnotationCenterPage {
       }
     } catch (error) {
       logger.error(TAG, `定位原文失败: ${String(error)}`);
-      promptAction.showToast({ message: '定位原文失败，请重试', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '定位原文失败，请重试', duration: 1500 });
     }
   }
 

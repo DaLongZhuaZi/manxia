@@ -1,4 +1,4 @@
-/**
+﻿/**
  * WebDAV配置对话框
  * 玻璃效果 + 网络扫描 + 与网络文件夹页面同风格布局
  *
@@ -142,7 +142,7 @@ export struct WebDAVConfigDialog {
   }
 
   private playEnterAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 260,
       curve: Curve.EaseOut
     }, () => {
@@ -155,7 +155,7 @@ export struct WebDAVConfigDialog {
   }
 
   private playExitAnimation(callback: () => void): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 180,
       curve: Curve.EaseIn,
       onFinish: () => {

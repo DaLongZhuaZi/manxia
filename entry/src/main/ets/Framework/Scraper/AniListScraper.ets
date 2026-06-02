@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Scraper/AniListScraper.ets
 /**
  * AniList 刮削器
@@ -368,7 +369,7 @@ export class AniListScraper {
         throw new Error(`HTTP ${response.responseCode}`);
       }
 
-      return JSON.parse(response.result as string) as AniListResponse;
+      return SafeUtils.parseObj(response.result as string) as AniListResponse;
     } finally {
       httpRequest.destroy();
     }

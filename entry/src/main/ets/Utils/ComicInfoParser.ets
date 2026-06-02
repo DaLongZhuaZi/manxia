@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ComicInfo.xml解析器
  * 用于解析压缩包中的ComicInfo.xml文件，提取漫画元数据
  */
@@ -84,13 +84,13 @@ export class ComicInfoParser {
       const options: XmlParseOptions = {
         supportDoctype: true,
         ignoreNameSpace: true,
-        tagValueCallbackFunction: this.handleTagValue.bind(this),
-        attributeValueCallbackFunction: this.handleAttributeValue.bind(this),
-        tokenValueCallbackFunction: this.handleTokenValue.bind(this)
+        tagValueCallbackFunction: (name: string, value: string) => this.handleTagValue(name, value),
+        attributeValueCallbackFunction: (name: string, value: string) => this.handleAttributeValue(name, value),
+        tokenValueCallbackFunction: (eventType: xml.EventType, parseInfo: xml.ParseInfo) => this.handleTokenValue(eventType, parseInfo)
       };
       
       // 执行解析
-      parser.parse(options);
+      parser.parseXml(options);
       
       logger.info(TAG, 'ComicInfo.xml解析完成', JSON.stringify(this.comicInfo));
       return this.comicInfo;

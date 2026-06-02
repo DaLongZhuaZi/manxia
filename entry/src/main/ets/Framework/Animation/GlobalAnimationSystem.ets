@@ -1,4 +1,4 @@
-// 文件路径: src/main/ets/Framework/Animation/GlobalAnimationSystem.ets
+﻿// 文件路径: src/main/ets/Framework/Animation/GlobalAnimationSystem.ets
 /**
  * 全局动画系统
  * 提供独立可调用的各种动画组件和工具，支持传统动画系统

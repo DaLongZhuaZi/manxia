@@ -1,3 +1,4 @@
+import { SafeUtils } from './Utils/SafeUtils';
 //文件路径：entry/src/main/ets/EntryAbility.ets
 /**
  * 应用入口Ability
@@ -864,7 +865,7 @@ export default class EntryAbility extends UIAbility {
       const paramsRaw = want.parameters['params'];
       let params: Record<string, string> = {};
       if (typeof paramsRaw === 'string') {
-        params = JSON.parse(paramsRaw) as Record<string, string>;
+        params = SafeUtils.parseObj(paramsRaw) as Record<string, string>;
       } else if (typeof paramsRaw === 'object' && paramsRaw !== null) {
         params = paramsRaw as Record<string, string>;
       }

@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../../../Utils/SafeFileUtils';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { getContext, isInitialized as isGlobalContextInitialized } from '../../../../GlobalContext';
@@ -41,16 +42,16 @@ export class StorageProviderFacade implements IStorageProvider {
         return '';
       }
 
-      const file = fs.openSync(path, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(path);
+      const file = SafeFileUtils.openSync(path, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(path);
       if (stat.size <= 0) {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
         return '';
       }
 
       const buffer = new ArrayBuffer(Number(stat.size));
-      fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
 
       const decoder = new util.TextDecoder('utf-8');
       return decoder.decodeToString(new Uint8Array(buffer));
@@ -67,9 +68,9 @@ export class StorageProviderFacade implements IStorageProvider {
 
     try {
       this.ensureParentDirectory(path);
-      const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, content);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(file.fd, content);
+      SafeFileUtils.closeSync(file);
       return true;
     } catch {
       logger.warn(TAG, `写入文本失败: ${path}`);
@@ -83,7 +84,7 @@ export class StorageProviderFacade implements IStorageProvider {
     }
 
     try {
-      return fs.accessSync(path);
+      return SafeFileUtils.accessSync(path);
     } catch {
       return false;
     }
@@ -120,7 +121,7 @@ export class StorageProviderFacade implements IStorageProvider {
     }
 
     try {
-      fs.mkdirSync(parentDir, true);
+      SafeFileUtils.mkdirSync(parentDir, true);
     } catch {
       logger.warn(TAG, `创建父目录失败: ${parentDir}`);
     }

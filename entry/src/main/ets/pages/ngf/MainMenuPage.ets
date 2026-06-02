@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { NGFErrorContext, NGFErrorSeverity } from '../../Framework/NGF/core/contracts/IErrorHandler';
 import { NGFEventPayload } from '../../Framework/NGF/core/contracts/IEventBus';
@@ -218,7 +219,7 @@ struct NGFStarterMainMenuPage {
       return null;
     }
     try {
-      const parsed = JSON.parse(payloadJson) as Partial<NGFStarterStatePayload>;
+      const parsed = SafeUtils.parseObj(payloadJson) as Partial<NGFStarterStatePayload>;
       const phaseName = parsed.phaseName && typeof parsed.phaseName === 'string' ? parsed.phaseName : 'not_started';
       const progress = parsed.progress && typeof parsed.progress === 'number' ? parsed.progress : 0;
       const isCompleted = parsed.isCompleted && typeof parsed.isCompleted === 'boolean' ? parsed.isCompleted : false;

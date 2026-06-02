@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Scraper/BangumiScraper.ets
 /**
  * Bangumi 番组计划刮削器
@@ -121,7 +122,7 @@ export class BangumiScraper {
         throw new Error(`HTTP ${response.responseCode}`);
       }
 
-      const data = JSON.parse(response.result as string) as BangumiSearchResult;
+      const data = SafeUtils.parseObj(response.result as string) as BangumiSearchResult;
       const results: ScrapedMetadata[] = data.data.map(subject => this.convertToMetadata(subject));
 
       logger.info(TAG, `Bangumi搜索成功: 找到 ${results.length} 条结果`);
@@ -168,7 +169,7 @@ export class BangumiScraper {
         throw new Error(`HTTP ${response.responseCode}`);
       }
 
-      const subject = JSON.parse(response.result as string) as BangumiSubject;
+      const subject = SafeUtils.parseObj(response.result as string) as BangumiSubject;
       const metadata = this.convertToMetadata(subject);
 
       logger.info(TAG, `Bangumi详情获取成功: ${metadata.title}`);

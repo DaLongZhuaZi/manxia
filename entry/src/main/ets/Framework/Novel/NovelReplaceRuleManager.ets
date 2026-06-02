@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 小说替换净化规则管理器
  * 管理全局替换规则，用于净化正文内容
@@ -207,7 +208,7 @@ export class NovelReplaceRuleManager {
       return undefined;
     }
     try {
-      return JSON.parse(str) as string[];
+      return SafeUtils.parseArr(str) as string[];
     } catch {
       return undefined;
     }
@@ -400,7 +401,7 @@ export class NovelReplaceRuleManager {
     };
 
     try {
-      const data: Object = JSON.parse(json);
+      const data: Object = SafeUtils.parseObj(json);
       const rules: Object[] = Array.isArray(data) ? data as Object[] : [data];
       result.total = rules.length;
 

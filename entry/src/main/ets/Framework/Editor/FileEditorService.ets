@@ -71,7 +71,7 @@ export class FileEditorService {
       await fileIo.close(file.fd);
       
       const decoder = new util.TextDecoder('utf-8');
-      const content = decoder.decodeWithStream(new Uint8Array(buffer));
+      const content = decoder.decodeToString(new Uint8Array(buffer));
       
       logger.info(TAG, `文件读取成功，大小: ${stat.size} bytes`);
       return content;

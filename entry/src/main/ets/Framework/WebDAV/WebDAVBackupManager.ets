@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * WebDAV备份管理器
  * 管理WebDAV云端备份的上传、下载、同步等操作
@@ -167,7 +169,7 @@ export class WebDAVBackupManager {
       logger.info(TAG, `开始上传备份: ${fileName}`);
 
       // 获取文件大小
-      const stat = fileIo.statSync(localBackupPath);
+      const stat = SafeFileUtils.statSync(localBackupPath);
       const fileSize = stat.size;
 
       // 优先使用Native客户端
@@ -296,7 +298,7 @@ export class WebDAVBackupManager {
       
       if (content.trim().length > 0) {
         // 验证是否是有效的JSON
-        const parsed = JSON.parse(content) as BackupIndex;
+        const parsed = SafeUtils.parseObj(content) as BackupIndex;
         logger.info(TAG, `索引文件存在，包含 ${parsed.backups?.length || 0} 个备份`);
         return true;
       }
@@ -347,7 +349,7 @@ export class WebDAVBackupManager {
       }
       
       if (content.trim()) {
-        const index = JSON.parse(content) as BackupIndex;
+        const index = SafeUtils.parseObj(content) as BackupIndex;
         logger.info(TAG, `读取到备份索引，包含 ${index.backups.length} 个备份`);
         return index;
       }

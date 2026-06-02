@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/BatchMangaImportDialog.ets
 /**
  * 批量漫画导入配置对话框
@@ -538,7 +539,7 @@ export struct BatchMangaImportDialog {
     const subDirs: string[] = [];
     
     try {
-      const fileList = fileIo.listFileSync(dirPath);
+      const fileList = SafeFileUtils.listFileSync(dirPath);
       
       for (const file of fileList) {
         const lowerFile = file.toLowerCase();
@@ -555,7 +556,7 @@ export struct BatchMangaImportDialog {
         
         if (!isImage) {
           try {
-            const stat = fileIo.statSync(fullPath);
+            const stat = SafeFileUtils.statSync(fullPath);
             if (stat.isDirectory()) {
               subDirs.push(fullPath);
             }

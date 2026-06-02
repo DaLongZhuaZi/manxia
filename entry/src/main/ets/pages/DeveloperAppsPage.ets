@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/pages/DeveloperAppsPage.ets
+﻿// 文件路径: entry/src/main/ets/pages/DeveloperAppsPage.ets
 /**
  * 同开发者页面
  * 展示当前开发者的其他APP，提供跳转应用商店的链接
@@ -152,11 +152,11 @@ struct DeveloperAppsPage {
 
   private async openAppGallery(app: DeveloperApp): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await context.openLink(app.appGalleryUrl, { appLinkingOnly: false });
     } catch (error) {
       logger.error(TAG, '打开应用商店失败', String(error));
-      promptAction.showToast({ message: '无法打开应用商店，请重试' });
+      this.getUIContext().getPromptAction().showToast({ message: '无法打开应用商店，请重试' });
     }
   }
 

@@ -141,7 +141,7 @@ export struct AdvancedSettingsSubPage {
     this.resetOtherActionsSecretTap();
 
     if (this.sourceSettingsVisible) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '源功能设置已显示',
         duration: 1500
       });
@@ -152,7 +152,7 @@ export struct AdvancedSettingsSubPage {
     await this.settingsManager.setBoolean(SettingKeys.SOURCE_SETTINGS_VISIBLE, true);
     this.settingsManager.syncToAppStorage();
     AppStorage.setOrCreate('source_settings_visible', true);
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: '已显示源功能设置',
       duration: 1500
     });
@@ -551,7 +551,7 @@ export struct AdvancedSettingsSubPage {
             .onChange(async (isOn: boolean) => {
               this.sfwModeEnabled = isOn;
               await this.contentFilterManager.setSFWMode(isOn);
-              promptAction.showToast({
+              this.getUIContext().getPromptAction().showToast({
                 message: isOn ? 'SFW模式已启用，已隐藏NSFW内容' : 'SFW模式已关闭',
                 duration: 2000
               });
@@ -673,7 +673,7 @@ export struct AdvancedSettingsSubPage {
               this.settingsManager.syncToAppStorage();
               // 立即应用到logger
               logger.initializeHilogLevelFromIndex(index);
-              promptAction.showToast({
+              this.getUIContext().getPromptAction().showToast({
                 message: `日志等级已设置为: ${LOG_LEVEL_NAMES[index]}`,
                 duration: 2000
               });
@@ -1193,7 +1193,7 @@ export struct AdvancedSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])

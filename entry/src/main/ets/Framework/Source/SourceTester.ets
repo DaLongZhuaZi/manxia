@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源测试器
  * 测试图源的各项功能是否正常工作
@@ -253,7 +254,7 @@ export class SourceTester {
    */
   private extractComicId(details: string): string | null {
     try {
-      const data: ESObject = JSON.parse(details) as ESObject;
+      const data: ESObject = SafeUtils.parseObj(details) as ESObject;
       return data.firstId as string || null;
     } catch {
       return null;

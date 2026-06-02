@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径：entry/src/main/ets/Framework/WebView/WebViewAuthManager.ets
 /**
  * WebView登录与Cookie管理器（全局单例）
@@ -181,7 +182,7 @@ export class WebViewAuthManager {
       return [];
     }
     try {
-      const arr = JSON.parse(json) as Object[];
+      const arr = SafeUtils.parseArr(json) as Object[];
       const result: CookieEntry[] = [];
       let i: number = 0;
       while (i < arr.length) {

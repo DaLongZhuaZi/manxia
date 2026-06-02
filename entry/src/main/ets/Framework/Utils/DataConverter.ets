@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Utils/DataConverter.ets
 /**
  * 数据转换工具类
@@ -220,7 +221,7 @@ export class DataConverter {
     }
     
     try {
-      return JSON.parse(JSON.stringify(obj));
+      return SafeUtils.parseObj(JSON.stringify(obj));
     } catch (error) {
       logger.error(TAG, `深度克隆失败: ${error}`);
       return obj;

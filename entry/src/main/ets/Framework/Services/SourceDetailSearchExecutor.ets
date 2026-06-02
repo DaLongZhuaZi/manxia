@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源详情搜索执行器
  * 将 SourceDetailPage 的完整搜索分支抽离为后台可调用能力，供图源详情页和全局搜索共用。
@@ -496,7 +497,7 @@ export class SourceDetailSearchExecutor {
     }
 
     try {
-      return JSON.parse(configJson) as SourceDetailSearchJsonConfig;
+      return SafeUtils.parseObj(configJson) as SourceDetailSearchJsonConfig;
     } catch (error) {
       logger.warn(TAG, `解析图源配置失败: sourceId=${sourceRecord.id}, error=${String(error)}`);
       return null;

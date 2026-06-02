@@ -334,7 +334,7 @@ export struct ShortcutSettingsSubPage {
       }
     } catch (error) {
       logger.warn(TAG, `读取系统快捷方式状态失败，回退到本地设置: ${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '读取系统快捷方式状态失败，已使用本地配置',
         duration: 1600
       });
@@ -401,7 +401,7 @@ export struct ShortcutSettingsSubPage {
   }
 
   private showRestartDialog(): void {
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '配置已保存',
       message: this.buildRestartDialogMessage(),
       buttons: [
@@ -438,7 +438,7 @@ export struct ShortcutSettingsSubPage {
       logger.info(TAG, 'APP已重启');
     } catch (error) {
       logger.error(TAG, '重启APP失败', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '重启失败，请手动重启APP',
         duration: 2000
       });
@@ -458,7 +458,7 @@ export struct ShortcutSettingsSubPage {
     }
 
     if (enabled && this.visibleShortcutCount >= SHORTCUT_MAX_VISIBLE_COUNT) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: `最多仅可显示 ${SHORTCUT_MAX_VISIBLE_COUNT} 个快捷方式`,
         duration: 1500
       });
@@ -471,7 +471,7 @@ export struct ShortcutSettingsSubPage {
       await shortcutManager.setShortcutVisibleForSelf(shortcutId, enabled);
       await this.persistVisibleShortcutIds(this.collectVisibleShortcutIdsFromItems(this.shortcutItems));
       logger.info(TAG, `快捷方式状态已更新: id=${shortcutId}, enabled=${enabled}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '快捷方式设置已保存',
         duration: 1200
       });
@@ -479,7 +479,7 @@ export struct ShortcutSettingsSubPage {
     } catch (error) {
       this.replaceShortcutEnabled(shortcutId, !enabled);
       logger.error(TAG, `更新快捷方式状态失败: id=${shortcutId}, enabled=${enabled}, error=${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请稍后重试',
         duration: 1500
       });
@@ -723,7 +723,7 @@ export struct ShortcutSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])

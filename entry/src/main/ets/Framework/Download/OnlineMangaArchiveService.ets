@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * 在线漫画归档服务
  * 负责将在线下载/缓存的散图打包为 CBZ，并在阅读前解压到运行缓存目录。
@@ -218,9 +219,9 @@ export class OnlineMangaArchiveService {
       0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND length + type
       0x44, 0xAE, 0x42, 0x60, 0x82                    // IEND CRC
     ]);
-    const file = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-    fs.writeSync(file.fd, placeholder.buffer);
-    fs.closeSync(file.fd);
+    const file = SafeFileUtils.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    SafeFileUtils.writeSync(file.fd, placeholder.buffer);
+    SafeFileUtils.closeSync(file.fd);
   }
 
   public async createArchiveFromPageFiles(request: OnlineArchiveCreateRequest): Promise<OnlineArchiveCreateResult> {
@@ -259,7 +260,7 @@ export class OnlineMangaArchiveService {
               } else {
                 const extension = this.resolveImageExtension(page.sourcePath, page.imageUrl);
                 const finalTarget = `${workDir}/${String(i + 1).padStart(4, '0')}.${extension}`;
-                fs.copyFileSync(page.sourcePath, finalTarget);
+                SafeFileUtils.copyFileSync(page.sourcePath, finalTarget);
               }
               realPageIdx++;
             } else {
@@ -282,7 +283,7 @@ export class OnlineMangaArchiveService {
           strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY
         });
         const compressedOutputPath = this.resolveCompressedOutputPath(tempArchivePath, legacyTempArchivePath);
-        fs.renameSync(compressedOutputPath, archivePath);
+        SafeFileUtils.renameSync(compressedOutputPath, archivePath);
         this.deleteArchiveTempFiles(archivePath);
 
         const archiveSize = this.getFileSize(archivePath);
@@ -301,7 +302,7 @@ export class OnlineMangaArchiveService {
           }
           const extension = this.resolveImageExtension(page.sourcePath, page.imageUrl);
           const targetPath = `${workDir}/${String(i + 1).padStart(4, '0')}.${extension}`;
-          fs.copyFileSync(page.sourcePath, targetPath);
+          SafeFileUtils.copyFileSync(page.sourcePath, targetPath);
         }
 
         const comicInfoXml = this.buildComicInfoXml(request.metadata, sortedPages.length);
@@ -318,7 +319,7 @@ export class OnlineMangaArchiveService {
           strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY
         });
         const compressedOutputPath = this.resolveCompressedOutputPath(tempArchivePath, legacyTempArchivePath);
-        fs.renameSync(compressedOutputPath, archivePath);
+        SafeFileUtils.renameSync(compressedOutputPath, archivePath);
         this.deleteArchiveTempFiles(archivePath);
 
         const archiveSize = this.getFileSize(archivePath);
@@ -793,7 +794,7 @@ export class OnlineMangaArchiveService {
     }
 
     try {
-      const stat = fs.statSync(downloadPath);
+      const stat = SafeFileUtils.statSync(downloadPath);
       if (!stat.isDirectory()) {
         return [];
       }
@@ -1487,12 +1488,12 @@ export class OnlineMangaArchiveService {
     }
 
     try {
-      const entries = fs.listFileSync(dirPath);
+      const entries = SafeFileUtils.listFileSync(dirPath);
       const directImageFiles: string[] = [];
       const childDirectories: string[] = [];
       for (let i = 0; i < entries.length; i++) {
         const fullPath = `${dirPath}/${entries[i]}`;
-        const stat = fs.statSync(fullPath);
+        const stat = SafeFileUtils.statSync(fullPath);
         if (stat.isDirectory()) {
           childDirectories.push(fullPath);
         } else if (this.isImagePath(fullPath)) {
@@ -1561,7 +1562,7 @@ export class OnlineMangaArchiveService {
       if (!this.pathExists(path)) {
         return false;
       }
-      const stat = fs.statSync(path);
+      const stat = SafeFileUtils.statSync(path);
       return stat.isDirectory();
     } catch (_error) {
       return false;
@@ -1734,7 +1735,7 @@ export class OnlineMangaArchiveService {
 
       try {
         this.deleteFileIfExists(archivePath);
-        fs.renameSync(tempPath, archivePath);
+        SafeFileUtils.renameSync(tempPath, archivePath);
         this.deleteArchiveTempFiles(archivePath);
         logger.info(TAG, `已恢复未完成CBZ归档: ${tempPath} -> ${archivePath}`);
         return archivePath;
@@ -1764,7 +1765,7 @@ export class OnlineMangaArchiveService {
 
   private resolveReaderExtractDir(chapterId: string, archivePath: string): string {
     const context = this.requireContext();
-    const stat = fs.statSync(archivePath);
+    const stat = SafeFileUtils.statSync(archivePath);
     const stamp = `${stat.size}_${stat.mtime}`;
     const dir = `${context.cacheDir}/online_cbz_reader/${this.sanitizePathSegment(chapterId)}_${this.sanitizePathSegment(stamp)}`;
     return dir;
@@ -1779,18 +1780,18 @@ export class OnlineMangaArchiveService {
 
   private ensureDirectory(dirPath: string): void {
     try {
-      const stat = fs.statSync(dirPath);
+      const stat = SafeFileUtils.statSync(dirPath);
       if (!stat.isDirectory()) {
         throw new Error('路径不是目录');
       }
     } catch (_error) {
-      fs.mkdirSync(dirPath, true);
+      SafeFileUtils.mkdirSync(dirPath, true);
     }
   }
 
   private pathExists(path: string): boolean {
     try {
-      return fs.accessSync(path);
+      return SafeFileUtils.accessSync(path);
     } catch (_error) {
       return false;
     }
@@ -1799,7 +1800,7 @@ export class OnlineMangaArchiveService {
   private deleteFileIfExists(path: string): void {
     try {
       if (this.pathExists(path)) {
-        fs.unlinkSync(path);
+        SafeFileUtils.unlinkSync(path);
       }
     } catch (error) {
       logger.warn(TAG, `删除文件失败: ${path}, ${String(error)}`);
@@ -1849,36 +1850,36 @@ export class OnlineMangaArchiveService {
       if (!this.pathExists(dirPath)) {
         return;
       }
-      const entries = fs.listFileSync(dirPath);
+      const entries = SafeFileUtils.listFileSync(dirPath);
       for (let i = 0; i < entries.length; i++) {
         const fullPath = `${dirPath}/${entries[i]}`;
-        const stat = fs.statSync(fullPath);
+        const stat = SafeFileUtils.statSync(fullPath);
         if (stat.isDirectory()) {
           this.deleteDirectoryRecursive(fullPath);
         } else {
-          fs.unlinkSync(fullPath);
+          SafeFileUtils.unlinkSync(fullPath);
         }
       }
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
     } catch (error) {
       logger.warn(TAG, `删除目录失败: ${dirPath}, ${String(error)}`);
     }
   }
 
   private writeTextFile(path: string, content: string): void {
-    const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+    const file = SafeFileUtils.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
     try {
       const encoder = new util.TextEncoder();
       const buffer = encoder.encodeInto(content);
-      fs.writeSync(file.fd, buffer.buffer);
+      SafeFileUtils.writeSync(file.fd, buffer.buffer);
     } finally {
-      fs.closeSync(file.fd);
+      SafeFileUtils.closeSync(file.fd);
     }
   }
 
   private getFileSize(path: string): number {
     try {
-      const stat = fs.statSync(path);
+      const stat = SafeFileUtils.statSync(path);
       return stat.size;
     } catch (_error) {
       return 0;
@@ -1899,10 +1900,10 @@ export class OnlineMangaArchiveService {
       return files;
     }
 
-    const entries = fs.listFileSync(dirPath);
+    const entries = SafeFileUtils.listFileSync(dirPath);
     for (let i = 0; i < entries.length; i++) {
       const fullPath = `${dirPath}/${entries[i]}`;
-      const stat = fs.statSync(fullPath);
+      const stat = SafeFileUtils.statSync(fullPath);
       if (stat.isDirectory()) {
         const childFiles = this.scanImageFilesRecursive(fullPath);
         for (let j = 0; j < childFiles.length; j++) {

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceEngine.ets
 /**
  * 漫画图源引擎主控制器
@@ -339,7 +340,7 @@ export class MangaSourceEngine {
           // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
           if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
             try {
-              scriptData = JSON.parse(scriptData) as string;
+              scriptData = SafeUtils.parseStr(scriptData) as string;
             } catch (e) {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
@@ -347,7 +348,7 @@ export class MangaSourceEngine {
           // 处理直接返回数组的情况: [...]
           if (scriptData.startsWith('[')) {
             try {
-              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              const parsed = SafeUtils.parseArr(scriptData) as Array<Record<string, Object>>;
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
                 searchResults = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
                 logger.debug(TAG, `从脚本结果提取到 ${searchResults.length} 条漫画数据`);
@@ -359,7 +360,7 @@ export class MangaSourceEngine {
           // 处理返回对象包含 mangas 数组的情况: {"mangas":[...]}
           else if (scriptData.startsWith('{')) {
             try {
-              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const parsed = SafeUtils.parseObj(scriptData) as Record<string, Object>;
               const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
               if (Array.isArray(mangasArray) && mangasArray.length > 0) {
                 searchResults = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
@@ -466,7 +467,7 @@ export class MangaSourceEngine {
           // 解除双重序列化
           if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
             try {
-              scriptData = JSON.parse(scriptData) as string;
+              scriptData = SafeUtils.parseStr(scriptData) as string;
             } catch (e) {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
@@ -474,7 +475,7 @@ export class MangaSourceEngine {
 
           if (scriptData.startsWith('{')) {
             try {
-              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const parsed = SafeUtils.parseObj(scriptData) as Record<string, Object>;
               
               // 解析结果类型
               const resultType = String(parsed['type'] || 'detail') as DirectSearchResultType;
@@ -915,7 +916,7 @@ export class MangaSourceEngine {
       // 解除双重序列化
       if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
         try {
-          scriptData = JSON.parse(scriptData) as string;
+          scriptData = SafeUtils.parseStr(scriptData) as string;
         } catch (e) {
           logger.debug(TAG, `解除双重序列化失败: ${e}`);
         }
@@ -924,7 +925,7 @@ export class MangaSourceEngine {
       // 尝试解析为数组
       if (scriptData.startsWith('[')) {
         try {
-          const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+          const parsed = SafeUtils.parseArr(scriptData) as Array<Record<string, Object>>;
           if (Array.isArray(parsed)) {
             return parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
           }
@@ -936,7 +937,7 @@ export class MangaSourceEngine {
       // 尝试解析为包含mangas字段的对象
       if (scriptData.startsWith('{')) {
         try {
-          const parsed = JSON.parse(scriptData) as Record<string, Object>;
+          const parsed = SafeUtils.parseObj(scriptData) as Record<string, Object>;
           const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
           if (Array.isArray(mangasArray)) {
             return mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
@@ -969,7 +970,7 @@ export class MangaSourceEngine {
     }
 
     try {
-      let parsedResult: string | Object = JSON.parse(trimmedData) as string | Object;
+      let parsedResult: string | Object = SafeUtils.parseObj(trimmedData) as string | Object;
       logger.debug(TAG, `第一次JSON解析完成，类型: ${typeof parsedResult}`);
 
       if (typeof parsedResult === 'string') {
@@ -978,7 +979,7 @@ export class MangaSourceEngine {
         const nestedLooksLikeJsonArray = nestedData.startsWith('[') && nestedData.endsWith(']');
         if (nestedLooksLikeJsonObject || nestedLooksLikeJsonArray) {
           logger.debug(TAG, '检测到双重字符串化，进行第二次解析');
-          parsedResult = JSON.parse(parsedResult) as Object;
+          parsedResult = SafeUtils.parseObj(parsedResult) as Object;
           logger.debug(TAG, `第二次JSON解析完成，类型: ${typeof parsedResult}`);
         }
       }
@@ -1123,7 +1124,7 @@ export class MangaSourceEngine {
           // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
           if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
             try {
-              scriptData = JSON.parse(scriptData) as string;
+              scriptData = SafeUtils.parseStr(scriptData) as string;
               logger.debug(TAG, `脚本数据解除双重序列化后首字符: '${scriptData.charAt(0)}'`);
             } catch (e) {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
@@ -1132,7 +1133,7 @@ export class MangaSourceEngine {
           // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
           if (scriptData.startsWith('[')) {
             try {
-              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              const parsed = SafeUtils.parseArr(scriptData) as Array<Record<string, Object>>;
               logger.debug(TAG, `JSON解析成功，数组长度: ${parsed.length}`);
               // 验证是否是漫画列表格式（包含 id 字段）
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
@@ -1146,7 +1147,7 @@ export class MangaSourceEngine {
           // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
           else if (scriptData.startsWith('{')) {
             try {
-              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const parsed = SafeUtils.parseObj(scriptData) as Record<string, Object>;
               const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
               if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
                 results = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
@@ -1253,7 +1254,7 @@ export class MangaSourceEngine {
           // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
           if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
             try {
-              scriptData = JSON.parse(scriptData) as string;
+              scriptData = SafeUtils.parseStr(scriptData) as string;
             } catch (e) {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
@@ -1261,7 +1262,7 @@ export class MangaSourceEngine {
           // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
           if (scriptData.startsWith('[')) {
             try {
-              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              const parsed = SafeUtils.parseArr(scriptData) as Array<Record<string, Object>>;
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
                 results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
                 logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据(数组格式)`);
@@ -1273,7 +1274,7 @@ export class MangaSourceEngine {
           // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
           else if (scriptData.startsWith('{')) {
             try {
-              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const parsed = SafeUtils.parseObj(scriptData) as Record<string, Object>;
               const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
               if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
                 results = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
@@ -1366,7 +1367,7 @@ export class MangaSourceEngine {
       
       if (this.rawConfigJson) {
         try {
-          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+          const rawConfig = SafeUtils.parseObj(this.rawConfigJson) as Record<string, Object>;
           
           // 读取 filters 配置，用于变量映射
           filtersConfig = rawConfig['filters'] as Record<string, Object> | undefined;
@@ -1479,7 +1480,7 @@ export class MangaSourceEngine {
           // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
           if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
             try {
-              scriptData = JSON.parse(scriptData) as string;
+              scriptData = SafeUtils.parseStr(scriptData) as string;
             } catch (e) {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
@@ -1487,7 +1488,7 @@ export class MangaSourceEngine {
           // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
           if (scriptData.startsWith('[')) {
             try {
-              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              const parsed = SafeUtils.parseArr(scriptData) as Array<Record<string, Object>>;
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
                 results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
                 logger.debug(TAG, `从脚本结果提取到 ${results.length} 条筛选数据(数组格式)`);
@@ -1499,7 +1500,7 @@ export class MangaSourceEngine {
           // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
           else if (scriptData.startsWith('{')) {
             try {
-              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const parsed = SafeUtils.parseObj(scriptData) as Record<string, Object>;
               const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
               if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
                 results = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
@@ -1606,7 +1607,7 @@ export class MangaSourceEngine {
           // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
           if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
             try {
-              scriptData = JSON.parse(scriptData) as string;
+              scriptData = SafeUtils.parseStr(scriptData) as string;
             } catch (e) {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
@@ -1614,7 +1615,7 @@ export class MangaSourceEngine {
           // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
           if (scriptData.startsWith('[')) {
             try {
-              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              const parsed = SafeUtils.parseArr(scriptData) as Array<Record<string, Object>>;
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
                 results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
                 logger.debug(TAG, `从脚本结果提取到 ${results.length} 条数据(数组格式)`);
@@ -1626,7 +1627,7 @@ export class MangaSourceEngine {
           // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
           else if (scriptData.startsWith('{')) {
             try {
-              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const parsed = SafeUtils.parseObj(scriptData) as Record<string, Object>;
               const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
               if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
                 results = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
@@ -1725,14 +1726,14 @@ export class MangaSourceEngine {
           // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
           if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
             try {
-              scriptData = JSON.parse(scriptData) as string;
+              scriptData = SafeUtils.parseStr(scriptData) as string;
             } catch (e) {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
           }
           if (scriptData.startsWith('{')) {
             try {
-              bookDetail = JSON.parse(scriptData) as Record<string, Object>;
+              bookDetail = SafeUtils.parseObj(scriptData) as Record<string, Object>;
               logger.debug(TAG, `从脚本结果提取到电子书详情: ${bookDetail['title']}`);
             } catch (e) {
               logger.debug(TAG, `脚本结果不是对象格式: ${e}`);
@@ -1995,7 +1996,7 @@ export class MangaSourceEngine {
         let defaultTimeType = 'a';
         if (this.rawConfigJson) {
           try {
-            const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+            const rawConfig = SafeUtils.parseObj(this.rawConfigJson) as Record<string, Object>;
             const workflows = rawConfig['workflows'] as Record<string, Object> | undefined;
             if (workflows) {
               const leaderboardWorkflow = workflows['getLeaderboard'] as Record<string, Object> | undefined;
@@ -2052,7 +2053,7 @@ export class MangaSourceEngine {
           // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
           if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
             try {
-              scriptData = JSON.parse(scriptData) as string;
+              scriptData = SafeUtils.parseStr(scriptData) as string;
             } catch (e) {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
@@ -2060,7 +2061,7 @@ export class MangaSourceEngine {
           // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
           if (scriptData.startsWith('[')) {
             try {
-              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              const parsed = SafeUtils.parseArr(scriptData) as Array<Record<string, Object>>;
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
                 leaderboardResults = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
                 logger.debug(TAG, `从脚本结果提取到 ${leaderboardResults.length} 条排行榜数据(数组格式)`);
@@ -2072,7 +2073,7 @@ export class MangaSourceEngine {
           // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
           else if (scriptData.startsWith('{')) {
             try {
-              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const parsed = SafeUtils.parseObj(scriptData) as Record<string, Object>;
               const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
               if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
                 leaderboardResults = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
@@ -2521,13 +2522,13 @@ export class MangaSourceEngine {
               let scriptResult = result.data as string;
               
               // 尝试第一次解析
-              let parsed: Object = JSON.parse(scriptResult);
+              let parsed: Object = SafeUtils.parseObj(scriptResult);
               logger.debug(TAG, `第一次JSON解析: 类型=${typeof parsed}, 是否数组=${Array.isArray(parsed)}`);
               
               // 如果解析后还是字符串且以[开头，说明被双重字符串化了，需要再解析一次
               if (typeof parsed === 'string' && (parsed as string).trim().startsWith('[')) {
                 logger.debug(TAG, `检测到双重字符串化，进行第二次解析`);
-                parsed = JSON.parse(parsed as string);
+                parsed = SafeUtils.parseObj(parsed as string);
                 logger.debug(TAG, `第二次JSON解析: 类型=${typeof parsed}, 是否数组=${Array.isArray(parsed)}`);
               }
               
@@ -2882,13 +2883,13 @@ export class MangaSourceEngine {
               let scriptResult = result.data as string;
               
               // 尝试第一次解析
-              let parsed: Object = JSON.parse(scriptResult);
+              let parsed: Object = SafeUtils.parseObj(scriptResult);
               logger.debug(TAG, `第一次JSON解析: 类型=${typeof parsed}, 是否数组=${Array.isArray(parsed)}`);
               
               // 如果解析后还是字符串且以[或{开头，说明被双重字符串化了，需要再解析一次
               if (typeof parsed === 'string' && ((parsed as string).trim().startsWith('[') || (parsed as string).trim().startsWith('{'))) {
                 logger.debug(TAG, `检测到双重字符串化，进行第二次解析`);
-                parsed = JSON.parse(parsed as string);
+                parsed = SafeUtils.parseObj(parsed as string);
                 logger.debug(TAG, `第二次JSON解析: 类型=${typeof parsed}, 是否数组=${Array.isArray(parsed)}`);
               }
               
@@ -3018,13 +3019,13 @@ export class MangaSourceEngine {
           
           // 尝试解析JSON字符串
           try {
-            let parsed: Object = JSON.parse(scriptResult);
+            let parsed: Object = SafeUtils.parseObj(scriptResult);
             logger.debug(TAG, `loadMorePages JSON解析: 类型=${typeof parsed}, 是否对象=${typeof parsed === 'object'}`);
             
             // 如果解析后还是字符串，说明被双重字符串化了，需要再解析一次
             if (typeof parsed === 'string' && ((parsed as string).trim().startsWith('{') || (parsed as string).trim().startsWith('['))) {
               logger.debug(TAG, `检测到双重字符串化，进行第二次解析`);
-              parsed = JSON.parse(parsed as string);
+              parsed = SafeUtils.parseObj(parsed as string);
               logger.debug(TAG, `第二次JSON解析: 类型=${typeof parsed}`);
             }
             
@@ -3558,7 +3559,7 @@ export class MangaSourceEngine {
       return null;
     }
     try {
-      this.parsedConfigCache = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+      this.parsedConfigCache = SafeUtils.parseObj(this.rawConfigJson) as Record<string, Object>;
       return this.parsedConfigCache;
     } catch (e) {
       logger.warn(TAG, `解析 rawConfigJson 失败: ${e}`);
@@ -4015,7 +4016,7 @@ export class MangaSourceEngine {
     }
 
     try {
-      const configObj = JSON.parse(this.rawConfigJson) as Record<string, ESObject>;
+      const configObj = SafeUtils.parseObj(this.rawConfigJson) as Record<string, ESObject>;
       
       // 注册工作流
       const workflows = configObj['workflows'] as Record<string, ESObject> | undefined;
@@ -4096,7 +4097,7 @@ export class MangaSourceEngine {
       if (result.success && result.data) {
         let sources: ESObject[] = [];
         if (typeof result.data === 'string') {
-          const parsed: ESObject = JSON.parse(result.data) as ESObject;
+          const parsed: ESObject = SafeUtils.parseObj(result.data) as ESObject;
           if (Array.isArray(parsed)) {
             sources = parsed as ESObject[];
           } else if (parsed && typeof parsed === 'object') {
@@ -4154,7 +4155,7 @@ export class MangaSourceEngine {
       if (result.success && result.data) {
         let files: ESObject[] = [];
         if (typeof result.data === 'string') {
-          const parsed: ESObject = JSON.parse(result.data) as ESObject;
+          const parsed: ESObject = SafeUtils.parseObj(result.data) as ESObject;
           if (Array.isArray(parsed)) {
             files = parsed as ESObject[];
           } else if (parsed && typeof parsed === 'object') {

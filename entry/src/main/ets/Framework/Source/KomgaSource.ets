@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { logger } from '../../Utils/Logger';
 import { ChapterInfo, ComicDetailInfo, ComicInfo, PageInfo } from './SourceExecutor';
@@ -705,7 +706,7 @@ export class KomgaSource {
 
       logger.debug(TAG, `Komga 请求成功: code=${response.responseCode}, url=${requestUrl}`);
       if (typeof response.result === 'string') {
-        return JSON.parse(response.result) as T;
+        return SafeUtils.parseObj(response.result) as T;
       }
       return response.result as T;
     } catch (error) {

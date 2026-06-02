@@ -108,21 +108,21 @@ export struct GroupManagementDialog {
    */
   async renameGroup(): Promise<void> {
     if (!this.selectedGroupForOperation || !this.newGroupName.trim()) {
-      promptAction.showToast({ message: '请输入新的分组名称' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入新的分组名称' });
       return;
     }
 
     if (this.callbacks?.onRename) {
       try {
         await this.callbacks.onRename(this.selectedGroupForOperation, this.newGroupName.trim());
-        promptAction.showToast({ message: '重命名成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '重命名成功' });
         this.currentView = 'list';
         this.selectedGroupForOperation = '';
         this.newGroupName = '';
         // 刷新分组数据
         this.refreshGroupData();
       } catch (error) {
-        promptAction.showToast({ message: `重命名失败: ${String(error)}` });
+        this.getUIContext().getPromptAction().showToast({ message: `重命名失败: ${String(error)}` });
       }
     }
   }
@@ -132,26 +132,26 @@ export struct GroupManagementDialog {
    */
   async mergeGroups(): Promise<void> {
     if (this.selectedGroups.size < 2) {
-      promptAction.showToast({ message: '请至少选择2个分组进行合并' });
+      this.getUIContext().getPromptAction().showToast({ message: '请至少选择2个分组进行合并' });
       return;
     }
 
     if (!this.mergeTargetName.trim()) {
-      promptAction.showToast({ message: '请输入合并后的分组名称' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入合并后的分组名称' });
       return;
     }
 
     if (this.callbacks?.onMerge) {
       try {
         await this.callbacks.onMerge(Array.from(this.selectedGroups), this.mergeTargetName.trim());
-        promptAction.showToast({ message: '合并成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '合并成功' });
         this.currentView = 'list';
         this.selectedGroups = new Set();
         this.mergeTargetName = '';
         // 刷新分组数据
         this.refreshGroupData();
       } catch (error) {
-        promptAction.showToast({ message: `合并失败: ${String(error)}` });
+        this.getUIContext().getPromptAction().showToast({ message: `合并失败: ${String(error)}` });
       }
     }
   }
@@ -161,12 +161,12 @@ export struct GroupManagementDialog {
    */
   async splitGroup(): Promise<void> {
     if (!this.selectedGroupForOperation) {
-      promptAction.showToast({ message: '请选择要拆分的分组' });
+      this.getUIContext().getPromptAction().showToast({ message: '请选择要拆分的分组' });
       return;
     }
 
     if (this.splitConditionType === 'keyword' && !this.splitKeyword.trim()) {
-      promptAction.showToast({ message: '请输入关键词' });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入关键词' });
       return;
     }
 
@@ -177,14 +177,14 @@ export struct GroupManagementDialog {
           keyword: this.splitConditionType === 'keyword' ? this.splitKeyword.trim() : undefined
         };
         await this.callbacks.onSplit(this.selectedGroupForOperation, condition);
-        promptAction.showToast({ message: '拆分成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '拆分成功' });
         this.currentView = 'list';
         this.selectedGroupForOperation = '';
         this.splitKeyword = '';
         // 刷新分组数据
         this.refreshGroupData();
       } catch (error) {
-        promptAction.showToast({ message: `拆分失败: ${String(error)}` });
+        this.getUIContext().getPromptAction().showToast({ message: `拆分失败: ${String(error)}` });
       }
     }
   }
@@ -196,11 +196,11 @@ export struct GroupManagementDialog {
     if (this.callbacks?.onDelete) {
       try {
         await this.callbacks.onDelete(groupName);
-        promptAction.showToast({ message: '删除成功' });
+        this.getUIContext().getPromptAction().showToast({ message: '删除成功' });
         // 刷新分组数据
         this.refreshGroupData();
       } catch (error) {
-        promptAction.showToast({ message: `删除失败: ${String(error)}` });
+        this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${String(error)}` });
       }
     }
   }
@@ -471,7 +471,7 @@ export struct GroupManagementDialog {
           .backgroundColor(AppColors.error)
           .borderRadius(6)
           .onClick(() => {
-            promptAction.showDialog({
+            this.getUIContext().getPromptAction().showDialog({
               title: '确认删除',
               message: `确定要删除分组"${group.name}"吗？这将移除所有书源的该分组标记。`,
               buttons: [

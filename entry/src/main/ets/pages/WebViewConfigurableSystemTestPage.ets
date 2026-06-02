@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * WebView可配置系统测试页面
  * 
@@ -568,7 +569,7 @@ struct WebViewConfigurableSystemTestPage {
         )
       `;
       const result = await this.runWebJavaScript(script);
-      const links: LinkInfo[] = JSON.parse(result) as LinkInfo[];
+      const links: LinkInfo[] = SafeUtils.parseArr(result) as LinkInfo[];
       this.jsOutput = `找到 ${links.length} 个链接:\\n${JSON.stringify(links, null, 2)}`;
       logger.info(TAG, `✅ 获取了 ${links.length} 个链接`);
     } catch (e) {
@@ -595,7 +596,7 @@ struct WebViewConfigurableSystemTestPage {
         )
       `;
       const result = await this.runWebJavaScript(script);
-      const images: ImageInfo[] = JSON.parse(result) as ImageInfo[];
+      const images: ImageInfo[] = SafeUtils.parseArr(result) as ImageInfo[];
       this.jsOutput = `找到 ${images.length} 个图片:\\n${JSON.stringify(images, null, 2)}`;
       logger.info(TAG, `✅ 获取了 ${images.length} 个图片`);
     } catch (e) {
@@ -628,7 +629,7 @@ struct WebViewConfigurableSystemTestPage {
         })
       `;
       const result = await this.runWebJavaScript(script);
-      const metaInfo: PageMetaInfo = JSON.parse(result) as PageMetaInfo;
+      const metaInfo: PageMetaInfo = SafeUtils.parseObj(result) as PageMetaInfo;
       this.jsOutput = JSON.stringify(metaInfo, null, 2);
       logger.info(TAG, `✅ 页面元信息获取成功`);
     } catch (e) {
@@ -651,7 +652,7 @@ struct WebViewConfigurableSystemTestPage {
         })
       `;
       const result = await this.runWebJavaScript(script);
-      const cookieInfo: CookieData = JSON.parse(result) as CookieData;
+      const cookieInfo: CookieData = SafeUtils.parseObj(result) as CookieData;
       this.jsOutput = JSON.stringify(cookieInfo, null, 2);
       logger.info(TAG, `✅ Cookie数量: ${cookieInfo.cookieCount}`);
     } catch (e) {
@@ -678,7 +679,7 @@ struct WebViewConfigurableSystemTestPage {
         })
       `;
       const result = await this.runWebJavaScript(script);
-      const storageInfo: StorageData = JSON.parse(result) as StorageData;
+      const storageInfo: StorageData = SafeUtils.parseObj(result) as StorageData;
       this.jsOutput = JSON.stringify(storageInfo, null, 2);
       logger.info(TAG, `✅ LocalStorage项数: ${storageInfo.count}`);
     } catch (e) {
@@ -712,7 +713,7 @@ struct WebViewConfigurableSystemTestPage {
         })
       `;
       const result = await this.runWebJavaScript(script);
-      const perfInfo: PerformanceData = JSON.parse(result) as PerformanceData;
+      const perfInfo: PerformanceData = SafeUtils.parseObj(result) as PerformanceData;
       this.jsOutput = JSON.stringify(perfInfo, null, 2);
       logger.info(TAG, `✅ 性能信息获取成功`);
     } catch (e) {

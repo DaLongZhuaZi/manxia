@@ -1,4 +1,4 @@
-import { promptAction, LengthMetrics } from '@kit.ArkUI';
+﻿import { promptAction, LengthMetrics } from '@kit.ArkUI';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
@@ -341,11 +341,11 @@ export struct ReadAloudPlayerPage {
   }
 
   private runAnimatedButtonAction(buttonKey: string, action: () => void): void {
-    animateTo({ duration: 90, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 90, curve: Curve.EaseOut }, () => {
       this.activeButtonKey = buttonKey;
     });
     setTimeout(() => {
-      animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
         if (this.activeButtonKey === buttonKey) {
           this.activeButtonKey = '';
         }
@@ -475,14 +475,14 @@ export struct ReadAloudPlayerPage {
       const snapshot = this.novelAudioSessionManager.getSnapshot();
       const durationMs = Math.max(0, Math.floor(snapshot.audioDurationMs));
       if (durationMs <= 0) {
-        promptAction.showToast({ message: '当前音频时长未就绪，暂无法定位', duration: 1400 });
+        this.getUIContext().getPromptAction().showToast({ message: '当前音频时长未就绪，暂无法定位', duration: 1400 });
         this.progressDragPreviewText = '';
         return;
       }
       const targetMs = Math.floor((safePercent / 100) * durationMs);
       const success = await this.novelAudioSessionManager.seekToPosition(targetMs, 'player_progress_slider');
       if (!success) {
-        promptAction.showToast({ message: '拖动定位失败，请稍后重试', duration: 1400 });
+        this.getUIContext().getPromptAction().showToast({ message: '拖动定位失败，请稍后重试', duration: 1400 });
       }
       this.refreshPlayerState();
       this.progressDragPreviewText = `已定位：${this.formatDuration(targetMs)} / ${this.formatDuration(durationMs)}`;
@@ -506,7 +506,7 @@ export struct ReadAloudPlayerPage {
   }
 
   private toggleInfoPanelCollapsed(): void {
-    animateTo({ duration: 260, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseInOut }, () => {
       this.isInfoPanelCollapsed = !this.isInfoPanelCollapsed;
     });
   }
@@ -549,7 +549,7 @@ export struct ReadAloudPlayerPage {
     this.sleepTimerDialogOpacity = 0;
     this.sleepTimerDialogScale = 0.96;
     setTimeout(() => {
-      animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
         this.sleepTimerDialogOpacity = 1;
         this.sleepTimerDialogScale = 1;
       });
@@ -560,7 +560,7 @@ export struct ReadAloudPlayerPage {
     if (!this.showSleepTimerDialog) {
       return;
     }
-    animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
       this.sleepTimerDialogOpacity = 0;
       this.sleepTimerDialogScale = 0.96;
     });
@@ -572,7 +572,7 @@ export struct ReadAloudPlayerPage {
   private applySleepTimer(durationMs: number): void {
     this.readAloudController.scheduleSleepTimer(durationMs);
     this.refreshSleepTimerState();
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: `已设置定时关闭：${this.formatDuration(durationMs)}`,
       duration: 1500
     });
@@ -582,7 +582,7 @@ export struct ReadAloudPlayerPage {
   private cancelSleepTimer(): void {
     this.readAloudController.cancelSleepTimer();
     this.refreshSleepTimerState();
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: '已取消定时关闭',
       duration: 1500
     });
@@ -591,7 +591,7 @@ export struct ReadAloudPlayerPage {
   private applyCustomSleepTimer(): void {
     const parsedValue = Number.parseInt(this.customSleepTimerValue.trim(), 10);
     if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '请输入大于 0 的定时时长',
         duration: 1600
       });
@@ -877,7 +877,7 @@ export struct ReadAloudPlayerPage {
       return;
     }
     if (!this.hasSession) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '当前没有可播放内容',
         duration: 1500
       });
@@ -894,7 +894,7 @@ export struct ReadAloudPlayerPage {
 
   private async handleNovelAudioTogglePlayPause(): Promise<void> {
     if (!this.hasSession) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '当前没有可播放的听书会话',
         duration: 1400
       });
@@ -972,7 +972,7 @@ export struct ReadAloudPlayerPage {
       return;
     }
     const success = await this.novelAudioSessionManager.cacheCurrentChapterAudio();
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: success ? '当前章节听书音频已缓存' : '当前章节听书缓存失败',
       duration: 1400
     });

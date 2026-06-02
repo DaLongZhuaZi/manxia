@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * TXT目录规则管理器
  * 用于本地TXT文件的章节识别
@@ -532,7 +533,7 @@ export class NovelTxtTocRuleManager {
     };
 
     try {
-      const data: Object = JSON.parse(jsonStr);
+      const data: Object = SafeUtils.parseObj(jsonStr);
       const rules: Object[] = Array.isArray(data) ? data as Object[] : [data];
       result.total = rules.length;
 

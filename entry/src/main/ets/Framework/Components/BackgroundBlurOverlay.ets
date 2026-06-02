@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/Framework/Components/BackgroundBlurOverlay.ets
+﻿// 文件路径: entry/src/main/ets/Framework/Components/BackgroundBlurOverlay.ets
 /**
  * 后台模糊遮罩组件
  * 当应用进入后台时显示，保护用户隐私
@@ -57,7 +57,7 @@ export struct BackgroundBlurOverlay {
       this.iconScale = 1.0;
     } else {
       // 退出动画：先播放淡出，再隐藏组件
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 200,
         curve: Curve.EaseIn,
         onFinish: () => {

@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/Framework/Components/EBookMetadataDialog.ets
+﻿// 文件路径: entry/src/main/ets/Framework/Components/EBookMetadataDialog.ets
 /**
  * 电子书元数据补充对话框（增强版）
  * 用于在电子书导入时查看和编辑书籍信息
@@ -14,7 +14,7 @@ import { logger } from '../../Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
-import { picker } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import {
@@ -640,9 +640,9 @@ export struct EBookMetadataDialog {
    */
   private async selectCustomCover(): Promise<void> {
     try {
-      const photoPicker = new picker.PhotoViewPicker();
-      const selectOptions: picker.PhotoSelectOptions = {
-        MIMEType: picker.PhotoViewMIMETypes.IMAGE_TYPE,
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
+      const selectOptions: photoAccessHelper.PhotoSelectOptions = {
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
         maxSelectNumber: 1
       };
       
@@ -662,13 +662,13 @@ export struct EBookMetadataDialog {
   private validateForm(): boolean {
     if (this.title.trim().length === 0) {
       logger.warn(TAG, '书名不能为空');
-      promptAction.showToast({ message: '请输入书名', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入书名', duration: 2000 });
       return false;
     }
 
     if (this.author.trim().length === 0) {
       logger.warn(TAG, '作者不能为空');
-      promptAction.showToast({ message: '请输入作者', duration: 2000 });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入作者', duration: 2000 });
       return false;
     }
 

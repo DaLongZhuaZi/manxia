@@ -1,3 +1,5 @@
+import { common } from '@kit.AbilityKit';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * 阅读设置面板
   * 统一管理字体、背景、阅读与听书选项。
@@ -28,7 +30,7 @@ import {
   TEXT_READER_FONT_SIZE_MAX,
   clampTextReaderFontSize
 } from '../Models/TextReaderModels';
-import { picker } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
@@ -1290,9 +1292,9 @@ export struct TextReaderSettingsPanel {
    */
   private async selectBackgroundImage(): Promise<void> {
     try {
-      const photoPicker = new picker.PhotoViewPicker();
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const result = await photoPicker.select({
-        MIMEType: picker.PhotoViewMIMETypes.IMAGE_TYPE,
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
         maxSelectNumber: 1
       });
       
@@ -1355,8 +1357,8 @@ export struct TextReaderSettingsPanel {
   private async copyImageToSandbox(sourceUri: string): Promise<string | null> {
     try {
       // 获取应用缓存目录
-      const context = getContext(this);
-      const cacheDir = context.cacheDir;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
+      const cacheDir: string = context.cacheDir;
       
       // 生成目标文件名
       const timestamp = Date.now();
@@ -1370,17 +1372,17 @@ export struct TextReaderSettingsPanel {
       logger.info(TAG, `复制源文件到目标: ${sourceUri} -> ${destPath}`);
       
       // 打开源文件
-      const sourceFile = fs.openSync(sourceUri, fs.OpenMode.READ_ONLY);
+      const sourceFile = SafeFileUtils.openSync(sourceUri, fs.OpenMode.READ_ONLY);
       logger.info(TAG, `已打开源文件, fd: ${sourceFile.fd}`);
       
       // copyFileSync 支持 (fd, path) 的形式，这里使用源 fd 复制到目标路径
-      fs.copyFileSync(sourceFile.fd, destPath);
+      SafeFileUtils.copyFileSync(sourceFile.fd, destPath);
       logger.info(TAG, `copyFileSync 执行完成`);
       
-      fs.closeSync(sourceFile);
+      SafeFileUtils.closeSync(sourceFile);
       
       // 校验目标文件
-      const stat = fs.statSync(destPath);
+      const stat = SafeFileUtils.statSync(destPath);
       logger.info(TAG, `目标文件校验通过: ${destPath}, 大小: ${stat.size} bytes`);
       
       return destPath;
@@ -1409,7 +1411,7 @@ export struct TextReaderSettingsPanel {
     try {
       // 仅删除背景目录内文件
       if (path.includes('/bg_images/')) {
-        fs.unlinkSync(path);
+        SafeFileUtils.unlinkSync(path);
         logger.info(TAG, `已删除背景图片文件: ${path}`);
       }
     } catch (error) {
@@ -1421,7 +1423,7 @@ export struct TextReaderSettingsPanel {
     * 弹出删除确认对话框
    */
   private showDeleteConfirmDialog(index: number): void {
-    promptAction.showDialog({
+    this.getUIContext().getPromptAction().showDialog({
       title: '删除背景图片',
       message: '确定要删除这张背景图片吗？',
       buttons: [

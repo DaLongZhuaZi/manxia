@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { logger } from '../../Utils/Logger';
 import { DatabaseManager } from '../Database/DatabaseManager';
 import { generateUUID } from '../Utils/UUIDGenerator';
@@ -593,7 +594,7 @@ export class UnifiedAnnotationManager {
 
   private parseAnchor(raw: string): AnnotationAnchor {
     try {
-      const parsed = JSON.parse(raw) as AnnotationAnchor;
+      const parsed = SafeUtils.parseObj(raw) as AnnotationAnchor;
       return parsed || {};
     } catch (_error) {
       return {};

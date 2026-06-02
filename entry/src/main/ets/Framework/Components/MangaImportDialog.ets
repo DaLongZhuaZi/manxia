@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/MangaImportDialog.ets
 /**
  * 漫画导入配置对话框
@@ -268,7 +269,7 @@ export struct MangaImportDialog {
     const subDirs: string[] = [];
     
     try {
-      const files = fileIo.listFileSync(dirPath);
+      const files = SafeFileUtils.listFileSync(dirPath);
       
       for (const file of files) {
         const lowerFile = file.toLowerCase();
@@ -286,7 +287,7 @@ export struct MangaImportDialog {
         if (!isImage) {
           // 检查是否为目录
           try {
-            const stat = fileIo.statSync(fullPath);
+            const stat = SafeFileUtils.statSync(fullPath);
             if (stat.isDirectory()) {
               subDirs.push(fullPath);
             }
@@ -461,7 +462,7 @@ export struct MangaImportDialog {
    */
   private showToast(message: string): void {
     logger.info(TAG, `Toast: ${message}`);
-    promptAction.showToast({ message: message, duration: 2000 });
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 });
   }
 
   /**

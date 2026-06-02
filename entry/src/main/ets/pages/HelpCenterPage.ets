@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/pages/HelpCenterPage.ets
+﻿// 文件路径: entry/src/main/ets/pages/HelpCenterPage.ets
 /**
  * 帮助中心页面
  * 显示所有帮助文档的入口，支持搜索功能
@@ -99,7 +99,7 @@ export struct HelpCenterPage {
     });
     // 延迟触发入场动画
     setTimeout(() => {
-      animateTo({ duration: 400, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 400, curve: Curve.EaseOut }, () => {
         this.pageReady = true;
       });
     }, 50);
@@ -185,7 +185,7 @@ export struct HelpCenterPage {
 
       const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
       if (!globalStack || !flow.helpCenterRouteName || flow.helpCenterRouteName.length <= 0) {
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: '当前引导需要在对应页面内重播',
           duration: 1800
         });
@@ -194,7 +194,7 @@ export struct HelpCenterPage {
       globalStack.pushPathByName(flow.helpCenterRouteName, undefined);
     } catch (error) {
       logger.error(TAG, `重播引导失败: ${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '重播引导失败',
         duration: 1800
       });

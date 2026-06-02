@@ -1,4 +1,4 @@
-// 文件路径: src/main/ets/Framework/Managers/ThemeManager.ets
+﻿// 文件路径: src/main/ets/Framework/Managers/ThemeManager.ets
 /**
  * 主题管理器
  * 负责应用主题的切换、保存和加载
@@ -1168,7 +1168,7 @@ export class ThemeManager {
    * 获取所有可用主题
    */
   public getAvailableThemes(): ThemeType[] {
-    return Object.values(ThemeType);
+    return [ThemeType.LIGHT, ThemeType.DARK, ThemeType.AUTO, ThemeType.PRIVACY];
   }
 
   /**

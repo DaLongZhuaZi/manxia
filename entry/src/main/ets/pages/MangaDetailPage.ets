@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/MangaDetailPage.ets
 // 职责: 漫画详情页面，展示漫画的详细信息、章节列表等内容（含收藏持久化）
 
@@ -682,7 +684,7 @@ struct MangaDetailPage {
       // 仅用于日志的轻量存在性检查，避免 UI 失败时无上下文
       try {
         const actualPath: string = hasScheme ? rawPath.substring(7) : rawPath;
-        const stat: fs.Stat = fs.statSync(actualPath);
+        const stat: fs.Stat = SafeFileUtils.statSync(actualPath);
         logger.debug(TAG, `封面路径规范化成功: raw='${rawPath}', display='${displayPath}', size=${stat.size}`);
       } catch (statErr) {
         logger.warn(TAG, `封面路径规范化检查失败: raw='${rawPath}', display='${displayPath}', 原始错误=${String(statErr)}`);
@@ -769,7 +771,7 @@ struct MangaDetailPage {
       try {
         const hasScheme: boolean = path.indexOf('file://') === 0;
         const actualPath: string = hasScheme ? path.substring(7) : path;
-        file = fs.openSync(actualPath, fs.OpenMode.READ_ONLY);
+        file = SafeFileUtils.openSync(actualPath, fs.OpenMode.READ_ONLY);
         const src: image.ImageSource = image.createImageSource(file.fd);
         const info: image.ImageInfo = await src.getImageInfo();
         const w: number = info.size.width;
@@ -786,7 +788,7 @@ struct MangaDetailPage {
       } finally {
         if (file) {
           try {
-            fs.closeSync(file);
+            SafeFileUtils.closeSync(file);
           } catch (closeErr) {
             const closeMsg: string = closeErr instanceof Error ? closeErr.message : String(closeErr);
             logger.warn(TAG, `关闭文件描述符失败: ${closeMsg}`);
@@ -1339,20 +1341,20 @@ struct MangaDetailPage {
       
       if (success) {
         this.mangaIsNSFW = isNSFW;
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: isNSFW ? '已标记为NSFW内容' : '已标记为SFW内容',
           duration: 2000
         });
       } else {
         logger.error(TAG, `更新NSFW状态失败: 未找到内容`);
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: '更新失败：未找到内容',
           duration: 2000
         });
       }
     } catch (error) {
       logger.error(TAG, `更新NSFW状态失败: ${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '更新失败',
         duration: 2000
       });
@@ -1625,7 +1627,7 @@ struct MangaDetailPage {
           const sfwEnabled = ContentFilterManager.getInstance().isSFWModeEnabled();
           if (sfwEnabled && this.mangaIsNSFW) {
             logger.warn(TAG, 'SFW模式已启用，阻止访问NSFW内容');
-            promptAction.showToast({
+            this.getUIContext().getPromptAction().showToast({
               message: 'SFW模式已启用，无法查看NSFW内容',
               duration: 2000
             });
@@ -1957,7 +1959,7 @@ struct MangaDetailPage {
             try {
               const configJson = s.configJson as string;
               if (configJson) {
-                const config: MangaDetailSourceHeaderConfig = JSON.parse(configJson) as MangaDetailSourceHeaderConfig;
+                const config: MangaDetailSourceHeaderConfig = SafeUtils.parseObj(configJson) as MangaDetailSourceHeaderConfig;
                 this.initCoverHeadersFromSourceConfig(config);
               }
             } catch (parseErr) {
@@ -3389,8 +3391,8 @@ struct MangaDetailPage {
     if (!this.uiContext) {
       return;
     }
-    const promptAction = this.uiContext.getPromptAction();
-    if (!promptAction) {
+    const prompt = this.uiContext.getPromptAction();
+    if (!prompt) {
       return;
     }
     interface ActionMenuButtonDef { text: string; color: Resource }
@@ -3421,7 +3423,7 @@ struct MangaDetailPage {
       buttons: buttons,
       isModal: false
     };
-    promptAction.showActionMenu(options)
+    prompt.showActionMenu(options)
       .then((data: ActionMenuResult) => {
         const idx: number = data.index;
         if (idx === 0) {
@@ -3615,15 +3617,15 @@ struct MangaDetailPage {
    */
   private async downloadAndSaveCover(mangaId: string, coverUrl: string): Promise<void> {
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context) {
         throw new Error('无法获取Context');
       }
       
       // 创建漫画目录
       const mangaDir = `${context.filesDir}/manga_covers/${mangaId}`;
-      if (!fs.accessSync(mangaDir)) {
-        fs.mkdirSync(mangaDir, true);
+      if (!SafeFileUtils.accessSync(mangaDir)) {
+        SafeFileUtils.mkdirSync(mangaDir, true);
       }
       
       // 确定文件扩展名
@@ -3642,9 +3644,9 @@ struct MangaDetailPage {
       
       if (response.responseCode === 200 && response.result) {
         // 保存图片数据
-        const file = fs.openSync(coverPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.writeSync(file.fd, response.result as ArrayBuffer);
-        fs.closeSync(file);
+        const file = SafeFileUtils.openSync(coverPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(file.fd, response.result as ArrayBuffer);
+        SafeFileUtils.closeSync(file);
         
         logger.info(TAG, `封面保存成功: ${coverPath}`);
       } else {
@@ -6336,11 +6338,11 @@ struct MangaDetailPage {
 
         // 1. 删除本地下载的图片文件
         try {
-          const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
           if (context) {
             const chapterDir = `${context.filesDir}/comics/${manga.id}/chapters/${chapterId}`;
-            if (fs.accessSync(chapterDir)) {
-              fs.rmdirSync(chapterDir);
+            if (SafeFileUtils.accessSync(chapterDir)) {
+              SafeFileUtils.rmdirSync(chapterDir);
               logger.info(TAG, `已删除章节目录: ${chapterDir}`);
             }
           }

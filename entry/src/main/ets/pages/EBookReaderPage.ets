@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/EBookReaderPage.ets
 /**
  * 电子书阅读器页面
@@ -406,8 +407,9 @@ struct EBookReaderPage {
   private updateScreenOrientation(): void {
     try {
       const displayInfo = display.getDefaultDisplaySync();
-      this.screenWidth = px2vp(displayInfo.width);
-      const screenHeight = px2vp(displayInfo.height);
+      const uiContext = this.uiContext ?? this.getUIContext();
+      this.screenWidth = uiContext.px2vp(displayInfo.width);
+      const screenHeight = uiContext.px2vp(displayInfo.height);
       this.isLandscape = this.screenWidth > screenHeight;
       logger.info(TAG, `屏幕方向: ${this.isLandscape ? '横屏' : '竖屏'}, 宽度=${this.screenWidth}vp`);
     } catch (error) {
@@ -2563,7 +2565,7 @@ struct EBookReaderPage {
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
     
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -2577,7 +2579,7 @@ struct EBookReaderPage {
   */
   private hideToolbarWithAnimation(): void {
     this.clearToolbarAutoHideTimer();
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -2596,7 +2598,7 @@ struct EBookReaderPage {
   */
   private showMoreMenuWithAnimation(): void {
     this.showMoreMenu = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: curves.springMotion(0.6, 0.9)
     }, () => {
@@ -2610,7 +2612,7 @@ struct EBookReaderPage {
   * 隐藏更多菜单（带动画）
   */
   private hideMoreMenuWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 150,
       curve: Curve.EaseOut
     }, () => {
@@ -2630,7 +2632,7 @@ struct EBookReaderPage {
   private showChapterListWithAnimation(): void {
     logger.info(TAG, `显示章节列表，当前章节索引: ${this.currentChapterIndex}`);
     this.showChapterList = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -2655,7 +2657,7 @@ struct EBookReaderPage {
   * 隐藏章节列表（带动画）
   */
   private hideChapterListWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -2672,7 +2674,7 @@ struct EBookReaderPage {
   */
   private showSettingsPanelWithAnimation(): void {
     this.showSettingsPanel = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -2686,7 +2688,7 @@ struct EBookReaderPage {
   * 隐藏设置面板（带动画）
   */
   private hideSettingsPanelWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -2705,7 +2707,7 @@ struct EBookReaderPage {
   */
   private showBookInfoDialogWithAnimation(): void {
     this.showBookInfoDialog = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -2717,7 +2719,7 @@ struct EBookReaderPage {
   * 隐藏书籍信息弹窗（带动画）
   */
   private hideBookInfoDialogWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -2734,7 +2736,7 @@ struct EBookReaderPage {
   */
   private showFontSettingsPanelWithAnimation(): void {
     this.showFontSettingsPanel = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -2747,7 +2749,7 @@ struct EBookReaderPage {
   * 隐藏字体设置面板（带动画）
   */
   private hideFontSettingsPanelWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -2765,7 +2767,7 @@ struct EBookReaderPage {
   */
   private showReadingOptionsPanelWithAnimation(): void {
     this.showReadingOptionsPanel = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -2778,7 +2780,7 @@ struct EBookReaderPage {
   * 隐藏阅读设置面板（带动画）
   */
   private hideReadingOptionsPanelWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -3797,7 +3799,7 @@ struct EBookReaderPage {
   */
   private showTextReaderSettingsWithAnimation(): void {
     this.showTextReaderSettings = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
     }, () => {
@@ -3810,7 +3812,7 @@ struct EBookReaderPage {
   * 隐藏文本阅读器设置（带动画）
   */
   private hideTextReaderSettingsWithAnimation(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -3891,7 +3893,7 @@ struct EBookReaderPage {
       return null;
     }
     try {
-      const rawData = JSON.parse(domPos) as Record<string, number | string>;
+      const rawData = SafeUtils.parseObj(domPos) as Record<string, number | string>;
       const resourceIndexValue = rawData['resourceIndex'];
       const resourceCountValue = rawData['resourceCount'];
       const totalResourceCountValue = rawData['totalResourceCount'];
@@ -4228,12 +4230,12 @@ struct EBookReaderPage {
 
   private async createCurrentEBookBookmark(): Promise<void> {
     if (!this.ebook) {
-      promptAction.showToast({ message: '电子书信息未就绪' });
+      this.getUIContext().getPromptAction().showToast({ message: '电子书信息未就绪' });
       return;
     }
     const context = this.getCurrentEBookBookmarkContext();
     if (!context) {
-      promptAction.showToast({ message: '电子书信息未就绪' });
+      this.getUIContext().getPromptAction().showToast({ message: '电子书信息未就绪' });
       return;
     }
     try {
@@ -4245,14 +4247,14 @@ struct EBookReaderPage {
       });
       this.currentPageBookmarkId = bookmark.id;
       this.isCurrentPageBookmarked = true;
-      promptAction.showToast({ message: '书签已添加' });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已添加' });
       logger.info(
         TAG,
         `电子书书签添加成功: chapterIndex=${context.chapterIndex}, pageIndex=${context.pageIndex}, bookmarkId=${bookmark.id}`
       );
     } catch (error) {
       logger.error(TAG, `添加电子书书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '添加书签失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '添加书签失败' });
     }
   }
 
@@ -4263,18 +4265,18 @@ struct EBookReaderPage {
       bookmarkId = this.currentPageBookmarkId;
     }
     if (!bookmarkId || bookmarkId.trim().length <= 0) {
-      promptAction.showToast({ message: '当前页暂无书签' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页暂无书签' });
       return;
     }
     try {
       await this.annotationManager.deleteAnnotation(bookmarkId);
       this.currentPageBookmarkId = '';
       this.isCurrentPageBookmarked = false;
-      promptAction.showToast({ message: '书签已移除' });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已移除' });
       logger.info(TAG, `电子书书签移除成功: bookmarkId=${bookmarkId}`);
     } catch (error) {
       logger.error(TAG, `移除电子书书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '移除书签失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '移除书签失败' });
     }
   }
 
@@ -4292,7 +4294,7 @@ struct EBookReaderPage {
 
   private openCurrentEBookAnnotationCenter(): void {
     if (!this.ebook) {
-      promptAction.showToast({ message: '电子书信息未就绪' });
+      this.getUIContext().getPromptAction().showToast({ message: '电子书信息未就绪' });
       return;
     }
     const bookmarkContext = this.getCurrentEBookBookmarkContext();
@@ -4321,14 +4323,14 @@ struct EBookReaderPage {
             this.pathStack.pushPathByName('AnnotationCenterPage', params);
           } catch (error) {
             logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
-            promptAction.showToast({ message: '打开灵感页面失败' });
+            this.getUIContext().getPromptAction().showToast({ message: '打开灵感页面失败' });
           }
         },
         this.getUIContext()
       );
     } catch (error) {
       logger.error(TAG, `启动灵感页面过渡失败: ${String(error)}`);
-      promptAction.showToast({ message: '打开灵感页面失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '打开灵感页面失败' });
     }
   }
 

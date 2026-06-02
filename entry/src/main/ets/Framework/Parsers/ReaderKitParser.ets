@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/ReaderKitParser.ets
 /**
  * Reader Kit 电子书解析器
@@ -94,11 +95,11 @@ export class ReaderKitEBookParser {
         openTarget = `/${filePath}`;
       }
 
-      let file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
-      let stat = fileIo.statSync(file.fd);
+      let file = SafeFileUtils.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      let stat = SafeFileUtils.statSync(file.fd);
       let buffer = new ArrayBuffer(stat.size);
-      let readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      let readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
 
       if (readLen !== stat.size) {
         throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
@@ -113,11 +114,11 @@ export class ReaderKitEBookParser {
         if (filePath.startsWith('file://')) {
           const stripped = filePath.substring(7);
           const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
-          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
-          const stat = fileIo.statSync(file.fd);
+          const file = SafeFileUtils.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = SafeFileUtils.statSync(file.fd);
           const buffer = new ArrayBuffer(stat.size);
-          const readLen = fileIo.readSync(file.fd, buffer);
-          fileIo.closeSync(file);
+          const readLen = SafeFileUtils.readSync(file.fd, buffer);
+          SafeFileUtils.closeSync(file);
 
           if (readLen !== stat.size) {
             throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);

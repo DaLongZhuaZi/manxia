@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { logger } from '../../Utils/Logger';
 import { getNovelContentProcessor, ContentProcessConfig } from '../Novel/NovelContentProcessor';
@@ -21,7 +22,7 @@ function sanitizeRuleIdArray(rawValue: string): string[] {
     return [];
   }
   try {
-    const parsed = JSON.parse(rawValue) as Array<string>;
+    const parsed = SafeUtils.parseArr(rawValue) as Array<string>;
     if (!Array.isArray(parsed)) {
       return [];
     }

@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * WebDAV客户端
  * 基于perry-mitchell/webdav-client设计，适配HarmonyOS ArkTS
@@ -392,11 +394,11 @@ export class WebDAVClient {
     
     try {
       // 读取本地文件
-      const file = fileIo.openSync(localPath, fileIo.OpenMode.READ_ONLY);
-      const stat = fileIo.statSync(localPath);
+      const file = SafeFileUtils.openSync(localPath, fileIo.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(localPath);
       const buffer = new ArrayBuffer(stat.size);
-      fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       // 上传
       await this.putFileContents(remotePath, buffer);
@@ -443,9 +445,9 @@ export class WebDAVClient {
       const data = await this.getFileContents(remotePath, 'arraybuffer');
       
       // 写入本地文件
-      const file = fileIo.openSync(localPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-      fileIo.writeSync(file.fd, data as ArrayBuffer);
-      fileIo.closeSync(file);
+      const file = SafeFileUtils.openSync(localPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, data as ArrayBuffer);
+      SafeFileUtils.closeSync(file);
       
       if (onProgress) {
         onProgress(100);
@@ -700,7 +702,7 @@ export class WebDAVClient {
     }
     
     try {
-      const result: Object = JSON.parse(data);
+      const result: Object = SafeUtils.parseObj(data);
       if (Array.isArray(result)) {
         return result as Object[];
       }

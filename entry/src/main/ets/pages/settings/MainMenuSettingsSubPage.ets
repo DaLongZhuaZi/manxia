@@ -403,7 +403,7 @@ export struct MainMenuSettingsSubPage {
     try {
       await this.dataManager.saveUserSetting('default_user', 'library_view_mode', targetMode);
       this.libraryDisplayMode = mode;
-      promptAction.showDialog({
+      this.getUIContext().getPromptAction().showDialog({
         title: '配置已保存',
         message: '主页面书库显示模式已更新，需要重启APP后生效。\n\n是否立即重启？',
         buttons: [
@@ -417,7 +417,7 @@ export struct MainMenuSettingsSubPage {
       });
     } catch (error) {
       logger.error(TAG, '保存主页面书库显示模式失败', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请重试',
         duration: 1500
       });
@@ -508,7 +508,7 @@ export struct MainMenuSettingsSubPage {
         ? '折叠屏导航模式已更新，需要重启APP后生效。\n\n是否立即重启？'
         : '平板横屏顶栏位置已更新，需要重启APP后生效。\n\n是否立即重启？';
 
-      promptAction.showDialog({
+      this.getUIContext().getPromptAction().showDialog({
         title: '配置已保存',
         message: dialogMessage,
         buttons: [
@@ -522,7 +522,7 @@ export struct MainMenuSettingsSubPage {
       });
     } catch (error) {
       logger.error(TAG, '保存平板顶栏位置失败', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请重试',
         duration: 1500
       });
@@ -540,7 +540,7 @@ export struct MainMenuSettingsSubPage {
 
     logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}, skipPrivacyBiometric=${this.privacyLibrarySkipBiometricAuth}`);
 
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: '设置已保存',
       duration: 1500
     });
@@ -552,7 +552,7 @@ export struct MainMenuSettingsSubPage {
       this.mainPageBottomBarAnimationEnabled = enabled;
     } catch (error) {
       logger.error(TAG, '保存主页面底栏动画设置失败', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请重试',
         duration: 1500
       });
@@ -570,7 +570,7 @@ export struct MainMenuSettingsSubPage {
       this.bottomBarStyle = nextStyle;
       logger.info(TAG, `底栏样式已切换: ${nextStyle}`);
 
-      promptAction.showDialog({
+      this.getUIContext().getPromptAction().showDialog({
         title: '底栏样式已切换',
         message: '底栏样式已切换，需要重启APP才能生效。\n\n是否立即重启？',
         buttons: [
@@ -585,7 +585,7 @@ export struct MainMenuSettingsSubPage {
     } catch (error) {
       logger.error(TAG, '保存底栏样式失败', String(error));
       this.bottomBarStyle = previousStyle;
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请重试',
         duration: 1500
       });
@@ -596,14 +596,14 @@ export struct MainMenuSettingsSubPage {
     try {
       await this.settingsManager.setBoolean(SettingKeys.PRIVACY_LIBRARY_SKIP_BIOMETRIC_AUTH, enabled);
       this.privacyLibrarySkipBiometricAuth = enabled;
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '设置已保存',
         duration: 1500
       });
     } catch (error) {
       logger.error(TAG, '保存隐私书库验证方式设置失败', String(error));
       this.privacyLibrarySkipBiometricAuth = !enabled;
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请重试',
         duration: 1500
       });
@@ -626,14 +626,14 @@ export struct MainMenuSettingsSubPage {
         throw new Error('saveConfig failed');
       }
       this.suwayomiBrowsePageAsEntryEnabled = enabled;
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '设置已保存',
         duration: 1500
       });
     } catch (error) {
       logger.error(TAG, '保存 Suwayomi 入口设置失败', String(error));
       this.suwayomiBrowsePageAsEntryEnabled = !enabled;
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请重试',
         duration: 1500
       });
@@ -688,14 +688,14 @@ export struct MainMenuSettingsSubPage {
         throw new Error('saveConfig failed');
       }
       this.komgaBrowsePageAsEntryEnabled = enabled;
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '设置已保存',
         duration: 1500
       });
     } catch (error) {
       logger.error(TAG, '保存 Komga 入口设置失败', String(error));
       this.komgaBrowsePageAsEntryEnabled = !enabled;
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请重试',
         duration: 1500
       });
@@ -752,7 +752,7 @@ export struct MainMenuSettingsSubPage {
       logger.info(TAG, `已保存标签配置: ${JSON.stringify(finalIndices)}`);
       
       // 显示重启提示对话框
-      promptAction.showDialog({
+      this.getUIContext().getPromptAction().showDialog({
         title: '配置已保存',
         message: '底栏配置已保存，需要重启APP才能生效。\n\n是否立即重启？',
         buttons: [
@@ -848,7 +848,7 @@ export struct MainMenuSettingsSubPage {
       logger.info(TAG, 'APP已重启');
     } catch (error) {
       logger.error(TAG, '重启APP失败', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '重启失败，请手动重启APP',
         duration: 2000
       });
@@ -1063,7 +1063,7 @@ export struct MainMenuSettingsSubPage {
       .height(44)
       .width('100%')
       .onClick(() => {
-        promptAction.showDialog({
+        this.getUIContext().getPromptAction().showDialog({
           title: '确认重置',
           message: '这将重置主页面相关设置和底栏配置为默认值，是否继续？',
           buttons: [
@@ -1488,7 +1488,7 @@ export struct MainMenuSettingsSubPage {
                   .onChange((isOn: boolean) => {
                     this.libraryCoverOpenReaderEnabled = isOn;
                     this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, isOn);
-                    promptAction.showToast({
+                    this.getUIContext().getPromptAction().showToast({
                       message: '设置已保存',
                       duration: 1500
                     });
@@ -1937,7 +1937,7 @@ export struct MainMenuSettingsSubPage {
         .height('100%')
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .edgeEffect(EdgeEffect.Spring)

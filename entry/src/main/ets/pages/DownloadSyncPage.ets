@@ -1,3 +1,4 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 // 文件路径：entry/src/main/ets/pages/DownloadSyncPage.ets
 /**
  * Download同步页面
@@ -37,7 +38,6 @@ import { EBookMetadata, EBookChapter, EBook } from '../Models/EBookModels';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
-import { componentSnapshot } from '@kit.ArkUI';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
@@ -429,7 +429,7 @@ struct DownloadSyncPage {
         // 验证路径是否仍然有效
         try {
           const initFilePath = `${savedPath}/.manxia_init`;
-          const exists = fs.accessSync(initFilePath);
+          const exists = SafeFileUtils.accessSync(initFilePath);
           // accessSync返回undefined表示文件存在，抛出异常表示不存在
           logger.info(TAG, `检测到已初始化的Download目录: ${savedPath}`);
           this.downloadDirPath = savedPath;
@@ -625,7 +625,7 @@ A: 不会，原文件保持不变。`;
     try {
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
       if (!context) {
-        promptAction.showToast({ message: '无法获取上下文' });
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取上下文' });
         return;
       }
       
@@ -646,9 +646,9 @@ A: 不会，原文件保持不变。`;
           
           try {
             const testFilePath = new fileUri.FileUri(uri + '/.manxia_init').path;
-            const file = fs.openSync(testFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
-            fs.writeSync(file.fd, '漫匣应用目录初始化文件');
-            fs.closeSync(file.fd);
+            const file = SafeFileUtils.openSync(testFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
+            SafeFileUtils.writeSync(file.fd, '漫匣应用目录初始化文件');
+            SafeFileUtils.closeSync(file.fd);
             logger.info(TAG, `成功创建初始化文件: ${testFilePath}`);
           } catch (writeError) {
             logger.warn(TAG, `创建初始化文件失败: ${String(writeError)}`);
@@ -666,17 +666,17 @@ A: 不会，原文件保持不变。`;
           
           // 自动扫描文件
           this.reloadDownloadImportState().then(() => {
-            promptAction.showToast({ message: `目录连接成功，已扫描 ${this.downloadDirFileCount} 个文件` });
+            this.getUIContext().getPromptAction().showToast({ message: `目录连接成功，已扫描 ${this.downloadDirFileCount} 个文件` });
           });
         }
       }).catch((err: Error) => {
         logger.error(TAG, `DOWNLOAD模式失败: ${err.message}`);
-        promptAction.showToast({ message: `创建失败: ${err.message}` });
+        this.getUIContext().getPromptAction().showToast({ message: `创建失败: ${err.message}` });
       });
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `访问Download目录失败: ${String(error)}`);
-      promptAction.showToast({ message: `访问失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `访问失败: ${String(error)}` });
       await this.reloadDownloadImportState();
     }
   }
@@ -694,10 +694,10 @@ A: 不会，原文件保持不变。`;
         
         // 创建文件夹
         try {
-          fs.accessSync(folderPath);
+          SafeFileUtils.accessSync(folderPath);
         } catch (e) {
           // 文件夹不存在，创建它
-          fs.mkdirSync(folderPath);
+          SafeFileUtils.mkdirSync(folderPath);
           createdCount++;
           logger.info(TAG, `创建保留文件夹: ${folderName}`);
         }
@@ -729,13 +729,13 @@ A: 不会，原文件保持不变。`;
         const actualPath = new fileUri.FileUri(targetUri).path;
         
         try {
-          fs.accessSync(actualPath);
+          SafeFileUtils.accessSync(actualPath);
           logger.debug(TAG, `.nomedia文件已存在: ${actualPath}`);
           return true;
         } catch (_) {
           // 文件不存在，创建它
-          const file = fs.openSync(actualPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-          fs.closeSync(file);
+          const file = SafeFileUtils.openSync(actualPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+          SafeFileUtils.closeSync(file);
           logger.info(TAG, `.nomedia文件已创建: ${actualPath}`);
           return true;
         }
@@ -748,12 +748,12 @@ A: 不会，原文件保持不变。`;
     try {
       const nomediaPath = `${folderPath}/.nomedia`;
       try {
-        fs.accessSync(nomediaPath);
+        SafeFileUtils.accessSync(nomediaPath);
         logger.debug(TAG, `.nomedia文件已存在（路径模式）: ${nomediaPath}`);
         return true;
       } catch (_) {
-        const file = fs.openSync(nomediaPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        fs.closeSync(file);
+        const file = SafeFileUtils.openSync(nomediaPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        SafeFileUtils.closeSync(file);
         logger.info(TAG, `.nomedia文件已创建（路径模式）: ${nomediaPath}`);
         return true;
       }
@@ -792,7 +792,7 @@ A: 不会，原文件保持不变。`;
   private async scanDownloadDir(showToast: boolean = true): Promise<void> {
     if (!this.downloadDirPath) {
       if (showToast) {
-        promptAction.showToast({ message: '\u8bf7\u5148\u8bbf\u95eeDownload\u76ee\u5f55' });
+        this.getUIContext().getPromptAction().showToast({ message: '\u8bf7\u5148\u8bbf\u95eeDownload\u76ee\u5f55' });
       }
       return;
     }
@@ -817,13 +817,13 @@ A: 不会，原文件保持不变。`;
       
       logger.info(TAG, `\u626b\u63cf\u5b8c\u6210: \u6f2b\u753b=${this.pendingMangaFiles.length}, \u7535\u5b50\u4e66=${this.pendingEbookFiles.length}, PDF=${this.pendingPdfFiles.length}, \u5c0f\u8bf4=${this.pendingNovelFiles.length}`);
       if (showToast) {
-        promptAction.showToast({ message: `\u626b\u63cf\u5b8c\u6210\uff0c\u53d1\u73b0 ${totalPending} \u4e2a\u53ef\u5bfc\u5165\u6587\u4ef6` });
+        this.getUIContext().getPromptAction().showToast({ message: `\u626b\u63cf\u5b8c\u6210\uff0c\u53d1\u73b0 ${totalPending} \u4e2a\u53ef\u5bfc\u5165\u6587\u4ef6` });
       }
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `\u626b\u63cf\u76ee\u5f55\u5931\u8d25: ${String(error)}`);
       if (showToast) {
-        promptAction.showToast({ message: `\u626b\u63cf\u5931\u8d25: ${String(error)}` });
+        this.getUIContext().getPromptAction().showToast({ message: `\u626b\u63cf\u5931\u8d25: ${String(error)}` });
       }
     } finally {
       this.isScanning = false;
@@ -838,7 +838,7 @@ A: 不会，原文件保持不变。`;
     const currentPath = relativePath ? `${basePath}/${relativePath}` : basePath;
     
     try {
-      const entries = fs.listFileSync(currentPath);
+      const entries = SafeFileUtils.listFileSync(currentPath);
       
       for (const entry of entries) {
         if (entry.startsWith('.')) continue;
@@ -848,7 +848,7 @@ A: 不会，原文件保持不变。`;
         const isReserved = this.isReservedFolder(entry);
         
         try {
-          const stat = fs.statSync(fullPath);
+          const stat = SafeFileUtils.statSync(fullPath);
           const isDir = stat.isDirectory();
           
           const node: FileTreeNode = {
@@ -1047,7 +1047,7 @@ A: 不会，原文件保持不变。`;
               .width('100%')
               .padding({ left: 16, right: 16, top: 8, bottom: this.navigationBarHeight + 8 })
             }
-            .id('guide_download_sync_scroll')
+            .id('' as string)
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
@@ -1080,7 +1080,7 @@ A: 不会，原文件保持不变。`;
               .width('100%')
               .padding({ left: 16, right: 16, top: 8, bottom: this.navigationBarHeight + 8 })
             }
-            .id('guide_download_sync_scroll')
+            .id('' as string)
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
@@ -1108,7 +1108,7 @@ A: 不会，原文件保持不变。`;
         }
         .width('100%')
         .height('100%')
-        .id('guide_download_sync_root')
+        .id('' as string)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .constraintSize({ maxWidth: this.responsive_maxContentWidth })
         .padding({
@@ -1277,7 +1277,7 @@ A: 不会，原文件保持不变。`;
       offsetY: 8
     })
     .margin({ left: 16, right: 16, top: 8, bottom: 4 })
-    .id('guide_download_sync_tabs')
+    .id('' as string)
   }
 
   @Builder
@@ -1555,12 +1555,12 @@ A: 不会，原文件保持不变。`;
       .borderRadius(10)
       .onClick(() => {
         void this.reloadDownloadImportState().then(() => {
-          promptAction.showToast({ message: '\u5df2\u5237\u65b0\u5bfc\u5165\u72b6\u6001' });
+          this.getUIContext().getPromptAction().showToast({ message: '\u5df2\u5237\u65b0\u5bfc\u5165\u72b6\u6001' });
         });
       })
     }
     .width('100%')
-    .id('guide_download_sync_imported_status')
+    .id('' as string)
   }
 
   private getImportedCount(): number {
@@ -1581,7 +1581,7 @@ A: 不会，原文件保持不变。`;
     const selected = this.selectedPaths;
 
     if (selected.length === 0) {
-      promptAction.showToast({ message: '请先选择要导入的文件' });
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择要导入的文件' });
       return;
     }
 
@@ -1605,7 +1605,7 @@ A: 不会，原文件保持不变。`;
     }
 
     if (mangaFiles.length === 0 && ebookFiles.length === 0 && pdfFiles.length === 0 && novelFiles.length === 0) {
-      promptAction.showToast({ message: '选中的文件类型不支持导入' });
+      this.getUIContext().getPromptAction().showToast({ message: '选中的文件类型不支持导入' });
       return;
     }
 
@@ -1735,7 +1735,7 @@ A: 不会，原文件保持不变。`;
 
   private toggleNodeExpanded(path: string): void {
     this.expandedPaths[path] = !this.expandedPaths[path];
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 250,
       curve: Curve.EaseInOut
     }, () => {
@@ -1999,7 +1999,7 @@ A: 不会，原文件保持不变。`;
       }
     }
     .width('100%')
-    .id('guide_download_sync_folder_status')
+    .id('' as string)
   }
 
   @Builder
@@ -2222,12 +2222,12 @@ A: 不会，原文件保持不变。`;
       offsetX: 0,
       offsetY: 8
     })
-    .id('guide_download_sync_quick_import')
+    .id('' as string)
   }
 
   private async importMangaFromDownloadDir(): Promise<void> {
     if (this.pendingMangaFiles.length === 0) {
-      promptAction.showToast({ message: '没有待导入的漫画文件' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有待导入的漫画文件' });
       return;
     }
     
@@ -2393,7 +2393,7 @@ A: 不会，原文件保持不变。`;
     }
     
     this.updateProgress(ImportStatus.COMPLETED, `完成: 成功 ${successCount}/${total}`, 100);
-    promptAction.showToast({ message: `导入完成: 成功 ${successCount}` });
+    this.getUIContext().getPromptAction().showToast({ message: `导入完成: 成功 ${successCount}` });
     await this.reloadDownloadImportState();
     
     if (successCount > 0) {
@@ -2422,16 +2422,16 @@ A: 不会，原文件保持不变。`;
     
     // [修复] 漫画存储到manga子目录
     const mangaBaseDir = `${this.downloadDirPath}/manga`;
-    try { fs.mkdirSync(mangaBaseDir); } catch (e) { /* 已存在 */ }
+    try { SafeFileUtils.mkdirSync(mangaBaseDir); } catch (e) { /* 已存在 */ }
     const mangaPath = `${mangaBaseDir}/${folderName}`;
-    try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
+    try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
     
     let firstCoverPath = '';
     
     for (let i = 0; i < group.chapters.length; i++) {
       const chapter = group.chapters[i];
       const chapterPath = `${mangaPath}/${this.sanitizeFolderName(chapter.title)}`;
-      try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
       
       const isFolder = chapter.fileUri.startsWith('folder:');
       let sourcePath = '';
@@ -2501,7 +2501,7 @@ A: 不会，原文件保持不变。`;
       const ext = coverSrcPath.substring(coverSrcPath.lastIndexOf('.'));
       const coverPath = `${mangaPath}/cover${ext}`;
       try {
-        fs.copyFileSync(coverSrcPath, coverPath);
+        SafeFileUtils.copyFileSync(coverSrcPath, coverPath);
         await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
         logger.info(TAG, `封面已保存: ${coverPath}`);
       } catch (e) {
@@ -2517,7 +2517,7 @@ A: 不会，原文件保持不变。`;
    */
   private collectAndCopyImages(sourcePath: string, destPath: string, imageFiles: string[]): void {
     try {
-      const files = fs.listFileSync(sourcePath);
+      const files = SafeFileUtils.listFileSync(sourcePath);
       
       for (const file of files) {
         const srcFullPath = `${sourcePath}/${file}`;
@@ -2525,7 +2525,7 @@ A: 不会，原文件保持不变。`;
         if (/\.(jpg|jpeg|png|webp|avif|gif|bmp)$/i.test(file)) {
           const destFullPath = `${destPath}/${file}`;
           try {
-            fs.copyFileSync(srcFullPath, destFullPath);
+            SafeFileUtils.copyFileSync(srcFullPath, destFullPath);
             imageFiles.push(file);
           } catch (e) {
             logger.warn(TAG, `复制文件失败: ${file}`);
@@ -2533,7 +2533,7 @@ A: 不会，原文件保持不变。`;
         } else {
           // 检查是否为子目录，递归处理
           try {
-            const stat = fs.statSync(srcFullPath);
+            const stat = SafeFileUtils.statSync(srcFullPath);
             if (stat.isDirectory()) {
               this.collectAndCopyImages(srcFullPath, destPath, imageFiles);
             }
@@ -2588,7 +2588,7 @@ A: 不会，原文件保持不变。`;
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `解析文件夹失败: ${displayName}`, String(error));
-      promptAction.showToast({ message: `解析失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `解析失败: ${String(error)}` });
       void this.reloadDownloadImportState();
     }
   }
@@ -2637,7 +2637,7 @@ A: 不会，原文件保持不变。`;
         return;
       }
       logger.error(TAG, `解析失败: ${filename}`, String(error));
-      promptAction.showToast({ message: `解析失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `解析失败: ${String(error)}` });
       void this.reloadDownloadImportState();
     }
   }
@@ -2651,9 +2651,9 @@ A: 不会，原文件保持不变。`;
       
       // [修复] 漫画存储到manga子目录
       const mangaBaseDir = `${this.downloadDirPath}/manga`;
-      try { fs.mkdirSync(mangaBaseDir); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(mangaBaseDir); } catch (e) { /* 已存在 */ }
       const mangaPath = `${mangaBaseDir}/${folderName}`;
-      try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
       
       const mangaId = await this.dataManager.addComicInfo({
         title: result.title,
@@ -2672,7 +2672,7 @@ A: 不会，原文件保持不变。`;
       await DataService.getInstance().addToFavorites(mangaId, result.tags);
       
       const chapterPath = `${mangaPath}/第1话`;
-      try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
       
       const imageFiles: string[] = [];
       if (parsed.extractedPath) {
@@ -2683,7 +2683,7 @@ A: 不会，原文件保持不变。`;
           const comicInfoSrc = `${parsed.extractedPath}/ComicInfo.xml`;
           const comicInfoDest = `${mangaPath}/ComicInfo.xml`;
           try {
-            fs.copyFileSync(comicInfoSrc, comicInfoDest);
+            SafeFileUtils.copyFileSync(comicInfoSrc, comicInfoDest);
             logger.info(TAG, `ComicInfo.xml已复制: ${comicInfoDest}`);
           } catch (e) {
             logger.warn(TAG, `复制ComicInfo.xml失败: ${String(e)}`);
@@ -2714,7 +2714,7 @@ A: 不会，原文件保持不变。`;
         const ext = coverSrcPath.substring(coverSrcPath.lastIndexOf('.'));
         const coverPath = `${mangaPath}/cover${ext}`;
         try {
-          fs.copyFileSync(coverSrcPath, coverPath);
+          SafeFileUtils.copyFileSync(coverSrcPath, coverPath);
           await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
           logger.info(TAG, `封面已保存: ${coverPath}`);
         } catch (e) {
@@ -2723,7 +2723,7 @@ A: 不会，原文件保持不变。`;
       }
       
       this.updateProgress(ImportStatus.COMPLETED, '导入完成', 100);
-      promptAction.showToast({ message: '导入成功' });
+      this.getUIContext().getPromptAction().showToast({ message: '导入成功' });
       await this.reloadDownloadImportState();
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
       
@@ -2734,13 +2734,13 @@ A: 不会，原文件保持不变。`;
       const error = e as Error;
       logger.error(TAG, `导入失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
       await this.reloadDownloadImportState();
     }
   }
 
   private askDeleteSourceFile(fileUri: string, title: string): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '删除原文件',
       message: `漫画"${title}"已成功导入。\n是否删除原压缩包文件以节省空间？`,
       primaryButton: {
@@ -2768,14 +2768,14 @@ A: 不会，原文件保持不变。`;
         filePath = fileUri.replace('file://', '');
       }
       
-      fs.unlinkSync(filePath);
+      SafeFileUtils.unlinkSync(filePath);
       logger.info(TAG, `原文件已删除: ${filePath}`);
-      promptAction.showToast({ message: '原文件已删除' });
+      this.getUIContext().getPromptAction().showToast({ message: '原文件已删除' });
       void this.reloadDownloadImportState();
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `删除原文件失败: ${String(error)}`);
-      promptAction.showToast({ message: `删除失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${String(error)}` });
     }
   }
 
@@ -2900,7 +2900,7 @@ A: 不会，原文件保持不变。`;
 
   private async addPageInfoToDatabaseFromPath(chapterId: string, chapterPath: string): Promise<void> {
     try {
-      const files = fs.listFileSync(chapterPath);
+      const files = SafeFileUtils.listFileSync(chapterPath);
       const imageFiles = files.filter((f: string) => /\.(jpg|jpeg|png|webp|avif)$/i.test(f)).sort();
       
       for (let i = 0; i < imageFiles.length; i++) {
@@ -2925,7 +2925,7 @@ A: 不会，原文件保持不变。`;
 
   private async importEbooksFromDownloadDir(): Promise<void> {
     if (this.pendingEbookFiles.length === 0) {
-      promptAction.showToast({ message: '没有待导入的电子书文件' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有待导入的电子书文件' });
       return;
     }
     
@@ -2933,7 +2933,7 @@ A: 不会，原文件保持不变。`;
     const sourceFiles: string[] = [...this.pendingEbookFiles];
     this.batchImportTotalCount = sourceFiles.length;
     
-    promptAction.showToast({ message: `开始导入 ${sourceFiles.length} 个电子书/小说文件` });
+    this.getUIContext().getPromptAction().showToast({ message: `开始导入 ${sourceFiles.length} 个电子书/小说文件` });
     
     let successCount = 0;
     let failCount = 0;
@@ -2942,7 +2942,7 @@ A: 不会，原文件保持不变。`;
       const relativePath = sourceFiles[i];
       this.batchImportCurrentIndex = i + 1;
       
-      promptAction.showToast({ message: `正在处理第 ${i + 1}/${sourceFiles.length} 个: ${relativePath.substring(relativePath.lastIndexOf('/') + 1)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `正在处理第 ${i + 1}/${sourceFiles.length} 个: ${relativePath.substring(relativePath.lastIndexOf('/') + 1)}` });
       
       // 等待用户确认后再处理下一个
       const success = await this.showEbookMetadataDialogAsync(relativePath, i + 1, sourceFiles.length);
@@ -2956,7 +2956,7 @@ A: 不会，原文件保持不变。`;
     
     // 显示最终结果
     if (successCount > 0 || failCount > 0) {
-      promptAction.showToast({ 
+      this.getUIContext().getPromptAction().showToast({ 
         message: `导入完成: 成功 ${successCount} 个${failCount > 0 ? `, 失败/取消 ${failCount} 个` : ''}` 
       });
     }
@@ -2978,24 +2978,24 @@ A: 不会，原文件保持不变。`;
       
       // 创建临时目录用于解析
       const ebooksBasePath = this.getSandboxEbooksBasePath();
-      try { fs.mkdirSync(ebooksBasePath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(ebooksBasePath); } catch (e) { /* 已存在 */ }
       
       const bookName = filename.replace(/\.(txt|epub|mobi|azw|azw3|pdf)$/i, '').replace(/[<>:"/\\|?*]/g, '_');
       const bookFolderPath = `${ebooksBasePath}/${bookName}`;
-      try { fs.mkdirSync(bookFolderPath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(bookFolderPath); } catch (e) { /* 已存在 */ }
       
       const ext = filename.includes('.') ? filename.substring(filename.lastIndexOf('.')) : '.epub';
       const targetPath = `${bookFolderPath}/${bookName}${ext}`;
       
       // 复制文件到目标位置
-      fs.copyFileSync(sourcePath, targetPath);
+      SafeFileUtils.copyFileSync(sourcePath, targetPath);
       logger.info(TAG, `电子书复制成功: ${targetPath}`);
       
       // 解析电子书
       const parser = EBookParserFactory.createParser(targetPath);
       if (!parser) {
         logger.warn(TAG, `不支持的电子书格式: ${targetPath}`);
-        promptAction.showToast({ message: `不支持的电子书格式: ${filename}` });
+        this.getUIContext().getPromptAction().showToast({ message: `不支持的电子书格式: ${filename}` });
         return false;
       }
       
@@ -3018,7 +3018,7 @@ A: 不会，原文件保持不变。`;
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `解析电子书失败 ${relativePath}: ${String(error)}`);
-      promptAction.showToast({ message: `解析失败: ${filename}` });
+      this.getUIContext().getPromptAction().showToast({ message: `解析失败: ${filename}` });
       return false;
     }
   }
@@ -3049,11 +3049,11 @@ A: 不会，原文件保持不变。`;
     if (ebook.metadata.coverImagePath) {
       try {
         const originalCoverPath = ebook.metadata.coverImagePath;
-        if (fs.accessSync(originalCoverPath)) {
+        if (SafeFileUtils.accessSync(originalCoverPath)) {
           const coverExt = originalCoverPath.includes('.') ? 
             originalCoverPath.substring(originalCoverPath.lastIndexOf('.')) : '.jpg';
           const newCoverPath = `${folderPath}/cover${coverExt}`;
-          fs.copyFileSync(originalCoverPath, newCoverPath);
+          SafeFileUtils.copyFileSync(originalCoverPath, newCoverPath);
           ebook.metadata.coverImagePath = newCoverPath;
           coverSaved = true;
           logger.info(TAG, `电子书封面已保存: ${newCoverPath}`);
@@ -3199,7 +3199,7 @@ A: 不会，原文件保持不变。`;
           const coverExt = result.customCoverPath.includes('.') ? 
             result.customCoverPath.substring(result.customCoverPath.lastIndexOf('.')) : '.jpg';
           const newCoverPath = `${this.pendingEbookFolderPath}/cover${coverExt}`;
-          fs.copyFileSync(result.customCoverPath, newCoverPath);
+          SafeFileUtils.copyFileSync(result.customCoverPath, newCoverPath);
           this.pendingEbookData.metadata.coverImagePath = newCoverPath;
           logger.info(TAG, `自定义封面已保存: ${newCoverPath}`);
         } catch (e) {
@@ -3218,7 +3218,7 @@ A: 不会，原文件保持不变。`;
       logger.info(TAG, `电子书导入成功: ${result.metadata.title}`);
       await this.reloadDownloadImportState();
       this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${result.metadata.title}`, 100);
-      promptAction.showToast({ message: `导入成功: ${result.metadata.title}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入成功: ${result.metadata.title}` });
       
       // 批量导入时不询问删除源文件，最后统一处理
       if (this.batchImportTotalCount <= 1) {
@@ -3230,7 +3230,7 @@ A: 不会，原文件保持不变。`;
       const error = e as Error;
       logger.error(TAG, `保存电子书失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
       await this.reloadDownloadImportState();
       return false;
     } finally {
@@ -3284,11 +3284,11 @@ A: 不会，原文件保持不变。`;
         if (ebook.metadata.coverImagePath) {
           try {
             const originalCoverPath = ebook.metadata.coverImagePath;
-            if (fs.accessSync(originalCoverPath)) {
+            if (SafeFileUtils.accessSync(originalCoverPath)) {
               const coverExt = originalCoverPath.includes('.') ? 
                 originalCoverPath.substring(originalCoverPath.lastIndexOf('.')) : '.jpg';
               const newCoverPath = `${bookFolderPath}/cover${coverExt}`;
-              fs.copyFileSync(originalCoverPath, newCoverPath);
+              SafeFileUtils.copyFileSync(originalCoverPath, newCoverPath);
               ebook.metadata.coverImagePath = newCoverPath;
               coverSaved = true;
               logger.info(TAG, `电子书封面已保存: ${newCoverPath}`);
@@ -3319,7 +3319,7 @@ A: 不会，原文件保持不变。`;
           for (const ext of coverFormats) {
             const testPath = `${bookFolderPath}/cover.${ext}`;
             try {
-              if (fs.accessSync(testPath)) {
+              if (SafeFileUtils.accessSync(testPath)) {
                 ebook.metadata.coverImagePath = testPath;
                 coverSaved = true;
                 logger.info(TAG, `使用已有封面: ${testPath}`);
@@ -3351,7 +3351,7 @@ A: 不会，原文件保持不变。`;
 
   private async importPdfsFromDownloadDir(): Promise<void> {
     if (this.pendingPdfFiles.length === 0) {
-      promptAction.showToast({ message: '没有待导入的PDF文件' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有待导入的PDF文件' });
       return;
     }
     
@@ -3368,7 +3368,7 @@ A: 不会，原文件保持不变。`;
       this.updateProgress(ImportStatus.IDLE, `配置PDF导入 (${i + 1}/${pendingFiles.length})`, 10);
       await this.handlePdfImportWithCategorySelection(pendingFiles[i]);
     }
-    promptAction.showToast({ message: `已处理 ${pendingFiles.length} 个PDF导入请求` });
+    this.getUIContext().getPromptAction().showToast({ message: `已处理 ${pendingFiles.length} 个PDF导入请求` });
   }
 
   /**
@@ -3377,7 +3377,7 @@ A: 不会，原文件保持不变。`;
    */
   private async importNovelsFromDownloadDir(): Promise<void> {
     if (this.pendingNovelFiles.length === 0) {
-      promptAction.showToast({ message: '没有待导入的小说文件' });
+      this.getUIContext().getPromptAction().showToast({ message: '没有待导入的小说文件' });
       return;
     }
     
@@ -3425,7 +3425,7 @@ A: 不会，原文件保持不变。`;
           void this.reloadDownloadImportState();
           // 询问是否继续处理剩余文件
           if (index < files.length - 1) {
-            AlertDialog.show({
+            this.getUIContext().showAlertDialog({
               title: '继续导入',
               message: `还有 ${files.length - index - 1} 个小说文件未处理，是否继续？`,
               primaryButton: {
@@ -3467,12 +3467,12 @@ A: 不会，原文件保持不变。`;
       
       // 创建novel子目录
       const novelBasePath = `${this.downloadDirPath}/novel`;
-      try { fs.mkdirSync(novelBasePath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(novelBasePath); } catch (e) { /* 已存在 */ }
       
       // 为小说创建单独的文件夹
       const bookName = result.title.replace(/[<>:"/\\|?*]/g, '_');
       const bookFolderPath = `${novelBasePath}/${bookName}`;
-      try { fs.mkdirSync(bookFolderPath); } catch (e) { /* 已存在 */ }
+      try { SafeFileUtils.mkdirSync(bookFolderPath); } catch (e) { /* 已存在 */ }
       
       const targetPath = `${bookFolderPath}/${bookName}.txt`;
       
@@ -3492,7 +3492,7 @@ A: 不会，原文件保持不变。`;
       if (importSuccess) {
         await this.reloadDownloadImportState();
         this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${result.title}`, 100);
-        promptAction.showToast({ message: `小说导入成功: ${result.title}` });
+        this.getUIContext().getPromptAction().showToast({ message: `小说导入成功: ${result.title}` });
         this.askDeleteSourceFile(sourceUri, filename);
       } else {
         this.updateProgress(ImportStatus.ERROR, `导入失败: ${result.title}`, 0);
@@ -3501,7 +3501,7 @@ A: 不会，原文件保持不变。`;
       const error = e as Error;
       logger.error(TAG, `导入小说失败 ${filename}: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
-      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${String(error)}` });
       await this.reloadDownloadImportState();
     }
   }
@@ -3517,11 +3517,11 @@ A: 不会，原文件保持不变。`;
   ): Promise<void> {
     try {
       // 读取源文件
-      const file = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-      const stat = fileIo.statSync(file.fd);
+      const file = SafeFileUtils.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(file.fd);
       const buffer = new ArrayBuffer(stat.size);
-      fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       
       // 根据用户选择的编码解码文件内容
       let encoding = 'utf-8';
@@ -3570,9 +3570,9 @@ A: 不会，原文件保持不变。`;
       const encoder = new util.TextEncoder('utf-8');
       const utf8Buffer = encoder.encodeInto(content);
       
-      const targetFile = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(targetFile.fd, utf8Buffer.buffer);
-      fileIo.closeSync(targetFile);
+      const targetFile = SafeFileUtils.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(targetFile.fd, utf8Buffer.buffer);
+      SafeFileUtils.closeSync(targetFile);
       
       logger.info(TAG, `文件已保存为UTF-8编码: ${targetPath}`);
     } catch (e) {
@@ -3683,7 +3683,7 @@ A: 不会，原文件保持不变。`;
               const coverExt = metadata.coverPath.includes('.') ? 
                 metadata.coverPath.substring(metadata.coverPath.lastIndexOf('.')) : '.jpg';
               const newCoverPath = `${bookFolderPath}/cover${coverExt}`;
-              fs.copyFileSync(metadata.coverPath, newCoverPath);
+              SafeFileUtils.copyFileSync(metadata.coverPath, newCoverPath);
               ebook.metadata.coverImagePath = newCoverPath;
               logger.info(TAG, `封面已复制到: ${newCoverPath}`);
             } else {
@@ -3702,7 +3702,7 @@ A: 不会，原文件保持不变。`;
           for (const ext of coverFormats) {
             const testPath = `${bookFolderPath}/cover.${ext}`;
             try {
-              fs.accessSync(testPath);
+              SafeFileUtils.accessSync(testPath);
               ebook.metadata.coverImagePath = testPath;
               coverSaved = true;
               logger.info(TAG, `使用已有封面: ${testPath}`);
@@ -3752,7 +3752,7 @@ A: 不会，原文件保持不变。`;
    */
   private async generateCoverWithSnapshot(title: string, outputPath: string): Promise<boolean> {
     try {
-      const pixelMap = await componentSnapshot.createFromBuilder(
+      const pixelMap = await this.getUIContext().getComponentSnapshot().createFromBuilder(
         () => { this.buildCoverForSnapshot(title); }
       );
       
@@ -3850,7 +3850,7 @@ A: 不会，原文件保持不变。`;
         quality: 90
       };
       
-      const arrayBuffer = await imagePacker.packing(pixelMap, packOptions);
+      const arrayBuffer = await imagePacker.packToData(pixelMap, packOptions);
       const file = await fileIo.open(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       await fileIo.write(file.fd, arrayBuffer);
       await fileIo.close(file.fd);
@@ -3882,7 +3882,7 @@ A: 不会，原文件保持不变。`;
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `\u5904\u7406PDF\u6587\u4ef6\u5bfc\u5165\u5931\u8d25: ${String(error)}`);
-      promptAction.showToast({ message: `PDF\u5bfc\u5165\u5931\u8d25: ${String(error)}` });
+      this.getUIContext().getPromptAction().showToast({ message: `PDF\u5bfc\u5165\u5931\u8d25: ${String(error)}` });
       await this.reloadDownloadImportState();
     }
   }
@@ -3936,16 +3936,16 @@ A: 不会，原文件保持不变。`;
 
     taskManager.startTask(taskId).then(() => {
       logger.info(TAG, `PDF导入任务完成: ${taskId}`);
-      promptAction.showToast({ message: `导入成功: ${dialogResult.title}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入成功: ${dialogResult.title}` });
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
       void this.reloadDownloadImportState();
     }).catch((error: Error) => {
       logger.error(TAG, `PDF导入任务失败: ${taskId}`, error.message);
-      promptAction.showToast({ message: `导入失败: ${error.message}` });
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${error.message}` });
       void this.reloadDownloadImportState();
     });
 
-    promptAction.showToast({ message: 'PDF导入已开始，可以离开此页面' });
+    this.getUIContext().getPromptAction().showToast({ message: 'PDF导入已开始，可以离开此页面' });
   }
 
   private async executePdfImportWithDialogResult(

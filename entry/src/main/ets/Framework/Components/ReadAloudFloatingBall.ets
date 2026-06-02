@@ -1,4 +1,4 @@
-import { promptAction } from '@kit.ArkUI';
+﻿import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { ReadAloudController } from '../ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../EventBus';
@@ -423,7 +423,7 @@ export struct ReadAloudFloatingBall {
     }
     const snapshot = this.readAloudController.getSnapshot();
     if (!snapshot.hasContext) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '当前没有可播放内容',
         duration: 1500
       });
@@ -441,7 +441,7 @@ export struct ReadAloudFloatingBall {
   private async toggleNovelAudioPlayback(): Promise<void> {
     const snapshot = this.novelAudioSessionManager.getSnapshot();
     if (!snapshot.hasSession) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '当前没有可播放的听书会话',
         duration: 1500
       });
@@ -451,7 +451,7 @@ export struct ReadAloudFloatingBall {
       await this.novelAudioSessionManager.togglePlayPause();
     } catch (error) {
       logger.warn(TAG, `悬浮球切换听书播放状态失败: ${String(error)}`);
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '切换播放状态失败',
         duration: 1500
       });
@@ -463,7 +463,7 @@ export struct ReadAloudFloatingBall {
     const novelAudioSnapshot = this.novelAudioSessionManager.getSnapshot();
     const context = this.readAloudController.getContextSnapshot();
     if (!novelAudioSnapshot.hasSession && !context) {
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '当前没有可播放内容',
         duration: 1500
       });

@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * 通用解压缩工具类
  * 用于数据管理功能中的文件解压缩操作
@@ -364,11 +365,11 @@ export class CompressionUtils {
       await this.sandboxManager.createDirectory(tempDir);
       
       // 使用fs.openSync打开URI文件（只读模式）
-      const sourceFile = fileIo.openSync(uriPath, fileIo.OpenMode.READ_ONLY);
+      const sourceFile = SafeFileUtils.openSync(uriPath, fileIo.OpenMode.READ_ONLY);
       
       try {
         // 获取文件大小
-        const stat = fileIo.statSync(sourceFile.fd);
+        const stat = SafeFileUtils.statSync(sourceFile.fd);
         const fileSize = stat.size;
         
         if (fileSize === 0) {
@@ -383,24 +384,24 @@ export class CompressionUtils {
         
         // 创建缓冲区读取文件内容
         const buffer = new ArrayBuffer(fileSize);
-        const readLength = fileIo.readSync(sourceFile.fd, buffer);
+        const readLength = SafeFileUtils.readSync(sourceFile.fd, buffer);
         
         if (readLength !== fileSize) {
           throw new Error(`文件读取不完整: 期望 ${fileSize} 字节，实际读取 ${readLength} 字节`);
         }
         
         // 创建目标文件并写入内容
-        const targetFile = fileIo.openSync(tempFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+        const targetFile = SafeFileUtils.openSync(tempFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
         
         try {
-          fileIo.writeSync(targetFile.fd, buffer);
+          SafeFileUtils.writeSync(targetFile.fd, buffer);
           logger.debug(TAG, `URI文件复制到临时目录: ${uriPath} -> ${tempFilePath}, 大小: ${readLength} bytes`);
           return tempFilePath;
         } finally {
-          fileIo.closeSync(targetFile);
+          SafeFileUtils.closeSync(targetFile);
         }
       } finally {
-        fileIo.closeSync(sourceFile);
+        SafeFileUtils.closeSync(sourceFile);
       }
     } catch (error) {
       const errorStr = String(error);
@@ -694,11 +695,11 @@ export class CompressionUtils {
         throw new Error(`ZIP 条目解压失败: ${entryName}`);
       }
 
-      const file = fs.openSync(outputPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      const file = SafeFileUtils.openSync(outputPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
       try {
-        fs.writeSync(file.fd, content);
+        SafeFileUtils.writeSync(file.fd, content);
       } finally {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
       }
     }
   }

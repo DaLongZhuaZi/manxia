@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Debug/ErrorRecordManager.ets
 /**
  * 统一错误记录管理器
@@ -411,17 +413,17 @@ export class ErrorRecordManager {
         return;
       }
 
-      const exists = fs.accessSync(this.recordsFilePath);
+      const exists = SafeFileUtils.accessSync(this.recordsFilePath);
       if (!exists) {
         // 首次启动时文件不存在属于正常情况，保持内存中的已有记录
         this.isLoaded = true;
         return;
       }
 
-      const file = fs.openSync(this.recordsFilePath, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(this.recordsFilePath);
+      const file = SafeFileUtils.openSync(this.recordsFilePath, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(this.recordsFilePath);
       if (stat.size === 0) {
-        fs.closeSync(file);
+        SafeFileUtils.closeSync(file);
         if (this.records.length === 0) {
           this.records = [];
         }
@@ -430,12 +432,12 @@ export class ErrorRecordManager {
       }
 
       const buf = new ArrayBuffer(Number(stat.size));
-      fs.readSync(file.fd, buf);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buf);
+      SafeFileUtils.closeSync(file);
 
       const decoder = new util.TextDecoder('utf-8');
       const jsonStr = decoder.decodeToString(new Uint8Array(buf));
-      const parsed = JSON.parse(jsonStr) as Array<Partial<ErrorRecord>>;
+      const parsed = SafeUtils.parseArr(jsonStr) as Array<Partial<ErrorRecord>>;
 
       if (!Array.isArray(parsed)) {
         if (this.records.length === 0) {
@@ -562,9 +564,9 @@ export class ErrorRecordManager {
         return;
       }
       const jsonStr = JSON.stringify(this.records);
-      const file = fs.openSync(this.recordsFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, jsonStr);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(this.recordsFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(file.fd, jsonStr);
+      SafeFileUtils.closeSync(file);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[NGF] ${TAG}: 保存错误记录失败: ${msg}`);

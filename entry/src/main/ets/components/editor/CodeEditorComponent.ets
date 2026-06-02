@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 代码编辑器组件
  * 基于WebView + Monaco Editor实现
@@ -274,7 +275,7 @@ export struct CodeEditorComponent {
     if (!this.isReady) return { line: 1, column: 1 };
     try {
       const result = await this.webController.runJavaScript('JSON.stringify(getCursorPosition())');
-      return JSON.parse(result as string) as CursorPosition;
+      return SafeUtils.parseObj(result as string) as CursorPosition;
     } catch (e) {
       logger.error(TAG, `获取光标位置失败: ${e}`);
       return { line: 1, column: 1 };

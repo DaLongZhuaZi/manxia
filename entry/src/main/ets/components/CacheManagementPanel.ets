@@ -427,7 +427,7 @@ export struct CacheManagementPanel {
         })
         .animation({ duration: 150, curve: Curve.EaseOut })
         .onClick(() => {
-            AlertDialog.show({
+            this.getUIContext().showAlertDialog({
               title: '确认清空',
               message: '确定要清空所有磁盘缓存吗？',
               primaryButton: {
@@ -699,7 +699,7 @@ export struct CacheManagementPanel {
           })
           .animation({ duration: 150, curve: Curve.EaseOut })
           .onClick(() => {
-              AlertDialog.show({
+              this.getUIContext().showAlertDialog({
                 title: '确认重置',
                 message: '确定要重置为默认配置吗？',
                 primaryButton: {

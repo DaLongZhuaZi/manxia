@@ -1,3 +1,4 @@
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Cache/DiskCacheManager.ets
 /**
  * 磁盘缓存管理器
@@ -162,14 +163,14 @@ export class DiskCacheManager {
 
         const uint8Array = new Uint8Array(buffer);
         const decoder = new util.TextDecoder('utf-8');
-        const content = decoder.decodeWithStream(uint8Array);
+        const content = decoder.decodeToString(uint8Array);
 
         interface IndexData {
           version: number;
           entries: Array<[string, CacheEntry]>;
           totalSize: number;
         }
-        const indexData = JSON.parse(content) as IndexData;
+        const indexData = SafeUtils.parseObj(content) as IndexData;
 
         if (indexData.version === this.INDEX_VERSION) {
           this.cacheIndex = new Map(indexData.entries);
@@ -363,7 +364,7 @@ export class DiskCacheManager {
         quality: 85
       };
 
-      const buffer = await packer.packing(pixelMap, packOpts);
+      const buffer = await packer.packToData(pixelMap, packOpts);
       const size = buffer.byteLength;
 
       // 检查缓存大小，必要时清理

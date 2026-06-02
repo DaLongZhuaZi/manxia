@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { EBook } from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
@@ -78,7 +79,7 @@ export class OnlineEBookImportService {
         const coverExt: string = this.getFileExtension(originalCoverPath, '.jpg');
         const targetCoverPath: string = `${folderPath}/cover${coverExt}`;
         if (this.normalizePath(originalCoverPath) !== this.normalizePath(targetCoverPath)) {
-          fs.copyFileSync(originalCoverPath, targetCoverPath);
+          SafeFileUtils.copyFileSync(originalCoverPath, targetCoverPath);
         }
         ebook.metadata.coverImagePath = targetCoverPath;
         coverSaved = true;
@@ -108,7 +109,7 @@ export class OnlineEBookImportService {
 
   private fileExists(filePath: string): boolean {
     try {
-      return fs.accessSync(filePath);
+      return SafeFileUtils.accessSync(filePath);
     } catch (_error) {
       return false;
     }

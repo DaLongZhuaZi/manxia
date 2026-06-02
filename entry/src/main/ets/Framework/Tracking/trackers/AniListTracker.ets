@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../../Utils/SafeUtils';
 /**
  * AniList 跟踪器
  * 实现与 AniList GraphQL API 的集成
@@ -276,7 +277,7 @@ export class AniListTracker extends BaseTracker {
       httpRequest.destroy();
 
       if (response.responseCode === 200) {
-        const data: TokenResponse = JSON.parse(response.result as string) as TokenResponse;
+        const data: TokenResponse = SafeUtils.parseObj(response.result as string) as TokenResponse;
         this.authState.accessToken = data.access_token;
         this.authState.refreshToken = data.refresh_token || '';
         this.authState.expiresAt = Date.now() + data.expires_in * 1000;
@@ -628,7 +629,7 @@ export class AniListTracker extends BaseTracker {
       httpRequest.destroy();
 
       if (response.responseCode === 200) {
-        return JSON.parse(response.result as string) as GraphQLResponse;
+        return SafeUtils.parseObj(response.result as string) as GraphQLResponse;
       }
 
       this.logError(`GraphQL请求失败: ${response.responseCode}`);
@@ -666,7 +667,7 @@ export class AniListTracker extends BaseTracker {
     try {
       const stateJson = this.settingsManager.getString(ANILIST_AUTH_STATE_KEY, '');
       if (stateJson) {
-        const state: AuthStateStorage = JSON.parse(stateJson) as AuthStateStorage;
+        const state: AuthStateStorage = SafeUtils.parseObj(stateJson) as AuthStateStorage;
         this.authState = {
           isLoggedIn: state.isLoggedIn || false,
           username: state.username || '',

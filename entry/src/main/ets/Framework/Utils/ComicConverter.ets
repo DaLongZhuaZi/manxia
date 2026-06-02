@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Utils/ComicConverter.ets
 // 职责: 提供ComicInfo与Manga对象之间的转换工具方法
 
@@ -452,7 +453,7 @@ export class ComicConverter {
       
       if (settingsJson) {
         // 解析JSON字符串
-        const settings = JSON.parse(settingsJson) as ReadingSettings;
+        const settings = SafeUtils.parseObj(settingsJson) as ReadingSettings;
         logger.info(TAG, `成功从数据库加载漫画 ${comicId} 的独立阅读设置`);
         return ComicConverter.normalizeReadingSettings(settings);
       }
@@ -733,7 +734,7 @@ export class ComicConverter {
     let readingSettings: ReadingSettings;
     const directSettingsRecord = preloadedContext.userSettings.get(settingsKey);
     if (directSettingsRecord && directSettingsRecord.settingValue) {
-      readingSettings = ComicConverter.normalizeReadingSettings(JSON.parse(directSettingsRecord.settingValue) as ReadingSettings);
+      readingSettings = ComicConverter.normalizeReadingSettings(SafeUtils.parseObj(directSettingsRecord.settingValue) as ReadingSettings);
     } else {
       const sourceSnapshot = await ComicConverter.resolveSourceSettingsSnapshot(
         DataManager.getInstance(),

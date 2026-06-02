@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 图源Tab内容组件
  * 从 MainMenuPage 提取的图源管理页逻辑
  */
@@ -516,7 +516,7 @@ export struct SourceTabContent {
       })
       .clip(true)
       .onClick(() => {
-        animateTo({
+        this.getUIContext().animateTo({
           duration: 250,
           curve: Curve.EaseInOut
         }, () => {

@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/EBookParser.ets
 /**
  * 电子书解析器基类
@@ -189,11 +190,11 @@ class ReaderKitEBookParser extends EBookParser {
       if (!filePath.startsWith('file://') && !filePath.startsWith('/')) {
         openTarget = `/${filePath}`;
       }
-      let file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
-      let stat = fileIo.statSync(file.fd);
+      let file = SafeFileUtils.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      let stat = SafeFileUtils.statSync(file.fd);
       let buffer = new ArrayBuffer(stat.size);
-      let readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      let readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       if (readLen !== stat.size) {
         throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
       }
@@ -204,11 +205,11 @@ class ReaderKitEBookParser extends EBookParser {
         if (filePath.startsWith('file://')) {
           const stripped = filePath.substring(7);
           const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
-          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
-          const stat = fileIo.statSync(file.fd);
+          const file = SafeFileUtils.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = SafeFileUtils.statSync(file.fd);
           const buffer = new ArrayBuffer(stat.size);
-          const readLen = fileIo.readSync(file.fd, buffer);
-          fileIo.closeSync(file);
+          const readLen = SafeFileUtils.readSync(file.fd, buffer);
+          SafeFileUtils.closeSync(file);
           if (readLen !== stat.size) {
             throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
           }
@@ -1220,7 +1221,7 @@ class ReaderKitEBookParser extends EBookParser {
     }
 
     if (!this.pathExists(extractionRoot)) {
-      fileIo.mkdirSync(extractionRoot, true);
+      SafeFileUtils.mkdirSync(extractionRoot, true);
     }
     await zlib.decompressFile(this.normalizeFsPath(this.filePath), extractionRoot);
     if (!this.pathExists(containerPath)) {
@@ -1379,7 +1380,7 @@ class ReaderKitEBookParser extends EBookParser {
 
   private pathExists(path: string): boolean {
     try {
-      fileIo.statSync(path);
+      SafeFileUtils.statSync(path);
       return true;
     } catch (_error) {
       return false;
@@ -1387,23 +1388,23 @@ class ReaderKitEBookParser extends EBookParser {
   }
 
   private readTextFileSync(path: string): string {
-    const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
-    const stat = fileIo.statSync(file.fd);
+    const file = SafeFileUtils.openSync(path, fileIo.OpenMode.READ_ONLY);
+    const stat = SafeFileUtils.statSync(file.fd);
     const buffer = new ArrayBuffer(stat.size);
-    fileIo.readSync(file.fd, buffer);
-    fileIo.closeSync(file);
+    SafeFileUtils.readSync(file.fd, buffer);
+    SafeFileUtils.closeSync(file);
     return new util.TextDecoder('utf-8', { ignoreBOM: true }).decodeToString(new Uint8Array(buffer));
   }
 
   private writeTextFileSync(path: string, content: string): void {
     const encoder = new util.TextEncoder();
     const encoded = encoder.encodeInto(content);
-    const file = fileIo.openSync(path,
+    const file = SafeFileUtils.openSync(path,
       fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
     try {
-      fileIo.writeSync(file.fd, encoded.buffer as ArrayBuffer);
+      SafeFileUtils.writeSync(file.fd, encoded.buffer as ArrayBuffer);
     } finally {
-      fileIo.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
   }
 
@@ -1977,17 +1978,17 @@ export class EBookCoverExtractor {
   private static readFileAsArrayBuffer(filePath: string): ArrayBuffer | null {
     try {
       const normalizedPath = filePath.startsWith('file://') ? filePath.substring(7) : filePath;
-      const file = fileIo.openSync(normalizedPath, fileIo.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(normalizedPath, fileIo.OpenMode.READ_ONLY);
       try {
-        const stat = fileIo.statSync(file.fd);
+        const stat = SafeFileUtils.statSync(file.fd);
         const buffer = new ArrayBuffer(stat.size);
-        const readLength = fileIo.readSync(file.fd, buffer);
+        const readLength = SafeFileUtils.readSync(file.fd, buffer);
         if (readLength !== stat.size) {
           logger.warn(EBookCoverExtractor.TAG, `读取封面长度不一致: expected=${stat.size}, actual=${readLength}`);
         }
         return buffer;
       } finally {
-        fileIo.closeSync(file);
+        SafeFileUtils.closeSync(file);
       }
     } catch (error) {
       logger.warn(EBookCoverExtractor.TAG, `读取封面文件失败: ${String(error)}`);
@@ -2007,7 +2008,7 @@ export class EBookCoverExtractor {
 
       // 确保目录存在
       try {
-        fileIo.mkdirSync(basePath, true);
+        SafeFileUtils.mkdirSync(basePath, true);
       } catch (e) {
         // 目录可能已存在
       }
@@ -2034,11 +2035,11 @@ export class EBookCoverExtractor {
         imageSource.release();
       }
 
-      const file = fileIo.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      const file = SafeFileUtils.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
       try {
-        fileIo.writeSync(file.fd, packedBuffer);
+        SafeFileUtils.writeSync(file.fd, packedBuffer);
       } finally {
-        fileIo.closeSync(file);
+        SafeFileUtils.closeSync(file);
       }
       logger.info(EBookCoverExtractor.TAG, `封面图片已标准化保存为 WebP: ${fullPath}, packed=${packedBuffer.byteLength}, original=${originalName}, sourceExt=${ext}`);
 
@@ -2075,18 +2076,18 @@ export class EBookCoverExtractor {
 
     try {
       try {
-        fileIo.mkdirSync(basePath, true);
+        SafeFileUtils.mkdirSync(basePath, true);
       } catch (e) {
         // 目录可能已存在
       }
 
       const fileName = `cover_${Date.now()}_raw${ext}`;
       const fullPath = `${basePath}/${fileName}`;
-      const file = fileIo.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      const file = SafeFileUtils.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       try {
-        fileIo.writeSync(file.fd, imageData);
+        SafeFileUtils.writeSync(file.fd, imageData);
       } finally {
-        fileIo.closeSync(file);
+        SafeFileUtils.closeSync(file);
       }
       logger.info(EBookCoverExtractor.TAG, `封面原图保存成功: ${fullPath}, size=${imageData.byteLength}, original=${originalName}`);
       return fullPath;
@@ -2159,7 +2160,7 @@ export class EBookCoverExtractor {
       
       // 确保目录存在
       try {
-        fileIo.mkdirSync(outputDir, true);
+        SafeFileUtils.mkdirSync(outputDir, true);
       } catch (mkdirError) {
         // 目录可能已存在
       }
@@ -2231,15 +2232,15 @@ export class EBookCoverExtractor {
         
         // 如果目标文件已存在，先删除
         try {
-          fileIo.unlinkSync(savePath);
+          SafeFileUtils.unlinkSync(savePath);
         } catch (unlinkError) {
           // 文件不存在，忽略
         }
         
         // 异步写入文件
-        const file = fileIo.openSync(savePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+        const file = SafeFileUtils.openSync(savePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
         await fileIo.write(file.fd, imgBuffer);
-        fileIo.closeSync(file.fd);
+        SafeFileUtils.closeSync(file.fd);
         
         logger.info(EBookCoverExtractor.TAG, `PDF 封面图片生成成功: ${savePath}`);
         
@@ -2328,9 +2329,9 @@ class MobiEBookParser extends EBookParser {
   private getFileSizeSafely(): number {
     try {
       const openTarget = this.filePath.startsWith('file://') ? this.filePath.substring(7) : this.filePath;
-      const fileHandle = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
-      const fileSize = fileIo.statSync(fileHandle.fd).size;
-      fileIo.closeSync(fileHandle);
+      const fileHandle = SafeFileUtils.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      const fileSize = SafeFileUtils.statSync(fileHandle.fd).size;
+      SafeFileUtils.closeSync(fileHandle);
       return fileSize;
     } catch (error) {
       logger.warn(TAG, `${this.format} 获取文件大小失败: ${String(error)}`);
@@ -2682,11 +2683,11 @@ class TxtParser extends EBookParser {
         openTarget = `/${this.filePath}`;
       }
 
-      let file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
-      let stat = fileIo.statSync(file.fd);
+      let file = SafeFileUtils.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      let stat = SafeFileUtils.statSync(file.fd);
       let buffer = new ArrayBuffer(stat.size);
-      let readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      let readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
 
       if (readLen !== stat.size) {
         throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
@@ -2699,11 +2700,11 @@ class TxtParser extends EBookParser {
         if (this.filePath.startsWith('file://')) {
           const stripped = this.filePath.substring(7);
           const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
-          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
-          const stat = fileIo.statSync(file.fd);
+          const file = SafeFileUtils.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = SafeFileUtils.statSync(file.fd);
           const buffer = new ArrayBuffer(stat.size);
-          const readLen = fileIo.readSync(file.fd, buffer);
-          fileIo.closeSync(file);
+          const readLen = SafeFileUtils.readSync(file.fd, buffer);
+          SafeFileUtils.closeSync(file);
 
           if (readLen !== stat.size) {
             throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
@@ -2840,18 +2841,18 @@ class TxtParser extends EBookParser {
         openTarget = `/${this.filePath}`;
       }
 
-      let file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
-      let stat = fileIo.statSync(file.fd);
-      fileIo.closeSync(file);
+      let file = SafeFileUtils.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      let stat = SafeFileUtils.statSync(file.fd);
+      SafeFileUtils.closeSync(file);
       return stat.size;
     } catch (firstError) {
       try {
         if (this.filePath.startsWith('file://')) {
           const stripped = this.filePath.substring(7);
           const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
-          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
-          const stat = fileIo.statSync(file.fd);
-          fileIo.closeSync(file);
+          const file = SafeFileUtils.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = SafeFileUtils.statSync(file.fd);
+          SafeFileUtils.closeSync(file);
           return stat.size;
         }
         return 0;
@@ -3104,7 +3105,7 @@ class PdfParser extends EBookParser {
       // 获取文件大小
       let fileSize = 0;
       try {
-        const stat = fileIo.statSync(this.filePath);
+        const stat = SafeFileUtils.statSync(this.filePath);
         fileSize = stat.size;
       } catch (e) {
         logger.warn(TAG, `获取文件大小失败: ${e}`);

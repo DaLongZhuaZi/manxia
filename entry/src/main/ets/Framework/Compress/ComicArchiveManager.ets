@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Compress/ComicArchiveManager.ets
 /**
  * 漫画归档管理器
@@ -444,7 +445,7 @@ export class ComicArchiveManager {
       const jsonPath = `${dir}/metadata.json`;
       if (await this.sandboxManager.exists(jsonPath)) {
         const content = await this.sandboxManager.readTextFile(jsonPath);
-        return JSON.parse(content) as ArchiveMetadata;
+        return SafeUtils.parseObj(content) as ArchiveMetadata;
       }
       
       // 尝试读取XML元数据

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 图源登录页面
  * 提供独立 WebView 环境用于登录操作
@@ -177,9 +178,9 @@ export struct SourceLoginPage {
     }
 
     try {
-      const parsedResult = JSON.parse(rawJson) as Object;
+      const parsedResult = SafeUtils.parseObj(rawJson) as Object;
       const parsedObj: Record<string, Object> = typeof parsedResult === 'string'
-        ? JSON.parse(String(parsedResult)) as Record<string, Object>
+        ? SafeUtils.parseObj(String(parsedResult)) as Record<string, Object>
         : parsedResult as Record<string, Object>;
       const keys: string[] = Object.keys(parsedObj);
       if (!keys.includes('hasToken') || !keys.includes('hasUserId') || !keys.includes('cookieLength')) {

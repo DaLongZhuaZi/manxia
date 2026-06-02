@@ -1,3 +1,6 @@
+﻿import { common } from '@kit.AbilityKit';
+import { UIContext } from '@ohos.arkui.UIContext';
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * Suwayomi 浏览页面
  * 浏览 Suwayomi 服务器上的漫画源和漫画列表
@@ -208,10 +211,10 @@ export struct SuwayomiBrowsePage {
 
   private async loadPreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(getContext(), { name: this.PREFS_NAME });
+      const store = preferences.getPreferencesSync((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
       this.displayMode = (store.getSync('displayMode', 'grid') as string) === 'list' ? 'list' : 'grid';
       const pinnedStr = store.getSync('pinnedSourceIds', '[]') as string;
-      this.pinnedSourceIds = JSON.parse(pinnedStr) as string[];
+      this.pinnedSourceIds = SafeUtils.parseArr(pinnedStr) as string[];
       this.selectedLanguage = store.getSync('selectedLanguage', 'all') as string;
       // 加载排序设置
       this.selectedSortIndex = store.getSync('selectedSortIndex', 0) as number;
@@ -225,7 +228,7 @@ export struct SuwayomiBrowsePage {
 
   private async savePreferences(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(getContext(), { name: this.PREFS_NAME });
+      const store = preferences.getPreferencesSync((this.getUIContext().getHostContext() as common.UIAbilityContext), { name: this.PREFS_NAME });
       store.putSync('displayMode', this.displayMode);
       store.putSync('pinnedSourceIds', JSON.stringify(this.pinnedSourceIds));
       store.putSync('selectedLanguage', this.selectedLanguage);
@@ -627,7 +630,7 @@ export struct SuwayomiBrowsePage {
 
   private showToast(message: string): void {
     import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showToast({
+      AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
         message: message,
         duration: 2000
       });
@@ -944,7 +947,7 @@ export struct SuwayomiBrowsePage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .position({ x: 0, y: '100%' })
     .translate({ y: -28 - 8 })
-    .id('guide_suwayomi_bottom_tabs')
+    .id('' as string)
   }
 
   @Builder
@@ -990,7 +993,7 @@ export struct SuwayomiBrowsePage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .id('guide_suwayomi_top_bar')
+    .id('' as string)
   }
 
   @Builder
@@ -1131,7 +1134,7 @@ export struct SuwayomiBrowsePage {
       .scrollBar(BarState.Off)
       .width('100%')
       .height(44)
-      .id('guide_suwayomi_library_filters')
+      .id('' as string)
     }
   }
 
@@ -1221,7 +1224,7 @@ export struct SuwayomiBrowsePage {
               .width('100%')
               .layoutWeight(1)
               .justifyContent(FlexAlign.Center)
-              .id('guide_suwayomi_source_content')
+              .id('' as string)
             } else if (this.displayMode === 'grid') {
               // Grid模式
               Refresh({ refreshing: this.isRefreshing }) {
@@ -1252,7 +1255,7 @@ export struct SuwayomiBrowsePage {
               })
               .width('100%')
               .layoutWeight(1)
-              .id('guide_suwayomi_source_content')
+              .id('' as string)
             } else {
               // List模式
               Refresh({ refreshing: this.isRefreshing }) {
@@ -1274,7 +1277,7 @@ export struct SuwayomiBrowsePage {
               })
               .width('100%')
               .layoutWeight(1)
-              .id('guide_suwayomi_source_content')
+              .id('' as string)
             }
           } else {
             // 漫画列表
@@ -1288,7 +1291,7 @@ export struct SuwayomiBrowsePage {
               .width('100%')
               .layoutWeight(1)
               .justifyContent(FlexAlign.Center)
-              .id('guide_suwayomi_library_content')
+              .id('' as string)
             } else if (this.displayMode === 'grid') {
               // Grid模式
               Refresh({ refreshing: this.isRefreshing }) {
@@ -1334,7 +1337,7 @@ export struct SuwayomiBrowsePage {
               })
               .width('100%')
               .layoutWeight(1)
-              .id('guide_suwayomi_library_content')
+              .id('' as string)
               .gesture(
                 PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
                   .onActionStart((event: GestureEvent) => {
@@ -1390,7 +1393,7 @@ export struct SuwayomiBrowsePage {
               })
               .width('100%')
               .layoutWeight(1)
-              .id('guide_suwayomi_library_content')
+              .id('' as string)
               .gesture(
                 PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
                   .onActionStart((event: GestureEvent) => {
@@ -1417,7 +1420,7 @@ export struct SuwayomiBrowsePage {
         }
         .width('100%')
         .height('100%')
-        .id('guide_suwayomi_root')
+        .id('' as string)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 底部导航栏

@@ -128,7 +128,7 @@ export struct RssSourceDebugPage {
   private async initializeAndLoad(): Promise<void> {
     this.isLoading = true;
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       await getRssSubscriptionInitializer().initialize(context);
       this.sources = await this.manager.getAllSources(false);
       if (this.sources.length === 0) {
@@ -142,7 +142,7 @@ export struct RssSourceDebugPage {
       const errorText = String(error);
       logger.error(TAG, `订阅源调试页初始化失败: ${errorText}`);
       this.appendDebugLine(`初始化失败: ${errorText}`);
-      promptAction.showToast({ message: `初始化失败: ${errorText}` });
+      this.getUIContext().getPromptAction().showToast({ message: `初始化失败: ${errorText}` });
     }
     this.isLoading = false;
   }

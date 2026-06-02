@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Suwayomi 图源
  * 将 Suwayomi 服务器作为漫画源使用
@@ -8,6 +9,8 @@ import { http } from '@kit.NetworkKit';
 import { preferences } from '@kit.ArkData';
 import { logger } from '../../Utils/Logger';
 import { ComicInfo, ChapterInfo, PageInfo, ComicDetailInfo } from './SourceExecutor';
+import { common } from '@kit.AbilityKit';
+import { uiContextManager } from '../Managers/UIContextManager';
 
 const TAG = 'SuwayomiSource';
 
@@ -258,6 +261,14 @@ export class SuwayomiSource {
     password: '',
     useAuth: false
   };
+
+  private getAbilityContext(): common.UIAbilityContext {
+    const context = uiContextManager.getAbilityContext();
+    if (!context) {
+      throw new Error('SuwayomiSource 获取 AbilityContext 失败');
+    }
+    return context;
+  }
   private isInitialized: boolean = false;
 
   private constructor() {}
@@ -288,7 +299,7 @@ export class SuwayomiSource {
   private async loadConfig(): Promise<void> {
     try {
       // 从 SuwayomiTracker 的配置中读取（使用同步方法保持一致）
-      const store = preferences.getPreferencesSync(getContext(), { name: 'suwayomi_config' });
+      const store = preferences.getPreferencesSync(this.getAbilityContext(), { name: 'suwayomi_config' });
       const serverUrl = store.getSync('serverUrl', '') as string;
       const username = store.getSync('username', '') as string;
       const password = store.getSync('password', '') as string;
@@ -311,7 +322,7 @@ export class SuwayomiSource {
    */
   public async saveConfig(config: SuwayomiSourceConfig): Promise<void> {
     try {
-      const store = await preferences.getPreferences(getContext(), 'suwayomi_source_config');
+      const store = await preferences.getPreferences(this.getAbilityContext(), 'suwayomi_source_config');
       await store.put('serverUrl', config.serverUrl);
       await store.put('username', config.username);
       await store.put('password', config.password);
@@ -464,7 +475,7 @@ export class SuwayomiSource {
         return null;
       }
 
-      const result: GraphQLResponse = JSON.parse(response.result as string);
+      const result: GraphQLResponse = SafeUtils.parseObj(response.result as string);
       if (result.errors && result.errors.length > 0) {
         logger.error(TAG, `GraphQL 错误: ${result.errors[0].message}`);
         return null;

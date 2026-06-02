@@ -1,3 +1,4 @@
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 备份管理器
  * 负责导出和导入所有应用数据
@@ -207,7 +208,7 @@ export class BackupManager {
     try {
       const sandboxManager = SandboxManager.getInstance();
       const content = await sandboxManager.readTextFile(filePath);
-      const data = JSON.parse(content) as BackupData;
+      const data = SafeUtils.parseObj(content) as BackupData;
       
       const itemCounts: BackupItemCounts = {
         manga: data.manga?.library?.length || 0,
@@ -274,7 +275,7 @@ export class BackupManager {
           author: String(manga['author'] || ''),
           artist: String(manga['artist'] || ''),
           description: String(manga['description'] || ''),
-          genre: JSON.parse(String(manga['genre'] || '[]')),
+          genre: SafeUtils.parseObj(String(manga['genre'] || '[]')),
           status: String(manga['status'] || ''),
           coverUrl: String(manga['coverUrl'] || ''),
           coverLocalPath: String(manga['coverLocalPath'] || ''),
@@ -1028,7 +1029,7 @@ export class BackupManager {
       return '{}';
     }
     try {
-      JSON.parse(trimmed);
+      SafeUtils.parseObj<Object>(trimmed);
       return trimmed;
     } catch {
       return '{}';
@@ -1075,7 +1076,7 @@ export class BackupManager {
     try {
       const sandboxManager = SandboxManager.getInstance();
       const content = await sandboxManager.readTextFile(filePath);
-      return JSON.parse(content) as BackupData;
+      return SafeUtils.parseObj(content) as BackupData;
     } catch (error) {
       logger.error(TAG, `Failed to load backup file: ${error}`);
       throw new Error(`Failed to load backup file: ${error}`);

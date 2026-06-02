@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../../../Utils/SafeUtils';
 import { logger } from '../../../../Utils/Logger';
 import { SettingsManager } from '../../../Managers/SettingsManager';
 import { IDataFacade, NGFDataQueryResult } from '../contracts/IDataFacade';
@@ -219,7 +220,7 @@ export class DataFacade implements IDataFacade {
     }
 
     try {
-      const parsed = JSON.parse(queryJson) as Partial<NGFDataQueryEnvelope>;
+      const parsed = SafeUtils.parseObj(queryJson) as Partial<NGFDataQueryEnvelope>;
       const id = parsed.id && typeof parsed.id === 'string' ? parsed.id : '';
       return new NGFDataQueryEnvelope(id);
     } catch {
@@ -233,7 +234,7 @@ export class DataFacade implements IDataFacade {
     }
 
     try {
-      const parsed = JSON.parse(dataJson) as Partial<NGFDataEntityEnvelope>;
+      const parsed = SafeUtils.parseObj(dataJson) as Partial<NGFDataEntityEnvelope>;
       const id = parsed.id && typeof parsed.id === 'string' ? parsed.id : '';
       const payloadJson = parsed.payloadJson && typeof parsed.payloadJson === 'string'
         ? parsed.payloadJson
@@ -250,7 +251,7 @@ export class DataFacade implements IDataFacade {
     }
 
     try {
-      const parsed = JSON.parse(queryJson) as Partial<NGFSettingsQueryEnvelope>;
+      const parsed = SafeUtils.parseObj(queryJson) as Partial<NGFSettingsQueryEnvelope>;
       const key = parsed.key && typeof parsed.key === 'string' ? parsed.key : '';
       const valueType = parsed.valueType && typeof parsed.valueType === 'string' ? parsed.valueType : 'string';
       const defaultString = parsed.defaultString && typeof parsed.defaultString === 'string'
@@ -274,7 +275,7 @@ export class DataFacade implements IDataFacade {
     }
 
     try {
-      const parsed = JSON.parse(dataJson) as Partial<NGFSettingsWriteEnvelope>;
+      const parsed = SafeUtils.parseObj(dataJson) as Partial<NGFSettingsWriteEnvelope>;
       const key = parsed.key && typeof parsed.key === 'string' ? parsed.key : '';
       const valueType = parsed.valueType && typeof parsed.valueType === 'string' ? parsed.valueType : 'string';
       const stringValue = parsed.stringValue && typeof parsed.stringValue === 'string' ? parsed.stringValue : '';

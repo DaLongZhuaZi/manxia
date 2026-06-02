@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * Legado JS扩展函数实现
  * 提供网络请求、编码解码、文件操作等功能的实际实现
@@ -494,11 +495,11 @@ export class LegadoJsExtensions {
   async readTxtFile(path: string): Promise<string> {
     try {
       const fullPath = this.resolvePath(path);
-      const file = fileIo.openSync(fullPath, fileIo.OpenMode.READ_ONLY);
-      const stat = fileIo.statSync(fullPath);
+      const file = SafeFileUtils.openSync(fullPath, fileIo.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(fullPath);
       const buffer = new ArrayBuffer(stat.size);
-      fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       return new util.TextDecoder().decodeToString(new Uint8Array(buffer));
     } catch (error) {
       logger.warn(TAG, `读取文件失败: ${path}, error: ${String(error)}`);
@@ -516,7 +517,7 @@ export class LegadoJsExtensions {
       
       // 检查缓存是否存在
       try {
-        const stat = fileIo.statSync(cachePath);
+        const stat = SafeFileUtils.statSync(cachePath);
         if (saveTime && saveTime > 0) {
           const now = Date.now();
           const fileTime = stat.mtime;
@@ -547,11 +548,11 @@ export class LegadoJsExtensions {
    */
   private async writeFile(path: string, content: string): Promise<void> {
     try {
-      const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      const file = SafeFileUtils.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
       const encoder = new util.TextEncoder();
       const buffer = encoder.encodeInto(content);
-      fileIo.writeSync(file.fd, buffer.buffer);
-      fileIo.closeSync(file);
+      SafeFileUtils.writeSync(file.fd, buffer.buffer);
+      SafeFileUtils.closeSync(file);
     } catch (error) {
       logger.warn(TAG, `写入文件失败: ${path}, error: ${String(error)}`);
     }
@@ -805,11 +806,11 @@ export class LegadoJsExtensions {
   async readFile(path: string): Promise<Uint8Array | null> {
     try {
       const fullPath = this.resolvePath(path);
-      const file = fileIo.openSync(fullPath, fileIo.OpenMode.READ_ONLY);
-      const stat = fileIo.statSync(fullPath);
+      const file = SafeFileUtils.openSync(fullPath, fileIo.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(fullPath);
       const buffer = new ArrayBuffer(stat.size);
-      fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       return new Uint8Array(buffer);
     } catch (error) {
       logger.warn(TAG, `读取文件失败: ${path}, error: ${String(error)}`);
@@ -823,7 +824,7 @@ export class LegadoJsExtensions {
   deleteFile(path: string): boolean {
     try {
       const fullPath = this.resolvePath(path);
-      fileIo.unlinkSync(fullPath);
+      SafeFileUtils.unlinkSync(fullPath);
       return true;
     } catch (error) {
       logger.warn(TAG, `删除文件失败: ${path}, error: ${String(error)}`);
@@ -881,7 +882,7 @@ export class LegadoJsExtensions {
       
       // 确保输出目录存在
       try {
-        fileIo.mkdirSync(outDir);
+        SafeFileUtils.mkdirSync(outDir);
       } catch (e) {
         // 目录可能已存在
       }
@@ -931,9 +932,9 @@ export class LegadoJsExtensions {
         const key = this.md5Encode16(url.substring(0, 32));
         zipPath = `${key}.zip`;
         const fullPath = this.resolvePath(zipPath);
-        const file = fileIo.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-        fileIo.writeSync(file.fd, bytes.buffer);
-        fileIo.closeSync(file);
+        const file = SafeFileUtils.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+        SafeFileUtils.writeSync(file.fd, bytes.buffer);
+        SafeFileUtils.closeSync(file);
       }
       
       if (!zipPath) return null;
@@ -978,10 +979,10 @@ export class LegadoJsExtensions {
       const contents: string[] = [];
       
       // 列出目录下的文件
-      const files = fileIo.listFileSync(fullPath);
+      const files = SafeFileUtils.listFileSync(fullPath);
       for (const fileName of files) {
         const filePath = `${fullPath}/${fileName}`;
-        const stat = fileIo.statSync(filePath);
+        const stat = SafeFileUtils.statSync(filePath);
         if (stat.isFile()) {
           const content = await this.readTxtFile(`${path}/${fileName}`);
           if (content) {

@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 import { storageStatistics } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
@@ -556,7 +558,7 @@ export class StorageDashboardService {
     let entryCount = 0;
     let itemCount = 0;
     try {
-      const parsed = JSON.parse(cacheString) as Object;
+      const parsed = SafeUtils.parseObj(cacheString) as Object;
       const entries = Object.entries(parsed) as [string, CachedContent][];
       entryCount = entries.length;
       for (let index = 0; index < entries.length; index++) {
@@ -605,7 +607,7 @@ export class StorageDashboardService {
 
   private countBookSourceItems(rawCache: string): number {
     try {
-      const parsed = JSON.parse(rawCache) as BookSourceCacheData;
+      const parsed = SafeUtils.parseObj(rawCache) as BookSourceCacheData;
       return parsed.bookSourceBooks.length;
     } catch (_error) {
       return 0;
@@ -614,7 +616,7 @@ export class StorageDashboardService {
 
   private countSuwayomiItems(rawCache: string): number {
     try {
-      const parsed = JSON.parse(rawCache) as SuwayomiCacheData;
+      const parsed = SafeUtils.parseObj(rawCache) as SuwayomiCacheData;
       return parsed.mangas.length;
     } catch (_error) {
       return 0;
@@ -623,7 +625,7 @@ export class StorageDashboardService {
 
   private countKomgaItems(rawCache: string): number {
     try {
-      const parsed = JSON.parse(rawCache) as KomgaCacheData;
+      const parsed = SafeUtils.parseObj(rawCache) as KomgaCacheData;
       return parsed.items.length;
     } catch (_error) {
       return 0;
@@ -669,9 +671,9 @@ export class StorageDashboardService {
     while (stack.length > 0) {
       const currentPath = stack.pop() as string;
       try {
-        const stat = fs.statSync(currentPath);
+        const stat = SafeFileUtils.statSync(currentPath);
         if (stat.isDirectory()) {
-          const children = fs.listFileSync(currentPath);
+          const children = SafeFileUtils.listFileSync(currentPath);
           for (let index = 0; index < children.length; index++) {
             stack.push(`${currentPath}/${children[index]}`);
           }
@@ -1218,7 +1220,7 @@ export class StorageDashboardService {
     }
 
     try {
-      const children = fs.listFileSync(path);
+      const children = SafeFileUtils.listFileSync(path);
       for (let index = 0; index < children.length; index++) {
         const childName = children[index];
         if (this.containsString(excludedChildNames, childName)) {
@@ -1237,22 +1239,22 @@ export class StorageDashboardService {
       return;
     }
 
-    const stat = fs.statSync(path);
+    const stat = SafeFileUtils.statSync(path);
     if (stat.isDirectory()) {
-      const children = fs.listFileSync(path);
+      const children = SafeFileUtils.listFileSync(path);
       for (let index = 0; index < children.length; index++) {
         this.deletePathRecursive(`${path}/${children[index]}`);
       }
-      fs.rmdirSync(path);
+      SafeFileUtils.rmdirSync(path);
       return;
     }
 
-    fs.unlinkSync(path);
+    SafeFileUtils.unlinkSync(path);
   }
 
   private pathExists(path: string): boolean {
     try {
-      return fs.accessSync(path);
+      return SafeFileUtils.accessSync(path);
     } catch (_error) {
       return false;
     }

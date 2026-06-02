@@ -1,4 +1,5 @@
-﻿import { common } from '@kit.AbilityKit';
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { common } from '@kit.AbilityKit';
 import { http } from '@kit.NetworkKit';
 import { logger } from '../../Utils/Logger';
 import {
@@ -597,7 +598,7 @@ export class RssSubscriptionManager {
     const parsedEntries: HeaderEntry[] = [];
     if (text.startsWith('{') && text.endsWith('}')) {
       try {
-        const headerObj = JSON.parse(text) as Object;
+        const headerObj = SafeUtils.parseObj(text) as Object;
         const entries = Object.entries(headerObj) as [string, Object][];
         for (let i = 0; i < entries.length; i++) {
           const key = entries[i][0].trim();
@@ -668,9 +669,9 @@ export class RssSubscriptionManager {
     }
     const jsonText = `{${fragments.join(',')}}`;
     try {
-      return JSON.parse(jsonText) as Object;
+      return SafeUtils.parseObj(jsonText) as Object;
     } catch (_error) {
-      return JSON.parse('{}') as Object;
+      return SafeUtils.parseObj('{}') as Object;
     }
   }
 
@@ -2165,7 +2166,7 @@ export class RssSubscriptionManager {
         try {
           logger.info(TAG, `开始拉取 sourceUrls 远程内容: ${normalizedUrl}`);
           const text = await this.fetchTextByUrl(normalizedUrl, URL_IMPORT_TIMEOUT);
-          const parsed = JSON.parse(text) as Object | Object[];
+          const parsed = SafeUtils.parseArr(text) as Object | Object[];
           const nested = await this.resolveImportList(parsed, visitedUrls, depth + 1);
           for (const nestedItem of nested) {
             resolvedList.push(nestedItem);
@@ -2251,7 +2252,7 @@ export class RssSubscriptionManager {
 
     let data: Object | Object[];
     try {
-      data = JSON.parse(text) as Object | Object[];
+      data = SafeUtils.parseArr(text) as Object | Object[];
     } catch (error) {
       const errorText = this.resolveErrorText(error as RssErrorValue);
       logger.error(TAG, `JSON 解析失败: ${errorText}`);

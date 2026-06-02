@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
 import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
@@ -99,11 +100,11 @@ export struct KomgaSettingsPage {
   }
 
   private toast(message: string): void {
-    promptAction.showToast({ message, duration: 2000 });
+    this.getUIContext().getPromptAction().showToast({ message, duration: 2000 });
   }
 
   private revealPageContent(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 260,
       curve: Curve.EaseOut
     }, () => {
@@ -334,7 +335,7 @@ export struct KomgaSettingsPage {
         throw new Error(`响应码 ${response.responseCode}`);
       }
       const resultText = response.result as string;
-      this.availableLibraries = JSON.parse(resultText) as KomgaLibraryOption[];
+      this.availableLibraries = SafeUtils.parseArr(resultText) as KomgaLibraryOption[];
       if (showToast) {
         this.toast(`已加载 ${this.availableLibraries.length} 个库`);
       }

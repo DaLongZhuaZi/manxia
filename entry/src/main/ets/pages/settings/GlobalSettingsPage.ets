@@ -419,7 +419,7 @@ export struct GlobalSettingsPage {
   private updateSearchResults(input: string): void {
     this.searchKeyword = input;
     const query = input.trim();
-    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
       if (query.length === 0) {
         this.searchResults = [];
         return;
@@ -429,7 +429,7 @@ export struct GlobalSettingsPage {
   }
 
   private clearSearch(): void {
-    animateTo({ duration: 160, curve: Curve.EaseIn }, () => {
+    this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseIn }, () => {
       this.searchKeyword = '';
       this.searchResults = [];
     });
@@ -1206,7 +1206,7 @@ export struct GlobalSettingsPage {
       offsetX: 0,
       offsetY: 8
     })
-    .id('guide_global_settings_search')
+    .id('' as string)
   }
 
   @Builder
@@ -1356,7 +1356,7 @@ export struct GlobalSettingsPage {
       })
     }
     .width('100%')
-    .id('guide_global_settings_group_list')
+    .id('' as string)
   }
 
   build() {
@@ -1386,7 +1386,7 @@ export struct GlobalSettingsPage {
                       }
                     })
                   }
-                  .id('guide_global_settings_group_list')
+                  .id('' as string)
                   .columnsTemplate('1fr 1fr')
                   .columnsGap(12)
                   .rowsGap(12)
@@ -1413,11 +1413,11 @@ export struct GlobalSettingsPage {
         }
         .width('100%')
         .height('100%')
-        .id('guide_global_settings_scroll')
+        .id('' as string)
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
@@ -1451,7 +1451,7 @@ export struct GlobalSettingsPage {
           })
         }
       }
-      .id('guide_global_settings_root')
+      .id('' as string)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .hideTitleBar(true)

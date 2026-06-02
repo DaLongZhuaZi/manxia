@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../../../Utils/SafeFileUtils';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { getContext, isInitialized as isGlobalContextInitialized } from '../../../../GlobalContext';
@@ -141,25 +142,25 @@ export class SourceLoaderFacade implements ISourceLoader {
 
   private existsPath(path: string): boolean {
     try {
-      return fs.accessSync(path);
+      return SafeFileUtils.accessSync(path);
     } catch {
       return false;
     }
   }
 
   private readText(path: string): string {
-    const file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+    const file = SafeFileUtils.openSync(path, fs.OpenMode.READ_ONLY);
     try {
-      const stat = fs.statSync(path);
+      const stat = SafeFileUtils.statSync(path);
       if (stat.size <= 0) {
         return '';
       }
       const buffer = new ArrayBuffer(Number(stat.size));
-      fs.readSync(file.fd, buffer);
+      SafeFileUtils.readSync(file.fd, buffer);
       const decoder = new util.TextDecoder('utf-8');
       return decoder.decodeToString(new Uint8Array(buffer));
     } finally {
-      fs.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
   }
 }

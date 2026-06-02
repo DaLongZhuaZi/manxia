@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * JSON图源解析器
  * 解析JSON格式的图源配置文件
@@ -156,7 +157,7 @@ export class JSONSourceParser {
    */
   static fromJSON(jsonString: string): JSONSourceParser {
     try {
-      const config = JSON.parse(jsonString) as JSONSourceConfig;
+      const config = SafeUtils.parseObj(jsonString) as JSONSourceConfig;
       return new JSONSourceParser(config);
     } catch (error) {
       logger.error(TAG, 'JSON解析失败', String(error));

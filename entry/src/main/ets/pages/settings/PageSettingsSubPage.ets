@@ -387,7 +387,7 @@ export struct PageSettingsSubPage {
         ? '折叠屏导航模式已更新，需要重启APP后生效。\n\n是否立即重启？'
         : '平板横屏顶栏位置已更新，需要重启APP后生效。\n\n是否立即重启？';
 
-      promptAction.showDialog({
+      this.getUIContext().getPromptAction().showDialog({
         title: '配置已保存',
         message: dialogMessage,
         buttons: [
@@ -401,7 +401,7 @@ export struct PageSettingsSubPage {
       });
     } catch (error) {
       logger.error(TAG, '保存平板顶栏位置失败', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '保存失败，请重试',
         duration: 1500
       });
@@ -434,7 +434,7 @@ export struct PageSettingsSubPage {
 
     logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, readerMultiton=${this.readerPageMultitonEnabled}, backgroundBlur=${this.backgroundBlurEnabled}, blurIcon=${this.backgroundBlurIconType}`);
 
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: '设置已保存',
       duration: 1500
     });
@@ -445,7 +445,7 @@ export struct PageSettingsSubPage {
     await this.settingsManager.setBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, enabled);
     this.settingsManager.syncToAppStorage();
     AppStorage.setOrCreate('backgroundBlurEnabled', enabled);
-    promptAction.showToast({
+    this.getUIContext().getPromptAction().showToast({
       message: enabled ? '后台模糊遮罩已启用' : '后台模糊遮罩已关闭',
       duration: 2000
     });
@@ -529,7 +529,7 @@ export struct PageSettingsSubPage {
       logger.info(TAG, `已保存标签配置: ${JSON.stringify(finalIndices)}`);
       
       // 显示重启提示对话框
-      promptAction.showDialog({
+      this.getUIContext().getPromptAction().showDialog({
         title: '配置已保存',
         message: '底栏配置已保存，需要重启APP才能生效。\n\n是否立即重启？',
         buttons: [
@@ -621,7 +621,7 @@ export struct PageSettingsSubPage {
       logger.info(TAG, 'APP已重启');
     } catch (error) {
       logger.error(TAG, '重启APP失败', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '重启失败，请手动重启APP',
         duration: 2000
       });
@@ -740,7 +740,7 @@ export struct PageSettingsSubPage {
       .height(44)
       .width('100%')
       .onClick(() => {
-        promptAction.showDialog({
+        this.getUIContext().getPromptAction().showDialog({
           title: '确认重置',
           message: '这将重置页面设置为默认值，是否继续？',
           buttons: [
@@ -1512,7 +1512,7 @@ export struct PageSettingsSubPage {
         .height('100%')
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
+        .onDidScroll((_xOffset: number, _yOffset: number) => {
           this.markSettingsScrolling();
         })
         .edgeEffect(EdgeEffect.Spring)

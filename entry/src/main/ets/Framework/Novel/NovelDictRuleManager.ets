@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 字典规则管理器
  * 用于在线词典查询功能
@@ -438,7 +439,7 @@ export class NovelDictRuleManager {
     };
 
     try {
-      const data: Object = JSON.parse(jsonStr);
+      const data: Object = SafeUtils.parseObj(jsonStr);
       const rules: Object[] = Array.isArray(data) ? data as Object[] : [data];
       result.total = rules.length;
 

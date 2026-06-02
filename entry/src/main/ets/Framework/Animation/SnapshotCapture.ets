@@ -2,8 +2,7 @@
 // 职责: 条目快照捕获工具，用于生成Canvas绘制所需的PixelMap
 
 import { logger } from '../../Utils/Logger';
-import { componentSnapshot } from '@kit.ArkUI';
-import { image } from '@kit.ImageKit';
+import { UIContext } from '@kit.ArkUI';
 
 const TAG = 'SnapshotCapture';
 
@@ -46,7 +45,8 @@ export class SnapshotCapture {
     componentId: string,
     options?: Partial<SnapshotOptions>
   ): Promise<PixelMap | null> {
-    if (!this.uiContext) {
+    const uiContext = this.uiContext;
+    if (!uiContext) {
       logger.error(TAG, 'UIContext未初始化');
       return null;
     }
@@ -63,7 +63,7 @@ export class SnapshotCapture {
       }
 
       // 捕获快照
-      const pixelMap = await componentSnapshot.get(componentId, {
+      const pixelMap = await uiContext.getComponentSnapshot().get(componentId, {
         scale: opts.scale
       });
 
@@ -92,6 +92,12 @@ export class SnapshotCapture {
     options?: Partial<SnapshotOptions>
   ): Promise<Map<string, PixelMap>> {
     const snapshots = new Map<string, PixelMap>();
+    if (!this.uiContext) {
+      logger.error(TAG, 'UIContext未初始化');
+      return snapshots;
+    }
+
+    const uiContext = this.uiContext;
     const opts: SnapshotOptions = {
       scale: options?.scale ?? DEFAULT_SNAPSHOT_OPTIONS.scale,
       waitTime: options?.waitTime ?? DEFAULT_SNAPSHOT_OPTIONS.waitTime
@@ -107,7 +113,7 @@ export class SnapshotCapture {
     // 并发捕获所有快照
     const capturePromises = componentIds.map(async (id) => {
       try {
-        const pixelMap = await componentSnapshot.get(id, {
+        const pixelMap = await uiContext.getComponentSnapshot().get(id, {
           scale: opts.scale
         });
         if (pixelMap) {
@@ -184,8 +190,14 @@ export class SnapshotCapture {
    * @returns 是否存在
    */
   public async checkComponentExists(componentId: string): Promise<boolean> {
+    const uiContext = this.uiContext;
+    if (!uiContext) {
+      logger.error(TAG, 'UIContext未初始化');
+      return false;
+    }
+
     try {
-      const pixelMap = await componentSnapshot.get(componentId, { scale: 0.1 });
+      const pixelMap = await uiContext.getComponentSnapshot().get(componentId, { scale: 0.1 });
       if (pixelMap) {
         pixelMap.release();
         return true;

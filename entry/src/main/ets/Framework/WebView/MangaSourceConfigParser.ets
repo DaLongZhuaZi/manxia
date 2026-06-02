@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceConfigParser.ets
 /**
  * 漫画图源配置解析器
@@ -190,7 +191,7 @@ export class MangaSourceConfigParser {
       logger.info(TAG, '开始解析漫画图源配置');
       logger.debug(TAG, `JSON内容长度: ${jsonContent.length}`);
       
-      const rawConfig: Record<string, Object> = JSON.parse(jsonContent) as Record<string, Object>;
+      const rawConfig: Record<string, Object> = SafeUtils.parseObj(jsonContent) as Record<string, Object>;
       const warnings: string[] = [];
       logger.debug(TAG, `JSON解析成功，开始验证配置`);
 

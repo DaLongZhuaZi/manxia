@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/NovelSettingsDialogComponent.ets
 // 职责: 小说/电子书设置对话框组件，从UnifiedDetailPage提取的独立组件
 
@@ -209,7 +210,7 @@ export struct NovelSettingsDialogComponent {
     );
     this.novelSettingsActiveTab = 0;
     this.showNovelSettingsDialog = true;
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 260,
       curve: Curve.EaseOut
     }, () => {
@@ -221,7 +222,7 @@ export struct NovelSettingsDialogComponent {
 
 
   private closeNovelSettingsDialog(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 180,
       curve: Curve.EaseIn
     }, () => {
@@ -302,7 +303,7 @@ export struct NovelSettingsDialogComponent {
     }
     this.novelSettingsCloseAfterClose = afterClose;
     this.isNovelSettingsCloseConfirmDialogVisible = true;
-    animateTo({ duration: 240, curve: curves.springMotion(0.65, 0.92) }, () => {
+    this.getUIContext().animateTo({ duration: 240, curve: curves.springMotion(0.65, 0.92) }, () => {
       this.novelSettingsCloseConfirmOpacity = 1;
       this.novelSettingsCloseConfirmScale = 1;
       this.novelSettingsCloseConfirmTranslateY = 0;
@@ -374,7 +375,7 @@ export struct NovelSettingsDialogComponent {
       return [];
     }
     try {
-      const parsed = JSON.parse(rawValue) as Array<string>;
+      const parsed = SafeUtils.parseArr(rawValue) as Array<string>;
       if (!Array.isArray(parsed)) {
         return [];
       }
@@ -539,7 +540,7 @@ export struct NovelSettingsDialogComponent {
       return true;
     } catch (error) {
       logger.error(TAG, `保存小说设置失败: key=${key}, error=${String(error)}`);
-      promptAction.showToast({ message: '保存设置失败', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存设置失败', duration: 1200 });
       return false;
     }
   }
@@ -623,7 +624,7 @@ export struct NovelSettingsDialogComponent {
       }
       const scopedSaved = await this.saveBookScopedRuleIds(this.novelSelectedTocRuleIds, this.novelSelectedReplaceRuleIds);
       if (!scopedSaved) {
-        promptAction.showToast({ message: '保存书籍规则失败', duration: 1400 });
+        this.getUIContext().getPromptAction().showToast({ message: '保存书籍规则失败', duration: 1400 });
         return;
       }
       this.novelEnableDirectoryParsing = nextEnabled;
@@ -631,10 +632,10 @@ export struct NovelSettingsDialogComponent {
       this.novelAppliedTocRuleIds = this.cloneRuleIdList(this.novelSelectedTocRuleIds);
       this.refreshNovelRuleDirtyState();
       logger.info(TAG, `目录解析应用完成: enabled=${nextEnabled}, selectedRules=${this.novelSelectedTocRuleIds.length}`);
-      promptAction.showToast({ message: '目录规则已应用并刷新章节', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '目录规则已应用并刷新章节', duration: 1400 });
     } catch (error) {
       logger.error(TAG, `应用目录解析规则失败: ${String(error)}`);
-      promptAction.showToast({ message: '应用目录解析规则失败', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '应用目录解析规则失败', duration: 1400 });
     } finally {
       this.isApplyingNovelDirectoryParsing = false;
     }
@@ -656,7 +657,7 @@ export struct NovelSettingsDialogComponent {
       }
       const scopedSaved = await this.saveBookScopedRuleIds(this.novelSelectedTocRuleIds, this.novelSelectedReplaceRuleIds);
       if (!scopedSaved) {
-        promptAction.showToast({ message: '保存书籍规则失败', duration: 1400 });
+        this.getUIContext().getPromptAction().showToast({ message: '保存书籍规则失败', duration: 1400 });
         return;
       }
       this.novelEnableReplaceRules = nextEnabled;
@@ -664,10 +665,10 @@ export struct NovelSettingsDialogComponent {
       this.novelAppliedReplaceRuleIds = this.cloneRuleIdList(this.novelSelectedReplaceRuleIds);
       this.refreshNovelRuleDirtyState();
       logger.info(TAG, `净化规则应用完成: enabled=${nextEnabled}, selectedRules=${this.novelSelectedReplaceRuleIds.length}`);
-      promptAction.showToast({ message: '净化规则已应用到当前内容', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '净化规则已应用到当前内容', duration: 1400 });
     } catch (error) {
       logger.error(TAG, `应用净化规则失败: ${String(error)}`);
-      promptAction.showToast({ message: '应用净化规则失败', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '应用净化规则失败', duration: 1400 });
     } finally {
       this.isApplyingNovelReplaceRules = false;
     }
@@ -714,7 +715,7 @@ export struct NovelSettingsDialogComponent {
       this.onContentUpdated?.(previousContent);
       this.onChaptersReloaded?.();
       logger.warn(TAG, '目录解析结果为空，已回退到应用前内容');
-      promptAction.showToast({ message: '目录解析结果为空，已恢复原目录', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '目录解析结果为空，已恢复原目录', duration: 1400 });
     }
   }
 
@@ -1083,15 +1084,15 @@ export struct NovelSettingsDialogComponent {
     }
     const ebook = EBookAdapter.getOriginalEBook(this.content);
     if (!ebook) {
-      promptAction.showToast({ message: '未找到电子书数据', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '未找到电子书数据', duration: 1400 });
       return;
     }
     if (this.ebookInfoTitle.trim().length <= 0) {
-      promptAction.showToast({ message: '请输入书名', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入书名', duration: 1400 });
       return;
     }
     if (this.ebookInfoAuthor.trim().length <= 0) {
-      promptAction.showToast({ message: '请输入作者', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '请输入作者', duration: 1400 });
       return;
     }
     this.isSavingEBookInfo = true;
@@ -1105,10 +1106,10 @@ export struct NovelSettingsDialogComponent {
       eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
       this.ebookInfoDirty = false;
       logger.info(TAG, `本地电子书信息已保存: ${ebook.id}, title=${ebook.metadata.title}`);
-      promptAction.showToast({ message: '电子书信息已保存', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: '电子书信息已保存', duration: 1400 });
     } catch (error) {
       logger.error(TAG, `保存电子书信息失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存电子书信息失败', duration: 1600 });
+      this.getUIContext().getPromptAction().showToast({ message: '保存电子书信息失败', duration: 1600 });
     } finally {
       this.isSavingEBookInfo = false;
     }
@@ -1194,7 +1195,7 @@ export struct NovelSettingsDialogComponent {
       }
     }
     this.ebookInfoDirty = true;
-    promptAction.showToast({ message: '刮削信息已填入，请确认保存', duration: 1400 });
+    this.getUIContext().getPromptAction().showToast({ message: '刮削信息已填入，请确认保存', duration: 1400 });
   }
 
 
@@ -1236,7 +1237,7 @@ export struct NovelSettingsDialogComponent {
 
 
   private hideNovelSettingsCloseConfirmDialog(): void {
-    animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
       this.novelSettingsCloseConfirmOpacity = 0;
       this.novelSettingsCloseConfirmScale = 0.96;
       this.novelSettingsCloseConfirmTranslateY = 12;

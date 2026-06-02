@@ -376,7 +376,7 @@ export struct NovelSearchPage {
   async clearHistory(): Promise<void> {
     await this.settingsManager.clearSearchHistory();
     this.searchHistory = [];
-    promptAction.showToast({ message: '搜索历史已清空' });
+    this.getUIContext().getPromptAction().showToast({ message: '搜索历史已清空' });
   }
 
   async removeHistoryItem(keyword: string): Promise<void> {
@@ -390,7 +390,7 @@ export struct NovelSearchPage {
   }
 
   showConcurrentSettings(): void {
-    promptAction.showActionMenu({
+    this.getUIContext().getPromptAction().showActionMenu({
       title: `当前并发数: ${this.maxConcurrentSources}`,
       buttons: [
         { text: '3个书源', color: $r('sys.color.ohos_id_color_text_primary') },
@@ -408,7 +408,7 @@ export struct NovelSearchPage {
       if (this.selectedSourceIds.size > this.maxConcurrentSources) {
         this.selectedSourceIds.clear();
       }
-      promptAction.showToast({ message: `已设置为同时搜索${this.maxConcurrentSources}个书源` });
+      this.getUIContext().getPromptAction().showToast({ message: `已设置为同时搜索${this.maxConcurrentSources}个书源` });
     }).catch(() => {});
   }
 
@@ -567,7 +567,7 @@ export struct NovelSearchPage {
     
     for (const source of sources) {
       if (newSet.size >= maxAllowed) {
-        promptAction.showToast({ message: `最多选择${maxAllowed}个书源` });
+        this.getUIContext().getPromptAction().showToast({ message: `最多选择${maxAllowed}个书源` });
         break;
       }
       newSet.add(source.id);
@@ -663,7 +663,7 @@ export struct NovelSearchPage {
     } else {
       // 检查是否超过并发限制
       if (newSet.size >= this.maxConcurrentSources) {
-        promptAction.showToast({ message: `最多选择${this.maxConcurrentSources}个书源` });
+        this.getUIContext().getPromptAction().showToast({ message: `最多选择${this.maxConcurrentSources}个书源` });
         return;
       }
       newSet.add(sourceId);

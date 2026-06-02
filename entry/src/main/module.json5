@@ -1,4 +1,4 @@
-{
+﻿{
   "module": {
     "name": "entry",
     "querySchemes": [
@@ -8,7 +8,7 @@
       "manxia"
     ],
     "type": "entry",
-    "description": "$string:module_desc",
+    "description": "$string:app_module_desc",
     "mainElement": "EntryAbility",
     "srcEntry": "./ets/MyAbilityStage.ets",
     "metadata": [

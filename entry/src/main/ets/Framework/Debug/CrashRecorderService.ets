@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Debug/CrashRecorderService.ets
 /**
  * 闪退记录服务
@@ -99,7 +101,7 @@ export class CrashRecorderService {
     }
 
     try {
-      const exists = fs.accessSync(this.crashLogsDir);
+      const exists = SafeFileUtils.accessSync(this.crashLogsDir);
       if (exists) {
         return;
       }
@@ -108,7 +110,7 @@ export class CrashRecorderService {
     }
 
     try {
-      fs.mkdirSync(this.crashLogsDir, true);
+      SafeFileUtils.mkdirSync(this.crashLogsDir, true);
       console.log(`[NGF] ${TAG}: 崩溃日志目录已创建: ${this.crashLogsDir}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -175,9 +177,9 @@ export class CrashRecorderService {
       const content = this.buildCrashReport(now, dateStr, errorMessage, stackTrace, allLogs);
 
       // 同步写入文件（崩溃场景下必须用同步操作）
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, content);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, content);
+      SafeFileUtils.closeSync(file);
 
       console.error(`[NGF] ${TAG}: ✅ 崩溃日志已保存: ${filePath}`);
 
@@ -292,9 +294,9 @@ export class CrashRecorderService {
         logFileName: logFileName
       });
 
-      const file = fs.openSync(summaryPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, summary);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(summaryPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      SafeFileUtils.writeSync(file.fd, summary);
+      SafeFileUtils.closeSync(file);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[NGF] ${TAG}: 保存崩溃摘要失败: ${msg}`);
@@ -310,7 +312,7 @@ export class CrashRecorderService {
       this.ensureCrashLogsDir();
       const summaryPath = `${this.crashLogsDir}/last_crash_summary.json`;
       try {
-        const exists = fs.accessSync(summaryPath);
+        const exists = SafeFileUtils.accessSync(summaryPath);
         if (!exists) {
           console.log(`[NGF] ${TAG}: 未检测到上次崩溃记录`);
           return;
@@ -322,14 +324,14 @@ export class CrashRecorderService {
       }
 
       // 读取崩溃摘要
-      const file = fs.openSync(summaryPath, fs.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(summaryPath, fs.OpenMode.READ_ONLY);
       const buf = new ArrayBuffer(8192);
-      const readLen = fs.readSync(file.fd, buf);
-      fs.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buf);
+      SafeFileUtils.closeSync(file);
 
       const decoder = new util.TextDecoder('utf-8');
       const summaryStr = decoder.decodeToString(new Uint8Array(buf, 0, readLen));
-      const summary = JSON.parse(summaryStr) as CrashRecord;
+      const summary = SafeUtils.parseObj(summaryStr) as CrashRecord;
 
       console.log(`[NGF] ${TAG}: ⚠️ 检测到上次崩溃记录: ${summary.crashTimeStr}`);
       console.log(`[NGF] ${TAG}: 崩溃原因: ${summary.errorMessage}`);
@@ -342,7 +344,7 @@ export class CrashRecorderService {
       AppStorage.setOrCreate('previousCrashLogFile', summary.logFileName || '');
 
       // 删除摘要文件（已读取，避免重复提示）
-      fs.unlinkSync(summaryPath);
+      SafeFileUtils.unlinkSync(summaryPath);
       console.log(`[NGF] ${TAG}: 崩溃摘要已读取并清除`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -369,11 +371,11 @@ export class CrashRecorderService {
       if (!this.crashLogsDir) {
         return [];
       }
-      const exists = fs.accessSync(this.crashLogsDir);
+      const exists = SafeFileUtils.accessSync(this.crashLogsDir);
       if (!exists) {
         return [];
       }
-      const files = fs.listFileSync(this.crashLogsDir);
+      const files = SafeFileUtils.listFileSync(this.crashLogsDir);
       return files.filter((f: string) => f.startsWith('crash_') && f.endsWith('.txt'));
     } catch {
       return [];
@@ -386,11 +388,11 @@ export class CrashRecorderService {
   public readCrashLog(fileName: string): string {
     try {
       const filePath = `${this.crashLogsDir}/${fileName}`;
-      const file = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(filePath);
+      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.READ_ONLY);
+      const stat = SafeFileUtils.statSync(filePath);
       const buf = new ArrayBuffer(Number(stat.size));
-      fs.readSync(file.fd, buf);
-      fs.closeSync(file);
+      SafeFileUtils.readSync(file.fd, buf);
+      SafeFileUtils.closeSync(file);
 
       const decoder = new util.TextDecoder('utf-8');
       return decoder.decodeToString(new Uint8Array(buf));
@@ -415,7 +417,7 @@ export class CrashRecorderService {
       const toDelete = files.slice(0, files.length - 10);
       for (const fileName of toDelete) {
         try {
-          fs.unlinkSync(`${this.crashLogsDir}/${fileName}`);
+          SafeFileUtils.unlinkSync(`${this.crashLogsDir}/${fileName}`);
         } catch {
           // 忽略单个文件删除失败
         }
@@ -438,7 +440,7 @@ export class CrashRecorderService {
       }
       const logsDir = downloadDirManager.ensureDirectory('logs');
       const targetPath = `${logsDir}/${fileName}`;
-      fs.copyFileSync(sourcePath, targetPath);
+      SafeFileUtils.copyFileSync(sourcePath, targetPath);
       console.error(`[NGF] ${TAG}: 崩溃日志已复制到 Download 目录`);
     } catch {
       // 崩溃场景下复制失败不影响

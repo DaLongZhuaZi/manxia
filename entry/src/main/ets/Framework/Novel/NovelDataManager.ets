@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 小说数据管理器
  * 独立管理小说相关数据，不影响现有数据库
@@ -210,7 +211,7 @@ export class NovelDataManager {
       do {
         try {
           const json = rs.getString(0);
-          sources.push(JSON.parse(json) as LegadoBookSource);
+          sources.push(SafeUtils.parseObj(json) as LegadoBookSource);
         } catch (e) {
           // 忽略解析错误
         }

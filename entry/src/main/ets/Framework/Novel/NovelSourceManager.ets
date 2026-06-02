@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * 小说源管理器
  * 统一管理小说书源的导入、存储、执行
@@ -807,7 +808,7 @@ export class NovelSourceManager {
    */
   static isLargeFile(filePath: string, thresholdMB: number = 5): boolean {
     try {
-      const stat = fs.statSync(filePath);
+      const stat = SafeFileUtils.statSync(filePath);
       return stat.size > thresholdMB * 1024 * 1024;
     } catch (error) {
       logger.warn(TAG, `检查文件大小失败: ${String(error)}`);
@@ -820,7 +821,7 @@ export class NovelSourceManager {
    */
   static getFileSize(filePath: string): number {
     try {
-      const stat = fs.statSync(filePath);
+      const stat = SafeFileUtils.statSync(filePath);
       return stat.size;
     } catch (error) {
       logger.warn(TAG, `获取文件大小失败: ${String(error)}`);

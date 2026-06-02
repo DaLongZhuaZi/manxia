@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { logger } from '../Utils/Logger';
 import { ReaderSafeAreaUtils } from '../Utils/ReaderSafeAreaUtils';
 import { common } from '@kit.AbilityKit';
@@ -230,8 +231,9 @@ struct EBookImageReaderPage {
       if (!displayInfo) {
         return;
       }
-      this.screenWidth = px2vp(displayInfo.width);
-      this.screenHeight = px2vp(displayInfo.height);
+      const uiContext = this.uiContext ?? this.getUIContext();
+      this.screenWidth = uiContext.px2vp(displayInfo.width);
+      this.screenHeight = uiContext.px2vp(displayInfo.height);
       this.isLandscapeMode = this.screenWidth > this.screenHeight;
     } catch (error) {
       logger.warn(TAG, `更新屏幕尺寸失败: ${String(error)}`);
@@ -746,12 +748,12 @@ struct EBookImageReaderPage {
 
   private async createCurrentEBookBookmark(): Promise<void> {
     if (!this.ebook) {
-      promptAction.showToast({ message: '电子书尚未就绪' });
+      this.getUIContext().getPromptAction().showToast({ message: '电子书尚未就绪' });
       return;
     }
     const context = this.getCurrentEBookBookmarkContext();
     if (!context) {
-      promptAction.showToast({ message: '当前页面无法添加书签' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页面无法添加书签' });
       return;
     }
     try {
@@ -763,10 +765,10 @@ struct EBookImageReaderPage {
       });
       this.currentPageBookmarkId = bookmark.id;
       this.isCurrentPageBookmarked = true;
-      promptAction.showToast({ message: '书签已添加' });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已添加' });
     } catch (error) {
       logger.error(TAG, `添加图片 EPUB 书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '添加书签失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '添加书签失败' });
     }
   }
 
@@ -777,17 +779,17 @@ struct EBookImageReaderPage {
       bookmarkId = this.currentPageBookmarkId;
     }
     if (!bookmarkId || bookmarkId.trim().length <= 0) {
-      promptAction.showToast({ message: '当前页面暂无书签' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页面暂无书签' });
       return;
     }
     try {
       await this.annotationManager.deleteAnnotation(bookmarkId);
       this.currentPageBookmarkId = '';
       this.isCurrentPageBookmarked = false;
-      promptAction.showToast({ message: '书签已移除' });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已移除' });
     } catch (error) {
       logger.error(TAG, `移除图片 EPUB 书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '移除书签失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '移除书签失败' });
     }
   }
 
@@ -801,7 +803,7 @@ struct EBookImageReaderPage {
 
   private openCurrentEBookAnnotationCenter(): void {
     if (!this.ebook) {
-      promptAction.showToast({ message: '电子书尚未就绪' });
+      this.getUIContext().getPromptAction().showToast({ message: '电子书尚未就绪' });
       return;
     }
     const context = this.getCurrentEBookBookmarkContext();
@@ -827,7 +829,7 @@ struct EBookImageReaderPage {
       );
     } catch (error) {
       logger.error(TAG, `打开批注中心失败: ${String(error)}`);
-      promptAction.showToast({ message: '打开批注中心失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '打开批注中心失败' });
     }
   }
 
@@ -1524,7 +1526,7 @@ struct EBookImageReaderPage {
   private showToolbars(): void {
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
-    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
       this.toolbarOpacity = 1;
     });
     this.handleMenusVisibilityChange();
@@ -1533,7 +1535,7 @@ struct EBookImageReaderPage {
 
   private hideToolbars(): void {
     this.clearToolbarAutoHideTimer();
-    animateTo({ duration: 160, curve: Curve.EaseIn }, () => {
+    this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseIn }, () => {
       this.toolbarOpacity = 0;
     });
     setTimeout(() => {
@@ -1863,11 +1865,11 @@ struct EBookImageReaderPage {
   private async saveCurrentPageToGallery(): Promise<void> {
     const entry = this.getCurrentPageEntry();
     if (!entry || !entry.imagePath.startsWith('/')) {
-      promptAction.showToast({ message: '当前页面无法保存' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页面无法保存' });
       return;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const extensionIndex = entry.imagePath.lastIndexOf('.');
       const extension = extensionIndex > 0 ? entry.imagePath.substring(extensionIndex + 1) : 'jpg';
       const sandboxUri = fileUri.getUriFromPath(entry.imagePath);
@@ -1887,23 +1889,23 @@ struct EBookImageReaderPage {
       const destFile = await fs.open(targetUris[0], fs.OpenMode.WRITE_ONLY);
       const srcFile = await fs.open(sandboxUri, fs.OpenMode.READ_ONLY);
       await fs.copyFile(srcFile.fd, destFile.fd);
-      fs.closeSync(destFile);
-      fs.closeSync(srcFile);
-      promptAction.showToast({ message: '当前页面已保存到图库' });
+      SafeFileUtils.closeSync(destFile);
+      SafeFileUtils.closeSync(srcFile);
+      this.getUIContext().getPromptAction().showToast({ message: '当前页面已保存到图库' });
     } catch (error) {
       logger.error(TAG, `保存页面失败: ${String(error)}`);
-      promptAction.showToast({ message: '保存页面失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '保存页面失败' });
     }
   }
 
   private async shareCurrentPageImage(): Promise<void> {
     const entry = this.getCurrentPageEntry();
     if (!entry || !entry.imagePath.startsWith('/')) {
-      promptAction.showToast({ message: '当前页面无法分享' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页面无法分享' });
       return;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const shareUri = fileUri.getUriFromPath(entry.imagePath);
       const title = `${this.ebook?.metadata.title || '电子书'} - 第${this.currentPageIndex + 1}页`;
       const shareData: systemShare.SharedData = new systemShare.SharedData({
@@ -1919,7 +1921,7 @@ struct EBookImageReaderPage {
       });
     } catch (error) {
       logger.error(TAG, `分享页面失败: ${String(error)}`);
-      promptAction.showToast({ message: '分享页面失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '分享页面失败' });
     }
   }
 
@@ -2131,7 +2133,7 @@ struct EBookImageReaderPage {
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
     .opacity(this.toolbarOpacity)
-    .id('guide_manga_reader_top_toolbar')
+    .id('' as string)
   }
 
   @Builder
@@ -2246,7 +2248,7 @@ struct EBookImageReaderPage {
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: -2 })
     .opacity(this.toolbarOpacity)
-    .id('guide_manga_reader_bottom_toolbar')
+    .id('' as string)
   }
 
   @Builder
@@ -2712,7 +2714,7 @@ struct EBookImageReaderPage {
                 .onClick(() => {
                   const pageNum = parseInt(this.jumpToPageInput);
                   if (isNaN(pageNum) || pageNum <= 0 || pageNum > this.getTotalPages()) {
-                    promptAction.showToast({ message: '请输入有效页码' });
+                    this.getUIContext().getPromptAction().showToast({ message: '请输入有效页码' });
                     return;
                   }
                   this.jumpToPage(pageNum - 1, 'jump_dialog');
@@ -2776,7 +2778,7 @@ struct EBookImageReaderPage {
               .onClick(() => {
                 const pageNum = parseInt(this.jumpToPageInput);
                 if (isNaN(pageNum) || pageNum <= 0 || pageNum > this.getTotalPages()) {
-                  promptAction.showToast({ message: '请输入有效页码' });
+                  this.getUIContext().getPromptAction().showToast({ message: '请输入有效页码' });
                   return;
                 }
                 this.jumpToPage(pageNum - 1, 'jump_dialog');
@@ -3259,7 +3261,7 @@ struct EBookImageReaderPage {
       .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
       .focusable(true)
       .defaultFocus(true)
-      .id('ebook_image_reader_root')
+      .id('' as string)
       .onKeyEvent((event: KeyEvent) => {
         if (event.type === KeyType.Up) {
           const consumed = this.handleVolumeKeyPageTurn(event.keyCode);

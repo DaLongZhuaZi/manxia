@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 图源详情页面
  * 显示图源的热门、最新、搜索等内容
@@ -645,7 +647,7 @@ export struct SourceDetailPage {
         timestamp: number;
       }
       
-      const cacheData: SearchCacheData = JSON.parse(cacheStr) as SearchCacheData;
+      const cacheData: SearchCacheData = SafeUtils.parseObj(cacheStr) as SearchCacheData;
       
       // 检查关键词是否匹配
       if (cacheData.keyword !== keyword) {
@@ -2362,7 +2364,7 @@ export struct SourceDetailPage {
         // 尝试加载用户自定义的标签配置
         const configJson = await this.dataManager.getSourceTabsConfig(this.sourceId);
         if (configJson) {
-          config = JSON.parse(configJson) as SourceTabsConfig;
+          config = SafeUtils.parseObj(configJson) as SourceTabsConfig;
           logger.info(TAG, `已加载用户标签配置: ${config.tabs.length}个标签`);
         } else {
           // 使用默认配置
@@ -2943,7 +2945,7 @@ export struct SourceDetailPage {
     this.isExportingDebugLog = true;
 
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       if (!context || !context.cacheDir) {
         throw new Error('missing UIAbilityContext');
       }
@@ -2952,9 +2954,9 @@ export struct SourceDetailPage {
       const fileName = sourceDebugLogManager.buildExportFileName(sourceName, exportTime);
       tempFilePath = `${context.cacheDir}/${fileName}`;
 
-      const tempFile = fs.openSync(tempFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(tempFile.fd, content);
-      fs.closeSync(tempFile);
+      const tempFile = SafeFileUtils.openSync(tempFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(tempFile.fd, content);
+      SafeFileUtils.closeSync(tempFile);
 
       const documentPicker = new picker.DocumentViewPicker(context);
       const documentSaveOptions = new picker.DocumentSaveOptions();
@@ -2963,15 +2965,15 @@ export struct SourceDetailPage {
       const saveResult = await documentPicker.save(documentSaveOptions);
       if (saveResult && saveResult.length > 0) {
         const targetUri = saveResult[0];
-        const sourceFile = fs.openSync(tempFilePath, fs.OpenMode.READ_ONLY);
-        const targetFile = fs.openSync(targetUri, fs.OpenMode.WRITE_ONLY);
+        const sourceFile = SafeFileUtils.openSync(tempFilePath, fs.OpenMode.READ_ONLY);
+        const targetFile = SafeFileUtils.openSync(targetUri, fs.OpenMode.WRITE_ONLY);
         const buffer = new ArrayBuffer(4096);
         let readLength = 0;
-        while ((readLength = fs.readSync(sourceFile.fd, buffer)) > 0) {
-          fs.writeSync(targetFile.fd, buffer, { length: readLength });
+        while ((readLength = SafeFileUtils.readSync(sourceFile.fd, buffer)) > 0) {
+          SafeFileUtils.writeSync(targetFile.fd, buffer, { length: readLength });
         }
-        fs.closeSync(sourceFile);
-        fs.closeSync(targetFile);
+        SafeFileUtils.closeSync(sourceFile);
+        SafeFileUtils.closeSync(targetFile);
         logger.info(TAG, `图源调试日志导出成功: sourceId=${this.sourceId}, targetUri=${targetUri}`);
         this.getUIContext().getPromptAction().showToast({ message: '\u5bfc\u51fa\u65e5\u5fd7\u6210\u529f' });
       } else {
@@ -2984,7 +2986,7 @@ export struct SourceDetailPage {
     } finally {
       if (tempFilePath.length > 0) {
         try {
-          fs.unlinkSync(tempFilePath);
+          SafeFileUtils.unlinkSync(tempFilePath);
         } catch (_error) {
         }
       }
@@ -3146,10 +3148,11 @@ export struct SourceDetailPage {
             .fileAccess(true)
             .mixedMode(MixedMode.All)
             .cacheMode(CacheMode.Default)
-            .userAgent(this.sourceUserAgent)
+            
             .onControllerAttached(() => {
               logger.info(TAG, 'WebView控制器已附加');
               this.webViewControllerAttached = true;
+              this.webViewController.setCustomUserAgent(this.sourceUserAgent);
               this.sourceDetailSearchExecutor.attachWebViewController(this.webViewController);
             })
             .onPageBegin((event) => {
@@ -3474,7 +3477,7 @@ export struct SourceDetailPage {
     try {
       const filterJson = await this.dataManager.getUserSetting(String(this.sourceId), 'dynamicFilterValues');
       if (filterJson) {
-        const entries = JSON.parse(filterJson) as [string, string][];
+        const entries = SafeUtils.parseArr(filterJson) as [string, string][];
         const loadedMap = new Map<string, string>(entries);
         
         // [修复] 验证并清理无效的缓存值
@@ -3957,7 +3960,7 @@ export struct SourceDetailPage {
    * 移除指定的筛选历史记录（带动画）
    */
   private removeFilterHistory(historyId: string): void {
-    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.filterHistory = this.filterHistory.filter(item => item.id !== historyId);
     });
   }
@@ -4054,7 +4057,7 @@ export struct SourceDetailPage {
       
       if (newItems.length > 0) {
         // 有新内容：使用动画在顶部插入
-        animateTo({
+        this.getUIContext().animateTo({
           duration: 300,
           curve: Curve.EaseOut
         }, () => {
@@ -4108,7 +4111,7 @@ export struct SourceDetailPage {
     this.refreshHintVisible = true;
     
     // 淡入动画
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 200,
       curve: Curve.EaseOut
     }, () => {
@@ -4119,7 +4122,7 @@ export struct SourceDetailPage {
     if (type !== 'loading') {
       // 2秒后自动淡出并隐藏
       setTimeout(() => {
-        animateTo({
+        this.getUIContext().animateTo({
           duration: 300,
           curve: Curve.EaseIn
         }, () => {
@@ -4643,7 +4646,7 @@ export struct SourceDetailPage {
         'tabDisplayModes'
       );
       if (modesJson) {
-        const modesObj = JSON.parse(modesJson) as Record<string, string | number | null | undefined>;
+        const modesObj = SafeUtils.parseObj(modesJson) as Record<string, string | number | null | undefined>;
         const newMap = new Map<string, DisplayMode>();
         Object.keys(modesObj).forEach(tabId => {
           const modeValue: string | number | null | undefined = modesObj[tabId];

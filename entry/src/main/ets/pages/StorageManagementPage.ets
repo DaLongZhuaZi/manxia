@@ -637,7 +637,7 @@ export struct StorageManagementPage {
       previewLines.push(`• 以及另外 ${clearTargets.length - previewLimit} 项`);
     }
 
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '确认清理',
       message: `${previewLines.join('\n\n')}\n\n总计 ${this.storageService.formatSize(totalSizeBytes)} · ${totalItems} 项\n此操作会直接删除对应缓存文件，部分离线内容稍后需要重新拉取。`,
       autoCancel: true,

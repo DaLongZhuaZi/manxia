@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/ConfigurationParser.ets
 /**
  * WebView配置解析器
@@ -352,7 +353,7 @@ export class WebViewConfigurationParser implements ConfigurationParser<WebViewCo
       logger.debug(TAG, '开始解析WebView配置文件');
       
       // 解析JSON字符串
-      const rawConfig = JSON.parse(jsonContent) as DynamicObject;
+      const rawConfig = SafeUtils.parseObj(jsonContent) as DynamicObject;
       
       // 验证基本结构
       if (!this.isValidRawConfig(rawConfig)) {
@@ -466,7 +467,7 @@ export class WebViewConfigurationParser implements ConfigurationParser<WebViewCo
   }
 
   static getDefaultConfig(): WebViewConfiguration {
-    return JSON.parse(JSON.stringify(WebViewConfigurationParser.DEFAULT_CONFIG)) as WebViewConfiguration;
+    return SafeUtils.parseObj(JSON.stringify(WebViewConfigurationParser.DEFAULT_CONFIG)) as WebViewConfiguration;
   }
 
   private isValidRawConfig(rawConfig: DynamicObject): boolean {
@@ -737,7 +738,7 @@ export class SecurityPolicyConfigurationParser implements ConfigurationParser<Se
     try {
       logger.debug(TAG, '开始解析安全策略配置文件');
       
-      const rawConfig = JSON.parse(jsonContent) as DynamicObject;
+      const rawConfig = SafeUtils.parseObj(jsonContent) as DynamicObject;
       
       if (!this.isValidRawConfig(rawConfig)) {
         logger.error(TAG, '安全策略配置文件格式无效');

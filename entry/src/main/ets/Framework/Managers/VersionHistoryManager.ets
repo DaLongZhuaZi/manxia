@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 版本记录管理器
  * 负责获取 GitHub 提交记录、根据网络情况切换加速代理、并缓存历史提交
@@ -507,7 +509,7 @@ export class VersionHistoryManager {
 
       const payload = response.result;
       const responseText = typeof payload === 'string' ? payload : JSON.stringify(payload);
-      const parsed = JSON.parse(responseText) as GitHubCommitResponseItem[];
+      const parsed = SafeUtils.parseArr(responseText) as GitHubCommitResponseItem[];
       if (!Array.isArray(parsed)) {
         throw new Error('提交数据格式异常');
       }
@@ -584,7 +586,7 @@ export class VersionHistoryManager {
 
       const payload = response.result;
       const responseText = typeof payload === 'string' ? payload : JSON.stringify(payload);
-      const parsed = JSON.parse(responseText) as GitHubCommitDetailResponseItem;
+      const parsed = SafeUtils.parseObj(responseText) as GitHubCommitDetailResponseItem;
       if (!parsed || typeof parsed !== 'object') {
         throw new Error('提交详情数据格式异常');
       }
@@ -1014,18 +1016,18 @@ export class VersionHistoryManager {
 
   private async ensureDirectoryExists(dirPath: string): Promise<void> {
     try {
-      const exists = fileIo.accessSync(dirPath);
+      const exists = SafeFileUtils.accessSync(dirPath);
       if (!exists) {
-        fileIo.mkdirSync(dirPath);
+        SafeFileUtils.mkdirSync(dirPath);
       }
     } catch (_) {
-      fileIo.mkdirSync(dirPath);
+      SafeFileUtils.mkdirSync(dirPath);
     }
   }
 
   private async ensureCacheFileExists(): Promise<void> {
     try {
-      const exists = fileIo.accessSync(this.cacheFilePath);
+      const exists = SafeFileUtils.accessSync(this.cacheFilePath);
       if (!exists) {
         this.writeCacheFile(this.createEmptyCacheData());
       }
@@ -1045,12 +1047,12 @@ export class VersionHistoryManager {
 
   private readCacheFile(): VersionHistoryCacheData {
     try {
-      const file = fileIo.openSync(this.cacheFilePath, fileIo.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(this.cacheFilePath, fileIo.OpenMode.READ_ONLY);
       const buffer = new ArrayBuffer(2 * 1024 * 1024);
-      const readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
       const jsonContent = this.decodeToString(buffer, readLen);
-      const parsed = JSON.parse(jsonContent) as VersionHistoryCacheData;
+      const parsed = SafeUtils.parseObj(jsonContent) as VersionHistoryCacheData;
 
       if (!parsed || !Array.isArray(parsed.repositories)) {
         return this.createEmptyCacheData();
@@ -1074,12 +1076,12 @@ export class VersionHistoryManager {
 
   private writeCacheFile(cacheData: VersionHistoryCacheData): void {
     const jsonContent = JSON.stringify(cacheData, null, 2);
-    const file = fileIo.openSync(
+    const file = SafeFileUtils.openSync(
       this.cacheFilePath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
     );
-    fileIo.writeSync(file.fd, jsonContent);
-    fileIo.closeSync(file);
+    SafeFileUtils.writeSync(file.fd, jsonContent);
+    SafeFileUtils.closeSync(file);
   }
 
   private decodeToString(buffer: ArrayBuffer, length: number): string {

@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 import { logger } from '../Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { display, promptAction, UIContext, window } from '@kit.ArkUI';
@@ -346,7 +348,7 @@ export struct EpubWebViewReaderPage {
 
   private async initializeWithParams(params: EBookReaderParams): Promise<void> {
     try {
-      this.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      this.context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
     } catch (_ignored) {}
     this.coverComponentId = params.coverComponentId ?? '';
     this.routerBackOnClose = params.routerBackOnClose === true;
@@ -600,18 +602,18 @@ export struct EpubWebViewReaderPage {
   }
 
   private readUtf8TextFileSync(path: string): string {
-    const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    const file = SafeFileUtils.openSync(path, fileIo.OpenMode.READ_ONLY);
     try {
-      const stat = fileIo.statSync(file.fd);
+      const stat = SafeFileUtils.statSync(file.fd);
       if (stat.size <= 0) {
         return '';
       }
       const buffer = new ArrayBuffer(stat.size);
-      const readLength = fileIo.readSync(file.fd, buffer);
+      const readLength = SafeFileUtils.readSync(file.fd, buffer);
       const bytes = readLength > 0 ? new Uint8Array(buffer, 0, readLength) : new Uint8Array(buffer);
       return new util.TextDecoder('utf-8', { ignoreBOM: true }).decodeToString(bytes);
     } finally {
-      fileIo.closeSync(file);
+      SafeFileUtils.closeSync(file);
     }
   }
 
@@ -621,7 +623,7 @@ export struct EpubWebViewReaderPage {
       return false;
     }
     try {
-      return fileIo.accessSync(normalizedPath);
+      return SafeFileUtils.accessSync(normalizedPath);
     } catch (_error) {
       return false;
     }
@@ -1279,7 +1281,7 @@ export struct EpubWebViewReaderPage {
       return defaultColor;
     }
     try {
-      const style = JSON.parse(styleJson) as HighlightStyle;
+      const style = SafeUtils.parseObj(styleJson) as HighlightStyle;
       if (style && style.color && style.color.trim().length > 0) {
         return style.color;
       }
@@ -1294,7 +1296,7 @@ export struct EpubWebViewReaderPage {
       return HighlightLineType.UNDERLINE;
     }
     try {
-      const style = JSON.parse(styleJson) as HighlightStyle;
+      const style = SafeUtils.parseObj(styleJson) as HighlightStyle;
       if (style && style.lineType === HighlightLineType.WAVY) {
         return HighlightLineType.WAVY;
       }
@@ -1547,7 +1549,7 @@ export struct EpubWebViewReaderPage {
   ): Promise<void> {
     const ebook = this.ebook;
     if (!ebook) {
-      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '书籍信息未就绪', duration: 1500 });
       return;
     }
 
@@ -1577,13 +1579,13 @@ export struct EpubWebViewReaderPage {
         TAG,
         `EPUB Web 划线创建成功: annotationId=${highlight.id}, spine=${this.currentSpineIndex}, start=${snapshot.startOffset}, end=${snapshot.endOffset}, withThought=${withThought}`
       );
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: withThought ? '划线和想法已保存' : '划线已保存',
         duration: 1500
       });
     } catch (error) {
       logger.error(TAG, `创建 EPUB Web 划线失败: ${String(error)}`);
-      promptAction.showToast({ message: '划线保存失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '划线保存失败', duration: 1500 });
     }
   }
 
@@ -1592,7 +1594,7 @@ export struct EpubWebViewReaderPage {
       return this.context;
     }
     try {
-      const hostContext = this.getUIContext().getHostContext();
+      const hostContext = (this.getUIContext().getHostContext() as common.UIAbilityContext);
       if (!hostContext) {
         return null;
       }
@@ -1766,12 +1768,12 @@ export struct EpubWebViewReaderPage {
   private async createCurrentEpubBookmark(): Promise<void> {
     const ebook = this.ebook;
     if (!ebook) {
-      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '书籍信息未就绪', duration: 1500 });
       return;
     }
     const context = await this.getCurrentEpubBookmarkContext();
     if (!context) {
-      promptAction.showToast({ message: '当前页无法添加书签', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页无法添加书签', duration: 1500 });
       return;
     }
     try {
@@ -1784,14 +1786,14 @@ export struct EpubWebViewReaderPage {
       });
       this.currentPageBookmarkId = bookmark.id;
       this.isCurrentPageBookmarked = true;
-      promptAction.showToast({ message: '书签已添加', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已添加', duration: 1200 });
       logger.info(
         TAG,
         `EPUB Web 书签添加成功: spine=${context.chapterIndex}, page=${context.pageIndex}, start=${context.startOffset}, bookmarkId=${bookmark.id}`
       );
     } catch (error) {
       logger.error(TAG, `添加 EPUB Web 书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '添加书签失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '添加书签失败', duration: 1500 });
     }
   }
 
@@ -1802,18 +1804,18 @@ export struct EpubWebViewReaderPage {
       bookmarkId = this.currentPageBookmarkId;
     }
     if (!bookmarkId || bookmarkId.trim().length <= 0) {
-      promptAction.showToast({ message: '当前页暂无书签', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页暂无书签', duration: 1200 });
       return;
     }
     try {
       await this.annotationManager.deleteAnnotation(bookmarkId);
       this.currentPageBookmarkId = '';
       this.isCurrentPageBookmarked = false;
-      promptAction.showToast({ message: '书签已移除', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已移除', duration: 1200 });
       logger.info(TAG, `EPUB Web 书签移除成功: bookmarkId=${bookmarkId}`);
     } catch (error) {
       logger.error(TAG, `移除 EPUB Web 书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '移除书签失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '移除书签失败', duration: 1500 });
     }
   }
 
@@ -1839,7 +1841,7 @@ export struct EpubWebViewReaderPage {
       return [];
     }
     try {
-      const parsed = JSON.parse(rawValue) as Array<string>;
+      const parsed = SafeUtils.parseArr(rawValue) as Array<string>;
       if (!Array.isArray(parsed)) {
         return [];
       }
@@ -2039,7 +2041,7 @@ export struct EpubWebViewReaderPage {
       logger.info(TAG, `EPUB Web 已添加净化规则: ruleId=${createdRule.id}, pattern=${normalizedPattern.substring(0, 50)}`);
     } catch (error) {
       logger.error(TAG, `添加 EPUB Web 净化规则失败: ${String(error)}`);
-      promptAction.showToast({ message: '添加净化规则失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '添加净化规则失败', duration: 1500 });
     }
   }
 
@@ -2344,7 +2346,7 @@ export struct EpubWebViewReaderPage {
         this.scheduleRouteReadAloudAutoStart(`${reason}_retry_${this.routeReadAloudAutoStartAttempts}`, 420);
       } else {
         this.clearRouteReadAloudAutoEntry();
-        promptAction.showToast({ message: '当前页不是可朗读文本', duration: 1500 });
+        this.getUIContext().getPromptAction().showToast({ message: '当前页不是可朗读文本', duration: 1500 });
       }
       return;
     }
@@ -2403,7 +2405,7 @@ export struct EpubWebViewReaderPage {
     this.readAloudController.updateSettings(readAloudSettings);
     const hasContext = await this.updateEpubReadAloudContextByPosition();
     if (!hasContext) {
-      promptAction.showToast({ message: '当前页不是可朗读文本', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页不是可朗读文本', duration: 1500 });
       return;
     }
     if (this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING) {
@@ -2422,14 +2424,14 @@ export struct EpubWebViewReaderPage {
   private async startReadAloudFromCharIndexAsync(charIndex: number): Promise<void> {
     const snapshot = await this.queryCurrentEpubTextSnapshot();
     if (!snapshot || snapshot.text.trim().length <= 0) {
-      promptAction.showToast({ message: '当前页不是可朗读文本', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页不是可朗读文本', duration: 1500 });
       return;
     }
     const safeStart = this.resolveReadAloudSentenceStartCharIndex(snapshot.text, charIndex);
     this.readAloudCurrentCharIndex = safeStart;
     const hasContext = await this.updateEpubReadAloudContextByPosition(safeStart);
     if (!hasContext) {
-      promptAction.showToast({ message: '听书内容未就绪', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '听书内容未就绪', duration: 1500 });
       return;
     }
     const currentSettings = this.getSafeReadAloudSettings(this.readAloudPanelSettings);
@@ -2622,7 +2624,8 @@ export struct EpubWebViewReaderPage {
             topInsetPx = Math.max(topInsetPx, rect.top + rect.height);
           }
         }
-        displayCutoutTopInset = topInsetPx > 0 ? Math.ceil(px2vp(topInsetPx)) : 0;
+        const uiContext = this.uiContext ?? this.getUIContext();
+        displayCutoutTopInset = topInsetPx > 0 ? Math.ceil(uiContext.px2vp(topInsetPx)) : 0;
       } catch (displayError) {
         logger.debug(TAG, `读取 display cutout 信息失败: ${String(displayError)}`);
       }
@@ -2645,7 +2648,7 @@ export struct EpubWebViewReaderPage {
 
   private getWindowCutoutTopInset(): number {
     try {
-      const hostContext = this.context ?? (this.getUIContext().getHostContext() as common.UIAbilityContext);
+      const hostContext = this.context ?? ((this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext);
       if (!hostContext || !hostContext.windowStage) {
         return 0;
       }
@@ -3007,7 +3010,7 @@ export struct EpubWebViewReaderPage {
       toastMessage = 'WebView EPUB 暂不支持双页竖屏上下组合，已切换为左右组合';
     }
     if (shouldNotify && toastMessage.length > 0) {
-      promptAction.showToast({ message: toastMessage, duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: toastMessage, duration: 1400 });
     }
     return normalized;
   }
@@ -3086,7 +3089,8 @@ export struct EpubWebViewReaderPage {
       return this.componentWidth;
     }
     const info = display.getDefaultDisplaySync();
-    return px2vp(info.width);
+    const uiContext = this.uiContext ?? this.getUIContext();
+    return uiContext.px2vp(info.width);
   }
 
   private getEffectiveComponentHeight(): number {
@@ -3094,7 +3098,8 @@ export struct EpubWebViewReaderPage {
       return this.componentHeight;
     }
     const info = display.getDefaultDisplaySync();
-    return px2vp(info.height);
+    const uiContext = this.uiContext ?? this.getUIContext();
+    return uiContext.px2vp(info.height);
   }
 
   private getDeviceOrientation(): 'portrait' | 'landscape' | 'square' {
@@ -3379,7 +3384,7 @@ export struct EpubWebViewReaderPage {
         this.loadSpineItem(nextSpineIndex, 0, 'next', '', source);
         return true;
       }
-      promptAction.showToast({ message: '已是最后一章', duration: 1200 });
+      this.getUIContext().getPromptAction().showToast({ message: '已是最后一章', duration: 1200 });
       return false;
     }
     const previousSpineIndex = this.findReadableSpineIndex(this.currentSpineIndex - 1, -1);
@@ -3387,7 +3392,7 @@ export struct EpubWebViewReaderPage {
       this.loadSpineItem(previousSpineIndex, 99999, 'prev', '', source);
       return true;
     }
-    promptAction.showToast({ message: '已是第一章', duration: 1200 });
+    this.getUIContext().getPromptAction().showToast({ message: '已是第一章', duration: 1200 });
     return false;
   }
 
@@ -3831,7 +3836,7 @@ export struct EpubWebViewReaderPage {
     if (!isReaderKitEnabled()) {
       this.canFallbackToReaderKit = false;
       logger.warn(TAG, 'ReaderKit fallback blocked by global feature gate');
-      promptAction.showToast({ message: 'ReaderKit 已在当前环境关闭', duration: 1400 });
+      this.getUIContext().getPromptAction().showToast({ message: 'ReaderKit 已在当前环境关闭', duration: 1400 });
       return;
     }
     const bookId = this.ebook?.id ?? '';

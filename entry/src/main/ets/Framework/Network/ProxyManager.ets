@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 网络代理管理器
  * 管理APP内的HTTP/HTTPS代理配置
@@ -67,7 +68,7 @@ export class ProxyManager {
     try {
       const savedConfig = this.settingsManager.getString(PROXY_SETTINGS_KEY, '');
       if (savedConfig) {
-        const parsed = JSON.parse(savedConfig) as ProxyConfig;
+        const parsed = SafeUtils.parseObj(savedConfig) as ProxyConfig;
         this.config = {
           enabled: parsed.enabled || false,
           httpEnabled: parsed.httpEnabled !== undefined ? parsed.httpEnabled : true,

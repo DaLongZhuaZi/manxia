@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 用户自定义主题配置系统（精简版）
  * 
@@ -438,7 +439,7 @@ export class UserThemeConfigManager {
       
       const profileJson = await this.preferencesStore.get(this.CURRENT_PROFILE_KEY, '') as string;
       if (profileJson && profileJson.length > 0) {
-        const loaded = JSON.parse(profileJson) as StoredUserThemeProfile;
+        const loaded = SafeUtils.parseObj(profileJson) as StoredUserThemeProfile;
         const loadedEffects: StoredEffectsConfig = loaded.effects ? loaded.effects : {};
         const legacyCornerRadius = loadedEffects.cornerRadius;
         const normalizedEffects: Partial<EffectsConfig> = {

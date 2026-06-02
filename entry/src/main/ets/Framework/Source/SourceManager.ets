@@ -1,3 +1,5 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源管理器
  * 统一管理图源的导入、执行、测试等功能
@@ -155,10 +157,10 @@ export class SourceManager {
       logger.info(TAG, `开始导入图源: ${filePath}`);
 
       // 读取文件内容
-      const file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      const file = SafeFileUtils.openSync(filePath, fileIo.OpenMode.READ_ONLY);
       const buffer = new ArrayBuffer(1024 * 1024); // 1MB
-      const readLen = fileIo.readSync(file.fd, buffer);
-      fileIo.closeSync(file);
+      const readLen = SafeFileUtils.readSync(file.fd, buffer);
+      SafeFileUtils.closeSync(file);
 
       const jsonContent: string = this.decodeToString(buffer, readLen);
 
@@ -179,7 +181,7 @@ export class SourceManager {
   async importFromJSON(jsonContent: string): Promise<ImportResult> {
     try {
       // 解析JSON
-      const config: ESObject = JSON.parse(jsonContent) as ESObject;
+      const config: ESObject = SafeUtils.parseObj(jsonContent) as ESObject;
       
       // 检查metadata
       if (!config.metadata) {
@@ -289,7 +291,7 @@ export class SourceManager {
    */
   async updateSourceFromJSON(jsonContent: string, sourceId: number): Promise<ImportResult> {
     try {
-      const config: ESObject = JSON.parse(jsonContent) as ESObject;
+      const config: ESObject = SafeUtils.parseObj(jsonContent) as ESObject;
       const metadata: ESObject = config.metadata as ESObject;
       const sourceName: string = metadata.name as string;
       const pkg: string = metadata.id as string || '';  // [修复] 获取 pkg 字段
@@ -689,7 +691,7 @@ export class SourceManager {
     }
 
     try {
-      const config: SourceSupportConfig = JSON.parse(configJson) as SourceSupportConfig;
+      const config: SourceSupportConfig = SafeUtils.parseObj(configJson) as SourceSupportConfig;
       const workflows: SourceWorkflowSupportMap | undefined = config.workflows;
       if (!workflows) {
         return emptySupport;

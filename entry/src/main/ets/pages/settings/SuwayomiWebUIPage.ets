@@ -1,3 +1,4 @@
+﻿import { UIContext } from '@ohos.arkui.UIContext';
 /**
  * Suwayomi WebUI 页面
  * 使用 WebView 访问 Suwayomi 服务器的 Web 界面
@@ -98,7 +99,7 @@ export struct SuwayomiWebUIPage {
 
   private showToast(message: string): void {
     import('@kit.ArkUI').then(arkUI => {
-      arkUI.promptAction.showToast({
+      AppStorage.get<UIContext>('GlobalUIContext')?.getPromptAction()?.showToast({
         message: message,
         duration: 2000
       });

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源执行引擎
  * 负责执行图源的各种操作（搜索、获取详情等）
@@ -158,7 +159,7 @@ export class SourceExecutor {
 
       // 解析响应
       const data: ESObject = typeof response.result === 'string' ?
-        JSON.parse(response.result) as ESObject :
+        SafeUtils.parseObj(response.result) as ESObject :
         response.result as ESObject;
 
       request.destroy();

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Scraper/BookOfMoeScraper.ets
 /**
  * BookOf.Moe 刮削器
@@ -212,7 +213,7 @@ export class BookOfMoeScraper {
    */
   private parseApiResponse(responseText: string): BookOfMoeBook[] {
     try {
-      const data: BookOfMoeApiResponse = JSON.parse(responseText) as BookOfMoeApiResponse;
+      const data: BookOfMoeApiResponse = SafeUtils.parseObj(responseText) as BookOfMoeApiResponse;
       
       // 检查是否是数组响应
       if (Array.isArray(data)) {

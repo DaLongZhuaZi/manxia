@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
 import fs from '@ohos.file.fs';
@@ -147,8 +148,8 @@ export struct KomgaImage {
     let file: fs.File | null = null;
     let imageSource: image.ImageSource | null = null;
     try {
-      fs.accessSync(normalizedPath);
-      file = fs.openSync(normalizedPath, fs.OpenMode.READ_ONLY);
+      SafeFileUtils.accessSync(normalizedPath);
+      file = SafeFileUtils.openSync(normalizedPath, fs.OpenMode.READ_ONLY);
       imageSource = image.createImageSource(file.fd);
       return await imageSource.createPixelMap({
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888
@@ -163,7 +164,7 @@ export struct KomgaImage {
       }
       try {
         if (file !== null) {
-          fs.closeSync(file);
+          SafeFileUtils.closeSync(file);
         }
       } catch (_error) {
       }

@@ -1,4 +1,4 @@
-// 文件路径: src/main/ets/Framework/Services/DataService.ets
+﻿// 文件路径: src/main/ets/Framework/Services/DataService.ets
 /**
  * 数据服务层
  * 为UI层提供统一的数据访问接口，封装复杂的数据操作逻辑

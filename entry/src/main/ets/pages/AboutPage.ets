@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/pages/AboutPage.ets
+﻿// 文件路径: entry/src/main/ets/pages/AboutPage.ets
 /**
  * 关于应用页面
  * 显示应用版本、开发者信息、开源许可等内容
@@ -547,7 +547,7 @@ struct AboutPage {
       logger.info(TAG, `已打开邀测链接: ${option.label}`);
     } catch (error) {
       logger.error(TAG, `打开邀测链接失败: ${option.label}`, String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: `无法打开浏览器，请手动访问${option.label}`,
         duration: 3000
       });
@@ -624,14 +624,14 @@ struct AboutPage {
         await context.openLink(qqGroupUrl, { appLinkingOnly: false });
         logger.info(TAG, '已尝试打开QQ群页面');
         
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: '正在打开QQ群页面...',
           duration: 2000
         });
       } catch (openError) {
         // 如果无法打开QQ，只显示复制成功的提示
         logger.warn(TAG, '无法打开QQ应用，仅复制群号', String(openError));
-        promptAction.showToast({
+        this.getUIContext().getPromptAction().showToast({
           message: `QQ群号 ${qqGroupNumber} 已复制，请在QQ中搜索加群`,
           duration: 3000
         });
@@ -639,7 +639,7 @@ struct AboutPage {
       
     } catch (error) {
       logger.error(TAG, '复制QQ群号失败', String(error));
-      promptAction.showToast({
+      this.getUIContext().getPromptAction().showToast({
         message: '复制失败，请手动添加QQ群：1067738499',
         duration: 3000
       });

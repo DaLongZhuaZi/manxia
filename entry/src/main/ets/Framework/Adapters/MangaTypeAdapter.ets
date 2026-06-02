@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 漫画类型适配器
  * 将旧的数据库类型转换为新的类型系统
@@ -200,7 +201,7 @@ export class MangaTypeAdapter {
     
     try {
       // 尝试解析JSON数组
-      const parsed = JSON.parse(tagsStr);
+      const parsed = SafeUtils.parseObj(tagsStr);
       if (Array.isArray(parsed)) {
         return parsed;
       }

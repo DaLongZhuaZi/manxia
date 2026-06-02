@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 类型书架管理器
  * 管理自定义书架的创建、删除和持久化存储
@@ -210,7 +211,7 @@ export class TypeShelfManager {
       const shelvesJson: string = this.settingsManager.getString(TYPE_SHELVES_KEY, '');
       
       if (shelvesJson && shelvesJson.length > 0) {
-        this.shelves = JSON.parse(shelvesJson) as TypeShelf[];
+        this.shelves = SafeUtils.parseArr(shelvesJson) as TypeShelf[];
         logger.info(TAG, `加载了 ${this.shelves.length} 个书架`);
       } else {
         // 首次使用，创建默认系统书架

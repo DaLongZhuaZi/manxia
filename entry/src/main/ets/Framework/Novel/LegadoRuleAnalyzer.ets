@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Legado规则解析引擎
  * 支持多种解析模式：Default(CSS)、XPath、JSONPath、Regex、JS
@@ -488,7 +489,7 @@ export class LegadoRuleAnalyzer {
       rule = rule.replace(putMatch[0], '');
       try {
         // 尝试标准JSON解析
-        const putJson = JSON.parse(`{${putMatch[1]}}`) as Record<string, string>;
+        const putJson = SafeUtils.parseObj(`{${putMatch[1]}}`) as Record<string, string>;
         Object.keys(putJson).forEach(key => {
           putMap[key] = putJson[key];
         });
@@ -1320,7 +1321,7 @@ export class LegadoRuleAnalyzer {
           } else {
             // 没有后续规则，尝试解析JS结果
             try {
-              const parsed: ESObject = JSON.parse(normalizedJsResult) as ESObject;
+              const parsed: ESObject = SafeUtils.parseObj(normalizedJsResult) as ESObject;
               if (Array.isArray(parsed)) {
                 const parsedArray: ESObject[] = parsed as ESObject[];
                 results = parsedArray.map((item: ESObject): string => 
@@ -1499,7 +1500,7 @@ export class LegadoRuleAnalyzer {
    */
   private getStringByJsonPath(path: string): string {
     try {
-      const data: Object = JSON.parse(this.content);
+      const data: Object = SafeUtils.parseObj(this.content);
       const result: Object | null = this.evaluateJsonPath(data as ESObject, path);
       if (result === null || result === undefined) {
         return '';
@@ -1532,7 +1533,7 @@ export class LegadoRuleAnalyzer {
    */
   private getStringListByJsonPath(path: string): string[] {
     try {
-      const data: Object = JSON.parse(this.content);
+      const data: Object = SafeUtils.parseObj(this.content);
       const result: Object | null = this.evaluateJsonPath(data as ESObject, path);
       if (Array.isArray(result)) {
         return result.map((item: ESObject): string => this.valueToString(item));
@@ -1558,7 +1559,7 @@ export class LegadoRuleAnalyzer {
       // 尝试解析JSON
       let data: Object;
       try {
-        data = JSON.parse(this.content);
+        data = SafeUtils.parseObj(this.content);
       } catch (parseError) {
         // 内容不是有效的JSON，可能是HTML
         this.selectorTrace((): string => `JSONPath解析: 内容不是有效JSON，跳过`);

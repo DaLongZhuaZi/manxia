@@ -1,4 +1,4 @@
-// 文件路径: entry/src/main/ets/Framework/Components/AppGuideOverlay.ets
+﻿// 文件路径: entry/src/main/ets/Framework/Components/AppGuideOverlay.ets
 /**
  * 应用统一引导遮罩
  * 提供全屏遮罩、局部高亮和步骤说明卡片
@@ -28,7 +28,7 @@ export struct AppGuideOverlay {
   @Prop highlightVerticalOffsetRatio: number = 0;
   @Prop immersiveMode: boolean = false;
   @Prop showSkip: boolean = true;
-  @Prop themeState?: ThemeAwareState;
+  @Prop themeState!: ThemeAwareState;
   onNext?: () => void;
   onSkip?: () => void;
 

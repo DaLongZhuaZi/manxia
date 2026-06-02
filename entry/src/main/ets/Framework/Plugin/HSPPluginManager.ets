@@ -1,3 +1,4 @@
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/Plugin/HSPPluginManager.ets
 /**
  * HSP插件管理器
@@ -303,8 +304,8 @@ export class HSPPluginManager {
       if (registryData) {
         // 使用util.TextDecoder将ArrayBuffer转换为string
         const decoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
-        const registryString = decoder.decodeWithStream(new Uint8Array(registryData), { stream: false });
-        const registry = JSON.parse(registryString) as Record<string, PluginRegistryEntry>;
+        const registryString = decoder.decodeToString(new Uint8Array(registryData), { stream: false });
+        const registry = SafeUtils.parseObj(registryString) as Record<string, PluginRegistryEntry>;
         // 使用传统循环替代Object.entries
         const registryKeys = Object.keys(registry);
         for (let i = 0; i < registryKeys.length; i++) {

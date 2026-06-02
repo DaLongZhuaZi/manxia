@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../../../Utils/SafeUtils';
 import { IActionExecutor, NGFActionResult } from '../contracts/IActionExecutor';
 
 class NGFWaitActionEnvelope {
@@ -56,7 +57,7 @@ export class ActionExecutorFacade implements IActionExecutor {
     }
 
     try {
-      const parsed = JSON.parse(actionJson) as Partial<NGFWaitActionEnvelope>;
+      const parsed = SafeUtils.parseObj(actionJson) as Partial<NGFWaitActionEnvelope>;
       const waitMs = parsed.waitMs && typeof parsed.waitMs === 'number' ? parsed.waitMs : 0;
       return new NGFWaitActionEnvelope(waitMs);
     } catch {

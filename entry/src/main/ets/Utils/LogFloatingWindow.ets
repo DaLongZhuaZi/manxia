@@ -1,4 +1,4 @@
-import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+﻿import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logCollector, LogEntry, LogFilter } from '../Framework/Debug/LogCollector';
 import { logger, LogLevel } from './Logger';

@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/settings/SettingsSearchSupport.ets
 /**
  * 设置搜索支持
@@ -224,7 +225,7 @@ export class SettingsSearchSupport {
       if (!payload || payload.length === 0) {
         return null;
       }
-      const parsed = JSON.parse(payload) as SettingsSearchTarget;
+      const parsed = SafeUtils.parseObj(payload) as SettingsSearchTarget;
       if (!parsed || parsed.targetPage !== pageName) {
         return null;
       }

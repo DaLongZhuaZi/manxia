@@ -1,4 +1,4 @@
-import { ComicDetailInfo, PageInfo } from './SourceExecutor';
+﻿import { ComicDetailInfo, PageInfo } from './SourceExecutor';
 
 export type KomgaAuthMode = 'NONE' | 'BASIC' | 'API_KEY';
 export type KomgaContentType = 'SERIES' | 'READLISTS' | 'BOOKS';

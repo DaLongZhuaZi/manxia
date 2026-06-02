@@ -1,4 +1,4 @@
-import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+﻿import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { promptAction } from '@kit.ArkUI';
 
 @CustomDialog
@@ -21,7 +21,7 @@ export struct ArchivePasswordDialog {
   }
 
   private showToast(message: string): void {
-    promptAction.showToast({ message, duration: 2000 });
+    this.getUIContext().getPromptAction().showToast({ message, duration: 2000 });
   }
 
   build() {

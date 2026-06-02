@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/Framework/Components/ShareLinkDialogComponent.ets
 // 职责: 分享直达链接对话框组件，样式与 DownloadDialogComponent 完全一致
 
@@ -59,7 +60,7 @@ export struct ShareLinkDialogComponent {
     this.webLink = this.buildWebLink();
 
     if (!this.appLink && !this.webLink) {
-      promptAction.showToast({ message: '无法生成分享链接', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '无法生成分享链接', duration: 1500 });
       return;
     }
 
@@ -218,7 +219,7 @@ export struct ShareLinkDialogComponent {
       return null;
     }
     try {
-      return JSON.parse(filePath) as ShareOnlineEBookExtendedData;
+      return SafeUtils.parseObj(filePath) as ShareOnlineEBookExtendedData;
     } catch (error) {
       logger.debug(TAG, `解析在线电子书分享扩展数据失败: ${String(error)}`);
       return null;
@@ -306,7 +307,7 @@ export struct ShareLinkDialogComponent {
     const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.shareLinkText);
     const systemPasteboard = pasteboard.getSystemPasteboard();
     systemPasteboard.setData(pasteData);
-    promptAction.showToast({ message: '链接已复制', duration: 1500 });
+    this.getUIContext().getPromptAction().showToast({ message: '链接已复制', duration: 1500 });
     this.closeShareDialog();
   }
 
@@ -338,7 +339,7 @@ export struct ShareLinkDialogComponent {
     } catch (error) {
       const errMsg: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `分享失败: ${errMsg}`);
-      promptAction.showToast({ message: '分享失败', duration: 1500 });
+      this.getUIContext().getPromptAction().showToast({ message: '分享失败', duration: 1500 });
     }
   }
 

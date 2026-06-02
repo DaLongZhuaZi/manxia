@@ -1,3 +1,4 @@
+﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 /**
  * 永久图片缓存管理器
  * 用于"边看边下载"功能，将图片永久保存到本地
@@ -83,13 +84,13 @@ export class PermanentImageCacheManager {
       this.pendingContextLogged = false;
       
       // 确保目录存在
-      if (!fs.accessSync(this.permanentCachePath)) {
-        fs.mkdirSync(this.permanentCachePath);
+      if (!SafeFileUtils.accessSync(this.permanentCachePath)) {
+        SafeFileUtils.mkdirSync(this.permanentCachePath);
         logger.info(TAG, `创建永久缓存目录: ${this.permanentCachePath}`);
       }
       
-      if (!fs.accessSync(this.tempCachePath)) {
-        fs.mkdirSync(this.tempCachePath);
+      if (!SafeFileUtils.accessSync(this.tempCachePath)) {
+        SafeFileUtils.mkdirSync(this.tempCachePath);
         logger.info(TAG, `创建临时缓存目录: ${this.tempCachePath}`);
       }
       return true;
@@ -199,15 +200,15 @@ export class PermanentImageCacheManager {
    */
   private ensureDirectoryExists(filePath: string): void {
     const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
-    if (!fs.accessSync(dirPath)) {
+    if (!SafeFileUtils.accessSync(dirPath)) {
       // 递归创建目录
       const parts = dirPath.split('/');
       let currentPath = '';
       for (const part of parts) {
         if (part.length === 0) continue;
         currentPath += '/' + part;
-        if (!fs.accessSync(currentPath)) {
-          fs.mkdirSync(currentPath);
+        if (!SafeFileUtils.accessSync(currentPath)) {
+          SafeFileUtils.mkdirSync(currentPath);
         }
       }
     }
@@ -240,7 +241,7 @@ export class PermanentImageCacheManager {
       }
       
       // 如果文件已存在，直接返回
-      if (fs.accessSync(targetPath)) {
+      if (SafeFileUtils.accessSync(targetPath)) {
         logger.debug(TAG, `图片已存在: ${targetPath}`);
         return targetPath;
       }
@@ -249,9 +250,9 @@ export class PermanentImageCacheManager {
       this.ensureDirectoryExists(targetPath);
       
       // 写入文件
-      const file = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      fs.writeSync(file.fd, imageData);
-      fs.closeSync(file);
+      const file = SafeFileUtils.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      SafeFileUtils.writeSync(file.fd, imageData);
+      SafeFileUtils.closeSync(file);
       
       logger.debug(TAG, `图片保存成功: ${targetPath}`);
       
@@ -273,7 +274,7 @@ export class PermanentImageCacheManager {
   private async checkAndCleanTempCache(sourceId: number, maxSize: number): Promise<void> {
     try {
       const sourceTempPath = `${this.tempCachePath}/source_${sourceId}`;
-      if (!fs.accessSync(sourceTempPath)) {
+      if (!SafeFileUtils.accessSync(sourceTempPath)) {
         return;
       }
       
@@ -295,15 +296,15 @@ export class PermanentImageCacheManager {
     let totalSize = 0;
     
     try {
-      if (!fs.accessSync(dirPath)) {
+      if (!SafeFileUtils.accessSync(dirPath)) {
         return 0;
       }
       
-      const items = fs.listFileSync(dirPath);
+      const items = SafeFileUtils.listFileSync(dirPath);
       
       for (const item of items) {
         const itemPath = `${dirPath}/${item}`;
-        const stat = fs.statSync(itemPath);
+        const stat = SafeFileUtils.statSync(itemPath);
         
         if (stat.isDirectory()) {
           totalSize += await this.calculateDirectorySize(itemPath);
@@ -337,7 +338,7 @@ export class PermanentImageCacheManager {
         }
         
         try {
-          fs.unlinkSync(file.path);
+          SafeFileUtils.unlinkSync(file.path);
           freedSize += file.size;
           logger.debug(TAG, `删除旧缓存: ${file.path}`);
         } catch (error) {
@@ -359,15 +360,15 @@ export class PermanentImageCacheManager {
     files: Array<FileInfo>
   ): Promise<void> {
     try {
-      if (!fs.accessSync(dirPath)) {
+      if (!SafeFileUtils.accessSync(dirPath)) {
         return;
       }
       
-      const items = fs.listFileSync(dirPath);
+      const items = SafeFileUtils.listFileSync(dirPath);
       
       for (const item of items) {
         const itemPath = `${dirPath}/${item}`;
-        const stat = fs.statSync(itemPath);
+        const stat = SafeFileUtils.statSync(itemPath);
         
         if (stat.isDirectory()) {
           await this.collectFiles(itemPath, files);
@@ -396,11 +397,11 @@ export class PermanentImageCacheManager {
       if (!this.ensureCachePathsReady('getAllSourceConfigs')) {
         return configs;
       }
-      if (!fs.accessSync(this.permanentCachePath)) {
+      if (!SafeFileUtils.accessSync(this.permanentCachePath)) {
         return configs;
       }
       
-      const items = fs.listFileSync(this.permanentCachePath);
+      const items = SafeFileUtils.listFileSync(this.permanentCachePath);
       
       for (const item of items) {
         if (item.startsWith('source_')) {
@@ -433,11 +434,11 @@ export class PermanentImageCacheManager {
         return stats;
       }
       const sourcePath = `${this.permanentCachePath}/source_${sourceId}`;
-      if (!fs.accessSync(sourcePath)) {
+      if (!SafeFileUtils.accessSync(sourcePath)) {
         return stats;
       }
       
-      const mangaDirs = fs.listFileSync(sourcePath);
+      const mangaDirs = SafeFileUtils.listFileSync(sourcePath);
       
       for (const mangaDir of mangaDirs) {
         if (mangaDir.startsWith('manga_')) {
@@ -448,17 +449,17 @@ export class PermanentImageCacheManager {
           let imageCount = 0;
           let totalSize = 0;
           
-          const chapterDirs = fs.listFileSync(mangaPath);
+          const chapterDirs = SafeFileUtils.listFileSync(mangaPath);
           chapterCount = chapterDirs.length;
           
           for (const chapterDir of chapterDirs) {
             const chapterPath = `${mangaPath}/${chapterDir}`;
-            const images = fs.listFileSync(chapterPath);
+            const images = SafeFileUtils.listFileSync(chapterPath);
             imageCount += images.length;
             
             for (const image of images) {
               const imagePath = `${chapterPath}/${image}`;
-              const stat = fs.statSync(imagePath);
+              const stat = SafeFileUtils.statSync(imagePath);
               totalSize += stat.size;
             }
           }
@@ -492,7 +493,7 @@ export class PermanentImageCacheManager {
       const safeMangaId = mangaId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const mangaPath = `${this.permanentCachePath}/source_${sourceId}/manga_${safeMangaId}`;
       
-      if (fs.accessSync(mangaPath)) {
+      if (SafeFileUtils.accessSync(mangaPath)) {
         await this.deleteDirectory(mangaPath);
         logger.info(TAG, `删除漫画缓存成功: ${mangaPath}`);
         return true;
@@ -510,24 +511,24 @@ export class PermanentImageCacheManager {
    */
   private async deleteDirectory(dirPath: string): Promise<void> {
     try {
-      if (!fs.accessSync(dirPath)) {
+      if (!SafeFileUtils.accessSync(dirPath)) {
         return;
       }
       
-      const items = fs.listFileSync(dirPath);
+      const items = SafeFileUtils.listFileSync(dirPath);
       
       for (const item of items) {
         const itemPath = `${dirPath}/${item}`;
-        const stat = fs.statSync(itemPath);
+        const stat = SafeFileUtils.statSync(itemPath);
         
         if (stat.isDirectory()) {
           await this.deleteDirectory(itemPath);
         } else {
-          fs.unlinkSync(itemPath);
+          SafeFileUtils.unlinkSync(itemPath);
         }
       }
       
-      fs.rmdirSync(dirPath);
+      SafeFileUtils.rmdirSync(dirPath);
     } catch (error) {
       logger.error(TAG, `删除目录失败: ${dirPath}, ${error}`);
     }
@@ -549,13 +550,13 @@ export class PermanentImageCacheManager {
       }
       // 先检查永久缓存
       const permanentPath = this.getPermanentImagePath(sourceId, mangaId, chapterId, pageIndex, imageUrl);
-      if (fs.accessSync(permanentPath)) {
+      if (SafeFileUtils.accessSync(permanentPath)) {
         return permanentPath;
       }
       
       // 再检查临时缓存
       const tempPath = this.getTempImagePath(sourceId, mangaId, chapterId, pageIndex, imageUrl);
-      if (fs.accessSync(tempPath)) {
+      if (SafeFileUtils.accessSync(tempPath)) {
         return tempPath;
       }
       
@@ -576,7 +577,7 @@ export class PermanentImageCacheManager {
       const safeMangaId = mangaId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const mangaPath = `${this.permanentCachePath}/source_${sourceId}/manga_${safeMangaId}`;
       
-      if (fs.accessSync(mangaPath)) {
+      if (SafeFileUtils.accessSync(mangaPath)) {
         this.deleteDirectory(mangaPath);
         logger.info(TAG, `已删除漫画缓存: ${mangaPath}`);
       }

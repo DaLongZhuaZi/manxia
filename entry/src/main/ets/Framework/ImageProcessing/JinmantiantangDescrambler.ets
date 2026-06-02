@@ -192,7 +192,7 @@ export class JinmantiantangDescrambler {
         format: 'image/jpeg',
         quality: quality
       };
-      const resultData = await packer.packing(resultPixelMap, packOpts);
+      const resultData = await packer.packToData(resultPixelMap, packOpts);
 
       // 8. 清理资源
       await sourcePixelMap.release();

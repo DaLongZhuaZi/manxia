@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Markdown预览组件
  * 基于WebView + marked.js实现
@@ -123,7 +124,7 @@ export struct MarkdownViewerComponent {
     if (!this.isReady) return [];
     try {
       const result = await this.webController.runJavaScript('getTableOfContents()');
-      return JSON.parse(result as string) as TocItem[];
+      return SafeUtils.parseArr(result as string) as TocItem[];
     } catch (e) {
       logger.error(TAG, `获取目录失败: ${e}`);
       return [];

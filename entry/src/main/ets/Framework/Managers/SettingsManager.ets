@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 设置管理器
  * 负责管理应用的所有设置，使用数据库持久化存储
@@ -339,7 +340,7 @@ export class SettingsManager {
       return defaultValue;
     }
     try {
-      return JSON.parse(value) as T;
+      return SafeUtils.parseObj(value) as T;
     } catch (error) {
       logger.error(TAG, `解析JSON设置失败: ${key}`, String(error));
       return defaultValue;

@@ -1,3 +1,5 @@
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 漫画阅读器页面
  * 实现沉浸式显示、Navigation架构、状态管理
@@ -987,7 +989,7 @@ export struct MangaReaderPage {
       logger.info(TAG, `应用屏幕常亮设置: ${keepScreenOn}`);
       
       // 获取当前窗口并设置屏幕常亮
-      window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
+      window.getLastWindow((this.getUIContext().getHostContext() as common.UIAbilityContext)).then((windowStage: window.Window) => {
         windowStage.setWindowKeepScreenOn(keepScreenOn).then(() => {
           logger.info(TAG, `屏幕常亮设置成功: ${keepScreenOn}`);
         }).catch((err: BusinessError) => {
@@ -1045,7 +1047,7 @@ export struct MangaReaderPage {
       
       logger.info(TAG, `应用亮度设置: readingBrightness=${brightness.toFixed(2)}, windowBrightness=${windowBrightness.toFixed(2)}`);
       
-      window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
+      window.getLastWindow((this.getUIContext().getHostContext() as common.UIAbilityContext)).then((windowStage: window.Window) => {
         windowStage.setWindowBrightness(windowBrightness).then(() => {
           logger.info(TAG, `窗口亮度设置成功: ${windowBrightness.toFixed(2)}`);
         }).catch((err: BusinessError) => {
@@ -1064,7 +1066,7 @@ export struct MangaReaderPage {
   */
   private restoreBrightnessSetting(): void {
     try {
-      window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
+      window.getLastWindow((this.getUIContext().getHostContext() as common.UIAbilityContext)).then((windowStage: window.Window) => {
         // 设置为 -1 表示使用系统默认亮度
         windowStage.setWindowBrightness(-1).then(() => {
           logger.info(TAG, '窗口亮度已恢复为系统默认');
@@ -1200,7 +1202,7 @@ export struct MangaReaderPage {
   */
   private restoreKeepScreenOnSetting(): void {
     try {
-      window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
+      window.getLastWindow((this.getUIContext().getHostContext() as common.UIAbilityContext)).then((windowStage: window.Window) => {
         windowStage.setWindowKeepScreenOn(false).then(() => {
           logger.info(TAG, '屏幕常亮已关闭');
         }).catch((err: BusinessError) => {
@@ -1916,7 +1918,7 @@ export struct MangaReaderPage {
 
   private parseSourceConfigJson(configJson: string): SourceConfigJsonLike | null {
     try {
-      return JSON.parse(configJson) as SourceConfigJsonLike;
+      return SafeUtils.parseObj(configJson) as SourceConfigJsonLike;
     } catch (error) {
       logger.warn(TAG, `解析图源配置失败: ${String(error)}`);
       return null;
@@ -2405,7 +2407,7 @@ export struct MangaReaderPage {
       if (settingsJson === null || settingsJson.length <= 0) {
         return null;
       }
-      const parsedSettings = JSON.parse(settingsJson) as ReadingSettings;
+      const parsedSettings = SafeUtils.parseObj(settingsJson) as ReadingSettings;
       const normalizedSettings = this.cloneReadingSettings(parsedSettings);
       AppStorage.setOrCreate(scopeKey, settingsJson);
       logger.info(TAG, `已加载远程图源阅读设置: key=${scopeKey}`);
@@ -5855,7 +5857,7 @@ export struct MangaReaderPage {
       
       if (!chapter || !chapter.pages || pageIndex < 0 || pageIndex >= chapter.pages.length) {
         logger.error(TAG, '无法保存：当前页面无效');
-        AlertDialog.show({ message: '无法保存：当前页面无效' });
+        this.getUIContext().showAlertDialog({ message: '无法保存：当前页面无效' });
         return;
       }
       
@@ -5865,18 +5867,18 @@ export struct MangaReaderPage {
       // 如果是网络图片，需要先下载到沙箱
       if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
         logger.info(TAG, `保存网络图片到图库: ${imagePath}`);
-        AlertDialog.show({ message: '暂不支持直接保存网络图片，请先缓存到本地' });
+        this.getUIContext().showAlertDialog({ message: '暂不支持直接保存网络图片，请先缓存到本地' });
         return;
       }
       
       // 本地图片路径
       if (!imagePath.startsWith('/')) {
         logger.error(TAG, `无效的图片路径: ${imagePath}`);
-        AlertDialog.show({ message: '保存失败：图片路径无效' });
+        this.getUIContext().showAlertDialog({ message: '保存失败：图片路径无效' });
         return;
       }
       
-      const context = getContext(this);
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
       
       // 获取文件后缀名
       const lastDotIndex = imagePath.lastIndexOf('.');
@@ -5909,18 +5911,18 @@ export struct MangaReaderPage {
         await fs.copyFile(srcFile.fd, destFile.fd);
         
         // 关闭文件
-        fs.closeSync(destFile);
-        fs.closeSync(srcFile);
+        SafeFileUtils.closeSync(destFile);
+        SafeFileUtils.closeSync(srcFile);
         
         logger.info(TAG, `图片保存成功: ${desFileUris[0]}`);
-        AlertDialog.show({ message: '图片已保存到图库' });
+        this.getUIContext().showAlertDialog({ message: '图片已保存到图库' });
       } else {
         logger.info(TAG, '用户取消保存');
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `保存图片到图库失败: ${errorMsg}`);
-      AlertDialog.show({ message: `保存失败: ${errorMsg}` });
+      this.getUIContext().showAlertDialog({ message: `保存失败: ${errorMsg}` });
     }
   }
 
@@ -8117,7 +8119,7 @@ export struct MangaReaderPage {
       const pageIndex = this.readerState.currentPageIndex;
       if (!chapter || !chapter.pages || pageIndex < 0 || pageIndex >= chapter.pages.length) {
         logger.error(TAG, '无法分享：当前页面无效');
-        AlertDialog.show({ message: '无法分享：当前页面无效' });
+        this.getUIContext().showAlertDialog({ message: '无法分享：当前页面无效' });
         return;
       }
 
@@ -8125,16 +8127,16 @@ export struct MangaReaderPage {
       const imagePath = currentPage.imagePath;
       if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
         logger.warn(TAG, `当前页为网络图片，无法直接分享: ${imagePath}`);
-        AlertDialog.show({ message: '当前页为网络图片，请先缓存后再分享' });
+        this.getUIContext().showAlertDialog({ message: '当前页为网络图片，请先缓存后再分享' });
         return;
       }
       if (!imagePath.startsWith('/')) {
         logger.error(TAG, `无法分享：图片路径无效: ${imagePath}`);
-        AlertDialog.show({ message: '分享失败：图片路径无效' });
+        this.getUIContext().showAlertDialog({ message: '分享失败：图片路径无效' });
         return;
       }
 
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
       const shareUri = fileUri.getUriFromPath(imagePath);
       const title = `${this.readerState.currentManga?.title || '漫画'} 第${pageIndex + 1}页`;
       const shareData: systemShare.SharedData = new systemShare.SharedData({
@@ -8152,14 +8154,14 @@ export struct MangaReaderPage {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `分享当前页面失败: ${errorMessage}`);
-      AlertDialog.show({ message: `分享失败: ${errorMessage}` });
+      this.getUIContext().showAlertDialog({ message: `分享失败: ${errorMessage}` });
     }
   }
 
   private async createCurrentMangaBookmark(): Promise<void> {
     const context = this.getCurrentMangaBookmarkContext();
     if (!context) {
-      promptAction.showToast({ message: '漫画信息未就绪' });
+      this.getUIContext().getPromptAction().showToast({ message: '漫画信息未就绪' });
       return;
     }
     try {
@@ -8171,14 +8173,14 @@ export struct MangaReaderPage {
       });
       this.currentPageBookmarkId = bookmark.id;
       this.isCurrentPageBookmarked = true;
-      promptAction.showToast({ message: '书签已添加' });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已添加' });
       logger.info(
         TAG,
         `漫画书签添加成功: chapterIndex=${context.chapterIndex}, pageIndex=${context.currentPage}, bookmarkId=${bookmark.id}`
       );
     } catch (error) {
       logger.error(TAG, `添加漫画书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '添加书签失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '添加书签失败' });
     }
   }
 
@@ -8189,18 +8191,18 @@ export struct MangaReaderPage {
       bookmarkId = this.currentPageBookmarkId;
     }
     if (!bookmarkId || bookmarkId.trim().length <= 0) {
-      promptAction.showToast({ message: '当前页暂无书签' });
+      this.getUIContext().getPromptAction().showToast({ message: '当前页暂无书签' });
       return;
     }
     try {
       await this.annotationManager.deleteAnnotation(bookmarkId);
       this.currentPageBookmarkId = '';
       this.isCurrentPageBookmarked = false;
-      promptAction.showToast({ message: '书签已移除' });
+      this.getUIContext().getPromptAction().showToast({ message: '书签已移除' });
       logger.info(TAG, `漫画书签移除成功: bookmarkId=${bookmarkId}`);
     } catch (error) {
       logger.error(TAG, `移除漫画书签失败: ${String(error)}`);
-      promptAction.showToast({ message: '移除书签失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '移除书签失败' });
     }
   }
 
@@ -8220,7 +8222,7 @@ export struct MangaReaderPage {
     const manga = this.readerState.currentManga;
     const mangaId = manga?.id || this.pageParams?.mangaId || '';
     if (!mangaId) {
-      promptAction.showToast({ message: '漫画信息未就绪' });
+      this.getUIContext().getPromptAction().showToast({ message: '漫画信息未就绪' });
       return;
     }
     const params: AnnotationCenterPageParams = {
@@ -8246,14 +8248,14 @@ export struct MangaReaderPage {
             this.pathStack.pushPathByName('AnnotationCenterPage', params);
           } catch (error) {
             logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
-            promptAction.showToast({ message: '打开灵感页面失败' });
+            this.getUIContext().getPromptAction().showToast({ message: '打开灵感页面失败' });
           }
         },
         this.getUIContext()
       );
     } catch (error) {
       logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
-      promptAction.showToast({ message: '打开灵感页面失败' });
+      this.getUIContext().getPromptAction().showToast({ message: '打开灵感页面失败' });
     }
   }
 
@@ -8343,7 +8345,7 @@ export struct MangaReaderPage {
     .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
     .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
     .opacity(this.toolbarOpacity)
-    .id('guide_manga_reader_top_toolbar')
+    .id('' as string)
   }
 
   /**
@@ -8499,7 +8501,7 @@ export struct MangaReaderPage {
     .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
     .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: -2 })
     .opacity(this.toolbarOpacity)
-    .id('guide_manga_reader_bottom_toolbar')
+    .id('' as string)
   }
 
 
@@ -8866,7 +8868,7 @@ export struct MangaReaderPage {
           .width('100%')
           .height('100%')
           .backgroundColor(Color.Transparent)
-          .id('guide_manga_reader_root')
+          .id('' as string)
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 快速设置面板（带动画）
@@ -9212,7 +9214,7 @@ export struct MangaReaderPage {
               }
             }
           })
-          .id('guide_manga_reader_chapter_list')
+          .id('' as string)
           .zIndex(1000)
         }
 
@@ -9979,7 +9981,7 @@ export struct MangaReaderPage {
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .focusable(true)
       .defaultFocus(true)
-      .id('manga_reader_root')
+      .id('' as string)
       .onKeyEvent((event: KeyEvent) => {
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）
         if (event.type === KeyType.Up) {

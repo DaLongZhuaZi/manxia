@@ -1,3 +1,4 @@
+﻿import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 局域网传书上传收件箱服务
  *
@@ -486,7 +487,7 @@ export class TransferUploadStoreService {
         const buffer = new ArrayBuffer(stat.size);
         await fileIo.read(file.fd, buffer);
         const text = this.decoder.decodeToString(new Uint8Array(buffer));
-        const parsed = JSON.parse(text) as TransferUploadIndexData;
+        const parsed = SafeUtils.parseObj(text) as TransferUploadIndexData;
         if (parsed.version === INDEX_VERSION && Array.isArray(parsed.records)) {
           this.records = cloneTransferUploadRecords(parsed.records);
           shouldPruneLoadedRecords = true;

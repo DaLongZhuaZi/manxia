@@ -1,3 +1,4 @@
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 全局交互管理器
  * 管理震动、触觉反馈等交互体验
@@ -167,7 +168,7 @@ export class InteractionManager {
       
       const settingsJson = await this.preferencesStore.get(this.SETTINGS_KEY, '') as string;
       if (settingsJson) {
-        const saved = JSON.parse(settingsJson) as InteractionSettings;
+        const saved = SafeUtils.parseObj(settingsJson) as InteractionSettings;
         if (saved.vibrationEnabled !== undefined) {
           this.settings.vibrationEnabled = saved.vibrationEnabled;
         }
@@ -351,7 +352,13 @@ export class InteractionManager {
    * 获取所有场景列表
    */
   public static getAllScenes(): VibrationScene[] {
-    return Object.values(VibrationScene);
+    return [
+      VibrationScene.BUTTON_CLICK, VibrationScene.TOGGLE_SWITCH, VibrationScene.LIST_ITEM_SELECT,
+      VibrationScene.LONG_PRESS, VibrationScene.SWIPE_ACTION, VibrationScene.PAGE_TURN,
+      VibrationScene.CHAPTER_CHANGE, VibrationScene.BOOKMARK_ADD, VibrationScene.DOWNLOAD_COMPLETE,
+      VibrationScene.DOWNLOAD_ERROR, VibrationScene.SUCCESS, VibrationScene.ERROR,
+      VibrationScene.WARNING, VibrationScene.NOTIFICATION
+    ];
   }
 
   /**
