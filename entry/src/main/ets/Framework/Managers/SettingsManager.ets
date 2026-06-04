@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 设置管理器
  * 负责管理应用的所有设置，使用数据库持久化存储
@@ -183,6 +183,7 @@ export class SettingKeys {
   static readonly LIBRARY_GRID_DIRECT_COVER_ENABLED = 'library_grid_direct_cover_enabled';
   static readonly LIBRARY_GRID_COVER_TYPE_MARKER_ENABLED = 'library_grid_cover_type_marker_enabled';
   static readonly LIBRARY_SHELF_DETAIL_DIRECT_COVER_ENABLED = 'library_shelf_detail_direct_cover_enabled';
+  static readonly LIBRARY_GRID_START_FROM_TOP = 'library_grid_start_from_top'; // 默认视图从顶部开始显示（默认关闭）
   
   // 内容过滤设置
   static readonly SFW_MODE_ENABLED = 'sfw_mode_enabled'; // 启用SFW模式（隐藏NSFW内容）

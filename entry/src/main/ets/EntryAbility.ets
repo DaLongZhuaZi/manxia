@@ -56,13 +56,24 @@ import {
   ngfSettingsStoreFacade,
   ngfUiShellIntegrationFacade
 } from './Framework/NGF';
-import { BasePayload, eventBus, GameEvent } from './Framework/EventBus';
+import { BasePayload, eventBus, GameEvent, ContinuationTriggeredPayload } from './Framework/EventBus';
+import { distributedFileManager } from './Framework/Distributed/DistributedFileManager';
+import { distributedDataSyncManager } from './Framework/Distributed/DistributedDataSyncManager';
 
 export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     logger.startup('EntryAbility', 'onCreate START', 'EntryAbility开始创建');
     initializeReaderKitRuntimeGate('EntryAbility.onCreate');
+    
+    // 初始化分布式管理器
+    distributedFileManager.initialize(this.context);
+    distributedDataSyncManager.initialize(this.context);
+
+    // 处理跨端接续 (App Continuation)
+    if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
+      this.restoreContinuationState(want);
+    }
     
     // 详细记录Want信息用于调试
     logger.info('EntryAbility', `📋 Want详情: uri=${want.uri || 'null'}, type=${want.type || 'null'}, action=${want.action || 'null'}`);
@@ -993,6 +1004,11 @@ export default class EntryAbility extends UIAbility {
       return;
     }
 
+    // 处理跨端接续 (App Continuation) 热启动
+    if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
+      this.restoreContinuationState(want);
+    }
+
     // 检查是否通过 Deep Link 打开应用（manxia:// 或 https://manxia.top/）
     const deepLinkUri: string = want.uri || '';
     if (this.isDeepLinkUri(deepLinkUri)) {
@@ -1178,5 +1194,93 @@ export default class EntryAbility extends UIAbility {
     } catch (error) {
       logger.warn('EntryAbility', `dispose CrashRecorderService failed: ${String(error)}`);
     }
+    
+    distributedDataSyncManager.leaveSession();
+  }
+
+  /**
+   * 鸿蒙跨端流转 (App Continuation) 状态保存
+   */
+  onContinue(wantParam: Record<string, Object>): AbilityConstant.OnContinueResult {
+    logger.info('EntryAbility', 'onContinue: 开始保存接续状态');
+    
+    // 生成分布式状态机 sessionId
+    const sessionId = `continuation_${Date.now()}`;
+    
+    // 将会话ID写入 wantParam 传给目标端
+    wantParam['distributedSessionId'] = sessionId;
+    
+    // 从AppStorage提取当前阅读状态
+    const bookId = AppStorage.get<string>('currentReadBookId') || '';
+    const chapterIndex = AppStorage.get<number>('currentReadChapterIndex') || 0;
+    const pageIndex = AppStorage.get<number>('currentReadPageIndex') || 0;
+    const offset = AppStorage.get<number>('currentReadOffset') || 0;
+    const sourceType = AppStorage.get<string>('currentReadSourceType') || '';
+    const isLocal = AppStorage.get<boolean>('currentReadIsLocal') || false;
+
+    // 启动分布式状态机
+    distributedDataSyncManager.joinSession(sessionId);
+    distributedDataSyncManager.updateProgress(bookId, chapterIndex, pageIndex, offset, sourceType);
+
+    wantParam['bookId'] = bookId;
+    wantParam['isLocal'] = isLocal;
+    wantParam['chapterIndex'] = chapterIndex;
+    wantParam['pageIndex'] = pageIndex;
+    wantParam['offset'] = offset;
+    wantParam['sourceType'] = sourceType;
+    
+    // 触发全局接续事件，供前端（如MainMenuPage）弹出遥控器进入提示
+    eventBus.publish(
+      GameEvent.CONTINUATION_TRIGGERED,
+      new ContinuationTriggeredPayload(sessionId, bookId, chapterIndex, pageIndex, offset, sourceType, isLocal)
+    );
+    
+    logger.info('EntryAbility', `onContinue 状态已保存: bookId=${bookId}, sessionId=${sessionId}`);
+    return AbilityConstant.OnContinueResult.AGREE;
+  }
+
+  /**
+   * 恢复跨端流转状态
+   */
+  private restoreContinuationState(want: Want): void {
+    logger.info('EntryAbility', 'restoreContinuationState: 开始恢复跨端流转状态');
+    
+    if (want.parameters && want.parameters['distributedSessionId']) {
+      const sessionId = want.parameters['distributedSessionId'] as string;
+      const bookId = want.parameters['bookId'] as string;
+      const isLocal = want.parameters['isLocal'] as boolean;
+      const chapterIndex = want.parameters['chapterIndex'] as number;
+      const pageIndex = want.parameters['pageIndex'] as number;
+      const offset = want.parameters['offset'] as number;
+      const rawSourceType = want.parameters['sourceType'] as string;
+      const sourceType = this.normalizeContinuationSourceType(rawSourceType);
+      
+      logger.info('EntryAbility', `目标端接续解析: sessionId=${sessionId}, bookId=${bookId}`);
+      
+      // 目标端加入分布式状态机会话
+      distributedDataSyncManager.joinSession(sessionId);
+      
+      // 设置标志位，让 MainMenuPage 或阅读器直接拉起内容
+      AppStorage.setOrCreate('widgetTargetPage', 'continueRead');
+      AppStorage.setOrCreate('widgetContentType', sourceType);
+      AppStorage.setOrCreate('widgetContentId', bookId);
+      AppStorage.setOrCreate('continuationSessionId', sessionId);
+      AppStorage.setOrCreate('continuationPageIndex', pageIndex);
+      AppStorage.setOrCreate('continuationOffset', offset);
+      AppStorage.setOrCreate('continuationChapterIndex', chapterIndex);
+      AppStorage.setOrCreate('continuationIsLocal', isLocal);
+    }
+  }
+
+  private normalizeContinuationSourceType(sourceType: string): string {
+    const safeSourceType = sourceType ? sourceType : '';
+    const normalized = safeSourceType.trim().toLowerCase();
+    if (normalized === 'novel') {
+      return 'novel';
+    }
+    if (normalized === 'ebook' || normalized === 'epub' || normalized === 'pdf' || normalized === 'txt') {
+      return 'ebook';
+    }
+    return 'manga';
   }
 }

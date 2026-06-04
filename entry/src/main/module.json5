@@ -407,6 +407,14 @@
         }
       },
       {
+        "name": "ohos.permission.DISTRIBUTED_DATASYNC",
+        "reason": "$string:distributed_data_sync_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
+          "when": "always"
+        }
+      },
+      {
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
         "reason": "$string:background_running_reason",
         "usedScene": {

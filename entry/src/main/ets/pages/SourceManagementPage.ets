@@ -860,7 +860,7 @@ export struct SourceManagementPage {
    */
   @Builder
   buildSourceList() {
-    List({ scroller: this.listScroller }) {
+    List({ space: 16, scroller: this.listScroller }) {
       ForEach(this.displayedSources, (source: SourceInfo, index: number) => {
         ListItem() {
           this.buildSourceCard(source)

@@ -1830,7 +1830,10 @@ export class EBookDataManager {
     const isFavorite = Number(getRecordValue(record, 'isFavorite', 0)) === 1;
     const totalWordCount = Number(getRecordValue(record, 'totalWordCount', 0));
     const contentMode = String(getRecordValue(record, 'contentMode', EBookContentMode.UNKNOWN)) as EBookContentMode;
-    const preferredReaderEngine = String(getRecordValue(record, 'preferredReaderEngine', EBookReaderEngine.READER_KIT)) as EBookReaderEngine;
+    let preferredReaderEngine = String(getRecordValue(record, 'preferredReaderEngine', EBookReaderEngine.READER_KIT)) as EBookReaderEngine;
+    if (format === EBookFormat.MD) {
+      preferredReaderEngine = EBookReaderEngine.MARKDOWN;
+    }
     const extractedRootPath = String(getRecordValue(record, 'extractedRootPath', ''));
     const addTime = Number(getRecordValue(record, 'addTime', 0));
     const lastUpdateTime = Number(getRecordValue(record, 'lastUpdateTime', 0));

@@ -1561,8 +1561,9 @@ export struct RssSubscriptionManagementPage {
 
   @Builder
   private buildGroupFilterButton(option: GroupFilterOption) {
-    Button(`${option.label}(${option.count})`)
+    Text(`${option.label}(${option.count})`)
       .height(30)
+      .textAlign(TextAlign.Center)
       .fontSize(11)
       .fontFamily(this.appFontFamily)
       .fontColor(this.selectedGroupFilterKey === option.key

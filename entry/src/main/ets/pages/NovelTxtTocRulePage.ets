@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * TXT目录规则管理页面
  * ????TXT?????????
@@ -415,11 +415,12 @@ export struct NovelTxtTocRulePage {
                 end: this.buildSwipeActions(rule)
               })
             })
+            ListItem() { Row().width('100%').height(24 + this.navigationBarHeight) }
           }
           .width('100%')
           .height('100%')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .padding({ top: 8, bottom: 24 + this.navigationBarHeight })
+          .padding({ top: 8, bottom: 8 })
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
         }

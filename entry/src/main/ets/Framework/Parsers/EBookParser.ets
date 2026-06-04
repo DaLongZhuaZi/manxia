@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../../Utils/SafeFileUtils';
 // 文件路径: entry/src/main/ets/Framework/Parsers/EBookParser.ets
 /**
  * 电子书解析器基类
@@ -2409,7 +2409,7 @@ export class EBookParserFactory {
     }
 
     // 优先使用 Reader Kit 解析支持的格式（除了 TXT，TXT 我们有自定义实现）
-    if (ReaderKitEBookParser.isSupportedFormat(format) && format !== EBookFormat.TXT) {
+    if (ReaderKitEBookParser.isSupportedFormat(format) && format !== EBookFormat.TXT && format !== EBookFormat.MD) {
       if (isReaderKitEnabled()) {
         logger.info(TAG, `使用 Reader Kit 解析: ${format}`);
       } else {
@@ -2421,7 +2421,8 @@ export class EBookParserFactory {
     // 其他格式使用自定义解析器
     switch (format) {
       case EBookFormat.TXT:
-        return new TxtParser(filePath);
+      case EBookFormat.MD:
+        return new TxtParser(filePath, format);
       case EBookFormat.PDF:
         return new PdfParser(filePath);
       default:
@@ -2439,6 +2440,8 @@ export class EBookParserFactory {
     switch (extension) {
       case 'txt':
         return EBookFormat.TXT;
+      case 'md':
+        return EBookFormat.MD;
       case 'epub':
         return EBookFormat.EPUB;
       case 'mobi':
@@ -2523,8 +2526,8 @@ async function createReaderKitBookParserHandler(filePath: string, trigger: strin
 class TxtParser extends EBookParser {
   private encoding: string = 'utf-8';
 
-  constructor(filePath: string) {
-    super(filePath, EBookFormat.TXT);
+  constructor(filePath: string, format: EBookFormat = EBookFormat.TXT) {
+    super(filePath, format);
   }
 
   public async parse(): Promise<EBook> {
@@ -2573,8 +2576,10 @@ class TxtParser extends EBookParser {
       logger.debug(TAG, `提取的元数据: ${JSON.stringify(extractionResult.metadata)}`);
 
       // 7. 创建电子书对象
-      const ebook = this.generateDefaultEBook(this.filePath, EBookFormat.TXT, extractionResult.metadata);
+      const ebook = this.generateDefaultEBook(this.filePath, this.format, extractionResult.metadata);
       ebook.fileSize = fileSize;
+      ebook.contentMode = EBookContentMode.REFLOWABLE_TEXT;
+      ebook.preferredReaderEngine = this.format === EBookFormat.MD ? EBookReaderEngine.MARKDOWN : EBookReaderEngine.TEXT;
 
       // 8. 使用智能提取器的章节信息构建章节列表
       if (extractionResult.chapters.length > 0) {

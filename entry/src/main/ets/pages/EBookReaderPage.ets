@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../Utils/SafeUtils';
+import { SafeUtils } from '../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/EBookReaderPage.ets
 /**
  * 电子书阅读器页面
@@ -92,6 +92,8 @@ import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 
 const TAG = 'EBookReaderPage';
 
@@ -302,6 +304,7 @@ struct EBookReaderPage {
 
   aboutToAppear(): void {
     this.isPageVisible = true;
+    distributedReadingService.attachToReader();
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EBookReaderPage');
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -375,6 +378,44 @@ struct EBookReaderPage {
     return true;
   }
 
+  private lastRemoteInstructionTimestamp: number = 0;
+
+  private registerRemoteControlListener(): void {
+    logger.info(TAG, '[RemoteControl] 电子书被控端已注册遥控器指令监听');
+    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
+      if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
+        return;
+      }
+      if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
+        return;
+      }
+      this.lastRemoteInstructionTimestamp = state.timestamp;
+
+      logger.info(TAG, `[RemoteControl] 收到电子书遥控指令: ${state.instructionType}`);
+      switch (state.instructionType) {
+        case 'cmd:next_page':
+          this.turnEBookPageByVolume(true);
+          break;
+        case 'cmd:prev_page':
+          this.turnEBookPageByVolume(false);
+          break;
+        case 'cmd:next_chapter':
+          this.nextChapter();
+          break;
+        case 'cmd:prev_chapter':
+          this.previousChapter();
+          break;
+        case 'cmd:toggle_auto_read':
+          this.toggleTextReadAloud();
+          break;
+        default:
+          logger.warn(TAG, `[RemoteControl] 未知电子书指令: ${state.instructionType}`);
+          break;
+      }
+      distributedDataSyncManager.sendInstruction('ack', '');
+    });
+  }
+
   private handleVolumeKeyPageTurn(keyCode: number): boolean {
     const volumeKeyEnabled = this.textReaderSettings.volumeKeyNavigation ?? true;
     logger.debug(TAG, `Volume key event: keyCode=${keyCode}, volumeKeyNavigation=${volumeKeyEnabled}`);
@@ -419,6 +460,7 @@ struct EBookReaderPage {
 
   aboutToDisappear(): void {
     this.isPageVisible = false;
+    distributedReadingService.detach();
     const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.clearToolbarAutoHideTimer();
@@ -1441,7 +1483,7 @@ struct EBookReaderPage {
         // 用户已修改过设置，使用保存的设置
         ebook.readingSettings.followSystemTheme = false;
         // 用户已修改过设置，使用保存的设置
-        this.saveTextReaderSettings();
+        this.queueTextReaderSettingsSave();
       } else {
       // 没有保存的设置，使用全局设置
       logger.info(TAG, `纯文本阅读器无保存设置，应用全局设置: 字体大小=${globalFontSize}, 字体=${globalFontFamily}, 背景色=${globalBgPreset.backgroundColor}`);
@@ -1820,7 +1862,7 @@ struct EBookReaderPage {
     if (!nextReadAloud.enabled) {
       nextReadAloud.enabled = true;
       this.textReaderSettings.readAloud = nextReadAloud;
-      this.saveTextReaderSettings();
+      this.queueTextReaderSettingsSave();
       this.persistGlobalReadAloudSettings(nextReadAloud);
     }
 
@@ -1861,7 +1903,7 @@ struct EBookReaderPage {
     const nextReadAloud: ReadAloudSettings = this.mergeReadAloudSettings(current, partial);
     this.readAloudPanelSettings = nextReadAloud;
     this.textReaderSettings.readAloud = nextReadAloud;
-    this.saveTextReaderSettings();
+    this.queueTextReaderSettingsSave();
     this.persistGlobalReadAloudSettings(nextReadAloud);
     this.syncTextReadAloudContext();
 
@@ -2188,6 +2230,26 @@ struct EBookReaderPage {
     logger.info(TAG, `切换到下一章: ${this.currentChapter?.title}`);
   }
 
+  private ebookSettingsSaveTimeoutId: number = -1;
+
+  private queueEBookSettingsSave(): void {
+    if (this.ebookSettingsSaveTimeoutId !== -1) {
+      clearTimeout(this.ebookSettingsSaveTimeoutId);
+    }
+    this.ebookSettingsSaveTimeoutId = setTimeout(() => {
+      this.ebookSettingsSaveTimeoutId = -1;
+      if (this.ebook && this.ebook.readingSettings) {
+        this.ebookDataManager.saveReadingSettings(this.ebook.id, this.ebook.readingSettings)
+          .then(() => {
+            logger.info(TAG, 'Reading settings saved');
+          })
+          .catch((error: Error) => {
+            logger.error(TAG, `Failed to save reading settings: ${error.message}`);
+          });
+      }
+    }, 500);
+  }
+
   /**
   * 更新阅读设置（立即生效）
   */
@@ -2204,39 +2266,37 @@ struct EBookReaderPage {
       this.textColor = settings.textColor;
       this.pageMargin = settings.pageMargin;
 
-      // 立即应用到 Reader Kit（如果控制器已就绪）
-      this.ebook.readingSettings = settings;
+      const nextSettings: EBookReadingSettings = JSON.parse(JSON.stringify(settings));
+      this.ebook.readingSettings = nextSettings;
       this.syncImagePageReaderSettings();
       this.syncDeviceOrientationLock('ebook_settings_change');
 
       // 保存到数据库
       if (this.readerKitController && this.readerKitController.isControllerReady()) {
         this.readerKitController.applyReadingSettings(settings, true);
-      logger.info(TAG, '阅读设置已保存');
+        logger.info(TAG, '阅读设置已应用');
       }
 
-      // 保存到数据库
-      await this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
-      logger.info(TAG, 'Reading settings saved');
+      // 延迟保存到数据库
+      this.queueEBookSettingsSave();
     } catch (error) {
-      logger.error(TAG, `保存阅读设置失败: ${String(error)}`);
+      logger.error(TAG, `应用阅读设置失败: ${String(error)}`);
     }
   }
 
-  /**
-  * 保存当前设置（简化版本，用于面板中的即时保存）
-  */
   private saveSettings(): void {
     if (!this.ebook || !this.ebook.readingSettings) {
       return;
     }
 
     // 立即应用到 Reader Kit
-    this.ebook.readingSettings.fontSize = this.fontSize;
-    this.ebook.readingSettings.lineHeight = this.lineHeight;
-    this.ebook.readingSettings.backgroundColor = this.bgColor;
-    this.ebook.readingSettings.textColor = this.textColor;
-    this.ebook.readingSettings.pageMargin = this.pageMargin;
+    const nextSettings: EBookReadingSettings = JSON.parse(JSON.stringify(this.ebook.readingSettings));
+    nextSettings.fontSize = this.fontSize;
+    nextSettings.lineHeight = this.lineHeight;
+    nextSettings.backgroundColor = this.bgColor;
+    nextSettings.textColor = this.textColor;
+    nextSettings.pageMargin = this.pageMargin;
+    this.ebook.readingSettings = nextSettings;
     const isNightMode = this.bgColor === '#1E1E1E' || this.bgColor === '#1B3B2F';
     this.ebook.readingSettings.nightMode = isNightMode;
     this.syncImagePageReaderSettings();
@@ -2247,11 +2307,7 @@ struct EBookReaderPage {
     }
 
   // 当前 DOM 位置（用于 Reader Kit 精确恢复阅读位置）
-    this.ebookDataManager.saveReadingSettings(this.ebook.id, this.ebook.readingSettings)
-      .then(() => logger.debug(TAG, '设置已保存'))
-      .catch((error: Error) => {
-        logger.error(TAG, `保存阅读设置失败: ${String(error)}`);
-      });
+    this.queueEBookSettingsSave();
   }
 
   private applyReadingThemePreset(backgroundColor: string, textColor: string): void {
@@ -2358,6 +2414,14 @@ struct EBookReaderPage {
         this.ebook.readingProgress.lastReadTime = progress.lastReadTime;
         this.ebook.readingProgress.totalReadingTime = totalReadingTime;
       }
+
+      distributedReadingService.syncProgress(
+        this.ebook.id,
+        progress.currentChapterIndex,
+        progress.currentPosition,
+        0,
+        'ebook'
+      );
       
       logger.info(TAG, `阅读进度已保存: 章节=${chapterIndexToSave}, 页=${currentPosition}, domPos长度=${domPos.length}, 累计阅读时间=${totalReadingTime.toFixed(2)}分钟`);
     } catch (error) {
@@ -2823,7 +2887,7 @@ struct EBookReaderPage {
       const coverComponentId: string = this.sourceCoverComponentId || (ebookId ? `cover_ebook_lib_${ebookId}` : '');
 
       if (this.isUsingTextReader()) {
-        await this.saveTextReaderSettings();
+        await this.executeSaveTextReaderSettings();
       }
 
       // Save progress first, then trigger close transition.
@@ -3093,6 +3157,11 @@ struct EBookReaderPage {
           }, 96);
         }
         this.loadEBook(params.bookId);
+        const continuationSessionId = AppStorage.get<string>('continuationSessionId');
+        if (continuationSessionId) {
+          this.registerRemoteControlListener();
+          AppStorage.setOrCreate('continuationSessionId', '');
+        }
       } else {
         this.errorMessage = '电子书 ID 参数无效';
         logger.error(TAG, '缺少电子书ID参数');
@@ -3724,6 +3793,13 @@ struct EBookReaderPage {
         this.ebook.readingProgress.lastReadTime = readingProgress.lastReadTime;
         this.ebook.readingProgress.totalReadingTime = readingProgress.totalReadingTime;
       }
+      distributedReadingService.syncProgress(
+        this.ebook.id,
+        this.currentChapterIndex,
+        pageIndex,
+        this.textCurrentPageStartCharIndex,
+        'ebook'
+      );
       logger.debug(TAG, `保存文本阅读进度: 章节=${this.currentChapterIndex}, 页码=${pageIndex}, 进度=${progress.toFixed(1)}%`);
     } catch (error) {
       logger.error(TAG, `保存文本阅读进度失败: ${String(error)}`);
@@ -3767,12 +3843,13 @@ struct EBookReaderPage {
           onSettingsChange: (settings: TextReaderSettings) => {
             const previousHintKey = this.getInteractionHintKey(this.textReaderSettings);
             settings.readAloud = this.getSafeReadAloudSettings(settings.readAloud);
-            this.textReaderSettings = settings;
+            const nextSettings: TextReaderSettings = JSON.parse(JSON.stringify(settings));
+            this.textReaderSettings = nextSettings;
             if (previousHintKey !== this.getInteractionHintKey(settings)) {
               this.queueInteractionHintIfNeeded(settings);
             }
             this.syncDeviceOrientationLock('text_settings_change');
-            this.saveTextReaderSettings();
+            this.queueTextReaderSettingsSave();
             this.syncTextReadAloudContext();
             this.persistGlobalReadAloudSettings(this.getSafeReadAloudSettings(settings.readAloud));
           }
@@ -3829,7 +3906,19 @@ struct EBookReaderPage {
   * 保存文本阅读器设置
   * 将 TextReaderSettings 转换为 EBookReadingSettings 并保存到数据库
   */
-  private async saveTextReaderSettings(): Promise<void> {
+  private textSettingsSaveTimeoutId: number = -1;
+
+  private queueTextReaderSettingsSave(): void {
+    if (this.textSettingsSaveTimeoutId !== -1) {
+      clearTimeout(this.textSettingsSaveTimeoutId);
+    }
+    this.textSettingsSaveTimeoutId = setTimeout(() => {
+      this.textSettingsSaveTimeoutId = -1;
+      void this.executeSaveTextReaderSettings();
+    }, 500);
+  }
+
+  private async executeSaveTextReaderSettings(): Promise<void> {
     if (!this.ebook) {
       return;
     }

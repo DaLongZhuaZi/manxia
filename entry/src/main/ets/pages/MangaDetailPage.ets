@@ -45,6 +45,7 @@ import { ChapterPreloadManager, ChapterInfo } from '../Framework/Preload/Chapter
 
 import { LengthMetrics, curves, UIContext } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
+import { LabelUtils } from '../Utils/LabelUtils';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import { common } from '@kit.AbilityKit';
@@ -4461,9 +4462,10 @@ struct MangaDetailPage {
             // 封面图片容器，添加阴影效果
             Column() {
               // 使用方法返回的渲染源，避免在 UI 语法块内声明变量
-              Image(this.getCoverImageSourceForUI())
-                .width(this.coverDisplayWidth)
-                .height(this.coverDisplayHeight)
+              Stack({ alignContent: Alignment.TopEnd }) {
+                Image(this.getCoverImageSourceForUI())
+                  .width(this.coverDisplayWidth)
+                  .height(this.coverDisplayHeight)
                 .objectFit(ImageFit.Contain) // 仅缩放，完整显示，不裁剪
                 .backgroundColor(Color.Transparent)
                 .id(`cover_manga_detail_${this.currentManga?.id || ''}`)  // 用于翻开动画定位
@@ -4487,7 +4489,19 @@ struct MangaDetailPage {
                     });
                   }
                 })
-                .alt($r('app.media.mangabook')) // 设置加载失败时的替代图片
+                .alt($r('app.media.mangabook'))
+                
+                if (LabelUtils.isTranslatedContent(this.currentManga?.title)) {
+                  Text('汉化')
+                    .fontSize(10)
+                    .fontColor(Color.White)
+                    .backgroundColor('#E6F44336')
+                    .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+                    .borderRadius({ bottomLeft: 6, topRight: 8 })
+                }
+              }
+              .width(this.coverDisplayWidth)
+              .height(this.coverDisplayHeight)// 设置加载失败时的替代图片
             }
             .backgroundColor(Color.Transparent)
             .width(this.coverDisplayWidth)
@@ -5521,15 +5535,28 @@ struct MangaDetailPage {
           // 封面和基本信息（简化版）
           Column({ space: 12 }) {
           // 封面图片
-          Image(this.getCoverImageSourceForUI())
-            .width(120)
-            .height(180)
+          Stack({ alignContent: Alignment.TopEnd }) {
+            Image(this.getCoverImageSourceForUI())
+              .width(120)
+              .height(180)
             .objectFit(ImageFit.Contain)
             .borderRadius(8)
             .onError(() => {
               logger.warn(TAG, `封面图片加载失败`);
             })
             .alt($r('app.media.mangabook'))
+            
+            if (LabelUtils.isTranslatedContent(this.currentManga?.title)) {
+              Text('汉化')
+                .fontSize(10)
+                .fontColor(Color.White)
+                .backgroundColor('#E6F44336')
+                .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+                .borderRadius({ bottomLeft: 6, topRight: 8 })
+            }
+          }
+          .width(120)
+          .height(180)
 
           // 标题
           Text(this.currentManga?.title || '加载中...')
@@ -6468,3 +6495,4 @@ class ChapterDataSource implements IDataSource {
 }
 
 export { MangaDetailPage }
+

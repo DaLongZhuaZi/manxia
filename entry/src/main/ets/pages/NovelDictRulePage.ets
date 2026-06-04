@@ -1,4 +1,4 @@
-import { SafeFileUtils } from '../Utils/SafeFileUtils';
+﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * 字典规则管理页面
  * 管理在线词典查询规则
@@ -400,11 +400,12 @@ export struct NovelDictRulePage {
                 end: this.buildSwipeActions(rule)
               })
             })
+            ListItem() { Row().width('100%').height(24 + this.navigationBarHeight) }
           }
           .width('100%')
           .height('100%')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .padding({ top: 8, bottom: 24 + this.navigationBarHeight })
+          .padding({ top: 8, bottom: 8 })
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
         }

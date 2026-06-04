@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 小说功能设置页面
  * 提供书源管理、规则管理入口以及全局设置
  * 
@@ -86,7 +86,7 @@ export struct NovelSettingsPage {
       subtitle: '字体、背景、翻页等',
       icon: $r('sys.symbol.textformat'),
       iconColor: '#E91E63',
-      route: 'FontSettingsSubPage'
+      route: 'ReadingSettingsSubPage'
     },
     {
       title: '书源管理',
@@ -261,7 +261,7 @@ export struct NovelSettingsPage {
               this.buildFeatureTilesSection()
               
               // 全局设置区域
-              this.buildGlobalSettingsSection()
+              
             }
             .width('100%')
             .padding({ left: 16, right: 16, bottom: 24 + this.navigationBarHeight })

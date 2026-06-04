@@ -244,6 +244,37 @@ export class CoverSelectionCompletedPayload implements IEventPayload {
   }
 }
 
+/**
+ * 分布式接续被触发的事件载荷
+ */
+export class ContinuationTriggeredPayload implements IEventPayload {
+  public sessionId: string;
+  public bookId: string;
+  public chapterIndex: number;
+  public pageIndex: number;
+  public offset: number;
+  public sourceType: string;
+  public isLocal: boolean;
+  
+  constructor(
+    sessionId: string,
+    bookId: string,
+    chapterIndex: number,
+    pageIndex: number,
+    offset: number,
+    sourceType: string,
+    isLocal: boolean
+  ) {
+    this.sessionId = sessionId;
+    this.bookId = bookId;
+    this.chapterIndex = chapterIndex;
+    this.pageIndex = pageIndex;
+    this.offset = offset;
+    this.sourceType = sourceType;
+    this.isLocal = isLocal;
+  }
+}
+
 // =================================================================
 // 3. 全局游戏事件常量
 //    使用接口来定义GameEvent对象的结构，确保类型安全。
@@ -303,6 +334,8 @@ interface GameEventConstants {
   FILE_IMPORT_REQUESTED: string;
   // 封面选择
   COVER_SELECTION_COMPLETED: string;
+  // 分布式
+  CONTINUATION_TRIGGERED: string;
 }
 
 export const GameEvent: GameEventConstants = {
@@ -369,6 +402,9 @@ export const GameEvent: GameEventConstants = {
   
   // --- 封面选择事件 ---
   COVER_SELECTION_COMPLETED: 'coverSelectionCompleted',
+  
+  // --- 分布式协同事件 ---
+  CONTINUATION_TRIGGERED: 'continuationTriggered',
 };
 
 // =================================================================

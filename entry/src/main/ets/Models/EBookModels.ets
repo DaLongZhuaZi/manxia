@@ -10,7 +10,8 @@ export enum EBookFormat {
   MOBI = 'MOBI',
   AZW = 'AZW',
   AZW3 = 'AZW3',
-  PDF = 'PDF'
+  PDF = 'PDF',
+  MD = 'MD'
 }
 
 export enum EBookContentMode {
@@ -25,7 +26,8 @@ export enum EBookReaderEngine {
   READER_KIT = 'READER_KIT',
   MANGA = 'MANGA',
   WEBVIEW = 'WEBVIEW',
-  PDF_KIT = 'PDF_KIT'
+  PDF_KIT = 'PDF_KIT',
+  MARKDOWN = 'MARKDOWN'
 }
 
 /**
@@ -295,6 +297,8 @@ export class EBook {
     this.contentMode = EBookContentMode.UNKNOWN;
     if (format === EBookFormat.TXT) {
       this.preferredReaderEngine = EBookReaderEngine.TEXT;
+    } else if (format === EBookFormat.MD) {
+      this.preferredReaderEngine = EBookReaderEngine.MARKDOWN;
     } else if (format === EBookFormat.PDF) {
       this.preferredReaderEngine = EBookReaderEngine.PDF_KIT;
     } else if (format === EBookFormat.MOBI || format === EBookFormat.AZW || format === EBookFormat.AZW3) {

@@ -81,6 +81,8 @@ import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/App
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 
 const TAG = 'NovelReaderPage';
 const NOVEL_SETTINGS_STORE = 'novel_settings';
@@ -278,6 +280,7 @@ export struct NovelReaderPage {
   };
 
   aboutToAppear(): void {
+    distributedReadingService.attachToReader();
     // 初始化主题感知
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${theme}`);
@@ -300,6 +303,7 @@ export struct NovelReaderPage {
   }
 
   aboutToDisappear(): void {
+    distributedReadingService.detach();
     this.isPageVisible = false;
     this.stopReadAloudUiSyncTimer();
     const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
@@ -1911,12 +1915,24 @@ export struct NovelReaderPage {
     this.tryShowQueuedInteractionHint(reason, 220);
   }
 
+  private settingsSaveTimeoutId: number = -1;
+
   async saveSettings(): Promise<void> {
     this.pendingSettingsSnapshot = this.cloneTextReaderSettings(this.settings);
-    if (this.settingsSavePromise === null) {
-      this.settingsSavePromise = this.flushPendingSettingsSaves();
+    
+    if (this.settingsSaveTimeoutId !== -1) {
+      clearTimeout(this.settingsSaveTimeoutId);
     }
-    return await this.settingsSavePromise;
+    
+    return new Promise<void>((resolve) => {
+      this.settingsSaveTimeoutId = setTimeout(() => {
+        this.settingsSaveTimeoutId = -1;
+        if (this.settingsSavePromise === null) {
+          this.settingsSavePromise = this.flushPendingSettingsSaves();
+        }
+        this.settingsSavePromise.then(resolve);
+      }, 500);
+    });
   }
 
   onSettingsChange(newSettings: TextReaderSettings): void {
@@ -2179,6 +2195,89 @@ export struct NovelReaderPage {
   }
 
   /**
+   * 注册遥控器指令监听（被控端）
+   * 通过时间戳防重入，避免同一指令被重复执行。
+   */
+  private lastRemoteInstructionTimestamp: number = 0;
+
+  private registerRemoteControlListener(): void {
+    logger.info(TAG, '[RemoteControl] 小说被控端已注册遥控器指令监听');
+    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
+      if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
+        return;
+      }
+      if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
+        return;
+      }
+      this.lastRemoteInstructionTimestamp = state.timestamp;
+
+      logger.info(TAG, `[RemoteControl] 收到遥控指令: ${state.instructionType}`);
+      switch (state.instructionType) {
+        case 'cmd:next_page':
+          this.goToNextPage();
+          break;
+        case 'cmd:prev_page':
+          this.goToPreviousPage();
+          break;
+        case 'cmd:next_chapter':
+          this.goToNextChapter();
+          break;
+        case 'cmd:prev_chapter':
+          this.goToPreviousChapter();
+          break;
+        case 'cmd:toggle_auto_read':
+          this.toggleReadAloudFromToolbar();
+          break;
+        default:
+          logger.warn(TAG, `[RemoteControl] 未知指令: ${state.instructionType}`);
+          break;
+      }
+      // 通知遥控端指令已执行
+      distributedDataSyncManager.sendInstruction('ack', '');
+    });
+  }
+
+  /**
+  * 上一页
+  */
+  private goToPreviousPage(): void {
+    if (this.currentChapterTotalPages <= 0) {
+      logger.warn(TAG, '[RemoteControl] 小说页码尚未就绪，无法上一页');
+      return;
+    }
+    if (this.currentPageIndex > 0) {
+      this.currentPageIndex--;
+      this.readAloudController.updatePageIndex(this.currentPageIndex);
+      this.updateReadAloudContextByPosition();
+      this.syncOverallReadProgress('remote_prev_page');
+      this.refreshCurrentNovelBookmarkState('remote_prev_page');
+      this.saveReadProgress();
+      return;
+    }
+    this.goToPreviousChapter();
+  }
+
+  /**
+  * 下一页
+  */
+  private goToNextPage(): void {
+    if (this.currentChapterTotalPages <= 0) {
+      logger.warn(TAG, '[RemoteControl] 小说页码尚未就绪，无法下一页');
+      return;
+    }
+    if (this.currentPageIndex < this.currentChapterTotalPages - 1) {
+      this.currentPageIndex++;
+      this.readAloudController.updatePageIndex(this.currentPageIndex);
+      this.updateReadAloudContextByPosition();
+      this.syncOverallReadProgress('remote_next_page');
+      this.refreshCurrentNovelBookmarkState('remote_next_page');
+      this.saveReadProgress();
+      return;
+    }
+    this.goToNextChapter();
+  }
+
+  /**
   * 上一章
   */
   goToPreviousChapter(): void {
@@ -2394,6 +2493,14 @@ export struct NovelReaderPage {
           this.readStartTime = now;// 重置开始时间，避免重复计算
         }
       }
+      
+      distributedReadingService.syncProgress(
+        this.bookId,
+        this.currentChapterIndex,
+        this.currentPageIndex,
+        this.currentPageStartCharIndex,
+        'novel'
+      );
       
       logger.debug(TAG, `保存阅读进度: 章节${this.currentChapterIndex}, 页面${this.currentPageIndex}`);
     } catch (error) {
@@ -3913,7 +4020,31 @@ export struct NovelReaderPage {
         this.bookId = this.isLocalTxtNovelMode()
           ? buildLocalTextNovelBookId(localBookIdentity)
           : `${param.sourceId}_${encodeURIComponent(param.bookUrl)}`;
-        this.chapterId = `${this.bookId}_${param.chapterIndex}`;
+
+        // 拦截分布式进度
+        const continuationSessionId = AppStorage.get<string>('continuationSessionId');
+        if (continuationSessionId) {
+          const distributedState = distributedDataSyncManager.getCurrentState();
+          // 如果命中bookUrl或bookId，或者小说由于本地和远程bookId不同，则使用较为宽泛的判断（这里使用bookUrl或bookId）
+          if (distributedState && (distributedState.bookId === this.bookId || distributedState.bookId.includes(encodeURIComponent(param.bookUrl)))) {
+            this.currentChapterIndex = distributedState.chapterIndex;
+            // 对于小说，pageIndex保存的是页面索引，offset保存的是字符偏移
+            if (distributedState.pageIndex >= 0) {
+              this.currentPageIndex = distributedState.pageIndex;
+            }
+            if (distributedState.offset >= 0) {
+              this.currentPageStartCharIndex = distributedState.offset;
+            }
+            logger.info(TAG, `[Distributed] 接续阅读命中: chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, offset=${this.currentPageStartCharIndex}`);
+            // 清除session避免重复触发
+            AppStorage.setOrCreate('continuationSessionId', '');
+          }
+
+          // 注册遥控器指令监听（被控端）
+          this.registerRemoteControlListener();
+        }
+
+        this.chapterId = `${this.bookId}_${this.currentChapterIndex}`;
         this.bookCoverUrl = param.coverUrl || '';
         this.shouldAutoStartReadAloud = param.autoStartReadAloud === true;
         this.shouldAutoOpenReadAloudPlayer = param.autoOpenReadAloudPlayer === true;
