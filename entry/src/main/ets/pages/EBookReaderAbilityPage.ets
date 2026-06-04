@@ -14,6 +14,7 @@ import {
   EBookFormat,
   EBookReaderEngine
 } from '../Models/EBookModels';
+import { createUserManualEBookFromRawFile, isUserManualId } from '../Data/UserManualData';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 import { ReaderAbilityBackgroundBlurOverlay } from '../Framework/Reader/ReaderAbilityBackgroundBlurOverlay';
 import {
@@ -131,18 +132,46 @@ struct EBookReaderAbilityPage {
       return 'EBookReaderPage';
     }
     try {
-      const ebook = await this.ebookDataManager.getEBookById(params.bookId);
-      if (!ebook) {
+      const ebook = await this.resolveInitialEBook(params);
+      if (ebook === null) {
         logger.warn(TAG, `无法解析独立电子书阅读路由：未找到书籍 bookId=${params.bookId}`);
         return 'EBookReaderPage';
       }
-      const repairedEBook = await this.repairKindleWebViewRouteIfNeeded(ebook);
+      const resolvedEBook: EBook = ebook;
+      const repairedEBook = await this.repairKindleWebViewRouteIfNeeded(resolvedEBook);
       const routeName = resolveEBookReaderRouteName(repairedEBook);
       logger.info(TAG, `独立电子书阅读路由判定: bookId=${repairedEBook.id}, route=${routeName}`);
       return routeName;
     } catch (error) {
       logger.warn(TAG, `解析独立电子书阅读路由失败，回退普通阅读页: ${String(error)}`);
       return 'EBookReaderPage';
+    }
+  }
+
+  private async resolveInitialEBook(params: EBookReaderParams): Promise<EBook | null> {
+    let ebook: EBook | null = await this.ebookDataManager.getEBookById(params.bookId);
+    if (!ebook && isUserManualId(params.bookId)) {
+      ebook = await this.recoverUserManualEBook(params.bookId);
+      if (ebook) {
+        params.bookId = ebook.id;
+      }
+    }
+    return ebook;
+  }
+
+  private async recoverUserManualEBook(requestedBookId: string): Promise<EBook | null> {
+    try {
+      const userManual = await createUserManualEBookFromRawFile();
+      try {
+        await this.ebookDataManager.saveEBook(userManual);
+      } catch (saveError) {
+        logger.warn(TAG, `恢复内置使用手册时保存数据库失败: requested=${requestedBookId}, current=${userManual.id}, error=${String(saveError)}`);
+      }
+      logger.info(TAG, `已从 rawfile 恢复内置使用手册: requested=${requestedBookId}, current=${userManual.id}`);
+      return userManual;
+    } catch (error) {
+      logger.warn(TAG, `恢复内置使用手册失败: requested=${requestedBookId}, error=${String(error)}`);
+      return null;
     }
   }
 

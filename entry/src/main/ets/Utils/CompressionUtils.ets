@@ -1,13 +1,11 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 /**
  * 通用解压缩工具类
  * 用于数据管理功能中的文件解压缩操作
  * 
  * 支持的格式：
  * - ZIP/CBZ: 优先使用系统@ohos.zlib，密码包/编码异常时回退到@ohos/minizip
- * - RAR/CBR: 使用@ohos/unrar
- * - 7Z/LZMA: 使用@ohos/oh7zip
- * - TAR/GZ/BZ2/XZ: 使用@ohos/commons-compress
+ * - RAR/CBR/7Z/LZMA/TAR/GZ/BZ2/XZ: 使用@ohos/oh7zip
  */
 
 import { zlib } from '@kit.BasicServicesKit';
@@ -16,19 +14,8 @@ import { logger } from './Logger';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { getMimeTypeFromExtension } from './FileNameUtils';
-// commons-compress用于处理tar/gz/bz2/xz等流式格式
-import {
-  InputStream,
-  OutputStream,
-  unGzipFile,
-  ArchiveStreamFactory,
-  CompressorStreamFactory,
-  CompressorInputStream,
-  IOUtils
-} from '@ohos/commons-compress';
 import { Uncompress, Config7z } from '@ohos/oh7zip';
 import { MinizipNative } from '@ohos/minizip';
-import { UnrarApi } from '@ohos/unrar';
 import fs from '@ohos.file.fs';
 
 const TAG = 'CompressionUtils';
@@ -583,14 +570,14 @@ export class CompressionUtils {
     try {
       if (this.zlibFormats.includes(extension)) {
         await this.extractZipArchive(archivePath, targetDir, options.password);
-      } else if (this.commonsCompressFormats.includes(extension)) {
-        await this.extractWithCommonsCompress(archivePath, targetDir, extension);
-      } else if (this.unrarFormats.includes(extension)) {
-        await this.extractWithUnrar(archivePath, targetDir, options.password);
-      } else if (this.sevenZipFormats.includes(extension)) {
-        await this.extractWithOh7zip(archivePath, targetDir, options.password);
+      } else if (
+        this.commonsCompressFormats.includes(extension) ||
+        this.unrarFormats.includes(extension) ||
+        this.sevenZipFormats.includes(extension)
+      ) {
+        await this.extractWithOh7zip(archivePath, targetDir, options.password, extension);
       } else {
-        throw new Error(`涓嶆敮鎸佺殑鍘嬬缉鏍煎紡: ${extension}`);
+        throw new Error(`不支持的压缩格式: ${extension}`);
       }
 
       logger.debug(TAG, `解压完成: ${archivePath} -> ${targetDir}`);
@@ -783,33 +770,11 @@ export class CompressionUtils {
     return safeParts.join('/');
   }
 
-  private async extractWithUnrar(
-    archivePath: string,
-    targetDir: string,
-    password?: string
-  ): Promise<void> {
-    const encrypted = UnrarApi.isEncrypted(archivePath) === 1;
-    const finalPassword = password?.trim();
-    if (encrypted && !finalPassword) {
-      throw this.createPasswordRequiredError(archivePath);
-    }
-
-    const resultStr = String(UnrarApi.extract(archivePath, targetDir, finalPassword)).toLowerCase();
-    if (resultStr.includes('success') || resultStr.includes('succeeded') || resultStr.includes('成功')) {
-      return;
-    }
-
-    if (encrypted) {
-      throw this.createPasswordRequiredError(archivePath);
-    }
-
-    throw new Error(`RAR 解压失败: ${resultStr}`);
-  }
-
   private async extractWithOh7zip(
     archivePath: string,
     targetDir: string,
-    password?: string
+    password?: string,
+    extension?: string
   ): Promise<void> {
     const uncompress = new Uncompress();
     const config: Config7z = {
@@ -823,175 +788,38 @@ export class CompressionUtils {
     }
 
     const code = await uncompress.extractAsync(config);
-    if (code === 0) {
-      return;
-    }
-    if (code === 10) {
-      throw this.createPasswordRequiredError(archivePath);
+    if (code !== 0) {
+      if (code === 10) {
+        throw this.createPasswordRequiredError(archivePath);
+      }
+      throw new Error(`7z 解压失败: code=${code}`);
     }
 
-    throw new Error(`7z 解压失败: code=${code}`);
-  }
-  
-  /**
-   * 使用commons-compress解压其他格式
-   */
-  private async extractWithCommonsCompress(
-    archivePath: string, 
-    targetDir: string, 
-    extension: string
-  ): Promise<void> {
-    logger.info(TAG, `使用commons-compress解压${extension}格式: ${archivePath}`);
-    
-    switch (extension) {
-      case '.gz':
-        await this.extractGzip(archivePath, targetDir);
-        break;
-      case '.tgz':
-        await this.extractTarGzip(archivePath, targetDir);
-        break;
-      case '.tar':
-        await this.extractTar(archivePath, targetDir);
-        break;
-      case '.bz2':
-        await this.extractBzip2(archivePath, targetDir);
-        break;
-      case '.xz':
-        await this.extractXz(archivePath, targetDir);
-        break;
-      default:
-        throw new Error(`commons-compress暂不支持${extension}格式`);
-    }
-  }
-  
-  /**
-   * 解压GZip格式
-   */
-  private async extractGzip(archivePath: string, targetDir: string): Promise<void> {
-    // 获取原始文件名（去掉.gz后缀）
-    const fileName = this.getFileNameFromPath(archivePath);
-    const outputFileName = fileName.endsWith('.gz') ? fileName.slice(0, -3) : fileName + '.out';
-    const outputPath = `${targetDir}/${outputFileName}`;
-    
-    await unGzipFile(archivePath, outputPath);
-    logger.debug(TAG, `GZip解压完成: ${outputPath}`);
-  }
-  
-  /**
-   * 解压TAR.GZ格式
-   */
-  private async extractTarGzip(archivePath: string, targetDir: string): Promise<void> {
-    // 先解压gzip得到tar文件
-    const tempTarPath = `${targetDir}/temp_archive.tar`;
-    await unGzipFile(archivePath, tempTarPath);
-    
-    // 再解压tar
-    await this.extractTar(tempTarPath, targetDir);
-    
-    // 删除临时tar文件
-    try {
-      await fs.unlink(tempTarPath);
-    } catch (e) {
-      logger.warn(TAG, `删除临时tar文件失败: ${tempTarPath}`);
-    }
-  }
-  
-  /**
-   * 解压TAR格式
-   */
-  private async extractTar(archivePath: string, targetDir: string): Promise<void> {
-    const inputStream: InputStream = new InputStream();
-    inputStream.setFilePath(archivePath);
-    
-    const archiveInputStream = ArchiveStreamFactory.DEFAULT.createArchiveInputStream('tar', inputStream, 'UTF-8');
-    
-    let entry = archiveInputStream.getNextEntry();
-    while (entry !== null) {
-      const entryName: string = entry.getName();
-      const safeEntryPath = this.normalizeArchiveEntryPath(entryName);
-      if (!safeEntryPath) {
-        entry = archiveInputStream.getNextEntry();
-        continue;
-      }
-      const outputPath = `${targetDir}/${safeEntryPath}`;
-      
-      if (entry.isDirectory()) {
-        // 创建目录
-        await this.sandboxManager.createDirectory(outputPath);
-      } else {
-        // 确保父目录存在
-        const parentDir = outputPath.substring(0, outputPath.lastIndexOf('/'));
-        if (parentDir && parentDir !== targetDir) {
-          await this.sandboxManager.createDirectory(parentDir);
+    // 适配 tar.gz/tgz 解压出的 .tar 文件二次解压
+    if (extension === '.gz' || extension === '.tgz') {
+      try {
+        const files = await this.sandboxManager.listDirectory(targetDir);
+        // 如果解压出来正好只有一个文件且是以 .tar 结尾，执行二次解压
+        if (files.length === 1 && files[0].toLowerCase().endsWith('.tar')) {
+          const tarPath = `${targetDir}/${files[0]}`;
+          logger.info(TAG, `检测到 tar 包，执行二次解压: ${tarPath}`);
+          const tarConfig: Config7z = {
+            src: tarPath,
+            dst: targetDir
+          };
+          const tarCode = await uncompress.extractAsync(tarConfig);
+          if (tarCode === 0) {
+            // 解压成功后删除临时 .tar 文件
+            await this.sandboxManager.deleteFile(tarPath);
+            logger.debug(TAG, `清理临时 tar 文件: ${tarPath}`);
+          } else {
+            logger.warn(TAG, `二次解压 tar 文件失败: code=${tarCode}`);
+          }
         }
-        
-        // 写入文件
-        const outputStream: OutputStream = new OutputStream();
-        outputStream.setFilePath(outputPath);
-        IOUtils.copyStream(archiveInputStream, outputStream);
-        outputStream.close();
+      } catch (err) {
+        logger.warn(TAG, `检查 tar 二次解压失败`, String(err));
       }
-      
-      entry = archiveInputStream.getNextEntry();
     }
-    
-    archiveInputStream.close();
-    inputStream.close();
-    logger.debug(TAG, `TAR解压完成: ${targetDir}`);
-  }
-  
-  /**
-   * 解压BZip2格式
-   */
-  private async extractBzip2(archivePath: string, targetDir: string): Promise<void> {
-    const inputStream: InputStream = new InputStream();
-    inputStream.setFilePath(archivePath);
-    
-    // 获取输出文件名
-    const fileName = this.getFileNameFromPath(archivePath);
-    const outputFileName = fileName.endsWith('.bz2') ? fileName.slice(0, -4) : fileName + '.out';
-    const outputPath = `${targetDir}/${outputFileName}`;
-    
-    const outputStream: OutputStream = new OutputStream();
-    outputStream.setFilePath(outputPath);
-    
-    // 使用commons-compress的bzip2解压
-    const compressorFactory: CompressorStreamFactory = new CompressorStreamFactory(false);
-    const compressorInputStream: CompressorInputStream = compressorFactory.createCompressorNameInputStream('bzip2', inputStream);
-    IOUtils.copyStream(compressorInputStream, outputStream);
-    
-    outputStream.close();
-    compressorInputStream.close();
-    inputStream.close();
-    
-    logger.debug(TAG, `BZip2解压完成: ${outputPath}`);
-  }
-  
-  /**
-   * 解压XZ格式
-   */
-  private async extractXz(archivePath: string, targetDir: string): Promise<void> {
-    const inputStream: InputStream = new InputStream();
-    inputStream.setFilePath(archivePath);
-    
-    // 获取输出文件名
-    const fileName = this.getFileNameFromPath(archivePath);
-    const outputFileName = fileName.endsWith('.xz') ? fileName.slice(0, -3) : fileName + '.out';
-    const outputPath = `${targetDir}/${outputFileName}`;
-    
-    const outputStream: OutputStream = new OutputStream();
-    outputStream.setFilePath(outputPath);
-    
-    // 使用commons-compress的xz解压
-    const compressorFactory: CompressorStreamFactory = new CompressorStreamFactory(false);
-    const compressorInputStream: CompressorInputStream = compressorFactory.createCompressorNameInputStream('xz', inputStream);
-    IOUtils.copyStream(compressorInputStream, outputStream);
-    
-    outputStream.close();
-    compressorInputStream.close();
-    inputStream.close();
-    
-    logger.debug(TAG, `XZ解压完成: ${outputPath}`);
   }
   
   /**

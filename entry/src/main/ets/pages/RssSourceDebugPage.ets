@@ -202,7 +202,8 @@ export struct RssSourceDebugPage {
 
   @Builder
   private buildSourceButton(source: RssSubscriptionSource) {
-    Button(source.name)
+    Text(source.name)
+      .textAlign(TextAlign.Center)
       .height(30)
       .fontSize(11)
       .fontFamily(this.appFontFamily)

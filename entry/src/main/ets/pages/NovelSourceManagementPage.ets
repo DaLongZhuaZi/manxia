@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 小说书源管理页面
@@ -465,7 +465,7 @@ export struct NovelSourceManagementPage {
     }
   }
 
-  private getGlassActionButtonTextColor(tone: GlassActionButtonTone): Resource {
+  private getGlassActionButtonTextColor(tone: GlassActionButtonTone): ResourceColor {
     switch (tone) {
       case 'neutral':
         return ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme);
@@ -475,7 +475,7 @@ export struct NovelSourceManagementPage {
       case 'danger':
       case 'accent':
       default:
-        return ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme);
+        return '#FFFFFF';
     }
   }
 
@@ -1456,8 +1456,7 @@ export struct NovelSourceManagementPage {
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
                   .fontColor(this.selectedGroup === ''
-                    ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .backgroundColor(this.selectedGroup === '' ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                   .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                   .borderRadius(16)
@@ -1469,8 +1468,7 @@ export struct NovelSourceManagementPage {
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
                     .fontColor(this.selectedGroup === group
-                      ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                      : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .backgroundColor(this.selectedGroup === group ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                     .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                     .borderRadius(16)
@@ -1495,8 +1493,7 @@ export struct NovelSourceManagementPage {
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
                   .fontColor(this.selectedGroup === ''
-                    ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .backgroundColor(this.selectedGroup === '' ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                   .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                   .borderRadius(16)
@@ -1509,8 +1506,7 @@ export struct NovelSourceManagementPage {
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
                     .fontColor(this.selectedGroup === group
-                      ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                      : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .backgroundColor(this.selectedGroup === group ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                     .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                     .borderRadius(16)
@@ -2032,7 +2028,7 @@ export struct NovelSourceManagementPage {
 
   @Builder
   buildSourceList() {
-    List({ scroller: this.listScroller }) {
+    List({ space: 16, scroller: this.listScroller }) {
       // 排序模式下使用完整的 filteredSources，否则使用分页的 displayedSources
       ForEach(this.isSortMode ? this.filteredSources : this.displayedSources, (source: NovelSourceInfo, index: number) => {
         ListItem() {

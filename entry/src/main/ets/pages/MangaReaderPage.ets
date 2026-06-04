@@ -100,6 +100,8 @@ import {
   MangaReaderAbilityParamStore,
   MangaReaderAbilityWindowPayload
 } from '../Framework/Reader/MangaReaderAbilityParamStore';
+import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
+import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 
 const TAG = 'MangaReaderPage';
 
@@ -535,7 +537,10 @@ export struct MangaReaderPage {
   @State prevChapterForWebtoon: MangaChapter | undefined = undefined;
   @State nextChapterForWebtoon: MangaChapter | undefined = undefined;
   // [修复] 章节边界状态：使用@State确保条漫模式下章节切换时能正确更新MangaViewer
-  @State isFirstChapterState: boolean = false;
+  private pendingMangaSettingsSnapshot: ReadingSettings | null = null;
+  private settingsSavePromise: Promise<void> | null = null;
+  private settingsSaveTimeoutId: number = -1;
+  @State isFirstChapterState: boolean = true;
   @State isLastChapterState: boolean = false;
   private webtoonOnlineAdjacentWarmupTimer: number = -1;
   private webtoonOnlineAdjacentLoadingChapterIds: Set<string> = new Set();
@@ -903,6 +908,9 @@ export struct MangaReaderPage {
   aboutToAppear() {
     this.isPageVisible = true;
     logger.lifecycle(TAG, '漫画阅读器页面即将出现');
+    
+    // 初始化分布式阅读服务，支持跨设备无缝接续
+    distributedReadingService.attachToReader();
     
     // 初始化屏幕尺寸
     this.uiContext = this.getUIContext();
@@ -1335,6 +1343,50 @@ export struct MangaReaderPage {
     this.updateAutoPageTurnConfig();
     void this.persistReadingSettings('update_auto_page_turn_interval');
     logger.info(TAG, `自动翻页间隔更新为: ${clamped}s`);
+  }
+
+  /**
+   * 注册遥控器指令监听（被控端）
+   * 通过时间戳防抖，避免同一指令被重复执行。
+   */
+  private lastRemoteInstructionTimestamp: number = 0;
+
+  private registerRemoteControlListener(): void {
+    logger.info(TAG, '[RemoteControl] 被控端已注册遥控器指令监听');
+    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
+      // 时间戳防重入：同一时间戳的指令只执行一次
+      if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
+        return;
+      }
+      if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
+        return;
+      }
+      this.lastRemoteInstructionTimestamp = state.timestamp;
+
+      logger.info(TAG, `[RemoteControl] 收到遥控指令: ${state.instructionType}`);
+      switch (state.instructionType) {
+        case 'cmd:next_page':
+          this.goToNextPage();
+          break;
+        case 'cmd:prev_page':
+          this.goToPreviousPage();
+          break;
+        case 'cmd:next_chapter':
+          this.goToNextChapter();
+          break;
+        case 'cmd:prev_chapter':
+          this.goToPreviousChapter();
+          break;
+        case 'cmd:toggle_auto_read':
+          this.setAutoPageTurnEnabled(!this.autoPageTurnEnabled);
+          break;
+        default:
+          logger.warn(TAG, `[RemoteControl] 未知指令: ${state.instructionType}`);
+          break;
+      }
+      // 通知遥控端指令已执行（清空指令域）
+      distributedDataSyncManager.sendInstruction('ack', '');
+    });
   }
 
   /**
@@ -3460,6 +3512,25 @@ export struct MangaReaderPage {
         throw new Error('路由参数无效：缺少 manga 或 mangaId');
       }
 
+      // 拦截分布式进度
+      const continuationSessionId = AppStorage.get<string>('continuationSessionId');
+      if (continuationSessionId) {
+        const distributedState = distributedDataSyncManager.getCurrentState();
+        if (distributedState && distributedState.bookId === manga.id) {
+          const chIndex = distributedState.chapterIndex;
+          if (chIndex >= 0 && chIndex < manga.chapters.length) {
+            params.chapterId = manga.chapters[chIndex].id;
+            params.pageIndex = distributedState.pageIndex;
+            logger.info(TAG, `[Distributed] 接续阅读命中: chapterIndex=${chIndex}, pageIndex=${params.pageIndex}`);
+            // 清除session避免重复触发
+            AppStorage.setOrCreate('continuationSessionId', '');
+          }
+        }
+
+        // 注册遥控器指令监听（被控端）
+        this.registerRemoteControlListener();
+      }
+
       logger.debug(TAG, `Requested chapterId from params: ${params.chapterId}`);
       logger.info(TAG, `📚 设置当前漫画: ${manga.title}`);
       this.readerState.currentManga = manga;
@@ -4383,6 +4454,16 @@ export struct MangaReaderPage {
     }
   }
 
+  private queueReadingSettingsSave(trigger: string): void {
+    if (this.settingsSaveTimeoutId !== -1) {
+      clearTimeout(this.settingsSaveTimeoutId);
+    }
+    this.settingsSaveTimeoutId = setTimeout(() => {
+      this.settingsSaveTimeoutId = -1;
+      void this.persistReadingSettings(trigger);
+    }, 500);
+  }
+
   private async persistReadingSettings(trigger: string): Promise<void> {
     const currentManga = this.readerState.currentManga;
     if (!currentManga) {
@@ -5254,20 +5335,13 @@ export struct MangaReaderPage {
       logger.info(TAG, `阅读模式变更: ${this.readingSettings.readingMode} -> ${normalizedSettings.readingMode}，将显示交互提示`);
     }
     
-    // 保存设置到数据库和AppStorage（针对当前漫画）
+    // 保存设置到AppStorage（针对当前漫画），防抖保存到数据库
     const snapshot = this.cloneReadingSettings(normalizedSettings);
     if (this.readerState.currentManga) {
       const mangaId = this.readerState.currentManga.id;
       const settingsJson = JSON.stringify(snapshot);
       
-      // 保存到数据库
-      ComicConverter.saveReadingSettings(mangaId, snapshot).then(() => {
-        logger.info(TAG, `✅ 阅读设置已保存到数据库: manga_settings_${mangaId}`);
-      }).catch((error: Error) => {
-        logger.error(TAG, `❌ 保存阅读设置到数据库失败: ${error.message}`);
-      });
-      
-      // 同时保存到AppStorage作为缓存
+      // 同步缓存到AppStorage，供其他地方快速读取
       AppStorage.setOrCreate(`manga_settings_${mangaId}`, settingsJson);
       logger.info(TAG, `已保存漫画独立设置到AppStorage: manga_settings_${mangaId}`);
       
@@ -5275,10 +5349,10 @@ export struct MangaReaderPage {
       this.readerState.currentManga.readingSettings = snapshot;
     }
     
-    // 立即更新当前阅读设置
-    this.readingSettings = snapshot;
+    // 立即更新当前阅读设置，使用浅拷贝强制ArkUI触发重新渲染，修复点击无效的问题
+    this.readingSettings = this.cloneReadingSettings(snapshot);
     this.syncDeviceOrientationLock('settings_change');
-    void this.persistReadingSettings('handle_settings_change');
+    this.queueReadingSettingsSave('handle_settings_change');
 
     // 如果屏幕常亮设置变更，立即应用
     if (keepScreenOnChanged) {
@@ -6921,6 +6995,11 @@ export struct MangaReaderPage {
     this.lastSavedPageIndex = pageIndex;
     this.lastProgressSaveTime = now;
     this.sessionStartTimestamp = now;
+    
+    // 向分布式沙箱同步实时进度
+    const chIndex = manga.chapters.findIndex(c => c.id === chapter.id);
+    distributedReadingService.syncProgress(manga.id, chIndex >= 0 ? chIndex : 0, pageIndex, 0, manga.contentType?.toString() || 'manga');
+    
     logger.debug(TAG, `已保存阅读进度[${trigger}]: ${manga.title} / ${chapter.title} -> 第${pageIndex + 1}页, 时长${duration}ms`);
   }
 

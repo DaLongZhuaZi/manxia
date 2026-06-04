@@ -25,6 +25,10 @@
       "value": "应用需要检查网络状态以上传错误报告或下载更新。"
     },
     {
+      "name": "distributed_data_sync_reason",
+      "value": "应用需要跨设备同步阅读进度和遥控指令，以支持流转后的阅读控制。"
+    },
+    {
       "name": "get_internet_reason",
       "value": "应用需要访问网络来刮削漫画、电子书信息。"
     },

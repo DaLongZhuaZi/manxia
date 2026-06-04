@@ -178,6 +178,7 @@ import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
 import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';
+import { RemoteControlPage } from './RemoteControlPage';
 
 // 测试页面导入已移除
 // import { ReaderKitTestPage } from './ReaderKitTestPage';
@@ -239,7 +240,7 @@ import { HdsStyleBottomBar, HdsBottomBarTabConfig } from '../Framework/Component
 import { HdsTabsController } from '@kit.UIDesignKit';
 
 // 导入事件总线
-import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload, BasePayload } from '../Framework/EventBus';
+import { eventBus, GameEvent, IEventPayload, ContinuationTriggeredPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload, BasePayload } from '../Framework/EventBus';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
 import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 import { SourceUpdateManager } from '../Framework/Managers/SourceUpdateManager';
@@ -1562,6 +1563,9 @@ struct MainMenuPage {
       }
     );
 
+    // 监听设备流转事件，提示用户是否进入遥控器模式
+    eventBus.subscribe(GameEvent.CONTINUATION_TRIGGERED, this.onContinuationTriggered);
+
     // 订阅漫画导入完成事件
     eventBus.subscribe(GameEvent.MANGA_IMPORT_COMPLETED, (payload: IEventPayload) => {
       const mangaPayload = payload as MangaImportCompletedPayload;
@@ -1993,22 +1997,61 @@ struct MainMenuPage {
     }
 
     try {
+      const continuationSessionId = AppStorage.get<string>('continuationSessionId');
+      const isContinuation = !!continuationSessionId;
+
       if (contentType === 'manga') {
         const manga = await this.resolveWidgetManga(contentId);
         if (manga) {
-          await this.openMangaDetail(manga);
+          if (isContinuation) {
+            const continuationIsLocal = AppStorage.get<boolean>('continuationIsLocal') || false;
+            const readerContentType = continuationIsLocal
+              ? MangaReaderContentType.Local
+              : MangaReaderContentType.OnlineUndownloaded;
+            const params: MangaReaderPageParams = {
+              manga: manga,
+              mangaId: manga.id,
+              contentType: readerContentType
+            };
+            openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG);
+          } else {
+            await this.openMangaDetail(manga);
+          }
           return;
         }
       } else if (contentType === 'ebook') {
         const ebook = await this.resolveWidgetEBook(contentId);
         if (ebook) {
+          if (isContinuation) {
+            const readerParams: EBookReaderParams = {
+              bookId: ebook.id
+            };
+            if (!openEBookReaderInIsolatedAbility(this.getUIContext(), this.pathStack, readerParams, TAG)) {
+              this.pathStack.pushPathByName('EBookReaderRoutePage', readerParams);
+            }
+            return;
+          }
           this.openEBookDetail(ebook);
           return;
         }
       } else if (contentType === 'novel') {
         const novel = await this.resolveWidgetNovel(contentId);
         if (novel) {
-          this.openNovelDetail(novel);
+          if (isContinuation) {
+            const params: NovelReaderPageParams = {
+              sourceId: novel.sourceId || '',
+              bookUrl: novel.bookUrl || novel.id || '',
+              bookName: novel.name || '',
+              chapterUrl: '',
+              chapterTitle: '',
+              chapterIndex: 0,
+              totalChapters: 0,
+              coverUrl: novel.coverUrl
+            };
+            this.pathStack.pushPathByName('NovelReaderPage', params);
+          } else {
+            this.openNovelDetail(novel);
+          }
           return;
         }
       }
@@ -8174,8 +8217,32 @@ struct MainMenuPage {
     });
   }
 
+  private onContinuationTriggered = (payload: IEventPayload) => {
+    const data = payload as ContinuationTriggeredPayload;
+    logger.info(TAG, `收到设备流转触发事件: sessionId=${data.sessionId}`);
+    
+    this.getUIContext().showAlertDialog({
+      title: '流转成功',
+      message: '内容已流转至新设备，是否进入遥控器模式以控制对方设备的阅读？',
+      autoCancel: true,
+      primaryButton: {
+        value: '进入遥控器',
+        action: () => {
+          this.pathStack.pushPathByName('RemoteControlPage', data);
+        }
+      },
+      secondaryButton: {
+        value: '继续本机阅读',
+        action: () => {
+          logger.info(TAG, '用户选择不进入遥控器模式');
+        }
+      }
+    });
+  }
+
   aboutToDisappear() {
     this.stopNavStackReturnWatch();
+    eventBus.unsubscribe(GameEvent.CONTINUATION_TRIGGERED, this.onContinuationTriggered);
     logger.lifecycle(TAG, '应用主页面即将销毁');
     this.bookSourcePickerCloseSignal++;
     this.clearDeepLinkRetryTimer();
@@ -28224,6 +28291,8 @@ struct MainMenuPage {
       // } else
       if (name === 'DataManagementPage') {
         DataManagementPage()
+      } else if (name === 'RemoteControlPage') {
+        RemoteControlPage()
       } else if (name === 'NetworkFolderPage') {
         NetworkFolderPage()
       } else if (name === 'TransferPage') {

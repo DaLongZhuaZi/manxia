@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { SafeUtils } from '../Utils/SafeUtils';
 import { logger } from '../Utils/Logger';
 import { common } from '@kit.AbilityKit';
@@ -3015,7 +3015,30 @@ export struct EpubWebViewReaderPage {
     return normalized;
   }
 
-  private async persistPageReadingSettings(trigger: string): Promise<void> {
+  private pageSettingsSaveTimeoutId: number = -1;
+  private textSettingsSaveTimeoutId: number = -1;
+
+  private queuePageReadingSettingsSave(trigger: string): void {
+    if (this.pageSettingsSaveTimeoutId !== -1) {
+      clearTimeout(this.pageSettingsSaveTimeoutId);
+    }
+    this.pageSettingsSaveTimeoutId = setTimeout(() => {
+      this.pageSettingsSaveTimeoutId = -1;
+      void this.executePersistPageReadingSettings(trigger);
+    }, 500);
+  }
+
+  private queueTextReadingSettingsSave(trigger: string): void {
+    if (this.textSettingsSaveTimeoutId !== -1) {
+      clearTimeout(this.textSettingsSaveTimeoutId);
+    }
+    this.textSettingsSaveTimeoutId = setTimeout(() => {
+      this.textSettingsSaveTimeoutId = -1;
+      void this.executePersistTextReadingSettings(trigger);
+    }, 500);
+  }
+
+  private async executePersistPageReadingSettings(trigger: string): Promise<void> {
     if (!this.ebook) {
       return;
     }
@@ -3029,7 +3052,11 @@ export struct EpubWebViewReaderPage {
     }
   }
 
-  private async persistTextReadingSettings(trigger: string): Promise<void> {
+  private async persistPageReadingSettings(trigger: string): Promise<void> {
+    this.queuePageReadingSettingsSave(trigger);
+  }
+
+  private async executePersistTextReadingSettings(trigger: string): Promise<void> {
     if (!this.ebook) {
       return;
     }
@@ -3044,6 +3071,10 @@ export struct EpubWebViewReaderPage {
     } catch (error) {
       logger.error(TAG, `保存 WebView EPUB 文本阅读设置失败: 触发源=${trigger}, 错误=${String(error)}`);
     }
+  }
+
+  private async persistTextReadingSettings(trigger: string): Promise<void> {
+    this.queueTextReadingSettingsSave(trigger);
   }
 
   private syncDeviceOrientationLock(reason: string): void {
@@ -5261,7 +5292,7 @@ export struct EpubWebViewReaderPage {
             callbacks: {
               onSettingsChange: (newSettings: EBookReadingSettings) => {
                 const mergedSettings = this.mergeTextReadingSettings(newSettings);
-                this.readingSettings = mergedSettings;
+                this.readingSettings = this.cloneTextReadingSettings(mergedSettings);
                 if (this.ebook) {
                   this.ebook.readingSettings = this.cloneTextReadingSettings(mergedSettings);
                 }
@@ -5269,7 +5300,7 @@ export struct EpubWebViewReaderPage {
                 this.syncDeviceOrientationLock('text_settings_change');
                 const bookId = this.ebook?.id ?? '';
                 if (bookId.length > 0) {
-                  void this.ebookDataManager.saveReadingSettings(bookId, mergedSettings);
+                  this.queueTextReadingSettingsSave('settings_change');
                 }
               },
               onPageSettingsChange: (newSettings: MangaReadingSettings) => {

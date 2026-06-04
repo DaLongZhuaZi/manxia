@@ -99,6 +99,7 @@ import { getCoverImageManager, CoverImageManager } from '../Framework/Image/Cove
 import { OnlineLoadOptions, RequestHeaders } from '../Framework/Cache/OnlineImageLoader';
 import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
 import { image } from '@kit.ImageKit';
+import { LabelUtils } from '../Utils/LabelUtils';
 import { getNovelCoverGenerator, NovelCoverGenerator } from '../Framework/Novel/NovelCoverGenerator';
 import { ZLibraryReaderParams } from './ZLibraryReaderPage';
 import { AvifImage } from '../components/AvifImage';
@@ -5788,6 +5789,16 @@ export struct UnifiedDetailPage {
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .borderRadius(4)
           .position({ x: 4, y: 4 })
+
+        if (LabelUtils.isTranslatedContent(this.getDisplayTitleText())) {
+          Text('汉化')
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor('#E6F44336')
+            .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+            .borderRadius({ bottomLeft: 6, topRight: 8 })
+            .position({ right: 0, top: 0 })
+        }
         
         // 在线漫画封面刷新按钮（右下角）
         if (this.isOnlineManga()) {
@@ -8984,6 +8995,16 @@ export struct UnifiedDetailPage {
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .borderRadius(4)
             .position({ x: 8, y: 8 })
+
+          if (LabelUtils.isTranslatedContent(this.getDisplayTitleText())) {
+            Text('汉化')
+              .fontSize(10)
+              .fontColor(Color.White)
+              .backgroundColor('#E6F44336')
+              .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+              .borderRadius({ bottomLeft: 6, topRight: 8 })
+              .position({ right: 0, top: 0 })
+          }
 
           // 在线漫画封面刷新按钮
           if (this.isOnlineManga()) {

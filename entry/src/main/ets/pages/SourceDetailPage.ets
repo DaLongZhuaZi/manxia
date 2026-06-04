@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { SafeUtils } from '../Utils/SafeUtils';
 /**
  * 图源详情页面
@@ -45,6 +45,7 @@ import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from '.
 import { SettingsPageSurfaceManager } from './settings/SettingsPageSurfaceManager';
 import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
 import { sourceDebugLogManager } from '../Framework/Debug/SourceDebugLogManager';
+import { LabelUtils } from '../Utils/LabelUtils';
 import {
   SourceDetailSearchExecutor,
   SourceDetailSearchResult,
@@ -1940,6 +1941,22 @@ export struct SourceDetailPage {
         .height(1)
         .align(Alignment.Bottom)
         .backgroundColor(this.getReadingStyleCoverSurface().bottomEdgeColor)
+
+      if (LabelUtils.isTranslatedContent(comic.title)) {
+        Row() {
+          Text('汉化')
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor('#E6F44336')
+            .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+            .borderRadius({ bottomLeft: 6 })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.End)
+        .alignItems(VerticalAlign.Top)
+        .hitTestBehavior(HitTestMode.None)
+      }
     }
     .width('100%')
     .height('100%')

@@ -3,321 +3,108 @@
  * 用于首次运行时添加到书库的内置电子书
  */
 
-import { EBook, EBookFormat, EBookStatus, EBookChapter, EBookMetadata, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
-
-const USER_MANUAL_ID = 'user_manual_001';
-
-/**
- * 使用手册章节内容
- */
-const CHAPTER_CONTENTS: string[] = [
-  `欢迎使用漫匣
-
-本手册基于 2026-03-25 的应用功能整理，适用于当前内置版本。
-
-漫匣是一款以本地阅读与书库管理为核心的综合阅读应用，目前主要包含以下能力：
-
-- 本地漫画、PDF、电子书、TXT 小说导入
-- 统一详情页、封面管理、分类与书架整理
-- 漫画阅读、电子书阅读、TXT 小说阅读与朗读
-- 缓存、备份恢复、WebDAV 同步
-- 隐私模式、NSFW 过滤、阅读统计与小组件同步
-
-如果页面布局或按钮名称与手册描述存在少量差异，请以应用内当前页面显示为准。随着版本更新，功能入口可能会微调，但整体阅读流程保持一致。`,
-
-  `首页、书库与搜索
-
-一、首页
-
-首页会展示最近阅读、继续阅读、推荐入口和常用功能。你可以在这里快速回到上次阅读的位置，也可以直接跳转到书库、搜索、设置等页面。
-
-二、书库
-
-书库是管理内容的核心区域，通常包含漫画、电子书、小说等内容类型。你可以在这里：
-
-- 切换不同内容类型
-- 在网格视图和列表视图之间切换
-- 使用分类、筛选、排序查看内容
-- 长按进入多选模式进行批量操作
-- 通过封面或标题进入详情页或直接阅读
-
-提示：
-书库里点击封面、点击标题到底是“打开详情页”还是“直接进入阅读器”，可以在页面设置中调整。
-
-三、搜索与筛选
-
-搜索功能主要用于检索已经进入书库的内容。常见使用方式如下：
-
-1. 输入关键词发起搜索
-2. 在结果中区分漫画、电子书、小说等内容类型
-3. 点击结果进入统一详情页或对应详情页
-4. 再决定收藏、下载或开始阅读
-
-如果某个结果没有立即显示封面，通常是封面缓存尚未完成或本地元数据尚未刷新，稍后重试即可。`,
-
-  `导入与整理本地内容
-
-一、导入本地漫画
-
-可以导入文件夹或常见压缩包漫画。常见来源包括：
-
-- 漫画文件夹
-- ZIP / CBZ / CBR / 7Z 等压缩包
-- 已整理好的本地漫画目录
-
-导入后，漫匣会尝试建立章节、封面和阅读进度信息，并加入书库。
-
-二、导入电子书与 TXT 小说
-
-漫匣支持导入常见电子书文件。当前版本常见场景包括：
-
-- TXT
-- EPUB
-- PDF
-- 其他由导入器支持的本地电子书格式
-
-其中：
-
-- TXT 内容通常可作为电子书阅读，也可以按小说方式进入更适合文本阅读的阅读器
-- PDF 会按文档阅读方式处理
-- 已导入内容会记录封面、元数据和阅读进度
-
-三、Download 同步
-
-如果你希望在不反复选择文件的情况下导入内容，可以使用 Download 同步入口：
-
-1. 连接 Download 目录
-2. 将待导入文件放入指定位置
-3. 扫描文件
-4. 逐个或批量导入
-
-四、封面与整理
-
-导入完成后，你可以在详情页中：
-
-- 更换封面
-- 修改部分元数据
-- 加入分类或书架
-- 删除或重新整理内容
-
-如果导入后没有马上看到内容，请尝试下拉刷新书库，或检查文件是否已经被识别为其他内容类型。`,
-
-  `分类、书架与整理
-
-一、分类与书架
-
-导入后的内容可以通过分类和书架进一步整理。常见做法包括：
-
-- 将不同题材或用途的内容放入不同分类
-- 为常读内容建立专门书架
-- 用筛选和排序快速找到目标内容
-
-二、书库整理建议
-
-如果你的内容较多，建议按以下方式长期维护书库：
-
-- 按内容类型分开整理
-- 定期删除无用的重复导入内容
-- 统一封面样式，便于快速识别
-- 为常读内容保留单独书架或分类
-
-三、多选与批量操作
-
-在书库中长按内容通常可以进入多选模式，用于执行批量操作，例如：
-
-- 批量删除
-- 批量整理
-- 批量加入或移出分类
-
-四、封面与元数据维护
-
-如果你希望书库更整齐，可以定期处理以下内容：
-
-- 更换封面
-- 检查标题与作者信息
-- 修正分类归属
-- 清理测试导入或临时内容`,
-
-  `统一详情页与封面管理
-
-一、统一详情页的作用
-
-当前版本大量内容会进入统一详情页展示。无论是漫画、电子书还是小说，你都可以在这里查看：
-
-- 封面、标题、作者、简介
-- 阅读状态与进度
-- 章节或目录列表
-- 下载、缓存、收藏、删除等操作
-- 相关推荐或同书架内容
-
-二、开始阅读
-
-在统一详情页中，通常可以通过以下方式开始阅读：
-
-- 点击“继续阅读”
-- 点击“开始阅读”
-- 从章节列表中选择指定章节
-
-三、更换封面
-
-如果当前封面不理想，可以在详情页中更换封面。更换后，新封面会同步影响：
-
-- 详情页头图
-- 书库封面
-- 某些统计和推荐卡片
-- 进入阅读器时的翻开动画
-
-四、封面预览
-
-点击封面通常可以进入大图预览。对于本地封面、网络封面和应用内置资源封面，当前版本都会尽量按正确方式展示。
-
-五、点击行为设置
-
-如果你更习惯“书库里点封面直接阅读”，或者更习惯“先看详情页再决定”，可以前往页面设置调整行为。不同内容类型可以独立配置。`,
-
-  `阅读器、目录与朗读
-
-一、漫画阅读
-
-漫画阅读器支持多种阅读方式，常见模式包括：
-
-- 单页阅读
-- 双页阅读
-- 连续滚动
-- 条漫模式
-
-阅读时点击屏幕中央通常可以呼出菜单，用于切换章节、调整亮度、查看目录或修改阅读设置。
-
-二、电子书与 TXT 阅读
-
-文本内容支持更加细致的排版设置，例如：
-
-- 字体大小
-- 行距和页边距
-- 背景色或阅读背景
-- 阅读主题
-- 进度恢复
-
-TXT 内容在某些场景下会进入更适合小说阅读的阅读器，以获得更好的目录、排版和进度体验。
-
-三、小说阅读与目录解析
-
-小说阅读器支持目录浏览、章节切换、缓存状态查看和替换规则。对于本地 TXT，也可以结合目录解析规则生成更易用的章节结构。
-
-四、朗读
-
-当前版本支持朗读相关能力，常见场景包括：
-
-- 小说内容朗读
-- 缓存朗读内容
-- 远程朗读任务与进度管理
-
-如果朗读入口未出现，通常与当前内容类型、章节缓存状态或相关设置有关。`,
-
-  `缓存、备份与设置
-
-一、缓存机制
-
-应用会在阅读和展示过程中逐步建立缓存，用于减少重复加载时间，并提升封面、章节和阅读状态的恢复速度。
-
-常见场景：
-
-- 预加载封面与图片
-- 保存阅读进度
-- 提高再次进入详情页或阅读器时的响应速度
-
-二、备份与恢复
-
-漫匣支持本地备份与恢复，也支持 WebDAV 同步。建议在以下场景主动备份：
-
-- 更换设备前
-- 大量导入内容后
-- 调整分类、书架或封面之后
-
-三、隐私与内容过滤
-
-当前版本提供隐私与内容管理相关能力，例如：
-
-- 隐私模式
-- NSFW 内容过滤
-- 分类隔离或个性化展示
-
-四、页面与阅读设置
-
-在设置中，你可以继续调整：
-
-- 详情页类型
-- 书库点击行为
-- 阅读器默认参数
-- 主题与外观
-- 缓存策略
-- 统计与小组件相关行为
-
-如果你不确定某项设置的影响，优先保持默认值通常是最稳妥的选择。`,
-
-  `常见问题
-
-Q1：导入后为什么在书库里找不到内容？
-A：先确认文件是否导入成功，再检查当前书库筛选、分类和内容类型是否正确。必要时下拉刷新一次书库。
-
-Q2：为什么封面没有显示出来？
-A：可能是网络封面还没加载完成、本地封面路径失效，或该内容使用的是应用内置资源封面。重新进入详情页或稍后再试通常可以恢复。
-
-Q3：为什么点击封面后不是我预期的行为？
-A：书库点击封面、点击标题的行为可以在页面设置中调整，不同内容类型可以分别配置。
-
-Q4：搜索不到刚导入的内容怎么办？
-A：先确认导入已经完成，再检查当前书库类型、分类和筛选条件是否正确。必要时返回书库刷新一次。
-
-Q5：阅读进度会自动保存吗？
-A：会。漫匣会尽量自动记录章节、页码或文本位置。为了避免意外丢失，仍然建议定期做本地备份或 WebDAV 同步。
-
-Q6：如何更换封面？
-A：进入详情页，点击封面预览或相关封面操作入口，选择新的图片后保存即可。
-
-Q7：TXT、电子书和小说有什么区别？
-A：它们都可以阅读，但展示方式和阅读器能力不同。TXT 可能以电子书方式导入，也可能以更偏小说阅读的方式打开，具体取决于当前入口与适配逻辑。
-
-Q8：遇到异常、卡顿或崩溃怎么办？
-A：先重启应用并重试；如果问题持续存在，建议备份数据后再反馈问题，并尽量附上日志、复现步骤和对应内容类型。`
+import { util } from '@kit.ArkTS';
+import { getContext } from '../GlobalContext';
+import { EBook, EBookFormat, EBookStatus, EBookChapter, EBookMetadata, DEFAULT_EBOOK_READING_SETTINGS, EBookReaderEngine } from '../Models/EBookModels';
+
+const USER_MANUAL_ID = 'user_manual_006';
+const USER_MANUAL_RAWFILE_PATH = 'user_manual.md';
+const LEGACY_USER_MANUAL_IDS: string[] = [
+  'user_manual_001',
+  'user_manual_002',
+  'user_manual_003',
+  'user_manual_004',
+  'user_manual_005'
 ];
+
+function normalizeManualChapterTitle(title: string): string {
+  const normalized = title.trim();
+  if (normalized.length <= 0) {
+    return '未命名章节';
+  }
+  return normalized;
+}
+
+function createManualChapter(chapterNumber: number, title: string, content: string, startPosition: number, endPosition: number): EBookChapter {
+  const safeContent = content.trim();
+  return {
+    id: `${USER_MANUAL_ID}_chapter_${chapterNumber}`,
+    bookId: USER_MANUAL_ID,
+    chapterNumber: chapterNumber,
+    title: normalizeManualChapterTitle(title),
+    content: safeContent,
+    startPosition: startPosition,
+    endPosition: endPosition,
+    wordCount: safeContent.length,
+    createTime: Date.now()
+  };
+}
+
+function extractManualSectionTitle(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('## ')) {
+    return '';
+  }
+  return trimmed.substring(3).trim();
+}
 
 /**
  * 创建使用手册章节列表
  */
-function createUserManualChapters(): EBookChapter[] {
-  const chapterTitles: string[] = [
-    '欢迎使用漫匣',
-    '首页、书库与搜索',
-    '导入与整理本地内容',
-    '分类、书架与整理',
-    '统一详情页与封面管理',
-    '阅读器、目录与朗读',
-    '缓存、备份与设置',
-    '常见问题'
-  ];
-
+function createUserManualChapters(markdownContent: string): EBookChapter[] {
+  const normalizedContent = markdownContent.replace(/\r\n/g, '\n');
+  const lines = normalizedContent.split('\n');
   const chapters: EBookChapter[] = [];
-  let position = 0;
+  let currentTitle = '漫匣使用手册';
+  let currentLines: string[] = [];
+  let currentStartPosition = 0;
+  let cursor = 0;
+  let insideCodeFence = false;
 
-  for (let i = 0; i < chapterTitles.length; i++) {
-    const content = CHAPTER_CONTENTS[i];
-    const chapter: EBookChapter = {
-      id: `${USER_MANUAL_ID}_chapter_${i + 1}`,
-      bookId: USER_MANUAL_ID,
-      chapterNumber: i + 1,
-      title: chapterTitles[i],
-      content: content,
-      startPosition: position,
-      endPosition: position + content.length,
-      wordCount: content.length,
-      createTime: Date.now()
-    };
-    chapters.push(chapter);
-    position += content.length;
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    const isFenceLine = trimmedLine.startsWith('```') || trimmedLine.startsWith('~~~');
+    const sectionTitle = insideCodeFence ? '' : extractManualSectionTitle(line);
+    if (sectionTitle.length > 0 && currentLines.join('\n').trim().length > 0) {
+      chapters.push(createManualChapter(
+        chapters.length + 1,
+        currentTitle,
+        currentLines.join('\n'),
+        currentStartPosition,
+        cursor
+      ));
+      currentTitle = sectionTitle;
+      currentLines = [line];
+      currentStartPosition = cursor;
+    } else {
+      if (sectionTitle.length > 0) {
+        currentTitle = sectionTitle;
+      }
+      currentLines.push(line);
+    }
+    if (isFenceLine) {
+      insideCodeFence = !insideCodeFence;
+    }
+    cursor += line.length + 1;
   }
 
-  return chapters;
+  if (currentLines.join('\n').trim().length > 0) {
+    chapters.push(createManualChapter(
+      chapters.length + 1,
+      currentTitle,
+      currentLines.join('\n'),
+      currentStartPosition,
+      normalizedContent.length
+    ));
+  }
+
+  if (chapters.length > 0) {
+    return chapters;
+  }
+
+  return [
+    createManualChapter(1, '漫匣使用手册', normalizedContent, 0, normalizedContent.length)
+  ];
 }
 
 /**
@@ -341,8 +128,8 @@ function createUserManualMetadata(): EBookMetadata {
 /**
  * 创建使用手册电子书对象
  */
-export function createUserManualEBook(): EBook {
-  const chapters = createUserManualChapters();
+export function createUserManualEBook(markdownContent: string): EBook {
+  const chapters = createUserManualChapters(markdownContent);
   const metadata = createUserManualMetadata();
 
   let totalWordCount = 0;
@@ -352,9 +139,9 @@ export function createUserManualEBook(): EBook {
 
   const now = Date.now();
 
-  return new EBook(
+  const ebook = new EBook(
     USER_MANUAL_ID,
-    EBookFormat.TXT,
+    EBookFormat.MD,
     '',
     0,
     metadata,
@@ -376,6 +163,40 @@ export function createUserManualEBook(): EBook {
     true,
     totalWordCount
   );
+  ebook.preferredReaderEngine = EBookReaderEngine.MARKDOWN;
+  return ebook;
+}
+
+/**
+ * 从 rawfile 加载当前内置使用手册
+ */
+export async function createUserManualEBookFromRawFile(): Promise<EBook> {
+  const context = getContext();
+  const rawFileBytes = await context.resourceManager.getRawFileContent(USER_MANUAL_RAWFILE_PATH);
+  const decoder = util.TextDecoder.create('utf-8');
+  const markdownContent = decoder.decodeToString(rawFileBytes);
+  return createUserManualEBook(markdownContent);
+}
+
+/**
+ * 判断是否为任一版本的内置使用手册ID
+ */
+export function isUserManualId(bookId: string): boolean {
+  if (bookId === USER_MANUAL_ID) {
+    return true;
+  }
+  return LEGACY_USER_MANUAL_IDS.includes(bookId);
+}
+
+/**
+ * 获取旧版使用手册ID列表
+ */
+export function getLegacyUserManualIds(): string[] {
+  const ids: string[] = [];
+  for (const id of LEGACY_USER_MANUAL_IDS) {
+    ids.push(id);
+  }
+  return ids;
 }
 
 /**

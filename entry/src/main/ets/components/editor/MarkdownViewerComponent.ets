@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Markdown预览组件
  * 基于WebView + marked.js实现
@@ -27,6 +27,60 @@ export interface TocItem {
   id: string;
 }
 
+export interface MarkdownReaderStyle {
+  fontSize: number;
+  lineHeight: number;
+  fontFamily: string;
+  fontWeight: number;
+  textColor: string;
+  backgroundColor: string;
+  pageMargin: number;
+  pageTopMargin: number;
+  pageBottomMargin: number;
+  letterSpacing: number;
+  paragraphSpacing: number;
+  firstLineIndent: number;
+  textAlignment: string;
+  pageMode: string;
+  pageTurnAnimation: string;
+  tapToTurn: boolean;
+}
+
+export interface MarkdownPageTurnResult {
+  moved: boolean;
+  boundary: string;
+  progress: number;
+  scrollTop: number;
+  maxScrollTop: number;
+}
+
+export interface MarkdownProgressSnapshot {
+  progress: number;
+  scrollTop: number;
+  maxScrollTop: number;
+  currentPage: number;
+  pageCount: number;
+}
+
+export const DEFAULT_MARKDOWN_READER_STYLE: MarkdownReaderStyle = {
+  fontSize: 16,
+  lineHeight: 1.6,
+  fontFamily: 'HarmonyOS Sans',
+  fontWeight: 400,
+  textColor: '#24292F',
+  backgroundColor: '#FFFFFF',
+  pageMargin: 16,
+  pageTopMargin: 24,
+  pageBottomMargin: 24,
+  letterSpacing: 0,
+  paragraphSpacing: 8,
+  firstLineIndent: 0,
+  textAlignment: 'LEFT',
+  pageMode: '0',
+  pageTurnAnimation: 'SLIDE',
+  tapToTurn: true
+};
+
 /**
  * Markdown预览控制器接口
  */
@@ -34,7 +88,12 @@ export interface MarkdownViewerController {
   renderMarkdown: (markdown: string) => void;
   setTheme: (theme: MarkdownTheme) => void;
   setFontSize: (size: number) => void;
+  applyReaderStyle: (style: MarkdownReaderStyle) => void;
+  scrollToProgress: (progress: number) => void;
+  getScrollSnapshot: () => Promise<MarkdownProgressSnapshot>;
+  turnPage: (forward: boolean) => Promise<MarkdownPageTurnResult>;
   scrollToHeading: (id: string) => void;
+  isControllerReady: () => boolean;
 }
 
 /**
@@ -44,14 +103,17 @@ export interface MarkdownViewerCallbacks {
   onReady?: (controller: MarkdownViewerController) => void;
   onRenderComplete?: () => void;
   onLinkClick?: (url: string) => void;
+  onReaderTap?: (zone: string) => void;
+  onProgressChange?: (progress: number) => void;
   onTocGenerated?: (toc: TocItem[]) => void;
 }
 
 @Component
 export struct MarkdownViewerComponent {
-  @Prop content: string = '';
-  @Prop theme: MarkdownTheme = MarkdownTheme.DARK;
-  @Prop fontSize: number = 16;
+  @Prop @Watch('onContentChange') content: string = '';
+  @Prop @Watch('onThemeChange') theme: MarkdownTheme = MarkdownTheme.DARK;
+  @Prop @Watch('onFontSizeChange') fontSize: number = 16;
+  @Prop @Watch('onReaderStyleChange') readerStyle: MarkdownReaderStyle = DEFAULT_MARKDOWN_READER_STYLE;
   @Prop callbacks: MarkdownViewerCallbacks = {};
   
   @State private isReady: boolean = false;
@@ -59,6 +121,21 @@ export struct MarkdownViewerComponent {
   
   private webController: webview.WebviewController = new webview.WebviewController();
   private pendingContent: string = '';
+
+  private onContentChange(): void {
+    logger.info(TAG, `Markdown内容已更新，长度: ${this.content?.length || 0}`);
+    if (this.isReady) {
+      this.renderMarkdown(this.content);
+    } else {
+      this.pendingContent = this.content;
+    }
+  }
+
+  private onThemeChange(): void {
+    if (this.isReady) {
+      this.setTheme(this.theme);
+    }
+  }
   
   aboutToAppear(): void {
     logger.info(TAG, 'Markdown预览组件初始化');
@@ -70,12 +147,31 @@ export struct MarkdownViewerComponent {
   }
   
   /**
+   * 字号变化回调
+   */
+  private onFontSizeChange(): void {
+    if (this.isReady) {
+      this.setFontSize(this.fontSize);
+    }
+  }
+
+  private onReaderStyleChange(): void {
+    if (this.isReady) {
+      this.applyReaderStyle(this.readerStyle);
+    }
+  }
+
+  /**
    * 渲染Markdown内容
    */
   public renderMarkdown(markdown: string): void {
     if (this.isReady) {
-      const escapedContent = this.escapeForJs(markdown);
-      this.webController.runJavaScript(`renderMarkdown("${escapedContent}")`);
+      try {
+        const escapedContent = JSON.stringify(markdown || '');
+        this.webController.runJavaScript(`renderMarkdown(${escapedContent})`);
+      } catch (e) {
+        logger.error(TAG, `执行renderMarkdown失败: ${e}`);
+      }
     } else {
       this.pendingContent = markdown;
     }
@@ -96,6 +192,50 @@ export struct MarkdownViewerComponent {
   public setFontSize(size: number): void {
     if (this.isReady) {
       this.webController.runJavaScript(`setFontSize(${size})`);
+    }
+  }
+
+  public applyReaderStyle(style: MarkdownReaderStyle): void {
+    if (this.isReady) {
+      try {
+        const styleJson = JSON.stringify(style);
+        this.webController.runJavaScript(`applyReaderStyle(${styleJson})`);
+      } catch (e) {
+        logger.error(TAG, `应用Markdown阅读样式失败: ${String(e)}`);
+      }
+    }
+  }
+
+  public scrollToProgress(progress: number): void {
+    if (this.isReady) {
+      const safeProgress = Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0;
+      this.webController.runJavaScript(`scrollToReaderProgress(${safeProgress})`);
+    }
+  }
+
+  public async getScrollSnapshot(): Promise<MarkdownProgressSnapshot> {
+    if (!this.isReady) {
+      return this.createDefaultProgressSnapshot();
+    }
+    try {
+      const rawResult = await this.webController.runJavaScript('getReaderScrollSnapshot()');
+      return this.parseProgressSnapshot(rawResult);
+    } catch (e) {
+      logger.error(TAG, `获取Markdown滚动快照失败: ${String(e)}`);
+      return this.createDefaultProgressSnapshot();
+    }
+  }
+
+  public async turnPage(forward: boolean): Promise<MarkdownPageTurnResult> {
+    if (!this.isReady) {
+      return this.createDefaultPageTurnResult('not_ready');
+    }
+    try {
+      const rawResult = await this.webController.runJavaScript(`turnReaderPage(${forward ? 'true' : 'false'})`);
+      return this.parsePageTurnResult(rawResult);
+    } catch (e) {
+      logger.error(TAG, `Markdown翻页失败: ${String(e)}`);
+      return this.createDefaultPageTurnResult('error');
     }
   }
   
@@ -132,21 +272,88 @@ export struct MarkdownViewerComponent {
   }
   
   /**
-   * 转义字符串用于JavaScript
+   * 转义字符串用于JavaScript (已废弃，改用JSON.stringify)
    */
   private escapeForJs(str: string): string {
-    return str
-      .replace(/\\/g, '\\\\')
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, '\\n')
-      .replace(/\r/g, '\\r')
-      .replace(/\t/g, '\\t');
+    return str;
+  }
+
+  private parseWebViewJson(raw: string): string {
+    if (raw.startsWith('"') && raw.endsWith('"')) {
+      try {
+        return SafeUtils.parseStr(raw) as string;
+      } catch (_error) {
+        return raw;
+      }
+    }
+    return raw;
+  }
+
+  private createDefaultPageTurnResult(boundary: string): MarkdownPageTurnResult {
+    return {
+      moved: false,
+      boundary: boundary,
+      progress: 0,
+      scrollTop: 0,
+      maxScrollTop: 0
+    };
+  }
+
+  private parsePageTurnResult(raw: string): MarkdownPageTurnResult {
+    try {
+      const clean = this.parseWebViewJson(raw);
+      const parsed = SafeUtils.parseObj(clean) as MarkdownPageTurnResult;
+      const progress = Number(parsed.progress);
+      const scrollTop = Number(parsed.scrollTop);
+      const maxScrollTop = Number(parsed.maxScrollTop);
+      return {
+        moved: parsed.moved === true,
+        boundary: parsed.boundary ? String(parsed.boundary) : '',
+        progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
+        scrollTop: Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0,
+        maxScrollTop: Number.isFinite(maxScrollTop) ? Math.max(0, maxScrollTop) : 0
+      };
+    } catch (_error) {
+      return this.createDefaultPageTurnResult('parse_error');
+    }
+  }
+
+  private createDefaultProgressSnapshot(): MarkdownProgressSnapshot {
+    return {
+      progress: 0,
+      scrollTop: 0,
+      maxScrollTop: 0,
+      currentPage: 1,
+      pageCount: 1
+    };
+  }
+
+  private parseProgressSnapshot(raw: string): MarkdownProgressSnapshot {
+    try {
+      const clean = this.parseWebViewJson(raw);
+      const parsed = SafeUtils.parseObj(clean) as MarkdownProgressSnapshot;
+      const progress = Number(parsed.progress);
+      const scrollTop = Number(parsed.scrollTop);
+      const maxScrollTop = Number(parsed.maxScrollTop);
+      const currentPage = Number(parsed.currentPage);
+      const pageCount = Number(parsed.pageCount);
+      return {
+        progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
+        scrollTop: Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0,
+        maxScrollTop: Number.isFinite(maxScrollTop) ? Math.max(0, maxScrollTop) : 0,
+        currentPage: Number.isFinite(currentPage) ? Math.max(1, Math.floor(currentPage)) : 1,
+        pageCount: Number.isFinite(pageCount) ? Math.max(1, Math.floor(pageCount)) : 1
+      };
+    } catch (_error) {
+      return this.createDefaultProgressSnapshot();
+    }
   }
   
   /**
    * 处理页面就绪
    */
   private onPageReady(): void {
+    if (this.isReady) return; // 防止重复触发
     logger.info(TAG, '预览页面就绪');
     this.isReady = true;
     this.isLoading = false;
@@ -154,6 +361,7 @@ export struct MarkdownViewerComponent {
     // 应用配置
     this.setTheme(this.theme);
     this.setFontSize(this.fontSize);
+    this.applyReaderStyle(this.readerStyle);
     
     // 渲染待处理的内容
     if (this.pendingContent) {
@@ -166,7 +374,12 @@ export struct MarkdownViewerComponent {
         renderMarkdown: (markdown: string) => this.renderMarkdown(markdown),
         setTheme: (theme: MarkdownTheme) => this.setTheme(theme),
         setFontSize: (size: number) => this.setFontSize(size),
-        scrollToHeading: (id: string) => this.scrollToHeading(id)
+        applyReaderStyle: (style: MarkdownReaderStyle) => this.applyReaderStyle(style),
+        scrollToProgress: (progress: number) => this.scrollToProgress(progress),
+        getScrollSnapshot: (): Promise<MarkdownProgressSnapshot> => this.getScrollSnapshot(),
+        turnPage: (forward: boolean): Promise<MarkdownPageTurnResult> => this.turnPage(forward),
+        scrollToHeading: (id: string) => this.scrollToHeading(id),
+        isControllerReady: (): boolean => this.isReady
       };
       this.callbacks.onReady(controller);
     }
@@ -199,6 +412,20 @@ export struct MarkdownViewerComponent {
       this.callbacks.onLinkClick(url);
     }
   }
+
+  private onReaderTap(zone: string): void {
+    logger.debug(TAG, `阅读区点击: ${zone}`);
+    if (this.callbacks.onReaderTap) {
+      this.callbacks.onReaderTap(zone);
+    }
+  }
+
+  private onProgressChange(progress: number): void {
+    if (this.callbacks.onProgressChange) {
+      const safeProgress = Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0;
+      this.callbacks.onProgressChange(safeProgress);
+    }
+  }
   
   build() {
     Stack() {
@@ -206,6 +433,7 @@ export struct MarkdownViewerComponent {
         src: $rawfile('code_editor/markdown_preview.html'),
         controller: this.webController
       })
+        .backgroundColor(Color.Transparent)
         .width('100%')
         .height('100%')
         .javaScriptAccess(true)
@@ -213,10 +441,17 @@ export struct MarkdownViewerComponent {
         .fileAccess(true)
         .mixedMode(MixedMode.All)
         .onPageEnd(() => {
-          logger.info(TAG, '页面加载完成');
+          logger.info(TAG, '页面加载完成，尝试触发onPageReady');
+          this.onPageReady();
         })
         .onErrorReceive((event) => {
           logger.error(TAG, `加载错误: ${event?.error?.getErrorInfo()}`);
+        })
+        .onConsole((event) => {
+          if (event && event.message) {
+            logger.info(TAG, `Web Console [${event.message.getMessageLevel()}]: ${event.message.getMessage()}`);
+          }
+          return false;
         })
         .javaScriptProxy({
           object: {
@@ -228,10 +463,16 @@ export struct MarkdownViewerComponent {
             },
             onLinkClick: (url: string) => {
               this.onLinkClick(url);
+            },
+            onReaderTap: (zone: string) => {
+              this.onReaderTap(zone);
+            },
+            onProgressChange: (progress: number) => {
+              this.onProgressChange(progress);
             }
           },
           name: 'arkts',
-          methodList: ['onPageReady', 'onRenderComplete', 'onLinkClick'],
+          methodList: ['onPageReady', 'onRenderComplete', 'onLinkClick', 'onReaderTap', 'onProgressChange'],
           controller: this.webController
         })
       
@@ -250,7 +491,7 @@ export struct MarkdownViewerComponent {
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.theme === MarkdownTheme.DARK ? '#0d1117' : '#ffffff')
+        .backgroundColor(Color.Transparent)
       }
     }
     .width('100%')

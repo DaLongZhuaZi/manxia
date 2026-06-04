@@ -2,13 +2,17 @@
 /**
  * 欢迎引导管理器
  * 负责管理首次启动标记和引导流程
+// 文件路径: entry/src/main/ets/Framework/Managers/WelcomeGuideManager.ets
+/**
+ * 欢迎引导管理器
+ * 负责管理首次启动标记和引导流程
  */
 
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
 import { getContext } from '../../GlobalContext';
-import { createUserManualEBook, getUserManualId } from '../../Data/UserManualData';
+import { createUserManualEBookFromRawFile, getLegacyUserManualIds, getUserManualId } from '../../Data/UserManualData';
 import { EBookDataManager } from '../Data/EBookDataManager';
 
 const TAG = 'WelcomeGuideManager';
@@ -56,6 +60,7 @@ export class WelcomeGuideManager {
   private readonly KEY_CURRENT_STEP = 'current_guide_step';
   private readonly KEY_LAST_SHOW_TIME = 'last_show_time';
   private readonly KEY_USER_MANUAL_ADDED = 'user_manual_added';
+  private readonly KEY_USER_MANUAL_V5_ADDED = 'user_manual_v5_added';
   private readonly KEY_SOURCE_FEATURE_GUIDE_SHOWN = 'source_feature_guide_shown';
   private readonly KEY_ACTIVE_GUIDE_FLOW = 'active_guide_flow';
 
@@ -386,7 +391,6 @@ export class WelcomeGuideManager {
       logger.error(TAG, `结束源功能引导失败: ${String(error)}`);
     }
   }
-
   /**
    * 检查引导是否完成
    */
@@ -411,36 +415,50 @@ export class WelcomeGuideManager {
         await this.initialize();
       }
 
-      // 检查是否已添加过使用手册
-      if (this.preferencesStore) {
-        const userManualAdded = await this.preferencesStore.get(this.KEY_USER_MANUAL_ADDED, false) as boolean;
-        if (userManualAdded) {
-          logger.debug(TAG, '使用手册已添加过，跳过');
-          return;
+      const ebookDataManager = EBookDataManager.getInstance();
+
+      // Delete old user manual versions if they exist
+      const oldManualIds = getLegacyUserManualIds();
+      for (const id of oldManualIds) {
+        const manual = await ebookDataManager.getEBookById(id);
+        if (manual) {
+          await ebookDataManager.deleteEBook(id);
+          logger.info(TAG, `已清理旧版使用手册: ${id}`);
         }
       }
 
-      // 检查书库中是否已存在使用手册
-      const ebookDataManager = EBookDataManager.getInstance();
       const userManualId = getUserManualId();
       const existingManual = await ebookDataManager.getEBookById(userManualId);
-      
+      let userManualV5Added = false;
+
+      // 检查是否已添加过使用手册 v5
+      if (this.preferencesStore) {
+        userManualV5Added = await this.preferencesStore.get(this.KEY_USER_MANUAL_V5_ADDED, false) as boolean;
+      }
+
       if (existingManual) {
         logger.info(TAG, '使用手册已存在于书库中，标记为已添加');
-        // 标记为已添加
         if (this.preferencesStore) {
+          if (!userManualV5Added) {
+            await this.preferencesStore.put(this.KEY_USER_MANUAL_V5_ADDED, true);
+          }
           await this.preferencesStore.put(this.KEY_USER_MANUAL_ADDED, true);
           await this.preferencesStore.flush();
         }
         return;
       }
 
+      if (userManualV5Added) {
+        logger.warn(TAG, '新版 MD 使用手册偏好标记已存在，但数据库未找到记录，重新写入内置手册');
+      }
+
       // 创建并添加使用手册
-      const userManual = createUserManualEBook();
+      const userManual = await createUserManualEBookFromRawFile();
       await ebookDataManager.saveEBook(userManual);
       
       // 标记为已添加
       if (this.preferencesStore) {
+        await this.preferencesStore.put(this.KEY_USER_MANUAL_V5_ADDED, true);
         await this.preferencesStore.put(this.KEY_USER_MANUAL_ADDED, true);
         await this.preferencesStore.flush();
       }
@@ -466,4 +484,3 @@ export class WelcomeGuideManager {
 
 // 导出单例实例
 export const welcomeGuideManager = WelcomeGuideManager.getInstance();
-

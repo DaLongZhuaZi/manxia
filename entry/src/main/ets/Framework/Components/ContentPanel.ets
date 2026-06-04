@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 通用内容面板组件
  * 支持多种内容类型：帮助文档、更新日志、特效展示等
  * 支持多标签页、最小化悬浮球、自定义样式
@@ -9,8 +9,8 @@
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
-import { AppColors } from '../Theme/AppColors';
-import { MarkdownViewerComponent, MarkdownTheme } from '../../components/editor/MarkdownViewerComponent';
+import { AppColors, ColorRole } from '../Theme/AppColors';
+import { MarkdownViewerComponent, MarkdownTheme, MarkdownReaderStyle } from '../../components/editor/MarkdownViewerComponent';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
@@ -107,7 +107,7 @@ export interface ContentPanelConfig {
  */
 const DEFAULT_STYLE_CONFIG: PanelStyleConfig = {
   width: '85%',
-  height: '70%',
+  height: '80%',
   borderRadius: 12,
   showTabBar: true,
   showToolbar: true,
@@ -498,11 +498,13 @@ export struct ContentPanelOverlay {
   @State private isDragging: boolean = false;
   @State private contentOpacity: number = 1;
   @State private styleConfig: PanelStyleConfig = DEFAULT_STYLE_CONFIG;
-  
+
   // 横向滑动切换标签页相关状态
   @State private swipeStartX: number = 0;
   @State private swipeOffsetX: number = 0;
-  
+
+  @State private isFontSizePopupOpen: boolean = false;
+
   private panelManager: ContentPanelManager = getContentPanelManager();
   private dragStartX: number = 0;
   private dragStartY: number = 0;
@@ -595,6 +597,28 @@ export struct ContentPanelOverlay {
     await fileIo.read(file.fd, buffer);
     await fileIo.close(file.fd);
     return new util.TextDecoder('utf-8').decodeToString(new Uint8Array(buffer));
+  }
+
+  private buildPanelMarkdownReaderStyle(): MarkdownReaderStyle {
+    const theme = this.themeState.currentTheme;
+    return {
+      fontSize: this.fontSize as number,
+      lineHeight: 1.62,
+      fontFamily: 'HarmonyOS Sans',
+      fontWeight: 400,
+      textColor: AppColors.getColorForTheme(ColorRole.ON_SURFACE, theme),
+      backgroundColor: AppColors.getColorForTheme(ColorRole.SURFACE, theme),
+      pageMargin: 18,
+      pageTopMargin: 18,
+      pageBottomMargin: 24,
+      letterSpacing: 0,
+      paragraphSpacing: 8,
+      firstLineIndent: 0,
+      textAlignment: 'LEFT',
+      pageMode: '0',
+      pageTurnAnimation: 'NONE',
+      tapToTurn: false
+    };
   }
 
   /**
@@ -777,6 +801,37 @@ export struct ContentPanelOverlay {
   }
 
   @Builder
+  buildFontSizePopup() {
+    Column() {
+      Text('字体大小')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .margin({ bottom: 12 })
+
+      Row({ space: 8 }) {
+        Text('A').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Slider({
+          value: this.fontSize as number,
+          min: 12,
+          max: 24,
+          step: 1,
+          style: SliderStyle.OutSet
+        })
+          .width(120)
+          .onChange((value: number) => {
+            this.fontSize = value as PanelFontSize;
+            this.panelManager.setFontSize(this.fontSize);
+          })
+        Text('A').fontSize(18).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+    }
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  @Builder
   buildToolbar() {
     if (this.styleConfig.showToolbar) {
       Row({ space: 8 }) {
@@ -804,6 +859,24 @@ export struct ContentPanelOverlay {
             this.onNavigateToHelpCenter();
           }
         })
+
+        // 字体大小按钮
+        Button({ type: ButtonType.Circle, stateEffect: true }) {
+          SymbolGlyph($r('sys.symbol.textformat')).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+        }
+        .width(28).height(28)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .bindPopup(this.isFontSizePopupOpen, {
+          builder: this.buildFontSizePopup(),
+          placement: Placement.Bottom,
+          mask: false,
+          onStateChange: (e) => {
+            if (!e.isVisible) {
+              this.isFontSizePopupOpen = false;
+            }
+          }
+        })
+        .onClick(() => { this.isFontSizePopupOpen = !this.isFontSizePopupOpen; })
 
         // 刷新按钮
         Button({ type: ButtonType.Circle, stateEffect: true }) {
@@ -857,7 +930,8 @@ export struct ContentPanelOverlay {
       MarkdownViewerComponent({
         content: tab.markdownContent,
         theme: this.themeState.currentTheme === ThemeType.DARK ? MarkdownTheme.DARK : MarkdownTheme.LIGHT,
-        fontSize: this.fontSize
+        fontSize: this.fontSize,
+        readerStyle: this.buildPanelMarkdownReaderStyle()
       })
         .width('100%')
         .layoutWeight(1)
@@ -885,7 +959,7 @@ export struct ContentPanelOverlay {
             Column() {
               ForEach(this.tabs.filter(t => t.id === this.activeTabId), (tab: ContentTab) => {
                 this.buildContent(tab)
-              }, (tab: ContentTab) => `${tab.id}_${this.fontSize}_${tab.isLoading}_${tab.markdownContent?.length || 0}`)
+              }, (tab: ContentTab) => `${tab.id}_${tab.isLoading}_${tab.markdownContent?.length || 0}`)
             }
             .width('100%')
             .layoutWeight(1)
@@ -918,7 +992,7 @@ export struct ContentPanelOverlay {
         .shadow({ radius: 16, color: AppColors.getShadowColor(3), offsetX: 0, offsetY: 4 })
         .scale({ x: this.panelScale, y: this.panelScale })
         .opacity(this.contentOpacity)
-        .position({ x: '7.5%', y: '15%' })
+        .position({ x: '7.5%', y: '10%' })
       }
     }
     .width('100%')
