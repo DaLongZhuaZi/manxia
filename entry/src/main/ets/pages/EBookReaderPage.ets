@@ -126,6 +126,7 @@ struct EBookReaderPage {
   private static lastShownInteractionHintKey: string = '';
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State isRemoteControlled: boolean = false;
   @State fontState: FontAwareState = new FontAwareState();
   @State private appGuideStep: AppGuideStep | null = null;
   @State private appGuideHighlightRect: GuideHighlightRect | null = null;
@@ -382,6 +383,8 @@ struct EBookReaderPage {
 
   private registerRemoteControlListener(): void {
     logger.info(TAG, '[RemoteControl] 电子书被控端已注册遥控器指令监听');
+    this.isRemoteControlled = true;
+    promptAction.showToast({ message: '遥控已连接' });
     distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
       if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
         return;
@@ -413,6 +416,16 @@ struct EBookReaderPage {
           break;
       }
       distributedDataSyncManager.sendInstruction('ack', '');
+    });
+
+    distributedDataSyncManager.setOnStatusChangedCallback((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+      if (status === 'offline') {
+        logger.info(TAG, '[RemoteControl] 遥控器已断开');
+        if (this.isRemoteControlled) {
+          this.isRemoteControlled = false;
+          promptAction.showToast({ message: '遥控器已断开' });
+        }
+      }
     });
   }
 
@@ -2970,6 +2983,22 @@ struct EBookReaderPage {
             this.toggleToolbar();
           }
         })
+        if (this.isRemoteControlled) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.computer_share_fill'))
+              .fontSize(16)
+              .fontColor([Color.White])
+            Text('被遥控中')
+              .fontSize(14)
+              .fontColor(Color.White)
+          }
+          .backgroundColor('rgba(0,0,0,0.6)')
+          .borderRadius(16)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .position({ x: 16, y: 16 })
+          .zIndex(100)
+        }
+
         if (this.showTextInteractionOverlay && this.isUsingTextReader()) {
           TextReaderInteractionOverlay({
             params: {
@@ -3159,6 +3188,7 @@ struct EBookReaderPage {
         this.loadEBook(params.bookId);
         const continuationSessionId = AppStorage.get<string>('continuationSessionId');
         if (continuationSessionId) {
+          promptAction.showToast({ message: '已从其他设备接续阅读' });
           this.registerRemoteControlListener();
           AppStorage.setOrCreate('continuationSessionId', '');
         }

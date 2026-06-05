@@ -15,6 +15,8 @@ export struct RemoteControlPage {
   @State private readingOffset: number = 0;
   @State private isLocal: boolean = false;
   @State private sourceType: string = '';
+  @State private connectionStatus: 'connecting' | 'online' | 'offline' | 'error' = 'connecting';
+  @State private errorMessage: string = '';
   
   aboutToAppear() {
     logger.info(TAG, 'RemoteControlPage aboutToAppear');
@@ -23,7 +25,8 @@ export struct RemoteControlPage {
   aboutToDisappear() {
     logger.info(TAG, 'RemoteControlPage aboutToDisappear');
     // 断开遥控器连接，但不需要终止分布式会话（因为目标端可能还要继续阅读）
-    distributedDataSyncManager.setOnDataChangedCallback(() => {});
+    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {});
+    distributedDataSyncManager.setOnStatusChangedCallback((status: string, message?: string) => {});
   }
 
   private onReady(context: NavDestinationContext) {
@@ -58,10 +61,31 @@ export struct RemoteControlPage {
           this.readingOffset = state.offset;
         }
       });
+
+      distributedDataSyncManager.setOnStatusChangedCallback((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+        if (status === 'restored') {
+          this.connectionStatus = 'online';
+        } else {
+          this.connectionStatus = status;
+        }
+        
+        if (status === 'error' && message) {
+          this.errorMessage = message;
+          this.getUIContext().getPromptAction().showToast({ message: `连接异常: ${message}` });
+        } else if (status === 'offline') {
+          this.getUIContext().getPromptAction().showToast({ message: '目标设备已离线' });
+        } else if (status === 'online') {
+          this.getUIContext().getPromptAction().showToast({ message: '已连接目标设备' });
+        }
+      });
     }
   }
 
   private sendCommand(cmd: string) {
+    if (this.connectionStatus === 'error' || this.connectionStatus === 'offline') {
+      this.getUIContext().getPromptAction().showToast({ message: '发送失败：连接已断开' });
+      return;
+    }
     distributedDataSyncManager.sendInstruction(cmd, '');
   }
 
@@ -109,13 +133,15 @@ export struct RemoteControlPage {
 
         // 状态展示区
         Column({ space: 16 }) {
-          SymbolGlyph($r('sys.symbol.computer_share_fill'))
+          SymbolGlyph(this.connectionStatus === 'online' ? $r('sys.symbol.computer_share_fill') : $r('sys.symbol.xmark_circle_fill'))
             .fontSize(64)
-            .fontColor([$r('sys.color.brand')])
+            .fontColor([this.connectionStatus === 'online' ? $r('sys.color.brand') : $r('sys.color.font_tertiary')])
             
-          Text('已连接至目标设备')
+          Text(this.connectionStatus === 'connecting' ? '正在连接目标设备...' : 
+               this.connectionStatus === 'online' ? '已连接至目标设备' : 
+               this.connectionStatus === 'offline' ? '目标设备已离线' : '连接发生错误')
             .fontSize(16)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontColor(this.connectionStatus === 'error' ? $r('app.color.color_error') : $r('sys.color.font_secondary'))
 
           Text(`书籍 ID: ${this.bookId}`)
             .fontSize(14)

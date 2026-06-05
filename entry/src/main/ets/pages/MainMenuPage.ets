@@ -23,6 +23,7 @@ import { MoveState } from '../Utils/MoveState';
 // 主题相关导入
 import { ComicConverter, PreloadedComicConversionContext } from '../Framework/Utils/ComicConverter';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { UniversalDialogManager, ButtonStyle } from '../Framework/Components/UniversalDialog';
 import { DeepLinkRouter, DeepLinkResult, DeepLinkSearchResult, DeepLinkSourceResult, DeepLinkNovelSearchResult, DeepLinkNovelSourceResult, DeepLinkNovelDetailResult } from '../Framework/Utils/DeepLinkRouter';
 import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
@@ -3063,6 +3064,9 @@ struct MainMenuPage {
   }
 
   private getInitialTopOverlaySpacerHeight(): number {
+    if (this.libraryGridStartFromTopSetting) {
+      return 0;
+    }
     if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'top') {
       return 0;
     }
@@ -14013,19 +14017,19 @@ struct MainMenuPage {
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor(this.getSettingsAnalyticsCardTitleColor())
 
       Text('作者与进度仅影响默认网格视图，封面类型标记与焕新封面会作用于书库封面视图')
         .fontSize(11)
         .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         .opacity(0.88)
 
       Row({ space: 8 }) {
         Text(`每行内容 ${this.getLibraryDefaultGridColumnsForDisplay()}`)
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
 
         Slider({
           value: this.getLibraryDefaultGridColumnsForDisplay(),
@@ -14049,13 +14053,13 @@ struct MainMenuPage {
         Text('作者显示')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         Blank()
         Button(this.getLibraryGridInfoDisplayModeShortLabel(this.libraryGridAuthorDisplayModeSetting))
           .height(28)
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardTitleColor())
           .backgroundColor(this.getSettingsAnalyticsCardBackground())
           .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
           .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
@@ -14080,13 +14084,13 @@ struct MainMenuPage {
         Text('阅读进度')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         Blank()
         Button(this.getLibraryGridInfoDisplayModeShortLabel(this.libraryGridProgressDisplayModeSetting))
           .height(28)
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardTitleColor())
           .backgroundColor(this.getSettingsAnalyticsCardBackground())
           .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
           .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
@@ -14111,7 +14115,7 @@ struct MainMenuPage {
         Text('焕新封面')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.libraryRenewedCoverEnabledSetting })
           .onChange((isOn: boolean) => {
@@ -14125,11 +14129,25 @@ struct MainMenuPage {
         Text('封面类型标记（需重启）')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.libraryCoverTypeMarkerEnabledSetting })
           .onChange((isOn: boolean) => {
             this.updateLibraryCoverTypeMarkerEnabled(isOn);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('从顶部开始显示')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getSettingsAnalyticsCardSubtitleColor())
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.libraryGridStartFromTopSetting })
+          .onChange((isOn: boolean) => {
+            this.updateLibraryGridStartFromTop(isOn);
           })
       }
       .width('100%')
@@ -14497,6 +14515,8 @@ struct MainMenuPage {
   private libraryGridAuthorDisplayModeSetting: string = 'smart';
   @StorageProp('library_grid_progress_display_mode')
   private libraryGridProgressDisplayModeSetting: string = 'smart';
+  @StorageLink('library_grid_start_from_top')
+  private libraryGridStartFromTopSetting: boolean = false;
   @StorageProp('library_grid_direct_cover_enabled')
   private libraryRenewedCoverEnabledSetting: boolean = true;
   @StorageProp('library_grid_cover_type_marker_enabled')
@@ -14898,6 +14918,22 @@ struct MainMenuPage {
 
     this.persistHideWoodShelfTextureSetting(hidden);
     logger.info(TAG, `[书架网格] 木质书架纹理已${hidden ? '关闭' : '开启'}`);
+  }
+
+  private updateLibraryGridStartFromTop(enabled: boolean): void {
+    if (this.libraryGridStartFromTopSetting === enabled) {
+      return;
+    }
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      this.libraryGridStartFromTopSetting = enabled;
+      AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_START_FROM_TOP, enabled);
+    });
+    this.persistLibraryGridBooleanSetting(
+      SettingKeys.LIBRARY_GRID_START_FROM_TOP,
+      enabled,
+      '从顶部开始显示'
+    );
+    logger.info(TAG, `[书架网格] 从顶部开始显示已${enabled ? '开启' : '关闭'}`);
   }
 
   private updateLibraryRenewedCoverEnabled(enabled: boolean): void {
@@ -28549,6 +28585,7 @@ struct MainMenuPage {
           })
             .width('100%').height('100%').backgroundColor(Color.Transparent)
         }
+          .align(Alignment.TopStart)
           .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
           .onScrollFrameBegin((offset: number, _state: ScrollState) => {
             this.handleScrollForBottomBar(offset);
@@ -28571,11 +28608,14 @@ struct MainMenuPage {
       Refresh({ refreshing: this.loadingState.refreshing }) {
         Scroll() {
           Column({ space: 0 }) {
-            Blank().height(this.getInitialTopOverlaySpacerHeight())
+            Row().width('100%').height(this.getInitialTopOverlaySpacerHeight())
             this.buildLibraryContent()
           }
           .width('100%')
+          .constraintSize(this.libraryGridStartFromTopSetting ? { minHeight: '100%' } : {})
+          .justifyContent(this.libraryGridStartFromTopSetting ? FlexAlign.Start : FlexAlign.Center)
         }
+        .align(this.libraryGridStartFromTopSetting ? Alignment.TopStart : Alignment.Center)
         .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
         .onScrollFrameBegin((offset: number, _state: ScrollState) => {
             this.handleScrollForBottomBar(offset);
@@ -30227,6 +30267,8 @@ struct MainMenuPage {
           .id('' as string)
           .width(this.getBottomBarWidth())
           .height(this.BOTTOM_BAR_HEIGHT)
+          .borderRadius(this.getGlassRadius())
+          .clip(true)
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
           .translate({ y: this.getEffectiveBottomBarOffset() })
           .opacity(this.getBottomBarRenderOpacity())

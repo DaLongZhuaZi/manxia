@@ -349,6 +349,7 @@ export struct MangaReaderPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State isRemoteControlled: boolean = false;
   @State fontState: FontAwareState = new FontAwareState();
   @State private appGuideStep: AppGuideStep | null = null;
   @State private appGuideHighlightRect: GuideHighlightRect | null = null;
@@ -1353,6 +1354,8 @@ export struct MangaReaderPage {
 
   private registerRemoteControlListener(): void {
     logger.info(TAG, '[RemoteControl] 被控端已注册遥控器指令监听');
+    this.isRemoteControlled = true;
+    promptAction.showToast({ message: '遥控已连接' });
     distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
       // 时间戳防重入：同一时间戳的指令只执行一次
       if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
@@ -1386,6 +1389,16 @@ export struct MangaReaderPage {
       }
       // 通知遥控端指令已执行（清空指令域）
       distributedDataSyncManager.sendInstruction('ack', '');
+    });
+
+    distributedDataSyncManager.setOnStatusChangedCallback((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+      if (status === 'offline') {
+        logger.info(TAG, '[RemoteControl] 遥控器已断开');
+        if (this.isRemoteControlled) {
+          this.isRemoteControlled = false;
+          promptAction.showToast({ message: '遥控器已断开' });
+        }
+      }
     });
   }
 
@@ -3515,6 +3528,7 @@ export struct MangaReaderPage {
       // 拦截分布式进度
       const continuationSessionId = AppStorage.get<string>('continuationSessionId');
       if (continuationSessionId) {
+        promptAction.showToast({ message: '已从其他设备接续阅读' });
         const distributedState = distributedDataSyncManager.getCurrentState();
         if (distributedState && distributedState.bookId === manga.id) {
           const chIndex = distributedState.chapterIndex;
@@ -10036,6 +10050,22 @@ export struct MangaReaderPage {
               this.handlePageGuideSkip();
             }
           })
+        }
+
+        if (this.isRemoteControlled) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.computer_share_fill'))
+              .fontSize(16)
+              .fontColor([Color.White])
+            Text('被遥控中')
+              .fontSize(14)
+              .fontColor(Color.White)
+          }
+          .backgroundColor('rgba(0,0,0,0.6)')
+          .borderRadius(16)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .position({ x: 16, y: 16 })
+          .zIndex(100)
         }
 
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）

@@ -1220,7 +1220,7 @@ A: 不会，原文件保持不变。`;
         .onClick(() => { this.currentTabIndex = 0; })
         .animation({ duration: 150 })
 
-        // 已导入管理Tab
+        // 手动浏览导入Tab
         Row() {
           SymbolGlyph($r('sys.symbol.checkmark_circle'))
             .fontSize(12)
@@ -1228,7 +1228,7 @@ A: 不会，原文件保持不变。`;
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
             .margin({ right: 4 })
-          Text('已导入管理')
+          Text('手动浏览导入')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(this.currentTabIndex === 1
@@ -1287,13 +1287,13 @@ A: 不会，原文件保持不变。`;
       Column({ space: 8 }) {
         Row({ space: 8 }) {
           SymbolGlyph($r('sys.symbol.checkmark_circle')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('已导入内容管理')
+          Text('手动浏览与导入')
             .fontSize(18)
             .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
-        Text('查看Download文件夹中文件的导入状态')
+        Text('浏览 Download 文件夹，并手动勾选文件或目录进行强制导入')
           .fontSize(13)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1325,7 +1325,7 @@ A: 不会，原文件保持不变。`;
         Column({ space: 10 }) {
           Row({ space: 8 }) {
             SymbolGlyph($r('sys.symbol.checkmark_circle_fill')).fontSize(16).fontColor(['#4CAF50'])
-            Text(`已选中 ${this.getSelectedCount()} 个文件`)
+            Text(`已选中 ${this.getSelectedCount()} 个项目`)
               .fontSize(13)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -1449,8 +1449,8 @@ A: 不会，原文件保持不变。`;
               .layoutWeight(1)
               .alignItems(HorizontalAlign.Start)
 
-              // 选择/状态标记（仅文件）
-              if (!item.node.isDirectory && !item.node.isReserved) {
+              // 选择/状态标记（文件和文件夹均可选择）
+              if (!item.node.isReserved) {
                 if (this.selectedPaths.includes(item.node.path)) {
                   SymbolGlyph($r('sys.symbol.checkmark_circle_fill')).fontSize(16).fontColor(['#4CAF50'])
                     .onClick(() => {
@@ -1592,6 +1592,12 @@ A: 不会，原文件保持不变。`;
     const novelFiles: string[] = [];
 
     for (const relativePath of selected) {
+      const treeItem = this.flatTreeItems.find(item => item.node.path === relativePath);
+      if (treeItem && treeItem.node.isDirectory) {
+        mangaFiles.push(`folder:${relativePath}`);
+        continue;
+      }
+
       const ext = this.getDownloadFileExtension(relativePath);
       if (DownloadSyncPage.MANGA_EXTENSIONS.includes(ext)) {
         mangaFiles.push(relativePath);
