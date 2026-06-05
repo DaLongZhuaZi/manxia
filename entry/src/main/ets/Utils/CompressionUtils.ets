@@ -282,7 +282,7 @@ export class CompressionUtils {
 
       if (comicInfoPath) {
         try {
-          comicInfoContent = await this.sandboxManager.readTextFile(comicInfoPath);
+          comicInfoContent = SafeFileUtils.readTextSync(comicInfoPath);
           logger.info(TAG, `找到ComicInfo.xml文件: ${comicInfoPath}`);
         } catch (error) {
           result.warnings.push(`读取ComicInfo.xml失败: ${error}`);
@@ -1334,7 +1334,7 @@ export class CompressionUtils {
       const comicInfoPath = await this.findComicInfoFile(extractedPath);
       if (comicInfoPath) {
         try {
-          comicInfoContent = await this.sandboxManager.readTextFile(comicInfoPath);
+          comicInfoContent = SafeFileUtils.readTextSync(comicInfoPath);
           hasComicInfo = true;
           logger.info(TAG, `找到ComicInfo.xml: ${comicInfoPath}`);
         } catch (error) {
@@ -1478,18 +1478,24 @@ export class CompressionUtils {
         const isDir = await this.isDirectory(filePath);
 
         if (isDir) {
-          // 检查子目录是否包含图片（可能是章节）
-          const imageCount = await this.countImagesInDirectory(filePath);
-          if (imageCount > 0) {
-            // 从文件夹名称提取章节信息
-            const chapterInfo = this.extractChapterInfoFromName(fileName, filePath, imageCount);
-            chapters.push(chapterInfo);
-            totalImageCount += imageCount;
-          } else {
-            // 递归检查更深层的目录
-            const subScanResult = await this.scanDirectoryForChapters(filePath);
+          // 递归检查子目录
+          const subScanResult = await this.scanDirectoryForChapters(filePath);
+          
+          if (subScanResult.chapters.length > 0) {
+            // 子目录里有嵌套的章节
             chapters.push(...subScanResult.chapters);
             totalImageCount += subScanResult.totalImageCount;
+            
+            // 如果这个子目录本身也包含散落的图片，把它们作为一个章节
+            if (subScanResult.rootImageCount > 0) {
+              const chapterInfo = this.extractChapterInfoFromName(fileName + " (Images)", filePath, subScanResult.rootImageCount);
+              chapters.push(chapterInfo);
+            }
+          } else if (subScanResult.rootImageCount > 0) {
+            // 子目录里没有更深层的章节，但有图片，它自己就是一个章节
+            const chapterInfo = this.extractChapterInfoFromName(fileName, filePath, subScanResult.rootImageCount);
+            chapters.push(chapterInfo);
+            totalImageCount += subScanResult.rootImageCount;
           }
         } else {
           // 检查是否为图片文件
@@ -1734,7 +1740,7 @@ export class CompressionUtils {
       const comicInfoPath = await this.findComicInfoFile(effectivePath);
       if (comicInfoPath) {
         try {
-          comicInfoContent = await this.sandboxManager.readTextFile(comicInfoPath);
+          comicInfoContent = SafeFileUtils.readTextSync(comicInfoPath);
           hasComicInfo = true;
           logger.info(TAG, `找到ComicInfo.xml: ${comicInfoPath}`);
         } catch (error) {

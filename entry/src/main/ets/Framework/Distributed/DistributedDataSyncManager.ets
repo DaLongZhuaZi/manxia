@@ -23,6 +23,7 @@ export class DistributedDataSyncManager {
   private sessionId: string = '';
   
   private onDataChangedCallback: ((state: SyncReadingState) => void) | null = null;
+  private onStatusChangedCallback: ((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => void) | null = null;
 
   private constructor() {}
 
@@ -44,6 +45,7 @@ export class DistributedDataSyncManager {
   public joinSession(sessionId: string): void {
     if (!this.context) {
       logger.error(TAG, 'Manager not initialized with context');
+      this.notifyStatusChange('error', 'Manager not initialized with context');
       return;
     }
 
@@ -74,15 +76,27 @@ export class DistributedDataSyncManager {
 
       this.syncObj.on('status', (sessionId: string, networkId: string, status: 'online' | 'offline' | 'restored') => {
         logger.info(TAG, `Session ${sessionId} device ${networkId} is ${status}`);
+        this.notifyStatusChange(status, `Device ${networkId} is ${status}`);
       });
 
       this.syncObj.setSessionId(sessionId).then(() => {
         logger.info(TAG, `Successfully joined distributed data session: ${sessionId}`);
+        this.notifyStatusChange('online', `Successfully joined session: ${sessionId}`);
       }).catch((err: Error) => {
-        logger.error(TAG, `Failed to set distributed data session: ${String(err)}`);
+        const errorMsg = `Failed to set distributed data session: ${String(err)}`;
+        logger.error(TAG, errorMsg);
+        this.notifyStatusChange('error', errorMsg);
       });
     } catch (e) {
-      logger.error(TAG, `Failed to join distributed data session: ${String(e)}`);
+      const errorMsg = `Failed to join distributed data session: ${String(e)}`;
+      logger.error(TAG, errorMsg);
+      this.notifyStatusChange('error', errorMsg);
+    }
+  }
+
+  private notifyStatusChange(status: 'online' | 'offline' | 'restored' | 'error', message?: string): void {
+    if (this.onStatusChangedCallback) {
+      this.onStatusChangedCallback(status, message);
     }
   }
 
@@ -116,7 +130,10 @@ export class DistributedDataSyncManager {
    * 发送指令（例如目标端请求源端下载章节）
    */
   public sendInstruction(type: string, payload: string): void {
-    if (!this.syncObj) return;
+    if (!this.syncObj) {
+      this.notifyStatusChange('error', 'Session not available');
+      return;
+    }
 
     try {
       this.syncObj['sessionId'] = this.sessionId;
@@ -124,10 +141,17 @@ export class DistributedDataSyncManager {
       this.syncObj['instructionPayload'] = payload;
       this.syncObj['timestamp'] = Date.now();
       
-      this.syncObj.save('local');
-      logger.info(TAG, `Sent instruction: ${type}`);
+      this.syncObj.save('local').then(() => {
+        logger.info(TAG, `Sent instruction: ${type}`);
+      }).catch((err: Error) => {
+        const errorMsg = `Failed to save instruction: ${String(err)}`;
+        logger.error(TAG, errorMsg);
+        this.notifyStatusChange('error', errorMsg);
+      });
     } catch (e) {
-      logger.error(TAG, `Error sending instruction: ${String(e)}`);
+      const errorMsg = `Error sending instruction: ${String(e)}`;
+      logger.error(TAG, errorMsg);
+      this.notifyStatusChange('error', errorMsg);
     }
   }
 
@@ -136,6 +160,13 @@ export class DistributedDataSyncManager {
    */
   public setOnDataChangedCallback(callback: (state: SyncReadingState) => void): void {
     this.onDataChangedCallback = callback;
+  }
+
+  /**
+   * 设置状态变更监听
+   */
+  public setOnStatusChangedCallback(callback: (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => void): void {
+    this.onStatusChangedCallback = callback;
   }
 
   /**
@@ -175,6 +206,7 @@ export class DistributedDataSyncManager {
         this.syncObj = null;
         this.sessionId = '';
         this.onDataChangedCallback = null;
+        this.onStatusChangedCallback = null;
       } catch (e) {
         logger.error(TAG, `Error leaving session: ${String(e)}`);
       }

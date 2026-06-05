@@ -1,4 +1,4 @@
-﻿import { SafeFileUtils } from '../Utils/SafeFileUtils';
+import { SafeFileUtils } from '../Utils/SafeFileUtils';
 import { SafeUtils } from '../Utils/SafeUtils';
 // 文件路径: entry/src/main/ets/pages/UnifiedDetailPage.ets
 /**
@@ -1007,7 +1007,7 @@ export struct UnifiedDetailPage {
   }
 
   private isReadActionBusy(): boolean {
-    return this.isOpeningOnlineEBookDownloadDetail || this.isOnlineEBookRecoveryInProgress;
+    return this.isOpeningOnlineEBookDownloadDetail || this.isOnlineEBookRecoveryInProgress || this.isLoading || this.isChaptersLoading;
   }
 
   private clearOnlineEBookRecoveryTimer(): void {
@@ -7552,6 +7552,14 @@ export struct UnifiedDetailPage {
 
           if (this.isChapterListExpanded) {
             Column() {
+              if (this.content?.contentType === UnifiedContentType.MANGA) {
+                this.buildMangaChapterList()
+              } else if (this.content?.contentType === UnifiedContentType.NOVEL) {
+                this.buildNovelChapterList()
+              } else if (this.content?.contentType === UnifiedContentType.EBOOK) {
+                this.buildEBookChapterList()
+              }
+
               if (this.isChaptersLoading) {
                 Column({ space: 12 }) {
                   LoadingProgress()
@@ -7568,14 +7576,6 @@ export struct UnifiedDetailPage {
                 .height(120)
                 .justifyContent(FlexAlign.Center)
                 .alignItems(HorizontalAlign.Center)
-              } else {
-                if (this.content?.contentType === UnifiedContentType.MANGA) {
-                  this.buildMangaChapterList()
-                } else if (this.content?.contentType === UnifiedContentType.NOVEL) {
-                  this.buildNovelChapterList()
-                } else if (this.content?.contentType === UnifiedContentType.EBOOK) {
-                  this.buildEBookChapterList()
-                }
               }
             }
             .width('100%')

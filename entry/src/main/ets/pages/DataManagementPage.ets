@@ -41,7 +41,8 @@ import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
 import { PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Parsers/PdfToMangaImporter';
 import { PdfImportService } from '../Framework/Services/PdfImportService';
-import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint,
+  DeviceType } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { image } from '@kit.ImageKit';
 import { AvifTranscoder, AvifTranscodeResult } from '../Utils/AvifTranscoder';
@@ -2130,11 +2131,22 @@ struct DataManagementPage {
     }
   }
 
+  @State isPC: boolean = false; // 是否为PC或二合一设备，用于隐藏不支持的系统级文件夹选择API入口
+
   /**
    * 页面显示时的回调
    */
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
+    
+    try {
+      const deviceType = this.deviceManager.getDeviceInfo().deviceType;
+      this.isPC = (deviceType === DeviceType.TWO_IN_ONE || deviceType === 'pc' as DeviceType);
+      logger.info(TAG, `当前设备类型判定: isPC = ${this.isPC}`);
+    } catch (e) {
+      logger.warn(TAG, '检测PC设备类型失败', String(e));
+    }
+
     this.uiContext = this.getUIContext();
     const abilityContext = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (abilityContext) {
@@ -4110,17 +4122,16 @@ struct DataManagementPage {
       const documentPicker = new picker.DocumentViewPicker(context);
       
       // 设置选择选项
-      // 漫画压缩包导入已覆盖ZIP/CBZ、RAR/CBR、7Z/LZMA及常见Unix压缩格式
-      const selectOptions: picker.DocumentSelectOptions = {
-        maxSelectNumber: 50, // 最多选择50个文件（优化性能，避免卡死）
-        fileSuffixFilters: [
-          '.zip', '.cbz',
-          '.rar', '.cbr',
-          '.7z', '.lzma',
-          '.tar', '.gz', '.tgz',
-          '.bz2', '.xz'
-        ],
-      };
+      const selectOptions = new picker.DocumentSelectOptions();
+      selectOptions.maxSelectNumber = 50; // 最多选择50个文件（优化性能，避免卡死）
+      selectOptions.selectMode = picker.DocumentSelectMode.FILE;
+      selectOptions.fileSuffixFilters = [
+        '.zip', '.cbz',
+        '.rar', '.cbr',
+        '.7z', '.lzma',
+        '.tar', '.gz', '.tgz',
+        '.bz2', '.xz'
+      ];
 
       // 选择文件
       const selectResult = await documentPicker.select(selectOptions);
@@ -4135,8 +4146,52 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.IDLE, `已选择 ${selectResult.length} 个文件`, 10);
 
     } catch (error) {
-      logger.error(TAG, '选择文件失败', String(error instanceof Error ? error.message : error));
-      this.updateProgress(ImportStatus.ERROR, `选择文件失败: ${error}`, 0);
+      const err = error as BusinessError;
+      logger.error(TAG, '选择文件失败', String(err.message || err));
+      this.updateProgress(ImportStatus.ERROR, `选择文件失败: ${err.message || err}`, 0);
+    }
+  }
+
+  /**
+   * 选择漫画文件夹
+   */
+  private selectFolder(): void {
+    logger.info(TAG, '开始选择漫画文件夹');
+    this.updateProgress(ImportStatus.SELECTING, '准备拉起文件夹选择器...', 0);
+
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      logger.error(TAG, '选择文件夹失败', '无法获取应用上下文');
+      this.updateProgress(ImportStatus.ERROR, '无法获取应用上下文', 0);
+      return;
+    }
+
+    try {
+      const documentPicker = new picker.DocumentViewPicker(context);
+      const selectOptions = new picker.DocumentSelectOptions();
+      selectOptions.selectMode = picker.DocumentSelectMode.FOLDER;
+      
+      documentPicker.select(selectOptions).then((uris: Array<string>) => {
+        if (!uris || uris.length === 0) {
+          this.updateProgress(ImportStatus.IDLE, '未选择任何文件夹', 0);
+          return;
+        }
+
+        logger.info(TAG, `选择的文件夹 URI 列表: ${JSON.stringify(uris)}`);
+        const folderUris = uris.map((uri: string) => `folder:${uri}`);
+        
+        // 由于在回调中执行，确保状态更新能够触发UI重绘
+        this.selectedFiles = [...this.selectedFiles, ...folderUris];
+        this.updateProgress(ImportStatus.IDLE, `已添加 ${uris.length} 个文件夹`, 10);
+      }).catch((err: BusinessError) => {
+        const errorMsg = String(err.message || err);
+        logger.error(TAG, `选择失败，错误码: ${err.code}, 信息: ${errorMsg}`);
+        this.updateProgress(ImportStatus.ERROR, `拉起文件夹选择器失败: ${errorMsg}`, 0);
+      });
+    } catch (error) {
+      const err = error as BusinessError;
+      logger.error(TAG, `DocumentViewPicker 初始化失败，错误码: ${err.code}, 信息: ${err.message}`);
+      this.updateProgress(ImportStatus.ERROR, `选择文件夹失败: ${err.message}`, 0);
     }
   }
 
@@ -4647,10 +4702,15 @@ struct DataManagementPage {
     const fileName = this.getFileNameFromUri(fileUri);
     
     try {
-      this.updateProgress(ImportStatus.EXTRACTING, `正在解析压缩包结构: ${fileName}`, 10);
+      this.updateProgress(ImportStatus.EXTRACTING, `正在解析结构: ${fileName}`, 10);
       
-      // 解析压缩包结构
-      const parsedStructure = await this.parseArchiveStructureWithPasswordRetry(fileUri);
+      let parsedStructure: CompressionParsedStructure;
+      if (fileUri.startsWith('folder:')) {
+        const folderPath = fileUri.substring(7);
+        parsedStructure = await this.compressionUtils.parseFolderAsArchiveStructure(folderPath);
+      } else {
+        parsedStructure = await this.parseArchiveStructureWithPasswordRetry(fileUri);
+      }
       
       // 转换为对话框需要的格式
       const convertedChapters: ChapterInfo[] = [];
@@ -7838,17 +7898,34 @@ struct DataManagementPage {
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
       .borderRadius(12)
 
-      Button({ stateEffect: true }) {
-        Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.folder')).fontSize(18).fontColor([Color.White])
-          Text('选择漫画文件').fontSize(16).fontColor(Color.White).fontFamily(this.appFontFamily)
+      Row({ space: 8 }) {
+        Button({ stateEffect: true }) {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(16).fontColor([Color.White])
+            Text('选择漫画文件').fontSize(14).fontColor(Color.White).fontFamily(this.appFontFamily)
+          }
+        }
+        .layoutWeight(1)
+        .height(52)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(12)
+        .onClick(() => { this.selectFiles(); })
+
+        if (this.isPC) {
+          Button({ stateEffect: true }) {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.folder')).fontSize(16).fontColor([Color.White])
+              Text('选择漫画文件夹').fontSize(14).fontColor(Color.White).fontFamily(this.appFontFamily)
+            }
+          }
+          .layoutWeight(1)
+          .height(52)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onClick(() => { this.selectFolder(); })
         }
       }
       .width('100%')
-      .height(52)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      .borderRadius(12)
-      .onClick(() => { this.selectFiles(); })
 
       if (this.selectedFiles.length > 0) {
         Column({ space: 8 }) {
