@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceActionEngine.ets
 /**
  * 漫画图源操作引擎
@@ -238,19 +238,19 @@ export class MangaSourceActionEngine {
         }
         
         // 检查是否有saveAs字段指定变量名
-        const actionObj: ESObject = action as ESObject;
+        const actionObj: Record<string, Object | undefined> = action as Object as Record<string, Object | undefined>;
         const saveAsField: string | undefined = actionObj['saveAs'] as string | undefined;
         if (saveAsField) {
           // 尝试解析JSON并保存各个字段
           try {
-            const parsed: ESObject = SafeUtils.parseObj(cleanResult) as ESObject;
+            const parsed: Record<string, Object | undefined> = SafeUtils.parseObj(cleanResult) as Record<string, Object | undefined>;
             if (typeof parsed === 'object' && parsed !== null) {
               // 保存整个对象到指定变量
               context.variables[saveAsField] = cleanResult;
               // 同时保存各个字段到 saveAs.fieldName 格式
               const keys: string[] = Object.keys(parsed);
               for (const key of keys) {
-                const value: ESObject = parsed[key] as ESObject;
+                const value: Object | undefined = parsed[key];
                 context.variables[`${saveAsField}.${key}`] = typeof value === 'string' ? value : JSON.stringify(value);
               }
               logger.debug(TAG, `脚本结果已保存到${saveAsField}及其子字段`);
@@ -909,7 +909,7 @@ export class MangaSourceActionEngine {
       }
       
       // 检查基于condition字段的简化跳出条件（用于JSON配置中的{{variable}}格式）
-      const actionObj: ESObject = action as ESObject;
+      const actionObj: Record<string, Object | undefined> = action as Object as Record<string, Object | undefined>;
       const conditionField: string | undefined = actionObj['condition'] as string | undefined;
       if (conditionField) {
         const resolvedCondition = this.replaceVariables(conditionField, context.variables);
@@ -1410,9 +1410,9 @@ export class MangaSourceActionEngine {
       
       
       // 替换body中的变量
-      let body: ESObject | string | undefined = action.body;
+      let body: Record<string, Object | undefined> | string | undefined = action.body as Record<string, Object | undefined> | string | undefined;
       if (body && typeof body === 'object') {
-        body = this.replaceObjectVariables(body as ESObject, context.variables);
+        body = this.replaceObjectVariables(body as Record<string, Object | undefined>, context.variables as Record<string, string>);
       }
       
       // 执行请求
@@ -1524,8 +1524,8 @@ export class MangaSourceActionEngine {
 
       // 提取数据
       if (action.extract && response.data) {
-        const extracted: ESObject | ESObject[] = this.apiEngine.extractFromJSON(
-          response.data as ESObject,
+        const extracted: Object | Object[] | null = this.apiEngine.extractFromJSON(
+          response.data as Object,
           action.extract as JSONExtractConfig
         );
         
@@ -1670,8 +1670,8 @@ export class MangaSourceActionEngine {
   /**
    * 替换对象中的变量
    */
-  private replaceObjectVariables(obj: ESObject, variables: Record<string, string>): ESObject {
-    const result: ESObject = {};
+  private replaceObjectVariables(obj: Record<string, Object | undefined>, variables: Record<string, string>): Record<string, Object | undefined> {
+    const result: Record<string, Object | undefined> = {};
     const keys = Object.keys(obj);
     
     // 只对这些字段进行数字转换，其他字段保持字符串（特别是ID字段）
@@ -1679,7 +1679,7 @@ export class MangaSourceActionEngine {
     
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
-      const value: ESObject | ESObject[] | string | number = obj[key];
+      const value: Object | undefined = obj[key];
       
       if (typeof value === 'string') {
         const replaced = this.replaceVariables(value, variables);
@@ -1695,7 +1695,7 @@ export class MangaSourceActionEngine {
           result[key] = replaced;
         }
       } else if (typeof value === 'object' && value !== null) {
-        result[key] = this.replaceObjectVariables(value as ESObject, variables);
+        result[key] = this.replaceObjectVariables(value as Record<string, Object | undefined>, variables);
       } else {
         result[key] = value;
       }

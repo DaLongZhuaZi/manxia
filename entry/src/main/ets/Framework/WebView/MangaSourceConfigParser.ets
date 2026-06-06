@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceConfigParser.ets
 /**
  * 漫画图源配置解析器
@@ -896,7 +896,11 @@ export class MangaSourceConfigParser {
     if (action.type === ActionType.HTTP_REQUEST) {
       const httpAction = processedAction as HTTPRequestAction;
       if (httpAction.body) {
-        httpAction.body = this.replaceObjectVariables(httpAction.body, variables);
+        if (typeof httpAction.body === 'string') {
+          httpAction.body = this.replaceVariables(httpAction.body, variables);
+        } else {
+          httpAction.body = this.replaceObjectVariables(httpAction.body, variables);
+        }
       }
     }
     
@@ -1258,26 +1262,26 @@ export class MangaSourceConfigParser {
   /**
    * 递归替换对象中的变量
    */
-  private replaceObjectVariables(obj: ESObject, variables: VariableMap): ESObject {
-    const result: ESObject = {};
+  private replaceObjectVariables(obj: Record<string, Object | undefined>, variables: VariableMap): Record<string, Object | undefined> {
+    const result: Record<string, Object | undefined> = {};
     const keys = Object.keys(obj);
     
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
-      const value: ESObject | ESObject[] | string | number | boolean = obj[key];
+      const value: Object | undefined = obj[key];
       
       if (typeof value === 'string') {
         result[key] = this.replaceVariables(value, variables);
       } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        result[key] = this.replaceObjectVariables(value as ESObject, variables);
+        result[key] = this.replaceObjectVariables(value as Record<string, Object | undefined>, variables);
       } else if (Array.isArray(value)) {
-        const arr: (string | ESObject | number | boolean)[] = [];
+        const arr: Object[] = [];
         for (let j = 0; j < value.length; j++) {
-          const item: ESObject | string | number | boolean = value[j];
+          const item: Object = (value as Object[])[j];
           if (typeof item === 'string') {
             arr.push(this.replaceVariables(item, variables));
           } else if (typeof item === 'object' && item !== null) {
-            arr.push(this.replaceObjectVariables(item as ESObject, variables));
+            arr.push(this.replaceObjectVariables(item as Record<string, Object | undefined>, variables));
           } else {
             arr.push(item);
           }
@@ -1792,7 +1796,7 @@ export class MangaSourceConfigParser {
       url: url,
       params: workflowObj.params as Record<string, string>,
       headers: headers,
-      body: workflowObj.body as ESObject,
+      body: workflowObj.body as Record<string, Object | undefined>,
       extract: workflowObj.extract as ExtractConfig,
       description: (workflowObj.description as string) || 'API请求',
       pagination: pagination
@@ -1818,7 +1822,7 @@ export class MangaSourceConfigParser {
       method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
       url: url,
       headers: headers,
-      body: workflowObj.body as ESObject,
+      body: workflowObj.body as string | Record<string, Object | undefined>,
       description: (workflowObj.description as string) || 'HTTP请求'
     };
     return httpAction;

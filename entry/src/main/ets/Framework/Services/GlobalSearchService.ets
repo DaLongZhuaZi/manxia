@@ -613,28 +613,44 @@ export class GlobalSearchService {
     // 并行执行三类任务（各类内部串行/分批执行）
     const batchSize = filter.maxConcurrent || 3;
     
-    const executeTasksInBatches = async (tasks: Array<() => Promise<void>>, batchSz: number): Promise<void> => {
-      for (let i = 0; i < tasks.length; i += batchSz) {
-        const batch = tasks.slice(i, Math.min(i + batchSz, tasks.length));
-        await Promise.all(batch.map(async (task) => {
-          await task();
+    // 滑动窗口任务调度机制（平滑处理并发，避免峰值阻塞主线程）
+    const executeTasksWithSlidingWindow = async (tasks: Array<() => Promise<void>>, maxConcurrent: number): Promise<void> => {
+      if (tasks.length === 0) return;
+      const executing: Promise<void>[] = [];
+      for (const task of tasks) {
+        // 主动出让执行权，让 ArkUI 能够有时间片进行渲染和响应滑动
+        await new Promise<void>(resolve => setTimeout(resolve, 10));
+        
+        const p = task().then(() => {
           updateProgress();
-        }));
+          // 执行完毕后从执行队列中移除自己
+          executing.splice(executing.indexOf(p), 1);
+        });
+        executing.push(p);
+        
+        // 如果当前并发数达到上限，等待任意一个任务完成
+        if (executing.length >= maxConcurrent) {
+          await Promise.race(executing);
+        }
       }
+      // 等待所有剩余任务完成
+      await Promise.all(executing);
     };
+
+    // 【核心优化】将漫画图源和小说书源这两种依赖 HTTP 请求且有较重 CPU 解析的工作合并，共享并发上限。
+    // 避免因为原来分开 Promise.all 导致并发数翻倍放大，引起 APP 瞬间卡死闪退。
+    const networkTasks = [...tasksByType.mangaHttp, ...tasksByType.novel];
     
-    // 【关键】三类任务完全并行执行，互不干扰
+    // 启动各组并发控制队列
     await Promise.all([
-      // 本地搜索任务（快速完成）
-      executeTasksInBatches(tasksByType.local, batchSize),
-      // HTTP 图源搜索任务
-      executeTasksInBatches(tasksByType.mangaHttp, batchSize),
-      // WebView 图源共享同一个控制器，必须串行避免页面上下文互相覆盖
-      executeTasksInBatches(tasksByType.mangaWebView, 1),
-      // 书源搜索任务（独立 HTTP 请求）
-      executeTasksInBatches(tasksByType.novel, batchSize),
-      // Suwayomi 搜索任务
-      executeTasksInBatches(tasksByType.suwayomi, 1)
+      // 本地任务快速并行
+      executeTasksWithSlidingWindow(tasksByType.local, batchSize),
+      // 合并后的网络解析任务，共享设定的最大并发度
+      executeTasksWithSlidingWindow(networkTasks, batchSize),
+      // WebView 必须严格串行，防止加载相互覆盖
+      executeTasksWithSlidingWindow(tasksByType.mangaWebView, 1),
+      // Suwayomi 默认配置
+      executeTasksWithSlidingWindow(tasksByType.suwayomi, 1)
     ]);
 
     // 兜底确保所有分组都已结束，避免 UI 长时间停留在“搜索中”

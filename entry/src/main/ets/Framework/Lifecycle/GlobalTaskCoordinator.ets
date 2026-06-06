@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 全局任务协调器
  * 
  * 职责：
@@ -58,13 +58,21 @@ export interface TaskDumpInfo {
 }
 
 /**
+ * 页面管理器接口
+ */
+export interface IPageManager {
+  getStats(): PageStats;
+  destroy(): Promise<void>;
+}
+
+/**
  * 全局任务协调器（单例）
  */
 export class GlobalTaskCoordinator {
   private static instance: GlobalTaskCoordinator | null = null;
   
   // 页面管理器注册表
-  private pageManagers: Map<string, ESObject> = new Map();
+  private pageManagers: Map<string, IPageManager> = new Map();
   
   // 统计数据
   private stats: GlobalStats = {
@@ -104,7 +112,7 @@ export class GlobalTaskCoordinator {
   /**
    * 注册页面管理器
    */
-  registerPage(pageId: string, manager: ESObject): void {
+  registerPage(pageId: string, manager: IPageManager): void {
     if (this.pageManagers.has(pageId)) {
       logger.warn(TAG, `页面已注册: ${pageId}`);
       return;
@@ -134,7 +142,7 @@ export class GlobalTaskCoordinator {
   /**
    * 获取页面管理器
    */
-  getPageManager(pageId: string): ESObject | undefined {
+  getPageManager(pageId: string): IPageManager | undefined {
     return this.pageManagers.get(pageId);
   }
   
@@ -170,8 +178,8 @@ export class GlobalTaskCoordinator {
    * 更新统计信息
    */
   private updateStats(): void {
-    const pages: ESObject[] = [];
-    this.pageManagers.forEach((value: ESObject) => {
+    const pages: IPageManager[] = [];
+    this.pageManagers.forEach((value: IPageManager) => {
       pages.push(value);
     });
     let totalTimers = 0;
@@ -179,9 +187,9 @@ export class GlobalTaskCoordinator {
     let totalResources = 0;
     let totalListeners = 0;
     
-    this.pageManagers.forEach((manager: ESObject) => {
-      if (manager && typeof manager.getStats === 'function') {
-        const stats = (manager.getStats?.() as PageStats) || { timerCount: 0, promiseCount: 0, resourceCount: 0, listenerCount: 0, uptime: 0 };
+    this.pageManagers.forEach((manager: IPageManager) => {
+      if (manager) {
+        const stats = manager.getStats();
         totalTimers += stats.timerCount || 0;
         totalPromises += stats.promiseCount || 0;
         totalResources += stats.resourceCount || 0;
@@ -235,23 +243,23 @@ export class GlobalTaskCoordinator {
   async emergencyCleanup(): Promise<void> {
     logger.warn(TAG, '执行紧急清理...');
     
-    const managers: ESObject[] = [];
-    this.pageManagers.forEach((value: ESObject) => {
+    const managers: IPageManager[] = [];
+    this.pageManagers.forEach((value: IPageManager) => {
       managers.push(value);
     });
     let cleanedPages = 0;
     
-    // 获取所有页面的运行时间
+    // 获取各页面的运行时间
     interface PageUptimeInfo {
       pageId: string;
       uptime: number;
-      manager: ESObject;
+      manager: IPageManager;
     }
     const pageUptimes: PageUptimeInfo[] = [];
     
-    this.pageManagers.forEach((manager: ESObject, pageId: string) => {
-      if (manager && typeof manager.getStats === 'function') {
-        const stats = manager.getStats() as PageStats;
+    this.pageManagers.forEach((manager: IPageManager, pageId: string) => {
+      if (manager) {
+        const stats = manager.getStats();
         pageUptimes.push({
           pageId,
           uptime: stats.uptime || 0,
@@ -269,15 +277,13 @@ export class GlobalTaskCoordinator {
     for (let i = 0; i < cleanupCount && i < pageUptimes.length; i++) {
       const item = pageUptimes[i];
       const pageId = item.pageId;
-      const manager: ESObject = item.manager;
+      const manager: IPageManager = item.manager;
       try {
-        if (manager && typeof manager.destroy === 'function') {
-          await manager.destroy();
-          cleanedPages++;
-          logger.info(TAG, `紧急清理页面: ${pageId}`);
-        }
+        await manager.destroy();
+        cleanedPages++;
+        logger.info(TAG, `紧急清理页面: ${pageId}`);
       } catch (error) {
-        logger.error(TAG, `清理页面失败: ${pageId}, ${error as ESObject}`);
+        logger.error(TAG, `清理页面失败: ${pageId}, ${String(error)}`);
       }
     }
     
@@ -292,9 +298,9 @@ export class GlobalTaskCoordinator {
    */
   dumpActiveTasks(): TaskDumpInfo {
     const pages: PageStats[] = [];
-    this.pageManagers.forEach((manager: ESObject, pageId: string) => {
-      if (manager && typeof manager.getStats === 'function') {
-        const stats = manager.getStats() as PageStats;
+    this.pageManagers.forEach((manager: IPageManager, pageId: string) => {
+      if (manager) {
+        const stats = manager.getStats();
         pages.push({
           pageId: stats.pageId || pageId,
           timerCount: stats.timerCount || 0,

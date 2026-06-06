@@ -17,6 +17,36 @@ export struct RemoteControlPage {
   @State private sourceType: string = '';
   @State private connectionStatus: 'connecting' | 'online' | 'offline' | 'error' = 'connecting';
   @State private errorMessage: string = '';
+
+  private onRemoteDataChanged = (state: SyncReadingState) => {
+    if (state.sessionId === this.sessionId && state.instructionType !== 'cmd:next_page'
+      && state.instructionType !== 'cmd:prev_page'
+      && state.instructionType !== 'cmd:next_chapter'
+      && state.instructionType !== 'cmd:prev_chapter'
+      && state.instructionType !== 'cmd:toggle_auto_read') {
+      // 只更新进度字段，忽略我们自己发出的指令回声
+      this.chapterIndex = state.chapterIndex;
+      this.pageIndex = state.pageIndex;
+      this.readingOffset = state.offset;
+    }
+  };
+
+  private onRemoteStatusChanged = (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+    if (status === 'restored') {
+      this.connectionStatus = 'online';
+    } else {
+      this.connectionStatus = status;
+    }
+    
+    if (status === 'error' && message) {
+      this.errorMessage = message;
+      this.getUIContext().getPromptAction().showToast({ message: `连接异常: ${message}` });
+    } else if (status === 'offline') {
+      this.getUIContext().getPromptAction().showToast({ message: '目标设备已离线' });
+    } else if (status === 'online') {
+      this.getUIContext().getPromptAction().showToast({ message: '已连接目标设备' });
+    }
+  };
   
   aboutToAppear() {
     logger.info(TAG, 'RemoteControlPage aboutToAppear');
@@ -25,8 +55,8 @@ export struct RemoteControlPage {
   aboutToDisappear() {
     logger.info(TAG, 'RemoteControlPage aboutToDisappear');
     // 断开遥控器连接，但不需要终止分布式会话（因为目标端可能还要继续阅读）
-    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {});
-    distributedDataSyncManager.setOnStatusChangedCallback((status: string, message?: string) => {});
+    distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
   }
 
   private onReady(context: NavDestinationContext) {
@@ -49,35 +79,8 @@ export struct RemoteControlPage {
         this.readingOffset = latestState.offset;
       }
 
-      distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
-        if (state.sessionId === this.sessionId && state.instructionType !== 'cmd:next_page'
-          && state.instructionType !== 'cmd:prev_page'
-          && state.instructionType !== 'cmd:next_chapter'
-          && state.instructionType !== 'cmd:prev_chapter'
-          && state.instructionType !== 'cmd:toggle_auto_read') {
-          // 只更新进度字段，忽略我们自己发出的指令回声
-          this.chapterIndex = state.chapterIndex;
-          this.pageIndex = state.pageIndex;
-          this.readingOffset = state.offset;
-        }
-      });
-
-      distributedDataSyncManager.setOnStatusChangedCallback((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
-        if (status === 'restored') {
-          this.connectionStatus = 'online';
-        } else {
-          this.connectionStatus = status;
-        }
-        
-        if (status === 'error' && message) {
-          this.errorMessage = message;
-          this.getUIContext().getPromptAction().showToast({ message: `连接异常: ${message}` });
-        } else if (status === 'offline') {
-          this.getUIContext().getPromptAction().showToast({ message: '目标设备已离线' });
-        } else if (status === 'online') {
-          this.getUIContext().getPromptAction().showToast({ message: '已连接目标设备' });
-        }
-      });
+      distributedDataSyncManager.addOnDataChangedCallback(this.onRemoteDataChanged);
+      distributedDataSyncManager.addOnStatusChangedCallback(this.onRemoteStatusChanged);
     }
   }
 

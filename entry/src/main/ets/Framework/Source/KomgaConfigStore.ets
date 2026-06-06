@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 import { preferences } from '@kit.ArkData';
 import { KomgaConfig, KomgaInstanceConfig, KOMGA_DEFAULT_CHAPTER_TEMPLATE } from './KomgaModels';
 import { getContext } from '../../GlobalContext';
@@ -23,12 +23,12 @@ function normalizeAuthMode(value: string): 'NONE' | 'BASIC' | 'API_KEY' {
   return 'NONE';
 }
 
-function normalizeInstance(raw: ESObject | null | undefined): KomgaInstanceConfig {
+function normalizeInstance(raw: Record<string, Object> | null | undefined): KomgaInstanceConfig {
   if (!raw) {
     return createDefaultKomgaInstance();
   }
 
-  const data: ESObject = raw;
+  const data: Record<string, Object> = raw;
   const instanceId = typeof data['id'] === 'string' && String(data['id']).length > 0
     ? String(data['id'])
     : createInstanceId();
@@ -75,14 +75,14 @@ export function createEmptyKomgaConfig(): KomgaConfig {
   };
 }
 
-export function normalizeKomgaConfig(raw: ESObject | null | undefined): KomgaConfig {
+export function normalizeKomgaConfig(raw: Record<string, Object> | null | undefined): KomgaConfig {
   if (!raw) {
     return createEmptyKomgaConfig();
   }
 
-  const data: ESObject = raw;
-  const rawInstances: ESObject[] = Array.isArray(data['instances']) ? data['instances'] as ESObject[] : [];
-  const instances = rawInstances.map((item: ESObject) => normalizeInstance(item));
+  const data: Record<string, Object> = raw;
+  const rawInstances: Record<string, Object>[] = Array.isArray(data['instances']) ? data['instances'] as Record<string, Object>[] : [];
+  const instances = rawInstances.map((item: Record<string, Object>) => normalizeInstance(item));
   const normalizedInstances = instances.length > 0 ? instances : [createDefaultKomgaInstance()];
   const currentInstanceId = typeof data['currentInstanceId'] === 'string'
     ? String(data['currentInstanceId'])
@@ -96,6 +96,46 @@ export function normalizeKomgaConfig(raw: ESObject | null | undefined): KomgaCon
   };
 }
 
+function normalizeKomgaInstanceConfig(instance: KomgaInstanceConfig): KomgaInstanceConfig {
+  const instanceId = instance.id.length > 0 ? instance.id : createInstanceId();
+  const libraryIds: string[] = [];
+  for (let i = 0; i < instance.defaultLibraryIds.length; i++) {
+    libraryIds.push(instance.defaultLibraryIds[i]);
+  }
+
+  return {
+    id: instanceId,
+    displayName: instance.displayName,
+    serverUrl: instance.serverUrl,
+    authMode: normalizeAuthMode(instance.authMode),
+    username: instance.username,
+    password: instance.password,
+    apiKey: instance.apiKey,
+    defaultLibraryIds: libraryIds,
+    chapterTitleTemplate: instance.chapterTitleTemplate.trim().length > 0
+      ? instance.chapterTitleTemplate
+      : KOMGA_DEFAULT_CHAPTER_TEMPLATE,
+    enabled: instance.enabled
+  };
+}
+
+function normalizeKomgaConfigForSave(config: KomgaConfig): KomgaConfig {
+  const instances: KomgaInstanceConfig[] = config.instances.map((item: KomgaInstanceConfig): KomgaInstanceConfig => {
+    return normalizeKomgaInstanceConfig(item);
+  });
+  const normalizedInstances = instances.length > 0 ? instances : [createDefaultKomgaInstance()];
+  const currentInstanceId = config.currentInstanceId.length > 0
+    ? config.currentInstanceId
+    : normalizedInstances[0].id;
+  const currentExists = normalizedInstances.some((item: KomgaInstanceConfig): boolean => item.id === currentInstanceId);
+
+  return {
+    instances: normalizedInstances,
+    currentInstanceId: currentExists ? currentInstanceId : normalizedInstances[0].id,
+    useBrowsePageAsEntry: config.useBrowsePageAsEntry
+  };
+}
+
 export async function loadKomgaConfig(): Promise<KomgaConfig> {
   try {
     const store = getKomgaPreferencesStore();
@@ -103,7 +143,7 @@ export async function loadKomgaConfig(): Promise<KomgaConfig> {
     if (!rawText) {
       return createEmptyKomgaConfig();
     }
-    return normalizeKomgaConfig(SafeUtils.parseObj(rawText) as ESObject);
+    return normalizeKomgaConfig(SafeUtils.parseObj(rawText) as Record<string, Object>);
   } catch (error) {
     logger.error(TAG, `加载 Komga 配置失败: ${String(error)}`);
     return createEmptyKomgaConfig();
@@ -113,7 +153,7 @@ export async function loadKomgaConfig(): Promise<KomgaConfig> {
 export async function saveKomgaConfig(config: KomgaConfig): Promise<boolean> {
   try {
     const store = getKomgaPreferencesStore();
-    const normalized = normalizeKomgaConfig(config as ESObject);
+    const normalized = normalizeKomgaConfigForSave(config);
     store.putSync(CONFIG_KEY, JSON.stringify(normalized));
     await store.flush();
     return true;

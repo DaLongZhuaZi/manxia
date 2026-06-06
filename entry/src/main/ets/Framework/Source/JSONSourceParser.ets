@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * JSON图源解析器
  * 解析JSON格式的图源配置文件
@@ -51,7 +51,7 @@ export interface RateLimitConfig {
 
 export interface NetworkConfig {
   userAgent?: string;
-  headers?: ESObject;
+  headers?: Record<string, Object | undefined>;
   timeout?: number;
   retryCount?: number;
   retryDelay?: number;
@@ -60,7 +60,7 @@ export interface NetworkConfig {
 
 export interface AuthenticationConfig {
   type: 'none' | 'basic' | 'bearer' | 'oauth2' | 'custom';
-  credentials?: ESObject;
+  credentials?: Record<string, Object | undefined>;
 }
 
 export interface APIConfig {
@@ -81,7 +81,7 @@ export interface FeatureDefinition {
   enabled: boolean;
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   url?: string;
-  body?: ESObject;
+  body?: Record<string, Object | undefined>;
   responseType?: 'json' | 'html' | 'xml' | 'text';
   parser?: ParserConfig;
   pagination?: PaginationConfig;
@@ -93,8 +93,8 @@ export interface ParserConfig {
   type: 'json' | 'html' | 'xml';
   listPath?: string;
   root?: string;
-  item?: ESObject;
-  fields?: ESObject;
+  item?: Record<string, Object | undefined>;
+  fields?: Record<string, Object | undefined>;
 }
 
 export interface PaginationConfig {
@@ -134,7 +134,7 @@ export interface SettingDefinition {
   options?: SettingOption[];
 }
 
-export type SettingsConfig = ESObject;
+export type SettingsConfig = Record<string, Object | undefined>;
 
 export interface ChangelogEntry {
   version: string;
@@ -212,29 +212,29 @@ export class JSONSourceParser {
    * 获取功能定义
    */
   getFeature(featureName: string): FeatureDefinition | undefined {
-    return (this.config.features as ESObject)[featureName] as FeatureDefinition;
+    return (this.config.features as Record<string, Object | undefined>)[featureName] as FeatureDefinition;
   }
 
   /**
    * 构建请求
    */
-  buildRequest(featureName: string, params: ESObject): RequestInfo {
+  buildRequest(featureName: string, params: Record<string, Object | undefined>): RequestInfo {
     const feature = this.getFeature(featureName);
     if (!feature || !feature.enabled) {
       throw new Error(`功能未启用: ${featureName}`);
     }
 
     // 创建变量上下文
-    const context: ESObject = this.createContext(params);
+    const context: VariableContext = this.createContext(params);
 
     // 替换URL中的变量
     const url: string = feature.url ? VariableReplacer.replace(feature.url, context) : '';
 
     // 替换请求体中的变量
-    const body: ESObject | undefined = feature.body ? VariableReplacer.replaceObject(feature.body, context) : undefined;
+    const body: Record<string, Object | undefined> | undefined = feature.body ? VariableReplacer.replaceObject(feature.body, context) : undefined;
 
     // 合并请求头 - 手动复制而不是使用展开运算符
-    const headers: ESObject = {};
+    const headers: Record<string, Object | undefined> = {};
     if (this.config.network?.headers) {
       const headerKeys = Object.keys(this.config.network.headers);
       for (const key of headerKeys) {
@@ -256,7 +256,7 @@ export class JSONSourceParser {
   /**
    * 解析响应
    */
-  parseResponse(featureName: string, response: ESObject): ESObject[] {
+  parseResponse(featureName: string, response: Record<string, Object | undefined>): Record<string, Object | undefined>[] {
     const feature = this.getFeature(featureName);
     if (!feature || !feature.parser) {
       return [];
@@ -276,18 +276,18 @@ export class JSONSourceParser {
   /**
    * 解析JSON响应
    */
-  private parseJSONResponse(response: ESObject, parser: ParserConfig): ESObject[] {
+  private parseJSONResponse(response: Record<string, Object | undefined>, parser: ParserConfig): Record<string, Object | undefined>[] {
     try {
       // 获取列表数据
       const listPath: string | undefined = parser.listPath || parser.root;
-      const items: ESObject[] = listPath ? JSONPathParser.parseArray(response, listPath) : [response];
+      const items: Object[] = listPath ? JSONPathParser.parseArray(response as Record<string, Object>, listPath) : [response];
 
       // 解析每个项目
-      const results: ESObject[] = [];
+      const results: Record<string, Object | undefined>[] = [];
       for (let i = 0; i < items.length; i++) {
-        const item: ESObject = items[i];
-        const itemMapping: ESObject = parser.item || parser.fields || {};
-        const parsed: ESObject = this.parseItem(item, itemMapping);
+        const item: Record<string, Object | undefined> = items[i] as Record<string, Object | undefined>;
+        const itemMapping: Record<string, Object | undefined> = parser.item || parser.fields || {};
+        const parsed: Record<string, Object | undefined> = this.parseItem(item, itemMapping);
         if (parsed) {
           results.push(parsed);
         }
@@ -303,24 +303,24 @@ export class JSONSourceParser {
   /**
    * 解析单个项目
    */
-  private parseItem(item: ESObject, mapping: ESObject): ESObject {
-    const result: ESObject = {};
+  private parseItem(item: Record<string, Object | undefined>, mapping: Record<string, Object | undefined>): Record<string, Object | undefined> {
+    const result: Record<string, Object | undefined> = {};
     const mappingKeys = Object.keys(mapping);
 
     for (const key of mappingKeys) {
-      const value: ESObject = mapping[key] as ESObject;
+      const value: Object | undefined = mapping[key];
 
       if (typeof value === 'string') {
         // 简单的JSONPath映射
-        result[key] = JSONPathParser.parseString(item, value);
+        result[key] = JSONPathParser.parseString(item as Record<string, Object>, value);
       } else if (typeof value === 'object' && value !== null) {
         // 嵌套对象或数组
-        const nestedMapping: ESObject = value as ESObject;
+        const nestedMapping: Record<string, Object | undefined> = value as Record<string, Object | undefined>;
         if (nestedMapping.listPath) {
           // 数组映射
-          const nestedItems: ESObject[] = JSONPathParser.parseArray(item, nestedMapping.listPath as string);
-          result[key] = nestedItems.map((nestedItem: ESObject): ESObject => 
-            this.parseItem(nestedItem, nestedMapping.item as ESObject)
+          const nestedItems: Object[] = JSONPathParser.parseArray(item as Record<string, Object>, nestedMapping.listPath as string);
+          result[key] = nestedItems.map((nestedItem: Object): Record<string, Object | undefined> => 
+            this.parseItem(nestedItem as Record<string, Object | undefined>, nestedMapping.item as Record<string, Object | undefined>)
           );
         } else {
           // 对象映射
@@ -335,10 +335,9 @@ export class JSONSourceParser {
   /**
    * 创建变量上下文
    */
-  private createContext(params: ESObject): ESObject {
-    const context: ESObject = {
-      baseUrl: this.config.metadata.baseUrl
-    };
+  private createContext(params: Record<string, Object | undefined>): VariableContext {
+    const context: VariableContext = {};
+    context['baseUrl'] = this.config.metadata.baseUrl;
 
     // 手动复制params而不是使用展开运算符
     const paramKeys = Object.keys(params);
@@ -350,7 +349,7 @@ export class JSONSourceParser {
     if (this.config.settings) {
       const settingKeys = Object.keys(this.config.settings);
       for (const key of settingKeys) {
-        const setting: ESObject = this.config.settings[key] as ESObject;
+        const setting: Record<string, Object | undefined> = this.config.settings[key] as Record<string, Object | undefined>;
         if (setting.default !== undefined) {
           context[`settings.${key}`] = setting.default;
         }
@@ -374,7 +373,7 @@ export class JSONSourceParser {
 export interface RequestInfo {
   method: string;
   url: string;
-  headers: ESObject;
-  body?: ESObject;
+  headers: Record<string, Object | undefined>;
+  body?: Record<string, Object | undefined>;
   timeout: number;
 }

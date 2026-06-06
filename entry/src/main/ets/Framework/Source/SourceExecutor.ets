@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 图源执行引擎
  * 负责执行图源的各种操作（搜索、获取详情等）
@@ -94,7 +94,7 @@ export class SourceExecutor {
     }
 
     // 从数据库加载配置
-    const config: ESObject | null = await this.dataManager.getSourceConfig(sourceId);
+    const config: Object | null = await this.dataManager.getSourceConfig(sourceId);
     if (!config) {
       throw new Error(`图源不存在: ${sourceId}`);
     }
@@ -178,10 +178,10 @@ export class SourceExecutor {
       const parser = await this.getParser(sourceId);
       
       // 构建请求
-      const params: ESObject = {
-        page: page,
-        limit: limit,
-        offset: (page - 1) * limit
+      const params: Record<string, Object> = {
+        'page': page,
+        'limit': limit,
+        'offset': (page - 1) * limit
       };
       const requestInfo = parser.buildRequest('popular', params);
 
@@ -211,10 +211,10 @@ export class SourceExecutor {
     try {
       const parser = await this.getParser(sourceId);
       
-      const params: ESObject = {
-        page: page,
-        limit: limit,
-        offset: (page - 1) * limit
+      const params: Record<string, Object> = {
+        'page': page,
+        'limit': limit,
+        'offset': (page - 1) * limit
       };
       const requestInfo = parser.buildRequest('latest', params);
 
@@ -241,11 +241,11 @@ export class SourceExecutor {
     try {
       const parser = await this.getParser(sourceId);
       
-      const params: ESObject = {
-        keyword: keyword,
-        page: page,
-        limit: limit,
-        offset: (page - 1) * limit
+      const params: Record<string, Object> = {
+        'keyword': keyword,
+        'page': page,
+        'limit': limit,
+        'offset': (page - 1) * limit
       };
       const requestInfo = parser.buildRequest('search', params);
 
@@ -272,8 +272,8 @@ export class SourceExecutor {
     try {
       const parser = await this.getParser(sourceId);
       
-      const params: ESObject = {
-        comicId: comicId
+      const params: Record<string, Object> = {
+        'comicId': comicId
       };
       const requestInfo = parser.buildRequest('detail', params);
 
@@ -321,8 +321,8 @@ export class SourceExecutor {
     try {
       const parser = await this.getParser(sourceId);
       
-      const params: ESObject = {
-        chapterId: chapterId
+      const params: Record<string, Object> = {
+        'chapterId': chapterId
       };
       const requestInfo = parser.buildRequest('pages', params);
 

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 缓存确认对话框组件
  * 从 UnifiedDetailPage 提取，用于清理缓存前的确认提示
  */
@@ -21,9 +21,9 @@ export interface CacheConfirmConfig {
 
 @Component
 export struct CacheConfirmDialogComponent {
-  @Prop themeState!: ThemeAwareState;
+  @Prop themeState: ThemeAwareState = new ThemeAwareState();
   @Prop @Watch('onLoadSignalChanged') loadSignal: number = 0;
-  @Prop config!: CacheConfirmConfig;
+  @Prop config: CacheConfirmConfig = { title: '', message: '', actionLabel: '', actionKind: 'primary', pendingAction: '' };
   onConfirm?: (pendingAction: string) => void;
   onCancel?: () => void;
 

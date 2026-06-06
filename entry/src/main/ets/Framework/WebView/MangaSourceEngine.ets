@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 // 文件路径: src/main/ets/Framework/WebView/MangaSourceEngine.ets
 /**
  * 漫画图源引擎主控制器
@@ -904,7 +904,7 @@ export class MangaSourceEngine {
   /**
    * 从结果数据中提取漫画列表（辅助方法）
    */
-  private extractMangaResults(data: ESObject): MangaInfo[] {
+  private extractMangaResults(data: Object): MangaInfo[] {
     // 处理数组类型
     if (Array.isArray(data)) {
       return (data as Array<Record<string, Object>>).map((item: Record<string, Object>) => this.transformToMangaInfo(item));
@@ -2912,13 +2912,7 @@ export class MangaSourceEngine {
                   pages = pagesArray.map((item: Record<string, Object>, index: number) => this.transformToPageInfo(item, index));
                   logger.info(TAG, `script操作返回了对象，包含 ${pages.length} 个页面`);
                   
-                  // 如果有 totalPages 字段，记录日志并附加到pages数组
-                  if (parsedObj['totalPages']) {
-                    const total = Number(parsedObj['totalPages']);
-                    logger.info(TAG, `script操作返回的总页数: ${total}`);
-                    (pages as ESObject)['totalPages'] = total;
-                    (pages as ESObject)['needsMorePages'] = total > pages.length;
-                  }
+                  // 已移除非法的数组属性附加
                   
                   logger.info(TAG, `📊 [MangaSourceEngine] 脚本返回的页面详情:`);
                   pages.forEach((page, idx) => {
@@ -2977,7 +2971,7 @@ export class MangaSourceEngine {
   /**
    * 加载更多页面（用于动态翻页）
    */
-  async loadMorePages(chapterId: string, mangaId?: string): Promise<EngineResult<ESObject>> {
+  async loadMorePages(chapterId: string, mangaId?: string): Promise<EngineResult<Record<string, Object | undefined>>> {
     if (!this.config) {
       throw new MangaSourceError(
         MangaSourceErrorCode.CONFIG_NOT_LOADED,
@@ -2999,7 +2993,7 @@ export class MangaSourceEngine {
       }
       context.variables['chapterId'] = this.normalizeUrl(chapterId);
       
-      let resultData: ESObject = {};
+      let resultData: Record<string, Object | undefined> = {};
       
       for (const action of actions) {
         logger.debug(TAG, `[loadMorePages] 执行操作: ${action.type}${action.type === 'script' ? ', code长度=' + (action.code?.length || 0) : ''}`);
@@ -3030,15 +3024,15 @@ export class MangaSourceEngine {
             }
             
             if (typeof parsed === 'object' && parsed !== null) {
-              resultData = parsed as ESObject;
+              resultData = parsed as Record<string, Object | undefined>;
               logger.debug(TAG, `loadMorePages解析结果: pages数量=${(resultData['pages'] as Array<Object>)?.length || 0}`);
             } else {
               logger.warn(TAG, `script返回的不是对象: ${typeof parsed}`);
-              resultData = result.data as ESObject;
+              resultData = result.data as Record<string, Object | undefined>;
             }
           } catch (e) {
             logger.warn(TAG, `JSON解析失败，使用原始数据: ${e}`);
-            resultData = result.data as ESObject;
+            resultData = result.data as Record<string, Object | undefined>;
           }
         }
       }
@@ -4016,17 +4010,17 @@ export class MangaSourceEngine {
     }
 
     try {
-      const configObj = SafeUtils.parseObj(this.rawConfigJson) as Record<string, ESObject>;
+      const configObj = SafeUtils.parseObj(this.rawConfigJson) as Record<string, Object | undefined>;
       
       // 注册工作流
-      const workflows = configObj['workflows'] as Record<string, ESObject> | undefined;
+      const workflows = configObj['workflows'] as Record<string, Object | undefined> | undefined;
       if (workflows) {
         const workflowNames = Object.keys(workflows);
         for (let i = 0; i < workflowNames.length; i++) {
           const name = workflowNames[i];
-          const workflow: ESObject = workflows[name];
+          const workflow: Object | undefined = workflows[name];
           if (workflow && typeof workflow === 'object') {
-            const workflowObj = workflow as Record<string, ESObject>;
+            const workflowObj = workflow as Record<string, Object | undefined>;
             const actions = workflowObj['actions'] as Action[] | undefined;
             if (actions && Array.isArray(actions)) {
               this.taskExecutor.registerWorkflow(name, actions);
@@ -4052,7 +4046,7 @@ export class MangaSourceEngine {
    * @param taskId 任务ID
    * @param params 初始参数
    */
-  async executeTask(taskId: string, params?: Record<string, ESObject>): Promise<TaskResult> {
+  async executeTask(taskId: string, params?: Record<string, Object | undefined>): Promise<TaskResult> {
     if (!this.taskExecutor) {
       return {
         taskId,
@@ -4067,7 +4061,7 @@ export class MangaSourceEngine {
     this.registerTasksFromConfig();
 
     // 添加基础变量
-    const fullParams: Record<string, ESObject> = {};
+    const fullParams: Record<string, Object | undefined> = {};
     fullParams['baseUrl'] = this.config?.metadata?.baseUrl || '';
     fullParams['sourceId'] = String(this.engineConfig.sourceId || '');
     if (params) {
@@ -4086,32 +4080,32 @@ export class MangaSourceEngine {
    * 获取下载源列表（电子书专用）
    * @param bookId 书籍ID
    */
-  async getDownloadSources(bookId: string): Promise<EngineResult<ESObject[]>> {
+  async getDownloadSources(bookId: string): Promise<EngineResult<Object[]>> {
     const startTime = Date.now();
     
     try {
-      const taskParams: Record<string, ESObject> = {};
+      const taskParams: Record<string, Object | undefined> = {};
       taskParams['bookId'] = bookId;
       const result = await this.executeTask('getDownloadSources', taskParams);
       
       if (result.success && result.data) {
-        let sources: ESObject[] = [];
+        let sources: Object[] = [];
         if (typeof result.data === 'string') {
-          const parsed: ESObject = SafeUtils.parseObj(result.data) as ESObject;
+          const parsed: Object = SafeUtils.parseObj(result.data) as Object;
           if (Array.isArray(parsed)) {
-            sources = parsed as ESObject[];
+            sources = parsed as Object[];
           } else if (parsed && typeof parsed === 'object') {
-            const parsedRecord: Record<string, ESObject> = parsed as Record<string, ESObject>;
+            const parsedRecord: Record<string, Object | undefined> = parsed as Record<string, Object | undefined>;
             if (Array.isArray(parsedRecord['sources'])) {
-              sources = parsedRecord['sources'] as ESObject[];
+              sources = parsedRecord['sources'] as Object[];
             }
           }
         } else if (Array.isArray(result.data)) {
           sources = result.data;
         } else if (result.data && typeof result.data === 'object') {
-          const dataRecord: Record<string, ESObject> = result.data as Record<string, ESObject>;
+          const dataRecord: Record<string, Object | undefined> = result.data as Record<string, Object | undefined>;
           if (Array.isArray(dataRecord['sources'])) {
-            sources = dataRecord['sources'] as ESObject[];
+            sources = dataRecord['sources'] as Object[];
           }
         }
 
@@ -4144,32 +4138,32 @@ export class MangaSourceEngine {
    * 从下载源获取文件列表（电子书专用）
    * @param sourceUrl 下载源URL
    */
-  async getFileListFromSource(sourceUrl: string): Promise<EngineResult<ESObject[]>> {
+  async getFileListFromSource(sourceUrl: string): Promise<EngineResult<Object[]>> {
     const startTime = Date.now();
     
     try {
-      const taskParams: Record<string, ESObject> = {};
+      const taskParams: Record<string, Object | undefined> = {};
       taskParams['sourceUrl'] = sourceUrl;
       const result = await this.executeTask('getFileListFromSource', taskParams);
       
       if (result.success && result.data) {
-        let files: ESObject[] = [];
+        let files: Object[] = [];
         if (typeof result.data === 'string') {
-          const parsed: ESObject = SafeUtils.parseObj(result.data) as ESObject;
+          const parsed: Object = SafeUtils.parseObj(result.data) as Object;
           if (Array.isArray(parsed)) {
-            files = parsed as ESObject[];
+            files = parsed as Object[];
           } else if (parsed && typeof parsed === 'object') {
-            const parsedRecord: Record<string, ESObject> = parsed as Record<string, ESObject>;
+            const parsedRecord: Record<string, Object | undefined> = parsed as Record<string, Object | undefined>;
             if (Array.isArray(parsedRecord['files'])) {
-              files = parsedRecord['files'] as ESObject[];
+              files = parsedRecord['files'] as Object[];
             }
           }
         } else if (Array.isArray(result.data)) {
           files = result.data;
         } else if (result.data && typeof result.data === 'object') {
-          const dataRecord: Record<string, ESObject> = result.data as Record<string, ESObject>;
+          const dataRecord: Record<string, Object | undefined> = result.data as Record<string, Object | undefined>;
           if (Array.isArray(dataRecord['files'])) {
-            files = dataRecord['files'] as ESObject[];
+            files = dataRecord['files'] as Object[];
           }
         }
 
@@ -4214,7 +4208,7 @@ export class MangaSourceEngine {
    * @param taskId 任务ID
    * @param userInput 用户输入的数据
    */
-  async resumeTask(taskId: string, userInput?: Record<string, ESObject>): Promise<void> {
+  async resumeTask(taskId: string, userInput?: Record<string, Object | undefined>): Promise<void> {
     if (this.taskExecutor) {
       await this.taskExecutor.resumeTask(taskId, userInput);
     }

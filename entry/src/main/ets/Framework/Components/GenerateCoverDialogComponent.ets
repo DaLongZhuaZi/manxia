@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 生成封面对话框组件
  * 从 UnifiedDetailPage 提取，用于生成自定义封面
  */
@@ -11,7 +11,7 @@ import { ThemeType } from '../Managers/ThemeManager';
 
 @Component
 export struct GenerateCoverDialogComponent {
-  @Prop themeState!: ThemeAwareState;
+  @Prop themeState: ThemeAwareState = new ThemeAwareState();
   @Prop @Watch('onLoadSignalChanged') loadSignal: number = 0;
   @Prop defaultTitle: string = '';
   onConfirm?: (title: string, fontScale: number) => void;

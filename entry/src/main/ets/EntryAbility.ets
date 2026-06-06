@@ -1257,8 +1257,11 @@ export default class EntryAbility extends UIAbility {
       
       logger.info('EntryAbility', `目标端接续解析: sessionId=${sessionId}, bookId=${bookId}`);
       
-      // 目标端加入分布式状态机会话
-      distributedDataSyncManager.joinSession(sessionId);
+      // 延迟目标端加入分布式状态机会话，避免与应用数据系统初始化竞争导致卡死
+      ngfLifecycleOrchestratorFacade.getCompletionPromise().then(() => {
+        logger.info('EntryAbility', '应用初始化完成，目标端开始加入分布式状态机会话');
+        distributedDataSyncManager.joinSession(sessionId);
+      });
       
       // 设置标志位，让 MainMenuPage 或阅读器直接拉起内容
       AppStorage.setOrCreate('widgetTargetPage', 'continueRead');

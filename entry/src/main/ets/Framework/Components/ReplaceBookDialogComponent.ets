@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 替换书籍对话框组件
  * 从 UnifiedDetailPage 提取，用于换源后的书籍替换确认
  */
@@ -12,9 +12,9 @@ import { OriginalBookInfo } from '../../Models/UnifiedContentModels';
 
 @Component
 export struct ReplaceBookDialogComponent {
-  @Prop themeState!: ThemeAwareState;
+  @Prop themeState: ThemeAwareState = new ThemeAwareState();
   @Prop @Watch('onLoadSignalChanged') loadSignal: number = 0;
-  @Prop originalBookInfo!: OriginalBookInfo;
+  @Prop originalBookInfo: OriginalBookInfo = { bookId: '', bookUrl: '', sourceId: '', sourceName: '', name: '', author: '', coverUrl: '', lastReadChapterIndex: 0, lastReadChapterTitle: '', lastReadPosition: 0, chapterCount: 0, isFavorite: false };
   @Prop newSourceName: string = '';
   @Prop newChapterCount: number = 0;
   @Prop matchedChapterIndex: number = -1;

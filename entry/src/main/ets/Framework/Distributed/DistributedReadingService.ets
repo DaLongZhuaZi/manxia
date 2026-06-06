@@ -18,15 +18,17 @@ export class DistributedReadingService {
     return DistributedReadingService.instance;
   }
 
+  private onStateChangeCallback = (state: SyncReadingState): void => {
+    this.handleStateChange(state);
+  };
+
   /**
    * 初始化阅读器页面的双向同步监听
    */
   public attachToReader(): void {
     if (this.isListening) return;
 
-    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
-      this.handleStateChange(state);
-    });
+    distributedDataSyncManager.addOnDataChangedCallback(this.onStateChangeCallback);
 
     this.isListening = true;
     logger.info(TAG, 'Attached DistributedReadingService to reader session.');
@@ -116,7 +118,7 @@ export class DistributedReadingService {
 
   public detach(): void {
     this.isListening = false;
-    distributedDataSyncManager.setOnDataChangedCallback(() => {});
+    distributedDataSyncManager.removeOnDataChangedCallback(this.onStateChangeCallback);
     logger.info(TAG, 'Detached DistributedReadingService.');
   }
 

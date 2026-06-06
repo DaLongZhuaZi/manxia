@@ -22,8 +22,8 @@ export class DistributedDataSyncManager {
   private syncObj: distributedDataObject.DataObject | null = null;
   private sessionId: string = '';
   
-  private onDataChangedCallback: ((state: SyncReadingState) => void) | null = null;
-  private onStatusChangedCallback: ((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => void) | null = null;
+  private dataChangedCallbacks: Set<(state: SyncReadingState) => void> = new Set();
+  private statusChangedCallbacks: Set<(status: 'online' | 'offline' | 'restored' | 'error', message?: string) => void> = new Set();
 
   private constructor() {}
 
@@ -68,9 +68,9 @@ export class DistributedDataSyncManager {
       
       this.syncObj.on('change', (sessionId: string, fields: Array<string>) => {
         logger.info(TAG, `Data changed in session ${sessionId}, fields: ${fields.join(',')}`);
-        if (this.onDataChangedCallback && this.syncObj) {
+        if (this.syncObj) {
           const currentState = this.extractState();
-          this.onDataChangedCallback(currentState);
+          this.dataChangedCallbacks.forEach(callback => callback(currentState));
         }
       });
 
@@ -95,9 +95,7 @@ export class DistributedDataSyncManager {
   }
 
   private notifyStatusChange(status: 'online' | 'offline' | 'restored' | 'error', message?: string): void {
-    if (this.onStatusChangedCallback) {
-      this.onStatusChangedCallback(status, message);
-    }
+    this.statusChangedCallbacks.forEach(callback => callback(status, message));
   }
 
   /**
@@ -156,17 +154,31 @@ export class DistributedDataSyncManager {
   }
 
   /**
-   * 设置数据变更监听
+   * 添加数据变更监听
    */
-  public setOnDataChangedCallback(callback: (state: SyncReadingState) => void): void {
-    this.onDataChangedCallback = callback;
+  public addOnDataChangedCallback(callback: (state: SyncReadingState) => void): void {
+    this.dataChangedCallbacks.add(callback);
   }
 
   /**
-   * 设置状态变更监听
+   * 移除数据变更监听
    */
-  public setOnStatusChangedCallback(callback: (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => void): void {
-    this.onStatusChangedCallback = callback;
+  public removeOnDataChangedCallback(callback: (state: SyncReadingState) => void): void {
+    this.dataChangedCallbacks.delete(callback);
+  }
+
+  /**
+   * 添加状态变更监听
+   */
+  public addOnStatusChangedCallback(callback: (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => void): void {
+    this.statusChangedCallbacks.add(callback);
+  }
+
+  /**
+   * 移除状态变更监听
+   */
+  public removeOnStatusChangedCallback(callback: (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => void): void {
+    this.statusChangedCallbacks.delete(callback);
   }
 
   /**
@@ -205,8 +217,8 @@ export class DistributedDataSyncManager {
         });
         this.syncObj = null;
         this.sessionId = '';
-        this.onDataChangedCallback = null;
-        this.onStatusChangedCallback = null;
+        this.dataChangedCallbacks.clear();
+        this.statusChangedCallbacks.clear();
       } catch (e) {
         logger.error(TAG, `Error leaving session: ${String(e)}`);
       }

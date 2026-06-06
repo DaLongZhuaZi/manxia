@@ -24,7 +24,8 @@ import {
   OnlineChapterInfo, 
   OnlineComicInfo,
   OnlineChapterInfoInput,
-  OnlinePageInfoInput
+  OnlinePageInfoInput,
+  OnlineComicSourceSaveInput
 } from '../Data/DataManager';
 import { DataService } from '../Services/DataService';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
@@ -744,7 +745,7 @@ export class MangaDetailLoader {
       }
       
       // 保存漫画信息到online_comic_info表
-      const comicData: ESObject = {
+      const comicData: OnlineComicSourceSaveInput = {
         id: externalId,
         title: manga.title,
         author: authorStr,
@@ -1672,7 +1673,7 @@ export class MangaDetailLoader {
       }
       
       // 保存漫画信息到online_comic_info表（使用saveComicFromSource）
-      const comicData: ESObject = {
+      const comicData: OnlineComicSourceSaveInput = {
         id: externalId,
         title: manga.title,
         author: authorStr,

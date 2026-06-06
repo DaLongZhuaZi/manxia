@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 变量替换引擎
  * 支持 {{variable}} 格式的变量替换
  */
@@ -10,7 +10,7 @@ const TAG = 'VariableReplacer';
 /**
  * 变量上下文 - 使用ESObject代替索引签名
  */
-export type VariableContext = ESObject;
+export type VariableContext = Record<string, Object | undefined>;
 
 /**
  * 变量替换器类
@@ -22,7 +22,7 @@ export class VariableReplacer {
    * @param context 变量上下文
    * @returns 替换后的字符串
    */
-  static replace(template: string, context: ESObject): string {
+  static replace(template: string, context: VariableContext): string {
     if (!template) {
       return template;
     }
@@ -53,31 +53,31 @@ export class VariableReplacer {
    * @param context 变量上下文
    * @returns 替换后的对象
    */
-  static replaceObject(obj: ESObject, context: ESObject): ESObject {
+  static replaceObject(obj: Record<string, Object | undefined>, context: VariableContext): Record<string, Object | undefined> {
     if (typeof obj !== 'object' || obj === null) {
       return obj;
     }
 
-    const result: ESObject = {};
+    const result: Record<string, Object | undefined> = {};
     const keys = Object.keys(obj);
 
     for (const key of keys) {
-      const value: ESObject | string | number | boolean | null | undefined = obj[key];
+      const value: Object | undefined = obj[key];
 
       if (typeof value === 'string') {
         result[key] = VariableReplacer.replace(value, context);
       } else if (typeof value === 'object' && value !== null) {
         if (Array.isArray(value)) {
-          result[key] = value.map((item: ESObject): ESObject => {
+          result[key] = (value as Array<Object>).map((item: Object): Object => {
             if (typeof item === 'string') {
               return VariableReplacer.replace(item, context);
             } else if (typeof item === 'object') {
-              return VariableReplacer.replaceObject(item, context);
+              return VariableReplacer.replaceObject(item as Record<string, Object | undefined>, context);
             }
             return item;
           });
         } else {
-          result[key] = VariableReplacer.replaceObject(value as ESObject, context);
+          result[key] = VariableReplacer.replaceObject(value as Record<string, Object | undefined>, context);
         }
       } else {
         result[key] = value;
@@ -90,16 +90,16 @@ export class VariableReplacer {
   /**
    * 获取嵌套属性值
    */
-  private static getNestedValue(obj: ESObject, path: string): string | number | boolean | undefined {
+  private static getNestedValue(obj: Record<string, Object | undefined>, path: string): string | number | boolean | undefined {
     const keys = path.split('.');
-    let current: ESObject | string | number | boolean | undefined = obj;
+    let current: Object | undefined = obj;
 
     for (const key of keys) {
       if (current === null || current === undefined) {
         return undefined;
       }
       if (typeof current === 'object') {
-        current = (current as ESObject)[key] as string | number | boolean | undefined;
+        current = (current as Record<string, Object | undefined>)[key];
       } else {
         return undefined;
       }
@@ -111,13 +111,13 @@ export class VariableReplacer {
   /**
    * 创建标准变量上下文
    */
-  static createContext(params: ESObject): ESObject {
-    const context: ESObject = {};
+  static createContext(params: Record<string, Object | undefined>): VariableContext {
+    const context: VariableContext = {};
 
     // 复制所有参数 - 使用Object.keys代替for...in
     const keys = Object.keys(params);
     for (const key of keys) {
-      const value: ESObject | string | number | boolean | null | undefined = params[key];
+      const value: Object | undefined = params[key];
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         context[key] = value;
       } else if (typeof value === 'object' && value !== null) {
@@ -132,14 +132,14 @@ export class VariableReplacer {
   /**
    * 合并多个上下文
    */
-  static mergeContexts(...contexts: ESObject[]): ESObject {
-    const merged: ESObject = {};
+  static mergeContexts(...contexts: VariableContext[]): VariableContext {
+    const merged: VariableContext = {};
 
     for (let i = 0; i < contexts.length; i++) {
-      const context: ESObject = contexts[i];
+      const context: VariableContext = contexts[i];
       const keys: string[] = Object.keys(context);
       for (const key of keys) {
-        const value: ESObject | string | number | boolean | null | undefined = context[key];
+        const value: Object | undefined = context[key];
         merged[key] = value;
       }
     }
@@ -151,10 +151,10 @@ export class VariableReplacer {
 /**
  * 便捷函数
  */
-export function replaceVariables(template: string, context: ESObject): string {
+export function replaceVariables(template: string, context: VariableContext): string {
   return VariableReplacer.replace(template, context);
 }
 
-export function replaceObjectVariables(obj: ESObject, context: ESObject): ESObject {
+export function replaceObjectVariables(obj: Record<string, Object | undefined>, context: VariableContext): Record<string, Object | undefined> {
   return VariableReplacer.replaceObject(obj, context);
 }

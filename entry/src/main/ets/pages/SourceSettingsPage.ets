@@ -364,7 +364,7 @@ export struct SourceSettingsPage {
     }
   }
 
-  private parseSourceLoginConfig(config: ESObject): void {
+  private parseSourceLoginConfig(config: Record<string, Object>): void {
     this.resetSourceLoginConfig();
 
     const configObj = config as Record<string, Object>;
@@ -461,7 +461,7 @@ export struct SourceSettingsPage {
 
     const sid: number = Number(sourceRecord.id);
     const pkg: string = sourceRecord.pkg || this.pageParams?.sourceName || '';
-    let config: ESObject | null = null;
+    let config: Record<string, Object> | null = null;
     if (pkg.length > 0) {
       config = await this.dataManager.getSourceConfigByPkg(pkg);
     }
@@ -512,7 +512,7 @@ export struct SourceSettingsPage {
       
       // 获取图源配置JSON
       const pkg = sourceRecord.pkg || sourceName;
-      const config: ESObject | null = await this.dataManager.getSourceConfigByPkg(pkg);
+      const config: Record<string, Object> | null = await this.dataManager.getSourceConfigByPkg(pkg);
       if (!config) {
         logger.warn(TAG, `未找到图源配置: pkg=${pkg}`);
         return;
@@ -538,20 +538,20 @@ export struct SourceSettingsPage {
       this.currentBaseUrl = sourceRecord.baseUrl || '';
       
       // 获取图源类型
-      const metadata: ESObject | undefined = config.metadata as ESObject;
+      const metadata: Record<string, Object> | undefined = config.metadata as Record<string, Object>;
       if (metadata && metadata.type) {
         this.sourceType = String(metadata.type);
         logger.info(TAG, `图源类型: ${this.sourceType}`);
       }
       
       // 解析自定义设置
-      const settings: ESObject | undefined = config.settings as ESObject;
+      const settings: Record<string, Object> | undefined = config.settings as Record<string, Object>;
       if (settings && typeof settings === 'object') {
         const customSettings: SourceCustomSetting[] = [];
         const settingKeys = Object.keys(settings);
         
         for (const key of settingKeys) {
-          const setting: ESObject = settings[key] as ESObject;
+          const setting: Record<string, Object> = settings[key] as Record<string, Object>;
           if (setting && typeof setting === 'object') {
             let settingType = (setting.type as string) || 'text';
             // 兼容string类型（映射为text）
@@ -574,9 +574,9 @@ export struct SourceSettingsPage {
             // 解析选项（select类型）
             if (setting.options && Array.isArray(setting.options)) {
               const optionsArray: SourceSettingOption[] = [];
-              const rawOptions: ESObject[] = setting.options as ESObject[];
+              const rawOptions: Record<string, Object>[] = setting.options as Record<string, Object>[];
               for (let i = 0; i < rawOptions.length; i++) {
-                const optObj: ESObject = rawOptions[i] as ESObject;
+                const optObj: Record<string, Object> = rawOptions[i] as Record<string, Object>;
                 const optItem: SourceSettingOption = {
                   value: String(optObj.value || ''),
                   label: String(optObj.label || optObj.value || '')
@@ -973,7 +973,7 @@ export struct SourceSettingsPage {
         logger.info(TAG, '未找到图源记录，尝试从DataManager获取配置');
         // 尝试从DataManager获取源配置
         try {
-          const sourceConfig: ESObject | null = await this.dataManager.getSourceConfigByPkg(sourceName);
+          const sourceConfig: Record<string, Object> | null = await this.dataManager.getSourceConfigByPkg(sourceName);
           if (sourceConfig) {
             const configObj = sourceConfig as Record<string, Object>;
             const keys = Object.keys(configObj);

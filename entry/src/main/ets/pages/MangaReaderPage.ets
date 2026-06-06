@@ -17,10 +17,10 @@ import { globalAnimationManager, AnimationType, AnimationState,
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
-import { UIContext, curves, promptAction } from '@kit.ArkUI';
+import { UIContext, curves } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { DataManager, PageInfo, PageInfoInput, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, OnlinePageInfoInput, UserSettingsDatabaseRecord } from '../Framework/Data/DataManager';
+import { DataManager, PageInfo, PageInfoInput, ChapterInfo, OnlineChapterInfo, OnlinePageInfo, OnlinePageInfoInput, UserSettingsDatabaseRecord, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
 import CookieManager from '../Framework/Managers/CookieManager';
@@ -339,6 +339,9 @@ interface MangaBookmarkContext {
   chapterTitle: string;
 }
 
+type RemoteDataChangedCallback = (state: SyncReadingState) => void;
+type RemoteStatusChangedCallback = (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => void;
+
 @Component
 export struct MangaReaderPage {
   @State isNetworkConfigReady: boolean = false;// 新增状态：网络配置是否就绪
@@ -380,6 +383,8 @@ export struct MangaReaderPage {
   private lastProgressSaveTime: number = 0;
   private lastSavedPageIndex: number = -1;
   private sessionStartTimestamp: number = 0;
+  private remoteDataChangedCallback: RemoteDataChangedCallback | null = null;
+  private remoteStatusChangedCallback: RemoteStatusChangedCallback | null = null;
   
   // WebView图源相关
   private readingTimeTimer: number = -1;// 阅读时间定时器
@@ -1126,6 +1131,7 @@ export struct MangaReaderPage {
     
     // 通知预加载管理器：阅读器已关闭
     this.lifecycle.destroy();
+    this.unregisterRemoteControlListener();
     
     // 停止阅读时间定时记录
     ChapterPreloadManager.getInstance().setReaderActive(false);
@@ -1354,9 +1360,10 @@ export struct MangaReaderPage {
 
   private registerRemoteControlListener(): void {
     logger.info(TAG, '[RemoteControl] 被控端已注册遥控器指令监听');
+    this.unregisterRemoteControlListener();
     this.isRemoteControlled = true;
-    promptAction.showToast({ message: '遥控已连接' });
-    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
+    this.getUIContext().getPromptAction().showToast({ message: '遥控已连接' });
+    const dataChangedCallback: RemoteDataChangedCallback = (state: SyncReadingState) => {
       // 时间戳防重入：同一时间戳的指令只执行一次
       if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
         return;
@@ -1389,17 +1396,32 @@ export struct MangaReaderPage {
       }
       // 通知遥控端指令已执行（清空指令域）
       distributedDataSyncManager.sendInstruction('ack', '');
-    });
+    };
+    this.remoteDataChangedCallback = dataChangedCallback;
+    distributedDataSyncManager.addOnDataChangedCallback(dataChangedCallback);
 
-    distributedDataSyncManager.setOnStatusChangedCallback((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+    const statusChangedCallback: RemoteStatusChangedCallback = (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
       if (status === 'offline') {
         logger.info(TAG, '[RemoteControl] 遥控器已断开');
         if (this.isRemoteControlled) {
           this.isRemoteControlled = false;
-          promptAction.showToast({ message: '遥控器已断开' });
+          this.getUIContext().getPromptAction().showToast({ message: '遥控器已断开' });
         }
       }
-    });
+    };
+    this.remoteStatusChangedCallback = statusChangedCallback;
+    distributedDataSyncManager.addOnStatusChangedCallback(statusChangedCallback);
+  }
+
+  private unregisterRemoteControlListener(): void {
+    if (this.remoteDataChangedCallback) {
+      distributedDataSyncManager.removeOnDataChangedCallback(this.remoteDataChangedCallback);
+      this.remoteDataChangedCallback = null;
+    }
+    if (this.remoteStatusChangedCallback) {
+      distributedDataSyncManager.removeOnStatusChangedCallback(this.remoteStatusChangedCallback);
+      this.remoteStatusChangedCallback = null;
+    }
   }
 
   /**
@@ -3528,7 +3550,7 @@ export struct MangaReaderPage {
       // 拦截分布式进度
       const continuationSessionId = AppStorage.get<string>('continuationSessionId');
       if (continuationSessionId) {
-        promptAction.showToast({ message: '已从其他设备接续阅读' });
+        this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
         const distributedState = distributedDataSyncManager.getCurrentState();
         if (distributedState && distributedState.bookId === manga.id) {
           const chIndex = distributedState.chapterIndex;
@@ -3778,7 +3800,7 @@ export struct MangaReaderPage {
           logger.info(TAG, `🔄 开始获取页面列表: mangaId=${externalMangaId}, chapterId=${externalChapterId}`);
 
           // [优化] 检查 MangaDetailPage 预取的页面列表缓存
-          let pageListResult: ESObject | null = null;
+          let pageListResult: EngineResult<SourcePageInfo[]> | null = null;
           if (params.sourceId && externalChapterId) {
             const prefetched = MangaSourceEngine.getPrefetchedPages(params.sourceId, externalChapterId);
             if (prefetched && prefetched.length > 0) {
@@ -3787,7 +3809,7 @@ export struct MangaReaderPage {
             }
           }
 
-          if (!pageListResult) {
+          if (pageListResult === null) {
             // [P0] 首屏不做固定延迟和长退避重试：立即请求，失败后仅即时重试一次
             pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
             if (!pageListResult.success || !pageListResult.data || pageListResult.data.length === 0) {
@@ -3795,14 +3817,18 @@ export struct MangaReaderPage {
               pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
             }
 
-            if (!pageListResult) {
-              throw new Error('从源站加载页面列表失败');
-            }
+          }
+
+          if (pageListResult === null) {
+            throw new Error('从源站加载页面列表失败');
           }
           
-          logger.info(TAG, `📊 页面列表获取结果: success=${pageListResult.success}, hasData=${!!pageListResult.data}, dataLength=${pageListResult.data?.length || 0}`);
-          if (pageListResult.error) {
-            logger.error(TAG, `❌ 页面列表获取错误: ${pageListResult.error}`);
+          const resolvedPageListResult: EngineResult<SourcePageInfo[]> = pageListResult;
+          const resolvedPageData: SourcePageInfo[] | undefined = resolvedPageListResult.data;
+
+          logger.info(TAG, `📊 页面列表获取结果: success=${resolvedPageListResult.success}, hasData=${!!resolvedPageData}, dataLength=${resolvedPageData ? resolvedPageData.length : 0}`);
+          if (resolvedPageListResult.error) {
+            logger.error(TAG, `❌ 页面列表获取错误: ${resolvedPageListResult.error}`);
           }
 
           // if (this.networkHeaders && this.networkHeaders.referer && this.networkHeaders.referer.includes('komiic.com')) {
@@ -3825,28 +3851,29 @@ export struct MangaReaderPage {
           //    }
           //    this.networkHeaders = updated as RequestHeaders;
           //    this.networkHeadersTick = this.networkHeadersTick + 1;
-          logger.info(TAG, `✅ 页面列表获取成功，共 ${pageListResult.data.length} 页`);
-          // }
-          
-          if (!pageListResult.success || !pageListResult.data) {
-            const errorMsg: string = (pageListResult.error as string) || '获取页面列表失败';
+          if (!resolvedPageListResult.success || !resolvedPageData) {
+            const errorMsg: string = resolvedPageListResult.error || '获取页面列表失败';
             logger.error(TAG, `❌ 页面列表获取失败: ${errorMsg}`);
             this.readerState.errorMessage = `加载章节页面失败\n${errorMsg}`;
             this.readerState.isLoading = false;
             throw new Error(errorMsg);
           }
+
+          const sourcePageData: SourcePageInfo[] = resolvedPageData;
+          logger.info(TAG, `✅ 页面列表获取成功，共 ${sourcePageData.length} 页`);
+          // }
           
-          logger.info(TAG, `Source getPageList 返回 ${pageListResult.data.length} 页`);
+          logger.info(TAG, `Source getPageList 返回 ${sourcePageData.length} 页`);
           
           // [调试] 输出所有页面详情
           logger.info(TAG, `📊 [MangaReaderPage] 从MangaSourceEngine获取到的页面详情:`);
-          pageListResult.data.forEach((page: SourcePageInfo, idx: number) => {
+          sourcePageData.forEach((page: SourcePageInfo, idx: number) => {
             if (idx < 10) {
               logger.info(TAG, `  - 页面${idx}: imageUrl=${page.imageUrl?.substring(0, 80) || 'URL为空'}, page=${page.page}`);
             }
           });
-          if (pageListResult.data.length > 10) {
-            logger.info(TAG, `  ... 还有 ${pageListResult.data.length - 10} 页未显示`);
+          if (sourcePageData.length > 10) {
+            logger.info(TAG, `  ... 还有 ${sourcePageData.length - 10} 页未显示`);
           }
           
           // [重构] 对于在线未下载漫画，从online_page表查询（不与本地方法混用）
@@ -3859,7 +3886,7 @@ export struct MangaReaderPage {
           }
 
           // 如果网络获取的页面列表为空，但数据库有数据，则使用数据库数据作为后备
-          let sourcePages: SourcePageInfo[] = pageListResult.data;
+          let sourcePages: SourcePageInfo[] = sourcePageData;
           if (!shouldRefreshVolatilePages && sourcePages.length === 0 && dbPages.length > 0) {
             logger.warn(TAG, '⚠️ 网络获取页面列表为空，回退使用online_page表缓存页面');
             sourcePages = dbPages.map((p: OnlinePageInfo): SourcePageInfo => {
@@ -6937,21 +6964,22 @@ export struct MangaReaderPage {
 
     // 准备在线漫画数据（如果是WebView图源）
     let sourceId: number | undefined = undefined;
-    let mangaData: Record<string, Object> | undefined = undefined;
+    let mangaData: OnlineComicSourceSaveInput | undefined = undefined;
     
     if (this.currentSourceId > 0 && this.mangaEngine) {
       sourceId = this.currentSourceId;
-      // 创建临时对象并转换为Record类型
-      const tempData: Record<string, Object> = {} as Record<string, Object>;
-      tempData['title'] = manga.title;
-      tempData['author'] = manga.metadata.authors.join(', ');
-      tempData['description'] = manga.description;
-      tempData['coverUrl'] = manga.coverImagePath;
-      tempData['status'] = String(manga.status);
-      tempData['tags'] = manga.metadata.genres;
-      tempData['rating'] = 0;
-      tempData['chapterCount'] = manga.chapters.length;
-      tempData['updateTime'] = Date.now();
+      const tempData: OnlineComicSourceSaveInput = {
+        id: manga.id,
+        title: manga.title,
+        author: manga.metadata.authors.join(', '),
+        description: manga.description,
+        coverUrl: manga.coverImagePath,
+        tags: manga.metadata.genres,
+        rating: 0,
+        updateTime: Date.now(),
+        status: String(manga.status),
+        chapterCount: manga.chapters.length
+      };
       mangaData = tempData;
     }
 

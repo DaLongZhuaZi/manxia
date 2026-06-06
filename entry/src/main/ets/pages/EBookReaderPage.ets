@@ -36,7 +36,7 @@ import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
-import { curves, UIContext, promptAction } from '@kit.ArkUI';
+import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
 import { MangaViewer } from '../components/MangaViewer';
@@ -381,52 +381,55 @@ struct EBookReaderPage {
 
   private lastRemoteInstructionTimestamp: number = 0;
 
+  private onRemoteDataChanged = (state: SyncReadingState) => {
+    if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
+      return;
+    }
+    if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
+      return;
+    }
+    this.lastRemoteInstructionTimestamp = state.timestamp;
+
+    logger.info(TAG, `[RemoteControl] 收到电子书遥控指令: ${state.instructionType}`);
+    switch (state.instructionType) {
+      case 'cmd:next_page':
+        this.turnEBookPageByVolume(true);
+        break;
+      case 'cmd:prev_page':
+        this.turnEBookPageByVolume(false);
+        break;
+      case 'cmd:next_chapter':
+        this.nextChapter();
+        break;
+      case 'cmd:prev_chapter':
+        this.previousChapter();
+        break;
+      case 'cmd:toggle_auto_read':
+        this.toggleTextReadAloud();
+        break;
+      default:
+        logger.warn(TAG, `[RemoteControl] 未知电子书指令: ${state.instructionType}`);
+        break;
+    }
+    distributedDataSyncManager.sendInstruction('ack', '');
+  };
+
+  private onRemoteStatusChanged = (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+    if (status === 'offline') {
+      logger.info(TAG, '[RemoteControl] 遥控器已断开');
+      if (this.isRemoteControlled) {
+        this.isRemoteControlled = false;
+        this.getUIContext().getPromptAction().showToast({ message: '遥控器已断开' });
+      }
+    }
+  };
+
   private registerRemoteControlListener(): void {
     logger.info(TAG, '[RemoteControl] 电子书被控端已注册遥控器指令监听');
     this.isRemoteControlled = true;
-    promptAction.showToast({ message: '遥控已连接' });
-    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
-      if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
-        return;
-      }
-      if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
-        return;
-      }
-      this.lastRemoteInstructionTimestamp = state.timestamp;
-
-      logger.info(TAG, `[RemoteControl] 收到电子书遥控指令: ${state.instructionType}`);
-      switch (state.instructionType) {
-        case 'cmd:next_page':
-          this.turnEBookPageByVolume(true);
-          break;
-        case 'cmd:prev_page':
-          this.turnEBookPageByVolume(false);
-          break;
-        case 'cmd:next_chapter':
-          this.nextChapter();
-          break;
-        case 'cmd:prev_chapter':
-          this.previousChapter();
-          break;
-        case 'cmd:toggle_auto_read':
-          this.toggleTextReadAloud();
-          break;
-        default:
-          logger.warn(TAG, `[RemoteControl] 未知电子书指令: ${state.instructionType}`);
-          break;
-      }
-      distributedDataSyncManager.sendInstruction('ack', '');
-    });
-
-    distributedDataSyncManager.setOnStatusChangedCallback((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
-      if (status === 'offline') {
-        logger.info(TAG, '[RemoteControl] 遥控器已断开');
-        if (this.isRemoteControlled) {
-          this.isRemoteControlled = false;
-          promptAction.showToast({ message: '遥控器已断开' });
-        }
-      }
-    });
+    this.getUIContext().getPromptAction().showToast({ message: '遥控已连接' });
+    distributedDataSyncManager.addOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.addOnStatusChangedCallback(this.onRemoteStatusChanged);
   }
 
   private handleVolumeKeyPageTurn(keyCode: number): boolean {
@@ -474,6 +477,9 @@ struct EBookReaderPage {
   aboutToDisappear(): void {
     this.isPageVisible = false;
     distributedReadingService.detach();
+    // 断开遥控器监听，避免内存泄漏和回调冲突
+    distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
     const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.clearToolbarAutoHideTimer();
@@ -3188,7 +3194,7 @@ struct EBookReaderPage {
         this.loadEBook(params.bookId);
         const continuationSessionId = AppStorage.get<string>('continuationSessionId');
         if (continuationSessionId) {
-          promptAction.showToast({ message: '已从其他设备接续阅读' });
+          this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
           this.registerRemoteControlListener();
           AppStorage.setOrCreate('continuationSessionId', '');
         }

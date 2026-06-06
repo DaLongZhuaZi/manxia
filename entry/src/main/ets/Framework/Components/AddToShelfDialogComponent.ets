@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 添加到书架对话框组件
  * 从 UnifiedDetailPage 提取，用于选择要添加到的书架
  */
@@ -12,7 +12,7 @@ import { TypeShelf, ShelfType, ShelfContentType } from '../Data/TypeShelfManager
 
 @Component
 export struct AddToShelfDialogComponent {
-  @Prop themeState!: ThemeAwareState;
+  @Prop themeState: ThemeAwareState = new ThemeAwareState();
   @Prop @Watch('onLoadSignalChanged') loadSignal: number = 0;
   @Prop shelves: TypeShelf[] = [];
   @Prop isPending: boolean = false;

@@ -25,7 +25,7 @@ import {
 import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from '../Framework/Types/StatusEnums';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
-import { DataManager, ComicInfo, ComicInfoInput, ChapterInfo as DataChapterInfo, ChapterInfoInput, PageInfo, PageInfoInput, ReadHistory, OnlineChapterInfoInput, OnlinePageInfoInput, OnlineComicInfo } from '../Framework/Data/DataManager';
+import { DataManager, ComicInfo, ComicInfoInput, ChapterInfo as DataChapterInfo, ChapterInfoInput, PageInfo, PageInfoInput, ReadHistory, OnlineChapterInfoInput, OnlinePageInfoInput, OnlineComicInfo, OnlineComicSourceSaveInput } from '../Framework/Data/DataManager';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { colorMap } from '../Data/ResourceMap';
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
@@ -3166,16 +3166,17 @@ struct MangaDetailPage {
         logger.info(TAG, `✅ 在线漫画已存在于online_comic_info表: ${this.currentManga.title}, ID: ${internalComicId}`);
       } else {
         // [重构] 使用saveComicFromSource保存到online_comic_info表
-        const comicData: ESObject = {
+        const comicTags: string[] = [];
+        const comicData: OnlineComicSourceSaveInput = {
           id: validExternalId,  // 使用外部ID作为id字段
           title: this.currentManga.title,
           author: authorStr,
           description: this.currentManga.description || '',
           coverUrl: (this.currentManga.coverImagePath as string) || '',
-          tags: [],
+          tags: comicTags,
           rating: 0,
           updateTime: Date.now(),
-          sourceName: this.sourceName || undefined  // [修复] 传递图源名称
+          sourceName: this.sourceName || ''  // [修复] 传递图源名称
         };
         
         logger.info(TAG, `📝 准备保存在线漫画: sourceName="${this.sourceName || 'N/A'}"`);
