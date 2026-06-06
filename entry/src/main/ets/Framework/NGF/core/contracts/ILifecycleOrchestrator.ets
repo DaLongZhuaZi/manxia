@@ -1,4 +1,4 @@
-﻿export class NGFPhaseState {
+export class NGFPhaseState {
   phaseName: string;
   progress: number;
   isCompleted: boolean;
@@ -18,4 +18,5 @@ export interface ILifecycleOrchestrator {
   markCompleted(): void;
   getCurrentState(): NGFPhaseState;
   isCompleted(): boolean;
+  getCompletionPromise(): Promise<boolean>;
 }

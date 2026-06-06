@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 漫画图源引擎类型定义
  * 定义JSON驱动的WebView自动化系统的所有类型接口
  */
@@ -1100,7 +1100,7 @@ export interface APIRequestAction extends BaseAction {
   /** 请求头 */
   headers?: Record<string, string>;
   /** 请求体 */
-  body?: ESObject;
+  body?: Record<string, Object | undefined>;
   /** 响应数据提取配置 */
   extract?: ExtractConfig;
   /** API分页配置 */
@@ -1115,7 +1115,7 @@ export interface HTTPRequestAction extends BaseAction {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   url: string;
   headers?: Record<string, string>;
-  body?: string | ESObject;
+  body?: string | Record<string, Object | undefined>;
   timeout?: number;
 }
 
@@ -1231,9 +1231,9 @@ export interface TaskContext {
   /** 任务状态 */
   status: TaskStatus;
   /** 变量存储 */
-  variables: Record<string, ESObject>;
+  variables: Record<string, Object | undefined>;
   /** 步骤结果 */
-  stepResults: Record<string, ESObject>;
+  stepResults: Record<string, Object | undefined>;
   /** 错误信息 */
   errors: TaskError[];
   /** 开始时间 */
@@ -1262,13 +1262,13 @@ export interface TaskResult {
   /** 是否成功 */
   success: boolean;
   /** 最终数据 */
-  data?: ESObject;
+  data?: Object;
   /** 错误信息 */
   error?: string;
   /** 执行耗时(毫秒) */
   duration: number;
   /** 各步骤结果 */
-  stepResults: Record<string, ESObject>;
+  stepResults: Record<string, Object | undefined>;
 }
 
 /**

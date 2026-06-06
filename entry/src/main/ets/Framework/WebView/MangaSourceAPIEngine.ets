@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 漫画图源API请求引擎
  * 处理HTTP/GraphQL API请求，支持JSON数据提取
@@ -181,19 +181,19 @@ export class MangaSourceAPIEngine {
       logger.debug(TAG, `API响应状态: ${response.responseCode}`);
 
       // 解析响应
-      let responseData: ESObject | string;
+      let responseData: Object | string;
       logger.debug(TAG, `响应result类型: ${typeof response.result}`);
       if (typeof response.result === 'string') {
         logger.debug(TAG, `响应字符串长度: ${response.result.length}, 前100字符: ${response.result.substring(0, 100)}`);
         try {
-          responseData = SafeUtils.parseObj(response.result) as ESObject;
+          responseData = SafeUtils.parseObj(response.result) as Object;
           logger.debug(TAG, `JSON解析成功`);
         } catch (e) {
           logger.warn(TAG, `JSON解析失败: ${e}`);
           responseData = response.result;
         }
       } else {
-        responseData = response.result as ESObject;
+        responseData = response.result as Object;
         logger.debug(TAG, `响应直接为对象`);
       }
 
@@ -206,7 +206,7 @@ export class MangaSourceAPIEngine {
       // 创建明确的响应对象
         const apiResponse: APIResponse = {
           status: response.responseCode,
-          headers: response.header as ESObject,
+          headers: response.header as Object,
           data: responseData
         };
         return apiResponse;
@@ -326,7 +326,7 @@ export class MangaSourceAPIEngine {
   /**
    * 从JSON数据中提取字段
    */
-  extractFromJSON(data: ESObject, config: JSONExtractConfig): ESObject | ESObject[] | null {
+  extractFromJSON(data: Object, config: JSONExtractConfig): Object | Object[] | null {
     logger.debug(TAG, `提取JSON数据，路径: ${config.path || 'root'}`);
     logger.debug(TAG, `响应数据类型: ${typeof data}, 是否为null: ${data === null}, 是否为undefined: ${data === undefined}`);
     if (data) {
@@ -334,7 +334,7 @@ export class MangaSourceAPIEngine {
     }
 
     // 获取目标数据
-    let targetData: ESObject | ESObject[] | null = data;
+    let targetData: Object | Object[] | null = data;
     if (config.path) {
       targetData = this.getValueByPath(data, config.path);
       logger.debug(TAG, `路径提取后数据类型: ${typeof targetData}, 是否为null: ${targetData === null}`);
@@ -354,18 +354,18 @@ export class MangaSourceAPIEngine {
 
     // 应用字段映射
     if (Array.isArray(targetData)) {
-      return targetData.map((item: ESObject): ESObject => this.mapFields(item, config.fields!));
+      return (targetData as Object[]).map((item: Object): Object => this.mapFields(item, config.fields!));
     } else {
-      return this.mapFields(targetData as ESObject, config.fields);
+      return this.mapFields(targetData as Object, config.fields!);
     }
   }
 
   /**
    * 通过路径获取值（支持点号和数组索引）
    */
-  private getValueByPath(obj: ESObject, path: string): ESObject | ESObject[] | null {
+  private getValueByPath(obj: Object, path: string): Object | Object[] | null {
     const parts = path.split('.');
-    let current: ESObject | ESObject[] | null = obj;
+    let current: Object | Object[] | null = obj;
     let isArray = false;
 
     for (let i = 0; i < parts.length; i++) {
@@ -377,7 +377,7 @@ export class MangaSourceAPIEngine {
       }
 
       if (!current) {
-        return new EmptyObject() as ESObject;
+        return new EmptyObject() as Object;
       }
 
       // 处理数组索引 [0] 或 [*]
@@ -388,7 +388,7 @@ export class MangaSourceAPIEngine {
 
         // 如果当前是数组，需要对每个元素应用路径
         if (isArray && Array.isArray(current)) {
-          current = current.map((item: ESObject): ESObject | ESObject[] => {
+          current = (current as Object[]).map((item: Object): Object | Object[] => {
             const itemRecord: Record<string, Object> = item as Record<string, Object>;
             const itemKeys: string[] = Object.keys(itemRecord);
             let valueObj: Object = new EmptyObject();
@@ -396,21 +396,21 @@ export class MangaSourceAPIEngine {
               valueObj = itemRecord[key];
             }
             const isArr: boolean = Array.isArray(valueObj);
-            const val: ESObject | ESObject[] = isArr ? (valueObj as ESObject[]) : (valueObj as ESObject);
+            const val: Object | Object[] = isArr ? (valueObj as Object[]) : (valueObj as Object);
             if (index === '*' && isArr) {
               return val;
             } else if (index !== '*') {
-              return isArr ? (val as ESObject[])[Number(index)] : val;
+              return isArr ? (val as Object[])[Number(index)] : val;
             }
             return val;
           }).flat();
           isArray = true;
         } else {
-          const currRecord: Record<string, Object> = (current as ESObject) as Record<string, Object>;
+          const currRecord: Record<string, Object> = current as Record<string, Object>;
           const currKeys: string[] = Object.keys(currRecord);
           if (!currKeys.includes(key)) return null;
           const nextObjRaw: Object = currRecord[key];
-          current = Array.isArray(nextObjRaw) ? (nextObjRaw as ESObject[]) : (nextObjRaw as ESObject);
+          current = Array.isArray(nextObjRaw) ? (nextObjRaw as Object[]) : (nextObjRaw as Object);
 
           if (index === '*') {
             // 标记为数组模式，继续处理后续路径
@@ -418,28 +418,28 @@ export class MangaSourceAPIEngine {
           } else {
             // 安全访问数组索引
             if (!Array.isArray(current) || Number(index) >= current.length) return null; // [修复] 索引越界或非数组
-            current = (current as ESObject[])[Number(index)];
+            current = (current as Object[])[Number(index)];
             isArray = false;
           }
         }
       } else {
         // 如果当前是数组模式，对每个元素获取属性
         if (isArray && Array.isArray(current)) {
-          current = current.map((item: ESObject): ESObject | ESObject[] => {
+          current = (current as Object[]).map((item: Object): Object | Object[] => {
             const itemRecord: Record<string, Object> = item as Record<string, Object>;
             const itemKeys: string[] = Object.keys(itemRecord);
             if (!itemKeys.includes(part)) {
-              return new EmptyObject() as ESObject;
+              return new EmptyObject() as Object;
             }
             const raw: Object = itemRecord[part];
-            return Array.isArray(raw) ? (raw as ESObject[]) : (raw as ESObject);
+            return Array.isArray(raw) ? (raw as Object[]) : (raw as Object);
           }).flat();
         } else {
-          const currRecord2: Record<string, Object> = (current as ESObject) as Record<string, Object>;
+          const currRecord2: Record<string, Object> = current as Record<string, Object>;
           const currKeys2: string[] = Object.keys(currRecord2);
           if (!currKeys2.includes(part)) return null;
           const nextValRaw: Object = currRecord2[part];
-          const nextVal: ESObject | ESObject[] = Array.isArray(nextValRaw) ? (nextValRaw as ESObject[]) : (nextValRaw as ESObject);
+          const nextVal: Object | Object[] = Array.isArray(nextValRaw) ? (nextValRaw as Object[]) : (nextValRaw as Object);
           current = nextVal;
           isArray = Array.isArray(current);
         }
@@ -452,23 +452,23 @@ export class MangaSourceAPIEngine {
   /**
    * 映射字段
    */
-  private mapFields(source: ESObject, fieldMap: ESObject): ESObject {
-    const result: ESObject = {};
+  private mapFields(source: Object, fieldMap: Object): Object {
+    const result: Record<string, Object | null> = {};
     const keys = Object.keys(fieldMap);
 
     for (let i = 0; i < keys.length; i++) {
       const targetField = keys[i];
-      const sourcePath = fieldMap[targetField] as string;
+      const sourcePath = (fieldMap as Record<string, Object>)[targetField] as string;
       
       // 如果路径为空字符串，直接使用source本身（用于字符串数组）
       if (sourcePath === '') {
         result[targetField] = source;
       } else if (sourcePath.includes('[*]')) {
         // 处理数组聚合 [*].name
-        const value: ESObject | ESObject[] = this.getValueByPath(source, sourcePath);
+        const value: Object | Object[] | null = this.getValueByPath(source, sourcePath);
         result[targetField] = value;
       } else {
-        const value: ESObject | ESObject[] = this.getValueByPath(source, sourcePath);
+        const value: Object | Object[] | null = this.getValueByPath(source, sourcePath);
         result[targetField] = value;
       }
     }
@@ -496,7 +496,7 @@ export class MangaSourceAPIEngine {
   /**
    * 替换URL中的变量
    */
-  replaceVariables(template: string, variables: ESObject): string {
+  replaceVariables(template: string, variables: Object): string {
     let result = template;
     const keys = Object.keys(variables);
     

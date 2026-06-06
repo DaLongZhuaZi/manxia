@@ -1431,6 +1431,7 @@ export struct GlobalSearchPage {
             offsetX: 0,
             offsetY: 8
           })
+          .margin({ bottom: 16 })
 
           // 紧凑筛选栏 - 内容类型 + 来源类型 在一行（可滑动）
           Scroll() {

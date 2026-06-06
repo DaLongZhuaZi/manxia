@@ -1,4 +1,4 @@
-﻿/**
+/**
  * WebView源管理器实现
  * 管理漫画源的WebView实例、配置和生命周期
  * 符合HarmonyOS API 18和ArkTS规范
@@ -384,8 +384,8 @@ export class WebViewSourceManager implements IWebViewSourceManager {
    */
   async isWebViewSource(sourceId: number): Promise<boolean> {
     try {
-      const config: ESObject | null = await this.dataManager.getSourceConfig(sourceId);
-      return !!config && !!config.workflows;
+      const config: Object | null = await this.dataManager.getSourceConfig(sourceId);
+      return !!config && !!(config as Record<string, Object | undefined>)['workflows'];
     } catch (error) {
       logger.error(TAG, `检测图源类型失败: ${sourceId}, 错误: ${error instanceof Error ? error.message : String(error)}`);
       return false;
@@ -443,7 +443,7 @@ export class WebViewSourceManager implements IWebViewSourceManager {
    */
   private async createMangaEngine(sourceId: number, sourceName: string): Promise<EngineCreationResult> {
     try {
-      let config: ESObject | null = null;
+      let config: Object | null = null;
       let actualSourceId: number = sourceId;
       let actualSourceName: string = sourceName;
       
@@ -475,7 +475,7 @@ export class WebViewSourceManager implements IWebViewSourceManager {
       }
       
       // 检查是否为WebView类型
-      if (!config.workflows) {
+      if (!(!!config && !!(config as Record<string, Object | undefined>)['workflows'])) {
         throw new Error(`图源不是WebView类型: ${actualSourceId}`);
       }
       

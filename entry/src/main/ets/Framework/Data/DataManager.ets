@@ -22,6 +22,7 @@ import {
   DownloadTaskDatabaseRecord,
   UserSettingsDatabaseRecord,
   PluginDatabaseRecord,
+  OnlineComicInfoDatabaseRecord,
   DatabaseValue,
   safeJsonParse,
   ComicSourceUpdateData,
@@ -367,6 +368,21 @@ export interface ComicSourceUpdate {
   config?: ConfigObject;
 }
 
+export interface ComicSourceDatabaseInput {
+  pkg: string;
+  name: string;
+  baseUrl: string;
+  version: string;
+  description: string;
+  language: string;
+  type: string;
+  isEnabled: boolean;
+  priority: number;
+  configJson: string;
+  requireProxy: boolean;
+  isNSFW: boolean;
+}
+
 export interface ComicInfoInput {
   title: string;
   author: string;
@@ -422,6 +438,22 @@ export interface OnlineComicInfoInput {
   tags: string[];
   rating: number;
   lastUpdateTime: number;
+}
+
+export interface OnlineComicSourceSaveInput {
+  id?: string;
+  title: string;
+  author: string;
+  description: string;
+  coverUrl: string;
+  tags: string[];
+  rating: number;
+  updateTime: number;
+  sourceName?: string;
+  sourcePkg?: string;
+  isNSFW?: boolean | number;
+  status?: string;
+  chapterCount?: number;
 }
 
 export interface OnlineChapterInfoInput {
@@ -4489,10 +4521,10 @@ export class DataManager {
   /**
    * 添加图源
    */
-  async addComicSource(source: ESObject): Promise<string> {
+  async addComicSource(source: ComicSourceDatabaseInput): Promise<string> {
     try {
       const now = Date.now();
-      const pkg = source.pkg as string;
+      const pkg = source.pkg;
       
       if (!pkg) {
         throw new Error('图源缺少 pkg 字段');
@@ -4504,16 +4536,16 @@ export class DataManager {
       
       await this.databaseManager.executeSql(sql, [
         pkg,
-        source.name as string,
-        source.baseUrl as string,
-        source.version as string,
-        source.description as string || '',
-        source.language as string || 'zh-CN',
-        source.type as string || 'manga',
+        source.name,
+        source.baseUrl,
+        source.version,
+        source.description || '',
+        source.language || 'zh-CN',
+        source.type || 'manga',
         source.isEnabled ? 1 : 0,
-        source.priority as number || 0,
+        source.priority || 0,
         now,
-        source.configJson as string || '{}',
+        source.configJson || '{}',
         '',
         now,
         source.requireProxy ? 1 : 0,
@@ -4534,40 +4566,40 @@ export class DataManager {
    */
   async importSourceFromJSON(jsonContent: string): Promise<string> {
     try {
-      const config: ESObject = SafeUtils.parseObj(jsonContent) as ESObject;
+      const config: Record<string, Object> = SafeUtils.parseObj(jsonContent) as Record<string, Object>;
       
       // 验证必需字段
-      const metadata: ESObject = config.metadata as ESObject;
-      if (!metadata || !metadata.id || !metadata.name || !metadata.baseUrl) {
+      const metadata: Record<string, Object> = config['metadata'] as Record<string, Object>;
+      if (!metadata || !metadata['id'] || !metadata['name'] || !metadata['baseUrl']) {
         throw new Error('图源配置缺少必需字段（id、name或baseUrl）');
       }
 
-      const pkg = metadata.id as string;
-      const metadataType = metadata.type as string;
-      logger.info(TAG, `[调试] 图源 ${metadata.name} 的metadata.type = "${metadataType}"`);
+      const pkg = metadata['id'] as string;
+      const metadataType = metadata['type'] as string;
+      logger.info(TAG, `[调试] 图源 ${metadata['name']} 的metadata.type = "${metadataType}"`);
       
       // 检查图源是否已存在
-      const existingSource: ESObject | null = await this.getSourceConfigByPkg(pkg);
+      const existingSource: Record<string, Object> | null = await this.getSourceConfigByPkg(pkg);
       
       // 读取是否需要代理（metadata.Internet）
-      const requireProxy = metadata.Internet === true ? 1 : 0;
+      const requireProxy = metadata['Internet'] === true ? 1 : 0;
       
       if (existingSource) {
         // 更新现有图源（保留 Cookie）
         const now = Date.now();
-        const sourceType = metadata.type as string || 'manga';
-        const isNSFW = (metadata.nsfw === true || metadata.nsfw === 1) ? 1 : 0;
+        const sourceType = (metadata['type'] as string) || 'manga';
+        const isNSFW = (metadata['nsfw'] === true || metadata['nsfw'] === 1) ? 1 : 0;
         const updateSql = `UPDATE comic_source 
                           SET name = ?, baseUrl = ?, version = ?, description = ?, 
                               language = ?, type = ?, lastUpdateTime = ?, configJson = ?, requireProxy = ?, isNSFW = ? 
                           WHERE pkg = ?`;
         
         await this.databaseManager.executeSql(updateSql, [
-          metadata.name as string,
-          metadata.baseUrl as string,
-          metadata.version as string || '1.0.0',
-          metadata.description as string || '',
-          metadata.language as string || 'zh-CN',
+          metadata['name'] as string,
+          metadata['baseUrl'] as string,
+          (metadata['version'] as string) || '1.0.0',
+          (metadata['description'] as string) || '',
+          (metadata['language'] as string) || 'zh-CN',
           sourceType,
           now,
           jsonContent,
@@ -4576,22 +4608,22 @@ export class DataManager {
           pkg
         ]);
         
-        logger.info(TAG, `图源已更新: ${metadata.name} (pkg: ${pkg}, v${metadata.version}, type=${sourceType}, requireProxy=${requireProxy})`);
+        logger.info(TAG, `图源已更新: ${metadata['name']} (pkg: ${pkg}, v${metadata['version']}, type=${sourceType}, requireProxy=${requireProxy})`);
       } else {
         // 构建图源数据
-        const sourceData: ESObject = {
+        const sourceData: ComicSourceDatabaseInput = {
           pkg: pkg,
-          name: metadata.name,
-          baseUrl: metadata.baseUrl,
-          version: metadata.version || '1.0.0',
-          description: metadata.description || '',
-          language: metadata.language || 'zh-CN',
-          type: metadata.type || 'manga',
+          name: metadata['name'] as string,
+          baseUrl: metadata['baseUrl'] as string,
+          version: (metadata['version'] as string) || '1.0.0',
+          description: (metadata['description'] as string) || '',
+          language: (metadata['language'] as string) || 'zh-CN',
+          type: (metadata['type'] as string) || 'manga',
           isEnabled: true,
           priority: 0,
           configJson: jsonContent,
           requireProxy: requireProxy === 1,
-          isNSFW: metadata.nsfw === true || metadata.nsfw === 1
+          isNSFW: metadata['nsfw'] === true || metadata['nsfw'] === 1
         };
 
         // 保存到数据库
@@ -4610,7 +4642,7 @@ export class DataManager {
   /**
    * 获取图源配置（通过 pkg）
    */
-  async getSourceConfigByPkg(pkg: string): Promise<ESObject | null> {
+  async getSourceConfigByPkg(pkg: string): Promise<Record<string, Object> | null> {
     try {
       const sql = 'SELECT * FROM comic_source WHERE pkg = ?';
       const result = await this.databaseManager.querySql(sql, [pkg]);
@@ -4618,10 +4650,10 @@ export class DataManager {
       logger.debug(TAG, `查询图源配置: pkg=${pkg}, 结果数量=${result?.length || 0}`);
       
       if (result && result.length > 0) {
-        const row: ESObject = result[0] as ESObject;
-        logger.debug(TAG, `图源记录: pkg=${row.pkg}, name=${row.name}`);
+        const row: Record<string, Object> = result[0] as Record<string, Object>;
+        logger.debug(TAG, `图源记录: pkg=${row['pkg']}, name=${row['name']}`);
         
-        const configJson: string | null | undefined = row.configJson as string;
+        const configJson: string | null | undefined = row['configJson'] as string;
         
         if (!configJson) {
           logger.error(TAG, `图源配置为空: pkg=${pkg}`);
@@ -4631,11 +4663,11 @@ export class DataManager {
         logger.debug(TAG, `读取图源配置，长度: ${configJson.length}, 前100字符: ${configJson.substring(0, 100)}`);
         
         try {
-          const config: ESObject = SafeUtils.parseObj(configJson) as ESObject;
-          logger.info(TAG, `图源配置解析成功: ${row.name}`);
+          const config: Record<string, Object> = SafeUtils.parseObj(configJson) as Record<string, Object>;
+          logger.info(TAG, `图源配置解析成功: ${row['name']}`);
           
           // 调试：检查workflows字段
-          const workflows: ESObject | undefined = config.workflows as ESObject;
+          const workflows: Record<string, Object> | undefined = config['workflows'] as Record<string, Object>;
           if (workflows) {
             const workflowKeys = Object.keys(workflows);
             logger.debug(TAG, `workflows包含 ${workflowKeys.length} 个工作流: ${workflowKeys.join(', ')}`);
@@ -4662,20 +4694,20 @@ export class DataManager {
    * 获取图源配置（兼容旧的数字 ID 接口）
    * @deprecated 请使用 getSourceConfigByPkg
    */
-  async getSourceConfig(sourceId: number): Promise<ESObject | null> {
+  async getSourceConfig(sourceId: number): Promise<Record<string, Object> | null> {
     try {
       const sql = 'SELECT * FROM comic_source WHERE id = ?';
       const result = await this.databaseManager.querySql(sql, [sourceId]);
       
       if (result && result.length > 0) {
-        const row: ESObject = result[0] as ESObject;
-        const configJson: string | null | undefined = row.configJson as string;
+        const row: Record<string, Object> = result[0] as Record<string, Object>;
+        const configJson: string | null | undefined = row['configJson'] as string;
         
         if (configJson) {
-          const config: ESObject = SafeUtils.parseObj(configJson) as ESObject;
+          const config: Record<string, Object> = SafeUtils.parseObj(configJson) as Record<string, Object>;
           
           // 调试：检查workflows字段
-          const workflows: ESObject | undefined = config.workflows as ESObject;
+          const workflows: Record<string, Object> | undefined = config['workflows'] as Record<string, Object>;
           if (workflows) {
             const workflowKeys = Object.keys(workflows);
             logger.debug(TAG, `[ID查询] workflows包含 ${workflowKeys.length} 个工作流: ${workflowKeys.join(', ')}`);
@@ -4775,12 +4807,12 @@ export class DataManager {
   /**
    * 从图源保存漫画信息
    */
-  async saveComicFromSource(sourceId: number, comicData: ESObject, externalId?: string): Promise<string> {
+  async saveComicFromSource(sourceId: number, comicData: OnlineComicSourceSaveInput, externalId?: string): Promise<string> {
     try {
       const now = Date.now();
       
       // finalExternalId用于online_comic_info表的externalId字段
-      const finalExternalId = (comicData.id as string) || externalId || this.generateId();
+      const finalExternalId = comicData.id || externalId || this.generateId();
       
       logger.info(TAG, `📝 [SQL] 开始保存在线漫画: title="${comicData.title}", sourceId=${sourceId}, externalId="${finalExternalId}"`);
       
@@ -4792,8 +4824,9 @@ export class DataManager {
       let existingCoverUrl = '';
       if (existing && existing.length > 0) {
         // 已存在，使用现有ID进行更新
-        comicId = (existing[0] as ESObject).id as string;
-        existingCoverUrl = String((existing[0] as ESObject).coverUrl || '');
+        const existingRecord = existing[0] as OnlineComicInfoDatabaseRecord;
+        comicId = existingRecord.id;
+        existingCoverUrl = existingRecord.coverUrl || '';
         logger.info(TAG, `📝 [SQL] 找到现有记录，将更新: id="${comicId}"`);
       } else {
         // 不存在，生成新ID
@@ -4807,12 +4840,12 @@ export class DataManager {
       let sourcePkgVal: string = '';
       
       // 1. 优先使用comicData中传递的sourceName和sourcePkg
-      if (comicData.sourceName && typeof comicData.sourceName === 'string' && comicData.sourceName.length > 0) {
-        sourceNameVal = comicData.sourceName as string;
+      if (comicData.sourceName && comicData.sourceName.length > 0) {
+        sourceNameVal = comicData.sourceName;
         logger.info(TAG, `📝 [SQL] 使用传递的图源名称: "${sourceNameVal}"`);
       }
-      if (comicData.sourcePkg && typeof comicData.sourcePkg === 'string' && comicData.sourcePkg.length > 0) {
-        sourcePkgVal = comicData.sourcePkg as string;
+      if (comicData.sourcePkg && comicData.sourcePkg.length > 0) {
+        sourcePkgVal = comicData.sourcePkg;
         logger.info(TAG, `📝 [SQL] 使用传递的图源包名: "${sourcePkgVal}"`);
       }
       
@@ -4842,7 +4875,7 @@ export class DataManager {
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       
       // [修复] 读取 comicData 中的 isNSFW 值，支持 boolean 和 number 类型
-      const isNSFWRaw: boolean | number = comicData.isNSFW as boolean | number;
+      const isNSFWRaw: boolean | number | undefined = comicData.isNSFW;
       let isNSFWVal: number = (isNSFWRaw === true || isNSFWRaw === 1) ? 1 : 0;
       
       // 【NSFW作用域】从图源继承NSFW状态：如果图源是NSFW且作用域开关开启，则其内容自动继承
@@ -4876,13 +4909,13 @@ export class DataManager {
         comicId,
         String(sourceId),
         finalExternalId,
-        comicData.title as string,
-        comicData.author as string || '',
-        comicData.description as string || '',
+        comicData.title,
+        comicData.author || '',
+        comicData.description || '',
         incomingCoverUrl,
-        JSON.stringify(comicData.tags || []),
-        (comicData.rating as number) || 0,
-        (comicData.updateTime as number) || now,
+        JSON.stringify(comicData.tags),
+        comicData.rating || 0,
+        comicData.updateTime || now,
         now,
         now,
         now,
@@ -5030,7 +5063,7 @@ export class DataManager {
   /**
    * 兼容API：保存在线漫画（包装原有方法）
    */
-  async saveOnlineComicFromSource(sourceId: number, comicData: ESObject, externalId?: string): Promise<string> {
+  async saveOnlineComicFromSource(sourceId: number, comicData: OnlineComicSourceSaveInput, externalId?: string): Promise<string> {
     return await this.saveComicFromSource(sourceId, comicData, externalId);
   }
 

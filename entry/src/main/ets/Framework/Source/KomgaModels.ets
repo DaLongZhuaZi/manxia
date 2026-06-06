@@ -1,4 +1,4 @@
-﻿import { ComicDetailInfo, PageInfo } from './SourceExecutor';
+import { ComicDetailInfo, PageInfo } from './SourceExecutor';
 
 export type KomgaAuthMode = 'NONE' | 'BASIC' | 'API_KEY';
 export type KomgaContentType = 'SERIES' | 'READLISTS' | 'BOOKS';
@@ -134,13 +134,13 @@ export function createDefaultKomgaBrowseFilters(): KomgaBrowseFilters {
   };
 }
 
-export function normalizeKomgaBrowseFilters(raw: ESObject | null | undefined): KomgaBrowseFilters {
+export function normalizeKomgaBrowseFilters(raw: Record<string, Object> | null | undefined): KomgaBrowseFilters {
   const defaults = createDefaultKomgaBrowseFilters();
   if (!raw) {
     return defaults;
   }
 
-  const data: ESObject = raw;
+  const data: Record<string, Object> = raw;
   const readStatusMode = typeof data['readStatusMode'] === 'string' ? String(data['readStatusMode']) : defaults.readStatusMode;
   const sortKey = typeof data['sortKey'] === 'string' ? String(data['sortKey']) : defaults.sortKey;
 

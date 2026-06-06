@@ -265,6 +265,10 @@ class NGFStarterLifecycleOrchestrator implements ILifecycleOrchestrator {
     return this.completed;
   }
 
+  getCompletionPromise(): Promise<boolean> {
+    return Promise.resolve(this.completed);
+  }
+
   private normalizePhaseName(phaseName: string): string {
     const normalized = phaseName.trim().toLowerCase();
     if (normalized.length <= 0) {

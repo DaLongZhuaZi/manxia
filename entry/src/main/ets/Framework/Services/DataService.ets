@@ -1,11 +1,11 @@
-﻿// 文件路径: src/main/ets/Framework/Services/DataService.ets
+// 文件路径: src/main/ets/Framework/Services/DataService.ets
 /**
  * 数据服务层
  * 为UI层提供统一的数据访问接口，封装复杂的数据操作逻辑
  */
 
 import { logger } from '../../Utils/Logger';
-import { DataManager, ComicSource, ComicInfo, ChapterInfo, PageInfo, FavoriteInfo, ReadHistory, DownloadTask, ComicSourceInput, ComicInfoInput, FavoriteInfoInput, ReadHistoryInput, DownloadTaskInput } from '../Data/DataManager';
+import { DataManager, ComicSource, ComicInfo, ChapterInfo, PageInfo, FavoriteInfo, ReadHistory, DownloadTask, ComicSourceInput, ComicInfoInput, FavoriteInfoInput, ReadHistoryInput, DownloadTaskInput, ComicSourceDatabaseInput, OnlineComicSourceSaveInput } from '../Data/DataManager';
 import { ComicSourceUpdateData, DownloadTaskUpdateData } from '../Database/DatabaseTypes';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
@@ -173,7 +173,14 @@ export class DataService {
   public async getAvailableComicSources(): Promise<ComicSource[]> {
     try {
       const sources = await this.dataManager.getAllComicSources();
-      return sources.filter((source: ESObject) => Boolean(source.isEnabled)) as ComicSource[];
+      const enabledSources: ComicSource[] = [];
+      for (let i = 0; i < sources.length; i++) {
+        const source = sources[i] as ComicSource;
+        if (source.isEnabled) {
+          enabledSources.push(source);
+        }
+      }
+      return enabledSources;
     } catch (error) {
       logger.error(TAG, '获取漫画源失败', String(error));
       throw error as Error;
@@ -185,15 +192,23 @@ export class DataService {
    */
   public async addComicSource(sourceConfig: ComicSourceConfig): Promise<number> {
     try {
-      const sourceData: ESObject = {
+      const sourcePkg: string = sourceConfig.pluginId && sourceConfig.pluginId.length > 0
+        ? sourceConfig.pluginId
+        : sourceConfig.name;
+      const configJson: string = sourceConfig.config ? JSON.stringify(sourceConfig.config) : '{}';
+      const sourceData: ComicSourceDatabaseInput = {
+        pkg: sourcePkg,
         name: sourceConfig.name,
         baseUrl: sourceConfig.baseUrl,
         version: sourceConfig.version || '1.0.0',
         description: sourceConfig.description || '',
         language: sourceConfig.language || 'zh-CN',
+        type: 'manga',
         isEnabled: true,
         priority: sourceConfig.priority || 0,
-        configJson: JSON.stringify(sourceConfig.config || {})
+        configJson: configJson,
+        requireProxy: false,
+        isNSFW: false
       };
       
       const pkg: string = await this.dataManager.addComicSource(sourceData);
@@ -451,7 +466,7 @@ export class DataService {
     pageIndex: number,
     readDuration: number,
     sourceId?: number,
-    mangaData?: Record<string, Object>
+    mangaData?: OnlineComicSourceSaveInput
   ): Promise<void> {
     try {
       // 如果提供了sourceId和mangaData，说明是在线漫画，需要先确保漫画存在于数据库

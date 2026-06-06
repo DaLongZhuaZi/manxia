@@ -1,4 +1,4 @@
-﻿/**
+/**
  * JSONPath解析器
  * 简化版JSONPath实现，支持基本的路径表达式
  */
@@ -10,7 +10,7 @@ const TAG = 'JSONPathParser';
 /**
  * JSONPath解析结果
  */
-export type JSONPathResult = string | number | boolean | null | ESObject | ESObject[];
+export type JSONPathResult = string | number | boolean | null | Record<string, Object> | Object[];
 
 /**
  * JSONPath解析器类
@@ -22,7 +22,7 @@ export class JSONPathParser {
    * @param path JSONPath表达式
    * @returns 解析结果
    */
-  static parse(data: ESObject, path: string): JSONPathResult {
+  static parse(data: Record<string, Object>, path: string): JSONPathResult {
     try {
       // 移除开头的$
       let normalizedPath = path.trim();
@@ -121,7 +121,7 @@ export class JSONPathParser {
       const index = parseInt(inner, 10);
       if (!isNaN(index)) {
         if (Array.isArray(data)) {
-          return data[index] ?? null;
+          return (data[index] ?? null) as JSONPathResult;
         }
         return null;
       }
@@ -129,14 +129,14 @@ export class JSONPathParser {
       // 字符串键（带引号）
       const key = inner.replace(/^['"]|['"]$/g, '');
       if (typeof data === 'object' && data !== null) {
-        return (data as ESObject)[key] ?? null;
+        return ((data as Record<string, Object>)[key] ?? null) as JSONPathResult;
       }
       return null;
     }
 
     // 对象属性
     if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
-      return (data as ESObject)[segment] ?? null;
+      return ((data as Record<string, Object>)[segment] ?? null) as JSONPathResult;
     }
 
     return null;
@@ -148,13 +148,13 @@ export class JSONPathParser {
    * @param path JSONPath表达式
    * @returns 数组结果
    */
-  static parseArray(data: ESObject, path: string): ESObject[] {
+  static parseArray(data: Record<string, Object>, path: string): Object[] {
     const result: JSONPathResult = JSONPathParser.parse(data, path);
     if (Array.isArray(result)) {
       return result;
     }
     if (result !== null && result !== undefined) {
-      return [result as ESObject];
+      return [result as Object];
     }
     return [];
   }
@@ -162,7 +162,7 @@ export class JSONPathParser {
   /**
    * 解析字符串值
    */
-  static parseString(data: ESObject, path: string): string {
+  static parseString(data: Record<string, Object>, path: string): string {
     const result: JSONPathResult = JSONPathParser.parse(data, path);
     if (result === null || result === undefined) {
       return '';
@@ -173,7 +173,7 @@ export class JSONPathParser {
   /**
    * 解析数字值
    */
-  static parseNumber(data: ESObject, path: string): number {
+  static parseNumber(data: Record<string, Object>, path: string): number {
     const result: JSONPathResult = JSONPathParser.parse(data, path);
     if (typeof result === 'number') {
       return result;
@@ -188,7 +188,7 @@ export class JSONPathParser {
   /**
    * 解析布尔值
    */
-  static parseBoolean(data: ESObject, path: string): boolean {
+  static parseBoolean(data: Record<string, Object>, path: string): boolean {
     const result: JSONPathResult = JSONPathParser.parse(data, path);
     if (typeof result === 'boolean') {
       return result;
@@ -205,7 +205,7 @@ export class JSONPathParser {
   /**
    * 测试JSONPath表达式
    */
-  static test(data: ESObject, path: string): boolean {
+  static test(data: Record<string, Object>, path: string): boolean {
     try {
       const result: JSONPathResult = JSONPathParser.parse(data, path);
       return result !== null && result !== undefined;
@@ -218,22 +218,22 @@ export class JSONPathParser {
 /**
  * 便捷函数
  */
-export function jsonPath(data: ESObject, path: string): JSONPathResult {
+export function jsonPath(data: Record<string, Object>, path: string): JSONPathResult {
   return JSONPathParser.parse(data, path);
 }
 
-export function jsonPathArray(data: ESObject, path: string): ESObject[] {
+export function jsonPathArray(data: Record<string, Object>, path: string): Object[] {
   return JSONPathParser.parseArray(data, path);
 }
 
-export function jsonPathString(data: ESObject, path: string): string {
+export function jsonPathString(data: Record<string, Object>, path: string): string {
   return JSONPathParser.parseString(data, path);
 }
 
-export function jsonPathNumber(data: ESObject, path: string): number {
+export function jsonPathNumber(data: Record<string, Object>, path: string): number {
   return JSONPathParser.parseNumber(data, path);
 }
 
-export function jsonPathBoolean(data: ESObject, path: string): boolean {
+export function jsonPathBoolean(data: Record<string, Object>, path: string): boolean {
   return JSONPathParser.parseBoolean(data, path);
 }

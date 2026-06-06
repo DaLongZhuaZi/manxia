@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * 任务执行引擎
  * 负责执行任务定义中的步骤，支持顺序执行、并行执行和条件执行
@@ -36,7 +36,7 @@ export interface TaskExecutorConfig {
  */
 interface StepExecutionResult {
   success: boolean;
-  data?: ESObject;
+  data?: Object;
   error?: string;
 }
 
@@ -108,7 +108,7 @@ export class TaskExecutor {
    */
   async executeTask(
     taskId: string,
-    initialParams?: Record<string, ESObject>
+    initialParams?: Record<string, Object | undefined>
   ): Promise<TaskResult> {
     const task = this.taskDefinitions.get(taskId);
     if (!task) {
@@ -125,7 +125,7 @@ export class TaskExecutor {
     const startTime = Date.now();
 
     // 创建任务上下文
-    const variables: Record<string, ESObject> = {};
+    const variables: Record<string, Object | undefined> = {};
     if (initialParams) {
       const paramKeys = Object.keys(initialParams);
       for (let i = 0; i < paramKeys.length; i++) {
@@ -179,7 +179,7 @@ export class TaskExecutor {
       const result: TaskResult = {
         taskId,
         success: context.errors.length === 0,
-        data: context.variables['result'] as ESObject,
+        data: context.variables['result'] as Object | undefined,
         duration: context.endTime - context.startTime,
         stepResults: context.stepResults
       };
@@ -326,7 +326,7 @@ export class TaskExecutor {
         }
 
         // 执行操作
-        let result: ESObject = null;
+        let result: Object | null = null;
         for (let j = 0; j < actions.length; j++) {
           const action = actions[j];
           logger.info(TAG, `执行操作 ${j + 1}/${actions.length}: ${action.type}`);
@@ -339,7 +339,7 @@ export class TaskExecutor {
           const varKeys = Object.keys(context.variables);
           for (let k = 0; k < varKeys.length; k++) {
             const key: string = varKeys[k];
-            const value: ESObject = context.variables[key];
+            const value: Object | undefined = context.variables[key];
             stringVariables[key] = typeof value === 'string' ? value : String(value);
           }
           const actionContext: ActionContext = {
@@ -364,14 +364,14 @@ export class TaskExecutor {
         logger.info(TAG, `步骤 ${step.id} 所有操作执行完成`);
 
         // 应用输出参数映射
-        if (step.outputMapping) {
-          this.applyOutputMapping(step.outputMapping, result, context);
+        if (step.outputMapping && result !== null) {
+          this.applyOutputMapping(step.outputMapping, result as Object, context);
         }
 
         // 保存步骤结果
-        context.stepResults[step.id] = result;
+        context.stepResults[step.id] = result ?? undefined;
 
-        return { success: true, data: result };
+        return { success: true, data: result ?? undefined };
 
       } catch (error) {
         retryCount++;
@@ -404,8 +404,8 @@ export class TaskExecutor {
   private applyInputMapping(
     mapping: Record<string, string> | undefined,
     context: TaskContext
-  ): Record<string, ESObject> {
-    const result: Record<string, ESObject> = {};
+  ): Record<string, Object | undefined> {
+    const result: Record<string, Object | undefined> = {};
 
     if (!mapping) {
       return result;
@@ -426,14 +426,14 @@ export class TaskExecutor {
    */
   private applyOutputMapping(
     mapping: Record<string, string>,
-    data: ESObject,
+    data: Object,
     context: TaskContext
   ): void {
     const outputVars = Object.keys(mapping);
     for (let i = 0; i < outputVars.length; i++) {
       const outputVar: string = outputVars[i];
       const extractExpr: string = mapping[outputVar];
-      const value: ESObject = this.extractValue(extractExpr, data);
+      const value: Object | undefined = this.extractValue(extractExpr, data);
       context.variables[outputVar] = value;
     }
   }
@@ -450,7 +450,7 @@ export class TaskExecutor {
       if (processedCondition === 'true') return true;
       if (processedCondition === 'false') return false;
       // 检查变量是否存在且不为空
-      const varValue: ESObject = context.variables[processedCondition];
+      const varValue: Object | undefined = context.variables[processedCondition];
       return varValue !== undefined && varValue !== null && varValue !== '';
     } catch (error) {
       logger.warn(TAG, `条件评估失败: ${condition}, 错误: ${error}`);
@@ -461,7 +461,7 @@ export class TaskExecutor {
   /**
    * 评估表达式
    */
-  private evaluateExpression(expr: string, context: TaskContext): ESObject {
+  private evaluateExpression(expr: string, context: TaskContext): Object | undefined {
     // 支持简单的变量引用: ${variableName} 或 ${stepResults.stepId.field}
     if (expr.startsWith('${') && expr.endsWith('}')) {
       const path = expr.slice(2, -1);
@@ -473,13 +473,13 @@ export class TaskExecutor {
   /**
    * 从数据中提取值
    */
-  private extractValue(expr: string, data: ESObject): ESObject {
-    if (!data) return null;
+  private extractValue(expr: string, data: Object): Object | undefined {
+    if (!data) return undefined;
 
     // 支持JSON路径: $.field.subfield
     if (expr.startsWith('$.')) {
       const path = expr.slice(2);
-      return this.getValueByPath(data as Record<string, ESObject>, path);
+      return this.getValueByPath(data as Record<string, Object | undefined>, path);
     }
 
     return data;
@@ -488,15 +488,16 @@ export class TaskExecutor {
   /**
    * 根据路径获取值
    */
-  private getValueByPath(obj: ESObject, path: string): ESObject {
+  private getValueByPath(obj: Object | undefined, path: string): Object | undefined {
+    if (!obj) return undefined;
     const parts = path.split('.');
-    let current: ESObject = obj;
+    let current: Object | undefined = obj;
 
     for (const part of parts) {
       if (current === null || current === undefined) {
-        return null;
+        return undefined;
       }
-      current = (current as Record<string, ESObject>)[part];
+      current = (current as Record<string, Object | undefined>)[part];
     }
 
     return current;
@@ -505,9 +506,9 @@ export class TaskExecutor {
   /**
    * 替换变量引用
    */
-  private replaceVariableReferences(str: string, variables: Record<string, ESObject>): string {
-    return str.replace(/\$\{(\w+)\}/g, (match: string, varName: string): string => {
-      const value: ESObject = variables[varName];
+  private replaceVariableReferences(str: string, variables: Record<string, Object | undefined>): string {
+    return str.replace(/\{\{([a-zA-Z0-9_.]+)\}\}/g, (match: string, varName: string): string => {
+      const value: Object | undefined = variables[varName];
       if (value === undefined) return match;
       return typeof value === 'string' ? value : JSON.stringify(value);
     });
@@ -516,21 +517,20 @@ export class TaskExecutor {
   /**
    * 替换操作中的变量
    */
-  private replaceVariables(action: Action, variables: Record<string, ESObject>): Action {
-    const actionStr = JSON.stringify(action);
-    const replacedStr = actionStr.replace(/\{\{(\w+)\}\}/g, (match: string, varName: string): string => {
-      const value: ESObject = variables[varName];
+  private replaceVariables(action: Action, variables: Record<string, Object | undefined>): Action {
+    const actionStr = JSON.stringify(action).replace(/\{\{([a-zA-Z0-9_.]+)\}\}/g, (match: string, varName: string): string => {
+      const value: Object | undefined = variables[varName];
       if (value === undefined) return match;
       return typeof value === 'string' ? value : String(value);
     });
-    return SafeUtils.parseObj(replacedStr) as Action;
+    return SafeUtils.parseObj(actionStr) as Action;
   }
 
   /**
    * 合并变量
    */
-  private mergeVariables(base: Record<string, ESObject>, additional: Record<string, ESObject>): Record<string, ESObject> {
-    const result: Record<string, ESObject> = {};
+  private mergeVariables(base: Record<string, Object | undefined>, additional: Record<string, Object | undefined>): Record<string, Object | undefined> {
+    const result: Record<string, Object | undefined> = {};
     const baseKeys = Object.keys(base);
     for (let i = 0; i < baseKeys.length; i++) {
       const key = baseKeys[i];
@@ -583,7 +583,7 @@ export class TaskExecutor {
   /**
    * 恢复等待中的任务
    */
-  async resumeTask(taskId: string, userInput?: Record<string, ESObject>): Promise<void> {
+  async resumeTask(taskId: string, userInput?: Record<string, Object | undefined>): Promise<void> {
     const context = this.runningTasks.get(taskId);
     if (context && context.status === TaskStatus.WAITING) {
       // 合并用户输入

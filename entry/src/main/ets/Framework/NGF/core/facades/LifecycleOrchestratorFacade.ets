@@ -1,4 +1,4 @@
-﻿import {
+import {
   AppInitializationManager,
   InitPhase,
   InitializationState
@@ -35,6 +35,10 @@ export class LifecycleOrchestratorFacade implements ILifecycleOrchestrator {
 
   isCompleted(): boolean {
     return this.manager.isCompleted();
+  }
+
+  getCompletionPromise(): Promise<boolean> {
+    return this.manager.getCompletionPromise();
   }
 
   private toNGFPhaseState(state: InitializationState): NGFPhaseState {

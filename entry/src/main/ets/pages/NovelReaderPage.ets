@@ -305,6 +305,9 @@ export struct NovelReaderPage {
 
   aboutToDisappear(): void {
     distributedReadingService.detach();
+    // 断开遥控器监听，避免内存泄漏和回调冲突
+    distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
     this.isPageVisible = false;
     this.stopReadAloudUiSyncTimer();
     const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
@@ -2201,53 +2204,56 @@ export struct NovelReaderPage {
    */
   private lastRemoteInstructionTimestamp: number = 0;
 
+  private onRemoteDataChanged = (state: SyncReadingState) => {
+    if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
+      return;
+    }
+    if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
+      return;
+    }
+    this.lastRemoteInstructionTimestamp = state.timestamp;
+
+    logger.info(TAG, `[RemoteControl] 收到遥控指令: ${state.instructionType}`);
+    switch (state.instructionType) {
+      case 'cmd:next_page':
+        this.goToNextPage();
+        break;
+      case 'cmd:prev_page':
+        this.goToPreviousPage();
+        break;
+      case 'cmd:next_chapter':
+        this.goToNextChapter();
+        break;
+      case 'cmd:prev_chapter':
+        this.goToPreviousChapter();
+        break;
+      case 'cmd:toggle_auto_read':
+        this.toggleReadAloudFromToolbar();
+        break;
+      default:
+        logger.warn(TAG, `[RemoteControl] 未知指令: ${state.instructionType}`);
+        break;
+    }
+    // 通知遥控端指令已执行
+    distributedDataSyncManager.sendInstruction('ack', '');
+  };
+
+  private onRemoteStatusChanged = (status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
+    if (status === 'offline') {
+      logger.info(TAG, '[RemoteControl] 遥控器已断开');
+      if (this.isRemoteControlled) {
+        this.isRemoteControlled = false;
+        this.getUIContext().getPromptAction().showToast({ message: '遥控器已断开' });
+      }
+    }
+  };
+
   private registerRemoteControlListener(): void {
     logger.info(TAG, '[RemoteControl] 小说被控端已注册遥控器指令监听');
     this.isRemoteControlled = true;
-    promptAction.showToast({ message: '遥控已连接' });
-    distributedDataSyncManager.setOnDataChangedCallback((state: SyncReadingState) => {
-      if (!state.instructionType || state.instructionType === 'none' || state.instructionType === 'ack') {
-        return;
-      }
-      if (state.timestamp <= this.lastRemoteInstructionTimestamp) {
-        return;
-      }
-      this.lastRemoteInstructionTimestamp = state.timestamp;
-
-      logger.info(TAG, `[RemoteControl] 收到遥控指令: ${state.instructionType}`);
-      switch (state.instructionType) {
-        case 'cmd:next_page':
-          this.goToNextPage();
-          break;
-        case 'cmd:prev_page':
-          this.goToPreviousPage();
-          break;
-        case 'cmd:next_chapter':
-          this.goToNextChapter();
-          break;
-        case 'cmd:prev_chapter':
-          this.goToPreviousChapter();
-          break;
-        case 'cmd:toggle_auto_read':
-          this.toggleReadAloudFromToolbar();
-          break;
-        default:
-          logger.warn(TAG, `[RemoteControl] 未知指令: ${state.instructionType}`);
-          break;
-      }
-      // 通知遥控端指令已执行
-      distributedDataSyncManager.sendInstruction('ack', '');
-    });
-
-    distributedDataSyncManager.setOnStatusChangedCallback((status: 'online' | 'offline' | 'restored' | 'error', message?: string) => {
-      if (status === 'offline') {
-        logger.info(TAG, '[RemoteControl] 遥控器已断开');
-        if (this.isRemoteControlled) {
-          this.isRemoteControlled = false;
-          promptAction.showToast({ message: '遥控器已断开' });
-        }
-      }
-    });
+    this.getUIContext().getPromptAction().showToast({ message: '遥控已连接' });
+    distributedDataSyncManager.addOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.addOnStatusChangedCallback(this.onRemoteStatusChanged);
   }
 
   /**
@@ -4053,7 +4059,7 @@ export struct NovelReaderPage {
         // 拦截分布式进度
         const continuationSessionId = AppStorage.get<string>('continuationSessionId');
         if (continuationSessionId) {
-          promptAction.showToast({ message: '已从其他设备接续阅读' });
+          this.getUIContext().getPromptAction().showToast({ message: '已从其他设备接续阅读' });
           const distributedState = distributedDataSyncManager.getCurrentState();
           // 如果命中bookUrl或bookId，或者小说由于本地和远程bookId不同，则使用较为宽泛的判断（这里使用bookUrl或bookId）
           if (distributedState && (distributedState.bookId === this.bookId || distributedState.bookId.includes(encodeURIComponent(param.bookUrl)))) {

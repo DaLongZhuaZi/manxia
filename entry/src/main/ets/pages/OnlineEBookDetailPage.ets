@@ -14,7 +14,7 @@ import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Fr
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
+import { AntiCrawlerConfig, TaskResult } from '../Framework/WebView/MangaSourceTypes';
 import { ImageCacheManager } from '../Framework/Cache/ImageCacheManager';
 import { DataManager } from '../Framework/Data/DataManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
@@ -274,7 +274,7 @@ export struct OnlineEBookDetailPage {
     }
   }
 
-  private isInvalidBookDetailResult(detail: Record<string, ESObject>): boolean {
+  private isInvalidBookDetailResult(detail: Record<string, Object>): boolean {
     const title: string = String(detail['title'] || '').trim();
     const detailId: string = String(detail['id'] || '').trim();
     const baseUrl: string = this.sourceInfo?.baseUrl ? String(this.sourceInfo.baseUrl).toLowerCase() : '';
@@ -332,7 +332,7 @@ export struct OnlineEBookDetailPage {
       if (cleanResult.startsWith('"') && cleanResult.endsWith('"')) {
         cleanResult = cleanResult.slice(1, -1).replace(/\\"/g, '"');
       }
-      const parsed = JSON.parse(cleanResult) as Record<string, ESObject>;
+      const parsed = JSON.parse(cleanResult) as Record<string, Object>;
       return {
         url: String(parsed['url'] || ''),
         title: String(parsed['title'] || ''),
@@ -453,7 +453,7 @@ export struct OnlineEBookDetailPage {
         const result = await this.mangaSourceEngine.getBookDetail(this.bookId);
         
         if (result.success && result.data) {
-          const detail = result.data as Record<string, ESObject>;
+          const detail = result.data as Record<string, Object>;
           if (this.isInvalidBookDetailResult(detail)) {
             logger.warn(TAG, `在线电子书详情命中非目标页面，保留缓存信息: id=${String(detail['id'] || '')}, title=${String(detail['title'] || '')}`);
             if (retryAttempt < this.detailRecoveryMaxAttempts) {
@@ -630,7 +630,7 @@ export struct OnlineEBookDetailPage {
 
     try {
       // 使用WebView引擎获取下载源
-      const params: Record<string, ESObject> = {};
+      const params: Record<string, Object> = {};
       params['bookId'] = this.bookId;
       logger.info(TAG, `调用executeTask: getDownloadSources, bookId=${this.bookId}`);
       const result = await this.mangaSourceEngine.executeTask('getDownloadSources', params);
@@ -755,14 +755,13 @@ export struct OnlineEBookDetailPage {
     return null;
   }
 
-  private parseDownloadSourcesResult(result: ESObject): DownloadSourcesParseResult {
+  private parseDownloadSourcesResult(result: TaskResult): DownloadSourcesParseResult {
     const sources: DownloadSource[] = [];
     let formSubmitted: boolean = false;
     let parseError: string | null = null;
     try {
-      const resultRecord = result as Record<string, ESObject>;
-      const stepResults = resultRecord['stepResults'] as Record<string, ESObject> | undefined;
-      let data: ESObject = stepResults?.['step2_waitSources'] || resultRecord['data'];
+      const stepData: Object | undefined = result.stepResults['step2_waitSources'];
+      let data: Object | undefined = stepData ? stepData : result.data;
       
       logger.debug(TAG, `解析下载源原始数据类型: ${typeof data}`);
       if (!data) {
@@ -771,21 +770,21 @@ export struct OnlineEBookDetailPage {
       }
 
       // 处理可能的双重JSON编码
-      let parsed: ESObject;
+      let parsed: Object;
       if (typeof data === 'string') {
-        parsed = JSON.parse(data) as ESObject;
+        parsed = JSON.parse(data) as Object;
         if (typeof parsed === 'string') {
           logger.debug(TAG, `检测到双重JSON编码，再次解析`);
-          parsed = JSON.parse(parsed) as ESObject;
+          parsed = JSON.parse(parsed) as Object;
         }
       } else {
         parsed = data;
       }
 
       // 检查是否是新格式（包含 sources 字段）
-      let sourceList: ESObject[];
+      let sourceList: Object[];
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const parsedRecord = parsed as Record<string, ESObject>;
+        const parsedRecord = parsed as Record<string, Object>;
         if (parsedRecord['sources'] !== undefined) {
           // 提取 formSubmitted 和 error
           formSubmitted = Boolean(parsedRecord['formSubmitted']);
@@ -794,10 +793,11 @@ export struct OnlineEBookDetailPage {
           }
           logger.info(TAG, `[解析] 表单提交状态: ${formSubmitted}, 错误: ${parseError || 'none'}`);
           
-          sourceList = (parsedRecord['sources'] as ESObject[]) || [];
+          const parsedSources = parsedRecord['sources'];
+          sourceList = Array.isArray(parsedSources) ? parsedSources as Object[] : [];
           // 记录调试信息
           if (parsedRecord['debug']) {
-            const debug = parsedRecord['debug'] as Record<string, ESObject>;
+            const debug = parsedRecord['debug'] as Record<string, Object>;
             logger.info(TAG, `[下载源调试] phase: ${debug['phase']}, URL: ${debug['url']}, hasFindResults: ${debug['hasFindResults']}, formCount: ${debug['formCount']}`);
             logger.info(TAG, `[下载源调试] manyBooksFormFound: ${debug['manyBooksFormFound']}, formSubmitted: ${debug['formSubmitted']}, submitMethod: ${debug['submitMethod']}`);
             if (debug['manyBooksFormAction']) {
@@ -819,7 +819,7 @@ export struct OnlineEBookDetailPage {
           return { sources: sources, formSubmitted: false, error: '数据格式不支持' };
         }
       } else if (Array.isArray(parsed)) {
-        sourceList = parsed;
+        sourceList = parsed as Object[];
       } else {
         logger.warn(TAG, `下载源数据格式不支持: ${typeof parsed}`);
         return { sources: sources, formSubmitted: false, error: '数据格式不支持' };
@@ -828,7 +828,7 @@ export struct OnlineEBookDetailPage {
       logger.info(TAG, `解析到 ${sourceList.length} 个下载源`);
       
       for (let i = 0; i < sourceList.length; i++) {
-        const item = sourceList[i] as Record<string, ESObject>;
+        const item = sourceList[i] as Record<string, Object>;
         const sourceName = String(item['name'] || `下载源 ${i + 1}`);
         const sourceUrl = String(item['url'] || '');
         logger.debug(TAG, `下载源 ${i}: name=${sourceName}, url=${sourceUrl.substring(0, 50)}...`);
@@ -1187,7 +1187,7 @@ export struct OnlineEBookDetailPage {
     try {
       logger.info(TAG, `[WebView导航] 开始导航到: ${sourceUrl}`);
       
-      const params: Record<string, ESObject> = {};
+      const params: Record<string, Object> = {};
       params['sourceUrl'] = sourceUrl;
       
       const result = await this.mangaSourceEngine?.executeTask('getFileListFromSource', params);
@@ -1344,7 +1344,7 @@ export struct OnlineEBookDetailPage {
 
     try {
       // 获取文件列表
-      const params: Record<string, ESObject> = {};
+      const params: Record<string, Object> = {};
       params['sourceUrl'] = source.url;
       const result = await this.mangaSourceEngine?.executeTask('getFileListFromSource', params);
 
@@ -1481,44 +1481,44 @@ export struct OnlineEBookDetailPage {
     return format.toUpperCase();
   }
 
-  private parseFileFormats(result: ESObject): FileFormat[] {
+  private parseFileFormats(result: TaskResult): FileFormat[] {
     const formats: FileFormat[] = [];
     try {
-      const resultRecord = result as Record<string, ESObject>;
-      const stepResults = resultRecord['stepResults'] as Record<string, ESObject> | undefined;
-      let data: ESObject = stepResults?.['step2_extractFiles'] || resultRecord['data'];
+      const stepData: Object | undefined = result.stepResults['step2_extractFiles'];
+      let data: Object | undefined = stepData ? stepData : result.data;
       if (!data) return formats;
 
       // 处理可能的双重JSON编码
       if (typeof data === 'string') {
-        let parsed: ESObject = JSON.parse(data) as ESObject;
+        let parsed: Object = JSON.parse(data) as Object;
         if (typeof parsed === 'string') {
-          parsed = JSON.parse(parsed) as ESObject;
+          parsed = JSON.parse(parsed) as Object;
         }
         data = parsed;
       }
 
       // 检查是否是新格式（包含 debug 和 files 字段）
-      let fileList: ESObject[];
+      let fileList: Object[];
       if (data && typeof data === 'object' && !Array.isArray(data)) {
-        const dataRecord = data as Record<string, ESObject>;
+        const dataRecord = data as Record<string, Object>;
         // 记录调试信息
         if (dataRecord['debug']) {
-          const debug = dataRecord['debug'] as Record<string, ESObject>;
+          const debug = dataRecord['debug'] as Record<string, Object>;
           logger.info(TAG, `[文件列表调试] URL: ${debug['url']}, 是否临时链接: ${debug['isTemporaryLink']}, 有file-list: ${debug['hasFileList']}, file-item数量: ${debug['fileItemCount']}`);
           if (debug['bodyText']) {
             logger.info(TAG, `[文件列表调试] 页面内容: ${String(debug['bodyText']).substring(0, 200)}`);
           }
         }
-        fileList = (dataRecord['files'] as ESObject[]) || [];
+        const filesValue = dataRecord['files'];
+        fileList = Array.isArray(filesValue) ? filesValue as Object[] : [];
       } else if (Array.isArray(data)) {
-        fileList = data;
+        fileList = data as Object[];
       } else {
         return formats;
       }
 
       for (let i = 0; i < fileList.length; i++) {
-        const item = fileList[i] as Record<string, ESObject>;
+        const item = fileList[i] as Record<string, Object>;
         const format = String(item['format'] || '').toLowerCase();
         if (format) {
           formats.push({

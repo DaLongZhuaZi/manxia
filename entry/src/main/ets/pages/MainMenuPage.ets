@@ -2016,7 +2016,7 @@ struct MainMenuPage {
             };
             openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, params, TAG);
           } else {
-            await this.openMangaDetail(manga);
+            void this.openMangaReaderWithAnimation(manga, '');
           }
           return;
         }
@@ -2032,7 +2032,7 @@ struct MainMenuPage {
             }
             return;
           }
-          this.openEBookDetail(ebook);
+          this.openEBookReaderFromHome(ebook);
           return;
         }
       } else if (contentType === 'novel') {
@@ -2051,7 +2051,7 @@ struct MainMenuPage {
             };
             this.pathStack.pushPathByName('NovelReaderPage', params);
           } else {
-            this.openNovelDetail(novel);
+            void this.openNovelReaderWithAnimation(novel, '');
           }
           return;
         }
@@ -5186,10 +5186,9 @@ struct MainMenuPage {
   private async loadRecentEBookList(): Promise<EBook[]> {
     try {
       const allEbooks = await this.ebookDataManager.getEBookList();
-      await this.normalizeEBookCoversForDisplay(allEbooks);
       
       // 筛选有阅读记录的电子书并按最后阅读时间排序
-      const recentEbooks = allEbooks
+      let recentEbooks = allEbooks
         .filter((ebook: EBook) => {
           return ebook.readingProgress.lastReadTime > 0 || 
                  ebook.readingProgress.progress > 0;
@@ -5198,6 +5197,8 @@ struct MainMenuPage {
           return b.readingProgress.lastReadTime - a.readingProgress.lastReadTime;
         })
         .slice(0, 20);
+        
+      await this.normalizeEBookCoversForDisplay(recentEbooks);
       
       return recentEbooks;
     } catch (error) {
@@ -5625,8 +5626,8 @@ struct MainMenuPage {
             .borderRadius(this.getCoverImageRadius())
             .clip(true)
             .onClick(() => {
-              // 点击封面打开小说详情页
-              this.openNovelDetail(novel);
+              // 点击封面直接开始阅读小说
+              void this.openNovelReaderWithAnimation(novel, `cover_novel_home_${novel.id}`);
             })
 
             Text(novel.name)
@@ -11038,6 +11039,7 @@ struct MainMenuPage {
     if (!ebooks || ebooks.length === 0) {
       return ebooks;
     }
+    let count = 0;
     for (const ebook of ebooks) {
       const resolvedCoverPath = this.getEBookCoverPath(ebook);
       if (resolvedCoverPath && resolvedCoverPath !== (ebook?.metadata?.coverImagePath || '')) {
@@ -11047,6 +11049,11 @@ struct MainMenuPage {
         );
       }
       this.ensureLocalLibraryCoverPrepared(resolvedCoverPath);
+      
+      count++;
+      if (count % 20 === 0) {
+        await new Promise<void>(resolve => setTimeout(resolve, 10));
+      }
     }
     return ebooks;
   }
@@ -11056,6 +11063,7 @@ struct MainMenuPage {
     if (!novels || novels.length === 0) {
       return novels;
     }
+    let count = 0;
     for (const novel of novels) {
       const storedCoverPath = (novel.coverLocalPath?.trim() || novel.coverUrl?.trim() || '');
       const resolvedCoverPath = this.getNovelCoverPath(novel);
@@ -11064,6 +11072,11 @@ struct MainMenuPage {
       }
       // 显示层只做本地封面预加载，不能改写数据库中的原始封面路径。
       this.ensureLocalLibraryCoverPrepared(resolvedCoverPath);
+      
+      count++;
+      if (count % 20 === 0) {
+        await new Promise<void>(resolve => setTimeout(resolve, 10));
+      }
     }
     return novels;
   }

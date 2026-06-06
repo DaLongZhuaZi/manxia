@@ -1,4 +1,4 @@
-﻿import { SafeUtils } from '../../Utils/SafeUtils';
+import { SafeUtils } from '../../Utils/SafeUtils';
 /**
  * Suwayomi 图源
  * 将 Suwayomi 服务器作为漫画源使用
@@ -52,6 +52,12 @@ interface SuwayomiChapter {
   uploadDate: number;
   url: string;
   lastPageRead: number;  // 最后阅读的页码
+}
+
+export interface SuwayomiExtendedChapterInfo extends ChapterInfo {
+  isRead?: boolean;
+  isDownloaded?: boolean;
+  lastPageRead?: number;
 }
 
 // Suwayomi 源信息
@@ -203,6 +209,12 @@ interface CategoryVariables {
   categoryId: number;
   offset: number;
   limit: number;
+}
+
+interface LibraryMangasVariables {
+  offset: number;
+  limit: number;
+  orderBy: string;
 }
 
 // 漫画排序类型
@@ -773,7 +785,7 @@ export class SuwayomiSource {
           }
         }
       `;
-      const variables: ESObject = { offset: offset, limit: batchSize, orderBy: orderBy };
+      const variables: LibraryMangasVariables = { offset: offset, limit: batchSize, orderBy: orderBy };
       const data = await this.executeGraphQL(query, variables);
 
       const mangasData: GraphQLMangasConnectionWithCount | undefined = data?.mangas as GraphQLMangasConnectionWithCount | undefined;
@@ -951,17 +963,16 @@ export class SuwayomiSource {
     const detailServerUrl = this.getNormalizedServerUrl();
     const chapters: SuwayomiChapter[] | undefined = manga.chapters?.nodes;
     const chapterList: ChapterInfo[] = chapters ? chapters.map((ch: SuwayomiChapter): ChapterInfo => {
-      const chapterInfo: ChapterInfo = {
+      const chapterInfo: SuwayomiExtendedChapterInfo = {
         id: String(ch.id),
         title: ch.name || `第 ${ch.chapterNumber} 章`,
         url: `${detailServerUrl}/manga/${mangaId}/chapter/${ch.id}`,
-        updateTime: ch.uploadDate
+        updateTime: ch.uploadDate,
+        isRead: ch.isRead,
+        isDownloaded: ch.isDownloaded,
+        pageCount: ch.pageCount || 0,
+        lastPageRead: ch.lastPageRead || 0
       };
-      // 使用 extra 字段存储额外信息
-      (chapterInfo as ESObject)['isRead'] = ch.isRead;
-      (chapterInfo as ESObject)['isDownloaded'] = ch.isDownloaded;
-      (chapterInfo as ESObject)['pageCount'] = ch.pageCount || 0;
-      (chapterInfo as ESObject)['lastPageRead'] = ch.lastPageRead || 0;
       return chapterInfo;
     }) : [];
 

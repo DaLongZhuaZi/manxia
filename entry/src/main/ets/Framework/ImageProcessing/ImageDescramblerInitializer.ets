@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 图片解扰器初始化模块
  * 在应用启动时注册所有解扰算法
  */
@@ -43,10 +43,10 @@ export function initializeImageDescrambler(): void {
  * 为图源配置解扰器
  * 从JSON配置中读取解扰参数并注册到拦截器
  */
-export function configureDescramblerForSource(sourceId: number, config: ESObject): void {
+export function configureDescramblerForSource(sourceId: number, config: Record<string, Object | undefined>): void {
   try {
     // 检查是否有imageDescrambler配置
-    const descramblerConfig = config.imageDescrambler as ESObject;
+    const descramblerConfig = config.imageDescrambler as Record<string, Object | undefined> | undefined;
     if (!descramblerConfig) {
       logger.debug(TAG, `图源${sourceId}未配置图片解扰`);
       return;
@@ -64,7 +64,7 @@ export function configureDescramblerForSource(sourceId: number, config: ESObject
       algorithm: descramblerConfig.algorithm as string || 'jinmantiantang',
       enabled: true,
       urlPattern: descramblerConfig.urlPattern as string || 'media/photos',
-      parameters: descramblerConfig as ESObject
+      parameters: descramblerConfig as Record<string, Object | undefined>
     });
     
     logger.info(TAG, `已为图源${sourceId}配置图片解扰: algorithm=${descramblerConfig.algorithm}`);

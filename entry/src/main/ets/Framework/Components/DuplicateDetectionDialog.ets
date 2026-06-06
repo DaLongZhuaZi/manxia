@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 内容重复检测弹窗组件
  * 显示可能重复的内容列表，让用户决定是否继续添加
  */
@@ -17,7 +17,7 @@ import {
 
 @Component
 export struct DuplicateDetectionDialog {
-  @Prop themeState!: ThemeAwareState;
+  @Prop themeState: ThemeAwareState = new ThemeAwareState();
   @Prop @Watch('onLoadSignalChanged') loadSignal: number = 0;
   @Prop newItemTitle: string = '';
   @Prop newItemAuthor: string = '';

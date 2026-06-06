@@ -1012,7 +1012,7 @@ export struct SourceDetailPage {
    */
   private async detectAndInitializeSourceType(): Promise<void> {
     try {
-      const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
+      const config: Record<string, Object> | null = await this.dataManager.getSourceConfig(this.sourceId);
       
       if (!config) {
         logger.warn(TAG, '图源配置为空，使用HTTP系统');
@@ -1042,7 +1042,7 @@ export struct SourceDetailPage {
    */
   private async checkCredentialLogin(): Promise<void> {
     try {
-      const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
+      const config: Record<string, Object> | null = await this.dataManager.getSourceConfig(this.sourceId);
       
       if (!config) {
         this.requiresCredentialLogin = false;
@@ -1071,7 +1071,7 @@ export struct SourceDetailPage {
         // [修复] 对于需要JWT Token的图源，需要检查是否有有效的Token
         // 如果没有Token，需要执行登录工作流获取Token
         if (this.useWebView && this.mangaSourceEngine) {
-          const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
+          const config: Record<string, Object> | null = await this.dataManager.getSourceConfig(this.sourceId);
           const authSourceConfig: SourceDetailJsonConfig | null = config ? config as SourceDetailJsonConfig : null;
           const authentication: SourceAuthConfig | undefined = authSourceConfig ? authSourceConfig.authentication : undefined;
           
@@ -2577,7 +2577,7 @@ export struct SourceDetailPage {
     try {
       // 获取图源配置中的登录URL
       logger.info(TAG, '开始获取图源配置');
-      const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
+      const config: Record<string, Object> | null = await this.dataManager.getSourceConfig(this.sourceId);
       logger.info(TAG, `获取到配置: ${config ? 'yes' : 'no'}`);
       
       const sourceConfig: SourceDetailJsonConfig | null = config ? config as SourceDetailJsonConfig : null;
@@ -2645,7 +2645,7 @@ export struct SourceDetailPage {
       logger.info(TAG, '开始重新加载Engine配置');
       
       // 从数据库获取最新配置
-      const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
+      const config: Record<string, Object> | null = await this.dataManager.getSourceConfig(this.sourceId);
       if (!config) {
         logger.warn(TAG, '无法获取图源配置');
         return;
