@@ -792,7 +792,7 @@ export struct KomgaLibraryDetailPage {
     Column({ space: 12 }) {
       Row({ space: 12 }) {
         Stack() {
-          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+          SymbolGlyph($r('sys.symbol.bookshelf'))
             .fontSize(26)
             .fontColor([this.color('accent_blue')])
         }
@@ -1090,7 +1090,7 @@ export struct KomgaLibraryDetailPage {
         .border({ width: 1, color: this.color('panel_border') })
       } else if (this.items.length <= 0) {
         Column({ space: 10 }) {
-          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          SymbolGlyph($r('sys.symbol.picture'))
             .fontSize(26)
             .fontColor([this.color('text_muted')])
           Text(this.searchQuery.trim().length > 0 ? '当前库没有匹配内容' : '当前库暂无可浏览内容')

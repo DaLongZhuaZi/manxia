@@ -8,6 +8,19 @@ import { UIExtensionAbility, UIExtensionContentSession, Want } from '@kit.Abilit
 import { window } from '@kit.ArkUI';
 import { fileUri } from '@kit.CoreFileKit';
 import { logger } from '../Utils/Logger';
+import { openExternalFileTaskInIsolatedAbilityByContext } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+import {
+  ExternalFileTaskFactory,
+  ExternalFileTaskKind,
+  ExternalFileTaskParams,
+  ExternalFileTaskSource
+} from '../Framework/ExternalFile/ExternalFileTaskTypes';
+import {
+  NETWORK_FOLDER_CODE_EXTENSIONS,
+  NETWORK_FOLDER_FONT_EXTENSIONS,
+  NETWORK_FOLDER_IMAGE_EXTENSIONS,
+  NETWORK_FOLDER_JSON_EXTENSIONS
+} from '../Models/NetworkFolderModels';
 
 const TAG = 'ShareExtAbility';
 // 应用包名（与AppScope/app.json5中的bundleName保持一致）
@@ -186,6 +199,7 @@ export default class ShareExtAbility extends UIExtensionAbility {
    */
   private getFileType(uri: string): string {
     const lowerUri = uri.toLowerCase();
+    const extension = this.getFileExtension(uri);
     
     // 漫画压缩包
     if (lowerUri.endsWith('.zip') || lowerUri.endsWith('.cbz') ||
@@ -209,9 +223,7 @@ export default class ShareExtAbility extends UIExtensionAbility {
     }
     
     // 其他图片
-    if (lowerUri.endsWith('.jpg') || lowerUri.endsWith('.jpeg') || 
-        lowerUri.endsWith('.png') || lowerUri.endsWith('.gif') ||
-        lowerUri.endsWith('.webp') || lowerUri.endsWith('.bmp')) {
+    if (NETWORK_FOLDER_IMAGE_EXTENSIONS.includes(extension)) {
       return 'image';
     }
     
@@ -233,8 +245,149 @@ export default class ShareExtAbility extends UIExtensionAbility {
     if (lowerUri.endsWith('.mxbackup') || lowerUri.endsWith('.mxbak')) {
       return 'backup';
     }
+
+    if (NETWORK_FOLDER_JSON_EXTENSIONS.includes(extension)) {
+      return 'json';
+    }
+
+    if (NETWORK_FOLDER_FONT_EXTENSIONS.includes(extension)) {
+      return 'font';
+    }
+
+    if (NETWORK_FOLDER_CODE_EXTENSIONS.includes(extension)) {
+      return 'code';
+    }
     
     return 'unknown';
+  }
+
+  private getFileExtension(uri: string): string {
+    const lowerUri = uri.toLowerCase();
+    const queryIndex = lowerUri.indexOf('?');
+    const hashIndex = lowerUri.indexOf('#');
+    let endIndex = lowerUri.length;
+    if (queryIndex >= 0 && hashIndex >= 0) {
+      endIndex = Math.min(queryIndex, hashIndex);
+    } else if (queryIndex >= 0) {
+      endIndex = queryIndex;
+    } else if (hashIndex >= 0) {
+      endIndex = hashIndex;
+    }
+    const pathPart = lowerUri.substring(0, endIndex);
+    const dotIndex = pathPart.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex >= pathPart.length - 1) {
+      return '';
+    }
+    return pathPart.substring(dotIndex + 1);
+  }
+
+  private inferCodeLanguageFromFileName(fileName: string): string {
+    const extension = this.getFileExtension(fileName);
+    switch (extension) {
+      case 'ts':
+      case 'ets':
+      case 'tsx':
+        return 'typescript';
+      case 'js':
+      case 'jsx':
+        return 'javascript';
+      case 'py':
+        return 'python';
+      case 'java':
+        return 'java';
+      case 'cpp':
+      case 'c':
+      case 'h':
+      case 'hpp':
+        return 'cpp';
+      case 'cs':
+        return 'csharp';
+      case 'go':
+        return 'go';
+      case 'rs':
+        return 'rust';
+      case 'swift':
+        return 'swift';
+      case 'kt':
+        return 'kotlin';
+      case 'rb':
+        return 'ruby';
+      case 'php':
+        return 'php';
+      case 'html':
+      case 'htm':
+        return 'html';
+      case 'css':
+        return 'css';
+      case 'scss':
+        return 'scss';
+      case 'less':
+        return 'less';
+      case 'jsonc':
+        return 'json';
+      case 'xml':
+        return 'xml';
+      case 'yaml':
+      case 'yml':
+        return 'yaml';
+      case 'md':
+      case 'markdown':
+        return 'markdown';
+      case 'sql':
+        return 'sql';
+      case 'sh':
+      case 'bash':
+      case 'zsh':
+        return 'shell';
+      case 'ps1':
+        return 'powershell';
+      case 'bat':
+      case 'cmd':
+        return 'bat';
+      case 'ini':
+      case 'conf':
+      case 'cfg':
+        return 'ini';
+      case 'toml':
+        return 'toml';
+      case 'lua':
+        return 'lua';
+      case 'r':
+        return 'r';
+      case 'dart':
+        return 'dart';
+      case 'vue':
+        return 'vue';
+      case 'svelte':
+        return 'svelte';
+      default:
+        return 'plaintext';
+    }
+  }
+
+  private mapShareTypeToTaskKind(fileType: string): ExternalFileTaskKind {
+    switch (fileType) {
+      case 'avif':
+        return ExternalFileTaskKind.AVIF;
+      case 'image':
+        return ExternalFileTaskKind.IMAGE;
+      case 'backup':
+        return ExternalFileTaskKind.BACKUP;
+      case 'pdf':
+        return ExternalFileTaskKind.PDF;
+      case 'ebook':
+        return ExternalFileTaskKind.EBOOK;
+      case 'comic':
+        return ExternalFileTaskKind.COMIC;
+      case 'json':
+        return ExternalFileTaskKind.JSON;
+      case 'font':
+        return ExternalFileTaskKind.FONT;
+      case 'code':
+        return ExternalFileTaskKind.CODE;
+      default:
+        return ExternalFileTaskKind.UNKNOWN;
+    }
   }
 
   /**
@@ -242,6 +395,25 @@ export default class ShareExtAbility extends UIExtensionAbility {
    */
   private async launchMainAppWithFiles(uris: string[], fileType: string): Promise<void> {
     try {
+      const taskParams: ExternalFileTaskParams = ExternalFileTaskFactory.createShareTask(
+        this.mapShareTypeToTaskKind(fileType),
+        uris,
+        ExternalFileTaskSource.SYSTEM_SHARE,
+        uris.length > 0 ? ExternalFileTaskFactory.extractFileName(uris[0]) : ''
+      );
+      if (fileType === 'code' && uris.length > 0) {
+        taskParams.language = this.inferCodeLanguageFromFileName(uris[0]);
+      }
+      const started = await openExternalFileTaskInIsolatedAbilityByContext(
+        this.context,
+        taskParams,
+        'ShareExtAbility.share'
+      );
+      if (started) {
+        logger.info(TAG, `已启动外部文件独立任务，传递 ${uris.length} 个文件，bundleName: ${APP_BUNDLE_NAME}`);
+        return;
+      }
+
       // 使用应用包名常量 - ShareExtAbility和EntryAbility在同一应用包中
       // 直接使用常量避免any/unknown类型问题和ApplicationInfo属性不存在的问题
       const want: Want = {
@@ -250,7 +422,8 @@ export default class ShareExtAbility extends UIExtensionAbility {
         parameters: {
           'share_import_files': uris,
           'share_import_type': fileType,
-          'share_import_source': 'system_share'
+          'share_import_source': 'system_share',
+          'share_import_language': taskParams.language
         }
       };
       

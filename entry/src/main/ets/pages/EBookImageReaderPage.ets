@@ -66,6 +66,16 @@ import {
 } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import {
+  MangaReadFlowEvent,
+  MangaReadFlowEventType,
+  MangaReadFlowModeKind,
+  MangaReadFlowSessionInfo,
+  MangaReadFlowSeverity,
+  MangaReadFlowSourceKind,
+  mapReadingModeToFlowMode
+} from '../Framework/Reader/MangaReadFlowTypes';
 
 const TAG = 'EBookImageReaderPage';
 
@@ -97,6 +107,8 @@ struct EBookImageReaderPage {
   private routerBackOnClose: boolean = false;
   private readerHostMode: string = '';
   private readerInstanceId: string = '';
+  private originImportId: string = '';
+  private originImportKind: string = '';
 
   @State readingSettings: MangaReadingSettings = DEFAULT_READING_SETTINGS;
   @State currentPageIndex: number = 0;
@@ -180,6 +192,9 @@ struct EBookImageReaderPage {
   private initialViewerPageIndex: number = 0;
   private isSavingProgress: boolean = false;
   private pendingProgressSaveTrigger: string = '';
+  private mangaReadFlowMonitor: MangaReadFlowMonitor = MangaReadFlowMonitor.getInstance();
+  private mangaReadFlowSessionId: string = '';
+  private mangaReadFlowLoadStartedAt: number = 0;
 
   aboutToAppear(): void {
     this.isPageVisible = true;
@@ -202,6 +217,16 @@ struct EBookImageReaderPage {
     eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
     if (!this.isCloseTransitionNavigating) {
       cancelTransition();
+    }
+    if (this.mangaReadFlowSessionId.length > 0) {
+      this.recordReadFlowEvent(
+        MangaReadFlowEventType.CLEANUP,
+        'about_to_disappear',
+        this.currentPageIndex,
+        'ebook_image_cleanup'
+      );
+      this.mangaReadFlowMonitor.endSession(this.mangaReadFlowSessionId, 'about_to_disappear');
+      this.mangaReadFlowSessionId = '';
     }
   }
 
@@ -238,6 +263,72 @@ struct EBookImageReaderPage {
     } catch (error) {
       logger.warn(TAG, `更新屏幕尺寸失败: ${String(error)}`);
     }
+  }
+
+  private ensureReadFlowSession(bookId: string): void {
+    if (this.mangaReadFlowSessionId.length > 0) {
+      return;
+    }
+    const info: MangaReadFlowSessionInfo = new MangaReadFlowSessionInfo();
+    info.sessionId = this.mangaReadFlowMonitor.createSessionId('ebook_image');
+    info.sourceKind = MangaReadFlowSourceKind.EBOOK_IMAGE;
+    info.modeKind = mapReadingModeToFlowMode(this.readingSettings.readingMode);
+    info.contentId = bookId;
+    info.contentTitle = this.ebook ? this.ebook.metadata.title : '';
+    info.pageIndex = this.currentPageIndex;
+    info.pageCount = this.getTotalPages();
+    info.readerHostMode = this.readerHostMode;
+    info.readerInstanceId = this.readerInstanceId;
+    info.originImportId = this.originImportId;
+    info.originImportKind = this.originImportKind;
+    info.startedAt = Date.now();
+    this.mangaReadFlowSessionId = this.mangaReadFlowMonitor.startSession(info);
+    this.mangaReadFlowLoadStartedAt = info.startedAt;
+  }
+
+  private recordReadFlowEvent(
+    eventType: MangaReadFlowEventType,
+    reason: string,
+    pageIndex: number,
+    detail: string
+  ): void {
+    if (this.mangaReadFlowSessionId.length <= 0) {
+      return;
+    }
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      eventType,
+      this.ebook ? this.ebook.id : '',
+      this.runtimeChapter ? this.runtimeChapter.id : '',
+      pageIndex,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.EBOOK_IMAGE;
+    event.modeKind = mapReadingModeToFlowMode(this.readingSettings.readingMode);
+    event.chapterTitle = this.runtimeChapter ? this.runtimeChapter.title : '';
+    event.pageCount = this.getTotalPages();
+    event.detail = detail;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordReadFlowError(reason: string, errorMessage: string): void {
+    if (this.mangaReadFlowSessionId.length <= 0) {
+      return;
+    }
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      MangaReadFlowEventType.ERROR,
+      this.ebook ? this.ebook.id : '',
+      this.runtimeChapter ? this.runtimeChapter.id : '',
+      this.currentPageIndex,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.EBOOK_IMAGE;
+    event.modeKind = MangaReadFlowModeKind.UNKNOWN;
+    event.success = false;
+    event.severity = MangaReadFlowSeverity.ERROR;
+    event.errorMessage = errorMessage;
+    this.mangaReadFlowMonitor.record(event);
   }
 
   private reportTransitionLoadingProgress(progress: number, reason: string): void {
@@ -362,7 +453,15 @@ struct EBookImageReaderPage {
     this.routerBackOnClose = params.routerBackOnClose === true;
     this.readerHostMode = params.readerHostMode || '';
     this.readerInstanceId = params.readerInstanceId || '';
+    this.originImportId = params.originImportId || '';
+    this.originImportKind = params.originImportKind || '';
     await this.loadEBook(params.bookId);
+  }
+
+  private ensureViewerReadFlowSession(): void {
+    if (this.mangaReadFlowSessionId.length <= 0 && this.ebook) {
+      this.ensureReadFlowSession(this.ebook.id);
+    }
   }
 
   private shouldRepairImagePageBookData(ebook: EBook): boolean {
@@ -521,6 +620,7 @@ struct EBookImageReaderPage {
     this.hasNotifiedTransitionReaderReady = false;
     this.transitionLoadingProgress = 0;
     this.isReaderInitialized = false;
+    this.ensureReadFlowSession(bookId);
     this.reportTransitionLoadingProgress(0.08, 'load_start');
 
     try {
@@ -564,6 +664,12 @@ struct EBookImageReaderPage {
       }
 
       this.ebook = ebook;
+      this.recordReadFlowEvent(
+        MangaReadFlowEventType.CHAPTER_RESOLVED,
+        'ebook_image_loaded',
+        runtime.initialPageIndex,
+        `title=${ebook.metadata.title}, entries=${runtime.imageEntries.length}`
+      );
       this.imageEntries = runtime.imageEntries;
       this.runtimeChapter = runtime.runtimeChapter;
       this.chapterListChapters = runtime.chapterListChapters;
@@ -579,11 +685,18 @@ struct EBookImageReaderPage {
       this.syncAutoPageTurnStateFromSettings(false);
       this.refreshCurrentEBookBookmarkState('load_complete');
       this.isLoading = false;
+      this.recordReadFlowEvent(
+        MangaReadFlowEventType.PAGES_RESOLVED,
+        'ebook_image_pages_ready',
+        runtime.initialPageIndex,
+        `pages=${runtime.imageEntries.length}, elapsed=${Date.now() - this.mangaReadFlowLoadStartedAt}`
+      );
       this.reportTransitionLoadingProgress(0.84, 'view_ready');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.errorMessage = message;
       this.isLoading = false;
+      this.recordReadFlowError('ebook_image_load_failed', message);
       this.notifyTransitionReaderReadyOnce('load_failed');
     }
   }
@@ -877,6 +990,12 @@ struct EBookImageReaderPage {
 
     await this.ebookDataManager.saveReadingProgress(progress);
     ebook.readingProgress = progress;
+    this.recordReadFlowEvent(
+      MangaReadFlowEventType.PROGRESS_SAVED,
+      trigger,
+      this.currentPageIndex,
+      `progress=${progress.progress}`
+    );
     this.lastProgressSaveTime = now;
     this.lastSavedPageIndex = this.currentPageIndex;
     this.sessionStartTimestamp = now;
@@ -936,7 +1055,7 @@ struct EBookImageReaderPage {
       interval: this.autoPageTurnEnabled ? this.autoPageTurnIntervalSeconds : 0,
       skipIntro: this.readingSettings.skipIntroPages > 0,
       skipIntroPages: this.readingSettings.skipIntroPages,
-      autoSwitchChapter: false
+      autoSwitchChapter: true
     };
     if (!this.autoPageTurnController) {
       this.autoPageTurnController = new AutoPageTurnController(config);
@@ -947,9 +1066,40 @@ struct EBookImageReaderPage {
         () => this.currentPageIndex,
         () => this.getTotalPages()
       );
+      this.autoPageTurnController.setChapterEndCallback((): boolean => this.handleAutoPageTurnChapterEnd());
     } else {
       this.autoPageTurnController.setConfig(config);
+      this.autoPageTurnController.setChapterEndCallback((): boolean => this.handleAutoPageTurnChapterEnd());
     }
+  }
+
+  private handleAutoPageTurnChapterEnd(): boolean {
+    const nextChapterPageIndex = this.findNextImageChapterPageIndex();
+    if (nextChapterPageIndex < 0) {
+      this.stopAutoPageTurn();
+      this.getUIContext().getPromptAction().showToast({ message: '已到最后一章，自动翻页已停止' });
+      return false;
+    }
+
+    this.saveReadingProgress('auto_page_turn_chapter_end');
+    this.jumpToPage(nextChapterPageIndex, 'auto_page_turn_next_chapter');
+    this.getUIContext().getPromptAction().showToast({ message: '已自动进入下一章' });
+    return true;
+  }
+
+  private findNextImageChapterPageIndex(): number {
+    const currentEntry = this.getCurrentPageEntry();
+    if (!currentEntry) {
+      return -1;
+    }
+    const currentChapterIndex = currentEntry.ebookChapterIndex;
+    for (let index = this.currentPageIndex + 1; index < this.imageEntries.length; index++) {
+      const entry = this.imageEntries[index];
+      if (entry.ebookChapterIndex > currentChapterIndex) {
+        return entry.runtimePageIndex;
+      }
+    }
+    return -1;
   }
 
   private startAutoPageTurn(): void {
@@ -1024,7 +1174,7 @@ struct EBookImageReaderPage {
   }
 
   private getAutoPageTurnIconResource() {
-    return this.autoPageTurnEnabled ? $r('sys.symbol.airplane_departure') : $r('sys.symbol.airplane_arrival');
+    return this.autoPageTurnEnabled ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill');
   }
 
   private setAutoPageTurnIntervalSeconds(value: number): void {
@@ -1819,6 +1969,12 @@ struct EBookImageReaderPage {
     if (!this.isReaderInitialized) {
       return;
     }
+    this.recordReadFlowEvent(
+      MangaReadFlowEventType.PAGE_CHANGED,
+      'viewer_page_change',
+      pageIndex,
+      `previous=${this.currentPageIndex}`
+    );
     this.applyCurrentPageIndex(pageIndex, 'viewer_page_change');
   }
 
@@ -2112,7 +2268,7 @@ struct EBookImageReaderPage {
         .width(48).height(48).backgroundColor(Color.Transparent)
         .onClick(() => { this.toggleCurrentEBookBookmark(); })
       Button() {
-        SymbolGlyph($r('sys.symbol.stickers'))
+        SymbolGlyph($r('sys.symbol.highlighter_line'))
           .fontColor([this.getToolbarIconColor()])
       }
         .width(48).height(48).backgroundColor(Color.Transparent)
@@ -2214,7 +2370,7 @@ struct EBookImageReaderPage {
           })
         Blank()
         Button() {
-          SymbolGlyph($r('sys.symbol.circle_on_circle'))
+          SymbolGlyph($r('sys.symbol.page_turning'))
             .fontColor([this.getToolbarIconColor()])
         }
           .width(48).height(48).backgroundColor(Color.Transparent)
@@ -3109,6 +3265,7 @@ struct EBookImageReaderPage {
               zoomScale: this.viewerZoomScale,
               toolbarsVisible: this.showTopToolbar || this.showBottomToolbar,
               chapterTick: 0,
+              readFlowSessionId: this.mangaReadFlowSessionId,
               preloadCurrentPages: 1,
               preloadNextPages: 1,
               contentType: 'ebook',

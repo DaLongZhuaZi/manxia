@@ -800,7 +800,7 @@ export struct SuwayomiMangaDetailPage {
         Flex({ wrap: FlexWrap.Wrap }) {
           this.buildMetaChip($r('sys.symbol.book'), `${this.mangaDetail?.chapters?.length || 0} 章内容`)
           if (this.isInRemoteLibrary) {
-            this.buildMetaChip($r('sys.symbol.rectangle_stack'), '服务端已收藏')
+            this.buildMetaChip($r('sys.symbol.bookshelf'), '服务端已收藏')
           }
         }
         .width('100%')
@@ -862,10 +862,10 @@ export struct SuwayomiMangaDetailPage {
       .width('100%')
 
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-        this.buildInfoCard($r('sys.symbol.books_vertical_fill'), '章节数', `${this.getSortedChapters().length} 章`)
+        this.buildInfoCard($r('sys.symbol.book_pages'), '章节数', `${this.getSortedChapters().length} 章`)
         this.buildInfoCard($r('sys.symbol.clock'), '阅读进度', this.getReadingProgressLabel())
         this.buildInfoCard($r('sys.symbol.book'), '本地书架', this.isInLocalLibrary ? '已加入' : '未加入')
-        this.buildInfoCard($r('sys.symbol.rectangle_stack'), '服务端书库', this.isInRemoteLibrary ? '已收藏' : '未收藏')
+        this.buildInfoCard($r('sys.symbol.bookshelf'), '服务端书库', this.isInRemoteLibrary ? '已收藏' : '未收藏')
       }
       .width('100%')
     }

@@ -1974,8 +1974,8 @@ export struct TrackingSettingsDialogComponent {
             this.buildTrackingSettingsOverviewCard()
 
             Row({ space: 8 }) {
-              this.buildTrackingSettingsTabButton('基础', $r('sys.symbol.bookshelf_badge_checkmark'), 0)
-              this.buildTrackingSettingsTabButton('筛选', $r('sys.symbol.bookshelf_badge_checkmark'), 1)
+              this.buildTrackingSettingsTabButton('基础', $r('sys.symbol.bell'), 0)
+              this.buildTrackingSettingsTabButton('筛选', $r('sys.symbol.funnel'), 1)
               this.buildTrackingSettingsTabButton('操作', $r('sys.symbol.gearshape'), 2)
             }
             .width('100%')

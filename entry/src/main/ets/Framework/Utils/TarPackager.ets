@@ -12,6 +12,7 @@ import { zlib } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 
 const TAG = 'TarPackager';
+const TAR_STREAM_BUFFER_SIZE: number = 1024 * 1024;
 
 /**
  * Tar 文件头结构（512字节）
@@ -65,7 +66,7 @@ export class TarPackager {
       
       // 创建临时 tar 文件
       const tempTarPath = `${outputPath}.tmp`;
-      const tarFile = SafeFileUtils.openSync(tempTarPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+      const tarFile = SafeFileUtils.openSyncStrict(tempTarPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
       
       try {
         // 写入每个文件
@@ -75,19 +76,19 @@ export class TarPackager {
         
         // 写入结束标记（两个512字节的空块）
         const endMarker = new ArrayBuffer(1024);
-        SafeFileUtils.writeSync(tarFile.fd, endMarker);
+        SafeFileUtils.writeExactSync(tarFile.fd, endMarker);
         
         SafeFileUtils.closeSync(tarFile);
         
         // 重命名为最终文件名
-        SafeFileUtils.renameSync(tempTarPath, outputPath);
+        SafeFileUtils.renameSyncStrict(tempTarPath, outputPath);
         
         logger.info(TAG, `tar归档创建成功: ${outputPath}`);
       } catch (error) {
         SafeFileUtils.closeSync(tarFile);
         // 清理临时文件
         if (SafeFileUtils.accessSync(tempTarPath)) {
-          SafeFileUtils.unlinkSync(tempTarPath);
+          SafeFileUtils.unlinkSyncStrict(tempTarPath);
         }
         throw new Error(`tar创建失败: ${error}`);
       }
@@ -109,31 +110,40 @@ export class TarPackager {
       
       // 确保输出目录存在
       if (!SafeFileUtils.accessSync(outputDir)) {
-        SafeFileUtils.mkdirSync(outputDir, true);
+        SafeFileUtils.mkdirSyncStrict(outputDir, true);
       }
       
-      const tarFile = SafeFileUtils.openSync(tarPath, fs.OpenMode.READ_ONLY);
+      const tarFile = SafeFileUtils.openSyncStrict(tarPath, fs.OpenMode.READ_ONLY);
       let extractedCount = 0;
       let dirCount = 0;
-      
+
       try {
         let offset = 0;
-        
+
         while (true) {
           // 读取文件头（512字节）
           const headerBuffer = new ArrayBuffer(512);
-          const readBytes = SafeFileUtils.readSync(tarFile.fd, headerBuffer, { offset: offset });
-          
+          const readBytes = SafeFileUtils.readSyncStrict(tarFile.fd, headerBuffer);
+
           if (readBytes < 512) {
-            logger.debug(TAG, `读取字节数不足512: ${readBytes}`);
-            break; // 文件结束
+            if (readBytes === 0) {
+              break;
+            }
+            throw new Error(`tar头读取不完整: offset=${offset}, readBytes=${readBytes}`);
+          }
+
+          if (this.isZeroBlock(headerBuffer)) {
+            logger.debug(TAG, `遇到tar结束块，结束解压`);
+            break;
           }
           
           // 解析文件头
           const header = this.parseTarHeader(headerBuffer);
+          this.validateTarHeader(headerBuffer, header);
+          const entryName = this.getTarEntryName(header);
           
           // 检查是否为结束标记（全零块）
-          if (header.name === '') {
+          if (entryName === '') {
             logger.debug(TAG, `遇到空名称条目，结束解压`);
             break;
           }
@@ -141,61 +151,56 @@ export class TarPackager {
           offset += 512;
           
           // 获取文件大小和类型
-          const fileSize = parseInt(header.size, 8) || 0;
+          const fileSize = this.parseOctal(header.size, 'size');
           const typeFlag = header.typeflag;
           
           // [修复] 处理目录条目 (typeflag='5') 或以/结尾的路径
-          const isDirectory = typeFlag === '5' || header.name.endsWith('/');
+          const isDirectory = typeFlag === '5' || entryName.endsWith('/');
+          const isRegularFile = typeFlag === '' || typeFlag === '0';
+          const outputPath = this.resolveTarEntryPath(outputDir, entryName);
           
           if (isDirectory) {
             // 创建目录
-            const dirPath = `${outputDir}/${header.name}`;
-            try {
-              if (!SafeFileUtils.accessSync(dirPath)) {
-                SafeFileUtils.mkdirSync(dirPath, true);
-              }
-              dirCount++;
-              logger.debug(TAG, `已创建目录: ${header.name}`);
-            } catch (mkdirError) {
-              logger.warn(TAG, `创建目录失败: ${header.name}, ${mkdirError}`);
+            if (!SafeFileUtils.accessSync(outputPath)) {
+              SafeFileUtils.mkdirSyncStrict(outputPath, true);
             }
+            dirCount++;
+            logger.debug(TAG, `已创建目录: ${entryName}`);
+            if (fileSize > 0) {
+              const paddedSize = Math.ceil(fileSize / 512) * 512;
+              this.skipTarBytes(tarFile.fd, paddedSize);
+              offset += paddedSize;
+            }
+          } else if (!isRegularFile) {
+            throw new Error(`不支持的tar条目类型: entry=${entryName}, type=${typeFlag}`);
           } else if (fileSize > 0) {
-            // 读取并写入文件
-            try {
-              const fileBuffer = new ArrayBuffer(fileSize);
-              SafeFileUtils.readSync(tarFile.fd, fileBuffer, { offset: offset });
-              
-              // 确定输出路径
-              const outputPath = `${outputDir}/${header.name}`;
-              const outputDirPath = outputPath.substring(0, outputPath.lastIndexOf('/'));
-              
-              // 确保父目录存在
-              if (outputDirPath && outputDirPath !== outputDir) {
-                try {
-                  if (!SafeFileUtils.accessSync(outputDirPath)) {
-                    SafeFileUtils.mkdirSync(outputDirPath, true);
-                  }
-                } catch (e) {
-                  // 目录可能已存在
-                }
+            // 确保父目录存在
+            const outputDirPath = outputPath.substring(0, outputPath.lastIndexOf('/'));
+            if (outputDirPath && outputDirPath !== outputDir) {
+              if (!SafeFileUtils.accessSync(outputDirPath)) {
+                SafeFileUtils.mkdirSyncStrict(outputDirPath, true);
               }
-              
-              const outputFile = SafeFileUtils.openSync(outputPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-              SafeFileUtils.writeSync(outputFile.fd, fileBuffer);
-              SafeFileUtils.closeSync(outputFile);
-              
-              extractedCount++;
-              logger.debug(TAG, `已解压文件: ${header.name} (${fileSize}字节)`);
-            } catch (extractError) {
-              logger.error(TAG, `解压文件失败: ${header.name}, ${extractError}`);
             }
-            
+
+            this.extractRegularFileFromTar(tarFile.fd, outputPath, fileSize);
+            extractedCount++;
+            logger.debug(TAG, `已解压文件: ${entryName} (${fileSize}字节)`);
+
             // 移动到下一个512字节边界
-            const paddedSize = Math.ceil(fileSize / 512) * 512;
-            offset += paddedSize;
+            const padding = (512 - (fileSize % 512)) % 512;
+            if (padding > 0) {
+              this.skipTarBytes(tarFile.fd, padding);
+            }
+            offset += fileSize + padding;
           } else {
-            // 空文件，只记录日志
-            logger.debug(TAG, `跳过空文件: ${header.name}`);
+            const outputDirPath = outputPath.substring(0, outputPath.lastIndexOf('/'));
+            if (outputDirPath && outputDirPath !== outputDir && !SafeFileUtils.accessSync(outputDirPath)) {
+              SafeFileUtils.mkdirSyncStrict(outputDirPath, true);
+            }
+            const outputFile = SafeFileUtils.openSyncStrict(outputPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+            SafeFileUtils.closeSync(outputFile);
+            extractedCount++;
+            logger.debug(TAG, `已解压空文件: ${entryName}`);
           }
         }
         
@@ -247,7 +252,7 @@ export class TarPackager {
         
         // [修复] 为每个条目单独捕获异常，避免一个条目失败导致整个循环中断
         try {
-          const stat = SafeFileUtils.statSync(fullPath);
+          const stat = SafeFileUtils.statSyncStrict(fullPath);
           
           if (stat.isDirectory()) {
             logger.debug(TAG, `进入子目录: ${entry}`);
@@ -260,17 +265,43 @@ export class TarPackager {
             logger.debug(TAG, `找到文件: ${relativePath} (${stat.size} 字节)`);
           }
         } catch (entryError) {
-          // [修复] 单个条目处理失败时记录错误但继续处理其他条目
           logger.error(TAG, `处理条目失败: ${entry}, 路径: ${fullPath}, 错误: ${entryError}`);
-          // 继续处理下一个条目
+          throw new Error(`处理tar源目录条目失败: ${fullPath}, ${entryError}`);
         }
       }
     } catch (error) {
       logger.error(TAG, `列出目录文件失败 ${dir}: ${error}`);
+      throw new Error(`列出目录文件失败 ${dir}: ${error}`);
     }
     
     logger.info(TAG, `目录 ${dir} 共找到 ${files.length} 个文件`);
     return files;
+  }
+
+  private skipTarBytes(fd: number, byteCount: number): void {
+    let remaining = byteCount;
+    while (remaining > 0) {
+      const chunkSize = remaining > TAR_STREAM_BUFFER_SIZE ? TAR_STREAM_BUFFER_SIZE : remaining;
+      const skipBuffer = new ArrayBuffer(chunkSize);
+      SafeFileUtils.readExactSync(fd, skipBuffer, { length: chunkSize });
+      remaining -= chunkSize;
+    }
+  }
+
+  private extractRegularFileFromTar(tarFd: number, outputPath: string, fileSize: number): void {
+    const outputFile = SafeFileUtils.openSyncStrict(outputPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+    try {
+      let remaining = fileSize;
+      while (remaining > 0) {
+        const chunkSize = remaining > TAR_STREAM_BUFFER_SIZE ? TAR_STREAM_BUFFER_SIZE : remaining;
+        const buffer = new ArrayBuffer(chunkSize);
+        SafeFileUtils.readExactSync(tarFd, buffer, { length: chunkSize });
+        SafeFileUtils.writeExactSync(outputFile.fd, buffer, { length: chunkSize });
+        remaining -= chunkSize;
+      }
+    } finally {
+      SafeFileUtils.closeSync(outputFile);
+    }
   }
 
   /**
@@ -278,33 +309,44 @@ export class TarPackager {
    */
   private async addFileToTar(tarFile: fs.File, baseDir: string, relativePath: string): Promise<void> {
     const fullPath = `${baseDir}/${relativePath}`;
-    const stat = SafeFileUtils.statSync(fullPath);
+    const stat = SafeFileUtils.statSyncStrict(fullPath);
     
     // 创建文件头
     const header = this.createTarHeader(relativePath, stat.size, stat.mtime);
     
     // 写入文件头
     const headerBuffer = this.serializeTarHeader(header);
-    SafeFileUtils.writeSync(tarFile.fd, headerBuffer);
+    SafeFileUtils.writeExactSync(tarFile.fd, headerBuffer);
     
     // 写入文件内容
     if (stat.size > 0) {
-      const fileContent = new ArrayBuffer(stat.size);
-      const sourceFile = SafeFileUtils.openSync(fullPath, fs.OpenMode.READ_ONLY);
-      SafeFileUtils.readSync(sourceFile.fd, fileContent);
-      SafeFileUtils.closeSync(sourceFile);
-      
-      SafeFileUtils.writeSync(tarFile.fd, fileContent);
-      
+      this.writeFileContentToTar(tarFile.fd, fullPath, stat.size);
+
       // 填充到512字节边界
       const padding = (512 - (stat.size % 512)) % 512;
       if (padding > 0) {
         const paddingBuffer = new ArrayBuffer(padding);
-        SafeFileUtils.writeSync(tarFile.fd, paddingBuffer);
+        SafeFileUtils.writeExactSync(tarFile.fd, paddingBuffer);
       }
     }
     
     logger.debug(TAG, `已添加到tar: ${relativePath} (${stat.size} 字节)`);
+  }
+
+  private writeFileContentToTar(tarFd: number, sourcePath: string, fileSize: number): void {
+    const sourceFile = SafeFileUtils.openSyncStrict(sourcePath, fs.OpenMode.READ_ONLY);
+    try {
+      let remaining = fileSize;
+      while (remaining > 0) {
+        const chunkSize = remaining > TAR_STREAM_BUFFER_SIZE ? TAR_STREAM_BUFFER_SIZE : remaining;
+        const buffer = new ArrayBuffer(chunkSize);
+        SafeFileUtils.readExactSync(sourceFile.fd, buffer, { length: chunkSize });
+        SafeFileUtils.writeExactSync(tarFd, buffer, { length: chunkSize });
+        remaining -= chunkSize;
+      }
+    } finally {
+      SafeFileUtils.closeSync(sourceFile);
+    }
   }
 
   /**
@@ -394,6 +436,83 @@ export class TarPackager {
       devminor: this.readString(view, 337, 8),
       prefix: this.readString(view, 345, 155)
     };
+  }
+
+  private isZeroBlock(buffer: ArrayBuffer): boolean {
+    const view = new Uint8Array(buffer);
+    for (let i = 0; i < view.length; i++) {
+      if (view[i] !== 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private validateTarHeader(buffer: ArrayBuffer, header: TarHeader): void {
+    const magic = header.magic.trim();
+    if (magic.length > 0 && magic !== 'ustar') {
+      throw new Error(`不支持的tar格式: magic=${header.magic}`);
+    }
+
+    const expectedChecksum = this.parseOctal(header.checksum, 'checksum');
+    const actualChecksum = this.calculateHeaderChecksum(buffer);
+    if (expectedChecksum !== actualChecksum) {
+      throw new Error(`tar头校验失败: entry=${this.getTarEntryName(header)}, expected=${expectedChecksum}, actual=${actualChecksum}`);
+    }
+
+    this.parseOctal(header.size, 'size');
+  }
+
+  private calculateHeaderChecksum(buffer: ArrayBuffer): number {
+    const view = new Uint8Array(buffer);
+    let checksum = 0;
+    for (let i = 0; i < view.length; i++) {
+      if (i >= 148 && i < 156) {
+        checksum += 32;
+      } else {
+        checksum += view[i];
+      }
+    }
+    return checksum;
+  }
+
+  private parseOctal(value: string, fieldName: string): number {
+    const normalized = value.trim();
+    if (normalized.length === 0) {
+      return 0;
+    }
+    for (let i = 0; i < normalized.length; i++) {
+      const code = normalized.charCodeAt(i);
+      if (code < 48 || code > 55) {
+        throw new Error(`tar ${fieldName}字段不是八进制: ${value}`);
+      }
+    }
+    return parseInt(normalized, 8);
+  }
+
+  private getTarEntryName(header: TarHeader): string {
+    if (header.prefix.length > 0) {
+      return `${header.prefix}/${header.name}`;
+    }
+    return header.name;
+  }
+
+  private resolveTarEntryPath(outputDir: string, entryName: string): string {
+    const normalizedEntry = entryName.replace(/\\/g, '/');
+    if (
+      normalizedEntry.length === 0 ||
+      normalizedEntry.startsWith('/') ||
+      normalizedEntry.startsWith('./') ||
+      normalizedEntry.includes('/../') ||
+      normalizedEntry === '..' ||
+      normalizedEntry.startsWith('../') ||
+      normalizedEntry.includes('\0') ||
+      normalizedEntry.includes(':')
+    ) {
+      throw new Error(`非法tar路径: ${entryName}`);
+    }
+
+    return `${outputDir}/${normalizedEntry}`;
   }
 
   /**

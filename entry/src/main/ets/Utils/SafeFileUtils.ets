@@ -1,9 +1,142 @@
 import fileIo, { ReadOptions, ReadTextOptions, WriteOptions, ListFileOptions } from '@ohos.file.fs';
 import { logger } from './Logger';
+import { util } from '@kit.ArkTS';
 
 const TAG = 'SafeFileUtils';
+const SAFE_FILE_IO_CHUNK_SIZE: number = 1024 * 1024;
 
 export class SafeFileUtils {
+  static copyFileSyncStrict(src: string | number, dest: string | number, mode?: number): void {
+    if (mode !== undefined) {
+      fileIo.copyFileSync(src, dest, mode);
+    } else {
+      fileIo.copyFileSync(src, dest);
+    }
+  }
+
+  static mkdirSyncStrict(path: string, recursion?: boolean): void {
+    if (recursion !== undefined) {
+      fileIo.mkdirSync(path, recursion);
+    } else {
+      fileIo.mkdirSync(path);
+    }
+  }
+
+  static openSyncStrict(path: string, mode?: number): fileIo.File {
+    if (mode !== undefined) {
+      return fileIo.openSync(path, mode);
+    }
+    return fileIo.openSync(path);
+  }
+
+  static readSyncStrict(fd: number, buffer: ArrayBuffer, options?: ReadOptions): number {
+    if (fd === -1) {
+      throw new Error('Invalid file descriptor');
+    }
+    if (options !== undefined) {
+      return fileIo.readSync(fd, buffer, options);
+    }
+    return fileIo.readSync(fd, buffer);
+  }
+
+  static readExactSync(fd: number, buffer: ArrayBuffer, options?: ReadOptions): void {
+    const expectedLength = options?.length !== undefined ? options.length : buffer.byteLength;
+    if (expectedLength > buffer.byteLength) {
+      throw new Error(`Read buffer too small: expected=${expectedLength}, buffer=${buffer.byteLength}`);
+    }
+    if (options?.offset !== undefined && options.offset !== 0) {
+      fileIo.lseek(fd, options.offset, fileIo.WhenceType.SEEK_CUR);
+    }
+    const targetView = new Uint8Array(buffer);
+    let totalRead = 0;
+    while (totalRead < expectedLength) {
+      const remaining = expectedLength - totalRead;
+      const chunkSize = remaining > SAFE_FILE_IO_CHUNK_SIZE ? SAFE_FILE_IO_CHUNK_SIZE : remaining;
+      const chunkBuffer = new ArrayBuffer(chunkSize);
+      const readBytes = SafeFileUtils.readSyncStrict(fd, chunkBuffer, { length: chunkSize });
+      if (readBytes <= 0) {
+        throw new Error(`Incomplete file read: expected=${expectedLength}, actual=${totalRead}`);
+      }
+      const chunkView = new Uint8Array(chunkBuffer);
+      targetView.set(chunkView.subarray(0, readBytes), totalRead);
+      totalRead += readBytes;
+    }
+  }
+
+  static renameSyncStrict(oldPath: string, newPath: string): void {
+    fileIo.renameSync(oldPath, newPath);
+  }
+
+  static statSyncStrict(file: string | number): fileIo.Stat {
+    return fileIo.statSync(file);
+  }
+
+  static unlinkSyncStrict(path: string): void {
+    fileIo.unlinkSync(path);
+  }
+
+  static writeSyncStrict(fd: number, buffer: ArrayBuffer | string, options?: WriteOptions): number {
+    if (fd === -1) {
+      throw new Error('Invalid file descriptor');
+    }
+    if (options !== undefined) {
+      return fileIo.writeSync(fd, buffer, options);
+    }
+    return fileIo.writeSync(fd, buffer);
+  }
+
+  static writeExactSync(fd: number, buffer: ArrayBuffer | string, options?: WriteOptions): void {
+    const expectedLength = options?.length !== undefined
+      ? options.length
+      : SafeFileUtils.getWriteBufferLength(buffer);
+    if (typeof buffer === 'string') {
+      const writtenBytes = SafeFileUtils.writeSyncStrict(fd, buffer, options);
+      if (writtenBytes !== expectedLength) {
+        throw new Error(`Incomplete file write: expected=${expectedLength}, actual=${writtenBytes}`);
+      }
+      return;
+    }
+
+    if (expectedLength > buffer.byteLength) {
+      throw new Error(`Write buffer too small: expected=${expectedLength}, buffer=${buffer.byteLength}`);
+    }
+    if (options?.offset !== undefined && options.offset !== 0) {
+      fileIo.lseek(fd, options.offset, fileIo.WhenceType.SEEK_CUR);
+    }
+    const sourceView = new Uint8Array(buffer);
+    let totalWritten = 0;
+    while (totalWritten < expectedLength) {
+      const remaining = expectedLength - totalWritten;
+      const chunkSize = remaining > SAFE_FILE_IO_CHUNK_SIZE ? SAFE_FILE_IO_CHUNK_SIZE : remaining;
+      const chunkBuffer = new ArrayBuffer(chunkSize);
+      const chunkView = new Uint8Array(chunkBuffer);
+      chunkView.set(sourceView.subarray(totalWritten, totalWritten + chunkSize));
+      const writtenBytes = SafeFileUtils.writeSyncStrict(fd, chunkBuffer, { length: chunkSize });
+      if (writtenBytes <= 0) {
+        throw new Error(`Incomplete file write: expected=${expectedLength}, actual=${totalWritten}`);
+      }
+      totalWritten += writtenBytes;
+    }
+  }
+
+  static writeStringExactSync(fd: number, content: string, options?: WriteOptions): void {
+    const expectedLength = options?.length !== undefined
+      ? options.length
+      : SafeFileUtils.getWriteBufferLength(content);
+    const writtenBytes = SafeFileUtils.writeSyncStrict(fd, content, options);
+    if (writtenBytes !== expectedLength) {
+      throw new Error(`Incomplete file write: expected=${expectedLength}, actual=${writtenBytes}`);
+    }
+  }
+
+  private static getWriteBufferLength(buffer: ArrayBuffer | string): number {
+    if (typeof buffer !== 'string') {
+      return buffer.byteLength;
+    }
+    const encoder = new util.TextEncoder();
+    return encoder.encodeInto(buffer).length;
+  }
+
   static accessSync(path: string, mode?: number, flag?: number): boolean {
     try {
       if (flag !== undefined) {

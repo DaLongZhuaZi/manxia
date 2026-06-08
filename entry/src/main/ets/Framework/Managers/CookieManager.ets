@@ -243,7 +243,7 @@ export class CookieManager {
       logger.info(TAG, `通过WebCookieManager获取Cookie: sourceId=${sourceId}, url=${normalizedUrl}, rawLength=${rawCookieString.length}`);
       const incomingEntries: CookieEntry[] = this.parseCookieHeaderString(rawCookieString);
       if (incomingEntries.length === 0) {
-        logger.warn(TAG, `WebCookieManager返回Cookie为空: sourceId=${sourceId}, url=${normalizedUrl}`);
+        logger.debug(TAG, `WebCookieManager返回Cookie为空: sourceId=${sourceId}, url=${normalizedUrl}`);
         return false;
       }
 
@@ -543,7 +543,7 @@ export class CookieManager {
           logger.info(TAG, `使用document.cookie补充保存Cookie: sourceId=${sourceId}, incoming=${incomingEntries.length}, merged=${mergedEntries.length}`);
           captured = true;
         } else {
-          logger.warn(TAG, `WebView中未找到Cookie: sourceId=${sourceId}`);
+          logger.debug(TAG, `WebView中未找到Cookie: sourceId=${sourceId}`);
         }
       }
     } catch (e) {
@@ -595,7 +595,7 @@ export class CookieManager {
       }
 
       if (setCookieValues.length === 0) {
-        logger.warn(TAG, '服务器未返回 Set-Cookie');
+        logger.debug(TAG, '服务器未返回 Set-Cookie');
         return false;
       }
 

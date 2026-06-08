@@ -1,3 +1,6 @@
 [submodule "manxia-extensions-source"]
 	path = manxia-extensions-source
-	url = https://gitee.com/dalongzz/manxia-extensions-source.git
+	url = https://github.com/DaLongZhuaZi/manxia-extensions-source.git
+[submodule "cloudflare/manxia-worker"]
+	path = cloudflare/manxia-worker
+	url = https://github.com/DaLongZhuaZi/manxia-cloudflare-worker.git

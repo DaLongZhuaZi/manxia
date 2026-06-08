@@ -15,6 +15,7 @@ import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UIContext, curves } from '@kit.ArkUI';
@@ -100,6 +101,33 @@ import {
   MangaReaderAbilityParamStore,
   MangaReaderAbilityWindowPayload
 } from '../Framework/Reader/MangaReaderAbilityParamStore';
+import {
+  ChapterSwitchPageGuard,
+  MangaReaderPageChangeGuardInput,
+  MangaReaderPageChangeGuardPlan,
+  MangaReaderPageGuardStatusInput,
+  MangaReaderPageGuardStatusPlan,
+  MangaReaderPageSyncGuard
+} from './MangaReaderPageSyncGuard';
+import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import {
+  MangaReadFlowEvent,
+  MangaReadFlowEventType,
+  MangaReadFlowSessionInfo,
+  MangaReadFlowSeverity,
+  MangaReadFlowSourceKind,
+  mapReadingModeToFlowMode
+} from '../Framework/Reader/MangaReadFlowTypes';
+import {
+  MangaReaderLaunchContext,
+  MangaReaderLaunchContextInput,
+  MangaReaderLaunchContextResolver
+} from '../Framework/Reader/MangaReaderLaunchContextResolver';
+import {
+  MangaChapterResolveGuard,
+  MangaChapterResolveGuardInput,
+  MangaChapterResolveGuardPlan
+} from '../Framework/Reader/MangaChapterResolveGuard';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 
@@ -139,6 +167,10 @@ export interface MangaReaderPageParams {
   readerInstanceId?: string;
   /** 独立阅读器实例标题，仅用于任务列表/窗口标题展示 */
   readerTitle?: string;
+  /** 导入/恢复流程来源会话ID，用于把导入和首次阅读串联 */
+  originImportId?: string;
+  /** 导入/恢复流程来源类型，例如 local_manga/pdf/download_sync */
+  originImportKind?: string;
 }
 
 /**
@@ -259,13 +291,6 @@ interface OperationErrorDetails {
   errorMessage: string;
   operation: string;
   timestamp: string;
-}
-
-interface ChapterSwitchPageGuard {
-  chapterId: string;
-  pageIndex: number;
-  direction: 'prev' | 'next';
-  expiresAt: number;
 }
 
 /**
@@ -481,8 +506,9 @@ export struct MangaReaderPage {
   @State showInteractionOverlay: boolean = false;// 初次进入不显示，等待读取真实阅读设置后再显示
   @State overlayDismissTimer: number = -1;
   @State isReadingSettingsReady: boolean = false;// 阅读设置是否已加载
-  private static hasShownInteractionHint: boolean = false;// 是否已经显示过交互提示（应用级别）
+  private static hasShownInteractionHint: boolean = false;// 进程内缓存，持久化状态见 SettingsManager
   private static lastShownReadingMode: ReadingMode | null = null;// 上次显示提示时的阅读模式
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   
   // 设置面板动画状态
   @State showDebugClickIndicator: boolean = false;
@@ -559,6 +585,12 @@ export struct MangaReaderPage {
   // 问题：MangaViewer 在初始化时会触发 onPageChange 回调，覆盖正确的阅读进度
   private isReaderInitialized: boolean = false;
   private chapterSwitchPageGuard: ChapterSwitchPageGuard | null = null;
+  private mangaReaderPageSyncGuard: MangaReaderPageSyncGuard = new MangaReaderPageSyncGuard();
+private mangaReadFlowMonitor: MangaReadFlowMonitor = MangaReadFlowMonitor.getInstance();
+private mangaReadFlowSessionId: string = '';
+private mangaReadFlowInitStartedAt: number = 0;
+private mangaReaderLaunchContextResolver: MangaReaderLaunchContextResolver = new MangaReaderLaunchContextResolver();
+private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterResolveGuard();
   private static readonly CHAPTER_SWITCH_PAGE_GUARD_MS: number = 3000;
   private hasNotifiedTransitionReaderReady: boolean = false;
   private transitionLoadingProgress: number = 0;
@@ -656,6 +688,8 @@ export struct MangaReaderPage {
             const hasPageIndex: boolean = rawKeys.includes('pageIndex');
             const hasFromPage: boolean = rawKeys.includes('fromPage');
             const hasCoverComponentId: boolean = rawKeys.includes('coverComponentId');
+            const hasOriginImportId: boolean = rawKeys.includes('originImportId');
+            const hasOriginImportKind: boolean = rawKeys.includes('originImportKind');
 
             if (hasManga || hasMangaId) {
               let inferredContentType: MangaReaderContentType = MangaReaderContentType.Local;
@@ -672,7 +706,9 @@ export struct MangaReaderPage {
                 chapterId: hasChapterId ? String(rawParamsObj['chapterId']) : undefined,
                 pageIndex: hasPageIndex ? Number(rawParamsObj['pageIndex']) : 0,
                 fromPage: hasFromPage ? String(rawParamsObj['fromPage']) : '未指定',
-                coverComponentId: hasCoverComponentId ? String(rawParamsObj['coverComponentId']) : undefined
+                coverComponentId: hasCoverComponentId ? String(rawParamsObj['coverComponentId']) : undefined,
+                originImportId: hasOriginImportId ? String(rawParamsObj['originImportId']) : undefined,
+                originImportKind: hasOriginImportKind ? String(rawParamsObj['originImportKind']) : undefined
               } as MangaReaderPageParams;
 
               this.pageParams = resultParams;
@@ -749,7 +785,9 @@ export struct MangaReaderPage {
       chapterTitle: source.chapterTitle,
       readerHostMode: MANGA_READER_ABILITY_HOST_MULTITON,
       readerInstanceId: payload.instanceId,
-      readerTitle: source.readerTitle
+      readerTitle: source.readerTitle,
+      originImportId: source.originImportId,
+      originImportKind: source.originImportKind
     };
     return params;
   }
@@ -1208,6 +1246,17 @@ export struct MangaReaderPage {
     } else if (this.shouldUseReaderTransition()) {
       logger.info(TAG, 'aboutToDisappear: close transition in progress, skip cancelTransition');
     }
+
+    if (this.mangaReadFlowSessionId.length > 0) {
+      this.recordMangaReadFlowEvent(
+        MangaReadFlowEventType.CLEANUP,
+        'about_to_disappear',
+        this.readerState.currentPageIndex,
+        'reader_page_cleanup'
+      );
+      this.mangaReadFlowMonitor.endSession(this.mangaReadFlowSessionId, 'about_to_disappear');
+      this.mangaReadFlowSessionId = '';
+    }
     
     logger.lifecycle(TAG, '漫画阅读器页面即将消失');
   }
@@ -1274,7 +1323,7 @@ export struct MangaReaderPage {
       interval: this.readingSettings.autoPageTurnInterval,
       skipIntro: this.readingSettings.skipIntroPages > 0,
       skipIntroPages: this.readingSettings.skipIntroPages,
-      autoSwitchChapter: false
+      autoSwitchChapter: true
     };
     
     this.autoPageTurnController = new AutoPageTurnController(config);
@@ -1298,6 +1347,7 @@ export struct MangaReaderPage {
       () => this.readerState.currentPageIndex,
       () => this.readerState.currentChapter?.pages.length || 0
     );
+    this.autoPageTurnController.setChapterEndCallback((): boolean => this.handleAutoPageTurnChapterEnd());
     
     logger.info(TAG, '自动翻页控制器已初始化');
   }
@@ -1590,7 +1640,7 @@ export struct MangaReaderPage {
   * 自动翻页按钮图标（启用/禁用）
   */
   private getAutoPageTurnIconResource(): Resource {
-    return this.autoPageTurnEnabled ? $r('sys.symbol.airplane_departure') : $r('sys.symbol.airplane_arrival');
+    return this.autoPageTurnEnabled ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill');
   }
   
   /**
@@ -1642,11 +1692,24 @@ export struct MangaReaderPage {
       interval: this.readingSettings.autoPageTurnInterval,
       skipIntro: this.readingSettings.skipIntroPages > 0,
       skipIntroPages: this.readingSettings.skipIntroPages,
-      autoSwitchChapter: false
+      autoSwitchChapter: true
     };
     
     this.autoPageTurnController.setConfig(config);
+    this.autoPageTurnController.setChapterEndCallback((): boolean => this.handleAutoPageTurnChapterEnd());
     logger.info(TAG, '自动翻页配置已更新');
+  }
+
+  private handleAutoPageTurnChapterEnd(): boolean {
+    if (!this.canSwitchToNextChapter()) {
+      this.getUIContext().getPromptAction().showToast({ message: '自动翻页已到最后一章' });
+      return false;
+    }
+    void this.saveReadingProgressInternal('autoPageTurnBeforeNextChapter').catch((error: Error) => {
+      logger.warn(TAG, `自动翻页切章前保存进度失败: ${error.message}`);
+    });
+    this.goToNextChapter();
+    return true;
   }
 
   /**
@@ -2301,6 +2364,10 @@ export struct MangaReaderPage {
       const needFallback: boolean = (externalMangaId.length === 0) || (externalMangaId.startsWith('id_')) || (externalChapterId.length === 0) || (externalChapterId.startsWith('id_'));
       if (needFallback) {
         logger.warn(TAG, `⚠️ 无法获取有效的外部ID, mangaId=${externalMangaId}, chapterId=${externalChapterId}, 使用fallback`);
+        this.recordMangaReadFlowDegraded(
+          'komiic_external_id_fallback_referer',
+          `mangaId=${externalMangaId}, chapterId=${externalChapterId}`
+        );
         newReferer = 'https://komiic.com/';
       } else {
         logger.info(TAG, `✅ 构造完整Referer: ${newReferer}`);
@@ -2365,6 +2432,7 @@ export struct MangaReaderPage {
           const errorMsg = `online_comic record ${mangaId} exists but externalId is missing\n` +
             `  online_comic record found but externalId is missing; fallback mapping cannot continue`;
           logger.error(TAG, errorMsg);
+          this.recordMangaReadFlowGuardRejected('missing_online_comic_external_id', errorMsg);
           throw new Error(errorMsg);
         }
       } else {
@@ -2402,6 +2470,7 @@ export struct MangaReaderPage {
             `  - id: ${chapter.id}\\n` +
             `  online_chapter record found but externalId is missing; fallback mapping cannot continue`;
           logger.error(TAG, errorMsg);
+          this.recordMangaReadFlowGuardRejected('missing_online_chapter_external_id', errorMsg);
           throw new Error(errorMsg);
         }
       } catch (err) {
@@ -2422,6 +2491,7 @@ export struct MangaReaderPage {
       `  - chapter.externalId: ${chapter.externalId}\\n` +
       `Please verify source parsing rules and chapter mapping`;
     logger.error(TAG, errorMsg);
+    this.recordMangaReadFlowGuardRejected('resolve_chapter_external_id_failed', errorMsg);
     throw new Error(errorMsg);
   }
 
@@ -2435,16 +2505,187 @@ export struct MangaReaderPage {
   private lastInitializedParamsKey: string = '';
 
   private buildInitParamsKey(params: MangaReaderPageParams): string {
-    const mangaId: string = params.mangaId || params.manga?.id || '';
-    const chapterId: string = params.chapterId || '';
-    const pageIndex: number = params.pageIndex !== undefined ? params.pageIndex : 0;
-    const contentType: string = String(params.contentType || '');
-    const sourceId: number = params.sourceId !== undefined ? params.sourceId : -1;
-    return `${mangaId}|${chapterId}|${pageIndex}|${contentType}|${sourceId}`;
+    return this.buildLaunchContext(params).initKey;
+  }
+
+  private buildLaunchContext(params: MangaReaderPageParams): MangaReaderLaunchContext {
+    const input: MangaReaderLaunchContextInput = new MangaReaderLaunchContextInput();
+    input.contentType = String(params.contentType || '');
+    input.mangaId = params.mangaId || params.manga?.id || '';
+    input.mangaTitle = params.manga?.title || '';
+    input.readerTitle = params.readerTitle || '';
+    input.chapterId = params.chapterId || '';
+    input.pageIndex = params.pageIndex !== undefined ? params.pageIndex : 0;
+    input.sourceId = params.sourceId !== undefined ? params.sourceId : -1;
+    input.readerHostMode = params.readerHostMode || '';
+    input.readerInstanceId = params.readerInstanceId || this.readerAbilityInstanceId;
+    input.originImportId = params.originImportId || '';
+    input.originImportKind = params.originImportKind || '';
+    return this.mangaReaderLaunchContextResolver.resolve(input);
   }
 
   private isRemoteProviderContentType(contentType: MangaReaderContentType): boolean {
     return contentType === MangaReaderContentType.Suwayomi || contentType === MangaReaderContentType.Komga;
+  }
+
+  private mapContentTypeToReadFlowSourceKind(contentType?: MangaReaderContentType): MangaReadFlowSourceKind {
+    return this.mangaReaderLaunchContextResolver.mapSourceKind(String(contentType || ''));
+  }
+
+  private ensureMangaReadFlowSession(params: MangaReaderPageParams): void {
+    if (this.mangaReadFlowSessionId.length > 0) {
+      return;
+    }
+    const launchContext: MangaReaderLaunchContext = this.buildLaunchContext(params);
+    const info: MangaReadFlowSessionInfo = new MangaReadFlowSessionInfo();
+    info.sessionId = this.mangaReadFlowMonitor.createSessionId('manga');
+    info.sourceKind = launchContext.sourceKind;
+    info.modeKind = mapReadingModeToFlowMode(this.readingSettings.readingMode);
+    info.contentId = launchContext.contentId;
+    info.contentTitle = launchContext.contentTitle;
+    info.chapterId = launchContext.chapterId;
+    info.pageIndex = launchContext.pageIndex;
+    info.sourceId = launchContext.sourceId;
+    info.readerHostMode = launchContext.readerHostMode;
+    info.readerInstanceId = launchContext.readerInstanceId;
+    info.originImportId = launchContext.originImportId;
+    info.originImportKind = launchContext.originImportKind;
+    info.startedAt = Date.now();
+    this.mangaReadFlowSessionId = this.mangaReadFlowMonitor.startSession(info);
+    this.mangaReadFlowInitStartedAt = info.startedAt;
+  }
+
+  private recordMangaReadFlowEvent(
+    eventType: MangaReadFlowEventType,
+    reason: string,
+    pageIndex: number,
+    detail: string
+  ): void {
+    if (this.mangaReadFlowSessionId.length <= 0) {
+      return;
+    }
+    const manga = this.readerState.currentManga;
+    const chapter = this.readerState.currentChapter;
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      eventType,
+      manga ? manga.id : (this.pageParams?.mangaId || ''),
+      chapter ? chapter.id : (this.pageParams?.chapterId || ''),
+      pageIndex,
+      reason
+    );
+    event.sourceKind = this.mapContentTypeToReadFlowSourceKind(this.pageParams?.contentType);
+    event.modeKind = mapReadingModeToFlowMode(this.readingSettings.readingMode);
+    event.chapterTitle = chapter ? chapter.title : '';
+    event.pageCount = chapter ? this.getChapterPageCount(chapter) : 0;
+    event.detail = detail;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordMangaReadFlowStatus(
+    eventType: MangaReadFlowEventType,
+    reason: string,
+    pageIndex: number,
+    detail: string,
+    severity: MangaReadFlowSeverity,
+    success: boolean
+  ): void {
+    if (this.mangaReadFlowSessionId.length <= 0) {
+      return;
+    }
+    const manga = this.readerState.currentManga;
+    const chapter = this.readerState.currentChapter;
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      eventType,
+      manga ? manga.id : (this.pageParams?.mangaId || ''),
+      chapter ? chapter.id : (this.pageParams?.chapterId || ''),
+      pageIndex,
+      reason
+    );
+    event.sourceKind = this.mapContentTypeToReadFlowSourceKind(this.pageParams?.contentType);
+    event.modeKind = mapReadingModeToFlowMode(this.readingSettings.readingMode);
+    event.chapterTitle = chapter ? chapter.title : '';
+    event.pageCount = chapter ? this.getChapterPageCount(chapter) : 0;
+    event.detail = detail;
+    event.severity = severity;
+    event.success = success;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordMangaReadFlowDegraded(reason: string, detail: string): void {
+    this.recordMangaReadFlowStatus(
+      MangaReadFlowEventType.FLOW_DEGRADED,
+      reason,
+      this.readerState.currentPageIndex,
+      detail,
+      MangaReadFlowSeverity.WARN,
+      true
+    );
+  }
+
+  private recordMangaReadFlowGuardRejected(reason: string, detail: string): void {
+    this.recordMangaReadFlowStatus(
+      MangaReadFlowEventType.FLOW_GUARD_REJECTED,
+      reason,
+      this.readerState.currentPageIndex,
+      detail,
+      MangaReadFlowSeverity.WARN,
+      true
+    );
+  }
+
+  private recordMangaReadFlowRecovered(reason: string, detail: string): void {
+    this.recordMangaReadFlowStatus(
+      MangaReadFlowEventType.FLOW_RECOVERED,
+      reason,
+      this.readerState.currentPageIndex,
+      detail,
+      MangaReadFlowSeverity.INFO,
+      true
+    );
+  }
+
+  private recordMangaReadFlowError(reason: string, errorMessage: string): void {
+    if (this.mangaReadFlowSessionId.length <= 0) {
+      return;
+    }
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      MangaReadFlowEventType.ERROR,
+      this.readerState.currentManga ? this.readerState.currentManga.id : (this.pageParams?.mangaId || ''),
+      this.readerState.currentChapter ? this.readerState.currentChapter.id : (this.pageParams?.chapterId || ''),
+      this.readerState.currentPageIndex,
+      reason
+    );
+    event.sourceKind = this.mapContentTypeToReadFlowSourceKind(this.pageParams?.contentType);
+    event.modeKind = mapReadingModeToFlowMode(this.readingSettings.readingMode);
+    event.success = false;
+    event.severity = MangaReadFlowSeverity.ERROR;
+    event.errorMessage = errorMessage;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordMangaReadFlowPagesResolved(reason: string, elapsedMs: number): void {
+    if (!this.readerState.currentChapter) {
+      return;
+    }
+    const pageCount: number = this.getChapterPageCount(this.readerState.currentChapter);
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      MangaReadFlowEventType.PAGES_RESOLVED,
+      this.readerState.currentManga ? this.readerState.currentManga.id : '',
+      this.readerState.currentChapter.id,
+      this.readerState.currentPageIndex,
+      reason
+    );
+    event.sourceKind = this.mapContentTypeToReadFlowSourceKind(this.pageParams?.contentType);
+    event.modeKind = mapReadingModeToFlowMode(this.readingSettings.readingMode);
+    event.chapterTitle = this.readerState.currentChapter.title;
+    event.pageCount = pageCount;
+    event.elapsedMs = elapsedMs;
+    event.detail = `pages=${pageCount}`;
+    this.mangaReadFlowMonitor.record(event);
   }
 
   private shouldUseReaderTransition(params?: MangaReaderPageParams | null): boolean {
@@ -2620,20 +2861,29 @@ export struct MangaReaderPage {
     if (chapter === null) {
       this.readerState.errorMessage = `Remote manga has no readable chapter: ${manga.title}`;
       this.readerState.isLoading = false;
+      this.recordMangaReadFlowError('remote_provider_no_chapter', this.readerState.errorMessage);
       this.notifyTransitionReaderReadyOnce('remote_provider_no_chapter');
       return true;
     }
 
     this.readerState.currentChapter = chapter;
     this.reportTransitionLoadingProgress(0.46, 'chapter_bound');
+    this.recordMangaReadFlowEvent(
+      MangaReadFlowEventType.CHAPTER_RESOLVED,
+      'remote_provider_chapter_bound',
+      params.pageIndex !== undefined ? params.pageIndex : 0,
+      `chapter=${chapter.title}`
+    );
 
     if (chapter.pages.length <= 0) {
       this.readerState.loadingMessage = `Loading chapter ${chapter.title}...`;
+      const remotePagesStartedAt: number = Date.now();
       const remotePages = await this.remoteLibraryBridge.loadChapterPages(manga, chapter);
       if (remotePages.length <= 0) {
         throw new Error(`Remote chapter has no pages: ${chapter.title}`);
       }
       chapter.pages = remotePages;
+      this.recordMangaReadFlowPagesResolved('remote_provider_pages_loaded', Date.now() - remotePagesStartedAt);
     }
 
     if (!chapter.totalPages || chapter.totalPages <= 0) {
@@ -2649,6 +2899,7 @@ export struct MangaReaderPage {
     if (totalPages <= 0 || chapter.pages.length <= 0) {
       this.readerState.errorMessage = `Remote chapter has no pages: ${chapter.title}`;
       this.readerState.isLoading = false;
+      this.recordMangaReadFlowError('remote_provider_no_pages', this.readerState.errorMessage);
       this.notifyTransitionReaderReadyOnce('remote_provider_no_pages');
       return true;
     }
@@ -2657,6 +2908,7 @@ export struct MangaReaderPage {
     const maxPageIndex = Math.max(0, chapter.pages.length - 1);
     this.readerState.currentPageIndex = Math.max(0, Math.min(requestedPageIndex, maxPageIndex));
     this.refreshCurrentMangaBookmarkState('initialize_remote_provider_reader');
+    this.recordMangaReadFlowPagesResolved('remote_provider_pages_ready', 0);
     this.reportTransitionLoadingProgress(0.72, 'chapter_pages_ready');
 
     await this.loadReadingSettings();
@@ -2846,6 +3098,13 @@ export struct MangaReaderPage {
       return;
     }
 
+    if (this.mangaReadFlowSessionId.length > 0 && this.lastInitializedParamsKey.length > 0 &&
+      this.lastInitializedParamsKey !== initKey) {
+      this.mangaReadFlowMonitor.endSession(this.mangaReadFlowSessionId, 'reader_reinitialize');
+      this.mangaReadFlowSessionId = '';
+    }
+    this.ensureMangaReadFlowSession(params);
+
     // 如果正在初始化，保存参数并等待完成后重新初始化
     if (this.isInitializing && this.initPromise) {
       const pendingKey = this.pendingParams ? this.buildInitParamsKey(this.pendingParams) : '';
@@ -2912,10 +3171,16 @@ export struct MangaReaderPage {
       }
       if (!this.onlineArchiveService.fileExists(archivePath)) {
         logger.warn(TAG, `在线已下载章节CBZ不存在，回退旧链路: ${archivePath}`);
+        const guardInput: MangaChapterResolveGuardInput = new MangaChapterResolveGuardInput();
+        guardInput.archivePath = archivePath;
+        guardInput.archiveExists = false;
+        const guardPlan: MangaChapterResolveGuardPlan = this.mangaChapterResolveGuard.buildPlan(guardInput);
+        this.recordMangaReadFlowDegraded(guardPlan.reason, guardPlan.detail);
         return false;
       }
 
       const pageInfos = await DataManager.getInstance().getOnlineChapterPages(chapter.id);
+      const extractStartedAt: number = Date.now();
       const extractResult: OnlineArchiveExtractResult = await this.onlineArchiveService.extractArchiveForReader({
         archivePath: archivePath,
         chapterId: chapter.id,
@@ -2930,15 +3195,34 @@ export struct MangaReaderPage {
       const networkPages = chapter.pages.filter(p => p.sourceType === ImageSourceType.NETWORK).length;
       if (networkPages > 0) {
         logger.info(TAG, `在线已下载章节(部分归档)已从CBZ解压加载: ${chapter.title}, pages=${chapter.pages.length}, network=${networkPages}, archive=${archivePath}`);
+        this.recordMangaReadFlowDegraded(
+          'online_archive_partial_network_pages',
+          `pages=${chapter.pages.length}, network=${networkPages}, archive=${archivePath}`
+        );
       } else {
         logger.info(TAG, `在线已下载章节已从CBZ解压加载: ${chapter.title}, pages=${chapter.pages.length}, archive=${archivePath}`);
+        this.recordMangaReadFlowRecovered(
+          'online_archive_extract_success',
+          `pages=${chapter.pages.length}, archive=${archivePath}`
+        );
       }
+      if (chapter.pages.length <= 0) {
+        this.recordMangaReadFlowDegraded('online_archive_extract_empty', `archive=${archivePath}`);
+      }
+      this.recordMangaReadFlowPagesResolved(
+        `online_archive_extract network=${networkPages}`,
+        Date.now() - extractStartedAt
+      );
       if (kickstartViewer && this.mangaViewerComponent) {
         this.mangaViewerComponent.kickstartLoading();
       }
       return true;
     } catch (error) {
       logger.warn(TAG, `在线已下载章节CBZ解压加载失败，回退旧链路: chapter=${chapter.title}, ${String(error)}`);
+      this.recordMangaReadFlowDegraded(
+        'online_archive_extract_failed_fallback',
+        `chapter=${chapter.title}, error=${String(error)}`
+      );
       return false;
     }
   }
@@ -3325,7 +3609,7 @@ export struct MangaReaderPage {
                   headers.cookie = cookieStr2;
                   logger.debug(TAG, '📋 步骤11: Cookie已添加到请求头');
                 } else {
-                  logger.warn(TAG, '读取Cookie失败: Cookie为空');
+                  logger.debug(TAG, 'Cookie为空，按无Cookie图源继续准备网络请求头');
                 }
               } catch (cookieError) {
                 const msg: string = cookieError instanceof Error ? cookieError.message : String(cookieError);
@@ -3570,6 +3854,12 @@ export struct MangaReaderPage {
       logger.debug(TAG, `Requested chapterId from params: ${params.chapterId}`);
       logger.info(TAG, `📚 设置当前漫画: ${manga.title}`);
       this.readerState.currentManga = manga;
+      this.recordMangaReadFlowEvent(
+        MangaReadFlowEventType.CHAPTER_RESOLVED,
+        'manga_bound',
+        params.pageIndex !== undefined ? params.pageIndex : 0,
+        `manga=${manga.title}, chapters=${manga.chapters.length}`
+      );
       this.reportTransitionLoadingProgress(0.28, 'manga_bound');
       logger.info(TAG, `📚 开始章节初始化，漫画总章节数: ${manga.chapters.length}`);
 
@@ -3651,6 +3941,12 @@ export struct MangaReaderPage {
       }
 
       this.reportTransitionLoadingProgress(0.46, 'chapter_bound');
+      this.recordMangaReadFlowEvent(
+        MangaReadFlowEventType.CHAPTER_RESOLVED,
+        'chapter_bound',
+        params.pageIndex !== undefined ? params.pageIndex : 0,
+        `chapter=${this.readerState.currentChapter.title}, pages=${this.readerState.currentChapter.pages.length}`
+      );
 
       const shouldTryOnlineArchivePages =
         params.contentType === MangaReaderContentType.OnlineDownloaded ||
@@ -3740,6 +4036,10 @@ export struct MangaReaderPage {
         let validCachedDbPages: OnlinePageInfo[] = [];
         if (shouldRefreshVolatilePages) {
           logger.info(TAG, '[缓存优先] 易失票据图源跳过 online_page 缓存，刷新页面票据');
+          this.recordMangaReadFlowDegraded(
+            'volatile_source_skip_online_page_cache',
+            `chapterId=${this.readerState.currentChapter.id}, sourceId=${params.sourceId !== undefined ? params.sourceId : -1}`
+          );
         } else {
           try {
             const cachedDataManager = DataManager.getInstance();
@@ -3747,6 +4047,10 @@ export struct MangaReaderPage {
             validCachedDbPages = cachedDbPages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
           } catch (cacheError) {
             logger.warn(TAG, `[缓存优先] 查询失败，回退到引擎路径: ${String(cacheError)}`);
+            this.recordMangaReadFlowDegraded(
+              'online_page_cache_query_failed',
+              `chapterId=${this.readerState.currentChapter.id}, error=${String(cacheError)}`
+            );
           }
         }
         if (validCachedDbPages.length > 0) {
@@ -3772,6 +4076,10 @@ export struct MangaReaderPage {
           });
           this.readerState.currentChapter.pages = cachedMangaPages;
           logger.info(TAG, `[P0] Cache-first hit online_page: count=${cachedMangaPages.length}`);
+          this.recordMangaReadFlowRecovered(
+            'online_page_cache_first_hit',
+            `chapterId=${currentChapterId}, pages=${cachedMangaPages.length}`
+          );
           if (this.mangaViewerComponent) {
             this.mangaViewerComponent.kickstartLoading();
           }
@@ -3806,6 +4114,10 @@ export struct MangaReaderPage {
             if (prefetched && prefetched.length > 0) {
               pageListResult = { success: true, data: prefetched, duration: 0, actionCount: 0 };
               logger.info(TAG, `[预取] 使用预取的页面列表: ${prefetched.length} 页`);
+              this.recordMangaReadFlowRecovered(
+                'prefetched_page_list_used',
+                `sourceId=${params.sourceId}, chapterExternalId=${externalChapterId}, pages=${prefetched.length}`
+              );
             }
           }
 
@@ -3814,12 +4126,19 @@ export struct MangaReaderPage {
             pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
             if (!pageListResult.success || !pageListResult.data || pageListResult.data.length === 0) {
               logger.warn(TAG, '[P0] 首次获取页面列表失败/为空，立即重试一次');
+              const firstError: string = pageListResult.error || 'empty_page_list';
+              const firstCount: number = pageListResult.data ? pageListResult.data.length : 0;
+              this.recordMangaReadFlowDegraded(
+                'source_page_list_first_attempt_failed',
+                `mangaExternalId=${externalMangaId}, chapterExternalId=${externalChapterId}, pages=${firstCount}, error=${firstError}`
+              );
               pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
             }
 
           }
 
           if (pageListResult === null) {
+            this.recordMangaReadFlowError('source_page_list_null_result', '从源站加载页面列表失败');
             throw new Error('从源站加载页面列表失败');
           }
           
@@ -3854,6 +4173,10 @@ export struct MangaReaderPage {
           if (!resolvedPageListResult.success || !resolvedPageData) {
             const errorMsg: string = resolvedPageListResult.error || '获取页面列表失败';
             logger.error(TAG, `❌ 页面列表获取失败: ${errorMsg}`);
+            this.recordMangaReadFlowError(
+              'source_page_list_failed',
+              `mangaExternalId=${externalMangaId}, chapterExternalId=${externalChapterId}, error=${errorMsg}`
+            );
             this.readerState.errorMessage = `加载章节页面失败\n${errorMsg}`;
             this.readerState.isLoading = false;
             throw new Error(errorMsg);
@@ -3889,6 +4212,10 @@ export struct MangaReaderPage {
           let sourcePages: SourcePageInfo[] = sourcePageData;
           if (!shouldRefreshVolatilePages && sourcePages.length === 0 && dbPages.length > 0) {
             logger.warn(TAG, '⚠️ 网络获取页面列表为空，回退使用online_page表缓存页面');
+            this.recordMangaReadFlowDegraded(
+              'source_page_list_empty_cache_fallback',
+              `chapterId=${this.readerState.currentChapter.id}, cachedPages=${dbPages.length}`
+            );
             sourcePages = dbPages.map((p: OnlinePageInfo): SourcePageInfo => {
               const sp: SourcePageInfo = {
                 page: p.pageNumber,
@@ -3907,12 +4234,20 @@ export struct MangaReaderPage {
             const errorMsg = 'No valid page URL found in source response';
             logger.error(TAG, `原始数据: ${JSON.stringify(sourcePages.slice(0, 3))}`);
             logger.error(TAG, `原始数据: ${JSON.stringify(sourcePages.slice(0, 3))}`);
+            this.recordMangaReadFlowError(
+              'source_page_list_no_valid_url',
+              `chapterId=${this.readerState.currentChapter.id}, sourcePages=${sourcePages.length}`
+            );
             this.readerState.errorMessage = `构建章节页面失败\n${errorMsg}\n请检查源站解析规则后重试`;
             this.readerState.isLoading = false;
             throw new Error(errorMsg);
           }
           
           logger.info(TAG, `✅ 有效图片数量: ${validPages.length}`);
+          this.recordMangaReadFlowRecovered(
+            'source_page_list_resolved',
+            `chapterId=${this.readerState.currentChapter.id}, pages=${validPages.length}, volatile=${shouldRefreshVolatilePages}`
+          );
           
           // 转换SourcePageInfo为MangaPage
           const pagesToConvert = validPages;
@@ -4046,6 +4381,7 @@ export struct MangaReaderPage {
         logger.error(TAG, `❌ 当前章节没有页面数据`);
         this.readerState.errorMessage = `章节《${this.readerState.currentChapter.title}》没有页面数据`;
         this.readerState.isLoading = false;
+        this.recordMangaReadFlowError('chapter_without_pages', this.readerState.errorMessage);
         // [修复] 提前返回时也要通知过渡动画，防止覆盖层阻止交互
         this.notifyTransitionReaderReadyOnce('chapter_without_pages');
         return;
@@ -4074,6 +4410,7 @@ export struct MangaReaderPage {
       }
 
       this.reportTransitionLoadingProgress(0.72, 'chapter_pages_ready');
+      this.recordMangaReadFlowPagesResolved('chapter_pages_ready', Date.now() - this.mangaReadFlowInitStartedAt);
 
       logger.debug(TAG, '⚙️ 开始加载阅读设置');
       await this.loadReadingSettings();
@@ -4100,6 +4437,12 @@ export struct MangaReaderPage {
       this.lastInitializedParamsKey = this.buildInitParamsKey(params);
       this.readerState.isLoading = false;
       this.reportTransitionLoadingProgress(0.94, 'init_done_wait_visual_ready');
+      this.recordMangaReadFlowEvent(
+        MangaReadFlowEventType.DISPLAY_COMMITTED,
+        'first_display',
+        this.readerState.currentPageIndex,
+        'reader_initialized_wait_visual_ready'
+      );
       logger.info(TAG, '✅ 漫画阅读器初始化完成');
       
       // 动画覆盖层退出时机：等待首屏视觉内容就绪（由MangaViewer回调+轮询共同保障）
@@ -4131,6 +4474,7 @@ export struct MangaReaderPage {
       this.readerState.errorMessage =
         `阅读器初始化失败: ${errorMessage}\n\n漫画: ${mangaInfo}\n章节 ID: ${params?.chapterId || '未提供'}\n页码: ${params?.pageIndex || 0}\n\n请检查网络和数据源状态后重试。`;
       this.readerState.isLoading = false;
+      this.recordMangaReadFlowError('init_failed', errorMessage);
       
       // [修复] 初始化失败时也要通知过渡动画，防止覆盖层阻止交互
       this.notifyTransitionReaderReadyOnce('init_failed');
@@ -4549,7 +4893,7 @@ export struct MangaReaderPage {
         this.updateVolumeKeyListener();
         this.syncAutoPageTurnStateFromSettings();
         this.isReadingSettingsReady = true;
-        logger.info(TAG, '📋 使用默认阅读设置，准备显示交互提示Overlay');
+        logger.info(TAG, '📋 使用默认阅读设置，尝试显示交互提示Overlay');
         if (!this.showInteractionOverlay) {
           this.showInteractionOverlay = true;
           this.showInteractionOverlayWithAnimation();
@@ -4599,7 +4943,7 @@ export struct MangaReaderPage {
       this.syncAutoPageTurnStateFromSettings();
       this.isReadingSettingsReady = true;
       
-      logger.info(TAG, '✅ 阅读设置加载完成（来自数据库），准备显示交互提示Overlay');
+      logger.info(TAG, '✅ 阅读设置加载完成（来自数据库），尝试显示交互提示Overlay');
       if (!this.showInteractionOverlay) {
         this.showInteractionOverlay = true;
         this.showInteractionOverlayWithAnimation();
@@ -4629,7 +4973,7 @@ export struct MangaReaderPage {
       this.updateVolumeKeyListener();
       this.syncAutoPageTurnStateFromSettings();
       this.isReadingSettingsReady = true;
-      logger.info(TAG, '📋 回退到默认阅读设置，准备显示交互提示Overlay');
+      logger.info(TAG, '📋 回退到默认阅读设置，尝试显示交互提示Overlay');
       if (!this.showInteractionOverlay) {
         this.showInteractionOverlay = true;
         this.showInteractionOverlayWithAnimation();
@@ -4842,27 +5186,42 @@ export struct MangaReaderPage {
 
   /**
    * 检查是否应该显示交互提示
-   * 检查是否应该显示交互提示
    * 只在以下情况显示：
-   * 1. 第一次进入阅读器（应用级别）
+   * 1. 首次使用漫画阅读器
+   * 2. 阅读模式发生变化
     */
   private shouldShowInteractionHint(): boolean {
     const currentMode = this.readingSettings.readingMode;
-    
-    // 情况1：第一次进入阅读器
-    if (!MangaReaderPage.hasShownInteractionHint) {
-      logger.info(TAG, '首次进入阅读器，显示交互提示');
+
+    if (MangaReaderPage.hasShownInteractionHint && MangaReaderPage.lastShownReadingMode === currentMode) {
+      logger.debug(TAG, `本进程已显示过当前阅读模式交互提示，跳过显示: mode=${currentMode}`);
+      return false;
+    }
+
+    const persistedMode = this.settingsManager.getString(SettingKeys.MANGA_READER_INTERACTION_HINT_LAST_MODE, '');
+    if (persistedMode.length === 0) {
+      logger.info(TAG, '首次使用漫画阅读器，显示交互提示');
       return true;
     }
-    
-    // 情况2：阅读模式发生变化
-    if (MangaReaderPage.lastShownReadingMode !== null && MangaReaderPage.lastShownReadingMode !== currentMode) {
-      logger.info(TAG, `Reading mode changed: ${MangaReaderPage.lastShownReadingMode} -> ${currentMode}`);
+
+    if (persistedMode !== currentMode) {
+      logger.info(TAG, `阅读模式变更，显示交互提示: ${persistedMode} -> ${currentMode}`);
       return true;
     }
-    
-    logger.debug(TAG, '已显示过交互提示且阅读模式未变化，跳过显示');
+
+    MangaReaderPage.hasShownInteractionHint = true;
+    MangaReaderPage.lastShownReadingMode = currentMode;
+    logger.debug(TAG, `已持久化显示过当前阅读模式交互提示，跳过显示: mode=${currentMode}`);
     return false;
+  }
+
+  private async persistInteractionHintShown(mode: ReadingMode): Promise<void> {
+    try {
+      await this.settingsManager.setString(SettingKeys.MANGA_READER_INTERACTION_HINT_LAST_MODE, String(mode));
+      logger.debug(TAG, `已持久化漫画阅读交互提示模式: ${mode}`);
+    } catch (error) {
+      logger.warn(TAG, `保存漫画阅读交互提示标记失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -4886,6 +5245,7 @@ export struct MangaReaderPage {
     }
     MangaReaderPage.lastShownReadingMode = this.readingSettings.readingMode;
     MangaReaderPage.hasShownInteractionHint = true;
+    void this.persistInteractionHintShown(this.readingSettings.readingMode);
     
     // 5秒后自动隐藏
     this.overlayDismissTimer = setTimeout(() => {
@@ -5128,28 +5488,30 @@ export struct MangaReaderPage {
   private setChapterSwitchPageGuard(chapter: MangaChapter, pageIndex: number, direction: 'prev' | 'next'): void {
     const normalizedPageIndex: number = this.normalizeReaderPageIndexForChapter(chapter, pageIndex);
     this.isReaderInitialized = false;
-    this.chapterSwitchPageGuard = {
-      chapterId: chapter.id,
-      pageIndex: normalizedPageIndex,
-      direction: direction,
-      expiresAt: Date.now() + MangaReaderPage.CHAPTER_SWITCH_PAGE_GUARD_MS
-    };
+    const guard: ChapterSwitchPageGuard = new ChapterSwitchPageGuard();
+    guard.chapterId = chapter.id;
+    guard.pageIndex = normalizedPageIndex;
+    guard.direction = direction;
+    guard.expiresAt = Date.now() + MangaReaderPage.CHAPTER_SWITCH_PAGE_GUARD_MS;
+    this.chapterSwitchPageGuard = guard;
     logger.debug(TAG, `跨章页码守门已设置: chapter=${chapter.title}, direction=${direction}, target=${normalizedPageIndex + 1}`);
   }
 
   private getActiveChapterSwitchPageGuard(chapter: MangaChapter | null): ChapterSwitchPageGuard | null {
-    if (!this.chapterSwitchPageGuard) {
-      return null;
-    }
-    if (Date.now() > this.chapterSwitchPageGuard.expiresAt) {
-      logger.debug(TAG, `跨章页码守门已过期: chapterId=${this.chapterSwitchPageGuard.chapterId}`);
+    const input: MangaReaderPageGuardStatusInput = new MangaReaderPageGuardStatusInput();
+    input.guard = this.chapterSwitchPageGuard;
+    input.currentChapterId = chapter ? chapter.id : '';
+    input.now = Date.now();
+    const plan: MangaReaderPageGuardStatusPlan = this.mangaReaderPageSyncGuard.getGuardStatus(input);
+    if (plan.shouldExpireGuard && plan.guard) {
+      logger.debug(TAG, `跨章页码守门已过期: chapterId=${plan.guard.chapterId}`);
       this.chapterSwitchPageGuard = null;
       return null;
     }
-    if (chapter && this.chapterSwitchPageGuard.chapterId !== chapter.id) {
+    if (plan.shouldIgnoreForChapterMismatch) {
       return null;
     }
-    return this.chapterSwitchPageGuard;
+    return plan.hasActiveGuard ? plan.guard : null;
   }
 
   private clearChapterSwitchPageGuard(reason: string): void {
@@ -5170,11 +5532,17 @@ export struct MangaReaderPage {
       return true;
     }
     const normalizedPageIndex: number = this.normalizeReaderPageIndexForChapter(chapter, pageIndex);
-    if (normalizedPageIndex === guard.pageIndex) {
+    const input: MangaReaderPageChangeGuardInput = new MangaReaderPageChangeGuardInput();
+    input.guard = guard;
+    input.normalizedPageIndex = normalizedPageIndex;
+    const plan: MangaReaderPageChangeGuardPlan = this.mangaReaderPageSyncGuard.buildPageChangePlan(input);
+    if (plan.shouldClearGuard) {
       this.clearChapterSwitchPageGuard('matched_page_change');
+    }
+    if (plan.shouldAccept) {
       return true;
     }
-    logger.debug(TAG, `忽略跨章期间不匹配的页码回调: incoming=${pageIndex + 1}, normalized=${normalizedPageIndex + 1}, expected=${guard.pageIndex + 1}, direction=${guard.direction}`);
+    logger.debug(TAG, `忽略跨章期间不匹配的页码回调: incoming=${pageIndex + 1}, normalized=${normalizedPageIndex + 1}, expected=${plan.expectedPageIndex + 1}, direction=${plan.direction}`);
     return false;
   }
 
@@ -6471,6 +6839,12 @@ export struct MangaReaderPage {
       logger.warn(TAG, `条漫章节切换: 未找到章节 ${chapterId}`);
       return;
     }
+    this.recordMangaReadFlowEvent(
+      MangaReadFlowEventType.CHAPTER_RESOLVED,
+      'webtoon_chapter_switch',
+      pageIndex,
+      `from=${currentChapter.id}, to=${chapterId}, title=${chapterTitle}`
+    );
     
     // [修复B2] 确保新章节有有效的页面数据
     // [修复B2] 确保新章节有有效的页面数据
@@ -6986,6 +7360,12 @@ export struct MangaReaderPage {
     // 保存到数据库（会插入新记录，新章节的记录自动覆盖旧章节）
     // 保存到数据库（会插入新记录，新章节的记录自动覆盖旧章节）
     await this.dataService.saveReadingProgress(manga.id, chapter.id, pageIndex, duration, sourceId, mangaData);
+    this.recordMangaReadFlowEvent(
+      MangaReadFlowEventType.PROGRESS_SAVED,
+      trigger,
+      pageIndex,
+      `duration=${duration}, sourceId=${sourceId !== undefined ? sourceId : -1}`
+    );
 
     // 更新Manga对象的阅读进度（确保内存中的数据和数据库一致）
     manga.readingProgress.currentChapterId = chapter.id;
@@ -7955,6 +8335,16 @@ export struct MangaReaderPage {
   /**
    * 切换到下一章节
     */
+  private canSwitchToNextChapter(): boolean {
+    const currentManga = this.readerState.currentManga;
+    const currentChapter = this.readerState.currentChapter;
+    if (!currentManga || !currentChapter || currentManga.chapters.length <= 0) {
+      return false;
+    }
+    const currentIndex = currentManga.chapters.findIndex(ch => ch.id === currentChapter.id);
+    return currentIndex >= 0 && currentIndex < currentManga.chapters.length - 1;
+  }
+
   private goToNextChapter(): void {
     const currentManga = this.readerState.currentManga;
     const currentChapter = this.readerState.currentChapter;
@@ -8436,7 +8826,7 @@ export struct MangaReaderPage {
       })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.stickers'))
+        SymbolGlyph($r('sys.symbol.highlighter_line'))
           .fontColor([this.getToolbarIconColor()])
       }
       .width(48)
@@ -8572,7 +8962,7 @@ export struct MangaReaderPage {
 
       // 错误状态1：加载失败
         Button() {
-          SymbolGlyph($r('sys.symbol.circle_on_circle'))
+          SymbolGlyph($r('sys.symbol.page_turning'))
             .fontColor([this.getToolbarIconColor()])
 
         }
@@ -8803,6 +9193,7 @@ export struct MangaReaderPage {
           chapterTick: this.chapterTick,// [新增] 传递章节切换计数器
           sourceId: this.currentSourceId > 0 ? this.currentSourceId : undefined,
           mangaId: this.readerState.currentManga ? this.readerState.currentManga.id : this.pageParams?.mangaId,
+          readFlowSessionId: this.mangaReadFlowSessionId,
           preloadCurrentPages: this.sourcePreloadSettings.preloadCurrentPages,
           preloadNextPages: this.sourcePreloadSettings.preloadNextPages,
           contentType: this.pageParams?.contentType,// [新增] 传递内容类型（用于区分在线/本地漫画）
@@ -8829,9 +9220,21 @@ export struct MangaReaderPage {
               if (!this.isReaderInitialized) {
                 logger.debug(TAG, `漫画阅读组件尚未初始化完成，暂不处理页码变化: ${pageIndex + 1}`);
               // [修复] 延迟设置初始化完成标志，确保 MangaViewer 完全初始化后才允许保存阅读进度
+                this.recordMangaReadFlowEvent(
+                  MangaReadFlowEventType.PAGE_CHANGED,
+                  'rejected_before_initialized',
+                  pageIndex,
+                  'viewer_page_change_rejected'
+                );
                 return;
               }
               if (!this.shouldAcceptPageChangeDuringChapterSwitch(pageIndex)) {
+                this.recordMangaReadFlowEvent(
+                  MangaReadFlowEventType.PAGE_CHANGED,
+                  'rejected_chapter_switch_guard',
+                  pageIndex,
+                  'viewer_page_change_rejected'
+                );
                 return;
               }
               
@@ -8841,6 +9244,12 @@ export struct MangaReaderPage {
                 ? this.normalizeReaderPageIndexForChapter(chapterForPageChange, pageIndex)
                 : pageIndex;
               this.syncReaderPageState(safePageIndex);
+              this.recordMangaReadFlowEvent(
+                MangaReadFlowEventType.PAGE_CHANGED,
+                'viewer_page_change',
+                safePageIndex,
+                `raw=${pageIndex}`
+              );
               this.refreshCurrentMangaBookmarkState('viewer_page_change');
               // 使用 setTimeout 确保 MangaViewer 的初始化回调（如 onPageChange）已经执行完毕
               this.delayAutoPageTurnForInteraction();
@@ -10188,7 +10597,7 @@ export struct MangaReaderPage {
       }
       return latest as MangaReaderPageParams;
     } catch (e) {
-      logger.error(TAG, '初始化阅读器失败', e instanceof Error ? e.message : String(e));
+      logger.debug(TAG, `NavPathStack参数暂不可用，等待NavDestination.onReady: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   }
@@ -10212,6 +10621,8 @@ export struct MangaReaderPage {
       const hasFromPage: boolean = keys.includes('fromPage');
       const hasCoverComponentId: boolean = keys.includes('coverComponentId');
       const hasSourceName: boolean = keys.includes('sourceName');
+      const hasOriginImportId: boolean = keys.includes('originImportId');
+      const hasOriginImportKind: boolean = keys.includes('originImportKind');
       let ct: MangaReaderContentType = MangaReaderContentType.Local;
       if (hasSourceId) {
         ct = MangaReaderContentType.OnlineUndownloaded;
@@ -10225,11 +10636,13 @@ export struct MangaReaderPage {
         chapterId: hasChapterId ? String(raw['chapterId']) : undefined,
         pageIndex: hasPageIndex ? Number(raw['pageIndex']) : 0,
         fromPage: hasFromPage ? String(raw['fromPage']) : '未指定',
-        coverComponentId: hasCoverComponentId ? String(raw['coverComponentId']) : undefined
+        coverComponentId: hasCoverComponentId ? String(raw['coverComponentId']) : undefined,
+        originImportId: hasOriginImportId ? String(raw['originImportId']) : undefined,
+        originImportKind: hasOriginImportKind ? String(raw['originImportKind']) : undefined
       } as MangaReaderPageParams;
       return result;
     } catch (e) {
-      logger.error(TAG, '初始化阅读器失败', e instanceof Error ? e.message : String(e));
+      logger.debug(TAG, `Router参数暂不可用，等待NavDestination.onReady: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   }
@@ -10243,7 +10656,7 @@ export struct MangaReaderPage {
       params = this.resolveParamsFromRouter();
     }
     if (!params) {
-      logger.error(TAG, '初始化阅读器失败：未找到阅读参数');
+      logger.info(TAG, '阅读参数尚未就绪，等待NavDestination.onReady');
       return;
     }
     this.pageParams = params;

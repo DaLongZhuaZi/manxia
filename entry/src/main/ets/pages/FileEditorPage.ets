@@ -7,30 +7,39 @@ import { SafeUtils } from '../Utils/SafeUtils';
  * 文件路径: entry/src/main/ets/pages/FileEditorPage.ets
  */
 
-import { promptAction } from '@kit.ArkUI';
 import { picker, fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
+import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
-import { CodeEditorComponent, EditorTheme, CodeEditorConfig, CodeEditorCallbacks, CodeEditorController } from '../components/editor/CodeEditorComponent';
-import { MarkdownViewerComponent, MarkdownTheme, TocItem, MarkdownViewerCallbacks, MarkdownViewerController } from '../components/editor/MarkdownViewerComponent';
-import { fileEditorService, FileInfo, SearchResult } from '../Framework/Editor/FileEditorService';
+import { CodeEditorComponent, EditorTheme, CodeEditorController } from '../components/editor/CodeEditorComponent';
+import { MarkdownViewerComponent, MarkdownTheme, TocItem, MarkdownViewerController } from '../components/editor/MarkdownViewerComponent';
+import {
+  fileEditorService,
+  SearchResult,
+  FileEditorOpenSource,
+  FileEditorSaveTarget,
+  FileEditorSaveTargetType,
+  FileEditorOpenParams,
+  FileEditorFeatureAudit,
+  FileEditorFeatureCheck,
+  FileEditorFeatureStatus,
+  FileEditorLinkedSaveResult,
+  FileEditorPageState,
+  FileEditorTabSnapshot
+} from '../Framework/Editor/FileEditorService';
+import { FILE_EDITOR_ABILITY_HOST_MODE } from '../Framework/Editor/FileEditorAbilityConstants';
+import {
+  eventBus,
+  GameEvent,
+  FileEditorDocumentPayload,
+  FileEditorCapabilityPayload
+} from '../Framework/EventBus';
 import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'FileEditorPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-
-/**
- * 页面参数
- */
-export interface FileEditorParams {
-  filePath?: string;
-  content?: string;
-  language?: string;
-  readOnly?: boolean;
-  title?: string;
-}
 
 /**
  * 编辑模式
@@ -53,10 +62,32 @@ interface TabInfo {
   language: string;
   isDirty: boolean;
   isReadOnly: boolean;
+  origin: FileEditorOpenSource;
+  saveTarget: FileEditorSaveTarget;
 }
 
 interface ThemeState {
   currentTheme: ThemeType;
+}
+
+interface EditorSettingsState {
+  showLineNumbers?: boolean;
+  showMinimap?: boolean;
+  wordWrap?: boolean;
+  fontSize?: number;
+  tabSize?: number;
+  insertSpaces?: boolean;
+  autoIndent?: boolean;
+  bracketPairColorization?: boolean;
+  renderWhitespace?: string;
+  cursorStyle?: string;
+  cursorBlinking?: string;
+  smoothScrolling?: boolean;
+  folding?: boolean;
+  autoClosingBrackets?: boolean;
+  autoClosingQuotes?: boolean;
+  formatOnPaste?: boolean;
+  formatOnType?: boolean;
 }
 
 @ComponentV2
@@ -65,6 +96,11 @@ export struct FileEditorPage {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   pathStack: NavPathStack = new NavPathStack();
   
+  @Local private instanceId: string = '';
+  @Local private sessionId: string = '';
+  @Local private hostMode: string = '';
+  @Local private origin: FileEditorOpenSource = FileEditorOpenSource.MANUAL;
+  @Local private saveTarget: FileEditorSaveTarget = fileEditorService.createSaveTarget(FileEditorSaveTargetType.NONE);
   @Local private filePath: string = '';
   @Local private fileName: string = '文件编辑器';
   @Local private content: string = '';
@@ -106,6 +142,9 @@ export struct FileEditorPage {
   @Local private activeTabId: string = '';
   @Local private showNewFileDialog: boolean = false;
   @Local private newFileName: string = '';
+  @Local private showCapabilityPanel: boolean = false;
+  @Local private capabilityPanelOpacity: number = 0;
+  @Local private capabilityAudit: FileEditorFeatureAudit | null = null;
   @Local private settingsPanelOpacity: number = 0;
   @Local private helpPanelOpacity: number = 0;
   @Local private newFileDialogOpacity: number = 0;
@@ -115,6 +154,8 @@ export struct FileEditorPage {
   private pendingTabContent: string | null = null;
   private pendingTabLanguage: string | null = null;
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
+  private hasHandledInitialParams: boolean = false;
+  private isClosingInstance: boolean = false;
   
   aboutToAppear(): void {
     WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, this.getUIContext());
@@ -142,6 +183,9 @@ export struct FileEditorPage {
   }
   
   aboutToDisappear(): void {
+    if (!this.isClosingInstance) {
+      this.saveCurrentInstanceSnapshot();
+    }
     WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     // 移除主题监听器
     if (this.themeChangeCallback) {
@@ -156,24 +200,24 @@ export struct FileEditorPage {
     try {
       const settings = AppStorage.get<string>('editorSettings');
       if (settings) {
-        const parsed = SafeUtils.parseObj(settings) as Record<string, boolean | number | string>;
-        this.showLineNumbers = parsed['showLineNumbers'] as boolean ?? true;
-        this.showMinimap = parsed['showMinimap'] as boolean ?? true;
-        this.wordWrap = parsed['wordWrap'] as boolean ?? false;
-        this.fontSize = parsed['fontSize'] as number ?? 14;
-        this.tabSize = parsed['tabSize'] as number ?? 4;
-        this.insertSpaces = parsed['insertSpaces'] as boolean ?? true;
-        this.autoIndent = parsed['autoIndent'] as boolean ?? true;
-        this.bracketPairColorization = parsed['bracketPairColorization'] as boolean ?? true;
-        this.renderWhitespace = parsed['renderWhitespace'] as string ?? 'none';
-        this.cursorStyle = parsed['cursorStyle'] as string ?? 'line';
-        this.cursorBlinking = parsed['cursorBlinking'] as string ?? 'blink';
-        this.smoothScrolling = parsed['smoothScrolling'] as boolean ?? true;
-        this.folding = parsed['folding'] as boolean ?? true;
-        this.autoClosingBrackets = parsed['autoClosingBrackets'] as boolean ?? true;
-        this.autoClosingQuotes = parsed['autoClosingQuotes'] as boolean ?? true;
-        this.formatOnPaste = parsed['formatOnPaste'] as boolean ?? false;
-        this.formatOnType = parsed['formatOnType'] as boolean ?? false;
+        const parsed = SafeUtils.parseObj<EditorSettingsState>(settings);
+        this.showLineNumbers = parsed.showLineNumbers ?? true;
+        this.showMinimap = parsed.showMinimap ?? true;
+        this.wordWrap = parsed.wordWrap ?? false;
+        this.fontSize = parsed.fontSize ?? 14;
+        this.tabSize = parsed.tabSize ?? 4;
+        this.insertSpaces = parsed.insertSpaces ?? true;
+        this.autoIndent = parsed.autoIndent ?? true;
+        this.bracketPairColorization = parsed.bracketPairColorization ?? true;
+        this.renderWhitespace = parsed.renderWhitespace ?? 'none';
+        this.cursorStyle = parsed.cursorStyle ?? 'line';
+        this.cursorBlinking = parsed.cursorBlinking ?? 'blink';
+        this.smoothScrolling = parsed.smoothScrolling ?? true;
+        this.folding = parsed.folding ?? true;
+        this.autoClosingBrackets = parsed.autoClosingBrackets ?? true;
+        this.autoClosingQuotes = parsed.autoClosingQuotes ?? true;
+        this.formatOnPaste = parsed.formatOnPaste ?? false;
+        this.formatOnType = parsed.formatOnType ?? false;
       }
     } catch (e) {
       logger.error(TAG, `加载编辑器设置失败: ${e}`);
@@ -185,7 +229,7 @@ export struct FileEditorPage {
    */
   private saveEditorSettings(): void {
     try {
-      const settings = JSON.stringify({
+      const settingsState: EditorSettingsState = {
         showLineNumbers: this.showLineNumbers,
         showMinimap: this.showMinimap,
         wordWrap: this.wordWrap,
@@ -203,7 +247,8 @@ export struct FileEditorPage {
         autoClosingQuotes: this.autoClosingQuotes,
         formatOnPaste: this.formatOnPaste,
         formatOnType: this.formatOnType
-      });
+      };
+      const settings = JSON.stringify(settingsState);
       AppStorage.setOrCreate('editorSettings', settings);
     } catch (e) {
       logger.error(TAG, `保存编辑器设置失败: ${e}`);
@@ -229,6 +274,477 @@ export struct FileEditorPage {
       this.showSettings = false;
     }, 200);
   }
+
+  /**
+   * 重置页面级编辑状态，确保同一路由组件复用时不会串实例
+   */
+  private resetEditorInstanceState(nextInstanceId: string): void {
+    this.instanceId = nextInstanceId;
+    this.sessionId = '';
+    this.hostMode = '';
+    this.origin = FileEditorOpenSource.MANUAL;
+    this.saveTarget = fileEditorService.createSaveTarget(FileEditorSaveTargetType.NONE);
+    this.filePath = '';
+    this.fileName = '文件编辑器';
+    this.content = '';
+    this.originalContent = '';
+    this.language = 'plaintext';
+    this.isReadOnly = false;
+    this.isDirty = false;
+    this.isLoading = false;
+    this.isSaving = false;
+    this.editMode = EditMode.EDIT;
+    this.showSearchBar = false;
+    this.searchText = '';
+    this.replaceText = '';
+    this.searchResults = [];
+    this.currentSearchIndex = 0;
+    this.showSettings = false;
+    this.tocItems = [];
+    this.showToc = false;
+    this.showHelp = false;
+    this.tabs = [];
+    this.activeTabId = '';
+    this.showNewFileDialog = false;
+    this.newFileName = '';
+    this.showCapabilityPanel = false;
+    this.capabilityPanelOpacity = 0;
+    this.capabilityAudit = null;
+    this.settingsPanelOpacity = 0;
+    this.helpPanelOpacity = 0;
+    this.newFileDialogOpacity = 0;
+    this.editorController = null;
+    this.previewController = null;
+    this.pendingTabContent = null;
+    this.pendingTabLanguage = null;
+    this.isClosingInstance = false;
+    logger.info(TAG, `文件编辑器页面实例状态已重置: instance=${nextInstanceId}`);
+  }
+
+  /**
+   * 保存当前页面实例快照
+   */
+  private saveCurrentInstanceSnapshot(): void {
+    if (this.instanceId.length === 0) {
+      return;
+    }
+
+    this.syncCurrentTabState();
+    const tabs: FileEditorTabSnapshot[] = [];
+    for (const tab of this.tabs) {
+      const snapshot: FileEditorTabSnapshot = {
+        id: tab.id,
+        filePath: tab.filePath,
+        fileName: tab.fileName,
+        content: tab.content,
+        originalContent: tab.originalContent,
+        language: tab.language,
+        isDirty: tab.isDirty,
+        isReadOnly: tab.isReadOnly,
+        origin: tab.origin,
+        saveTarget: tab.saveTarget
+      };
+      tabs.push(snapshot);
+    }
+
+    const state: FileEditorPageState = {
+      instanceId: this.instanceId,
+      sessionId: this.sessionId,
+      origin: this.origin,
+      saveTarget: this.saveTarget,
+      filePath: this.filePath,
+      fileName: this.fileName,
+      content: this.content,
+      originalContent: this.originalContent,
+      language: this.language,
+      isReadOnly: this.isReadOnly,
+      isDirty: this.isDirty,
+      editMode: this.editMode,
+      showSearchBar: this.showSearchBar,
+      searchText: this.searchText,
+      replaceText: this.replaceText,
+      currentSearchIndex: this.currentSearchIndex,
+      tabs: tabs,
+      activeTabId: this.activeTabId
+    };
+    fileEditorService.savePageState(state);
+  }
+
+  /**
+   * 恢复页面实例快照
+   */
+  private restoreInstanceSnapshot(state: FileEditorPageState): void {
+    this.isClosingInstance = false;
+    this.instanceId = state.instanceId;
+    this.sessionId = state.sessionId;
+    this.origin = state.origin;
+    this.saveTarget = state.saveTarget;
+    this.filePath = state.filePath;
+    this.fileName = state.fileName;
+    this.content = state.content;
+    this.originalContent = state.originalContent;
+    this.language = state.language;
+    this.isReadOnly = state.isReadOnly;
+    this.isDirty = state.isDirty;
+    this.editMode = this.parseEditMode(state.editMode);
+    this.showSearchBar = state.showSearchBar;
+    this.searchText = state.searchText;
+    this.replaceText = state.replaceText;
+    this.currentSearchIndex = state.currentSearchIndex;
+    const tabs: TabInfo[] = [];
+    for (const tab of state.tabs) {
+      const restoredTab: TabInfo = {
+        id: tab.id,
+        filePath: tab.filePath,
+        fileName: tab.fileName,
+        content: tab.content,
+        originalContent: tab.originalContent,
+        language: tab.language,
+        isDirty: tab.isDirty,
+        isReadOnly: tab.isReadOnly,
+        origin: tab.origin,
+        saveTarget: tab.saveTarget
+      };
+      tabs.push(restoredTab);
+    }
+    this.tabs = tabs;
+    this.activeTabId = state.activeTabId;
+    this.pendingTabContent = this.content;
+    this.pendingTabLanguage = this.language;
+    if (this.editorController) {
+      this.editorController.setContent(this.content, this.language);
+      this.pendingTabContent = null;
+      this.pendingTabLanguage = null;
+    }
+    if (this.language === 'markdown' && this.previewController) {
+      this.previewController.renderMarkdown(this.content);
+    }
+    this.auditEditorCapabilities(false);
+    logger.info(TAG, `文件编辑器页面实例快照已恢复: instance=${state.instanceId}, tabs=${state.tabs.length}`);
+  }
+
+  private parseEditMode(mode: string): EditMode {
+    if (mode === EditMode.PREVIEW) {
+      return EditMode.PREVIEW;
+    }
+    if (mode === EditMode.SPLIT) {
+      return EditMode.SPLIT;
+    }
+    return EditMode.EDIT;
+  }
+
+  /**
+   * 关闭功能检查面板
+   */
+  private closeCapabilityPanel(): void {
+    this.getUIContext().animateTo({ duration: 200 }, () => {
+      this.capabilityPanelOpacity = 0;
+    });
+    setTimeout(() => {
+      this.showCapabilityPanel = false;
+    }, 200);
+  }
+
+  /**
+   * 从编辑器控制器同步最新文本
+   */
+  private async syncContentFromEditor(): Promise<void> {
+    if (this.editorController) {
+      const latestContent = await this.editorController.getContent();
+      this.content = latestContent;
+      this.isDirty = latestContent !== this.originalContent;
+      if (this.language === 'markdown' && this.previewController) {
+        this.previewController.renderMarkdown(latestContent);
+      }
+    }
+    this.syncCurrentTabState();
+    if (this.sessionId.length > 0) {
+      fileEditorService.touchSession(this.sessionId);
+    }
+  }
+
+  /**
+   * 写入指定路径
+   */
+  private async writeContentToPath(path: string, content: string): Promise<void> {
+    await fileEditorService.writeFile(path, content);
+  }
+
+  /**
+   * 标记当前标签已保存
+   */
+  private markCurrentTabSaved(path: string, fileName: string, savedContent: string): void {
+    this.markTabSaved(this.activeTabId, path, fileName, savedContent, this.origin, this.saveTarget);
+  }
+
+  /**
+   * 标记指定标签已保存
+   */
+  private markTabSaved(tabId: string, path: string, fileName: string, savedContent: string,
+    origin: FileEditorOpenSource, saveTarget: FileEditorSaveTarget): void {
+    if (tabId.length === 0) {
+      return;
+    }
+
+    const updatedTabs: TabInfo[] = [];
+    for (const tab of this.tabs) {
+      if (tab.id === tabId) {
+        const updatedTab: TabInfo = {
+          id: tab.id,
+          filePath: path,
+          fileName: fileName,
+          content: savedContent,
+          originalContent: savedContent,
+          language: tab.language,
+          isDirty: false,
+          isReadOnly: tab.isReadOnly,
+          origin: origin,
+          saveTarget: saveTarget
+        };
+        updatedTabs.push(updatedTab);
+      } else {
+        updatedTabs.push(tab);
+      }
+    }
+    this.tabs = updatedTabs;
+
+    if (tabId !== this.activeTabId) {
+      return;
+    }
+
+    this.filePath = path;
+    this.fileName = fileName;
+    this.content = savedContent;
+    this.originalContent = savedContent;
+    this.isDirty = false;
+    this.origin = origin;
+    this.saveTarget = saveTarget;
+  }
+
+  /**
+   * 从路径中提取文件名
+   */
+  private getDisplayNameFromPath(path: string, fallback: string): string {
+    const normalized = path.replace(/\\/g, '/');
+    const parts = normalized.split('/');
+    const last = parts.length > 0 ? parts[parts.length - 1] : '';
+    if (last.length > 0) {
+      return decodeURIComponent(last);
+    }
+    return fallback;
+  }
+
+  /**
+   * 发布编辑器文档事件
+   */
+  private publishDocumentEvent(eventName: string, linkedApplied: boolean, message: string): void {
+    const payload = new FileEditorDocumentPayload(
+      this.sessionId,
+      this.origin,
+      this.saveTarget.type,
+      this.saveTarget.id ?? '',
+      this.saveTarget.name ?? '',
+      this.filePath,
+      this.fileName,
+      this.language,
+      this.content,
+      this.isDirty,
+      Date.now(),
+      linkedApplied,
+      message
+    );
+    eventBus.publish(eventName, payload);
+  }
+
+  /**
+   * 发布指定标签的文档事件
+   */
+  private publishTabDocumentEvent(eventName: string, tab: TabInfo, filePath: string, fileName: string,
+    isDirty: boolean, linkedApplied: boolean, message: string): void {
+    const payload = new FileEditorDocumentPayload(
+      this.sessionId,
+      tab.origin,
+      tab.saveTarget.type,
+      tab.saveTarget.id ?? '',
+      tab.saveTarget.name ?? '',
+      filePath,
+      fileName,
+      tab.language,
+      tab.content,
+      isDirty,
+      Date.now(),
+      linkedApplied,
+      message
+    );
+    eventBus.publish(eventName, payload);
+  }
+
+  /**
+   * 执行功能完整性检查
+   */
+  private auditEditorCapabilities(showPanel: boolean = true): void {
+    const audit = fileEditorService.auditCapabilities(
+      this.sessionId,
+      this.language,
+      this.isReadOnly,
+      this.saveTarget,
+      this.filePath.length > 0,
+      this.tabs.length
+    );
+    this.capabilityAudit = audit;
+    const summary = `就绪 ${audit.readyCount} 项，部分可用 ${audit.partialCount} 项，不可用 ${audit.unavailableCount} 项`;
+    eventBus.publish(
+      GameEvent.FILE_EDITOR_CAPABILITY_AUDITED,
+      new FileEditorCapabilityPayload(
+        audit.sessionId,
+        audit.readyCount,
+        audit.partialCount,
+        audit.unavailableCount,
+        audit.checkedAt,
+        summary
+      )
+    );
+    if (showPanel) {
+      this.capabilityPanelOpacity = 0;
+      this.showCapabilityPanel = true;
+      setTimeout(() => {
+        this.getUIContext().animateTo({ duration: 200 }, () => {
+          this.capabilityPanelOpacity = 1;
+        });
+      }, 10);
+    }
+  }
+
+  /**
+   * 保存后执行业务联动
+   */
+  private async applyLinkedSaveIfNeeded(): Promise<FileEditorLinkedSaveResult> {
+    return await fileEditorService.applyLinkedSave(this.saveTarget, this.content);
+  }
+
+  /**
+   * 保存非当前标签，不依赖编辑器控制器状态
+   */
+  private async saveDetachedTab(tab: TabInfo): Promise<boolean> {
+    if (tab.isReadOnly) {
+      return true;
+    }
+
+    let savedPath = tab.filePath;
+    let savedName = tab.fileName;
+
+    if (savedPath.length > 0) {
+      await this.writeContentToPath(savedPath, tab.content);
+    } else if ((tab.saveTarget.type === FileEditorSaveTargetType.FILE_PATH ||
+      tab.saveTarget.type === FileEditorSaveTargetType.EXTERNAL_DOCUMENT) &&
+      tab.saveTarget.path !== undefined && tab.saveTarget.path.length > 0) {
+      savedPath = tab.saveTarget.path;
+      savedName = this.getDisplayNameFromPath(savedPath, tab.fileName);
+      await this.writeContentToPath(savedPath, tab.content);
+    } else if (tab.saveTarget.shouldApplyToApp !== true) {
+      logger.warn(TAG, `跳过无保存路径的非当前标签: ${tab.fileName}`);
+      return false;
+    }
+
+    const linkedResult = await fileEditorService.applyLinkedSave(tab.saveTarget, tab.content);
+    if (!linkedResult.success) {
+      this.publishTabDocumentEvent(GameEvent.FILE_EDITOR_SAVED, tab, savedPath, savedName, true, false, linkedResult.message);
+      logger.warn(TAG, `非当前标签应用联动失败: ${tab.fileName}, ${linkedResult.message}`);
+      return false;
+    }
+
+    this.markTabSaved(tab.id, savedPath, savedName, tab.content, tab.origin, tab.saveTarget);
+    this.publishTabDocumentEvent(
+      GameEvent.FILE_EDITOR_SAVED,
+      tab,
+      savedPath,
+      savedName,
+      false,
+      tab.saveTarget.shouldApplyToApp === true,
+      linkedResult.message
+    );
+    return true;
+  }
+
+  /**
+   * 初始化独立编辑会话
+   */
+  private initializeEditorSession(params: FileEditorOpenParams | undefined, resolvedInstanceId: string): void {
+    const openParams: FileEditorOpenParams = {
+      instanceId: resolvedInstanceId,
+      sessionId: params?.sessionId ?? resolvedInstanceId,
+      hostMode: params?.hostMode,
+      filePath: params?.filePath,
+      content: params?.content,
+      language: params?.language,
+      readOnly: params?.readOnly,
+      title: params?.title,
+      origin: params?.origin,
+      saveTarget: params?.saveTarget
+    };
+    const session = fileEditorService.createSession(openParams);
+    this.instanceId = session.instanceId;
+    this.sessionId = session.sessionId;
+    this.hostMode = params?.hostMode ?? '';
+    this.origin = session.origin;
+    this.saveTarget = session.saveTarget;
+  }
+
+  /**
+   * 处理进入页面参数
+   */
+  private handleEditorParams(params: FileEditorOpenParams | undefined): void {
+    const nextInstanceId = params?.instanceId && params.instanceId.length > 0
+      ? params.instanceId
+      : this.hasHandledInitialParams && this.instanceId.length > 0
+        ? this.instanceId
+        : fileEditorService.createInstanceId();
+    if (this.hasHandledInitialParams && this.instanceId === nextInstanceId) {
+      this.isClosingInstance = false;
+      return;
+    }
+    if (!this.hasHandledInitialParams || this.instanceId !== nextInstanceId) {
+      if (!this.isClosingInstance) {
+        this.saveCurrentInstanceSnapshot();
+      }
+      const snapshot = fileEditorService.getPageState(nextInstanceId);
+      if (snapshot) {
+        this.restoreInstanceSnapshot(snapshot);
+        this.hasHandledInitialParams = true;
+        return;
+      }
+      this.resetEditorInstanceState(nextInstanceId);
+      this.hasHandledInitialParams = true;
+    }
+    this.initializeEditorSession(params, nextInstanceId);
+
+    if (params) {
+      logger.info(TAG, `接收到参数: session=${this.sessionId}, filePath=${params.filePath}, language=${params.language}, title=${params.title}`);
+
+      if (params.filePath) {
+        this.filePath = params.filePath;
+        this.isReadOnly = params.readOnly ?? false;
+        if (params.language) {
+          this.language = params.language;
+        }
+        if (params.title) {
+          this.fileName = params.title;
+        }
+        this.loadFile();
+      } else if (params.content !== undefined) {
+        this.content = params.content;
+        this.originalContent = params.content;
+        this.language = params.language ?? 'plaintext';
+        this.fileName = params.title ?? '未命名';
+        this.isReadOnly = params.readOnly ?? false;
+        this.addTab('', this.fileName, this.content, this.language, this.isReadOnly);
+      } else {
+        this.auditEditorCapabilities(false);
+      }
+    } else {
+      this.auditEditorCapabilities(false);
+    }
+  }
   
   /**
    * 加载文件
@@ -236,9 +752,14 @@ export struct FileEditorPage {
   private async loadFile(): Promise<void> {
     if (!this.filePath) return;
     
+    const loadingInstanceId = this.instanceId;
     this.isLoading = true;
     try {
       const fileInfo = await fileEditorService.getFileInfo(this.filePath);
+      if (loadingInstanceId !== this.instanceId) {
+        logger.warn(TAG, `忽略过期文件信息加载结果: loading=${loadingInstanceId}, current=${this.instanceId}`);
+        return;
+      }
       // 如果没有预设文件名，使用文件信息中的名称
       if (!this.fileName || this.fileName === '文件编辑器') {
         this.fileName = fileInfo.name;
@@ -249,11 +770,16 @@ export struct FileEditorPage {
       }
       
       this.content = await fileEditorService.readFile(this.filePath);
+      if (loadingInstanceId !== this.instanceId) {
+        logger.warn(TAG, `忽略过期文件内容加载结果: loading=${loadingInstanceId}, current=${this.instanceId}`);
+        return;
+      }
       this.originalContent = this.content;
       this.isDirty = false;
       
       // 创建标签页
       this.addTab(this.filePath, this.fileName, this.content, this.language, this.isReadOnly);
+      this.auditEditorCapabilities(false);
       
       logger.info(TAG, `文件加载成功: ${this.fileName}, 语言: ${this.language}, 内容长度: ${this.content.length}`);
     } catch (e) {
@@ -268,19 +794,54 @@ export struct FileEditorPage {
    * 保存文件
    */
   private async saveFile(): Promise<void> {
-    if (!this.filePath || this.isReadOnly) {
-      // 如果没有文件路径，提示另存为
-      this.showSaveAsDialog();
+    if (this.isReadOnly) {
+      this.getUIContext().getPromptAction().showToast({ message: '当前文件为只读模式' });
       return;
     }
     
     this.isSaving = true;
     try {
-      await fileEditorService.writeFile(this.filePath, this.content);
-      this.originalContent = this.content;
-      this.isDirty = false;
-      this.getUIContext().getPromptAction().showToast({ message: '保存成功' });
-      logger.info(TAG, '文件保存成功');
+      await this.syncContentFromEditor();
+
+      const needsLinkedSave = this.saveTarget.shouldApplyToApp === true;
+      let savedPath = this.filePath;
+      let savedName = this.fileName;
+
+      if (savedPath.length > 0) {
+        await this.writeContentToPath(savedPath, this.content);
+      } else if (this.saveTarget.type === FileEditorSaveTargetType.FILE_PATH &&
+        this.saveTarget.path !== undefined && this.saveTarget.path.length > 0) {
+        savedPath = this.saveTarget.path;
+        savedName = this.getDisplayNameFromPath(savedPath, this.fileName);
+        await this.writeContentToPath(savedPath, this.content);
+      } else if (this.saveTarget.type === FileEditorSaveTargetType.EXTERNAL_DOCUMENT &&
+        this.saveTarget.path !== undefined && this.saveTarget.path.length > 0) {
+        savedPath = this.saveTarget.path;
+        savedName = this.getDisplayNameFromPath(savedPath, this.fileName);
+        await this.writeContentToPath(savedPath, this.content);
+      } else if (!needsLinkedSave) {
+        const pickedPath = await this.saveFileAs();
+        if (pickedPath.length === 0) {
+          return;
+        }
+        savedPath = pickedPath;
+        savedName = this.getDisplayNameFromPath(savedPath, this.fileName);
+      }
+
+      const linkedResult = await this.applyLinkedSaveIfNeeded();
+      if (!linkedResult.success) {
+        this.isDirty = true;
+        this.syncCurrentTabState();
+        this.publishDocumentEvent(GameEvent.FILE_EDITOR_SAVED, false, linkedResult.message);
+        this.getUIContext().getPromptAction().showToast({ message: linkedResult.message });
+        logger.warn(TAG, `文件保存后的应用联动失败: ${linkedResult.message}`);
+        return;
+      }
+
+      this.markCurrentTabSaved(savedPath, savedName, this.content);
+      this.publishDocumentEvent(GameEvent.FILE_EDITOR_SAVED, needsLinkedSave, linkedResult.message);
+      this.getUIContext().getPromptAction().showToast({ message: needsLinkedSave ? linkedResult.message : '保存成功' });
+      logger.info(TAG, `文件保存成功: session=${this.sessionId}, path=${savedPath}, linked=${needsLinkedSave}`);
     } catch (e) {
       logger.error(TAG, `保存文件失败: ${e}`);
       this.getUIContext().getPromptAction().showToast({ message: `保存失败: ${e}` });
@@ -293,8 +854,53 @@ export struct FileEditorPage {
    * 显示另存为对话框
    */
   private showSaveAsDialog(): void {
-    // TODO: 实现文件选择器
-    this.getUIContext().getPromptAction().showToast({ message: '请先指定文件路径' });
+    void this.saveFileAsAndMark();
+  }
+
+  /**
+   * 另存为文件
+   */
+  private async saveFileAs(): Promise<string> {
+    try {
+      await this.syncContentFromEditor();
+      const documentSaveOptions = new picker.DocumentSaveOptions();
+      documentSaveOptions.newFileNames = [this.fileName || 'untitled.txt'];
+      const documentViewPicker = new picker.DocumentViewPicker();
+      const uris = await documentViewPicker.save(documentSaveOptions);
+
+      if (!uris || uris.length === 0) {
+        return '';
+      }
+
+      const targetUri = uris[0];
+      const encoder = new util.TextEncoder();
+      const buffer = encoder.encodeInto(this.content);
+      const destFile = await fileIo.open(targetUri, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      await fileIo.write(destFile.fd, buffer.buffer);
+      await fileIo.close(destFile);
+      const nextFileName = this.getDisplayNameFromPath(targetUri, this.fileName);
+      this.saveTarget = fileEditorService.createSaveTarget(FileEditorSaveTargetType.FILE_PATH, '', nextFileName, targetUri);
+      logger.info(TAG, `文件另存为成功: ${targetUri}`);
+      return targetUri;
+    } catch (error) {
+      logger.error(TAG, `另存为失败: ${error}`);
+      this.getUIContext().getPromptAction().showToast({ message: `另存为失败: ${error}` });
+      return '';
+    }
+  }
+
+  /**
+   * 另存为并同步当前标签状态
+   */
+  private async saveFileAsAndMark(): Promise<string> {
+    const path = await this.saveFileAs();
+    if (path.length > 0) {
+      const fileName = this.getDisplayNameFromPath(path, this.fileName);
+      this.markCurrentTabSaved(path, fileName, this.content);
+      this.publishDocumentEvent(GameEvent.FILE_EDITOR_SAVED, false, `另存为 ${path}`);
+      this.getUIContext().getPromptAction().showToast({ message: '另存为成功' });
+    }
+    return path;
   }
   
   /**
@@ -303,6 +909,7 @@ export struct FileEditorPage {
   private onContentChanged(newContent: string): void {
     this.content = newContent;
     this.isDirty = newContent !== this.originalContent;
+    this.syncCurrentTabState();
     
     // 如果是Markdown，更新预览
     if (this.language === 'markdown' && this.previewController) {
@@ -391,10 +998,18 @@ export struct FileEditorPage {
       originalContent: content,
       language: language,
       isDirty: false,
-      isReadOnly: isReadOnly
+      isReadOnly: isReadOnly,
+      origin: this.origin,
+      saveTarget: this.saveTarget
     };
-    this.tabs = [...this.tabs, newTab];
+    const newTabs: TabInfo[] = [];
+    for (const tab of this.tabs) {
+      newTabs.push(tab);
+    }
+    newTabs.push(newTab);
+    this.tabs = newTabs;
     this.switchToTab(tabId);
+    this.auditEditorCapabilities(false);
     return tabId;
   }
   
@@ -415,6 +1030,8 @@ export struct FileEditorPage {
       this.language = tab.language;
       this.isDirty = tab.isDirty;
       this.isReadOnly = tab.isReadOnly;
+      this.origin = tab.origin;
+      this.saveTarget = tab.saveTarget;
       
       // 设置编辑模式
       if (this.language === 'markdown') {
@@ -427,8 +1044,11 @@ export struct FileEditorPage {
       this.pendingTabContent = this.content;
       this.pendingTabLanguage = this.language;
       
-      // 注意：不要在这里直接调用editorController.setContent
-      // 因为编辑模式切换会导致组件重建，editorController会在onReady中处理pendingTabContent
+      if (this.editorController) {
+        this.editorController.setContent(this.content, this.language);
+        this.pendingTabContent = null;
+        this.pendingTabLanguage = null;
+      }
     }
   }
   
@@ -449,7 +1069,9 @@ export struct FileEditorPage {
         originalContent: oldTab.originalContent,
         language: oldTab.language,
         isDirty: this.isDirty,
-        isReadOnly: oldTab.isReadOnly
+        isReadOnly: oldTab.isReadOnly,
+        origin: this.origin,
+        saveTarget: this.saveTarget
       };
       const updatedTabs: TabInfo[] = [];
       for (let i = 0; i < this.tabs.length; i++) {
@@ -490,6 +1112,9 @@ export struct FileEditorPage {
       primaryButton: {
         value: '保存并关闭',
         action: async () => {
+          if (tabId !== this.activeTabId) {
+            this.switchToTab(tabId);
+          }
           if (tabId === this.activeTabId) {
             await this.saveFile();
           }
@@ -527,8 +1152,10 @@ export struct FileEditorPage {
         this.content = '';
         this.originalContent = '';
         this.isDirty = false;
+        this.saveTarget = fileEditorService.createSaveTarget(FileEditorSaveTargetType.NONE);
       }
     }
+    this.auditEditorCapabilities(false);
   }
   
   /**
@@ -549,60 +1176,89 @@ export struct FileEditorPage {
         primaryButton: {
           value: '保存并退出',
           action: async () => {
-            await this.saveAllFiles();
-            this.pathStack.pop();
+            const saved = await this.saveAllFiles();
+            if (saved) {
+              this.publishDocumentEvent(GameEvent.FILE_EDITOR_CLOSED, false, '保存并退出');
+              this.isClosingInstance = true;
+              fileEditorService.closeSession(this.sessionId);
+              void this.closeEditorHost('保存并退出');
+            }
           }
         },
         secondaryButton: {
           value: '直接退出',
           action: () => {
-            this.pathStack.pop();
+            this.publishDocumentEvent(GameEvent.FILE_EDITOR_CLOSED, false, '直接退出');
+            this.isClosingInstance = true;
+            fileEditorService.closeSession(this.sessionId);
+            void this.closeEditorHost('直接退出');
           }
         },
         cancel: () => {}
       });
     } else {
-      this.pathStack.pop();
+      this.publishDocumentEvent(GameEvent.FILE_EDITOR_CLOSED, false, '退出');
+      this.isClosingInstance = true;
+      fileEditorService.closeSession(this.sessionId);
+      void this.closeEditorHost('退出');
     }
+  }
+
+  private async closeEditorHost(reason: string): Promise<void> {
+    if (this.hostMode === FILE_EDITOR_ABILITY_HOST_MODE) {
+      try {
+        const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+        if (!hostContext) {
+          logger.warn(TAG, `独立文件编辑器退出失败，回退页面栈: reason=${reason}`);
+          this.pathStack.pop();
+          return;
+        }
+        logger.info(TAG, `独立文件编辑器实例退出: reason=${reason}, instance=${this.instanceId}`);
+        await hostContext.terminateSelf();
+        return;
+      } catch (error) {
+        logger.error(TAG, `独立文件编辑器实例退出异常: ${String(error)}`);
+      }
+    }
+    this.pathStack.pop();
   }
   
   /**
    * 保存所有文件
    */
-  private async saveAllFiles(): Promise<void> {
+  private async saveAllFiles(): Promise<boolean> {
+    await this.syncContentFromEditor();
+
+    const dirtyTabIds: string[] = [];
     for (const tab of this.tabs) {
-      if (tab.isDirty && tab.filePath) {
-        try {
-          await fileEditorService.writeFile(tab.filePath, tab.content);
-          const tabIndex = this.tabs.findIndex(t => t.id === tab.id);
-          if (tabIndex >= 0) {
-            const oldTab = this.tabs[tabIndex];
-            const updatedTab: TabInfo = {
-              id: oldTab.id,
-              filePath: oldTab.filePath,
-              fileName: oldTab.fileName,
-              content: oldTab.content,
-              originalContent: tab.content,
-              language: oldTab.language,
-              isDirty: false,
-              isReadOnly: oldTab.isReadOnly
-            };
-            const updatedTabs: TabInfo[] = [];
-            for (let i = 0; i < this.tabs.length; i++) {
-              if (i === tabIndex) {
-                updatedTabs.push(updatedTab);
-              } else {
-                updatedTabs.push(this.tabs[i]);
-              }
-            }
-            this.tabs = updatedTabs;
-          }
-        } catch (error) {
-          logger.error(TAG, `保存文件失败: ${tab.fileName}, ${error}`);
-        }
+      if (tab.isDirty) {
+        dirtyTabIds.push(tab.id);
       }
     }
-    this.isDirty = false;
+
+    for (const tabId of dirtyTabIds) {
+      const tab = this.tabs.find(item => item.id === tabId);
+      if (!tab || !tab.isDirty) {
+        continue;
+      }
+
+      try {
+        if (tab.id === this.activeTabId) {
+          await this.saveFile();
+        } else {
+          await this.saveDetachedTab(tab);
+        }
+      } catch (error) {
+        logger.error(TAG, `保存文件失败: ${tab.fileName}, ${String(error)}`);
+      }
+    }
+
+    await this.syncContentFromEditor();
+    const saved = !this.hasUnsavedChanges();
+    if (!saved) {
+      this.getUIContext().getPromptAction().showToast({ message: '仍有文件未保存，请检查无路径文件或联动失败项' });
+    }
+    return saved;
   }
   
   /**
@@ -895,6 +1551,10 @@ export struct FileEditorPage {
           },
           onContentChanged: (content: string) => {
             this.onContentChanged(content);
+          },
+          onSave: (content: string) => {
+            this.onContentChanged(content);
+            void this.saveFile();
           }
         }
       })
@@ -1021,6 +1681,11 @@ export struct FileEditorPage {
             if (this.showHelp) {
               this.buildHelpPanel()
             }
+
+            // 功能检查面板
+            if (this.showCapabilityPanel) {
+              this.buildCapabilityPanel()
+            }
             
             // 新建文件对话框
             if (this.showNewFileDialog) {
@@ -1045,32 +1710,8 @@ export struct FileEditorPage {
       this.pathStack = context.pathStack;
       
       // 处理传入的参数
-      const params = context.pathInfo?.param as FileEditorParams | undefined;
-      if (params) {
-        logger.info(TAG, `接收到参数: filePath=${params.filePath}, language=${params.language}, title=${params.title}`);
-        
-        if (params.filePath) {
-          this.filePath = params.filePath;
-          this.isReadOnly = params.readOnly ?? false;
-          if (params.language) {
-            this.language = params.language;
-          }
-          if (params.title) {
-            this.fileName = params.title;
-          }
-          // 加载文件
-          this.loadFile();
-        } else if (params.content !== undefined) {
-          // 直接传入内容
-          this.content = params.content;
-          this.originalContent = params.content;
-          this.language = params.language ?? 'plaintext';
-          this.fileName = params.title ?? '未命名';
-          this.isReadOnly = params.readOnly ?? false;
-          // 创建一个新标签
-          this.addTab('', this.fileName, this.content, this.language, this.isReadOnly);
-        }
-      }
+      const params = context.pathInfo?.param as FileEditorOpenParams | undefined;
+      this.handleEditorParams(params);
     })
     .onBackPressed(() => {
       this.handleBack();
@@ -1185,6 +1826,105 @@ export struct FileEditorPage {
       default:
         return $r('sys.symbol.doc');
     }
+  }
+
+  private getCapabilityIcon(status: FileEditorFeatureStatus): Resource {
+    if (status === FileEditorFeatureStatus.READY) {
+      return $r('sys.symbol.checkmark_circle_fill');
+    }
+    if (status === FileEditorFeatureStatus.PARTIAL) {
+      return $r('sys.symbol.info_circle');
+    }
+    return $r('sys.symbol.xmark_circle');
+  }
+
+  private getCapabilityColor(status: FileEditorFeatureStatus): ResourceColor {
+    if (status === FileEditorFeatureStatus.READY) {
+      return ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme);
+    }
+    if (status === FileEditorFeatureStatus.PARTIAL) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme);
+  }
+
+  @Builder
+  buildCapabilityPanel() {
+    Column() {
+      Column({ space: 16 }) {
+        Row() {
+          Text('功能检查')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Button({ type: ButtonType.Normal }) {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => this.closeCapabilityPanel())
+        }
+        .width('100%')
+
+        if (this.capabilityAudit) {
+          Row({ space: 10 }) {
+            Text(`就绪 ${this.capabilityAudit.readyCount}`)
+              .fontSize(13)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme))
+            Text(`部分 ${this.capabilityAudit.partialCount}`)
+              .fontSize(13)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            Text(`不可用 ${this.capabilityAudit.unavailableCount}`)
+              .fontSize(13)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+          }
+          .width('100%')
+
+          List() {
+            ForEach(this.capabilityAudit.items, (item: FileEditorFeatureCheck) => {
+              ListItem() {
+                Row({ space: 12 }) {
+                  SymbolGlyph(this.getCapabilityIcon(item.status))
+                    .fontSize(18)
+                    .fontColor([this.getCapabilityColor(item.status)])
+                  Column({ space: 4 }) {
+                    Text(item.title)
+                      .fontSize(14)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    Text(item.detail)
+                      .fontSize(12)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      .maxLines(2)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  }
+                  .layoutWeight(1)
+                }
+                .width('100%')
+                .padding({ top: 10, bottom: 10 })
+              }
+            })
+          }
+          .width('100%')
+          .height(320)
+        }
+      }
+      .width(420)
+      .constraintSize({ maxWidth: '92%' })
+      .padding(20)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(12)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_overlay', this.themeState.currentTheme))
+    .justifyContent(FlexAlign.Center)
+    .opacity(this.capabilityPanelOpacity)
+    .onClick(() => this.closeCapabilityPanel())
   }
   
   /**
@@ -1345,6 +2085,7 @@ export struct FileEditorPage {
    * 导出文件
    */
   private async exportFile(): Promise<void> {
+    await this.syncContentFromEditor();
     if (!this.content) {
       this.getUIContext().getPromptAction().showToast({ message: '没有内容可导出' });
       return;
@@ -1365,6 +2106,7 @@ export struct FileEditorPage {
         await fileIo.close(destFile);
         
         this.getUIContext().getPromptAction().showToast({ message: '文件导出成功' });
+        this.publishDocumentEvent(GameEvent.FILE_EDITOR_EXPORTED, false, `导出到 ${uris[0]}`);
         logger.info(TAG, `文件导出成功: ${uris[0]}`);
       }
     } catch (error) {
@@ -1412,6 +2154,8 @@ export struct FileEditorPage {
         const content = decoder.decodeToString(new Uint8Array(buffer));
         this.isLoading = false;
         
+        this.origin = FileEditorOpenSource.MANUAL;
+        this.saveTarget = fileEditorService.createSaveTarget(FileEditorSaveTargetType.EXTERNAL_DOCUMENT, '', fileName, uri);
         // 添加到标签页
         this.addTab(uri, fileName, content, language, false);
         
@@ -1616,6 +2360,22 @@ export struct FileEditorPage {
               this.editorController.redo();
             }
           })
+
+          // 格式化
+          Button({ type: ButtonType.Normal }) {
+            SymbolGlyph($r('sys.symbol.slider_horizontal_2_square'))
+              .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .borderRadius(18)
+          .onClick(() => {
+            if (this.editorController) {
+              this.editorController.formatCode();
+            }
+          })
         }
         
         // Markdown预览切换
@@ -1649,9 +2409,11 @@ export struct FileEditorPage {
                 .height(20)
                 .color(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
             } else {
-              SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+              SymbolGlyph($r('sys.symbol.save'))
                 .fontSize(20)
-                .fontColor([this.isDirty ? '#4CAF50' : ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
+                .fontColor([this.isDirty ?
+                  ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme) :
+                  ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
             }
           }
           .width(36)
@@ -1660,6 +2422,20 @@ export struct FileEditorPage {
           .borderRadius(18)
           .enabled(!this.isSaving)
           .onClick(() => this.saveFile())
+
+          Button({ type: ButtonType.Normal }) {
+            SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+              .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .borderRadius(18)
+          .enabled(!this.isSaving)
+          .onClick(() => {
+            void this.saveFileAsAndMark();
+          })
         }
         
         // 设置
@@ -1674,6 +2450,20 @@ export struct FileEditorPage {
         .borderRadius(18)
         .onClick(() => {
           this.openSettingsPanel();
+        })
+
+        // 功能检查
+        Button({ type: ButtonType.Normal }) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle'))
+            .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(18)
+        .onClick(() => {
+          this.auditEditorCapabilities(true);
         })
         
         // 新建文件
@@ -1690,7 +2480,7 @@ export struct FileEditorPage {
         
         // 导入文件
         Button({ type: ButtonType.Normal }) {
-          SymbolGlyph($r('sys.symbol.folder_badge_eye'))
+          SymbolGlyph($r('sys.symbol.folder_badge_plus'))
             .fontSize(20)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         }

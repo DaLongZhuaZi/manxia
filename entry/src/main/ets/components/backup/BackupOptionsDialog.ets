@@ -30,7 +30,7 @@ export struct BackupOptionsDialog {
     includePlugins: false,
     includeFavorites: true,
     includeOnlineData: false,
-    includeCloudConfig: true,
+    includeCloudConfig: false,
     includeCoverImages: true,
     includeChapterImages: false,
     includeEBookFiles: false
@@ -58,7 +58,7 @@ export struct BackupOptionsDialog {
     this.backupOptions.includePlugins = this.isAllSelected;
     this.backupOptions.includeFavorites = this.isAllSelected;
     this.backupOptions.includeOnlineData = this.isAllSelected;
-    this.backupOptions.includeCloudConfig = this.isAllSelected;
+    this.backupOptions.includeCloudConfig = false;
     this.backupOptions.includeCoverImages = this.isAllSelected;
     this.backupOptions.includeChapterImages = this.isAllSelected;
     this.backupOptions.includeEBookFiles = this.isAllSelected;
@@ -335,7 +335,7 @@ export struct BackupOptionsDialog {
 
         this.buildOptionItem(
           '云存储配置',
-          '包含 WebDAV、Suwayomi、FTP 的连接配置',
+          '包含 WebDAV、Suwayomi、Komga、FTP 的账号、密码和 API Key',
           this.backupOptions.includeCloudConfig,
           (value: boolean) => { this.backupOptions.includeCloudConfig = value; }
         )

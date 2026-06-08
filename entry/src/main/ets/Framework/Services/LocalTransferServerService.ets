@@ -162,6 +162,7 @@ export class LocalTransferServerService {
   private lastAbilityContext: common.UIAbilityContext | null = null;
   private autoStopTimer: number = -1;
   private lastActivityRefreshAt: number = 0;
+  private serviceNotificationEpoch: number = 0;
 
   private constructor() {}
 
@@ -264,12 +265,14 @@ export class LocalTransferServerService {
       return;
     }
     this.runtime.status = 'stopping';
+    this.serviceNotificationEpoch++;
     this.clearAutoStopTimer();
 
+    await this.notificationManager.cancelTaskNotification(TRANSFER_SERVICE_NOTIFICATION_TASK_ID);
+    await this.cancelActiveUploadNotificationsForServiceStop();
     await this.stopWebSocketServer();
     await this.closeAllTcpConnections();
     await this.stopTcpServer();
-    await this.notificationManager.cancelTaskNotification(TRANSFER_SERVICE_NOTIFICATION_TASK_ID);
 
     if (this.lastAbilityContext !== null && BackgroundTaskHelper.getOwnerCount() > 0) {
       try {
@@ -303,6 +306,7 @@ export class LocalTransferServerService {
     if (this.runtime.status !== 'running') {
       return;
     }
+    const notificationEpoch = this.serviceNotificationEpoch;
     try {
       const addressText = this.getRuntimePrimaryAddressText();
       const pairCode = this.runtime.session !== null ? this.runtime.session.pairCode : '';
@@ -311,6 +315,9 @@ export class LocalTransferServerService {
         addressText,
         pairCode
       );
+      if (this.runtime.status !== 'running' || notificationEpoch !== this.serviceNotificationEpoch) {
+        await this.notificationManager.cancelTaskNotification(TRANSFER_SERVICE_NOTIFICATION_TASK_ID);
+      }
     } catch (error) {
       logger.warn(TAG, `发送局域网传书运行通知失败: ${this.stringifyError(error)}`);
     }
@@ -997,6 +1004,10 @@ export class LocalTransferServerService {
   }
 
   private async notifyUploadFailure(state: TransferConnectionState, reason: string): Promise<void> {
+    if (this.runtime.status === 'stopping') {
+      await this.cancelUploadNotificationForServiceStop(state);
+      return;
+    }
     await this.updateUploadProgressSnapshot(state, 'failed', reason, true);
     if (state.uploadNotificationTerminal || state.uploadFailureNotified) {
       return;
@@ -1028,6 +1039,25 @@ export class LocalTransferServerService {
     const nextChain = state.uploadNotificationChain.then<void, void>(guardedOperation, guardedOperation);
     state.uploadNotificationChain = nextChain;
     await nextChain;
+  }
+
+  private async cancelActiveUploadNotificationsForServiceStop(): Promise<void> {
+    for (const state of this.connectionStates.values()) {
+      await this.cancelUploadNotificationForServiceStop(state);
+    }
+  }
+
+  private async cancelUploadNotificationForServiceStop(state: TransferConnectionState): Promise<void> {
+    if (state.uploadNotificationTaskId.length <= 0) {
+      state.uploadNotificationTerminal = true;
+      return;
+    }
+
+    const taskId = state.uploadNotificationTaskId;
+    state.uploadNotificationTerminal = true;
+    await this.enqueueUploadNotification(state, async (): Promise<void> => {
+      await this.notificationManager.cancelTaskNotification(taskId);
+    });
   }
 
   private resolveUploadNotificationTaskId(

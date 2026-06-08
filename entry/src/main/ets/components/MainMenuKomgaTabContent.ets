@@ -811,7 +811,7 @@ export struct MainMenuKomgaTabContent {
   private buildLibraryEntryCard(library: KomgaLibraryOption) {
     Row({ space: 10 }) {
       Stack() {
-        SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+        SymbolGlyph($r('sys.symbol.bookshelf'))
           .fontSize(17)
           .fontColor([this.color('accent_blue')])
       }
@@ -1308,7 +1308,7 @@ export struct MainMenuKomgaTabContent {
                 .justifyContent(FlexAlign.Center)
               } else if (this.items.length <= 0) {
                 Column({ space: 12 }) {
-                  SymbolGlyph($r('sys.symbol.rectangle_stack'))
+                  SymbolGlyph($r('sys.symbol.picture'))
                     .fontSize(40)
                     .fontColor([this.color('text_muted')])
                   Text(this.searchQuery.trim().length > 0 ? '没有找到匹配内容' : '当前没有可浏览内容')
@@ -1417,7 +1417,7 @@ export struct MainMenuKomgaTabContent {
             .color(this.color('comp_background_tertiary'))
           Row({ space: 0 }) {
             Column({ space: 4 }) {
-              SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+              SymbolGlyph($r('sys.symbol.bookshelf'))
                 .fontSize(24)
                 .fontColor([this.browseMode === 'library' ? this.color('accent_blue') : this.color('text_muted')])
               Text('库')
@@ -1431,7 +1431,7 @@ export struct MainMenuKomgaTabContent {
             .onClick(() => { this.setBrowseMode('library'); })
 
             Column({ space: 4 }) {
-              SymbolGlyph($r('sys.symbol.rectangle_stack'))
+              SymbolGlyph($r('sys.symbol.picture'))
                 .fontSize(24)
                 .fontColor([this.browseMode === 'discover' ? this.color('accent_blue') : this.color('text_muted')])
               Text('发现')

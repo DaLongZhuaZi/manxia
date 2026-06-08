@@ -490,7 +490,7 @@ export struct WebDAVConfigDialog {
     Column({ space: 10 }) {
       // 扫描标题栏
       Row({ space: 8 }) {
-        SymbolGlyph($r('sys.symbol.wifi'))
+        SymbolGlyph($r('sys.symbol.wifi_router'))
           .fontSize(16)
           .fontColor([this.color('accent_primary')])
         Text('网络扫描')
@@ -891,7 +891,7 @@ export struct WebDAVConfigDialog {
             this.showCreateDirDialog = false;
             this.pendingSettings = null;
           })
-          this.buildActionButton('创建目录', $r('sys.symbol.checkmark_circle_fill'), 1, true, () => {
+          this.buildActionButton('创建目录', $r('sys.symbol.folder_badge_plus'), 1, true, () => {
             void this.createDirectoryAndConfirm();
           })
         }
@@ -1198,10 +1198,10 @@ export struct WebDAVConfigDialog {
           })
           this.buildActionButton(
             this.isTesting ? '测试中…' : '测试连接',
-            $r('sys.symbol.arrow_clockwise'), 2, !this.isTesting, () => {
+            $r('sys.symbol.checkmark_circle'), 2, !this.isTesting, () => {
               void this.testConnection();
             })
-          this.buildActionButton('保存', $r('sys.symbol.checkmark_circle_fill'), 1, true, () => {
+          this.buildActionButton('保存', $r('sys.symbol.save'), 1, true, () => {
             this.saveAndClose();
           })
         }

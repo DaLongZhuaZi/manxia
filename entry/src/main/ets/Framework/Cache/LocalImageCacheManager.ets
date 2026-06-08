@@ -172,7 +172,8 @@ export class LocalImageCacheManager {
   private notifyLoadComplete(pageId: string, pixelMap: image.PixelMap | null): void {
     const callbacks = this.loadCompleteCallbacks.get(pageId);
     if (callbacks) {
-      callbacks.forEach(cb => cb(pixelMap));
+      const callbacksSnapshot: Array<(pixelMap: image.PixelMap | null) => void> = callbacks.slice();
+      callbacksSnapshot.forEach(cb => cb(pixelMap));
       this.loadCompleteCallbacks.delete(pageId);
     }
   }

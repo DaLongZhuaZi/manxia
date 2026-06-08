@@ -221,6 +221,83 @@ export class FileImportRequestedPayload implements IEventPayload {
 }
 
 /**
+ * 文件编辑器文档事件载荷
+ */
+export class FileEditorDocumentPayload implements IEventPayload {
+  public sessionId: string;
+  public origin: string;
+  public targetType: string;
+  public targetId: string;
+  public targetName: string;
+  public filePath: string;
+  public fileName: string;
+  public language: string;
+  public content: string;
+  public isDirty: boolean;
+  public savedAt: number;
+  public linkedApplied: boolean;
+  public message: string;
+
+  constructor(
+    sessionId: string,
+    origin: string,
+    targetType: string,
+    targetId: string,
+    targetName: string,
+    filePath: string,
+    fileName: string,
+    language: string,
+    content: string,
+    isDirty: boolean,
+    savedAt: number,
+    linkedApplied: boolean,
+    message: string
+  ) {
+    this.sessionId = sessionId;
+    this.origin = origin;
+    this.targetType = targetType;
+    this.targetId = targetId;
+    this.targetName = targetName;
+    this.filePath = filePath;
+    this.fileName = fileName;
+    this.language = language;
+    this.content = content;
+    this.isDirty = isDirty;
+    this.savedAt = savedAt;
+    this.linkedApplied = linkedApplied;
+    this.message = message;
+  }
+}
+
+/**
+ * 文件编辑器能力检查事件载荷
+ */
+export class FileEditorCapabilityPayload implements IEventPayload {
+  public sessionId: string;
+  public readyCount: number;
+  public partialCount: number;
+  public unavailableCount: number;
+  public checkedAt: number;
+  public summary: string;
+
+  constructor(
+    sessionId: string,
+    readyCount: number,
+    partialCount: number,
+    unavailableCount: number,
+    checkedAt: number,
+    summary: string
+  ) {
+    this.sessionId = sessionId;
+    this.readyCount = readyCount;
+    this.partialCount = partialCount;
+    this.unavailableCount = unavailableCount;
+    this.checkedAt = checkedAt;
+    this.summary = summary;
+  }
+}
+
+/**
  * 漫画删除事件的载荷
  */
 export class MangaDeletedPayload implements IEventPayload {
@@ -332,6 +409,10 @@ interface GameEventConstants {
   READ_ALOUD_CACHE_UPDATED: string;
   // 文件导入
   FILE_IMPORT_REQUESTED: string;
+  FILE_EDITOR_SAVED: string;
+  FILE_EDITOR_EXPORTED: string;
+  FILE_EDITOR_CLOSED: string;
+  FILE_EDITOR_CAPABILITY_AUDITED: string;
   // 封面选择
   COVER_SELECTION_COMPLETED: string;
   // 分布式
@@ -399,6 +480,10 @@ export const GameEvent: GameEventConstants = {
 
   // --- 文件导入事件 ---
   FILE_IMPORT_REQUESTED: 'fileImportRequested',
+  FILE_EDITOR_SAVED: 'fileEditorSaved',
+  FILE_EDITOR_EXPORTED: 'fileEditorExported',
+  FILE_EDITOR_CLOSED: 'fileEditorClosed',
+  FILE_EDITOR_CAPABILITY_AUDITED: 'fileEditorCapabilityAudited',
   
   // --- 封面选择事件 ---
   COVER_SELECTION_COMPLETED: 'coverSelectionCompleted',
@@ -415,7 +500,7 @@ type EventCallback = (payload: IEventPayload) => void;
 
 class EventBus {
   private static instance: EventBus;
-  private listeners: Record<string, Array<EventCallback>> = {};
+  private listeners: Map<string, Array<EventCallback>> = new Map<string, Array<EventCallback>>();
 
   private constructor() {}
 
@@ -427,27 +512,40 @@ class EventBus {
   }
 
   public subscribe(event: string, callback: EventCallback): void {
-    if (!this.listeners[event]) {
-      this.listeners[event] = [];
+    const eventListeners = this.listeners.get(event);
+    if (eventListeners) {
+      if (eventListeners.includes(callback)) {
+        return;
+      }
+      eventListeners.push(callback);
+    } else {
+      const newListeners: Array<EventCallback> = [];
+      newListeners.push(callback);
+      this.listeners.set(event, newListeners);
     }
-    this.listeners[event].push(callback);
   }
 
   public unsubscribe(event: string, callback: EventCallback): void {
-    const eventListeners: Array<EventCallback> | undefined = this.listeners[event];
+    const eventListeners: Array<EventCallback> | undefined = this.listeners.get(event);
     if (eventListeners) {
-      this.listeners[event] = eventListeners.filter(cb => cb !== callback);
+      const nextListeners: Array<EventCallback> = eventListeners.filter(cb => cb !== callback);
+      if (nextListeners.length > 0) {
+        this.listeners.set(event, nextListeners);
+      } else {
+        this.listeners.delete(event);
+      }
     }
   }
 
   public publish(event: string, payload: IEventPayload): void {
-    const eventListeners: Array<EventCallback> | undefined = this.listeners[event];
+    const eventListeners: Array<EventCallback> | undefined = this.listeners.get(event);
     if (eventListeners && eventListeners.length > 0) {
-      for (const callback of eventListeners) {
+      const listenerSnapshot: Array<EventCallback> = eventListeners.slice();
+      for (const callback of listenerSnapshot) {
         try {
           callback(payload);
         } catch (error) {
-          logger.error('EventBus', `Event listener for [${event}] failed: ${(error as Error).message}`);
+          logger.error('EventBus', `Event listener for [${event}] failed: ${String(error)}`);
         }
       }
     }

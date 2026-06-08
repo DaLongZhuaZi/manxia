@@ -217,7 +217,7 @@ export struct ChangeSourceDialogComponent {
             Row() {
               Column() {
                 Row({ space: 8 }) {
-                  SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                  SymbolGlyph($r('sys.symbol.arrow_2_circlepath'))
                     .fontSize(20)
                     .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green',
                       this.themeState.currentTheme)])

@@ -852,7 +852,7 @@ export class MangaSourceActionEngine {
     } else {
       throw new MangaSourceError(
         MangaSourceErrorCode.CAPTCHA_FAILED,
-        '手动验证码处理暂未实现'
+        '手动验证码处理需要页面级 WebView 用户交互流程，当前动作引擎无法独立完成'
       );
     }
   }

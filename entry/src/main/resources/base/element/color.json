@@ -849,6 +849,14 @@
       "value": "#94FFFFFF"
     },
     {
+      "name": "test_management_panel_background_dark",
+      "value": "#0D0D0D"
+    },
+    {
+      "name": "test_management_panel_border_dark",
+      "value": "#1A1A1A"
+    },
+    {
       "name": "test_management_text_primary_dark",
       "value": "#E0E0E0"
     },

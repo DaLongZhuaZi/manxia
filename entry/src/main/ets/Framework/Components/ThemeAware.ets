@@ -318,11 +318,11 @@ export class ThemeAwareHelper {
       // 面板颜色
       'panel_background': {
         light: 'test_management_panel_background',
-        dark: 'test_management_panel_background'
+        dark: 'test_management_panel_background_dark'
       },
       'panel_border': {
         light: 'test_management_panel_border',
-        dark: 'test_management_panel_border'
+        dark: 'test_management_panel_border_dark'
       },
       'panel_dark': {
         light: 'test_management_panel_dark_light',

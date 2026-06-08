@@ -1055,7 +1055,7 @@ export struct KomgaMangaDetailPage {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Flex({ wrap: FlexWrap.Wrap }) {
-          this.buildMetaChip($r('sys.symbol.rectangle_stack'), `${this.getChapterCount()} 条内容`)
+          this.buildMetaChip($r('sys.symbol.book_pages'), `${this.getChapterCount()} 条内容`)
           this.buildMetaChip($r('sys.symbol.book'), this.getPageCountLabel())
         }
         .width('100%')
@@ -1117,7 +1117,7 @@ export struct KomgaMangaDetailPage {
       .width('100%')
 
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-        this.buildInfoCard($r('sys.symbol.books_vertical_fill'), '内容类型', this.getContentTypeLabel())
+        this.buildInfoCard($r('sys.symbol.picture'), '内容类型', this.getContentTypeLabel())
         this.buildInfoCard($r('sys.symbol.clock'), '发布时间', this.getReleaseDateLabel())
         this.buildInfoCard($r('sys.symbol.folder'), '出版社', this.getPublisherLabel())
         this.buildInfoCard($r('sys.symbol.book'), '语言', this.getLanguageLabel())

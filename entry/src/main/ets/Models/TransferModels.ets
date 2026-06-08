@@ -10,6 +10,7 @@ import {
   NETWORK_FOLDER_COMIC_EXTENSIONS,
   NETWORK_FOLDER_EBOOK_EXTENSIONS,
   NETWORK_FOLDER_FONT_EXTENSIONS,
+  NETWORK_FOLDER_IMAGE_EXTENSIONS,
   NETWORK_FOLDER_JSON_EXTENSIONS
 } from './NetworkFolderModels';
 import type { NetworkFolderImportCategory } from './NetworkFolderModels';
@@ -357,7 +358,8 @@ export const TRANSFER_SUPPORTED_FILE_TYPES: string[] = [
   ...NETWORK_FOLDER_JSON_EXTENSIONS,
   ...NETWORK_FOLDER_FONT_EXTENSIONS,
   ...NETWORK_FOLDER_CODE_EXTENSIONS,
-  ...NETWORK_FOLDER_AVIF_EXTENSIONS
+  ...NETWORK_FOLDER_AVIF_EXTENSIONS,
+  ...NETWORK_FOLDER_IMAGE_EXTENSIONS
 ];
 
 export function createDefaultTransferConfig(): TransferConfig {
@@ -1055,7 +1057,8 @@ export function isTransferAcceptedImportCategory(category: NetworkFolderImportCa
     category === 'json' ||
     category === 'font' ||
     category === 'code' ||
-    category === 'avif';
+    category === 'avif' ||
+    category === 'image';
 }
 
 export function sanitizeTransferPort(port: number): number {

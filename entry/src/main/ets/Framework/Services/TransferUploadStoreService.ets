@@ -24,6 +24,12 @@ import {
   inferNetworkFolderImportCategory,
   NetworkFolderImportCategory
 } from '../../Models/NetworkFolderModels';
+import {
+  ExternalFileTaskFactory,
+  ExternalFileTaskKind,
+  ExternalFileTaskParams,
+  ExternalFileTaskSource
+} from '../ExternalFile/ExternalFileTaskTypes';
 
 const TAG = 'TransferUploadStore';
 const INDEX_VERSION = 1;
@@ -63,6 +69,11 @@ export interface TransferUploadStorageBudget {
   reservedBytes: number;
   freeBytes: number;
   reserveBytes: number;
+}
+
+export interface TransferExternalFileTaskPrepareResult {
+  record: TransferUploadRecord;
+  taskParams: ExternalFileTaskParams;
 }
 
 export class TransferUploadStoreService {
@@ -339,6 +350,52 @@ export class TransferUploadStoreService {
     record.status = 'handoff_sent';
     await this.saveIndex();
     logger.info(TAG, `已将上传文件转交给应用导入流程: ${record.fileName}, 分类=${record.importCategory}`);
+    return cloneTransferUploadRecord(record);
+  }
+
+  public async prepareRecordForExternalFileTask(recordId: string): Promise<TransferExternalFileTaskPrepareResult | null> {
+    await this.initialize();
+
+    const record = this.findRecordById(recordId);
+    if (record === null) {
+      return null;
+    }
+    if (!isTransferAcceptedImportCategory(record.importCategory)) {
+      return null;
+    }
+
+    this.clearPendingImportMarkers();
+    if (this.shouldTrackImportResult(record.importCategory)) {
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_RECORD_ID, record.id);
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_RESULT, '');
+      AppStorage.setOrCreate(APP_STORAGE_TRANSFER_TRACKING_ACTIVE, true);
+    } else {
+      this.clearTransferImportTrackingMarkers();
+    }
+
+    record.status = 'handoff_sent';
+    await this.saveIndex();
+    const result: TransferExternalFileTaskPrepareResult = {
+      record: cloneTransferUploadRecord(record),
+      taskParams: this.createExternalFileTaskParams(record)
+    };
+    logger.info(TAG, `已准备局域网传书独立导入任务: ${record.fileName}, 分类=${record.importCategory}`);
+    return result;
+  }
+
+  public async prepareRecordFallbackImport(recordId: string): Promise<TransferUploadRecord | null> {
+    await this.initialize();
+
+    const record = this.findRecordById(recordId);
+    if (record === null) {
+      return null;
+    }
+    if (!isTransferAcceptedImportCategory(record.importCategory)) {
+      return null;
+    }
+
+    this.clearPendingImportMarkers();
+    this.preparePendingImportMarkers(record);
     return cloneTransferUploadRecord(record);
   }
 
@@ -817,7 +874,47 @@ export class TransferUploadStoreService {
       category === 'json' ||
       category === 'font' ||
       category === 'code' ||
-      category === 'avif';
+      category === 'avif' ||
+      category === 'image';
+  }
+
+  private createExternalFileTaskParams(record: TransferUploadRecord): ExternalFileTaskParams {
+    const kind = this.mapImportCategoryToExternalTaskKind(record.importCategory);
+    return ExternalFileTaskFactory.createSingleFileTask(
+      kind,
+      record.localUri,
+      record.contentType,
+      ExternalFileTaskSource.TRANSFER,
+      record.fileName,
+      kind === ExternalFileTaskKind.CODE ? this.inferCodeLanguageFromFileName(record.fileName) : '',
+      'inbox',
+      record.id
+    );
+  }
+
+  private mapImportCategoryToExternalTaskKind(category: NetworkFolderImportCategory): ExternalFileTaskKind {
+    switch (category) {
+      case 'comic':
+        return ExternalFileTaskKind.COMIC;
+      case 'ebook':
+        return ExternalFileTaskKind.EBOOK;
+      case 'pdf':
+        return ExternalFileTaskKind.PDF;
+      case 'backup':
+        return ExternalFileTaskKind.BACKUP;
+      case 'json':
+        return ExternalFileTaskKind.JSON;
+      case 'font':
+        return ExternalFileTaskKind.FONT;
+      case 'code':
+        return ExternalFileTaskKind.CODE;
+      case 'avif':
+        return ExternalFileTaskKind.AVIF;
+      case 'image':
+        return ExternalFileTaskKind.IMAGE;
+      default:
+        return ExternalFileTaskKind.UNKNOWN;
+    }
   }
 
   private prepareMainMenuImportMarkers(record: TransferUploadRecord): void {
@@ -851,9 +948,9 @@ export class TransferUploadStoreService {
       return;
     }
 
-    if (record.importCategory === 'avif') {
+    if (record.importCategory === 'avif' || record.importCategory === 'image') {
       AppStorage.setOrCreate('pendingAvifUri', record.localUri);
-      AppStorage.setOrCreate('pendingFileCategory', 'avif');
+      AppStorage.setOrCreate('pendingFileCategory', record.importCategory);
       return;
     }
 

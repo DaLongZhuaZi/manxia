@@ -286,25 +286,29 @@ class MangaChapterDataSource implements IDataSource {
 
   // 数据源变更通知 - ArkUI要求在数据变化时通知列表进行刷新
   private notifyDataReload(): void {
-    for (const listener of this.listeners) {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    for (const listener of listenersSnapshot) {
       listener.onDataReloaded();
     }
   }
 
   private notifyDataAdd(index: number): void {
-    for (const listener of this.listeners) {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    for (const listener of listenersSnapshot) {
       listener.onDataAdd(index);
     }
   }
 
   private notifyDataChange(index: number): void {
-    for (const listener of this.listeners) {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    for (const listener of listenersSnapshot) {
       listener.onDataChange(index);
     }
   }
 
   private notifyDataDelete(index: number): void {
-    for (const listener of this.listeners) {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    for (const listener of listenersSnapshot) {
       listener.onDataDelete(index);
     }
   }
@@ -949,33 +953,15 @@ struct MangaDetailPage {
       logger.warn(TAG, `获取阅读历史失败: ${String(err)}`);
     }
 
-    // 批量查询所有章节的页面信息（一次性查询，避免N次数据库查询）
+    // 批量查询所有章节的页面数量，避免逐章节并发查询造成数据库风暴
     const pageCountMap: Map<string, number> = new Map();
     try {
-      // 使用Promise.all并发查询所有章节的页面数
-      // 定义返回类型接口
-      interface ChapterPageCount {
-        chapterId: string;
-        count: number;
+      const queriedPageCounts: Map<string, number> = this.pageParams?.sourceId
+        ? await dm.getOnlineChapterPageCounts(mangaRef.id)
+        : await dm.getLocalChapterPageCounts(mangaRef.id);
+      for (const mapEntry of queriedPageCounts) {
+        pageCountMap.set(mapEntry[0], mapEntry[1]);
       }
-      
-      const pageQueries = chapters.map(async (chapter: MangaChapter): Promise<ChapterPageCount> => {
-        try {
-          const pages: PageInfo[] = await dm.getPageInfoList(chapter.id);
-          const result: ChapterPageCount = { chapterId: chapter.id, count: pages.length };
-          return result;
-        } catch (err) {
-          logger.warn(TAG, `查询章节${chapter.id}页面失败: ${String(err)}`);
-          const result: ChapterPageCount = { chapterId: chapter.id, count: 0 };
-          return result;
-        }
-      });
-      
-      const results = await Promise.all(pageQueries);
-      results.forEach(result => {
-        pageCountMap.set(result.chapterId, result.count);
-      });
-      
       logger.info(TAG, `批量查询完成，获取到${pageCountMap.size}个章节的页面信息`);
     } catch (err) {
       logger.error(TAG, `批量查询章节页面失败: ${String(err)}`);
@@ -6356,6 +6342,7 @@ struct MangaDetailPage {
 
     try {
       logger.info(TAG, `开始删除选中的章节，共 ${this.selectedChapters.size} 个`);
+      const dm: DataManager = DataManager.getInstance();
       
       // 遍历选中的章节进行删除
       for (const chapterId of this.selectedChapters) {
@@ -6378,10 +6365,9 @@ struct MangaDetailPage {
           logger.warn(TAG, `删除章节文件失败: ${String(fileErr)}`);
         }
 
-        // 2. 删除数据库中的下载记录（目前DataManager没有此方法，跳过）
+        // 2. 删除数据库中的下载记录
         try {
-          // TODO: 实现DataManager.deleteDownloadTask方法
-          logger.info(TAG, `章节下载记录删除跳过: ${chapterId}`);
+          await dm.deleteDownloadTasksByChapter(manga.id, chapterId);
         } catch (dbErr) {
           logger.warn(TAG, `删除下载记录失败: ${String(dbErr)}`);
         }
@@ -6389,10 +6375,19 @@ struct MangaDetailPage {
         // 3. 更新章节状态
         chapter.isDownloaded = false;
         chapter.downloadProgress = 0;
+        try {
+          await dm.updateChapterInfo(chapterId, {
+            isDownloaded: false,
+            downloadPath: ''
+          });
+        } catch (chapterErr) {
+          logger.warn(TAG, `更新章节下载状态失败: ${String(chapterErr)}`);
+        }
       }
 
       // 刷新章节列表
       this.filteredChapters = [...this.filteredChapters];
+      this.applyChapterFilters();
       
       logger.info(TAG, `成功删除 ${this.selectedChapters.size} 个章节`);
       
@@ -6465,31 +6460,36 @@ class ChapterDataSource implements IDataSource {
   }
 
   notifyDataReload(): void {
-    this.listeners.forEach((listener: DataChangeListener) => {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    listenersSnapshot.forEach((listener: DataChangeListener) => {
       listener.onDataReloaded();
     });
   }
 
   notifyDataAdd(index: number): void {
-    this.listeners.forEach((listener: DataChangeListener) => {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    listenersSnapshot.forEach((listener: DataChangeListener) => {
       listener.onDataAdd(index);
     });
   }
 
   notifyDataChange(index: number): void {
-    this.listeners.forEach((listener: DataChangeListener) => {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    listenersSnapshot.forEach((listener: DataChangeListener) => {
       listener.onDataChange(index);
     });
   }
 
   notifyDataDelete(index: number): void {
-    this.listeners.forEach((listener: DataChangeListener) => {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    listenersSnapshot.forEach((listener: DataChangeListener) => {
       listener.onDataDelete(index);
     });
   }
 
   notifyDataMove(from: number, to: number): void {
-    this.listeners.forEach((listener: DataChangeListener) => {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    listenersSnapshot.forEach((listener: DataChangeListener) => {
       listener.onDataMove(from, to);
     });
   }

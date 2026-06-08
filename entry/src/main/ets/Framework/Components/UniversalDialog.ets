@@ -19,10 +19,14 @@ export interface DialogButton {
   action: () => void;
 }
 
+export interface UniversalDialogCustomContentParam {
+}
+
 export interface UniversalDialogOptions {
   title: string;
   message?: string;
-  customBuilder?: () => void; // 用于构建复杂内容的自定义构建器
+  customBuilder?: WrappedBuilder<[UniversalDialogCustomContentParam]>; // 用于构建复杂内容的自定义构建器
+  customBuilderParam?: UniversalDialogCustomContentParam;
   buttons: DialogButton[];
   themeState: ThemeAwareState;
 }
@@ -52,16 +56,6 @@ interface ActionMenuOptionsDef {
 interface AnimateParam {
   duration: number;
   curve: Curve;
-}
-
-// 使用声明式组件渲染自定义内容，避免在 build 中调用普通函数
-@Component
-struct CustomContentRenderer {
-  @BuilderParam content: () => void;
-
-  build() {
-    this.content();
-  }
 }
 
 @CustomDialog
@@ -103,6 +97,13 @@ struct UniversalDialog {
     }
   }
 
+  @Builder
+  private buildCustomContent() {
+    if (this.options.customBuilder && this.options.customBuilderParam) {
+      this.options.customBuilder.builder(this.options.customBuilderParam);
+    }
+  }
+
 
   build() {
     Column({ space: 16 }) {
@@ -117,8 +118,7 @@ struct UniversalDialog {
 
       // 2. 消息文本或自定义内容
       if (this.options.customBuilder) {
-        // 使用声明式组件包装自定义内容，以符合 ArkTS UI 语法
-        CustomContentRenderer({ content: this.options.customBuilder })
+        this.buildCustomContent()
       }
       if (!this.options.customBuilder && this.options.message) {
         Text(this.options.message)

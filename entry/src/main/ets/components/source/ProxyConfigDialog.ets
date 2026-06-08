@@ -133,7 +133,7 @@ export struct ProxyConfigDialog {
       return $r('sys.symbol.slider_vertical_3');
     }
     if (tab === 'sources') {
-      return $r('sys.symbol.rectangle_stack');
+      return $r('sys.symbol.picture');
     }
     return $r('sys.symbol.wifi');
   }
@@ -534,7 +534,7 @@ export struct ProxyConfigDialog {
         .width('100%')
       } else {
         Column({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          SymbolGlyph($r('sys.symbol.picture'))
             .fontSize(40)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.currentTheme)])
 
@@ -681,7 +681,7 @@ export struct ProxyConfigDialog {
   build() {
     Column() {
       Row() {
-        SymbolGlyph($r('sys.symbol.airplane_departure'))
+        SymbolGlyph($r('sys.symbol.globe_and_keyboard'))
           .fontSize(24)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.currentTheme)])
 

@@ -81,6 +81,7 @@ import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/App
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 
@@ -2768,15 +2769,15 @@ export struct NovelReaderPage {
     if (!context || context.bookId !== this.bookId) {
       return;
     }
-    const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
-    if (!globalStack) {
-      logger.warn(TAG, 'GlobalNavStack not found, cannot open ReadAloudPlayerPage');
-      return;
-    }
-    AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', 'NovelReaderPage');
-    AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
     AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
-    globalStack.pushPathByName('ReadAloudPlayerPage', undefined);
+    openReadAloudPlayerInIsolatedAbility(
+      this.getUIContext(),
+      AppStorage.get<NavPathStack>('GlobalNavStack'),
+      TAG,
+      'NovelReaderPage',
+      WindowManager.getCurrentMode(),
+      null
+    );
   }
 
   private async recordBrowseHistory(param: NovelReaderPageParams): Promise<void> {
@@ -4194,7 +4195,7 @@ export struct NovelReaderPage {
     Row() {
       // 返回按钮
       Button() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
+        SymbolGlyph($r('sys.symbol.arrow_left'))
           .fontSize(24)
           .fontColor([$r('app.color.text_primary')])
       }
@@ -4227,7 +4228,7 @@ export struct NovelReaderPage {
       })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.stickers'))
+        SymbolGlyph($r('sys.symbol.highlighter_line'))
           .fontSize(20)
           .fontColor([$r('app.color.text_primary')])
       }
@@ -4374,7 +4375,7 @@ export struct NovelReaderPage {
             .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
 
           Row() {
-            SymbolGlyph($r('sys.symbol.Celia'))
+            SymbolGlyph($r('sys.symbol.gearshape'))
               .fontSize(16)
               .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
           }

@@ -490,10 +490,15 @@ export class NovelLoginManager {
    * 执行URL登录
    */
   private async executeUrlLogin(source: LegadoBookSource, formData: Record<string, string>): Promise<LoginResult> {
-    // TODO: 实现URL登录逻辑
-    // 需要通过WebView加载登录页面并提交表单
-    logger.warn(TAG, 'URL登录暂未完全实现，需要WebView支持');
-    return { success: false, message: 'URL登录需要WebView支持' };
+    const inputKeys = Object.keys(formData);
+    logger.warn(
+      TAG,
+      `URL登录需要页面级WebView表单提交链路，当前NovelLoginManager无可绑定WebView: source=${source.bookSourceName}, fields=${inputKeys.join(',')}`
+    );
+    return {
+      success: false,
+      message: 'URL登录需要图源配置提供 WebView 登录 workflow 或页面级 WebView 表单链路，当前仅支持 JS 登录。'
+    };
   }
 
   /**

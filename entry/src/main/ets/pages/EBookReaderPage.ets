@@ -88,6 +88,15 @@ import { ReadAloudSettingsInfoPanel } from '../components/ReadAloudSettingsInfoP
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
+import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import {
+  MangaReadFlowEvent,
+  MangaReadFlowEventType,
+  MangaReadFlowModeKind,
+  MangaReadFlowSessionInfo,
+  MangaReadFlowSeverity,
+  MangaReadFlowSourceKind
+} from '../Framework/Reader/MangaReadFlowTypes';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
@@ -139,6 +148,8 @@ struct EBookReaderPage {
   private forceReaderKit: boolean = false;
   private readerHostMode: string = '';
   private readerInstanceId: string = '';
+  private originImportId: string = '';
+  private originImportKind: string = '';
 
   // 电子书数据
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -269,6 +280,8 @@ struct EBookReaderPage {
   private readerKitStartupExpectedChapterIndex: number = -1;
   private readerKitStartupExpectedPageOffset: number = -1;
   private static readonly READERKIT_STARTUP_GUARD_WINDOW_MS: number = 6000;
+  private mangaReadFlowMonitor: MangaReadFlowMonitor = MangaReadFlowMonitor.getInstance();
+  private pdfReadFlowSessionId: string = '';
 
   // 音量键翻页相关
   private readingSessionStartTime: number = 0;// 阅读会话开始时间
@@ -377,6 +390,99 @@ struct EBookReaderPage {
     }
     this.textCurrentPageIndex--;
     return true;
+  }
+
+  private ensurePdfReadFlowSession(): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.PDF || this.pdfReadFlowSessionId.length > 0) {
+      return;
+    }
+    const info: MangaReadFlowSessionInfo = new MangaReadFlowSessionInfo();
+    info.sessionId = this.mangaReadFlowMonitor.createSessionId('pdf');
+    info.sourceKind = MangaReadFlowSourceKind.PDF;
+    info.modeKind = MangaReadFlowModeKind.PDF_KIT;
+    info.contentId = this.ebook.id;
+    info.contentTitle = this.ebook.metadata.title;
+    info.chapterId = this.currentChapter?.id || '';
+    info.chapterTitle = this.currentChapter?.title || '';
+    info.pageIndex = Math.max(0, this.currentChapterIndex);
+    info.pageCount = this.ebook.chapters.length;
+    info.readerHostMode = this.readerHostMode;
+    info.readerInstanceId = this.readerInstanceId;
+    info.originImportId = this.originImportId;
+    info.originImportKind = this.originImportKind;
+    info.startedAt = Date.now();
+    this.pdfReadFlowSessionId = this.mangaReadFlowMonitor.startSession(info);
+  }
+
+  private recordPdfReadFlowEvent(
+    eventType: MangaReadFlowEventType,
+    reason: string,
+    pageIndex: number,
+    pageCount: number,
+    detail: string
+  ): void {
+    this.ensurePdfReadFlowSession();
+    if (this.pdfReadFlowSessionId.length <= 0 || !this.ebook) {
+      return;
+    }
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.pdfReadFlowSessionId,
+      eventType,
+      this.ebook.id,
+      this.currentChapter?.id || '',
+      pageIndex,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.PDF;
+    event.modeKind = MangaReadFlowModeKind.PDF_KIT;
+    event.chapterTitle = this.currentChapter?.title || '';
+    event.pageCount = pageCount;
+    event.detail = detail;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordPdfReadFlowError(reason: string, errorMessage: string): void {
+    this.ensurePdfReadFlowSession();
+    if (this.pdfReadFlowSessionId.length <= 0 || !this.ebook) {
+      return;
+    }
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.pdfReadFlowSessionId,
+      MangaReadFlowEventType.ERROR,
+      this.ebook.id,
+      this.currentChapter?.id || '',
+      this.currentChapterIndex,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.PDF;
+    event.modeKind = MangaReadFlowModeKind.PDF_KIT;
+    event.success = false;
+    event.severity = MangaReadFlowSeverity.ERROR;
+    event.errorMessage = errorMessage;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordPdfReadFlowGuardRejected(reason: string, pageIndex: number, pageCount: number, detail: string): void {
+    this.ensurePdfReadFlowSession();
+    if (this.pdfReadFlowSessionId.length <= 0 || !this.ebook) {
+      return;
+    }
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.pdfReadFlowSessionId,
+      MangaReadFlowEventType.FLOW_GUARD_REJECTED,
+      this.ebook.id,
+      this.currentChapter?.id || '',
+      pageIndex,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.PDF;
+    event.modeKind = MangaReadFlowModeKind.PDF_KIT;
+    event.chapterTitle = this.currentChapter?.title || '';
+    event.pageCount = pageCount;
+    event.success = true;
+    event.severity = MangaReadFlowSeverity.WARN;
+    event.detail = detail;
+    this.mangaReadFlowMonitor.record(event);
   }
 
   private lastRemoteInstructionTimestamp: number = 0;
@@ -528,6 +634,17 @@ struct EBookReaderPage {
       cancelTransition();
     } else {
       logger.info(TAG, 'aboutToDisappear：关闭过渡动画进行中，跳过 cancelTransition');
+    }
+    if (this.pdfReadFlowSessionId.length > 0) {
+      this.recordPdfReadFlowEvent(
+        MangaReadFlowEventType.CLEANUP,
+        'about_to_disappear',
+        this.currentChapterIndex,
+        this.ebook ? this.ebook.chapters.length : 0,
+        'pdf_reader_cleanup'
+      );
+      this.mangaReadFlowMonitor.endSession(this.pdfReadFlowSessionId, 'about_to_disappear');
+      this.pdfReadFlowSessionId = '';
     }
   }
 
@@ -3183,6 +3300,8 @@ struct EBookReaderPage {
         this.forceReaderKit = params.forceReaderKit === true;
         this.readerHostMode = params.readerHostMode || '';
         this.readerInstanceId = params.readerInstanceId || '';
+        this.originImportId = params.originImportId || '';
+        this.originImportKind = params.originImportKind || '';
         if (this.isHostedByIsolatedReaderAbility()) {
           PageWindowCoordinator.reapplyPagePolicy('EBookReaderPage', this.uiContext);
           WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
@@ -3572,6 +3691,13 @@ struct EBookReaderPage {
         callbacks: {
           onPageChange: (currentPage: number, totalPages: number) => {
             logger.info(TAG, `PDF 页面变化: ${currentPage}/${totalPages}`);
+            this.recordPdfReadFlowEvent(
+              MangaReadFlowEventType.PAGE_CHANGED,
+              'pdf_page_change',
+              currentPage - 1,
+              totalPages,
+              `currentPage=${currentPage}`
+            );
             // 保存阅读进度
             this.currentChapterIndex = currentPage - 1;
             if (this.ebook && this.ebook.chapters.length > this.currentChapterIndex) {
@@ -3583,12 +3709,20 @@ struct EBookReaderPage {
           },
           onLoadComplete: (pageCount: number) => {
             logger.info(TAG, `PDF load complete, total pages: ${pageCount}`);
+            this.recordPdfReadFlowEvent(
+              MangaReadFlowEventType.PAGES_RESOLVED,
+              'pdf_load_complete',
+              this.currentChapterIndex,
+              pageCount,
+              `pageCount=${pageCount}`
+            );
             this.reportTransitionLoadingProgress(0.96, 'pdf_load_complete');
             this.notifyTransitionReaderReadyOnce('pdf_load_complete');
           },
           onLoadError: (error: string) => {
             logger.error(TAG, `PDF 加载失败: ${error}`);
             this.errorMessage = error;
+            this.recordPdfReadFlowError('pdf_load_error', error);
             this.reportTransitionLoadingProgress(0.96, 'pdf_load_error');
             this.notifyTransitionReaderReadyOnce('pdf_load_error');
           }
@@ -3606,6 +3740,15 @@ struct EBookReaderPage {
     if (!this.ebook) {
       return;
     }
+    if (currentPage <= 0 || totalPages <= 0) {
+      this.recordPdfReadFlowGuardRejected(
+        'pdf_progress_save_skipped_invalid_page',
+        Math.max(0, currentPage - 1),
+        Math.max(0, totalPages),
+        `currentPage=${currentPage}, totalPages=${totalPages}`
+      );
+      return;
+    }
 
     // 更新阅读进度
     const progress = totalPages > 0 ? (currentPage / totalPages) * 100 : 0;
@@ -3618,6 +3761,13 @@ struct EBookReaderPage {
     
     // 保存进度
     this.saveReadingProgress();
+    this.recordPdfReadFlowEvent(
+      MangaReadFlowEventType.PROGRESS_SAVED,
+      'pdf_progress_change',
+      currentPage - 1,
+      totalPages,
+      `progress=${progress.toFixed(1)}`
+    );
     logger.debug(TAG, `PDF 进度已保存: 第 ${currentPage} 页, ${progress.toFixed(1)}%`);
   }
 
@@ -4495,7 +4645,7 @@ struct EBookReaderPage {
       })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.stickers'))
+        SymbolGlyph($r('sys.symbol.highlighter_line'))
           .fontColor([$r('app.color.text_primary')])
       }
       .width(48)
@@ -4678,7 +4828,7 @@ struct EBookReaderPage {
 
         // 字体调整按钮
           Button() {
-            SymbolGlyph($r('sys.symbol.sun_max'))
+            SymbolGlyph($r('sys.symbol.eye'))
               .fontSize(22)
               .fontColor([$r('app.color.text_primary')])
           }

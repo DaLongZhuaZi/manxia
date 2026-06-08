@@ -110,6 +110,8 @@ export interface PdfImportResult {
   chapterNumber?: number;
   /** 章节标题（单章节模式） */
   chapterTitle?: string;
+  /** 导入流程观测会话ID */
+  originImportId?: string;
 }
 
 /**

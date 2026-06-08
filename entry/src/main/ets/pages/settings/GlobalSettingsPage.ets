@@ -72,14 +72,14 @@ export struct GlobalSettingsPage {
       id: 'reading',
       title: '阅读设置',
       subtitle: '漫画、电子书、纯文本阅读器的默认设置',
-      icon: $r('sys.symbol.books_vertical_fill'),
+      icon: $r('sys.symbol.book_open_fill'),
       targetPage: 'ReadingSettingsSubPage'
     },
     {
       id: 'page',
       title: '页面设置',
       subtitle: '详情页类型选择、页面显示偏好',
-      icon: $r('sys.symbol.rectangle_stack'),
+      icon: $r('sys.symbol.thumbnails'),
       targetPage: 'PageSettingsSubPage'
     },
     {

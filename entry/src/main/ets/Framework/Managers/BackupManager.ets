@@ -67,6 +67,16 @@ const CREATE_UNIFIED_ANNOTATION_TABLE_SQL = `
   )
 `;
 
+interface UnifiedAnnotationAnchorJson {
+  chapterId?: string;
+  chapterTitle?: string;
+  chapterIndex?: number;
+  pageIndex?: number;
+  pageProgress?: number;
+  startOffset?: number;
+  endOffset?: number;
+}
+
 export class BackupManager {
   private static instance: BackupManager;
   // [修复] 所有管理器改为延迟初始化，避免在构造时访问未就绪的单例导致崩溃
@@ -179,28 +189,40 @@ export class BackupManager {
       
       const backupData = await this.loadBackupFile(filePath);
       this.validateBackupData(backupData);
-      
-      await this.restoreMangaLibrary(backupData.manga.library);
-      await this.restoreMangaReadProgress(backupData.manga.readProgress);
-      
-      await this.restoreNovelLibrary(backupData.novel.library);
-      await this.restoreNovelReadProgress(backupData.novel.readProgress);
-      
-      await this.restoreEBookLibrary(backupData.ebook.library);
-      
-      await this.restoreMangaSources(backupData.sources.manga);
-      await this.restoreNovelSources(backupData.sources.novel);
-      
-      await this.restoreSettings(backupData.settings);
-      await this.restoreHistory(backupData.history);
-      if (backupData.annotations?.records) {
-        await this.restoreUnifiedAnnotations(backupData.annotations.records);
+
+      const failures: string[] = [];
+      await this.runLegacyRestoreTask('漫画库', async () => { await this.restoreMangaLibrary(backupData.manga.library); }, failures);
+      await this.runLegacyRestoreTask('小说库', async () => { await this.restoreNovelLibrary(backupData.novel.library); }, failures);
+      await this.runLegacyRestoreTask('电子书库', async () => { await this.restoreEBookLibrary(backupData.ebook.library); }, failures);
+      await this.runLegacyRestoreTask('漫画源', async () => { await this.restoreMangaSources(backupData.sources.manga); }, failures);
+      await this.runLegacyRestoreTask('小说源', async () => { await this.restoreNovelSources(backupData.sources.novel); }, failures);
+      await this.runLegacyRestoreTask('漫画阅读进度', async () => { await this.restoreMangaReadProgress(backupData.manga.readProgress); }, failures);
+      await this.runLegacyRestoreTask('小说阅读进度', async () => { await this.restoreNovelReadProgress(backupData.novel.readProgress); }, failures);
+      await this.runLegacyRestoreTask('设置', async () => { await this.restoreSettings(backupData.settings); }, failures);
+      await this.runLegacyRestoreTask('历史记录', async () => { await this.restoreHistory(backupData.history); }, failures);
+      if (backupData.annotations && backupData.annotations.records) {
+        const annotationRecords = backupData.annotations.records;
+        await this.runLegacyRestoreTask('统一标注', async () => { await this.restoreUnifiedAnnotations(annotationRecords); }, failures);
+      }
+
+      if (failures.length > 0) {
+        throw new Error(`旧版JSON备份恢复部分失败: ${failures.join('; ')}`);
       }
       
       logger.info(TAG, 'Backup restore completed');
     } catch (error) {
       logger.error(TAG, `Backup restore failed: ${error}`);
       throw new Error(`Backup restore failed: ${error}`);
+    }
+  }
+
+  private async runLegacyRestoreTask(name: string, runner: () => Promise<void>, failures: string[]): Promise<void> {
+    try {
+      await runner();
+    } catch (error) {
+      const message = `${name}: ${String(error)}`;
+      failures.push(message);
+      logger.error(TAG, `旧版JSON恢复${name}失败: ${error}`);
     }
   }
 
@@ -667,6 +689,7 @@ export class BackupManager {
 
   private async restoreMangaLibrary(items: MangaBackupItem[]): Promise<void> {
     logger.info(TAG, `Restoring manga library: ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -691,8 +714,13 @@ export class BackupManager {
           ]);
         }
       } catch (error) {
+        failures.push(`${item.title}: ${String(error)}`);
         logger.error(TAG, `Failed to restore manga: ${item.title}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`漫画库恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Manga library restore completed');
@@ -700,6 +728,7 @@ export class BackupManager {
 
   private async restoreNovelLibrary(items: NovelBackupItem[]): Promise<void> {
     logger.info(TAG, `Restoring novel library: ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -734,8 +763,13 @@ export class BackupManager {
         
         await this.novelDataManager.saveBook(novel);
       } catch (error) {
+        failures.push(`${item.name}: ${String(error)}`);
         logger.error(TAG, `Failed to restore novel: ${item.name}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说库恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Novel library restore completed');
@@ -743,6 +777,7 @@ export class BackupManager {
 
   private async restoreEBookLibrary(items: EBookBackupItem[]): Promise<void> {
     logger.info(TAG, `Restoring ebook library: ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -757,8 +792,13 @@ export class BackupManager {
           item.isPrivate ? 1 : 0, item.isNSFW ? 1 : 0, item.totalWordCount || 0
         ]);
       } catch (error) {
+        failures.push(`${item.title}: ${String(error)}`);
         logger.error(TAG, `Failed to restore ebook: ${item.title}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`电子书库恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Ebook library restore completed');
@@ -766,6 +806,7 @@ export class BackupManager {
 
   private async restoreMangaSources(items: MangaSourceBackup[]): Promise<void> {
     logger.info(TAG, `Restoring manga sources: ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -776,8 +817,13 @@ export class BackupManager {
           item.isEnabled ? 1 : 0, item.isNSFW ? 1 : 0, item.lastUsedTime || 0
         ]);
       } catch (error) {
+        failures.push(`${item.name}: ${String(error)}`);
         logger.error(TAG, `Failed to restore manga source: ${item.name}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`漫画源恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Manga sources restore completed');
@@ -799,18 +845,37 @@ export class BackupManager {
 
   private async restoreMangaReadProgress(items: MangaReadProgressBackup[]): Promise<void> {
     logger.info(TAG, `Restoring manga read progress: ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
-        const sql = 'INSERT OR REPLACE INTO read_history (comicId, chapterId, pageIndex, totalPages, readTime) VALUES (?, ?, ?, ?, ?)';
+        const comicExists = await this.dbManager.querySql('SELECT id FROM comic_info WHERE id = ?', [item.mangaId]);
+        const chapterExists = await this.dbManager.querySql('SELECT id FROM chapter WHERE id = ?', [item.chapterId]);
+        if (comicExists.length === 0 || chapterExists.length === 0) {
+          logger.debug(TAG, `Skipping read progress without matching comic/chapter: ${item.mangaId}/${item.chapterId}`);
+          continue;
+        }
+
+        const now = Date.now();
+        const sql = 'INSERT OR REPLACE INTO read_history (comicId, chapterId, userId, pageNumber, readTime, duration, createTime) VALUES (?, ?, ?, ?, ?, ?, ?)';
         
         await this.dbManager.executeSql(sql, [
-          item.mangaId, item.chapterId, item.pageIndex,
-          item.totalPages, item.lastReadTime
+          item.mangaId,
+          item.chapterId,
+          'default',
+          item.pageIndex || 0,
+          item.lastReadTime || now,
+          0,
+          now
         ]);
       } catch (error) {
+        failures.push(`${item.mangaId}/${item.chapterId}: ${String(error)}`);
         logger.error(TAG, `Failed to restore manga read progress: ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`漫画阅读进度恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Manga read progress restore completed');
@@ -818,6 +883,7 @@ export class BackupManager {
 
   private async restoreNovelReadProgress(items: NovelReadProgressBackup[]): Promise<void> {
     logger.info(TAG, `Restoring novel read progress: ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -830,8 +896,13 @@ export class BackupManager {
           readTime: item.readTime
         });
       } catch (error) {
+        failures.push(`${item.bookId}/${item.chapterId}: ${String(error)}`);
         logger.error(TAG, `Failed to restore novel read progress: ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说阅读进度恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Novel read progress restore completed');
@@ -871,6 +942,7 @@ export class BackupManager {
       logger.info(TAG, 'Settings restore completed');
     } catch (error) {
       logger.error(TAG, `Failed to restore settings: ${error}`);
+      throw new Error(`设置恢复失败: ${error}`);
     }
   }
 
@@ -910,6 +982,7 @@ export class BackupManager {
       logger.info(TAG, 'History restore completed');
     } catch (error) {
       logger.error(TAG, `Failed to restore history: ${error}`);
+      throw new Error(`历史记录恢复失败: ${error}`);
     }
   }
 
@@ -930,6 +1003,7 @@ export class BackupManager {
 
     let successCount = 0;
     let failCount = 0;
+    const failures: string[] = [];
     for (const rawItem of items) {
       const item = this.normalizeUnifiedAnnotationBackupItem(rawItem);
       if (item.id.length <= 0 || item.contentId.length <= 0) {
@@ -960,10 +1034,14 @@ export class BackupManager {
         successCount++;
       } catch (error) {
         failCount++;
+        failures.push(`${item.id}: ${String(error)}`);
         logger.warn(TAG, `Failed to restore unified annotation: id=${item.id}, error=${error}`);
       }
     }
     logger.info(TAG, `Unified annotations restore completed: success=${successCount}, fail=${failCount}`);
+    if (failures.length > 0) {
+      throw new Error(`统一标注恢复失败 ${failCount}/${items.length}: ${failures.join('; ')}`);
+    }
   }
 
   private normalizeUnifiedAnnotationBackupItem(item: UnifiedAnnotationBackupItem): UnifiedAnnotationBackupItem {
@@ -1028,12 +1106,11 @@ export class BackupManager {
     if (trimmed.length <= 0) {
       return '{}';
     }
-    try {
-      SafeUtils.parseObj<Object>(trimmed);
+    const parsed = SafeUtils.parseOptional<UnifiedAnnotationAnchorJson>(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return trimmed;
-    } catch {
-      return '{}';
     }
+    return '{}';
   }
 
   private async ensureUnifiedAnnotationTable(): Promise<void> {

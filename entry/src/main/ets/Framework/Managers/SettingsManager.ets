@@ -44,6 +44,7 @@ export class SettingKeys {
   static readonly GLOBAL_MANGA_WEBTOON_LEFT_MARGIN = 'global_manga_webtoon_left_margin';
   static readonly GLOBAL_MANGA_WEBTOON_RIGHT_MARGIN = 'global_manga_webtoon_right_margin';
   static readonly GLOBAL_MANGA_WEBTOON_MARGIN_SYNC = 'global_manga_webtoon_margin_sync';
+  static readonly MANGA_READER_INTERACTION_HINT_LAST_MODE = 'manga_reader_interaction_hint_last_mode';
   
   // 电子书全局阅读设置
   static readonly GLOBAL_EBOOK_FONT_SIZE = 'global_ebook_font_size';
@@ -174,6 +175,7 @@ export class SettingKeys {
   static readonly VISIBLE_TABS = 'visible_tabs'; // JSON数组，存储可见的标签索引
   static readonly BOTTOM_BAR_STYLE = 'bottom_bar_style'; // 底栏样式: 'custom' | 'hds'
   static readonly MAIN_MENU_TABLET_TOP_BAR_POSITION = 'main_menu_tablet_top_bar_position';
+  static readonly MAIN_MENU_BOOK_SOURCE_PICKER_AUTO_SCROLL_ENABLED = 'main_menu_book_source_picker_auto_scroll_enabled';
   static readonly LIBRARY_DEFAULT_GRID_COLUMNS = 'library_default_grid_columns';
   static readonly LIBRARY_SHELF_GRID_COLUMNS = 'library_shelf_grid_columns';
   static readonly LIBRARY_HIDE_WOOD_SHELF_TEXTURE = 'library_hide_wood_shelf_texture';
@@ -378,12 +380,28 @@ export class SettingsManager {
 
   /**
    * 获取底部导航栏可见标签
-   * 默认显示基本标签: 首页(0), 书库(1), 发现(2), 图源(3), 设置(6)
-   * 新增的书源(4)和Suwayomi(5)默认不显示，用户可在设置中启用
+   * 默认显示基本标签: 书库(1), 图源(3), 书源(4), Suwayomi(5), 设置(6), Komga(7)
    */
   async getVisibleTabs(): Promise<number[]> {
-    const defaultTabs = [1, 3, 4, 6];
-    return this.getJSON<number[]>(SettingKeys.VISIBLE_TABS, defaultTabs);
+    const defaultTabs: number[] = [1, 3, 4, 5, 7, 6];
+    const savedTabs = this.getJSON<number[]>(SettingKeys.VISIBLE_TABS, defaultTabs);
+    const legacyDefaultTabs: number[] = [1, 3, 4, 6];
+    if (this.isSameNumberArray(savedTabs, legacyDefaultTabs)) {
+      return defaultTabs;
+    }
+    return savedTabs;
+  }
+
+  private isSameNumberArray(left: number[], right: number[]): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+    for (let index = 0; index < left.length; index++) {
+      if (left[index] !== right[index]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**

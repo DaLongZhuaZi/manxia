@@ -51,7 +51,7 @@ export struct RestoreOptionsDialog {
     restoreFavorites: true,
     restoreOnlineData: false,
     restoreMediaFiles: true,
-    restoreCloudConfig: true,
+    restoreCloudConfig: false,
     conflictStrategy: 'merge'
   };
   @Local currentTabIndex: number = 0;
@@ -156,7 +156,9 @@ export struct RestoreOptionsDialog {
         this.buildContentItem('🔌 漫画源', this.backupData.sources?.manga?.length || 0, '个源')
         this.buildContentItem('🔌 小说源', this.backupData.sources?.novel?.length || 0, '个源')
         this.buildContentItem('📊 阅读进度', 
-          (this.backupData.manga?.readProgress?.length || 0) + (this.backupData.novel?.readProgress?.length || 0), 
+          (this.backupData.manga?.readProgress?.length || 0) +
+          (this.backupData.novel?.readProgress?.length || 0) +
+          (this.backupData.tracking?.records?.length || 0),
           '条记录')
         this.buildContentItem('⚙️ 应用设置', this.backupData.settings ? 1 : 0, '组配置')
         this.buildContentItem('🕒 浏览历史', this.backupData.history?.browse?.length || 0, '条记录')
@@ -214,7 +216,9 @@ export struct RestoreOptionsDialog {
           this.buildRestoreOption('书源配置', this.restoreOptions.restoreSources, (value: boolean) => { this.restoreOptions.restoreSources = value; })
         }
         
-        if ((this.backupData.manga?.readProgress?.length || 0) + (this.backupData.novel?.readProgress?.length || 0) > 0) {
+        if ((this.backupData.manga?.readProgress?.length || 0) +
+          (this.backupData.novel?.readProgress?.length || 0) +
+          (this.backupData.tracking?.records?.length || 0) > 0) {
           this.buildRestoreOption('阅读进度', this.restoreOptions.restoreReadProgress, (value: boolean) => { this.restoreOptions.restoreReadProgress = value; })
         }
         
@@ -244,6 +248,10 @@ export struct RestoreOptionsDialog {
         
         if (this.backupData.onlineData?.comics?.length) {
           this.buildRestoreOption('在线数据', this.restoreOptions.restoreOnlineData, (value: boolean) => { this.restoreOptions.restoreOnlineData = value; })
+        }
+
+        if (this.backupData.cloudConfig) {
+          this.buildRestoreOption('云存储配置（包含账号/密码/API Key）', this.restoreOptions.restoreCloudConfig, (value: boolean) => { this.restoreOptions.restoreCloudConfig = value; })
         }
         
         this.buildRestoreOption('媒体文件（封面、图片等）', this.restoreOptions.restoreMediaFiles, (value: boolean) => { this.restoreOptions.restoreMediaFiles = value; })

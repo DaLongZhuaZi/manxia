@@ -67,6 +67,13 @@
 - 已验证语法正确、能够进入实际构建流程的命令包括：
   - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleApp -p product=default -p buildMode=debug --no-daemon --stacktrace`
   - `& 'F:\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleHap --no-daemon --stacktrace`
+- 本机已验证的 HDC 入口为：`F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe`。
+- 在已连接设备上覆盖安装并启动 APP 时，优先使用以下命令；执行前仍需确认当前工作目录是仓库根目录，并优先使用最新构建出的 signed HAP：
+  - 查看已连接设备：`& 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' list targets`
+  - 覆盖安装最新 HAP：`& 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' -t <deviceId> install -r 'F:\DevEcoStudioProject\manxia\entry\build\default\outputs\default\entry-default-signed.hap'`
+  - 启动主入口：`& 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' -t <deviceId> shell aa start -a EntryAbility -b com.dlzz.manxia -m entry`
+  - 验证进程：`& 'F:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' -t <deviceId> shell pidof com.dlzz.manxia`
+  - 当前已实测连接设备 ID 示例：`2UCUT24724009680`。该 ID 只能作为当前机器当前设备的便利记录，实际执行前必须以 `list targets` 输出为准。
 - 当前仓库在本机执行完整构建时，已观测到一个明确的本地原生缓存问题：`entry\.cxx\default\default\debug\arm64-v8a` 下旧的 CMake 生成器为 `Visual Studio 17 2022`，而当前 HarmonyOS 构建链使用 `Ninja`，会导致 `BuildNativeWithCmake` 失败。
 - 因此，如果再次遇到 `generator : Ninja does not match the generator used previously: Visual Studio 17 2022`，应优先判断为本地 `.cxx` / `CMakeCache.txt` 缓存冲突，而不是 Hvigor 命令写错。
 - 遇到上述缓存冲突时，先在仓库根目录停止 daemon、记录报错、定位到具体 `.cxx` 目录；只有在当前任务本身就是构建排障，且用户允许处理构建缓存时，才继续清理对应 CMake 缓存。

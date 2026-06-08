@@ -8,7 +8,8 @@ import {
   NovelAudioReadAloudSnapshot,
   NovelAudioReadAloudStateListener
 } from '../ReadAloud/NovelAudioReadAloudSessionManager';
-import { WindowManager } from '../../Utils/WindowManager';
+import { WindowManager, DisplayMode } from '../../Utils/WindowManager';
+import { openReadAloudPlayerInIsolatedAbility } from '../ReadAloud/ReadAloudPlayerAbilityLauncher';
 
 const TAG = 'ReadAloudFloatingBall';
 const FLOATING_BALL_REFRESH_INTERVAL_MS: number = 400;
@@ -470,27 +471,27 @@ export struct ReadAloudFloatingBall {
       return;
     }
 
-    const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
-    if (!globalStack) {
-      logger.warn(TAG, '无法获取 GlobalNavStack，无法打开听书播放页');
-      return;
-    }
-
     const currentHostPage = (AppStorage.get<string>('ReadAloudCurrentHostPage') ?? '').trim();
     const isReaderHost = currentHostPage === 'NovelReaderPage' ||
       currentHostPage === 'EBookReaderPage' ||
       currentHostPage === 'EpubWebViewReaderPage';
 
+    let returnHostPage: string = '';
+    let returnDisplayMode: DisplayMode | null = null;
     if (isReaderHost) {
-      AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', currentHostPage);
-      AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
-    } else {
-      AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', '');
-      AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', '');
+      returnHostPage = currentHostPage;
+      returnDisplayMode = WindowManager.getCurrentMode();
     }
     AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
     this.showBackRouteIcon = true;
-    globalStack.pushPathByName('ReadAloudPlayerPage', undefined);
+    openReadAloudPlayerInIsolatedAbility(
+      this.getUIContext(),
+      AppStorage.get<NavPathStack>('GlobalNavStack'),
+      TAG,
+      returnHostPage,
+      returnDisplayMode,
+      null
+    );
   }
 
   private returnToReaderPage(): void {
@@ -591,7 +592,7 @@ export struct ReadAloudFloatingBall {
           .backgroundColor('rgba(255,255,255,0.22)')
 
         Button() {
-          SymbolGlyph(this.showBackRouteIcon ? $r('sys.symbol.chevron_left') : $r('sys.symbol.book'))
+          SymbolGlyph(this.showBackRouteIcon ? $r('sys.symbol.arrow_left') : $r('sys.symbol.book'))
             .fontSize(15)
             .fontColor([Color.White])
         }

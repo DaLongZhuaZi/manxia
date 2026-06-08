@@ -1,6 +1,6 @@
 ﻿/**
- * AVIF 图片查看器
- * 支持AVIF图片的导入、查看和导出（转换为PNG/WebP）
+ * 图片查看器
+ * 支持普通图片预览，AVIF 图片继续使用专用解码器并支持导出转换。
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
@@ -23,10 +23,27 @@ import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarMana
 
 const TAG = 'AvifTestPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
+const IMAGE_FILE_SUFFIX_FILTERS: string[] = [
+  '.avif', '.AVIF',
+  '.jpg', '.JPG',
+  '.jpeg', '.JPEG',
+  '.png', '.PNG',
+  '.gif', '.GIF',
+  '.webp', '.WEBP',
+  '.bmp', '.BMP',
+  '.heic', '.HEIC',
+  '.heif', '.HEIF',
+  '.svg', '.SVG'
+];
 
 // NavDestinationContext接口定义
+interface NavDestinationPathInfo {
+  param?: Object;
+}
+
 interface NavDestinationContext {
   pathStack: NavPathStack;
+  pathInfo?: NavDestinationPathInfo;
 }
 
 // 导出格式
@@ -147,7 +164,7 @@ export struct AvifTestPage {
   }
 
   /**
-   * 选择AVIF文件
+   * 选择图片文件
    */
   private async selectFile(): Promise<void> {
     try {
@@ -157,7 +174,7 @@ export struct AvifTestPage {
       const documentPicker = new picker.DocumentViewPicker(this.context!);
       const selectOptions: picker.DocumentSelectOptions = {
         maxSelectNumber: 1,
-        fileSuffixFilters: ['.avif', '.AVIF'],
+        fileSuffixFilters: IMAGE_FILE_SUFFIX_FILTERS,
       };
 
       const result = await documentPicker.select(selectOptions);
@@ -175,11 +192,11 @@ export struct AvifTestPage {
         const uriObj = new fileUri.FileUri(uri);
         this.selectedFileName = uriObj.name;
       } catch {
-        this.selectedFileName = decodeURIComponent(uri.split('/').pop() || 'unknown.avif');
+        this.selectedFileName = decodeURIComponent(uri.split('/').pop() || 'unknown.image');
       }
       
       this.selectedFilePath = uri;
-      await this.decodeAvifFile(uri);
+      await this.decodeImageFile(uri);
     } catch (error) {
       this.showToast(`选择文件失败: ${error}`);
       logger.error(TAG, `选择文件失败: ${error}`);
@@ -189,9 +206,9 @@ export struct AvifTestPage {
   }
 
   /**
-   * 解码AVIF文件
+   * 解码图片文件。AVIF 走专用解码器，普通图片走系统 ImageSource。
    */
-  private async decodeAvifFile(uri: string): Promise<void> {
+  private async decodeImageFile(uri: string): Promise<void> {
     this.loadingText = '正在读取文件...';
     
     try {
@@ -215,38 +232,71 @@ export struct AvifTestPage {
       
       // 检查是否为AVIF格式
       const isAvif = isAvifFormat(buffer);
-      if (!isAvif) {
-        this.showToast('不是有效的AVIF格式文件');
-        return;
-      }
-      
-      // 解码AVIF
-      this.loadingText = '正在解码AVIF...';
+      this.loadingText = isAvif ? '正在解码AVIF...' : '正在解码图片...';
       const startTime = Date.now();
-      
-      const pixelMap = await this.avifDecoder.decode(buffer);
-      
+      const pixelMap = isAvif ? await this.decodeAvifBuffer(buffer) : await this.decodeSystemImage(buffer);
       const decodeTime = Date.now() - startTime;
       
       if (pixelMap) {
         const imgInfo = await pixelMap.getImageInfo();
+        const formatLabel = this.resolveImageFormatLabel(this.selectedFileName, isAvif);
         this.decodedImage = pixelMap;
         this.imageInfo = {
           width: imgInfo.size.width,
           height: imgInfo.size.height,
           fileSize: fileSize,
-          format: 'AVIF',
+          format: formatLabel,
           decodeTime: decodeTime
         };
         
-        logger.info(TAG, `AVIF解码成功: ${imgInfo.size.width}x${imgInfo.size.height}, 耗时${decodeTime}ms`);
+        logger.info(TAG, `图片解码成功: format=${formatLabel}, ${imgInfo.size.width}x${imgInfo.size.height}, 耗时${decodeTime}ms`);
       } else {
-        this.showToast('AVIF解码失败');
+        this.showToast(isAvif ? 'AVIF解码失败' : '图片解码失败');
       }
     } catch (error) {
       this.showToast(`解码错误: ${error}`);
       logger.error(TAG, `解码错误: ${error}`);
     }
+  }
+
+  private async decodeAvifBuffer(buffer: ArrayBuffer): Promise<image.PixelMap | null> {
+    const pixelMap = await this.avifDecoder.decode(buffer);
+    if (pixelMap) {
+      return pixelMap;
+    }
+    logger.warn(TAG, 'AVIF专用解码器返回空，尝试系统图片解码');
+    return await this.decodeSystemImage(buffer);
+  }
+
+  private async decodeSystemImage(buffer: ArrayBuffer): Promise<image.PixelMap | null> {
+    let imageSource: image.ImageSource | null = null;
+    try {
+      imageSource = image.createImageSource(buffer);
+      return await imageSource.createPixelMap();
+    } catch (error) {
+      logger.error(TAG, `系统图片解码失败: ${String(error)}`);
+      return null;
+    } finally {
+      if (imageSource) {
+        try {
+          await imageSource.release();
+        } catch (releaseError) {
+          logger.warn(TAG, `释放图片解码资源失败: ${String(releaseError)}`);
+        }
+      }
+    }
+  }
+
+  private resolveImageFormatLabel(fileName: string, isAvif: boolean): string {
+    if (isAvif) {
+      return 'AVIF';
+    }
+    const lowerName = fileName.trim().toLowerCase();
+    const dotIndex = lowerName.lastIndexOf('.');
+    if (dotIndex >= 0 && dotIndex < lowerName.length - 1) {
+      return lowerName.substring(dotIndex + 1).toUpperCase();
+    }
+    return 'IMAGE';
   }
 
   /**
@@ -268,7 +318,7 @@ export struct AvifTestPage {
    */
   private async exportImage(format: ExportFormat): Promise<void> {
     if (!this.decodedImage) {
-      this.showToast('请先导入AVIF图片');
+      this.showToast('请先导入图片');
       return;
     }
     
@@ -328,7 +378,7 @@ export struct AvifTestPage {
    */
   private async saveToGallery(): Promise<void> {
     if (!this.decodedImage) {
-      this.showToast('请先导入AVIF图片');
+      this.showToast('请先导入图片');
       return;
     }
     
@@ -569,12 +619,12 @@ export struct AvifTestPage {
             .fontSize(64)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
           
-          Text('点击"导入"按钮选择AVIF图片')
+          Text('点击"导入"按钮选择图片')
             .fontSize(16)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .fontFamily(this.appFontFamily)
           
-          Text('支持查看和转换AVIF格式图片')
+          Text('支持 AVIF、JPG、PNG、WebP 等图片格式')
             .fontSize(13)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .fontFamily(this.appFontFamily)
@@ -640,7 +690,7 @@ export struct AvifTestPage {
         }
         SettingsImmersiveTitleBar({
           themeState: this.themeState,
-          title: 'AVIF图片查看器',
+          title: '图片查看器',
           appFontFamily: this.appFontFamily,
           contentPadding: 16,
           maxContentWidth: 1200,
@@ -655,9 +705,13 @@ export struct AvifTestPage {
       logger.info(TAG, `📋 原始参数: ${JSON.stringify(rawParams)}`);
       
       let inputFileUri: string | undefined;
+      const directParams = context.pathInfo?.param as AvifTestPageParams | undefined;
+      if (directParams && directParams.fileUri) {
+        inputFileUri = directParams.fileUri;
+      }
       
       // 尝试多种参数格式
-      if (rawParams) {
+      if (!inputFileUri && rawParams) {
         if (Array.isArray(rawParams) && rawParams.length > 0) {
           // 数组格式
           const firstParam = rawParams[0] as AvifTestPageParams;
@@ -671,17 +725,17 @@ export struct AvifTestPage {
       }
       
       if (inputFileUri) {
-        logger.info(TAG, `从文件管理器打开AVIF文件: ${inputFileUri}`);
+        logger.info(TAG, `从文件管理器打开图片文件: ${inputFileUri}`);
         this.selectedFilePath = inputFileUri;
         // 获取文件名
         try {
           const uriObj = new fileUri.FileUri(inputFileUri);
           this.selectedFileName = uriObj.name;
         } catch {
-          this.selectedFileName = decodeURIComponent(inputFileUri.split('/').pop() || 'unknown.avif');
+          this.selectedFileName = decodeURIComponent(inputFileUri.split('/').pop() || 'unknown.image');
         }
         // 自动解码
-        this.decodeAvifFile(inputFileUri);
+        void this.decodeImageFile(inputFileUri);
       }
     })
     .onBackPressed(() => {

@@ -1,6 +1,5 @@
 ﻿import { SafeUtils } from '../../Utils/SafeUtils';
 import { http } from '@kit.NetworkKit';
-import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
@@ -19,12 +18,17 @@ import {
   createEmptyKomgaConfig,
   getKomgaInstanceDisplayName
 } from '../../Framework/Source/KomgaConfigStore';
+import { SettingsManager } from '../../Framework/Managers/SettingsManager';
+import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './SettingsImmersiveTitleBar';
 import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 
 const TAG = 'KomgaSettingsPage';
 const PAGE_BOTTOM_SPACER: number = 32;
+const KOMGA_TAB_INDEX: number = 7;
+const SETTINGS_TAB_INDEX: number = 6;
 type KomgaSettingsColorKey =
   'accent_blue' |
   'background_dark' |
@@ -50,6 +54,7 @@ export struct KomgaSettingsPage {
   @State instances: KomgaInstanceConfig[] = [];
   @State selectedInstanceId: string = '';
   @State useBrowsePageAsEntry: boolean = true;
+  @State showKomgaInBottomBar: boolean = false;
   @State displayName: string = '';
   @State serverUrl: string = '';
   @State authMode: KomgaAuthMode = 'NONE';
@@ -67,7 +72,10 @@ export struct KomgaSettingsPage {
   @State testSuccess: boolean = false;
 
   private tracker = getKomgaTracker();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   private componentId: string = 'KomgaSettingsPage';
+  private testConnectionRequestId: number = 0;
+  private libraryLoadRequestId: number = 0;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (_newTheme: ThemeType) => {
@@ -97,6 +105,28 @@ export struct KomgaSettingsPage {
 
   private getChipBorderColor(selected: boolean): ResourceColor {
     return selected ? this.color('border_active') : this.color('comp_divider');
+  }
+
+  private getActionButtonBackgroundColor(enabled: boolean, primary: boolean): ResourceColor {
+    if (!enabled) {
+      return this.color('comp_background_tertiary');
+    }
+    return primary ? this.color('accent_blue') : this.color('comp_background_tertiary');
+  }
+
+  private getActionButtonTextColor(enabled: boolean, primary: boolean): ResourceColor {
+    if (!enabled) {
+      return this.color('text_muted');
+    }
+    return primary ? this.color('button_text_primary') : this.color('button_text_secondary');
+  }
+
+  private canTestCurrentInstance(): boolean {
+    return !this.isTesting && this.serverUrl.trim().length > 0;
+  }
+
+  private canLoadLibrariesForCurrentInstance(): boolean {
+    return !this.isLoadingLibraries && this.serverUrl.trim().length > 0;
   }
 
   private toast(message: string): void {
@@ -163,10 +193,14 @@ export struct KomgaSettingsPage {
   private syncDraftToInstances(clearConnectionState: boolean = false, resetLibraries: boolean = false): void {
     this.commitDraft();
     if (clearConnectionState) {
+      this.testConnectionRequestId += 1;
+      this.isTesting = false;
       this.testResult = '';
       this.testSuccess = false;
     }
     if (resetLibraries) {
+      this.libraryLoadRequestId += 1;
+      this.isLoadingLibraries = false;
       this.availableLibraries = [];
     }
   }
@@ -183,6 +217,7 @@ export struct KomgaSettingsPage {
     this.hydrateDraft(this.getCurrentInstance());
     this.testResult = '';
     this.availableLibraries = [];
+    await this.loadBottomBarVisibility();
     if (this.serverUrl.trim().length > 0) {
       void this.loadLibraries(false);
     }
@@ -192,8 +227,13 @@ export struct KomgaSettingsPage {
     this.commitDraft();
     this.selectedInstanceId = this.resolveValidInstanceId(instanceId, this.instances);
     this.hydrateDraft(this.getCurrentInstance());
+    this.testConnectionRequestId += 1;
+    this.libraryLoadRequestId += 1;
+    this.isTesting = false;
+    this.isLoadingLibraries = false;
     this.availableLibraries = [];
     this.testResult = '';
+    this.testSuccess = false;
     if (this.serverUrl.trim().length > 0) {
       void this.loadLibraries(false);
     }
@@ -205,8 +245,13 @@ export struct KomgaSettingsPage {
     this.instances = this.instances.concat([instance]);
     this.selectedInstanceId = instance.id;
     this.hydrateDraft(instance);
+    this.testConnectionRequestId += 1;
+    this.libraryLoadRequestId += 1;
+    this.isTesting = false;
+    this.isLoadingLibraries = false;
     this.availableLibraries = [];
     this.testResult = '';
+    this.testSuccess = false;
   }
 
   private removeCurrentInstance(): void {
@@ -215,15 +260,25 @@ export struct KomgaSettingsPage {
       this.instances = [instance];
       this.selectedInstanceId = instance.id;
       this.hydrateDraft(instance);
+      this.testConnectionRequestId += 1;
+      this.libraryLoadRequestId += 1;
+      this.isTesting = false;
+      this.isLoadingLibraries = false;
       this.availableLibraries = [];
       this.testResult = '';
+      this.testSuccess = false;
       return;
     }
     this.instances = this.instances.filter(item => item.id !== this.selectedInstanceId);
     this.selectedInstanceId = this.instances[0].id;
     this.hydrateDraft(this.instances[0]);
+    this.testConnectionRequestId += 1;
+    this.libraryLoadRequestId += 1;
+    this.isTesting = false;
+    this.isLoadingLibraries = false;
     this.availableLibraries = [];
     this.testResult = '';
+    this.testSuccess = false;
   }
 
   private buildDraftInstance(): KomgaInstanceConfig {
@@ -284,6 +339,9 @@ export struct KomgaSettingsPage {
   }
 
   private async testConnection(): Promise<void> {
+    if (this.isTesting) {
+      return;
+    }
     const instance = this.buildDraftInstance();
     if (instance.serverUrl.trim().length <= 0) {
       this.testResult = '请先填写服务器地址';
@@ -291,6 +349,9 @@ export struct KomgaSettingsPage {
       return;
     }
 
+    const requestId = this.testConnectionRequestId + 1;
+    this.testConnectionRequestId = requestId;
+    const requestInstanceId = instance.id;
     this.isTesting = true;
     this.testResult = '';
     const request = http.createHttp();
@@ -301,14 +362,20 @@ export struct KomgaSettingsPage {
         connectTimeout: 20000,
         readTimeout: 20000
       });
-      this.testSuccess = response.responseCode >= 200 && response.responseCode < 300;
-      this.testResult = this.testSuccess ? '连接成功' : `连接失败，响应码：${response.responseCode}`;
+      if (requestId === this.testConnectionRequestId && requestInstanceId === this.selectedInstanceId) {
+        this.testSuccess = response.responseCode >= 200 && response.responseCode < 300;
+        this.testResult = this.testSuccess ? '连接成功' : `连接失败，响应码：${response.responseCode}`;
+      }
     } catch (error) {
       logger.error(TAG, `测试 Komga 连接失败: ${String(error)}`);
-      this.testSuccess = false;
-      this.testResult = `连接失败：${String(error)}`;
+      if (requestId === this.testConnectionRequestId && requestInstanceId === this.selectedInstanceId) {
+        this.testSuccess = false;
+        this.testResult = `连接失败：${String(error)}`;
+      }
     } finally {
-      this.isTesting = false;
+      if (requestId === this.testConnectionRequestId) {
+        this.isTesting = false;
+      }
       request.destroy();
     }
   }
@@ -322,6 +389,9 @@ export struct KomgaSettingsPage {
       return;
     }
 
+    const requestId = this.libraryLoadRequestId + 1;
+    this.libraryLoadRequestId = requestId;
+    const requestInstanceId = instance.id;
     this.isLoadingLibraries = true;
     const request = http.createHttp();
     try {
@@ -335,18 +405,25 @@ export struct KomgaSettingsPage {
         throw new Error(`响应码 ${response.responseCode}`);
       }
       const resultText = response.result as string;
-      this.availableLibraries = SafeUtils.parseArr(resultText) as KomgaLibraryOption[];
-      if (showToast) {
-        this.toast(`已加载 ${this.availableLibraries.length} 个库`);
+      const libraries = SafeUtils.parseArr(resultText) as KomgaLibraryOption[];
+      if (requestId === this.libraryLoadRequestId && requestInstanceId === this.selectedInstanceId) {
+        this.availableLibraries = libraries;
+        if (showToast) {
+          this.toast(`已加载 ${this.availableLibraries.length} 个库`);
+        }
       }
     } catch (error) {
       logger.error(TAG, `加载 Komga 库列表失败: ${String(error)}`);
-      this.availableLibraries = [];
-      if (showToast) {
-        this.toast(`加载库列表失败：${String(error)}`);
+      if (requestId === this.libraryLoadRequestId && requestInstanceId === this.selectedInstanceId) {
+        this.availableLibraries = [];
+        if (showToast) {
+          this.toast(`加载库列表失败：${String(error)}`);
+        }
       }
     } finally {
-      this.isLoadingLibraries = false;
+      if (requestId === this.libraryLoadRequestId) {
+        this.isLoadingLibraries = false;
+      }
       request.destroy();
     }
   }
@@ -423,6 +500,65 @@ export struct KomgaSettingsPage {
     return config;
   }
 
+  private async loadBottomBarVisibility(): Promise<void> {
+    try {
+      const visibleTabs = await this.settingsManager.getVisibleTabs();
+      this.showKomgaInBottomBar = visibleTabs.includes(KOMGA_TAB_INDEX);
+    } catch (error) {
+      logger.error(TAG, '加载 Komga 底栏入口设置失败', String(error));
+      this.showKomgaInBottomBar = false;
+    }
+  }
+
+  private buildVisibleTabsWithTarget(currentTabs: number[], targetIndex: number, visible: boolean): number[] {
+    const nextTabs: number[] = [];
+    for (let index = 0; index < currentTabs.length; index++) {
+      const tabIndex = currentTabs[index];
+      if (tabIndex !== targetIndex && !nextTabs.includes(tabIndex)) {
+        nextTabs.push(tabIndex);
+      }
+    }
+
+    if (!visible) {
+      return nextTabs;
+    }
+
+    const settingsIndex = nextTabs.indexOf(SETTINGS_TAB_INDEX);
+    if (settingsIndex >= 0) {
+      nextTabs.splice(settingsIndex, 0, targetIndex);
+    } else {
+      nextTabs.push(targetIndex);
+    }
+    return nextTabs;
+  }
+
+  private async saveBottomBarVisibility(isOn: boolean): Promise<void> {
+    const previousValue = this.showKomgaInBottomBar;
+    this.showKomgaInBottomBar = isOn;
+    try {
+      const currentTabs = await this.settingsManager.getVisibleTabs();
+      const nextTabs = this.buildVisibleTabsWithTarget(currentTabs, KOMGA_TAB_INDEX, isOn);
+      await this.settingsManager.setVisibleTabs(nextTabs);
+      AppStorage.setOrCreate('visible_tabs', nextTabs);
+      logger.info(TAG, `Komga 底栏入口已${isOn ? '显示' : '隐藏'}: ${JSON.stringify(nextTabs)}`);
+      this.showRestartRequiredDialog();
+    } catch (error) {
+      this.showKomgaInBottomBar = previousValue;
+      logger.error(TAG, '保存 Komga 底栏入口设置失败', String(error));
+      this.toast('保存底栏入口设置失败');
+    }
+  }
+
+  private showRestartRequiredDialog(): void {
+    this.getUIContext().getPromptAction().showDialog({
+      title: '配置已保存',
+      message: '底栏入口设置已保存，需要重启APP才能生效。',
+      buttons: [
+        { text: '知道了', color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) }
+      ]
+    });
+  }
+
   @Builder
   private buildChip(label: string, selected: boolean, action: () => void) {
     Button(label)
@@ -439,13 +575,36 @@ export struct KomgaSettingsPage {
       .onClick(() => action())
   }
 
+  @Builder
+  private buildAuthModeChip(label: string, mode: KomgaAuthMode) {
+    Button(label)
+      .fontSize(12)
+      .fontColor(this.getChipTextColor(this.authMode === mode))
+      .fontFamily(this.appFontFamily)
+      .constraintSize({ minHeight: 0 })
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .backgroundColor(this.getChipBackgroundColor(this.authMode === mode))
+      .border({ width: 1, color: this.getChipBorderColor(this.authMode === mode) })
+      .borderRadius(999)
+      .margin({ right: 8, bottom: 8 })
+      .stateEffect(false)
+      .onClick(() => {
+        if (this.authMode !== mode) {
+          this.authMode = mode;
+          this.syncDraftToInstances(true, true);
+        }
+      })
+  }
+
   build() {
     NavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(this.color('background_dark'))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Scroll() {
@@ -528,18 +687,9 @@ export struct KomgaSettingsPage {
               })
 
             Flex({ wrap: FlexWrap.Wrap }) {
-              this.buildChip('无需认证', this.authMode === 'NONE', () => {
-                this.authMode = 'NONE';
-                this.syncDraftToInstances(true, true);
-              })
-              this.buildChip('Basic Auth', this.authMode === 'BASIC', () => {
-                this.authMode = 'BASIC';
-                this.syncDraftToInstances(true, true);
-              })
-              this.buildChip('API Key', this.authMode === 'API_KEY', () => {
-                this.authMode = 'API_KEY';
-                this.syncDraftToInstances(true, true);
-              })
+              this.buildAuthModeChip('无需认证', 'NONE')
+              this.buildAuthModeChip('Basic Auth', 'BASIC')
+              this.buildAuthModeChip('API Key', 'API_KEY')
             }
 
             if (this.authMode === 'BASIC') {
@@ -592,19 +742,19 @@ export struct KomgaSettingsPage {
             Row({ space: 12 }) {
               Button(this.isTesting ? '测试中...' : '测试连接')
                 .layoutWeight(1)
-                .backgroundColor(this.color('accent_blue'))
-                .fontColor(this.color('button_text_primary'))
+                .backgroundColor(this.getActionButtonBackgroundColor(this.canTestCurrentInstance(), true))
+                .fontColor(this.getActionButtonTextColor(this.canTestCurrentInstance(), true))
                 .fontFamily(this.appFontFamily)
-                .enabled(!this.isTesting)
+                .enabled(this.canTestCurrentInstance())
                 .onClick(() => {
                   void this.testConnection();
                 })
               Button(this.isLoadingLibraries ? '加载中...' : '加载库列表')
                 .layoutWeight(1)
-                .backgroundColor(this.color('comp_background_tertiary'))
-                .fontColor(this.color('button_text_secondary'))
+                .backgroundColor(this.getActionButtonBackgroundColor(this.canLoadLibrariesForCurrentInstance(), false))
+                .fontColor(this.getActionButtonTextColor(this.canLoadLibrariesForCurrentInstance(), false))
                 .fontFamily(this.appFontFamily)
-                .enabled(!this.isLoadingLibraries)
+                .enabled(this.canLoadLibrariesForCurrentInstance())
                 .onClick(() => {
                   void this.loadLibraries(true);
                 })
@@ -642,6 +792,30 @@ export struct KomgaSettingsPage {
               .fontColor(this.color('text_primary'))
               .fontFamily(this.appFontFamily)
               .alignSelf(ItemAlign.Start)
+
+            Row() {
+              Column({ space: 4 }) {
+                Text('在底栏当中显示 Komga')
+                  .fontSize(14)
+                  .fontColor(this.color('text_primary'))
+                  .fontFamily(this.appFontFamily)
+
+                Text('调整后需要重启APP才能生效')
+                  .fontSize(12)
+                  .fontColor(this.color('text_muted'))
+                  .fontFamily(this.appFontFamily)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+
+              Toggle({ type: ToggleType.Switch, isOn: this.showKomgaInBottomBar })
+                .selectedColor(this.color('accent_blue'))
+                .switchPointColor(Color.White)
+                .onChange((value: boolean) => {
+                  void this.saveBottomBarVisibility(value);
+                })
+            }
+            .width('100%')
 
             if (this.availableLibraries.length > 0) {
               Flex({ wrap: FlexWrap.Wrap }) {
@@ -683,6 +857,8 @@ export struct KomgaSettingsPage {
                 .fontFamily(this.appFontFamily)
               Blank()
               Toggle({ type: ToggleType.Switch, isOn: this.useBrowsePageAsEntry })
+                .selectedColor(this.color('accent_blue'))
+                .switchPointColor(Color.White)
                 .onChange((value: boolean) => this.useBrowsePageAsEntry = value)
             }
             .width('100%')
@@ -745,7 +921,6 @@ export struct KomgaSettingsPage {
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .backgroundColor(this.color('background_dark'))
 
         SettingsImmersiveTitleBar({
           themeState: this.themeState,

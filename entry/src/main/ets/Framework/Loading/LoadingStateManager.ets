@@ -318,32 +318,28 @@ export class LoadingStateManager {
    * 获取内存使用量
    */
   private getMemoryUsage(): number {
-    // 实际实现中应该调用系统API获取内存使用量
-    return Math.random() * 100 * 1024 * 1024; // 模拟值
+    return 0;
   }
   
   /**
    * 获取CPU使用率
    */
   private getCpuUsage(): number {
-    // 实际实现中应该调用系统API获取CPU使用率
-    return Math.random() * 100; // 模拟值
+    return 0;
   }
   
   /**
    * 获取帧率
    */
   private getFps(): number {
-    // 实际实现中应该从渲染系统获取帧率
-    return 60 - Math.random() * 10; // 模拟值
+    return 0;
   }
   
   /**
    * 获取渲染时间
    */
   private getRenderTime(): number {
-    // 实际实现中应该从渲染系统获取渲染时间
-    return Math.random() * 50; // 模拟值
+    return 0;
   }
   
   /**
@@ -726,7 +722,8 @@ export class LoadingStateManager {
    */
   private notifyStateChange(event: LoadingStateChangeEvent): void {
     // 通知内部监听器
-    this.stateChangeListeners.forEach(listener => {
+    const listenersSnapshot: Array<(event: LoadingStateChangeEvent) => void> = this.stateChangeListeners.slice();
+    listenersSnapshot.forEach(listener => {
       try {
         listener(event);
       } catch (error) {
@@ -743,6 +740,9 @@ export class LoadingStateManager {
    * 添加状态变更监听器
    */
   public addStateChangeListener(listener: (event: LoadingStateChangeEvent) => void): void {
+    if (this.stateChangeListeners.includes(listener)) {
+      return;
+    }
     this.stateChangeListeners.push(listener);
   }
   

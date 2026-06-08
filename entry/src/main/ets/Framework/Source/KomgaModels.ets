@@ -14,11 +14,11 @@ export interface KomgaSortOption {
 }
 
 export const KOMGA_SORT_OPTIONS: KomgaSortOption[] = [
-  { key: 'RELEVANCE', label: '???', ascending: false },
-  { key: 'ALPHABETICAL', label: '?? A-Z', ascending: true },
-  { key: 'DATE_ADDED', label: '????', ascending: false },
-  { key: 'DATE_UPDATED', label: '????', ascending: false },
-  { key: 'RANDOM', label: '??', ascending: false }
+  { key: 'RELEVANCE', label: '相关度', ascending: false },
+  { key: 'ALPHABETICAL', label: '标题 A-Z', ascending: true },
+  { key: 'DATE_ADDED', label: '添加时间', ascending: false },
+  { key: 'DATE_UPDATED', label: '更新时间', ascending: false },
+  { key: 'RANDOM', label: '随机', ascending: false }
 ];
 
 export const KOMGA_DEFAULT_CHAPTER_TEMPLATE: string = '{number} - {title} ({size})';

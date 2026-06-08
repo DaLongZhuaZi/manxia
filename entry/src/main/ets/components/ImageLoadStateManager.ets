@@ -53,6 +53,9 @@ export class ImageLoadStateManager {
   
   // 加载状态映射（用于快速查询）
   private loadStates: Map<string, ImageLoadState> = new Map();
+
+  // 正在加载的页面数量，避免高频队列调度时遍历全量状态
+  private loadingCount: number = 0;
   
   // 状态变化回调
   private onStateChange?: (pageId: string, state: PageState) => void;
@@ -76,7 +79,7 @@ export class ImageLoadStateManager {
         pixelMap: null
       };
       this.pageStates.set(pageId, state);
-      this.loadStates.set(pageId, ImageLoadState.IDLE);
+      this.updateLoadState(pageId, ImageLoadState.IDLE);
     }
   }
 
@@ -84,7 +87,7 @@ export class ImageLoadStateManager {
    * 开始加载
    */
   startLoading(pageId: string): void {
-    const state = this.pageStates.get(pageId);
+    const state: PageState | undefined = this.pageStates.get(pageId);
     if (!state) {
       logger.warn(TAG, `页面状态不存在: ${pageId}`);
       return;
@@ -94,7 +97,7 @@ export class ImageLoadStateManager {
     state.loadStartTime = Date.now();
     state.error = undefined;
     
-    this.loadStates.set(pageId, ImageLoadState.LOADING);
+    this.updateLoadState(pageId, ImageLoadState.LOADING);
     
     this.notifyStateChange(pageId, state);
   }
@@ -103,7 +106,7 @@ export class ImageLoadStateManager {
    * 加载完成
    */
   onLoadComplete(pageId: string, pixelMap: image.PixelMap): void {
-    const state = this.pageStates.get(pageId);
+    const state: PageState | undefined = this.pageStates.get(pageId);
     if (!state) {
       logger.warn(TAG, `页面状态不存在: ${pageId}`);
       return;
@@ -115,7 +118,7 @@ export class ImageLoadStateManager {
     state.error = undefined;
     
     this.pixelMaps.set(pageId, pixelMap);
-    this.loadStates.set(pageId, ImageLoadState.COMPLETED);
+    this.updateLoadState(pageId, ImageLoadState.COMPLETED);
     
     this.notifyStateChange(pageId, state);
   }
@@ -124,7 +127,7 @@ export class ImageLoadStateManager {
    * 加载失败
    */
   onLoadError(pageId: string, error: string): void {
-    const state = this.pageStates.get(pageId);
+    const state: PageState | undefined = this.pageStates.get(pageId);
     if (!state) {
       logger.warn(TAG, `页面状态不存在: ${pageId}`);
       return;
@@ -138,7 +141,7 @@ export class ImageLoadStateManager {
     state.loadEndTime = Date.now();
     
     this.pixelMaps.delete(pageId);
-    this.loadStates.set(pageId, ImageLoadState.ERROR);
+    this.updateLoadState(pageId, ImageLoadState.ERROR);
     
     this.notifyStateChange(pageId, state);
   }
@@ -190,19 +193,17 @@ export class ImageLoadStateManager {
    * 避免每次调用时遍历所有页面
    */
   getLoadingCount(): number {
-    let count = 0;
-    this.loadStates.forEach(state => {
-      if (state === ImageLoadState.LOADING) {
-        count++;
-      }
-    });
-    return count;
+    return this.loadingCount;
   }
 
   /**
    * 清除页面状态
    */
   clearPage(pageId: string): void {
+    const state: ImageLoadState | undefined = this.loadStates.get(pageId);
+    if (state === ImageLoadState.LOADING) {
+      this.loadingCount = Math.max(0, this.loadingCount - 1);
+    }
     this.pageStates.delete(pageId);
     this.pixelMaps.delete(pageId);
     this.loadStates.delete(pageId);
@@ -215,6 +216,7 @@ export class ImageLoadStateManager {
     this.pageStates.clear();
     this.pixelMaps.clear();
     this.loadStates.clear();
+    this.loadingCount = 0;
   }
 
   /**
@@ -232,7 +234,7 @@ export class ImageLoadStateManager {
     });
 
     toRemove.forEach(pageId => {
-      const state = this.pageStates.get(pageId);
+      const state: PageState | undefined = this.pageStates.get(pageId);
       if (state && state.pixelMap) {
         cleanedCount++;
         state.pixelMap = null;
@@ -293,5 +295,15 @@ export class ImageLoadStateManager {
     if (this.onStateChange) {
       this.onStateChange(pageId, state);
     }
+  }
+
+  private updateLoadState(pageId: string, nextState: ImageLoadState): void {
+    const previousState: ImageLoadState | undefined = this.loadStates.get(pageId);
+    if (previousState === ImageLoadState.LOADING && nextState !== ImageLoadState.LOADING) {
+      this.loadingCount = Math.max(0, this.loadingCount - 1);
+    } else if (previousState !== ImageLoadState.LOADING && nextState === ImageLoadState.LOADING) {
+      this.loadingCount++;
+    }
+    this.loadStates.set(pageId, nextState);
   }
 }

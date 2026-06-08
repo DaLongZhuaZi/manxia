@@ -46,6 +46,7 @@ import { TimeUtils } from '../Utils/TimeUtils';
 import fs from '@ohos.file.fs';
 
 const TAG = 'DataManager';
+const COMIC_INFO_BATCH_QUERY_SIZE: number = 200;
 
 // ==================== 查询结果接口定义 ====================
 
@@ -590,6 +591,11 @@ export interface ComicBasicInfoUpdate {
   isPrivate?: boolean;
 }
 
+interface ComicInfoBatchRecord extends ComicInfoDatabaseRecord {
+  _source: string;
+  _priority: number;
+}
+
 export class DataManager {
   private static instance: DataManager | null = null;
 
@@ -689,7 +695,8 @@ export class DataManager {
       // 初始化插件管理器
       await this.pluginManager.initialize();
 
-      // 启动定时任务
+      // 重新初始化时先清理旧定时器，确保配置变更后的间隔生效且不会重复启动
+      this.stopTimers();
       this.startTimers();
 
       logger.info(TAG, '数据管理器初始化完成');
@@ -753,24 +760,24 @@ export class DataManager {
    * 将 online_comic_info 数据库记录转换为 ComicInfo
    * [修复] 用于支持从 online_comic_info 表查询漫画
    */
-  private convertOnlineComicRecordToComicInfo(record: ESObject): ComicInfo {
-    const isPrivateValue = record.isPrivate as number | undefined | null;
-    const isNSFWValue = record.isNSFW as number | undefined | null;
+  private convertOnlineComicRecordToComicInfo(record: ComicInfoBatchRecord): ComicInfo {
+    const isPrivateValue: number | undefined | null = record.isPrivate;
+    const isNSFWValue: number | undefined | null = record.isNSFW;
     
     return {
-      id: record.id as string,
-      title: record.title as string,
-      author: (record.author as string) || '',
-      description: (record.description as string) || '',
-      coverUrl: (record.coverUrl as string) || '',
-      sourceId: record.sourceId as string,
-      status: 'unknown' as MangaStatus,
-      tags: safeJsonParse(record.tags as string, []),
-      rating: (record.rating as number) || 0,
+      id: record.id,
+      title: record.title,
+      author: record.author || '',
+      description: record.description || '',
+      coverUrl: record.coverUrl || '',
+      sourceId: record.sourceId,
+      status: (record.status || 'unknown') as MangaStatus,
+      tags: safeJsonParse(record.tags, []),
+      rating: record.rating || 0,
       chapterCount: 0,
-      lastUpdateTime: (record.lastUpdateTime as number) || 0,
-      addTime: (record.addTime as number) || 0,
-      externalId: (record.externalId as string) || undefined,
+      lastUpdateTime: record.lastUpdateTime || 0,
+      addTime: record.addTime || 0,
+      externalId: record.externalId || undefined,
       isPrivate: (isPrivateValue !== undefined && isPrivateValue !== null) ? (isPrivateValue === 1) : false,
       isNSFW: (isNSFWValue !== undefined && isNSFWValue !== null) ? (isNSFWValue === 1) : false
     };
@@ -1702,33 +1709,99 @@ export class DataManager {
     try {
       const sql = `
         SELECT id, sourceId, externalId, title, author, description, coverUrl, coverLocalPath,
-               tags, rating, chapterCount, lastUpdateTime, addTime, isPrivate, isNSFW, 'local' as _source
+               status, tags, rating, chapterCount, lastUpdateTime, addTime, createTime, updateTime,
+               webUrl, apiUrl, contentType, isPrivate, isNSFW, 'local' as _source, 0 as _priority
         FROM comic_info WHERE id = ?
         UNION ALL
         SELECT id, sourceId, externalId, title, author, description, coverUrl, '' as coverLocalPath,
-               tags, rating, 0 as chapterCount, lastUpdateTime, addTime, isPrivate, isNSFW, 'online' as _source
+               status, tags, rating, 0 as chapterCount, lastUpdateTime, addTime, createTime, updateTime,
+               null as webUrl, null as apiUrl, 'online' as contentType, isPrivate, isNSFW, 'online' as _source, 1 as _priority
         FROM online_comic_info WHERE id = ?
+        ORDER BY _priority ASC
         LIMIT 1
       `;
       const result = await this.databaseManager.querySql(sql, [comicId, comicId]);
 
       if (result.length > 0) {
-        const record: DatabaseRecord = result[0] as DatabaseRecord;
-        const obj: ESObject = record as ESObject;
-        const source: string = (obj._source as string) || '';
+        const record: ComicInfoBatchRecord = result[0] as ComicInfoBatchRecord;
+        const source: string = record._source;
         if (source === 'local') {
           logger.debug(TAG, `从 comic_info 表找到漫画: ${comicId}`);
-          return this.convertRecordToComicInfo(record as ComicInfoDatabaseRecord);
+          return this.convertRecordToComicInfo(record);
         } else {
           logger.debug(TAG, `从 online_comic_info 表找到漫画: ${comicId}`);
-          return this.convertOnlineComicRecordToComicInfo(obj);
+          return this.convertOnlineComicRecordToComicInfo(record);
         }
       }
 
-      logger.warn(TAG, `未找到ID为 ${comicId} 的漫画（已查询 comic_info 和 online_comic_info 表）`);
+      logger.debug(TAG, `未找到ID为 ${comicId} 的漫画（已查询 comic_info 和 online_comic_info 表）`);
       return null;
     } catch (error) {
       logger.error(TAG, `根据ID获取漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  public async getComicsByIds(comicIds: string[]): Promise<Map<string, ComicInfo>> {
+    const resultMap: Map<string, ComicInfo> = new Map<string, ComicInfo>();
+    if (comicIds.length === 0) {
+      return resultMap;
+    }
+
+    try {
+      const uniqueIds: string[] = [];
+      for (const comicId of comicIds) {
+        if (comicId.length > 0 && !uniqueIds.includes(comicId)) {
+          uniqueIds.push(comicId);
+        }
+      }
+      if (uniqueIds.length === 0) {
+        return resultMap;
+      }
+
+      for (let start = 0; start < uniqueIds.length; start += COMIC_INFO_BATCH_QUERY_SIZE) {
+        const batchIds: string[] = uniqueIds.slice(start, start + COMIC_INFO_BATCH_QUERY_SIZE);
+        const placeholders = batchIds.map((): string => '?').join(',');
+        const sql = `
+          SELECT id, sourceId, externalId, title, author, description, coverUrl, coverLocalPath,
+                 status, tags, rating, chapterCount, lastUpdateTime, addTime, createTime, updateTime,
+                 webUrl, apiUrl, contentType, isPrivate, isNSFW, 'local' as _source, 0 as _priority
+          FROM comic_info WHERE id IN (${placeholders})
+          UNION ALL
+          SELECT id, sourceId, externalId, title, author, description, coverUrl, '' as coverLocalPath,
+                 status, tags, rating, 0 as chapterCount, lastUpdateTime, addTime, createTime, updateTime,
+                 null as webUrl, null as apiUrl, 'online' as contentType, isPrivate, isNSFW, 'online' as _source, 1 as _priority
+          FROM online_comic_info WHERE id IN (${placeholders})
+          ORDER BY _priority ASC
+        `;
+        const args: DatabaseValue[] = [];
+        for (const batchId of batchIds) {
+          args.push(batchId);
+        }
+        for (const batchId of batchIds) {
+          args.push(batchId);
+        }
+        const records: DatabaseRecord[] = await this.databaseManager.querySql(sql, args);
+        for (const record of records) {
+          const typedRecord: ComicInfoBatchRecord = record as ComicInfoBatchRecord;
+          const comicId = typedRecord.id;
+          if (comicId.length === 0) {
+            continue;
+          }
+          const source: string = typedRecord._source;
+          if (source !== 'local' && resultMap.has(comicId)) {
+            continue;
+          }
+          const comicInfo: ComicInfo = source === 'local'
+            ? this.convertRecordToComicInfo(typedRecord)
+            : this.convertOnlineComicRecordToComicInfo(typedRecord);
+          resultMap.set(comicId, comicInfo);
+        }
+      }
+      logger.debug(TAG, `批量获取漫画信息完成: 请求=${uniqueIds.length}, 命中=${resultMap.size}`);
+      return resultMap;
+    } catch (error) {
+      logger.error(TAG, `批量获取漫画信息失败: ${String(error)}`);
       throw error as Error;
     }
   }
@@ -2044,42 +2117,116 @@ export class DataManager {
    */
   public async updateChapterInfo(chapterId: string, updates: Partial<ChapterInfo>): Promise<void> {
     try {
-      // 构建更新记录，使用UpdateRecordData接口
-      const updateRecord: UpdateRecordData = {
-        id: chapterId // 必须提供id字段
-      };
-      
+      const now = Date.now();
+      const setClauses: string[] = [];
+      const args: DatabaseValue[] = [];
+
       if (updates.title !== undefined) {
-        updateRecord.title = updates.title;
+        setClauses.push('title = ?');
+        args.push(updates.title);
       }
       if (updates.index !== undefined) {
-        // UpdateRecordData没有index字段，需要通过其他方式处理或忽略
-        logger.warn(TAG, 'index字段更新暂不支持');
+        setClauses.push('chapterNumber = ?');
+        args.push(updates.index);
       }
       if (updates.pageCount !== undefined) {
-        updateRecord.totalPages = updates.pageCount; // 映射到totalPages字段
+        setClauses.push('pageCount = ?');
+        args.push(updates.pageCount);
       }
       if (updates.isDownloaded !== undefined) {
-        updateRecord.isDownloaded = updates.isDownloaded;
+        setClauses.push('isDownloaded = ?');
+        args.push(updates.isDownloaded ? 1 : 0);
       }
       if (updates.downloadPath !== undefined) {
-        updateRecord.downloadPath = updates.downloadPath;
+        setClauses.push('downloadPath = ?');
+        args.push(updates.downloadPath.length > 0 ? updates.downloadPath : null);
       }
       if (updates.publishTime !== undefined) {
-        // UpdateRecordData没有publishTime字段，需要通过其他方式处理或忽略
-        logger.warn(TAG, 'publishTime字段更新暂不支持');
+        setClauses.push('publishTime = ?');
+        args.push(updates.publishTime);
       }
 
-      await this.databaseManager.update(
-        'chapter',
-        updateRecord,
-        'id = ?',
-        [chapterId]
-      );
-      
+      if (setClauses.length > 0) {
+        setClauses.push('updateTime = ?');
+        args.push(now);
+        args.push(chapterId);
+        await this.databaseManager.executeSql(
+          `UPDATE chapter SET ${setClauses.join(', ')} WHERE id = ?`,
+          args
+        );
+      }
+
+      await this.updateOnlineChapterInfoIfPresent(chapterId, updates, now);
       logger.debug(TAG, `更新章节信息: ${chapterId}`);
     } catch (error) {
       logger.error(TAG, `更新章节信息失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  private async updateOnlineChapterInfoIfPresent(chapterId: string, updates: Partial<ChapterInfo>, updateTime: number): Promise<void> {
+    const setClauses: string[] = [];
+    const args: DatabaseValue[] = [];
+
+    if (updates.title !== undefined) {
+      setClauses.push('title = ?');
+      args.push(updates.title);
+    }
+    if (updates.index !== undefined) {
+      setClauses.push('chapterNumber = ?');
+      args.push(updates.index);
+      setClauses.push('`index` = ?');
+      args.push(updates.index);
+    }
+    if (updates.pageCount !== undefined) {
+      setClauses.push('pageCount = ?');
+      args.push(updates.pageCount);
+    }
+    if (updates.isDownloaded !== undefined) {
+      setClauses.push('isDownloaded = ?');
+      args.push(updates.isDownloaded ? 1 : 0);
+    }
+    if (updates.downloadPath !== undefined) {
+      setClauses.push('downloadPath = ?');
+      args.push(updates.downloadPath.length > 0 ? updates.downloadPath : null);
+    }
+    if (updates.publishTime !== undefined) {
+      setClauses.push('publishTime = ?');
+      args.push(updates.publishTime);
+    }
+
+    if (setClauses.length <= 0) {
+      return;
+    }
+
+    setClauses.push('updateTime = ?');
+    args.push(updateTime);
+    args.push(chapterId);
+    await this.databaseManager.executeSql(
+      `UPDATE online_chapter SET ${setClauses.join(', ')} WHERE id = ?`,
+      args
+    );
+  }
+
+  public async deleteDownloadTask(taskId: string): Promise<void> {
+    try {
+      await this.databaseManager.executeSql('DELETE FROM download_task WHERE id = ?', [taskId]);
+      logger.info(TAG, `删除下载任务记录: taskId=${taskId}`);
+    } catch (error) {
+      logger.error(TAG, `删除下载任务记录失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  public async deleteDownloadTasksByChapter(comicId: string, chapterId: string): Promise<void> {
+    try {
+      await this.databaseManager.executeSql(
+        'DELETE FROM download_task WHERE comicId = ? AND chapterId = ?',
+        [comicId, chapterId]
+      );
+      logger.info(TAG, `删除章节下载任务记录: comicId=${comicId}, chapterId=${chapterId}`);
+    } catch (error) {
+      logger.error(TAG, `删除章节下载任务记录失败: ${error}`);
       throw error as Error;
     }
   }

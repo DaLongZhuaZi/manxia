@@ -792,29 +792,30 @@ export class RhinoWasmExecutor {
       });
     },
     
-    // 浏览器相关（在沙箱中无法实现，返回模拟值）
+    // 浏览器相关：Rhino沙箱没有页面所有权，返回明确的受限结果。
     startBrowserAwait: function(url, title) {
-      console.log('[java.startBrowserAwait] URL:', url, 'Title:', title);
-      return { body: function() { return ''; } };
+      var message = 'startBrowserAwait unsupported in Rhino sandbox: requires WebView login flow. url=' + (url || '');
+      console.log('[java.startBrowserAwait]', message, 'Title:', title);
+      return { unsupported: true, message: message, body: function() { return ''; } };
     },
     startBrowser: function(url, title) {
-      console.log('[java.startBrowser] URL:', url, 'Title:', title);
+      console.log('[java.startBrowser] unsupported in Rhino sandbox: requires UI-owned browser flow. URL:', url, 'Title:', title);
     },
     
-    // 文件操作（在沙箱中无法实现）
+    // 文件操作：下载需要ArkTS异步网络与沙箱文件服务，当前同步JS对象只返回明确受限状态。
     cacheFile: '',
     downloadFile: function(url) {
-      console.log('[java.downloadFile] URL:', url);
+      console.log('[java.downloadFile] unsupported in Rhino sandbox: async download bridge is not attached. URL:', url);
       return '';
     },
     
-    // 加解密
+    // 加解密：CryptoArchitectureKit为异步ArkTS能力，当前同步沙箱桥接不可直接返回结果。
     aesDecodeToString: function(data, key, transformation, iv) {
-      console.log('[java.aesDecodeToString] Not implemented');
+      console.log('[java.aesDecodeToString] unsupported in Rhino sandbox: async crypto bridge is not attached. transformation:', transformation);
       return data;
     },
     aesEncodeToString: function(data, key, transformation, iv) {
-      console.log('[java.aesEncodeToString] Not implemented');
+      console.log('[java.aesEncodeToString] unsupported in Rhino sandbox: async crypto bridge is not attached. transformation:', transformation);
       return data;
     }
   };

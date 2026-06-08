@@ -378,7 +378,7 @@ export struct ContentTrackingStatusCard {
             Column() {
               this.buildActionButton(
                 this.state.isBusy ? '检查中...' : '现在检查',
-                $r('sys.symbol.bookshelf_badge_checkmark'),
+                $r('sys.symbol.checkmark_circle'),
                 false,
                 !this.state.isBusy,
                 this.callbacks.onRunNow
@@ -389,7 +389,7 @@ export struct ContentTrackingStatusCard {
             Column() {
               this.buildActionButton(
                 '打开提醒页',
-                $r('sys.symbol.bookshelf_badge_checkmark'),
+                $r('sys.symbol.bell'),
                 false,
                 !this.state.isBusy,
                 this.callbacks.onOpenManagement
@@ -417,7 +417,7 @@ export struct ContentTrackingStatusCard {
           Column() {
             this.buildActionButton(
               '打开提醒页',
-              $r('sys.symbol.bookshelf_badge_checkmark'),
+              $r('sys.symbol.bell'),
               false,
               !this.state.isBusy,
               this.callbacks.onOpenManagement
@@ -431,7 +431,7 @@ export struct ContentTrackingStatusCard {
       if (!this.state.supported) {
         this.buildActionButton(
           '打开提醒页',
-          $r('sys.symbol.bookshelf_badge_checkmark'),
+          $r('sys.symbol.bell'),
           false,
           !this.state.isBusy,
           this.callbacks.onOpenManagement
@@ -445,7 +445,7 @@ export struct ContentTrackingStatusCard {
     Column({ space: 12 }) {
       Row() {
         Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.bookshelf_badge_checkmark'))
+          SymbolGlyph($r('sys.symbol.bell'))
             .fontSize(16)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           Text('更新提醒')

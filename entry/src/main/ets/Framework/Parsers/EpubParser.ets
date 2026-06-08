@@ -21,7 +21,8 @@ const TAG = 'EpubParser';
  * 4. 解析各个XHTML/HTML章节文件
  * 5. 提取CSS样式和图片资源
  * 
- * 当前实现为简化版本，后续需要完善
+ * 当前实现为简化版本：主 EPUB 阅读优先走 EBookParser / WebView ReaderKit 链路，
+ * 本解析器仅保留基础元数据兜底。
  */
 export class EpubParser extends EBookParser {
   /**
@@ -31,9 +32,6 @@ export class EpubParser extends EBookParser {
     try {
       logger.info(TAG, `开始解析EPUB文件: ${filePath}`);
 
-      // TODO: 实现完整的EPUB解析逻辑
-      // 当前返回基础结构，待后续完善
-      
       const metadata = await this.extractMetadata(filePath);
       const fileSize = this.getFileSize(filePath);
       const bookId = this.generateId();

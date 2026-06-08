@@ -2,7 +2,7 @@
 /**
  * Suwayomi WebUI 页面
  * 使用 WebView 访问 Suwayomi 服务器的 Web 界面
- * 支持缩小到通用面板
+ * 使用全屏 WebView 访问服务端界面
  */
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
@@ -40,9 +40,6 @@ export struct SuwayomiWebUIPage {
   @State canGoBack: boolean = false;
   @State canGoForward: boolean = false;
   @State errorMessage: string = '';
-
-  // 面板模式状态
-  @State isPanelMode: boolean = false;
 
   private webController: webview.WebviewController = new webview.WebviewController();
   private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
@@ -87,14 +84,6 @@ export struct SuwayomiWebUIPage {
 
   private goHome(): void {
     this.webController.loadUrl(this.serverUrl);
-  }
-
-  private togglePanelMode(): void {
-    this.isPanelMode = !this.isPanelMode;
-    // TODO: 实现缩小到通用面板的逻辑
-    if (this.isPanelMode) {
-      this.showToast('面板模式功能开发中');
-    }
   }
 
   private showToast(message: string): void {

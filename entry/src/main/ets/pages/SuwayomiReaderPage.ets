@@ -16,6 +16,15 @@ import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { AvifDecoder, isAvifFormat } from '../Framework/Image/AvifDecoder';
 import { http } from '@kit.NetworkKit';
 import { image } from '@kit.ImageKit';
+import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import {
+  MangaReadFlowEvent,
+  MangaReadFlowEventType,
+  MangaReadFlowModeKind,
+  MangaReadFlowSessionInfo,
+  MangaReadFlowSeverity,
+  MangaReadFlowSourceKind
+} from '../Framework/Reader/MangaReadFlowTypes';
 
 const TAG = 'SuwayomiReaderPage';
 
@@ -86,6 +95,9 @@ export struct SuwayomiReaderPage {
   private executor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private scrollerController: Scroller = new Scroller();
   private swiperController: SwiperController = new SwiperController();
+  private mangaReadFlowMonitor: MangaReadFlowMonitor = MangaReadFlowMonitor.getInstance();
+  private mangaReadFlowSessionId: string = '';
+  private mangaReadFlowLoadStartedAt: number = 0;
 
   aboutToDisappear(): void {
     // 保存阅读进度并标记章节为已读
@@ -93,10 +105,21 @@ export struct SuwayomiReaderPage {
       this.saveReadingProgress();
       this.markAsRead();
     }
+    // 释放 AVIF PixelMap 资源
+    const releasedAvifPixelMapCount: number = this.releaseAvifPixelMaps();
+    if (this.mangaReadFlowSessionId.length > 0) {
+      this.recordReadFlowEvent(
+        MangaReadFlowEventType.CLEANUP,
+        'legacy_suwayomi_disappear',
+        true,
+        0,
+        `release_avif_pixelmaps=${releasedAvifPixelMapCount}`
+      );
+      this.mangaReadFlowMonitor.endSession(this.mangaReadFlowSessionId, 'about_to_disappear');
+      this.mangaReadFlowSessionId = '';
+    }
     // 恢复默认显示模式
     this.restoreDefaultMode();
-    // 释放 AVIF PixelMap 资源
-    this.releaseAvifPixelMaps();
   }
 
   onPageHide(): void {
@@ -110,7 +133,8 @@ export struct SuwayomiReaderPage {
   /**
    * 释放所有 AVIF PixelMap 资源
    */
-  private releaseAvifPixelMaps(): void {
+  private releaseAvifPixelMaps(): number {
+    const releaseCount: number = this.avifPixelMaps.size;
     this.avifPixelMaps.forEach((pixelMap: image.PixelMap) => {
       try {
         pixelMap.release();
@@ -119,6 +143,7 @@ export struct SuwayomiReaderPage {
       }
     });
     this.avifPixelMaps.clear();
+    return releaseCount;
   }
 
   /**
@@ -228,6 +253,92 @@ export struct SuwayomiReaderPage {
     return this.avifPixelMaps.get(pageIndex);
   }
 
+  private ensureReadFlowSession(): void {
+    if (this.mangaReadFlowSessionId.length > 0) {
+      return;
+    }
+    const info: MangaReadFlowSessionInfo = new MangaReadFlowSessionInfo();
+    info.sessionId = this.mangaReadFlowMonitor.createSessionId('legacy_suwayomi');
+    info.sourceKind = MangaReadFlowSourceKind.LEGACY_REMOTE;
+    info.modeKind = MangaReadFlowModeKind.LEGACY_SUWAYOMI;
+    info.contentId = this.mangaId;
+    info.contentTitle = this.mangaId;
+    info.chapterId = this.chapterId;
+    info.chapterTitle = this.chapterTitle;
+    info.pageIndex = this.currentPage;
+    info.pageCount = this.pages.length;
+    info.readerHostMode = 'legacy_suwayomi';
+    this.mangaReadFlowSessionId = this.mangaReadFlowMonitor.startSession(info);
+  }
+
+  private recordReadFlowEvent(
+    eventType: MangaReadFlowEventType,
+    reason: string,
+    success: boolean = true,
+    elapsedMs: number = 0,
+    detail: string = ''
+  ): void {
+    this.ensureReadFlowSession();
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      eventType,
+      this.mangaId,
+      this.chapterId,
+      this.currentPage,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.LEGACY_REMOTE;
+    event.modeKind = MangaReadFlowModeKind.LEGACY_SUWAYOMI;
+    event.chapterTitle = this.chapterTitle;
+    event.pageCount = this.pages.length;
+    event.elapsedMs = elapsedMs;
+    event.success = success;
+    event.detail = detail;
+    event.severity = success ? MangaReadFlowSeverity.INFO : MangaReadFlowSeverity.ERROR;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordReadFlowError(reason: string, errorMessage: string): void {
+    this.ensureReadFlowSession();
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      MangaReadFlowEventType.ERROR,
+      this.mangaId,
+      this.chapterId,
+      this.currentPage,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.LEGACY_REMOTE;
+    event.modeKind = MangaReadFlowModeKind.LEGACY_SUWAYOMI;
+    event.chapterTitle = this.chapterTitle;
+    event.pageCount = this.pages.length;
+    event.success = false;
+    event.errorMessage = errorMessage;
+    event.severity = MangaReadFlowSeverity.ERROR;
+    event.detail = 'legacy remote reader is not using unified asset pipeline';
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordReadFlowDegraded(reason: string, detail: string): void {
+    this.ensureReadFlowSession();
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      MangaReadFlowEventType.FLOW_DEGRADED,
+      this.mangaId,
+      this.chapterId,
+      this.currentPage,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.LEGACY_REMOTE;
+    event.modeKind = MangaReadFlowModeKind.LEGACY_SUWAYOMI;
+    event.chapterTitle = this.chapterTitle;
+    event.pageCount = this.pages.length;
+    event.success = true;
+    event.severity = MangaReadFlowSeverity.WARN;
+    event.detail = detail;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
   /**
    * 重试加载失败的页面
    */
@@ -240,23 +351,41 @@ export struct SuwayomiReaderPage {
   private async loadChapterPages(): Promise<void> {
     if (!this.chapterId) {
       this.errorMessage = '章节 ID 无效';
+      this.recordReadFlowError('invalid_chapter_id', this.errorMessage);
       return;
     }
 
     this.isLoading = true;
     this.errorMessage = '';
+    this.mangaReadFlowLoadStartedAt = Date.now();
+    this.recordReadFlowEvent(MangaReadFlowEventType.CHAPTER_RESOLVED, 'legacy_suwayomi_chapter_bound', true, 0, 'not unified asset pipeline');
+    this.recordReadFlowDegraded(
+      'legacy_suwayomi_asset_pipeline_bypass',
+      '旧 Suwayomi 阅读页使用页面内下载和 AVIF 解码缓存，不走 MangaAssetLoadCoordinator'
+    );
 
     try {
       // 获取图片请求头（用于认证）
       this.imageHeaders = this.executor.getImageHeaders();
       this.pages = await this.executor.getPages(this.chapterId);
       logger.info(TAG, `加载章节页面: ${this.pages.length} 页`);
+      this.recordReadFlowEvent(
+        MangaReadFlowEventType.PAGES_RESOLVED,
+        'legacy_suwayomi_pages_loaded',
+        true,
+        Date.now() - this.mangaReadFlowLoadStartedAt,
+        'not unified asset pipeline'
+      );
+      if (this.pages.length <= 0) {
+        this.recordReadFlowError('legacy_suwayomi_empty_pages', '旧 Suwayomi 阅读页返回空页面列表');
+      }
       
       // 恢复上次阅读进度
       await this.restoreReadingProgress();
     } catch (error) {
       logger.error(TAG, `加载页面失败: ${error}`);
       this.errorMessage = `加载失败: ${error}`;
+      this.recordReadFlowError('legacy_suwayomi_pages_failed', String(error));
     }
 
     this.isLoading = false;
@@ -278,8 +407,10 @@ export struct SuwayomiReaderPage {
     try {
       await this.executor.updateReadingProgress(this.chapterId, this.currentPage);
       logger.debug(TAG, `保存阅读进度: 章节=${this.chapterId}, 页码=${this.currentPage}`);
+      this.recordReadFlowEvent(MangaReadFlowEventType.PROGRESS_SAVED, 'legacy_suwayomi_progress_saved', true, 0, '');
     } catch (error) {
       logger.error(TAG, `保存阅读进度失败: ${error}`);
+      this.recordReadFlowError('legacy_suwayomi_progress_failed', String(error));
     }
   }
 
@@ -392,6 +523,7 @@ export struct SuwayomiReaderPage {
     this.avifLoadingPages = new Set();
 
     logger.info(TAG, `切换到章节: ${chapter.title} (index=${index})`);
+    this.recordReadFlowEvent(MangaReadFlowEventType.CHAPTER_RESOLVED, 'legacy_suwayomi_chapter_switched', true, 0, '');
     await this.loadChapterPages();
   }
 
@@ -471,6 +603,7 @@ export struct SuwayomiReaderPage {
   private goToPage(index: number): void {
     if (index >= 0 && index < this.pages.length) {
       this.currentPage = index;
+      this.recordReadFlowEvent(MangaReadFlowEventType.PAGE_CHANGED, 'legacy_suwayomi_go_to_page', true, 0, '');
       if (this.readingMode === SuwayomiReadingMode.VERTICAL_SCROLL) {
         this.scrollerController.scrollToIndex(index);
       } else {
@@ -523,7 +656,7 @@ export struct SuwayomiReaderPage {
     Row() {
       // 返回按钮
       Button() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
+        SymbolGlyph($r('sys.symbol.arrow_left'))
           .fontSize(24)
           .fontColor([Color.White])
       }
@@ -553,7 +686,7 @@ export struct SuwayomiReaderPage {
 
       // 阅读模式切换
       Button() {
-        SymbolGlyph($r('sys.symbol.doc_text'))
+        SymbolGlyph($r('sys.symbol.page_turning'))
           .fontSize(20)
           .fontColor([Color.White])
       }
@@ -724,6 +857,7 @@ export struct SuwayomiReaderPage {
     .edgeEffect(EdgeEffect.Spring)
     .onScrollIndex((start: number) => {
       this.currentPage = start;
+      this.recordReadFlowEvent(MangaReadFlowEventType.PAGE_CHANGED, 'legacy_suwayomi_vertical_scroll', true, 0, '');
     })
     .onClick(() => this.toggleControls())
   }
@@ -747,6 +881,7 @@ export struct SuwayomiReaderPage {
     .loop(false)
     .onChange((index: number) => {
       this.currentPage = index;
+      this.recordReadFlowEvent(MangaReadFlowEventType.PAGE_CHANGED, 'legacy_suwayomi_swiper_change', true, 0, '');
     })
     .onClick(() => this.toggleControls())
   }

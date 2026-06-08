@@ -723,7 +723,7 @@ struct DownloadManagerPage {
       return $r('sys.symbol.archivebox');
     }
     if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'].includes(ext)) {
-      return $r('sys.symbol.camera');
+      return $r('sys.symbol.picture');
     }
     if (['epub', 'mobi', 'pdf'].includes(ext)) {
       return $r('sys.symbol.book');
@@ -1053,7 +1053,7 @@ struct DownloadManagerPage {
         .animation({ duration: 150 })
 
         Row() {
-          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          SymbolGlyph($r('sys.symbol.picture'))
             .fontSize(12)
             .fontColor([this.contentTypeTab === 'manga_cache'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)

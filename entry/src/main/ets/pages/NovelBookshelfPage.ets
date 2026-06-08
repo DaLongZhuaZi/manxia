@@ -154,6 +154,10 @@ export struct NovelBookshelfPage {
   private dataManager: NovelDataManager = getNovelDataManager();
   private settingsManager = getNovelSettingsManager();
   private browseHistoryListener: (() => void) | null = null;
+  private readonly novelCoverChangedListener = (payload: IEventPayload): void => {
+    logger.info(TAG, `收到小说封面更新事件: ${JSON.stringify(payload)}`);
+    this.loadBooks();
+  };
 
   /**
    * 切换到下一个标签页（支持循环）
@@ -188,10 +192,7 @@ export struct NovelBookshelfPage {
     this.settingsManager.addBrowseHistoryListener(this.browseHistoryListener);
     
     // 监听小说封面更新事件
-    eventBus.subscribe(GameEvent.NOVEL_COVER_CHANGED, (payload: IEventPayload) => {
-      logger.info(TAG, `收到小说封面更新事件: ${JSON.stringify(payload)}`);
-      this.loadBooks();
-    });
+    eventBus.subscribe(GameEvent.NOVEL_COVER_CHANGED, this.novelCoverChangedListener);
   }
 
   private lifecycle = new PageLifecycleManager('NovelBookshelfPage', { enableDebug: true });
@@ -207,10 +208,7 @@ export struct NovelBookshelfPage {
       this.browseHistoryListener = null;
     }
     
-    // 移除EventBus监听器
-    // Note: EventBus.unsubscribe需要传入原始回调函数，这里使用subscribe的匿名函数无法精确移除
-    // 实际上页面销毁时EventBus会自动清理，这里注释掉
-    // eventBus.unsubscribe(GameEvent.NOVEL_COVER_CHANGED, ...);
+    eventBus.unsubscribe(GameEvent.NOVEL_COVER_CHANGED, this.novelCoverChangedListener);
   }
 
   async loadBooks(): Promise<void> {
@@ -466,7 +464,7 @@ export struct NovelBookshelfPage {
       {
         id: 'explore',
         label: '发现',
-        symbol: $r('sys.symbol.crown'),
+        symbol: $r('sys.symbol.discover'),
         onClick: () => {
           const params: NovelExplorePageParams = {};
           this.pathStack.pushPathByName('NovelExplorePage', params);

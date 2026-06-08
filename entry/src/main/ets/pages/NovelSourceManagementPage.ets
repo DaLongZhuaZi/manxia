@@ -31,7 +31,14 @@ import { NovelSearchPageParams } from './NovelBookshelfPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
 import { GroupManagementDialog, GroupInfo, SplitCondition } from '../Framework/Components/GroupManagementDialog';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
-import { FileEditorParams } from './FileEditorPage';
+import {
+  fileEditorService,
+  FileEditorOpenParams,
+  FileEditorOpenSource,
+  FileEditorSaveTargetType
+} from '../Framework/Editor/FileEditorService';
+import { openFileEditorInIsolatedAbility } from '../Framework/Editor/FileEditorAbilityLauncher';
+import { eventBus, GameEvent, IEventPayload, FileEditorDocumentPayload } from '../Framework/EventBus';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
 import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarManager';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
@@ -197,14 +204,25 @@ export struct NovelSourceManagementPage {
         this.fontState = newState;
       }
     );
+    eventBus.subscribe(GameEvent.FILE_EDITOR_SAVED, this.onFileEditorSaved);
   }
 
   private lifecycle = new PageLifecycleManager('NovelSourceManagementPage', { enableDebug: true });
 
   aboutToDisappear(): void {
     this.lifecycle.destroy();
+    eventBus.unsubscribe(GameEvent.FILE_EDITOR_SAVED, this.onFileEditorSaved);
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
+  }
+
+  private onFileEditorSaved = (payload: IEventPayload) => {
+    const data = payload as FileEditorDocumentPayload;
+    if (data.targetType === FileEditorSaveTargetType.NOVEL_SOURCE && data.linkedApplied) {
+      logger.info(TAG, `收到书源编辑器保存事件: ${data.targetName || data.fileName}`);
+      this.loadSources();
+      this.getUIContext().getPromptAction().showToast({ message: '书源配置已刷新' });
+    }
   }
 
   loadSources(): void {
@@ -4113,14 +4131,23 @@ export struct NovelSourceManagementPage {
       const sourceJson = JSON.stringify(rawSource, null, 2);
       
       // 导航到文件编辑器页面，传入内容而非文件路径
-      const params: FileEditorParams = {
+      const openParams: FileEditorOpenParams = {
         content: sourceJson,
         language: 'json',
         readOnly: false,
-        title: `编辑: ${source.name}`
+        title: `编辑: ${source.name}`,
+        origin: FileEditorOpenSource.NOVEL_SOURCE,
+        saveTarget: fileEditorService.createSaveTarget(
+          FileEditorSaveTargetType.NOVEL_SOURCE,
+          source.id,
+          source.name,
+          '',
+          '',
+          '',
+          true
+        )
       };
-      
-      this.pathStack.pushPathByName('FileEditorPage', params);
+      openFileEditorInIsolatedAbility(this.getUIContext(), openParams, TAG);
     } catch (err) {
       logger.error(TAG, `编辑书源配置失败: ${String(err)}`);
       this.getUIContext().getPromptAction().showToast({ message: '打开编辑器失败' });

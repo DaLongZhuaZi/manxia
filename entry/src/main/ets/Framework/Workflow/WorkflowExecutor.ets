@@ -6,12 +6,20 @@
 
 import { logger } from '../../Utils/Logger';
 import WorkflowCapabilities, { type WorkflowContext, type CapabilityType } from './WorkflowCapabilities';
-import { MangaSourceAPIEngine } from '../WebView/MangaSourceAPIEngine';
+import { MangaSourceAPIEngine, type JSONExtractConfig } from '../WebView/MangaSourceAPIEngine';
 import { type UserAgentRotationConfig } from '../Network/UserAgentManager';
 import { ngfWorkflowEngineFacade } from '../NGF';
 
 const TAG = 'WorkflowExecutor';
 const NGF_WORKFLOW_SHADOW_FLAG_KEY = 'ngf_content_workflow_shadow_mode';
+
+class EmptyExtractResult {
+  items: Object[];
+
+  constructor() {
+    this.items = [];
+  }
+}
 
 class NGFWorkflowShadowContext {
   sourceId: number;
@@ -279,9 +287,20 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     inputData: Object
   ): Object {
-    // TODO: 实现数据提取逻辑
-    // 这里可以使用JSONPath或其他提取方式
-    return inputData;
+    if (!step.extract) {
+      logger.debug(TAG, 'extract步骤未配置提取规则，返回输入数据');
+      return inputData;
+    }
+
+    const extractConfig = step.extract as JSONExtractConfig;
+    const extracted = this.apiEngine.extractFromJSON(inputData, extractConfig);
+    if (extracted === null) {
+      logger.warn(TAG, `extract步骤未提取到数据: path=${extractConfig.path || 'root'}`);
+      return new EmptyExtractResult() as Object;
+    }
+
+    logger.debug(TAG, `extract步骤完成: path=${extractConfig.path || 'root'}, array=${Array.isArray(extracted)}`);
+    return extracted as Object;
   }
 
   /**

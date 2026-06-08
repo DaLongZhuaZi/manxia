@@ -41,6 +41,7 @@ export class AutoPageTurnController {
   private onPageTurn: (() => void) | null = null;
   private getCurrentPageIndex: (() => number) | null = null;
   private getTotalPages: (() => number) | null = null;
+  private onChapterEnd: (() => Promise<boolean> | boolean) | null = null;
   private isFirstPageOfChapter: boolean = true;
   private onPageTurnComplete: (() => void) | null = null;
   private isWaitingForPageTurn: boolean = false;
@@ -76,6 +77,10 @@ export class AutoPageTurnController {
     this.getTotalPages = getTotalPages;
   }
 
+  public setChapterEndCallback(callback: (() => Promise<boolean> | boolean) | null): void {
+    this.onChapterEnd = callback;
+  }
+
   /**
    * 通知新章节开始
    */
@@ -106,41 +111,10 @@ export class AutoPageTurnController {
       this.skipIntroPages();
     }
 
-    // 如果提供了翻页完成回调，则不立即安排下一次翻页
-    // 而是等待翻页完成回调来安排下一次
     if (this.onPageTurnComplete) {
       logger.debug(TAG, '等待翻页完成回调以安排下一次翻页');
     } else {
-      // 如果没有提供完成回调，则按传统方式立即安排下一次翻页
-      // 如果提供了翻页完成回调，则不立即安排下一次翻页
-    // 而是等待翻页完成回调来安排下一次
-    if (this.onPageTurnComplete) {
-      logger.debug(TAG, '等待翻页完成回调以安排下一次翻页');
-    } else {
-      // 如果没有提供完成回调，则按传统方式立即安排下一次翻页
-      // 如果提供了翻页完成回调，则不立即安排下一次翻页
-    // 而是等待翻页完成回调来安排下一次
-    if (this.onPageTurnComplete) {
-      logger.debug(TAG, '等待翻页完成回调以安排下一次翻页');
-    } else {
-      // 如果没有提供完成回调，则按传统方式立即安排下一次翻页
-      // 如果提供了翻页完成回调，则不立即安排下一次翻页
-    // 而是等待翻页完成回调来安排下一次
-    if (this.onPageTurnComplete) {
-      logger.debug(TAG, '等待翻页完成回调以安排下一次翻页');
-    } else {
-      // 如果没有提供完成回调，则按传统方式立即安排下一次翻页
-      // 如果提供了翻页完成回调，则不立即安排下一次翻页
-    // 而是等待翻页完成回调来安排下一次
-    if (this.onPageTurnComplete) {
-      logger.debug(TAG, '等待翻页完成回调以安排下一次翻页');
-    } else {
-      // 如果没有提供完成回调，则按传统方式立即安排下一次翻页
       this.scheduleNextTurn();
-    }
-    }
-    }
-    }
     }
   }
 
@@ -242,7 +216,7 @@ export class AutoPageTurnController {
 
     const intervalMs = this.config.interval * 1000;
     this.timer = setTimeout(() => {
-      this.executeTurn();
+      void this.executeTurn();
     }, intervalMs);
 
     logger.debug(TAG, `下次翻页将在${this.config.interval}秒后执行`);
@@ -251,7 +225,7 @@ export class AutoPageTurnController {
   /**
    * 执行翻页操作
    */
-  private executeTurn(): void {
+  private async executeTurn(): Promise<void> {
     if (this.state !== AutoPageTurnState.RUNNING) {
       return;
     }
@@ -272,7 +246,19 @@ export class AutoPageTurnController {
       logger.info(TAG, '已到达章节最后一页');
       if (this.config.autoSwitchChapter) {
         logger.info(TAG, '自动切换到下一章节');
-        // TODO: 实现章节切换回调
+        if (this.onChapterEnd) {
+          try {
+            const switched = await this.onChapterEnd();
+            if (switched) {
+              this.notifyNewChapter();
+              this.scheduleNextTurn();
+              return;
+            }
+          } catch (error) {
+            logger.warn(TAG, `自动切换章节失败: ${String(error)}`);
+          }
+        }
+        this.stop();
       } else {
         this.stop();
       }
@@ -304,6 +290,7 @@ export class AutoPageTurnController {
     this.onPageTurn = null;
     this.getCurrentPageIndex = null;
     this.getTotalPages = null;
+    this.onChapterEnd = null;
     logger.info(TAG, '自动翻页控制器已销毁');
   }
 }
