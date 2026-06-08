@@ -19,6 +19,7 @@ export enum AppGuideFlowId {
   INSPIRATION = 'inspiration',
   GLOBAL_SETTINGS = 'global_settings',
   SUWAYOMI = 'suwayomi',
+  KOMGA = 'komga',
   UNIFIED_DETAIL = 'unified_detail',
   GLOBAL_SEARCH = 'global_search',
   MANGA_READER = 'manga_reader',
@@ -40,6 +41,7 @@ export enum AppGuidePageId {
   INSPIRATION = 'inspiration_page',
   GLOBAL_SETTINGS = 'global_settings_page',
   SUWAYOMI = 'suwayomi_browse_page',
+  KOMGA = 'komga_browse_page',
   UNIFIED_DETAIL = 'unified_detail_page',
   GLOBAL_SEARCH = 'global_search_page',
   MANGA_READER = 'manga_reader_page',
@@ -474,6 +476,57 @@ const GUIDE_FLOWS: AppGuideFlowDefinition[] = [
         anchorId: 'guide_suwayomi_source_content',
         title: '最常见的链路是先看库，再按需切到源',
         message: '推荐先在库模式里找现成漫画；如果没找到，再通过底部切到源模式挑图源或进入图源浏览。后续如果忘了这套节奏，也能在帮助中心里重新播放。',
+        cardPosition: 'center',
+        nextButtonText: '完成'
+      }
+    ]
+  },
+  {
+    id: AppGuideFlowId.KOMGA,
+    title: 'Komga 引导',
+    description: '介绍 Komga 浏览页的实例、书库、筛选和阅读链路。',
+    autoStartPageId: AppGuidePageId.KOMGA,
+    helpCenterReplayEnabled: true,
+    helpCenterRouteName: 'KomgaBrowsePage',
+    steps: [
+      {
+        id: 'komga_intro',
+        pageId: AppGuidePageId.KOMGA,
+        anchorId: 'guide_komga_root',
+        title: '这里是 Komga 浏览入口',
+        message: '这里会连接你配置好的 Komga 实例，并把库、发现流、系列、书籍和阅读列表集中到一个浏览入口里。',
+        cardPosition: 'bottom'
+      },
+      {
+        id: 'komga_overview',
+        pageId: AppGuidePageId.KOMGA,
+        anchorId: 'guide_komga_overview',
+        title: '先确认当前实例和浏览范围',
+        message: '顶部区域负责切换 Komga 实例、浏览模式和内容类型。连接多个服务端时，先确认实例再继续筛选，可以避免看错书库。',
+        cardPosition: 'bottom'
+      },
+      {
+        id: 'komga_filters',
+        pageId: AppGuidePageId.KOMGA,
+        anchorId: 'guide_komga_filters',
+        title: '筛选面板适合缩小书库范围',
+        message: '这里可以按库、阅读状态、集合、标签、作者和排序方式继续筛选。内容很多时，先缩小范围再浏览会更快。',
+        cardPosition: 'top'
+      },
+      {
+        id: 'komga_content',
+        pageId: AppGuidePageId.KOMGA,
+        anchorId: 'guide_komga_content',
+        title: '内容区承接详情页和阅读器',
+        message: '中间内容区会按当前模式展示系列、书籍或阅读列表。点击条目后可以继续进入详情页，再打开 Komga 阅读器。',
+        cardPosition: 'top'
+      },
+      {
+        id: 'komga_finish',
+        pageId: AppGuidePageId.KOMGA,
+        anchorId: 'guide_komga_content',
+        title: '常用节奏是先选实例，再筛库和内容类型',
+        message: '如果内容为空，优先检查实例配置和库筛选；如果内容很多，优先使用库、集合和标签缩小范围。后续可以在帮助中心重播这段引导。',
         cardPosition: 'center',
         nextButtonText: '完成'
       }

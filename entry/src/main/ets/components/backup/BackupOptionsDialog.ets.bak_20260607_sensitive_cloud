@@ -1,0 +1,383 @@
+/**
+ * 备份选项对话框
+ * 使用Tabs分标签页展示不同类别的备份选项
+ * 
+ * 文件路径: entry/src/main/ets/components/backup/BackupOptionsDialog.ets
+ */
+
+import { BackupOptions } from '../../Models/BackupModels';
+import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { ThemeType } from '../../Framework/Managers/ThemeManager';
+
+@ComponentV2
+export struct BackupOptionsDialog {
+  @Param @Require onConfirm: (options: BackupOptions) => void;
+  @Param @Require onCancel: () => void;
+  @Param @Require currentTheme: ThemeType;
+  @Local backupOptions: BackupOptions = {
+    includeBasicData: true,
+    includeMangaLibrary: true,
+    includeNovelLibrary: true,
+    includeEBookLibrary: true,
+    includeSources: true,
+    includeReadProgress: true,
+    includeSettings: true,
+    includeHistory: true,
+    includeAnnotations: true,
+    includeWebViewConfig: false,
+    includeDownloadTasks: false,
+    includeCacheInfo: false,
+    includePlugins: false,
+    includeFavorites: true,
+    includeOnlineData: false,
+    includeCloudConfig: false,
+    includeCoverImages: true,
+    includeChapterImages: false,
+    includeEBookFiles: false
+  };
+  @Local currentTabIndex: number = 0;
+  @Local isAllSelected: boolean = false;
+  
+  // 切换全选状态
+  toggleSelectAll(): void {
+    this.isAllSelected = !this.isAllSelected;
+    
+    // 更新所有选项
+    this.backupOptions.includeBasicData = this.isAllSelected;
+    this.backupOptions.includeMangaLibrary = this.isAllSelected;
+    this.backupOptions.includeNovelLibrary = this.isAllSelected;
+    this.backupOptions.includeEBookLibrary = this.isAllSelected;
+    this.backupOptions.includeSources = this.isAllSelected;
+    this.backupOptions.includeReadProgress = this.isAllSelected;
+    this.backupOptions.includeSettings = this.isAllSelected;
+    this.backupOptions.includeHistory = this.isAllSelected;
+    this.backupOptions.includeAnnotations = this.isAllSelected;
+    this.backupOptions.includeWebViewConfig = this.isAllSelected;
+    this.backupOptions.includeDownloadTasks = this.isAllSelected;
+    this.backupOptions.includeCacheInfo = this.isAllSelected;
+    this.backupOptions.includePlugins = this.isAllSelected;
+    this.backupOptions.includeFavorites = this.isAllSelected;
+    this.backupOptions.includeOnlineData = this.isAllSelected;
+    this.backupOptions.includeCloudConfig = this.isAllSelected;
+    this.backupOptions.includeCoverImages = this.isAllSelected;
+    this.backupOptions.includeChapterImages = this.isAllSelected;
+    this.backupOptions.includeEBookFiles = this.isAllSelected;
+  }
+
+  build() {
+    Column() {
+      Column() {
+        // 标题栏
+        Row() {
+          Text('备份选项')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+            .layoutWeight(1)
+          
+          // 全选按钮
+          SymbolGlyph(this.isAllSelected ? $r('sys.symbol.checkmark_square_on_square_fill') : $r('sys.symbol.checkmark_square_on_square'))
+            .fontSize(24)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)])
+            .onClick(() => {
+              this.toggleSelectAll();
+            })
+            .animation({
+              duration: 300,
+              curve: Curve.EaseInOut
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 20, bottom: 16 })
+        
+        // 标签页
+        Tabs({ index: $$this.currentTabIndex }) {
+          TabContent() {
+            this.buildLibraryTab()
+          }
+          .tabBar('书库数据')
+          
+          TabContent() {
+            this.buildSettingsTab()
+          }
+          .tabBar('设置与历史')
+          
+          TabContent() {
+            this.buildMediaTab()
+          }
+          .tabBar('媒体文件')
+          
+          TabContent() {
+            this.buildAdvancedTab()
+          }
+          .tabBar('高级选项')
+        }
+        .height('60%')
+        .barMode(BarMode.Scrollable)
+        .barBackgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+        
+        // 底部按钮
+        Row() {
+          Button('取消')
+            .fontSize(16)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
+            .borderRadius(8)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.onCancel();
+            })
+          
+          Blank().width(16)
+          
+          Button('开始备份')
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
+            .borderRadius(8)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.onConfirm(this.backupOptions);
+            })
+        }
+        .width('100%')
+        .padding({ top: 16, bottom: 20 })
+      }
+      .width('90%')
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.currentTheme))
+      .borderRadius(16)
+      .padding({ left: 20, right: 20 })
+      .scale({ x: 1, y: 1 })
+      .opacity(1)
+      .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }).animation({ duration: 300, curve: Curve.EaseOut })))
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0, 0, 0, 0.5)')
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => {
+      this.onCancel();
+    })
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+  }
+
+  @Builder
+  buildLibraryTab() {
+    Scroll() {
+      Column() {
+        this.buildOptionItem(
+          '漫画库',
+          '包含所有收藏的漫画信息、章节列表、阅读进度',
+          this.backupOptions.includeMangaLibrary,
+          (value: boolean) => { this.backupOptions.includeMangaLibrary = value; }
+        )
+        
+        this.buildOptionItem(
+          '小说库',
+          '包含所有收藏的小说信息、章节列表、阅读进度',
+          this.backupOptions.includeNovelLibrary,
+          (value: boolean) => { this.backupOptions.includeNovelLibrary = value; }
+        )
+        
+        this.buildOptionItem(
+          '电子书库',
+          '包含所有电子书信息、阅读进度（不含文件）',
+          this.backupOptions.includeEBookLibrary,
+          (value: boolean) => { this.backupOptions.includeEBookLibrary = value; }
+        )
+        
+        this.buildOptionItem(
+          '书源配置',
+          '包含漫画源和小说源的配置信息',
+          this.backupOptions.includeSources,
+          (value: boolean) => { this.backupOptions.includeSources = value; }
+        )
+        
+        this.buildOptionItem(
+          '阅读进度',
+          '包含所有内容的详细阅读进度记录',
+          this.backupOptions.includeReadProgress,
+          (value: boolean) => { this.backupOptions.includeReadProgress = value; }
+        )
+      }
+      .width('100%')
+      .padding(16)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Auto)
+  }
+
+  @Builder
+  buildSettingsTab() {
+    Scroll() {
+      Column() {
+        this.buildOptionItem(
+          '应用设置',
+          '包含阅读器设置、主题、语言等配置',
+          this.backupOptions.includeSettings,
+          (value: boolean) => { this.backupOptions.includeSettings = value; }
+        )
+        
+        this.buildOptionItem(
+          '浏览历史',
+          '包含漫画、小说、电子书的浏览记录',
+          this.backupOptions.includeHistory,
+          (value: boolean) => { this.backupOptions.includeHistory = value; }
+        )
+        
+        this.buildOptionItem(
+          '收藏标签',
+          '包含自定义的收藏分类和标签',
+          this.backupOptions.includeFavorites,
+          (value: boolean) => { this.backupOptions.includeFavorites = value; }
+        )
+
+        this.buildOptionItem(
+          '统一标注',
+          '包含书签、划线、想法及其样式与定位信息',
+          this.backupOptions.includeAnnotations,
+          (value: boolean) => { this.backupOptions.includeAnnotations = value; }
+        )
+      }
+      .width('100%')
+      .padding(16)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Auto)
+  }
+
+  @Builder
+  buildMediaTab() {
+    Scroll() {
+      Column() {
+        Text('注意：媒体文件会显著增加备份大小')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.currentTheme))
+          .margin({ bottom: 12 })
+        
+        this.buildOptionItem(
+          '封面图片',
+          '包含漫画、小说、电子书的封面图片',
+          this.backupOptions.includeCoverImages,
+          (value: boolean) => { this.backupOptions.includeCoverImages = value; }
+        )
+        
+        this.buildOptionItem(
+          '章节图片（缓存）',
+          '包含已缓存的漫画章节图片，可能非常大',
+          this.backupOptions.includeChapterImages,
+          (value: boolean) => { this.backupOptions.includeChapterImages = value; }
+        )
+        
+        this.buildOptionItem(
+          '电子书文件',
+          '包含已下载的电子书文件（EPUB/PDF等）',
+          this.backupOptions.includeEBookFiles,
+          (value: boolean) => { this.backupOptions.includeEBookFiles = value; }
+        )
+      }
+      .width('100%')
+      .padding(16)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Auto)
+  }
+
+  @Builder
+  buildAdvancedTab() {
+    Scroll() {
+      Column() {
+        Text('高级选项通常不需要备份')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.currentTheme))
+          .margin({ bottom: 12 })
+        
+        this.buildOptionItem(
+          'WebView配置',
+          '包含WebView的用户代理、Cookie等配置',
+          this.backupOptions.includeWebViewConfig,
+          (value: boolean) => { this.backupOptions.includeWebViewConfig = value; }
+        )
+        
+        this.buildOptionItem(
+          '下载任务',
+          '包含未完成的下载任务信息',
+          this.backupOptions.includeDownloadTasks,
+          (value: boolean) => { this.backupOptions.includeDownloadTasks = value; }
+        )
+        
+        this.buildOptionItem(
+          '缓存信息',
+          '包含各类缓存的元数据',
+          this.backupOptions.includeCacheInfo,
+          (value: boolean) => { this.backupOptions.includeCacheInfo = value; }
+        )
+        
+        this.buildOptionItem(
+          '插件信息',
+          '包含已安装的插件配置',
+          this.backupOptions.includePlugins,
+          (value: boolean) => { this.backupOptions.includePlugins = value; }
+        )
+        
+        this.buildOptionItem(
+          '在线数据',
+          '包含在线漫画平台的同步数据',
+          this.backupOptions.includeOnlineData,
+          (value: boolean) => { this.backupOptions.includeOnlineData = value; }
+        )
+
+        this.buildOptionItem(
+          '云存储配置',
+          '包含 WebDAV、Suwayomi、Komga、FTP 的账号、密码和 API Key',
+          this.backupOptions.includeCloudConfig,
+          (value: boolean) => { this.backupOptions.includeCloudConfig = value; }
+        )
+      }
+      .width('100%')
+      .padding(16)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Auto)
+  }
+
+  @Builder
+  buildOptionItem(title: string, description: string, isOn: boolean, onChange: (value: boolean) => void) {
+    Column() {
+      Row() {
+        Column() {
+          Text(title)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+          
+          Text(description)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+            .margin({ top: 4 })
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        
+        Toggle({ type: ToggleType.Switch, isOn: isOn })
+          .onChange(onChange)
+          .margin({ left: 12 })
+      }
+      .width('100%')
+      .padding({ top: 12, bottom: 12 })
+      
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
+    }
+    .width('100%')
+  }
+}

@@ -220,8 +220,8 @@ export struct SourceFeatureSettingsSubPage {
       .width('100%')
 
       Column({ space: 10 }) {
-        this.buildGuideButton('图源引导', $r('sys.symbol.rectangle_stack'), GuideStep.IMAGE_SOURCE_GUIDE)
-        this.buildGuideButton('书源引导', $r('sys.symbol.text_book_closed'), GuideStep.BOOK_SOURCE_GUIDE)
+        this.buildGuideButton('图源引导', $r('sys.symbol.picture'), GuideStep.IMAGE_SOURCE_GUIDE)
+        this.buildGuideButton('书源引导', $r('sys.symbol.list_book'), GuideStep.BOOK_SOURCE_GUIDE)
       }
       .width('100%')
     }

@@ -38,6 +38,13 @@ import {
   ProtocolPort
 } from '../Models/NetworkFolderModels';
 import { NetworkScannerAdapter } from '../Framework/Network/NetworkScannerAdapter';
+import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+import {
+  ExternalFileTaskFactory,
+  ExternalFileTaskKind,
+  ExternalFileTaskParams,
+  ExternalFileTaskSource
+} from '../Framework/ExternalFile/ExternalFileTaskTypes';
 
 const TAG = 'NetworkFolderPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -987,7 +994,7 @@ export struct NetworkFolderPage {
       case 0:
       case 1:
       case 2:
-        return $r('sys.symbol.arrow_clockwise');
+        return $r('sys.symbol.arrow_2_circlepath');
       case 3:
       case 4:
         return $r('sys.symbol.externaldrive_fill');
@@ -1026,6 +1033,26 @@ export struct NetworkFolderPage {
   }
 
   private dispatchImportFromNetworkFolder(
+    fileUri: string,
+    fileName: string,
+    importCategory: NetworkFolderImportCategory
+  ): void {
+    const taskParams = this.buildNetworkFolderExternalTaskParams(fileUri, fileName, importCategory);
+    void openExternalFileTaskInIsolatedAbility(
+      this.getUIContext(),
+      taskParams,
+      'NetworkFolderPage.importCachedFile'
+    ).then((started: boolean): void => {
+      if (started) {
+        this.statusMessage = `已打开独立导入窗口：${fileName}`;
+        this.showToast('已打开独立导入窗口');
+        return;
+      }
+      this.dispatchImportFromNetworkFolderFallback(fileUri, fileName, importCategory);
+    });
+  }
+
+  private dispatchImportFromNetworkFolderFallback(
     fileUri: string,
     fileName: string,
     importCategory: NetworkFolderImportCategory
@@ -1123,6 +1150,48 @@ export struct NetworkFolderPage {
     AppStorage.setOrCreate('pendingFileUri', fileUri);
     AppStorage.setOrCreate('pendingFileType', fileName);
     AppStorage.setOrCreate('pendingFileCategory', importCategory);
+  }
+
+  private buildNetworkFolderExternalTaskParams(
+    fileUri: string,
+    fileName: string,
+    importCategory: NetworkFolderImportCategory
+  ): ExternalFileTaskParams {
+    const kind = this.mapNetworkFolderCategoryToExternalTaskKind(importCategory);
+    return ExternalFileTaskFactory.createSingleFileTask(
+      kind,
+      fileUri,
+      fileName,
+      ExternalFileTaskSource.NETWORK_FOLDER,
+      fileName,
+      kind === ExternalFileTaskKind.CODE ? this.inferCodeLanguageForMainMenu(fileName) : '',
+      'download_dir'
+    );
+  }
+
+  private mapNetworkFolderCategoryToExternalTaskKind(importCategory: NetworkFolderImportCategory): ExternalFileTaskKind {
+    switch (importCategory) {
+      case 'comic':
+        return ExternalFileTaskKind.COMIC;
+      case 'ebook':
+        return ExternalFileTaskKind.EBOOK;
+      case 'pdf':
+        return ExternalFileTaskKind.PDF;
+      case 'backup':
+        return ExternalFileTaskKind.BACKUP;
+      case 'json':
+        return ExternalFileTaskKind.JSON;
+      case 'font':
+        return ExternalFileTaskKind.FONT;
+      case 'code':
+        return ExternalFileTaskKind.CODE;
+      case 'avif':
+        return ExternalFileTaskKind.AVIF;
+      case 'image':
+        return ExternalFileTaskKind.IMAGE;
+      default:
+        return ExternalFileTaskKind.UNKNOWN;
+    }
   }
 
   private inferCodeLanguageForMainMenu(fileName: string): string {
@@ -1876,7 +1945,7 @@ export struct NetworkFolderPage {
 
   private getProtocolSymbol(protocol: NetworkFolderProtocol): Resource {
     if (protocol === 'webdav') {
-      return $r('sys.symbol.arrow_clockwise');
+      return $r('sys.symbol.cloud');
     }
     if (protocol === 'sftp') {
       return $r('sys.symbol.lock_fill');
@@ -1972,10 +2041,10 @@ export struct NetworkFolderPage {
       return $r('sys.symbol.externaldrive_fill');
     }
     if (this.isComicArchiveExtension(extension)) {
-      return $r('sys.symbol.rectangle_stack');
+      return $r('sys.symbol.picture');
     }
     if (extension === 'pdf') {
-      return $r('sys.symbol.doc_plaintext_2');
+      return $r('sys.symbol.doc_plaintext');
     }
     if (this.isEBookExtension(extension)) {
       return $r('sys.symbol.text_book_closed');
@@ -1987,7 +2056,7 @@ export struct NetworkFolderPage {
       return $r('sys.symbol.textformat');
     }
     if (this.isImageExtension(extension)) {
-      return $r('sys.symbol.shutter_photo');
+      return $r('sys.symbol.picture');
     }
     if (this.isVideoExtension(extension)) {
       return $r('sys.symbol.play_circle');
@@ -2556,7 +2625,7 @@ export struct NetworkFolderPage {
           this.openCreateConnectionDialog();
         })
         Blank()
-        this.buildActionButton('网络扫描', $r('sys.symbol.wifi'), ACTION_STYLE_INFO, true, () => {
+        this.buildActionButton('网络扫描', $r('sys.symbol.wifi_router'), ACTION_STYLE_INFO, true, () => {
           void this.openScanPanel();
         })
       }
@@ -2718,7 +2787,7 @@ export struct NetworkFolderPage {
         this.buildActionButton('编辑', $r('sys.symbol.gearshape'), ACTION_STYLE_NEUTRAL, true, () => {
           this.openEditConnectionDialog(connection);
         })
-        this.buildActionButton('测试', $r('sys.symbol.arrow_clockwise'), ACTION_STYLE_INFO, true, () => {
+        this.buildActionButton('测试', $r('sys.symbol.checkmark_circle'), ACTION_STYLE_INFO, true, () => {
           this.dialogMode = 'edit';
           this.dialogDraft = draftFromNetworkFolderConnection(connection);
           this.dialogStatusMessage = `正在测试连接：${connection.name}`;
@@ -4091,7 +4160,7 @@ export struct NetworkFolderPage {
             }
 
             if (this.dialogDraft.protocol === 'webdav' || this.dialogDraft.protocol === 'ftps') {
-              this.buildDialogToggle($r('sys.symbol.checkmark_circle_fill'), '验证 SSL',
+              this.buildDialogToggle($r('sys.symbol.checkmark_circle'), '验证 SSL',
                 '建议保持开启，只有在自签名证书场景再关闭。', this.dialogDraft.verifySSL, (value: boolean) => {
                   const nextDraft = this.cloneDraft(this.dialogDraft);
                   nextDraft.verifySSL = value;
@@ -4120,11 +4189,11 @@ export struct NetworkFolderPage {
           this.buildActionButton('取消', $r('sys.symbol.xmark'), ACTION_STYLE_NEUTRAL, true, () => {
             this.closeConnectionDialog();
           })
-          this.buildActionButton(this.dialogTesting ? '测试中…' : '测试连接', $r('sys.symbol.arrow_clockwise'),
+          this.buildActionButton(this.dialogTesting ? '测试中…' : '测试连接', $r('sys.symbol.checkmark_circle'),
             ACTION_STYLE_INFO, !this.dialogSaving, () => {
               void this.testDialogConnection();
             })
-          this.buildActionButton(this.dialogSaving ? '保存中…' : '保存', $r('sys.symbol.checkmark_circle_fill'),
+          this.buildActionButton(this.dialogSaving ? '保存中…' : '保存', $r('sys.symbol.save'),
             ACTION_STYLE_PRIMARY, !this.dialogTesting, () => {
               void this.saveDialogConnection();
             })

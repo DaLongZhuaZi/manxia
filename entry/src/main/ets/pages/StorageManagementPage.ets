@@ -761,7 +761,7 @@ export struct StorageManagementPage {
       case 'preferences':
         return $r('sys.symbol.gearshape');
       case 'download':
-        return $r('sys.symbol.folder');
+        return $r('sys.symbol.download');
       case 'system':
         return $r('sys.symbol.externaldrive');
       default:

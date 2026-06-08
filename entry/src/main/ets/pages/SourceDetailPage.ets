@@ -56,6 +56,16 @@ import {
 
 const TAG = 'SourceDetailPage';
 
+function buildGlobalSearchCacheKey(sourceId: number, keyword: string): string {
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < normalizedKeyword.length; i++) {
+    hash = ((hash << 5) - hash) + normalizedKeyword.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return `global_search_cache_${sourceId}_${Math.abs(hash).toString(36)}`;
+}
+
 /**
  * 显示模式枚举
  */
@@ -130,7 +140,8 @@ class ComicListDataSource implements IDataSource {
     if (newItems.length === 0) return;
     this.items = [...newItems, ...this.items];
     // 通知数据变化，触发UI更新
-    this.listeners.forEach(listener => {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    listenersSnapshot.forEach(listener => {
       listener.onDataAdd(0);
     });
   }
@@ -154,7 +165,8 @@ class ComicListDataSource implements IDataSource {
   }
 
   notifyDataReload(): void {
-    this.listeners.forEach(listener => {
+    const listenersSnapshot: DataChangeListener[] = this.listeners.slice();
+    listenersSnapshot.forEach(listener => {
       listener.onDataReloaded();
     });
   }
@@ -625,8 +637,14 @@ export struct SourceDetailPage {
    */
   private tryLoadFromGlobalSearchCache(keyword: string): boolean {
     try {
-      const cacheKey = `global_search_cache_${this.sourceId}`;
-      const cacheStr = AppStorage.get<string>(cacheKey);
+      const cacheKey = buildGlobalSearchCacheKey(this.sourceId, keyword);
+      const legacyCacheKey = `global_search_cache_${this.sourceId}`;
+      let activeCacheKey = cacheKey;
+      let cacheStr = AppStorage.get<string>(cacheKey);
+      if (!cacheStr) {
+        cacheStr = AppStorage.get<string>(legacyCacheKey);
+        activeCacheKey = legacyCacheKey;
+      }
       
       if (!cacheStr) {
         logger.info(TAG, `未找到全局搜索缓存: ${cacheKey}`);
@@ -653,6 +671,7 @@ export struct SourceDetailPage {
       // 检查关键词是否匹配
       if (cacheData.keyword !== keyword) {
         logger.info(TAG, `缓存关键词不匹配: 缓存="${cacheData.keyword}", 当前="${keyword}"`);
+        AppStorage.delete(activeCacheKey);
         return false;
       }
       
@@ -660,7 +679,7 @@ export struct SourceDetailPage {
       const cacheAge = Date.now() - cacheData.timestamp;
       if (cacheAge > 5 * 60 * 1000) {
         logger.info(TAG, `全局搜索缓存已过期: ${cacheAge}ms`);
-        AppStorage.delete(cacheKey);
+        AppStorage.delete(activeCacheKey);
         return false;
       }
       
@@ -686,7 +705,7 @@ export struct SourceDetailPage {
       logger.info(TAG, `成功加载全局搜索缓存: ${comics.length} 条结果`);
       
       // 清除缓存（一次性使用）
-      AppStorage.delete(cacheKey);
+      AppStorage.delete(activeCacheKey);
       
       return true;
     } catch (error) {
@@ -2213,10 +2232,13 @@ export struct SourceDetailPage {
           break;
         case TabType.FILTER:
         case TabType.CUSTOM:
+          logger.warn(TAG, `HTTP图源未配置${currentTab.name}的可执行feature，请使用WebView workflow或补充HTTP feature映射`);
+          this.getUIContext().getPromptAction().showToast({ message: `${currentTab.name}需要图源配置提供对应 feature` });
+          break;
         case TabType.FAVORITES:
         case TabType.HISTORY:
-          // HTTP系统暂不支持这些功能，返回空数组
-          logger.warn(TAG, `HTTP系统暂不支持${currentTab.name}功能`);
+          logger.warn(TAG, `HTTP图源未提供${currentTab.name}能力`);
+          this.getUIContext().getPromptAction().showToast({ message: `图源未提供${currentTab.name}能力` });
           break;
       }
 
@@ -3056,7 +3078,7 @@ export struct SourceDetailPage {
       },
       {
         id: 'debug',
-        symbol: $r('sys.symbol.worldclock_fill_1'),
+        symbol: $r('sys.symbol.code_lab'),
         label: '调试',
         onClick: () => {
           logger.info(TAG, '点击调试按钮，显示WebView调试窗口');
@@ -3283,7 +3305,7 @@ export struct SourceDetailPage {
             {
               content: {
                 label: '调试',
-                icon: $r('sys.symbol.worldclock_fill_1'),
+                icon: $r('sys.symbol.code_lab'),
                 isEnabled: this.useWebView,
                 action: () => {
                   logger.info(TAG, '点击调试按钮，显示WebView调试窗口');
@@ -4486,7 +4508,7 @@ export struct SourceDetailPage {
       case 'search':
         return $r('sys.symbol.magnifyingglass');
       case 'filter':
-        return $r('sys.symbol.line_3_horizontal');
+        return $r('sys.symbol.funnel');
       case 'favorites':
         return $r('sys.symbol.heart');
       case 'history':
@@ -4556,7 +4578,7 @@ export struct SourceDetailPage {
       case DisplayMode.LIST:
         return $r('sys.symbol.list_bullet');
       case DisplayMode.LARGE_COVER:
-        return $r('sys.symbol.heart_square_stack_fill');
+        return $r('sys.symbol.thumbnails');
       default:
         return $r('sys.symbol.square_grid_2x2');
     }

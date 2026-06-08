@@ -33,9 +33,9 @@ function getHelpItemIcon(id: string): Resource {
     case 'quick_start':
       return $r('sys.symbol.play_circle');
     case 'reader_guide':
-      return $r('sys.symbol.books_vertical_fill');
+      return $r('sys.symbol.book_open_fill');
     case 'library_management':
-      return $r('sys.symbol.books_vertical_fill');
+      return $r('sys.symbol.book_open_fill');
     case 'file_import':
       return $r('sys.symbol.folder_badge_plus');
     case 'download_sync':
@@ -51,7 +51,7 @@ function getHelpItemIcon(id: string): Resource {
     case 'source_settings':
       return $r('sys.symbol.slider_horizontal_2_square');
     case 'source_guide':
-      return $r('sys.symbol.rectangle_stack');
+      return $r('sys.symbol.picture');
     case 'faq':
       return $r('sys.symbol.questionmark_circle');
     default:

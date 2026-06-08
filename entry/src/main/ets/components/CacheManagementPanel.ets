@@ -232,7 +232,7 @@ export struct CacheManagementPanel {
         
         Button({ type: ButtonType.Normal }) {
           Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+            SymbolGlyph($r('sys.symbol.arrow_2_circlepath'))
               .fontSize(14)
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             Text('刷新')
@@ -279,7 +279,7 @@ export struct CacheManagementPanel {
       
       // 标签页导航
       Row({ space: 0 }) {
-        this.buildTabButtonWithSymbol($r('sys.symbol.doc_plaintext'), '统计', CacheTab.STATISTICS)
+        this.buildTabButtonWithSymbol($r('sys.symbol.histogram_fill'), '统计', CacheTab.STATISTICS)
         this.buildTabButtonWithSymbol($r('sys.symbol.gearshape'), '配置', CacheTab.CONFIG)
         this.buildTabButtonWithSymbol($r('sys.symbol.bolt'), '预加载', CacheTab.PRELOAD)
       }
@@ -678,7 +678,7 @@ export struct CacheManagementPanel {
           // 重置按钮
           Button({ type: ButtonType.Normal }) {
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+              SymbolGlyph($r('sys.symbol.arrow_2_circlepath'))
                 .fontSize(16)
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
               Text('重置为默认配置')
@@ -736,7 +736,7 @@ export struct CacheManagementPanel {
         
         Button({ type: ButtonType.Normal }) {
           Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+            SymbolGlyph($r('sys.symbol.arrow_2_circlepath'))
               .fontSize(14)
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             Text('重置')

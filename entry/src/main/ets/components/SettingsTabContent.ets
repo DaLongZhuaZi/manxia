@@ -8,6 +8,13 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { SettingsPageSurfaceManager, SettingsPageSurfaceStyle } from '../pages/settings/SettingsPageSurfaceManager';
 import { AnnotationCenterPageParams } from '../pages/AnnotationCenterPage';
+import { openFileEditorInIsolatedAbility } from '../Framework/Editor/FileEditorAbilityLauncher';
+import {
+  FileEditorOpenParams,
+  FileEditorOpenSource,
+  FileEditorSaveTargetType,
+  fileEditorService
+} from '../Framework/Editor/FileEditorService';
 
 const TAG = 'SettingsTabContent';
 
@@ -18,7 +25,7 @@ interface NavigationPathParam {
 
 interface NavigationPath {
   name: string;
-  param: NavigationPathParam;
+  param: NavigationPathParam | FileEditorOpenParams;
 }
 
 @Component
@@ -293,7 +300,7 @@ export struct SettingsTabContent {
       if (onClick) {
         onClick();
       } else {
-        this.showToast(`${title}功能开发中...`);
+        this.showToast(`${title}入口未配置操作`);
       }
     })
   }
@@ -358,7 +365,7 @@ export struct SettingsTabContent {
             }
           }, 'guide_main_setting_global')
 
-          this.buildSettingItem('灵感', '查看和管理全部内容的书签、划线与想法', $r('sys.symbol.stickers'), () => {
+          this.buildSettingItem('灵感', '查看和管理全部内容的书签、划线与想法', $r('sys.symbol.highlighter_line'), () => {
             try {
               const params: AnnotationCenterPageParams = {
                 contentTitle: '全部内容'
@@ -372,7 +379,7 @@ export struct SettingsTabContent {
           }, 'guide_main_setting_inspiration')
 
           if (this.sourceFeaturesEnabled) {
-            this.buildSettingItem('更新提醒', '统一管理作品、书架和远程库的更新提醒', $r('sys.symbol.bookshelf_badge_checkmark'), () => {
+            this.buildSettingItem('更新提醒', '统一管理作品、书架和远程库的更新提醒', $r('sys.symbol.bell'), () => {
               try {
                 this.pathStack.pushPathByName('SubscriptionManagementPage', null);
                 logger.info(TAG, '导航到更新提醒页面');
@@ -455,7 +462,7 @@ export struct SettingsTabContent {
             }
           }, 'guide_main_setting_data_management')
 
-          this.buildSettingItem('网络文件夹', '通过 WebDAV/FTP/FTPS/SMB 连接远程文件夹并导入文件', $r('sys.symbol.wifi'), () => {
+          this.buildSettingItem('网络文件夹', '通过 WebDAV/FTP/FTPS/SMB 连接远程文件夹并导入文件', $r('sys.symbol.wifi_router'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'NetworkFolderPage',
@@ -509,14 +516,12 @@ export struct SettingsTabContent {
           if (this.advancedModeEnabled) {
             this.buildSettingItem('文件编辑器', '编辑代码、配置文件、Markdown', $r('sys.symbol.doc_plaintext'), () => {
               try {
-                const navigationPath: NavigationPath = {
-                  name: 'FileEditorPage',
-                  param: {
-                    fromPage: 'MainMenuPage',
-                    timestamp: Date.now()
-                  }
+                const openParams: FileEditorOpenParams = {
+                  origin: FileEditorOpenSource.MANUAL,
+                  title: '文件编辑器',
+                  saveTarget: fileEditorService.createSaveTarget(FileEditorSaveTargetType.NONE)
                 };
-                this.pathStack.pushPath(navigationPath);
+                openFileEditorInIsolatedAbility(this.getUIContext(), openParams, TAG);
                 logger.info(TAG, '导航到文件编辑器页面');
               } catch (error) {
                 logger.error(TAG, '导航到文件编辑器页面失败', String(error));
@@ -525,7 +530,7 @@ export struct SettingsTabContent {
             }, 'guide_main_setting_file_editor')
           }
 
-          this.buildSettingItem('AVIF图片查看器', '测试AVIF图片查看、导出功能', $r('sys.symbol.camera_macro'), () => {
+          this.buildSettingItem('AVIF图片查看器', '测试AVIF图片查看、导出功能', $r('sys.symbol.picture'), () => {
             const navigationPath: NavigationPath = {
               name: 'AvifTestPage',
               param: {

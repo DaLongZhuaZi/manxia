@@ -22,6 +22,7 @@ import {
 } from '../Components/PdfImportDialog';
 import { TaskCancelSignal } from '../Task/BackgroundTaskManager';
 import { ImportFilenameIntelligenceService } from './ImportFilenameIntelligenceService';
+import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Reader/MangaReadFlowImportReporter';
 
 const TAG = 'PdfImportService';
 const PDF_IMPORT_DIR_NAME = 'pdf_import';
@@ -176,14 +177,48 @@ export class PdfImportService {
         options.dialogResult.contentType,
         options.sourceId || 'local_pdf'
       );
+      result.originImportId = this.recordPdfImportFlow(options.fileUri, options.dialogResult, result, true, '', '');
 
       emitProgress(100, '导入完成');
       return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `PDF导入失败: ${errorMessage}`);
+      const failedResult: PdfImportResult = {
+        success: false,
+        errorMessage: errorMessage,
+        totalPages: 0
+      };
+      this.recordPdfImportFlow(options.fileUri, options.dialogResult, failedResult, false, errorMessage, 'execute_import_failed');
       throw error as Error;
     }
+  }
+
+  private recordPdfImportFlow(
+    fileUri: string,
+    dialogResult: PdfImportDialogResult,
+    result: PdfImportResult,
+    success: boolean,
+    errorMessage: string,
+    reason: string
+  ): string {
+    const report: MangaReadFlowImportReport = new MangaReadFlowImportReport();
+    report.contentId = result.mangaId || '';
+    report.contentTitle = dialogResult.title;
+    report.chapterId = result.chapterId || '';
+    report.chapterTitle = result.chapterTitle || dialogResult.chapterTitle || dialogResult.title;
+    report.pageCount = result.totalPages || 0;
+    report.chapterCount = 1;
+    report.sourcePath = fileUri;
+    report.targetPath = result.imageFiles && result.imageFiles.length > 0
+      ? result.imageFiles[0].imagePath
+      : '';
+    report.sourceId = dialogResult.contentType === PdfContentType.MANGA ? 'local_pdf_manga' : 'local_pdf_ebook';
+    report.success = success;
+    report.reason = reason.length > 0 ? reason : 'pdf_import_completed';
+    report.errorMessage = errorMessage;
+    report.detail = `contentType=${dialogResult.contentType}, importMode=${dialogResult.importMode}`;
+    return MangaReadFlowImportReporter.record(report);
   }
 
   private resolveOutputDir(filesDir: string, preferredOutputDir?: string): string {

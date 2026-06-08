@@ -72,7 +72,7 @@ export struct HomeTabContent {
     {
       title: '个性化分析',
       subtitle: '根据您的阅读习惯分析阅读偏好',
-      image: $r('sys.symbol.hi_vison'),
+      image: $r('sys.symbol.histogram_fill'),
       backgroundColor: '#0F3460'
     }
   ];
@@ -642,7 +642,7 @@ export struct HomeTabContent {
           .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
         } else if (this.recentReadingList.length === 0 && this.recentEBookList.length === 0 && this.recentNovelList.length === 0) {
           Column({ space: 8 }) {
-            Image($r('sys.symbol.archivebox'))
+            Image($r('sys.symbol.clock'))
               .width(48)
               .height(48)
 

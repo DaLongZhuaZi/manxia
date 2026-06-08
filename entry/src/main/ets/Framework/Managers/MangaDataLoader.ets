@@ -50,6 +50,9 @@ export interface ChapterPagesLoadResult {
 
 /**
  * 漫画数据加载器
+ *
+ * @deprecated 当前主在线链路已迁移到图源引擎和详情页专用加载流程。本类仅保留旧调用兼容，
+ * 不再直接发起 WebView 网络刷新。
  */
 export class MangaDataLoader {
   private static instance: MangaDataLoader;
@@ -175,13 +178,7 @@ export class MangaDataLoader {
     cachedChapters: Chapter[]
   ): Promise<MangaDetailLoadResult> {
     try {
-      // TODO: 调用WebView引擎获取最新数据
-      // 这里需要根据manga.sourceName找到对应的图源引擎
-      // const engine = await MangaSourceEngine.create(manga.sourceName);
-      // const freshData = await engine.getMangaDetail(manga.externalId);
-      
-      // 暂时返回缓存数据，标记需要刷新
-      logger.warn(TAG, '网络加载功能待实现，暂时使用缓存数据');
+      logger.warn(TAG, '旧 MangaDataLoader 不再直接接入 WebView 图源刷新，返回缓存并标记需要刷新');
       return {
         manga,
         chapters: cachedChapters,
@@ -291,12 +288,7 @@ export class MangaDataLoader {
     cachedPages: PageInfo[]
   ): Promise<ChapterPagesLoadResult> {
     try {
-      // TODO: 调用WebView引擎获取页面列表
-      // const engine = await MangaSourceEngine.create(manga.sourceName);
-      // const pages = await engine.getChapterPages(manga.externalId, chapter.externalId);
-      
-      // 暂时返回缓存数据
-      logger.warn(TAG, '网络加载功能待实现，暂时使用缓存数据');
+      logger.warn(TAG, '旧 MangaDataLoader 不再直接接入 WebView 页面刷新，返回缓存页面');
       return {
         pages: cachedPages,
         dataSource: 'cache'

@@ -35,6 +35,9 @@ export interface BackupData {
   // 历史记录
   history: HistoryBackupSection;
 
+  // 第三方追踪/同步记录
+  tracking?: TrackingBackupSection;
+
   // 统一标注（书签/划线/想法）
   annotations?: AnnotationBackupSection;
   
@@ -68,6 +71,7 @@ export interface CloudConfigBackupSection {
   suwayomi?: SuwayomiConfigBackup;
   komga?: KomgaConfigBackup;
   ftp?: FTPConnectionsBackup;
+  preferences?: PreferenceBackupSection;
 }
 
 /**
@@ -259,6 +263,105 @@ export interface NovelBackupItem {
 }
 
 /**
+ * 小说章节备份项
+ */
+export interface NovelChapterBackup {
+  id: string;
+  bookId: string;
+  url: string;
+  title: string;
+  chapterIndex: number;
+  isVolume: number;
+  isVip: number;
+  isPay: number;
+  isDownloaded: number;
+  contentPath: string;
+  wordCount: number;
+  updateTime: number;
+  createTime: number;
+}
+
+/**
+ * 小说正文缓存备份项
+ */
+export interface NovelContentCacheBackup {
+  id: string;
+  chapterId: string;
+  content: string;
+  wordCount: number;
+  createTime: number;
+  expireTime: number;
+}
+
+/**
+ * 小说阅读器设置备份项
+ */
+export interface NovelReaderSettingsBackup {
+  id: string;
+  userId: string;
+  fontSize: number;
+  lineHeight: number;
+  letterSpacing: number;
+  paragraphSpacing: number;
+  fontFamily: string;
+  textColor: string;
+  backgroundColor: string;
+  brightness: number;
+  keepScreenOn: number;
+  volumeKeyTurn: number;
+  clickTurn: number;
+  autoScroll: number;
+  autoScrollSpeed: number;
+  createTime: number;
+  updateTime: number;
+}
+
+/**
+ * 小说替换规则备份项
+ */
+export interface NovelReplaceRuleBackup {
+  id: string;
+  name: string;
+  pattern: string;
+  replacement: string;
+  isRegex: number;
+  scope: string;
+  enabled: number;
+  ruleOrder: number;
+  sourceIds: string;
+  createTime: number;
+  updateTime: number;
+}
+
+/**
+ * TXT目录识别规则备份项
+ */
+export interface NovelTxtTocRuleBackup {
+  id: string;
+  name: string;
+  rule: string;
+  example: string;
+  serialNumber: number;
+  enabled: number;
+  createTime: number;
+  updateTime: number;
+}
+
+/**
+ * 小说词典规则备份项
+ */
+export interface NovelDictRuleBackup {
+  id: string;
+  name: string;
+  urlRule: string;
+  showRule: string;
+  enabled: number;
+  sortNumber: number;
+  createTime: number;
+  updateTime: number;
+}
+
+/**
  * 电子书备份项
  */
 export interface EBookBackupItem {
@@ -409,6 +512,12 @@ export interface NovelBackupSection {
   library: NovelBackupItem[];
   readProgress: NovelReadProgressBackup[];
   categories: string[];
+  chapters?: NovelChapterBackup[];
+  contentCache?: NovelContentCacheBackup[];
+  readerSettings?: NovelReaderSettingsBackup[];
+  replaceRules?: NovelReplaceRuleBackup[];
+  txtTocRules?: NovelTxtTocRuleBackup[];
+  dictRules?: NovelDictRuleBackup[];
 }
 
 /**
@@ -435,6 +544,7 @@ export interface SettingsBackupSection {
   privacy: PrivacySettingsBackup;
   // 完整的设置表数据（新增）
   allSettings?: SettingItemBackup[];
+  preferenceStores?: PreferenceBackupSection;
 }
 
 /**
@@ -550,6 +660,61 @@ export interface NovelReadProgressBackup {
   readTime: number;
 }
 
+export type PreferenceEntryValue = string | number | boolean | string[] | number[] | boolean[];
+
+/**
+ * Preferences文件备份集合
+ */
+export interface PreferenceBackupSection {
+  stores: PreferenceStoreBackup[];
+}
+
+/**
+ * 单个Preferences文件备份
+ */
+export interface PreferenceStoreBackup {
+  storeName: string;
+  entries: PreferenceEntryBackup[];
+}
+
+/**
+ * 单个Preferences键值备份
+ */
+export interface PreferenceEntryBackup {
+  key: string;
+  value: PreferenceEntryValue;
+}
+
+/**
+ * 第三方追踪记录备份段
+ */
+export interface TrackingBackupSection {
+  records: TrackRecordBackup[];
+}
+
+/**
+ * 第三方追踪记录备份项
+ */
+export interface TrackRecordBackup {
+  id: string;
+  contentId: string;
+  contentType: string;
+  trackerId: number;
+  remoteId: string;
+  remoteTitle: string;
+  remoteUrl: string;
+  lastChapterRead: number;
+  totalChapters: number;
+  score: number;
+  status: number;
+  startedReadingDate: number;
+  finishedReadingDate: number;
+  lastSyncTime: number;
+  syncStatus: string;
+  createTime: number;
+  updateTime: number;
+}
+
 /**
  * 备份元数据
  */
@@ -562,6 +727,7 @@ export interface BackupItemCounts {
   ebook: number;
   sources: number;
   annotations?: number;
+  tracking?: number;
 }
 
 /**
@@ -843,7 +1009,7 @@ export const DEFAULT_BACKUP_OPTIONS: BackupOptions = {
   includePlugins: false,
   includeFavorites: true,
   includeOnlineData: false,
-  includeCloudConfig: true,
+  includeCloudConfig: false,
   includeCoverImages: true,
   includeChapterImages: false,
   includeEBookFiles: false

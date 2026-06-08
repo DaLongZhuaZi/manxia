@@ -268,8 +268,15 @@ export class JSONSourceParser {
       return this.parseJSONResponse(response, parser);
     }
 
-    // HTML和XML解析待实现
-    logger.warn(TAG, `暂不支持的解析器类型: ${parser.type}`);
+    if (parser.type === 'html') {
+      return this.parseMarkupResponse(response, parser, 'html');
+    }
+
+    if (parser.type === 'xml') {
+      return this.parseMarkupResponse(response, parser, 'xml');
+    }
+
+    logger.warn(TAG, `未知解析器类型: ${parser.type}`);
     return [];
   }
 
@@ -330,6 +337,177 @@ export class JSONSourceParser {
     }
 
     return result;
+  }
+
+  private parseMarkupResponse(
+    response: Record<string, Object | undefined>,
+    parser: ParserConfig,
+    parserType: 'html' | 'xml'
+  ): Record<string, Object | undefined>[] {
+    try {
+      const markup = this.extractMarkupText(response);
+      if (markup.length <= 0) {
+        logger.warn(TAG, `${parserType.toUpperCase()}响应为空，无法解析`);
+        return [];
+      }
+
+      const listSelector = parser.listPath || parser.root || '';
+      const itemBlocks = listSelector.length > 0 ? this.selectMarkupBlocks(markup, listSelector) : [markup];
+      const itemMapping: Record<string, Object | undefined> = parser.item || parser.fields || {};
+      const results: Record<string, Object | undefined>[] = [];
+
+      for (let i = 0; i < itemBlocks.length; i++) {
+        const parsed = this.parseMarkupItem(itemBlocks[i], itemMapping);
+        if (Object.keys(parsed).length > 0) {
+          results.push(parsed);
+        }
+      }
+
+      return results;
+    } catch (error) {
+      logger.error(TAG, `${parserType.toUpperCase()}响应解析失败`, String(error));
+      return [];
+    }
+  }
+
+  private extractMarkupText(response: Record<string, Object | undefined>): string {
+    const keys = ['body', 'data', 'result', 'content', 'text', 'html', 'xml'];
+    for (let i = 0; i < keys.length; i++) {
+      const value = response[keys[i]];
+      if (typeof value === 'string' && value.length > 0) {
+        return value;
+      }
+    }
+    const direct = response as Object;
+    if (typeof direct === 'string') {
+      return direct;
+    }
+    return SafeUtils.stringifyJson(response, '');
+  }
+
+  private parseMarkupItem(markup: string, mapping: Record<string, Object | undefined>): Record<string, Object | undefined> {
+    const result: Record<string, Object | undefined> = {};
+    const mappingKeys = Object.keys(mapping);
+
+    for (let i = 0; i < mappingKeys.length; i++) {
+      const key = mappingKeys[i];
+      const value = mapping[key];
+      if (typeof value === 'string') {
+        result[key] = this.extractMarkupValue(markup, value);
+      } else if (typeof value === 'object' && value !== null) {
+        const nestedMapping = value as Record<string, Object | undefined>;
+        const nestedListPath = nestedMapping.listPath;
+        if (typeof nestedListPath === 'string' && nestedListPath.length > 0) {
+          const blocks = this.selectMarkupBlocks(markup, nestedListPath);
+          const childMapping = nestedMapping.item as Record<string, Object | undefined>;
+          result[key] = blocks.map((block: string): Record<string, Object | undefined> => {
+            return this.parseMarkupItem(block, childMapping);
+          });
+        } else {
+          result[key] = this.parseMarkupItem(markup, nestedMapping);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  private extractMarkupValue(markup: string, expression: string): string {
+    const atIndex = expression.lastIndexOf('@');
+    let selector = expression;
+    let attrName = '';
+    if (atIndex > 0 && atIndex < expression.length - 1) {
+      selector = expression.substring(0, atIndex);
+      attrName = expression.substring(atIndex + 1);
+    }
+
+    const blocks = selector.length > 0 ? this.selectMarkupBlocks(markup, selector) : [markup];
+    if (blocks.length <= 0) {
+      return '';
+    }
+
+    if (attrName.length > 0) {
+      return this.extractAttribute(blocks[0], attrName);
+    }
+    return this.stripMarkup(blocks[0]).trim();
+  }
+
+  private selectMarkupBlocks(markup: string, selector: string): string[] {
+    const normalizedSelector = selector.trim();
+    if (normalizedSelector.length <= 0) {
+      return [];
+    }
+
+    if (normalizedSelector.startsWith('#')) {
+      return this.selectByAttribute(markup, 'id', normalizedSelector.substring(1));
+    }
+    if (normalizedSelector.startsWith('.')) {
+      return this.selectByClass(markup, normalizedSelector.substring(1));
+    }
+
+    const dotIndex = normalizedSelector.indexOf('.');
+    if (dotIndex > 0) {
+      const tagName = normalizedSelector.substring(0, dotIndex);
+      const className = normalizedSelector.substring(dotIndex + 1);
+      return this.selectByClass(markup, className, tagName);
+    }
+
+    return this.selectByTag(markup, normalizedSelector);
+  }
+
+  private selectByTag(markup: string, tagName: string): string[] {
+    const escapedTag = this.escapeRegExp(tagName);
+    const pattern = new RegExp(`<${escapedTag}(?:\\s[^>]*)?>[\\s\\S]*?<\\/${escapedTag}>`, 'gi');
+    return this.collectMatches(markup, pattern);
+  }
+
+  private selectByClass(markup: string, className: string, tagName: string = '[a-zA-Z0-9:_-]+'): string[] {
+    const escapedClass = this.escapeRegExp(className);
+    const pattern = new RegExp(`<(${tagName})(?:\\s[^>]*)?class=["'][^"']*(?:^|\\s)${escapedClass}(?:\\s|$)[^"']*["'][^>]*>[\\s\\S]*?<\\/\\1>`, 'gi');
+    return this.collectMatches(markup, pattern);
+  }
+
+  private selectByAttribute(markup: string, attrName: string, attrValue: string): string[] {
+    const escapedAttr = this.escapeRegExp(attrName);
+    const escapedValue = this.escapeRegExp(attrValue);
+    const pattern = new RegExp(`<([a-zA-Z0-9:_-]+)(?:\\s[^>]*)?${escapedAttr}=["']${escapedValue}["'][^>]*>[\\s\\S]*?<\\/\\1>`, 'gi');
+    return this.collectMatches(markup, pattern);
+  }
+
+  private collectMatches(markup: string, pattern: RegExp): string[] {
+    const results: string[] = [];
+    let match: RegExpExecArray | null = pattern.exec(markup);
+    while (match !== null) {
+      results.push(match[0]);
+      match = pattern.exec(markup);
+    }
+    return results;
+  }
+
+  private extractAttribute(markup: string, attrName: string): string {
+    const escapedAttr = this.escapeRegExp(attrName);
+    const pattern = new RegExp(`${escapedAttr}=["']([^"']*)["']`, 'i');
+    const match = pattern.exec(markup);
+    return match && match.length > 1 ? this.decodeHtmlEntities(match[1]) : '';
+  }
+
+  private stripMarkup(markup: string): string {
+    return this.decodeHtmlEntities(markup.replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' '));
+  }
+
+  private decodeHtmlEntities(value: string): string {
+    return value.replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   /**

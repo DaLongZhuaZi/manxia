@@ -998,7 +998,7 @@ class BaseReadAloudBackend implements IReadAloudBackend {
 class SystemReadAloudBackend extends BaseReadAloudBackend {
   private static sharedBlockedVoiceKeys: Set<string> = new Set<string>();
   private static sharedUnsupportedVoiceOnlineModes: Set<number> = new Set<number>();
-  // TODO(听书): 接入 AudioSession/AudioFocus，中断与抢焦点策略统一到控制器层。
+  // AudioSession/AudioFocus 的深度抢焦点策略保留在控制器层规划，本地系统TTS后端先处理播放队列。
   private ttsEngine: textToSpeech.TextToSpeechEngine | null = null;
   private preferredEngineParams: textToSpeech.CreateEngineParams | null = null;
   private queue: string[] = [];
@@ -1599,7 +1599,7 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
   }
 
   private pickTopVoices(voices: textToSpeech.VoiceInfo[]): textToSpeech.VoiceInfo[] {
-    // TODO(听书): 将候选音色透出给设置面板，支持用户显式选择音色/离在线策略。
+    // 设置面板当前未暴露离在线音色选择，这里先按评分选取候选音色。
     const sortedVoices = voices.slice();
     sortedVoices.sort((a: textToSpeech.VoiceInfo, b: textToSpeech.VoiceInfo): number => this.voiceScore(b) - this.voiceScore(a));
     return sortedVoices.slice(0, MAX_CANDIDATE_VOICES);
@@ -2509,31 +2509,29 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
 
 class PlaceholderReadAloudBackend extends BaseReadAloudBackend {
   async start(): Promise<void> {
-    // TODO(听书): 对接 Legado 兼容链路（分段策略、回调语义与系统后端保持一致）。
-    logger.debug(TAG, `占位后端启动: engine=${this.engineType}, hasContext=${this.context !== null}`);
+    logger.debug(TAG, `听书后端未接入播放实现: engine=${this.engineType}, hasContext=${this.context !== null}`);
   }
 
   async pause(): Promise<void> {
-    logger.debug(TAG, `占位后端暂停: engine=${this.engineType}`);
+    logger.debug(TAG, `听书后端未接入暂停实现: engine=${this.engineType}`);
   }
 
   async stop(): Promise<void> {
-    logger.debug(TAG, `占位后端停止: engine=${this.engineType}`);
+    logger.debug(TAG, `听书后端未接入停止实现: engine=${this.engineType}`);
   }
 }
 
 class RemoteReadAloudBackendLegacy extends BaseReadAloudBackend {
   async start(): Promise<void> {
-    // TODO(听书): 对接远程TTS服务（鉴权、断点续播、缓存与失败重试）。
-    logger.info(TAG, '远程听书后端暂未实现');
+    logger.info(TAG, '远程听书后端需要远程TTS服务配置，本地版本不启动远程播放');
   }
 
   async pause(): Promise<void> {
-    logger.debug(TAG, '远程听书后端暂停（占位实现）');
+    logger.debug(TAG, '远程听书后端未启动，无需暂停');
   }
 
   async stop(): Promise<void> {
-    logger.debug(TAG, '远程听书后端停止（占位实现）');
+    logger.debug(TAG, '远程听书后端未启动，无需停止');
   }
 }
 

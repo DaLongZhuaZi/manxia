@@ -7,7 +7,7 @@
 
 import { logger } from '../../Utils/Logger';
 import { preferences } from '@kit.ArkData';
-import { Configuration } from '@kit.AbilityKit';
+import { ConfigurationConstant } from '@kit.AbilityKit';
 import { getContext } from '../../GlobalContext';
 import { CommonModifier } from '@kit.ArkUI';
 import { colorMap } from '../../Data/ResourceMap';
@@ -308,6 +308,7 @@ export class ThemeManager {
       // 4. 确定最终显示的主题
       const finalTheme = this.getActualThemeSync();
       logger.info(TAG, `🎯 最终显示主题: ${finalTheme}`);
+      this.syncApplicationColorMode(this.currentTheme);
       
       // 5. 主动通知所有监听器当前主题（无论是AUTO还是固定主题）
       // 这确保所有组件都能获得初始主题，避免组件使用默认值
@@ -363,6 +364,29 @@ export class ThemeManager {
       return ThemeType.DARK;
     }
     return ThemeType.AUTO;
+  }
+
+  private colorModeFromTheme(theme: ThemeType): ConfigurationConstant.ColorMode {
+    if (theme === ThemeType.LIGHT) {
+      return ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+    }
+    if (theme === ThemeType.AUTO) {
+      return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
+    }
+    return ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+  }
+
+  private syncApplicationColorMode(theme: ThemeType): void {
+    try {
+      const context = getContext();
+      const colorMode: ConfigurationConstant.ColorMode = this.colorModeFromTheme(theme);
+      context.getApplicationContext().setColorMode(colorMode);
+      context.setColorMode(colorMode);
+      logger.info(TAG, `已同步应用颜色模式: theme=${theme}, colorMode=${colorMode}`);
+    } catch (error) {
+      const errorMsg: string = error instanceof Error ? error.message : String(error);
+      logger.warn(TAG, `同步应用颜色模式失败: ${errorMsg}`);
+    }
   }
 
   /**
@@ -543,6 +567,7 @@ export class ThemeManager {
     
     if (this.currentTheme === theme) {
       logger.debug(TAG, `主题已经是 ${theme}，无需切换`);
+      this.syncApplicationColorMode(theme);
       return;
     }
 
@@ -558,6 +583,7 @@ export class ThemeManager {
       // 保存主题
       await this.saveTheme(theme);
       logger.debug(TAG, `主题已保存到存储: ${theme}`);
+      this.syncApplicationColorMode(theme);
 
       // 确定要通知的主题
       let themeToNotify: ThemeType;
@@ -1390,7 +1416,12 @@ export class ThemeManager {
       const activeThemeId: string = this.getCurrentCustomThemeId();
       let storedModeRaw: string = AppStorage.get<string>(CUSTOM_THEME_KEYS.THEME_MODE) || '';
       if (this.preferencesStore) {
-        storedModeRaw = await this.preferencesStore.get(this.CUSTOM_THEME_MODE_KEY, '') as string;
+        try {
+          storedModeRaw = await this.preferencesStore.get(this.CUSTOM_THEME_MODE_KEY, '') as string;
+        } catch (error) {
+          const errorMsg: string = error instanceof Error ? error.message : String(error);
+          logger.warn(TAG, `刷新主题时读取自定义主题模式失败，使用当前状态: ${errorMsg}`);
+        }
       }
       const mode: CustomThemeMode = this.normalizeCustomThemeMode(storedModeRaw, activeThemeId);
       const targetTheme: ThemeType = this.themeTypeFromCustomThemeMode(mode);
@@ -1404,6 +1435,7 @@ export class ThemeManager {
     
     // 通知当前主题
     const currentTheme = this.getActualThemeSync();
+    this.syncApplicationColorMode(this.currentTheme);
     this.notifyThemeChange(currentTheme);
     
     logger.info(TAG, `主题刷新完成: ${currentTheme}`);
@@ -1580,6 +1612,10 @@ export class ThemeManager {
       if (this.currentTheme !== targetTheme) {
         this.currentTheme = targetTheme;
         await this.saveTheme(targetTheme);
+        this.syncApplicationColorMode(targetTheme);
+        this.notifyThemeChange(this.getActualThemeSync());
+      } else {
+        this.syncApplicationColorMode(targetTheme);
         this.notifyThemeChange(this.getActualThemeSync());
       }
 

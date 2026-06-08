@@ -823,7 +823,7 @@ export struct SuwayomiTabContent {
         .color(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
       Row({ space: 0 }) {
         Column({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+          SymbolGlyph($r('sys.symbol.bookshelf'))
             .fontSize(24)
             .fontColor([this.suwayomiBrowseMode === 'library' ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
@@ -852,7 +852,7 @@ export struct SuwayomiTabContent {
         })
 
         Column({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          SymbolGlyph($r('sys.symbol.picture'))
             .fontSize(24)
             .fontColor([this.suwayomiBrowseMode === 'sources' ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :

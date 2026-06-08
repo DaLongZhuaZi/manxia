@@ -8,6 +8,12 @@ export class MultiSelectState {
   selectedIds: Set<string> = new Set();
   isDeleting: boolean = false;
 
+  activate(): void {
+    this.selectedIds = new Set();
+    this.isActive = true;
+    this.isDeleting = false;
+  }
+
   toggle(id: string): void {
     const nextSelectedIds: Set<string> = new Set(this.selectedIds);
     if (nextSelectedIds.has(id)) {

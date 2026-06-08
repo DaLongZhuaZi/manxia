@@ -574,7 +574,7 @@ export struct ShareLinkDialogComponent {
 
               Button() {
                 Row({ space: 6 }) {
-                  SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+                  SymbolGlyph($r('sys.symbol.share'))
                     .fontSize(16)
                     .fontColor([Color.White])
                   Text('分享')

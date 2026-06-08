@@ -251,6 +251,45 @@ export struct BookSourceManagementPage {
     }
   }
 
+  private showSourceHealthCheck(source: BookSourceInfo): void {
+    const checks: string[] = [];
+    checks.push(source.isEnabled ? '已启用' : '已停用');
+    checks.push(source.url.length > 0 ? '书源地址有效' : '缺少书源地址');
+    checks.push(source.group && source.group.length > 0 ? `分组: ${source.group}` : '未设置分组');
+    checks.push(source.description.length > 0 ? '包含说明' : '未填写说明');
+    checks.push(source.language.length > 0 ? `语言: ${source.language}` : '未标记语言');
+    const message = `${source.name}\n${checks.join(' · ')}`;
+    logger.info(TAG, `书源本地健康检查: id=${source.id}, ${checks.join(', ')}`);
+    this.getUIContext().getPromptAction().showDialog({
+      title: '书源检查',
+      message,
+      buttons: [
+        { text: '确定', color: $r('sys.color.ohos_id_color_text_primary') }
+      ]
+    });
+  }
+
+  private showSourceEditHelp(source: BookSourceInfo): void {
+    const message = '当前页面支持通过文件导入或剪贴板导入同 ID 书源来覆盖更新；内联规则编辑需要完整规则表单，暂不在列表卡片内直接展开。';
+    logger.info(TAG, `显示书源更新说明: ${source.name}`);
+    this.getUIContext().getPromptAction().showActionMenu({
+      title: `更新 ${source.name}`,
+      buttons: [
+        { text: '从文件导入覆盖', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '从剪贴板导入覆盖', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '查看说明', color: $r('sys.color.ohos_id_color_text_primary') }
+      ]
+    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
+      if (result.index === 0) {
+        await this.importFromFile();
+      } else if (result.index === 1) {
+        await this.importFromClipboard();
+      } else if (result.index === 2) {
+        this.getUIContext().getPromptAction().showToast({ message, duration: 3000 });
+      }
+    }).catch(() => {});
+  }
+
   /**
    * 切换多选模式
    */
@@ -837,8 +876,7 @@ export struct BookSourceManagementPage {
           .layoutWeight(1)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .onClick(() => {
-            logger.info(TAG, `测试书源: ${source.name}`);
-            this.getUIContext().getPromptAction().showToast({ message: '测试功能开发中' });
+            this.showSourceHealthCheck(source);
           })
         
         Button(source.isNSFW ? '取消NSFW' : 'NSFW')
@@ -855,8 +893,7 @@ export struct BookSourceManagementPage {
           .layoutWeight(1)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .onClick(() => {
-            logger.info(TAG, `编辑书源: ${source.name}`);
-            this.getUIContext().getPromptAction().showToast({ message: '编辑功能开发中' });
+            this.showSourceEditHelp(source);
           })
         
         Button('删除')

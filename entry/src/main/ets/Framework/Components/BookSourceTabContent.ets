@@ -17,6 +17,7 @@ import { NovelDetailPageParams, NovelSearchPageParams } from '../../pages/NovelB
 import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
 import { AvifImage } from '../../components/AvifImage';
 import { DataManager } from '../Data/DataManager';
+import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 
 const TAG = 'BookSourceTabContent';
 
@@ -63,7 +64,7 @@ export struct BookSourceTabContent {
   @State isRefreshingBookSource: boolean = false;
   @State bookSourceCurrentPage: number = 1;
   @State bookSourceHasMore: boolean = true;
-  @State showBookSourcePicker: boolean = false;
+  @State @Watch('onBookSourcePickerVisibilityChanged') showBookSourcePicker: boolean = false;
   @State bookSourceViewMode: LibraryViewMode = LibraryViewMode.LIST;
   @State bookSourceSearchInput: string = '';
   @State isBookSourceSearchMode: boolean = false;
@@ -78,6 +79,7 @@ export struct BookSourceTabContent {
   private bookSourceCacheRestorePromise: Promise<void> | null = null;
   private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
   private tabContentCacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
 
   // ============ 生命周期 ============
 
@@ -105,6 +107,11 @@ export struct BookSourceTabContent {
   onPickerCloseSignalChanged(): void {
     if (this.showBookSourcePicker) {
       this.showBookSourcePicker = false;
+    }
+  }
+
+  onBookSourcePickerVisibilityChanged(): void {
+    if (!this.showBookSourcePicker) {
       this.bookSourceSearchKeyword = '';
       this.filterBookSourceList(this.bookSourceSearchKeyword);
     }
@@ -631,6 +638,11 @@ export struct BookSourceTabContent {
   }
 
   private scrollToSelectedBookSource(): void {
+    const autoScrollEnabled: boolean = this.settingsManager.getBoolean(
+      SettingKeys.MAIN_MENU_BOOK_SOURCE_PICKER_AUTO_SCROLL_ENABLED,
+      true
+    );
+    if (!autoScrollEnabled) return;
     if (!this.selectedBookSourceId || this.filteredBookSourceList.length === 0) return;
     const selectedIndex = this.filteredBookSourceList.findIndex((s: NovelSourceInfo) => s.id === this.selectedBookSourceId);
     if (selectedIndex > 0) {
@@ -803,7 +815,7 @@ export struct BookSourceTabContent {
     Column() {
       Column({ space: 12 }) {
         Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.text_book_closed'))
+          SymbolGlyph($r('sys.symbol.list_book'))
             .fontSize(18)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           Text('书源筛选')
@@ -816,25 +828,6 @@ export struct BookSourceTabContent {
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(this.getBookSourceReadableTertiaryColor())
-          Button() {
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(14)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-          }
-          .width(30)
-          .height(30)
-          .backgroundColor(this.getCardBackground())
-          .backgroundBlurStyle(this.getCardBlurStyle(), this.getCardBlurOptions())
-          .backgroundEffect(this.getCardBackgroundEffect())
-          .border({ width: this.getCardBorderWidth(), color: this.getCardBorderColor() })
-          .borderRadius(15)
-          .shadow({ radius: this.getCardRadius(), color: this.getCardShadowColor(), offsetX: 0, offsetY: 2 })
-          .clip(true)
-          .onClick(() => {
-            this.showBookSourcePicker = false;
-            this.bookSourceSearchKeyword = '';
-            this.filterBookSourceList(this.bookSourceSearchKeyword);
-          })
         }
         .width('100%')
 
@@ -916,7 +909,7 @@ export struct BookSourceTabContent {
       // 顶部操作栏
       Row({ space: 8 }) {
         Row({ space: 6 }) {
-          SymbolGlyph($r('sys.symbol.text_book_closed'))
+          SymbolGlyph($r('sys.symbol.list_book'))
             .fontSize(16)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
           Text(this.selectedBookSourceName || '选择书源')
@@ -990,7 +983,7 @@ export struct BookSourceTabContent {
 
         // 书源管理按钮
         Button() {
-          SymbolGlyph($r('sys.symbol.text_book_closed'))
+          SymbolGlyph($r('sys.symbol.list_book'))
             .fontSize(20)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
         }
@@ -1271,6 +1264,7 @@ export struct BookSourceTabContent {
     .height('100%')
     .bindSheet($$this.showBookSourcePicker, this.buildBookSourcePickerContent(), {
       height: SheetSize.MEDIUM,
+      showClose: false,
       dragBar: true
     })
   }

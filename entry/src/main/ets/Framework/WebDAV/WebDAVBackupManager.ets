@@ -11,12 +11,14 @@ import { SafeUtils } from '../../Utils/SafeUtils';
 
 import { WebDAVClient, WebDAVConfig, WebDAVFile } from './WebDAVClient';
 import { WebDAVNativeClient, WebDAVNativeConfig, isNativeModuleAvailable, getNativeModuleError } from './WebDAVNativeClient';
-import { BackupMetadata } from '../../Models/BackupModels';
+import { BackupMetadata, BackupOptions, BackupItemCounts } from '../../Models/BackupModels';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { logger } from '../../Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 
 const TAG = 'WebDAVBackupManager';
+const ARKTS_WEBDAV_FALLBACK_MAX_FILE_BYTES = 32 * 1024 * 1024;
+const ARKTS_WEBDAV_FALLBACK_MAX_FILE_MIB = ARKTS_WEBDAV_FALLBACK_MAX_FILE_BYTES / 1024 / 1024;
 
 export interface RemoteBackupInfo {
   fileName: string;
@@ -31,6 +33,29 @@ interface BackupIndex {
   version: number;
   lastUpdated: number;
   backups: RemoteBackupInfo[];
+}
+
+interface RawBackupIndex {
+  version?: number | string;
+  lastUpdated?: number | string;
+  backups?: RawRemoteBackupInfo[];
+}
+
+interface RawRemoteBackupInfo {
+  fileName?: string;
+  size?: number | string;
+  lastModified?: number | string;
+  metadata?: RawBackupMetadata;
+}
+
+interface RawBackupMetadata {
+  version?: string;
+  appVersion?: string;
+  timestamp?: number | string;
+  deviceInfo?: string;
+  itemCounts?: BackupItemCounts;
+  options?: BackupOptions;
+  fileSize?: number | string;
 }
 
 const BACKUP_INDEX_FILE = 'backups_index.json';
@@ -84,7 +109,7 @@ export class WebDAVBackupManager {
           password: config.password,
           basePath: config.basePath,
           timeoutMs: 30000,
-          verifySSL: false // 禁用SSL验证以支持自签名证书
+          verifySSL: config.verifySSL !== false
         };
         this.nativeClient = new WebDAVNativeClient(nativeConfig);
         const initResult = await this.nativeClient.initialize();
@@ -163,13 +188,13 @@ export class WebDAVBackupManager {
       this.syncStatus.uploadProgress = 0;
       this.syncStatus.error = undefined;
 
-      const fileName = localBackupPath.split('/').pop() || 'backup.mxbak';
-      const remotePath = `backups/${fileName}`;
+      const fileName = this.sanitizeBackupFileName(localBackupPath.split('/').pop() || 'backup.mxbak');
+      const remotePath = this.buildBackupRemotePath(fileName);
 
       logger.info(TAG, `开始上传备份: ${fileName}`);
 
       // 获取文件大小
-      const stat = SafeFileUtils.statSync(localBackupPath);
+      const stat = SafeFileUtils.statSyncStrict(localBackupPath);
       const fileSize = stat.size;
 
       // 优先使用Native客户端
@@ -178,6 +203,7 @@ export class WebDAVBackupManager {
         if (!result.success) {
           logger.warn(TAG, `Native上传失败，尝试ArkTS回退: ${result.message}`);
           if (this.client) {
+            this.ensureArkTSFallbackFileSize(fileSize, '上传');
             await this.client.upload(localBackupPath, remotePath, (progress) => {
               this.syncStatus.uploadProgress = progress;
             });
@@ -188,6 +214,7 @@ export class WebDAVBackupManager {
           this.syncStatus.uploadProgress = 100;
         }
       } else if (this.client) {
+        this.ensureArkTSFallbackFileSize(fileSize, '上传');
         await this.client.upload(localBackupPath, remotePath, (progress) => {
           this.syncStatus.uploadProgress = progress;
         });
@@ -207,8 +234,7 @@ export class WebDAVBackupManager {
     } catch (error) {
       this.syncStatus.error = String(error);
       logger.error(TAG, `上传备份失败: ${error}`);
-      const err = error as Error;
-      throw err;
+      throw new Error(String(error));
     } finally {
       this.syncStatus.isUploading = false;
       this.syncStatus.uploadProgress = 0;
@@ -237,17 +263,21 @@ export class WebDAVBackupManager {
         await this.sandboxManager.createDirectory(backupsDir);
       }
 
-      const localPath = `${backupsDir}/${remoteBackupInfo.fileName}`;
+      const safeFileName = this.sanitizeBackupFileName(remoteBackupInfo.fileName);
+      const localPath = `${backupsDir}/${safeFileName}`;
 
-      logger.info(TAG, `开始下载备份: ${remoteBackupInfo.fileName}`);
+      logger.info(TAG, `开始下载备份: ${safeFileName}`);
 
       // 优先使用Native客户端
+      const safeRemotePath = this.buildBackupRemotePath(safeFileName);
+
       if (this.nativeClient) {
-        const result = await this.nativeClient.downloadFile(remoteBackupInfo.remotePath, localPath);
+        const result = await this.nativeClient.downloadFile(safeRemotePath, localPath);
         if (!result.success) {
           logger.warn(TAG, `Native下载失败，尝试ArkTS回退: ${result.message}`);
           if (this.client) {
-            await this.client.download(remoteBackupInfo.remotePath, localPath, (progress) => {
+            this.ensureArkTSFallbackFileSize(remoteBackupInfo.size, '下载');
+            await this.client.download(safeRemotePath, localPath, (progress) => {
               this.syncStatus.downloadProgress = progress;
             });
           } else {
@@ -257,20 +287,20 @@ export class WebDAVBackupManager {
           this.syncStatus.downloadProgress = 100;
         }
       } else if (this.client) {
-        await this.client.download(remoteBackupInfo.remotePath, localPath, (progress) => {
+        this.ensureArkTSFallbackFileSize(remoteBackupInfo.size, '下载');
+        await this.client.download(safeRemotePath, localPath, (progress) => {
           this.syncStatus.downloadProgress = progress;
         });
       }
 
       this.syncStatus.lastSyncTime = Date.now();
-      logger.info(TAG, `备份下载成功: ${remoteBackupInfo.fileName}`);
+      logger.info(TAG, `备份下载成功: ${safeFileName}`);
 
       return localPath;
     } catch (error) {
       this.syncStatus.error = String(error);
       logger.error(TAG, `下载备份失败: ${error}`);
-      const err = error as Error;
-      throw err;
+      throw new Error(String(error));
     } finally {
       this.syncStatus.isDownloading = false;
       this.syncStatus.downloadProgress = 0;
@@ -298,8 +328,8 @@ export class WebDAVBackupManager {
       
       if (content.trim().length > 0) {
         // 验证是否是有效的JSON
-        const parsed = SafeUtils.parseObj(content) as BackupIndex;
-        logger.info(TAG, `索引文件存在，包含 ${parsed.backups?.length || 0} 个备份`);
+        const parsed = this.normalizeBackupIndex(SafeUtils.parseObj<RawBackupIndex>(content));
+        logger.info(TAG, `索引文件存在，包含 ${parsed.backups.length} 个备份`);
         return true;
       }
       return false;
@@ -349,7 +379,7 @@ export class WebDAVBackupManager {
       }
       
       if (content.trim()) {
-        const index = SafeUtils.parseObj(content) as BackupIndex;
+        const index = this.normalizeBackupIndex(SafeUtils.parseObj<RawBackupIndex>(content));
         logger.info(TAG, `读取到备份索引，包含 ${index.backups.length} 个备份`);
         return index;
       }
@@ -384,7 +414,7 @@ export class WebDAVBackupManager {
       logger.info(TAG, `备份索引已保存，包含 ${index.backups.length} 个备份`);
     } catch (error) {
       logger.error(TAG, `保存备份索引失败: ${error}`);
-      throw error as Error;
+      throw new Error(String(error));
     }
   }
 
@@ -395,11 +425,19 @@ export class WebDAVBackupManager {
     const index = await this.readBackupIndex();
     
     // 检查是否已存在
-    const existingIndex = index.backups.findIndex(b => b.fileName === backupInfo.fileName);
+    const safeBackupInfo: RemoteBackupInfo = {
+      fileName: this.sanitizeBackupFileName(backupInfo.fileName),
+      remotePath: this.buildBackupRemotePath(backupInfo.fileName),
+      size: backupInfo.size,
+      lastModified: backupInfo.lastModified,
+      metadata: backupInfo.metadata
+    };
+
+    const existingIndex = index.backups.findIndex(b => this.sanitizeBackupFileName(b.fileName) === safeBackupInfo.fileName);
     if (existingIndex >= 0) {
-      index.backups[existingIndex] = backupInfo;
+      index.backups[existingIndex] = safeBackupInfo;
     } else {
-      index.backups.push(backupInfo);
+      index.backups.push(safeBackupInfo);
     }
     
     // 按时间倒序排序
@@ -413,7 +451,8 @@ export class WebDAVBackupManager {
    */
   private async removeFromBackupIndex(fileName: string): Promise<void> {
     const index = await this.readBackupIndex();
-    index.backups = index.backups.filter(b => b.fileName !== fileName);
+    const safeFileName = this.sanitizeBackupFileName(fileName);
+    index.backups = index.backups.filter(b => this.sanitizeBackupFileName(b.fileName) !== safeFileName);
     await this.saveBackupIndex(index);
   }
 
@@ -429,7 +468,18 @@ export class WebDAVBackupManager {
     try {
       const index = await this.readBackupIndex();
       logger.info(TAG, `找到 ${index.backups.length} 个云端备份`);
-      return index.backups;
+      const safeBackups: RemoteBackupInfo[] = [];
+      for (const backup of index.backups) {
+        const safeBackup: RemoteBackupInfo = {
+          fileName: this.sanitizeBackupFileName(backup.fileName),
+          remotePath: this.buildBackupRemotePath(backup.fileName),
+          size: backup.size,
+          lastModified: backup.lastModified,
+          metadata: backup.metadata
+        };
+        safeBackups.push(safeBackup);
+      }
+      return safeBackups;
     } catch (error) {
       logger.error(TAG, `列出云端备份失败: ${error}`);
       return [];
@@ -446,23 +496,24 @@ export class WebDAVBackupManager {
     }
 
     try {
+      const safeFileName = this.sanitizeBackupFileName(remoteBackupInfo.fileName);
+      const safeRemotePath = this.buildBackupRemotePath(remoteBackupInfo.fileName);
       if (this.nativeClient) {
-        const result = await this.nativeClient.deleteFile(remoteBackupInfo.remotePath);
+        const result = await this.nativeClient.deleteFile(safeRemotePath);
         if (!result.success) {
           throw new Error(result.message);
         }
       } else if (this.client) {
-        await this.client.delete(remoteBackupInfo.remotePath);
+        await this.client.delete(safeRemotePath);
       }
       
       // 从索引中移除
       await this.removeFromBackupIndex(remoteBackupInfo.fileName);
       
-      logger.info(TAG, `删除云端备份成功: ${remoteBackupInfo.fileName}`);
+      logger.info(TAG, `删除云端备份成功: ${safeFileName}`);
     } catch (error) {
       logger.error(TAG, `删除云端备份失败: ${error}`);
-      const err = error as Error;
-      throw err;
+      throw new Error(String(error));
     }
   }
 
@@ -519,8 +570,7 @@ export class WebDAVBackupManager {
       await this.uploadBackup(latestBackupPath);
     } catch (error) {
       logger.error(TAG, `自动备份失败: ${error}`);
-      const err = error as Error;
-      throw err;
+      throw new Error(String(error));
     }
   }
 
@@ -550,8 +600,7 @@ export class WebDAVBackupManager {
       logger.info(TAG, `清理了 ${toDelete.length} 个旧备份`);
     } catch (error) {
       logger.error(TAG, `清理旧备份失败: ${error}`);
-      const err = error as Error;
-      throw err;
+      throw new Error(String(error));
     }
   }
 
@@ -598,6 +647,92 @@ export class WebDAVBackupManager {
       // 忽略检查错误，上传时会自动创建目录
       logger.warn(TAG, `检查备份目录时出错: ${error}`);
     }
+  }
+
+  private ensureArkTSFallbackFileSize(size: number, operationName: string): void {
+    if (size > ARKTS_WEBDAV_FALLBACK_MAX_FILE_BYTES) {
+      throw new Error(`ArkTS WebDAV回退客户端不支持${operationName}超过 ${ARKTS_WEBDAV_FALLBACK_MAX_FILE_MIB} MiB 的备份文件，请使用Native WebDAV客户端`);
+    }
+  }
+
+  private normalizeBackupIndex(rawIndex: RawBackupIndex): BackupIndex {
+    const backups: RemoteBackupInfo[] = [];
+    const rawBackups = rawIndex.backups;
+    if (Array.isArray(rawBackups)) {
+      for (const rawBackup of rawBackups) {
+        const backup = this.normalizeRemoteBackupInfo(rawBackup);
+        if (backup) {
+          backups.push(backup);
+        }
+      }
+    }
+
+    const index: BackupIndex = {
+      version: Number(rawIndex.version || 1),
+      lastUpdated: Number(rawIndex.lastUpdated || 0),
+      backups: backups
+    };
+    return index;
+  }
+
+  private normalizeRemoteBackupInfo(rawBackup: RawRemoteBackupInfo): RemoteBackupInfo | null {
+    const baseName = this.getBackupBaseName(rawBackup.fileName || '');
+    if (!baseName.endsWith('.mxbak') && !baseName.endsWith('.mxbackup')) {
+      return null;
+    }
+    const safeFileName = this.sanitizeBackupFileName(baseName);
+    const metadata = this.normalizeBackupMetadata(rawBackup.metadata);
+    const backup: RemoteBackupInfo = {
+      fileName: safeFileName,
+      remotePath: this.buildBackupRemotePath(safeFileName),
+      size: Number(rawBackup.size || 0),
+      lastModified: Number(rawBackup.lastModified || 0)
+    };
+    if (metadata) {
+      backup.metadata = metadata;
+    }
+    return backup;
+  }
+
+  private normalizeBackupMetadata(rawMetadata?: RawBackupMetadata): BackupMetadata | undefined {
+    if (!rawMetadata) {
+      return undefined;
+    }
+    if (!rawMetadata.itemCounts || !rawMetadata.options) {
+      return undefined;
+    }
+
+    const metadata: BackupMetadata = {
+      version: rawMetadata.version || '',
+      appVersion: rawMetadata.appVersion || '',
+      timestamp: Number(rawMetadata.timestamp || 0),
+      deviceInfo: rawMetadata.deviceInfo,
+      itemCounts: rawMetadata.itemCounts,
+      options: rawMetadata.options,
+      fileSize: Number(rawMetadata.fileSize || 0)
+    };
+    return metadata;
+  }
+
+  private sanitizeBackupFileName(fileName: string): string {
+    const baseName = this.getBackupBaseName(fileName);
+    let safeName = baseName.replace(/[\\/:*?"<>|]/g, '_').trim();
+    if (safeName.length === 0) {
+      safeName = `backup_${Date.now()}.mxbak`;
+    }
+    if (!safeName.endsWith('.mxbak') && !safeName.endsWith('.mxbackup')) {
+      safeName = `${safeName}.mxbak`;
+    }
+    return safeName;
+  }
+
+  private getBackupBaseName(fileName: string): string {
+    const slashParts = fileName.replace(/\\/g, '/').split('/');
+    return slashParts.length > 0 ? slashParts[slashParts.length - 1].trim() : '';
+  }
+
+  private buildBackupRemotePath(fileName: string): string {
+    return `backups/${this.sanitizeBackupFileName(fileName)}`;
   }
 }
 

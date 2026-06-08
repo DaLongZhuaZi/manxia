@@ -5,7 +5,13 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
+import { pasteboard } from '@kit.BasicServicesKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { util } from '@kit.ArkTS';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 // 已弃用自定义 AnimatedButton，改用原生 ArkUI Button
@@ -22,6 +28,19 @@ enum ReportType {
   WRONG_ORDER = 'wrong_order',
   QUALITY_ISSUE = 'quality_issue',
   OTHER = 'other'
+}
+
+interface FeedbackReportRecord {
+  version: number;
+  id: string;
+  createdAt: string;
+  mangaTitle: string;
+  chapterTitle: string;
+  reportType: ReportType;
+  reportTypeText: string;
+  description: string;
+  contactInfo: string;
+  source: string;
 }
 
 // 使用NavDestinationContext官方类型
@@ -44,6 +63,9 @@ struct MangaFeedbackPage {
   @State description: string = '';
   @State contactInfo: string = '';
   @State isSubmitting: boolean = false;
+  @State lastSavedReportPath: string = '';
+  @State lastSavedReportText: string = '';
+  private feedbackSequence: number = 0;
 
   onPageShow(): void {
     try {
@@ -74,13 +96,15 @@ struct MangaFeedbackPage {
    * 提交报告
    */
   private async submitReport(): Promise<void> {
-    if (this.mangaTitle.length === 0) {
+    if (this.mangaTitle.trim().length === 0) {
       logger.warn(TAG, '漫画标题不能为空');
+      this.showToast('请输入漫画标题');
       return;
     }
 
-    if (this.description.length < 10) {
+    if (this.description.trim().length < 10) {
       logger.warn(TAG, '问题描述至少10个字符');
+      this.showToast('问题描述至少需要 10 个字符');
       return;
     }
 
@@ -88,22 +112,183 @@ struct MangaFeedbackPage {
     try {
       logger.info(TAG, '提交报告', `漫画: ${this.mangaTitle}, 类型: ${this.reportType}`);
 
-      // TODO: 实现报告提交逻辑（发送到服务器或保存到本地）
-      // 模拟提交延迟
-      await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+      const record = this.buildFeedbackRecord();
+      const reportText = this.formatFeedbackReport(record);
+      const reportJson = JSON.stringify(record, null, 2);
+      const savedPath = await this.saveFeedbackReport(record.id, reportJson);
+      this.lastSavedReportPath = savedPath;
+      this.lastSavedReportText = reportText;
 
-      logger.info(TAG, '报告提交成功');
+      logger.info(TAG, `报告已保存到本地: ${savedPath}`);
+      this.showToast('反馈已保存到本地');
       
       // 清空表单
       this.resetForm();
-      
-      // 返回上一页
-      this.goBack();
+      this.showSavedFeedbackActions(savedPath, reportText);
     } catch (error) {
       logger.error(TAG, '提交报告失败', String(error));
+      this.showToast('保存反馈失败，请稍后重试');
     } finally {
       this.isSubmitting = false;
     }
+  }
+
+  private buildFeedbackRecord(): FeedbackReportRecord {
+    this.feedbackSequence += 1;
+    const createdAt = new Date().toISOString();
+    const recordId = `${Date.now()}_${this.feedbackSequence}`;
+    return {
+      version: 1,
+      id: recordId,
+      createdAt,
+      mangaTitle: this.mangaTitle.trim(),
+      chapterTitle: this.chapterTitle.trim(),
+      reportType: this.reportType,
+      reportTypeText: this.getReportTypeText(this.reportType),
+      description: this.description.trim(),
+      contactInfo: this.contactInfo.trim(),
+      source: 'MangaFeedbackPage'
+    };
+  }
+
+  private formatFeedbackReport(record: FeedbackReportRecord): string {
+    const lines: string[] = [
+      '漫匣问题反馈',
+      `反馈编号：${record.id}`,
+      `提交时间：${record.createdAt}`,
+      `漫画标题：${record.mangaTitle}`,
+      `章节标题：${record.chapterTitle.length > 0 ? record.chapterTitle : '未填写'}`,
+      `问题类型：${record.reportTypeText}`,
+      `联系方式：${record.contactInfo.length > 0 ? record.contactInfo : '未填写'}`,
+      '',
+      '问题描述：',
+      record.description
+    ];
+    return lines.join('\n');
+  }
+
+  private async saveFeedbackReport(recordId: string, reportJson: string): Promise<string> {
+    const hostContext = this.getUIContext().getHostContext();
+    if (!hostContext) {
+      throw new Error('无法获取页面上下文');
+    }
+    const abilityContext = hostContext as common.UIAbilityContext;
+    const feedbackDir = `${abilityContext.filesDir}/feedback`;
+    await this.ensureDirectoryExists(feedbackDir);
+    const safeRecordId = this.sanitizeFileName(recordId);
+    const targetPath = `${feedbackDir}/manga_feedback_${safeRecordId}.json`;
+    await this.writeTextFile(targetPath, reportJson);
+    return targetPath;
+  }
+
+  private sanitizeFileName(value: string): string {
+    return value.replace(/[\\/:*?"<>|.\s]+/g, '_');
+  }
+
+  private async ensureDirectoryExists(path: string): Promise<void> {
+    const exists = await fileIo.access(path);
+    if (exists) {
+      const stat = await fileIo.stat(path);
+      if (!stat.isDirectory()) {
+        throw new Error(`反馈保存路径已存在但不是目录: ${path}`);
+      }
+      return;
+    }
+    try {
+      await fileIo.mkdir(path, true);
+    } catch (error) {
+      const errorMessage = String(error);
+      if (errorMessage.indexOf('File exists') >= 0) {
+        return;
+      }
+      throw error as Error;
+    }
+  }
+
+  private async writeTextFile(path: string, content: string): Promise<void> {
+    const encoder = new util.TextEncoder();
+    const contentBytes = encoder.encodeInto(content);
+    const contentBuffer = this.copyUint8ArrayToBuffer(contentBytes);
+    const file = await fileIo.open(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    try {
+      await fileIo.write(file.fd, contentBuffer);
+    } finally {
+      await fileIo.close(file);
+    }
+  }
+
+  private copyUint8ArrayToBuffer(source: Uint8Array): ArrayBuffer {
+    const copy = new Uint8Array(source.byteLength);
+    copy.set(source);
+    return copy.buffer;
+  }
+
+  private async copyTextToClipboard(text: string, successMessage: string): Promise<boolean> {
+    try {
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      await systemPasteboard.setData(pasteData);
+      this.showToast(successMessage);
+      return true;
+    } catch (error) {
+      logger.error(TAG, `复制反馈失败: ${String(error)}`);
+      this.showToast('复制失败');
+      return false;
+    }
+  }
+
+  private async shareFeedbackBySystem(text: string, savedPath: string): Promise<void> {
+    const safeText = text.trim();
+    if (safeText.length <= 0) {
+      this.showToast('反馈内容为空');
+      return;
+    }
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const shareData: systemShare.SharedData = new systemShare.SharedData({
+        utd: utd.UniformDataType.PLAIN_TEXT,
+        content: safeText,
+        title: '漫匣问题反馈',
+        description: `本地反馈文件：${savedPath}`
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(shareData);
+      await controller.show(context, {
+        previewMode: systemShare.SharePreviewMode.DETAIL,
+        selectionMode: systemShare.SelectionMode.SINGLE
+      });
+      logger.info(TAG, `反馈系统分享已打开: ${savedPath}`);
+    } catch (error) {
+      logger.error(TAG, `反馈系统分享失败: ${String(error)}`);
+      this.showToast('系统分享失败，已复制到剪贴板');
+      await this.copyTextToClipboard(safeText, '反馈内容已复制');
+    }
+  }
+
+  private showSavedFeedbackActions(savedPath: string, reportText: string): void {
+    this.getUIContext().getPromptAction().showActionMenu({
+      title: '反馈已保存',
+      buttons: [
+        { text: '复制反馈内容', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '系统分享反馈', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '返回上一页', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '留在页面', color: $r('sys.color.ohos_id_color_text_primary') }
+      ]
+    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
+      if (result.index === 0) {
+        await this.copyTextToClipboard(reportText, '反馈内容已复制');
+      } else if (result.index === 1) {
+        await this.shareFeedbackBySystem(reportText, savedPath);
+      } else if (result.index === 2) {
+        this.goBack();
+      }
+    }).catch(() => {});
+  }
+
+  private showToast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({
+      message,
+      duration: 1800
+    });
   }
 
   /**

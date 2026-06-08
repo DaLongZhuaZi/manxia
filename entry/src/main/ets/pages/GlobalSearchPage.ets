@@ -56,6 +56,17 @@ const SEARCH_RESULT_REVEAL_DURATION_MS: number = 360;
 const SEARCH_GROUP_EXPAND_DURATION_MS: number = 320;
 const SEARCH_COVER_FADE_DURATION_MS: number = 260;
 const SEARCH_SHIMMER_BLADE_WIDTH: number = 5;
+const SEARCH_PREF_SAVE_DEBOUNCE_MS: number = 350;
+
+function buildGlobalSearchCacheKey(sourceId: number, keyword: string): string {
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < normalizedKeyword.length; i++) {
+    hash = ((hash << 5) - hash) + normalizedKeyword.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return `global_search_cache_${sourceId}_${Math.abs(hash).toString(36)}`;
+}
 
 // 源选择列表分页常量
 const SOURCE_DISPLAY_LIMIT = 20;  // 默认显示数量
@@ -169,6 +180,8 @@ export struct GlobalSearchPage {
   private pendingProgressGroups: SearchSourceGroup[] | null = null;
   private pendingProgressCompleted: number = 0;
   private pendingProgressTotal: number = 0;
+  private activeSearchToken: number = 0;
+  private searchPreferenceSaveTimer: number = -1;
   
   // WebView 相关（用于后台搜索 WebView 格式图源）
   private webViewController: webview.WebviewController = new webview.WebviewController();
@@ -422,6 +435,29 @@ export struct GlobalSearchPage {
     }
   }
 
+  private clearSearchPreferencesSaveTimer(): void {
+    if (this.searchPreferenceSaveTimer !== -1) {
+      clearTimeout(this.searchPreferenceSaveTimer);
+      this.searchPreferenceSaveTimer = -1;
+    }
+  }
+
+  private scheduleSearchPreferencesSave(): void {
+    this.clearSearchPreferencesSaveTimer();
+    this.searchPreferenceSaveTimer = setTimeout(() => {
+      this.searchPreferenceSaveTimer = -1;
+      void this.saveSearchPreferences();
+    }, SEARCH_PREF_SAVE_DEBOUNCE_MS);
+  }
+
+  private flushSearchPreferencesSave(): void {
+    if (this.searchPreferenceSaveTimer === -1) {
+      return;
+    }
+    this.clearSearchPreferencesSaveTimer();
+    void this.saveSearchPreferences();
+  }
+
   /**
    * 加载可用的在线源
    */
@@ -494,6 +530,8 @@ export struct GlobalSearchPage {
 
   aboutToDisappear(): void {
     WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+    this.activeSearchToken++;
+    this.flushSearchPreferencesSave();
     this.lifecycle.destroy();
     this.stopSearchLoadingMotion();
     this.clearResultRevealTimer();
@@ -856,6 +894,10 @@ export struct GlobalSearchPage {
       return;
     }
 
+    const searchToken: number = this.activeSearchToken + 1;
+    this.activeSearchToken = searchToken;
+    const keyword: string = this.searchKeyword.trim();
+
     try {
       this.isSearching = true;
       this.searchProgress = '正在搜索...';
@@ -871,11 +913,15 @@ export struct GlobalSearchPage {
       const effectiveSourceType = this.getEffectiveSourceTypeFilter();
       if (this.shouldWaitForMangaSourceWebView(effectiveSourceType)) {
         await this.waitForWebViewReady();
+        if (searchToken !== this.activeSearchToken) {
+          logger.debug(TAG, `丢弃过期搜索准备结果: "${keyword}"`);
+          return;
+        }
         this.sourceDetailSearchExecutor.attachWebViewController(this.webViewController);
       }
       
-      logger.info(TAG, `开始搜索: "${this.searchKeyword}", 内容类型=${this.contentTypeFilter}, 来源=${effectiveSourceType}`);
-      this.saveSearchHistory(this.searchKeyword);
+      logger.info(TAG, `开始搜索: "${keyword}", 内容类型=${this.contentTypeFilter}, 来源=${effectiveSourceType}`);
+      this.saveSearchHistory(keyword);
 
       // 构建筛选配置
       const filterConfig: SearchFilterConfig = {
@@ -889,9 +935,12 @@ export struct GlobalSearchPage {
 
       // 执行搜索
       const results = await this.searchService.searchAll(
-        this.searchKeyword,
+        keyword,
         filterConfig,
         (completed: number, total: number, _groupName: string, groups: SearchSourceGroup[]) => {
+          if (searchToken !== this.activeSearchToken) {
+            return;
+          }
           // 触摸/滑动期间冻结结果刷新，仅缓存最新快照，待停止滑动后一次性应用
           if (this.isResultsScrolling && completed < total) {
             this.queueProgressSnapshot(completed, total, groups);
@@ -906,6 +955,10 @@ export struct GlobalSearchPage {
         }
       );
 
+      if (searchToken !== this.activeSearchToken) {
+        logger.debug(TAG, `丢弃过期搜索结果: "${keyword}"`);
+        return;
+      }
       const finalTotal = this.pendingProgressTotal > 0 ? this.pendingProgressTotal : results.length;
       this.applyProgressSnapshot(finalTotal, finalTotal, results, true);
       this.pendingProgressGroups = null;
@@ -916,6 +969,10 @@ export struct GlobalSearchPage {
       const totalResults = results.reduce((sum, g) => sum + g.items.length, 0);
       logger.info(TAG, `搜索完成: ${results.length}个分组, ${totalResults}条结果`);
     } catch (error) {
+      if (searchToken !== this.activeSearchToken) {
+        logger.debug(TAG, `忽略过期搜索异常: "${keyword}", ${String(error)}`);
+        return;
+      }
       logger.error(TAG, `搜索失败: ${error}`);
       this.pendingProgressGroups = null;
       this.pendingProgressCompleted = 0;
@@ -1092,7 +1149,7 @@ export struct GlobalSearchPage {
     } else {
       this.selectedMangaSources = [...this.selectedMangaSources, sourceId];
     }
-    this.saveSearchPreferences();
+    this.scheduleSearchPreferencesSave();
   }
 
   /**
@@ -1105,7 +1162,7 @@ export struct GlobalSearchPage {
     } else {
       this.selectedNovelSources = [...this.selectedNovelSources, sourceId];
     }
-    this.saveSearchPreferences();
+    this.scheduleSearchPreferencesSave();
   }
   
   /**
@@ -1333,7 +1390,7 @@ export struct GlobalSearchPage {
       });
       
       // 存储缓存，使用 sourceId 和 keyword 组合作为 key
-      const cacheKey = `global_search_cache_${sourceId}`;
+      const cacheKey = buildGlobalSearchCacheKey(sourceId, this.searchKeyword);
       const cacheData: SearchCacheData = {
         keyword: this.searchKeyword,
         results: cachedResults,
@@ -1455,7 +1512,7 @@ export struct GlobalSearchPage {
                 // 来源类型筛选
                 Row({ space: 6 }) {
                   this.buildSourceTypeIconChip($r('sys.symbol.folder'), SearchSourceType.LOCAL)
-                  this.buildSourceTypeIconChip($r('sys.symbol.worldclock_fill_1'), SearchSourceType.ONLINE)
+                  this.buildSourceTypeIconChip($r('sys.symbol.globe_and_keyboard'), SearchSourceType.ONLINE)
                   this.buildSourceTypeIconChip($r('sys.symbol.square_grid_2x2'), SearchSourceType.ALL)
                 }
                 .id('guide_global_search_source_types')
@@ -1494,7 +1551,7 @@ export struct GlobalSearchPage {
                   .animation({ duration: 200, curve: Curve.EaseInOut })
                   .onClick(() => {
                     this.enableSuwayomi = !this.enableSuwayomi;
-                    this.saveSearchPreferences();
+                    this.scheduleSearchPreferencesSave();
                   })
                 }
               }
@@ -2568,7 +2625,7 @@ export struct GlobalSearchPage {
       .animation({ duration: 200, curve: Curve.EaseInOut })
       .onClick(() => {
         this.contentTypeFilter = type;
-        this.saveSearchPreferences();
+        this.scheduleSearchPreferencesSave();
         this.updateFilteredGroups();
         this.syncSearchLoadingMotion();
       })
@@ -2602,7 +2659,7 @@ export struct GlobalSearchPage {
     .animation({ duration: 200, curve: Curve.EaseInOut })
     .onClick(() => {
       this.sourceTypeFilter = type;
-      this.saveSearchPreferences();
+      this.scheduleSearchPreferencesSave();
       this.updateFilteredGroups();
       this.syncSearchLoadingMotion();
     })
@@ -2620,7 +2677,7 @@ export struct GlobalSearchPage {
           .fontSize(14)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
         
-        SymbolGlyph($r('sys.symbol.worldclock_fill_1'))
+        SymbolGlyph($r('sys.symbol.globe_and_keyboard'))
           .fontSize(16)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
         
@@ -2697,7 +2754,7 @@ export struct GlobalSearchPage {
         this.runSearchAnimation(250, Curve.EaseInOut, () => {
           this.showSourceExpanded = !this.showSourceExpanded;
         });
-        this.saveSearchPreferences();
+        this.scheduleSearchPreferencesSave();
       })
 
       // 展开的源选择内容
@@ -2864,7 +2921,7 @@ export struct GlobalSearchPage {
   private selectAllSources(): void {
     this.selectedMangaSources = this.availableMangaSources.map(s => s.id.toString());
     this.selectedNovelSources = this.availableNovelSources.map(s => s.id);
-    this.saveSearchPreferences();
+    this.scheduleSearchPreferencesSave();
   }
 
   /**
@@ -2874,7 +2931,7 @@ export struct GlobalSearchPage {
   private clearAllSources(): void {
     this.selectedMangaSources = [];
     this.selectedNovelSources = [];
-    this.saveSearchPreferences();
+    this.scheduleSearchPreferencesSave();
   }
 
   /**
@@ -2947,7 +3004,7 @@ export struct GlobalSearchPage {
       this.selectedNovelSources = this.availableNovelSources.map(s => s.id);
     }
     
-    this.saveSearchPreferences();
+    this.scheduleSearchPreferencesSave();
   }
 
   /**
@@ -2963,7 +3020,7 @@ export struct GlobalSearchPage {
       this.selectedNovelSources = [];
     }
     
-    this.saveSearchPreferences();
+    this.scheduleSearchPreferencesSave();
   }
 
   /**
@@ -2975,7 +3032,7 @@ export struct GlobalSearchPage {
     Column({ space: 10 }) {
       // 标题行
       Row({ space: 8 }) {
-        SymbolGlyph($r('sys.symbol.shutter_photo'))
+        SymbolGlyph($r('sys.symbol.picture'))
           .fontSize(16)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
         
@@ -3134,7 +3191,7 @@ export struct GlobalSearchPage {
     Row({ space: 4 }) {
       // 网络访问标识（requireProxy 表示需要 Internet）
       if (source.requireProxy) {
-        SymbolGlyph($r('sys.symbol.airplane_departure'))
+        SymbolGlyph($r('sys.symbol.globe_and_keyboard'))
           .fontSize(11)
           .fontColor([this.selectedMangaSources.includes(source.id.toString()) ? 
             Color.White :

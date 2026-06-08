@@ -24,6 +24,8 @@ import { logger } from '../../Utils/Logger';
 import { util } from '@kit.ArkTS';
 
 const TAG = 'WebDAVClient';
+const ARKTS_WEBDAV_MAX_FILE_BYTES = 32 * 1024 * 1024;
+const ARKTS_WEBDAV_MAX_FILE_MIB = ARKTS_WEBDAV_MAX_FILE_BYTES / 1024 / 1024;
 
 // HTTP请求选项
 interface RequestOptions {
@@ -45,6 +47,7 @@ export interface WebDAVConfig {
   username: string;
   password: string;
   basePath: string;
+  verifySSL?: boolean;
 }
 
 // 连接测试结果
@@ -319,7 +322,7 @@ export class WebDAVClient {
       }
     } catch (error) {
       if (error instanceof Error) {
-        throw error;
+        throw new Error(error.message);
       }
       const errorInfo = this.parseError(error);
       throw new Error(errorInfo.message);
@@ -394,11 +397,15 @@ export class WebDAVClient {
     
     try {
       // 读取本地文件
-      const file = SafeFileUtils.openSync(localPath, fileIo.OpenMode.READ_ONLY);
-      const stat = SafeFileUtils.statSync(localPath);
+      const stat = SafeFileUtils.statSyncStrict(localPath);
+      this.ensureFallbackFileSize(stat.size, '上传');
       const buffer = new ArrayBuffer(stat.size);
-      SafeFileUtils.readSync(file.fd, buffer);
-      SafeFileUtils.closeSync(file);
+      const file = SafeFileUtils.openSyncStrict(localPath, fileIo.OpenMode.READ_ONLY);
+      try {
+        SafeFileUtils.readExactSync(file.fd, buffer);
+      } finally {
+        SafeFileUtils.closeSync(file);
+      }
       
       // 上传
       await this.putFileContents(remotePath, buffer);
@@ -411,8 +418,7 @@ export class WebDAVClient {
     } catch (error) {
       const errorInfo = this.parseError(error);
       logger.error(TAG, `本地文件上传失败: ${errorInfo.message}`);
-      const err = new Error(errorInfo.message);
-      throw err;
+      throw new Error(errorInfo.message);
     }
   }
 
@@ -441,13 +447,21 @@ export class WebDAVClient {
   async downloadFile(remotePath: string, localPath: string, onProgress?: ProgressCallback): Promise<void> {
     logger.info(TAG, `下载文件到本地: ${remotePath} -> ${localPath}`);
     
+    const tempPath = `${localPath}.download_${Date.now()}.tmp`;
     try {
+      await this.ensureRemoteFallbackFileSize(remotePath, '下载');
       const data = await this.getFileContents(remotePath, 'arraybuffer');
       
       // 写入本地文件
-      const file = SafeFileUtils.openSync(localPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-      SafeFileUtils.writeSync(file.fd, data as ArrayBuffer);
-      SafeFileUtils.closeSync(file);
+      const buffer = data as ArrayBuffer;
+      this.ensureFallbackFileSize(buffer.byteLength, '下载');
+      const file = SafeFileUtils.openSyncStrict(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      try {
+        SafeFileUtils.writeExactSync(file.fd, buffer);
+      } finally {
+        SafeFileUtils.closeSync(file);
+      }
+      this.replaceDownloadedFile(tempPath, localPath);
       
       if (onProgress) {
         onProgress(100);
@@ -455,10 +469,10 @@ export class WebDAVClient {
       
       logger.info(TAG, `文件下载成功: ${localPath}`);
     } catch (error) {
+      this.cleanupDownloadTempFile(tempPath);
       const errorInfo = this.parseError(error);
       logger.error(TAG, `文件下载失败: ${errorInfo.message}`);
-      const err = new Error(errorInfo.message);
-      throw err;
+      throw new Error(errorInfo.message);
     }
   }
 
@@ -611,6 +625,54 @@ export class WebDAVClient {
     }
     
     return headers;
+  }
+
+  private ensureFallbackFileSize(size: number, operationName: string): void {
+    if (size > ARKTS_WEBDAV_MAX_FILE_BYTES) {
+      throw new Error(`ArkTS WebDAV客户端不支持${operationName}超过 ${ARKTS_WEBDAV_MAX_FILE_MIB} MiB 的备份文件，请使用Native WebDAV客户端`);
+    }
+  }
+
+  private async ensureRemoteFallbackFileSize(remotePath: string, operationName: string): Promise<void> {
+    const remoteFile = await this.stat(remotePath);
+    if (remoteFile && remoteFile.size > 0) {
+      this.ensureFallbackFileSize(remoteFile.size, operationName);
+    }
+  }
+
+  private replaceDownloadedFile(tempPath: string, localPath: string): void {
+    try {
+      SafeFileUtils.renameSyncStrict(tempPath, localPath);
+      return;
+    } catch (renameError) {
+      logger.warn(TAG, `直接替换下载文件失败，尝试暂存旧文件后重试: ${renameError}`);
+    }
+
+    if (SafeFileUtils.accessSync(localPath)) {
+      const previousPath = `${localPath}.previous_${Date.now()}.tmp`;
+      SafeFileUtils.renameSyncStrict(localPath, previousPath);
+      try {
+        SafeFileUtils.renameSyncStrict(tempPath, localPath);
+        this.cleanupDownloadTempFile(previousPath);
+        return;
+      } catch (replaceError) {
+        if (SafeFileUtils.accessSync(previousPath) && !SafeFileUtils.accessSync(localPath)) {
+          SafeFileUtils.renameSyncStrict(previousPath, localPath);
+        }
+        throw new Error(`替换下载文件失败且已尝试恢复旧文件: ${replaceError}`);
+      }
+    }
+    SafeFileUtils.renameSyncStrict(tempPath, localPath);
+  }
+
+  private cleanupDownloadTempFile(tempPath: string): void {
+    try {
+      if (SafeFileUtils.accessSync(tempPath)) {
+        SafeFileUtils.unlinkSyncStrict(tempPath);
+      }
+    } catch (cleanupError) {
+      logger.warn(TAG, `清理下载临时文件失败: ${cleanupError}`);
+    }
   }
 
   /**

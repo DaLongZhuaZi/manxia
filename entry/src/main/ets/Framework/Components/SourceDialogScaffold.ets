@@ -33,6 +33,7 @@ export struct SourceDialogScaffold {
   @Prop maskColor: ResourceColor = DialogSurfaceStyleHelper.getPopupMaskColor();
   @Prop maskBackgroundEffect: BackgroundEffectOptions | undefined = DialogSurfaceStyleHelper.getPopupMaskBackgroundEffect();
   @Prop dialogRadius: number = 26;
+  @Prop shadowOffsetY: number = 10;
   onMaskTap: () => void = () => {};
   @BuilderParam content: () => void = this.emptyContentBuilder;
   @State private maskTapEnabled: boolean = false;
@@ -81,7 +82,7 @@ export struct SourceDialogScaffold {
       radius: this.dialogRadius + 4,
       color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
       offsetX: 0,
-      offsetY: 10
+      offsetY: this.shadowOffsetY
     })
     .zIndex(1)
     .onClick(() => {

@@ -141,10 +141,15 @@ export class UnifiedDownloadManager {
   
   // 统一任务列表
   private unifiedTasks: Map<string, UnifiedDownloadTask> = new Map();
+  private taskIdsByType: Map<string, Set<string>> = new Map();
+  private taskIdsByContent: Map<string, Set<string>> = new Map();
+  private taskIdsByStatus: Map<string, Set<string>> = new Map();
   
   // 回调管理
   private callbacks: Map<string, UnifiedDownloadCallback> = new Map();
   private globalCallbacks: Set<UnifiedDownloadCallback> = new Set();
+  private lastProgressNotifyAtByTaskId: Map<string, number> = new Map();
+  private readonly PROGRESS_NOTIFY_INTERVAL_MS: number = 250;
   
   private constructor() {
     this.mangaDownloadManager = MangaDownloadManager.getInstance();
@@ -223,7 +228,7 @@ export class UnifiedDownloadManager {
         sourceId: params.sourceId
       };
       
-      this.unifiedTasks.set(taskId, unifiedTask);
+      this.registerUnifiedTask(unifiedTask);
       
       // 注册进度回调
       this.registerMangaProgressCallback(taskId);
@@ -283,7 +288,7 @@ export class UnifiedDownloadManager {
 
           if (sourceTask && sourceTask.status === TaskStatus.COMPLETED) {
             if (task.status !== UnifiedTaskStatus.COMPLETED) {
-              task.status = UnifiedTaskStatus.COMPLETED;
+              this.updateTaskStatus(task, UnifiedTaskStatus.COMPLETED);
               task.progress = 100;
               task.completedTime = sourceTask.completedTime || Date.now();
               this.notifyComplete(task);
@@ -292,16 +297,16 @@ export class UnifiedDownloadManager {
           }
 
           if (sourceTask && sourceTask.status === TaskStatus.FAILED) {
-            task.status = UnifiedTaskStatus.FAILED;
+            this.updateTaskStatus(task, UnifiedTaskStatus.FAILED);
             task.error = sourceTask.error || '下载失败';
             this.notifyError(task, task.error);
             return;
           }
 
           if (sourceTask && sourceTask.status === TaskStatus.PAUSED) {
-            task.status = UnifiedTaskStatus.PAUSED;
+            this.updateTaskStatus(task, UnifiedTaskStatus.PAUSED);
           } else if (progress > 0 || downloaded > 0) {
-            task.status = UnifiedTaskStatus.DOWNLOADING;
+            this.updateTaskStatus(task, UnifiedTaskStatus.DOWNLOADING);
           }
           
           // 通知回调
@@ -344,7 +349,7 @@ export class UnifiedDownloadManager {
         createdTime: Date.now()
       };
       
-      this.unifiedTasks.set(taskId, unifiedTask);
+      this.registerUnifiedTask(unifiedTask);
       
       // 创建进度回调
       const callback: NovelDownloadCallback = {
@@ -354,7 +359,7 @@ export class UnifiedDownloadManager {
             task.downloadedCount = current;
             task.totalCount = total;
             task.progress = Math.round((current / total) * 100);
-            task.status = UnifiedTaskStatus.DOWNLOADING;
+            this.updateTaskStatus(task, UnifiedTaskStatus.DOWNLOADING);
             task.chapterTitle = chapterTitle;
             this.notifyProgress(task);
           }
@@ -362,7 +367,7 @@ export class UnifiedDownloadManager {
         onComplete: () => {
           const task = this.unifiedTasks.get(taskId);
           if (task) {
-            task.status = UnifiedTaskStatus.COMPLETED;
+            this.updateTaskStatus(task, UnifiedTaskStatus.COMPLETED);
             task.progress = 100;
             task.completedTime = Date.now();
             this.notifyComplete(task);
@@ -371,7 +376,7 @@ export class UnifiedDownloadManager {
         onError: (error: string) => {
           const task = this.unifiedTasks.get(taskId);
           if (task) {
-            task.status = UnifiedTaskStatus.FAILED;
+            this.updateTaskStatus(task, UnifiedTaskStatus.FAILED);
             task.error = error;
             this.notifyError(task, error);
           }
@@ -423,12 +428,12 @@ export class UnifiedDownloadManager {
       if (task.type === UnifiedDownloadType.MANGA) {
         const success = await this.mangaDownloadManager.pauseTask(taskId);
         if (success) {
-          task.status = UnifiedTaskStatus.PAUSED;
+          this.updateTaskStatus(task, UnifiedTaskStatus.PAUSED);
         }
         return success;
       } else if (task.type === UnifiedDownloadType.NOVEL) {
         this.novelCacheManager.pauseDownload(taskId);
-        task.status = UnifiedTaskStatus.PAUSED;
+        this.updateTaskStatus(task, UnifiedTaskStatus.PAUSED);
         return true;
       }
       return false;
@@ -452,7 +457,7 @@ export class UnifiedDownloadManager {
       if (task.type === UnifiedDownloadType.MANGA) {
         const success = await this.mangaDownloadManager.resumeTask(taskId);
         if (success) {
-          task.status = UnifiedTaskStatus.PENDING;
+          this.updateTaskStatus(task, UnifiedTaskStatus.PENDING);
         }
         return success;
       } else if (task.type === UnifiedDownloadType.NOVEL) {
@@ -484,12 +489,7 @@ export class UnifiedDownloadManager {
         this.novelCacheManager.cancelDownload(taskId);
       }
       
-      // 移除统一任务记录
-      this.unifiedTasks.delete(taskId);
-      this.callbacks.delete(taskId);
-      
-      // 取消进度回调
-      this.mangaDownloadManager.unregisterProgressCallback(`unified_${taskId}`);
+      this.unregisterUnifiedTask(taskId);
       
       logger.info(TAG, `任务已取消: ${taskId}`);
       return true;
@@ -535,21 +535,21 @@ export class UnifiedDownloadManager {
    * 获取指定类型的下载任务
    */
   public getTasksByType(type: UnifiedDownloadType): UnifiedDownloadTask[] {
-    return this.getAllTasks().filter(task => task.type === type);
+    return this.getIndexedTasks(this.taskIdsByType.get(type));
   }
   
   /**
    * 获取指定内容的下载任务
    */
   public getTasksByContent(contentId: string): UnifiedDownloadTask[] {
-    return this.getAllTasks().filter(task => task.contentId === contentId);
+    return this.getIndexedTasks(this.taskIdsByContent.get(contentId));
   }
   
   /**
    * 获取指定状态的下载任务
    */
   public getTasksByStatus(status: UnifiedTaskStatus): UnifiedDownloadTask[] {
-    return this.getAllTasks().filter(task => task.status === status);
+    return this.getIndexedTasks(this.taskIdsByStatus.get(status));
   }
   
   /**
@@ -563,9 +563,8 @@ export class UnifiedDownloadManager {
    * 获取活跃的下载任务数量
    */
   public getActiveTaskCount(): number {
-    return this.getAllTasks().filter(
-      task => task.status === UnifiedTaskStatus.DOWNLOADING || task.status === UnifiedTaskStatus.PENDING
-    ).length;
+    return this.getIndexedTaskCount(this.taskIdsByStatus, UnifiedTaskStatus.DOWNLOADING) +
+      this.getIndexedTaskCount(this.taskIdsByStatus, UnifiedTaskStatus.PENDING);
   }
   
   // ==================== 回调管理 ====================
@@ -602,6 +601,13 @@ export class UnifiedDownloadManager {
    * 通知进度更新
    */
   private notifyProgress(task: UnifiedDownloadTask): void {
+    const now = Date.now();
+    const lastNotifyAt = this.lastProgressNotifyAtByTaskId.get(task.id) || 0;
+    if (now - lastNotifyAt < this.PROGRESS_NOTIFY_INTERVAL_MS && task.status === UnifiedTaskStatus.DOWNLOADING) {
+      return;
+    }
+    this.lastProgressNotifyAtByTaskId.set(task.id, now);
+
     // 任务特定回调
     const callback = this.callbacks.get(task.id);
     if (callback) {
@@ -613,19 +619,99 @@ export class UnifiedDownloadManager {
     }
     
     // 全局回调
-    this.globalCallbacks.forEach(cb => {
+    const globalCallbackSnapshot: UnifiedDownloadCallback[] = Array.from(this.globalCallbacks);
+    for (const cb of globalCallbackSnapshot) {
       try {
         cb.onProgress(task);
       } catch (error) {
         logger.warn(TAG, `全局回调执行失败: ${String(error)}`);
       }
-    });
+    }
+  }
+
+  private addTaskIdToIndex(index: Map<string, Set<string>>, key: string, taskId: string): void {
+    let taskIds = index.get(key);
+    if (!taskIds) {
+      taskIds = new Set<string>();
+      index.set(key, taskIds);
+    }
+    taskIds.add(taskId);
+  }
+
+  private removeTaskIdFromIndex(index: Map<string, Set<string>>, key: string, taskId: string): void {
+    const taskIds = index.get(key);
+    if (!taskIds) {
+      return;
+    }
+    taskIds.delete(taskId);
+    if (taskIds.size === 0) {
+      index.delete(key);
+    }
+  }
+
+  private addTaskToIndexes(task: UnifiedDownloadTask): void {
+    this.addTaskIdToIndex(this.taskIdsByType, task.type, task.id);
+    this.addTaskIdToIndex(this.taskIdsByContent, task.contentId, task.id);
+    this.addTaskIdToIndex(this.taskIdsByStatus, task.status, task.id);
+  }
+
+  private removeTaskFromIndexes(task: UnifiedDownloadTask): void {
+    this.removeTaskIdFromIndex(this.taskIdsByType, task.type, task.id);
+    this.removeTaskIdFromIndex(this.taskIdsByContent, task.contentId, task.id);
+    this.removeTaskIdFromIndex(this.taskIdsByStatus, task.status, task.id);
+  }
+
+  private registerUnifiedTask(task: UnifiedDownloadTask): void {
+    this.unifiedTasks.set(task.id, task);
+    this.addTaskToIndexes(task);
+  }
+
+  private unregisterUnifiedTask(taskId: string): void {
+    const task = this.unifiedTasks.get(taskId);
+    if (task) {
+      this.removeTaskFromIndexes(task);
+      if (task.type === UnifiedDownloadType.MANGA) {
+        this.mangaDownloadManager.unregisterProgressCallback(`unified_${taskId}`);
+      }
+    }
+    this.unifiedTasks.delete(taskId);
+    this.callbacks.delete(taskId);
+    this.lastProgressNotifyAtByTaskId.delete(taskId);
+  }
+
+  private updateTaskStatus(task: UnifiedDownloadTask, status: UnifiedTaskStatus): void {
+    if (task.status === status) {
+      return;
+    }
+    this.removeTaskIdFromIndex(this.taskIdsByStatus, task.status, task.id);
+    task.status = status;
+    this.addTaskIdToIndex(this.taskIdsByStatus, task.status, task.id);
+  }
+
+  private getIndexedTasks(taskIds: Set<string> | undefined): UnifiedDownloadTask[] {
+    const tasks: UnifiedDownloadTask[] = [];
+    if (!taskIds) {
+      return tasks;
+    }
+    for (const taskId of taskIds) {
+      const task = this.unifiedTasks.get(taskId);
+      if (task) {
+        tasks.push(task);
+      }
+    }
+    return tasks;
+  }
+
+  private getIndexedTaskCount(index: Map<string, Set<string>>, key: string): number {
+    const taskIds = index.get(key);
+    return taskIds ? taskIds.size : 0;
   }
   
   /**
    * 通知任务完成
    */
   private notifyComplete(task: UnifiedDownloadTask): void {
+    this.lastProgressNotifyAtByTaskId.delete(task.id);
     const callback = this.callbacks.get(task.id);
     if (callback) {
       try {
@@ -635,19 +721,21 @@ export class UnifiedDownloadManager {
       }
     }
     
-    this.globalCallbacks.forEach(cb => {
+    const globalCallbackSnapshot: UnifiedDownloadCallback[] = Array.from(this.globalCallbacks);
+    for (const cb of globalCallbackSnapshot) {
       try {
         cb.onComplete(task);
       } catch (error) {
         logger.warn(TAG, `全局完成回调执行失败: ${String(error)}`);
       }
-    });
+    }
   }
   
   /**
    * 通知任务错误
    */
   private notifyError(task: UnifiedDownloadTask, error: string): void {
+    this.lastProgressNotifyAtByTaskId.delete(task.id);
     const callback = this.callbacks.get(task.id);
     if (callback) {
       try {
@@ -657,13 +745,14 @@ export class UnifiedDownloadManager {
       }
     }
     
-    this.globalCallbacks.forEach(cb => {
+    const globalCallbackSnapshot: UnifiedDownloadCallback[] = Array.from(this.globalCallbacks);
+    for (const cb of globalCallbackSnapshot) {
       try {
         cb.onError(task, error);
       } catch (err) {
         logger.warn(TAG, `全局错误回调执行失败: ${String(err)}`);
       }
-    });
+    }
   }
   
   // ==================== 统计方法 ====================
@@ -672,14 +761,13 @@ export class UnifiedDownloadManager {
    * 获取下载统计信息
    */
   public getDownloadStats(): DownloadStatsResult {
-    const tasks = this.getAllTasks();
     const result: DownloadStatsResult = {
-      total: tasks.length,
-      pending: tasks.filter(t => t.status === UnifiedTaskStatus.PENDING).length,
-      downloading: tasks.filter(t => t.status === UnifiedTaskStatus.DOWNLOADING).length,
-      completed: tasks.filter(t => t.status === UnifiedTaskStatus.COMPLETED).length,
-      failed: tasks.filter(t => t.status === UnifiedTaskStatus.FAILED).length,
-      paused: tasks.filter(t => t.status === UnifiedTaskStatus.PAUSED).length
+      total: this.unifiedTasks.size,
+      pending: this.getIndexedTaskCount(this.taskIdsByStatus, UnifiedTaskStatus.PENDING),
+      downloading: this.getIndexedTaskCount(this.taskIdsByStatus, UnifiedTaskStatus.DOWNLOADING),
+      completed: this.getIndexedTaskCount(this.taskIdsByStatus, UnifiedTaskStatus.COMPLETED),
+      failed: this.getIndexedTaskCount(this.taskIdsByStatus, UnifiedTaskStatus.FAILED),
+      paused: this.getIndexedTaskCount(this.taskIdsByStatus, UnifiedTaskStatus.PAUSED)
     };
     return result;
   }
@@ -689,15 +777,15 @@ export class UnifiedDownloadManager {
    */
   public clearCompletedTasks(): number {
     const completedIds: string[] = [];
-    this.unifiedTasks.forEach((task, id) => {
-      if (task.status === UnifiedTaskStatus.COMPLETED) {
-        completedIds.push(id);
+    const completedTaskIds = this.taskIdsByStatus.get(UnifiedTaskStatus.COMPLETED);
+    if (completedTaskIds) {
+      for (const taskId of completedTaskIds) {
+        completedIds.push(taskId);
       }
-    });
+    }
     
     completedIds.forEach(id => {
-      this.unifiedTasks.delete(id);
-      this.callbacks.delete(id);
+      this.unregisterUnifiedTask(id);
     });
     
     logger.info(TAG, `已清理 ${completedIds.length} 个已完成任务`);
@@ -709,15 +797,15 @@ export class UnifiedDownloadManager {
    */
   public clearFailedTasks(): number {
     const failedIds: string[] = [];
-    this.unifiedTasks.forEach((task, id) => {
-      if (task.status === UnifiedTaskStatus.FAILED) {
-        failedIds.push(id);
+    const failedTaskIds = this.taskIdsByStatus.get(UnifiedTaskStatus.FAILED);
+    if (failedTaskIds) {
+      for (const taskId of failedTaskIds) {
+        failedIds.push(taskId);
       }
-    });
+    }
     
     failedIds.forEach(id => {
-      this.unifiedTasks.delete(id);
-      this.callbacks.delete(id);
+      this.unregisterUnifiedTask(id);
     });
     
     logger.info(TAG, `已清理 ${failedIds.length} 个失败任务`);

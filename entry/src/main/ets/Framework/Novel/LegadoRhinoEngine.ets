@@ -191,7 +191,7 @@ export class LegadoRhinoEngine {
     if (this.legadoEngine) {
       this.legadoEngine.setJsLib(jsLib);
     }
-    // TODO: 如果Rhino沙箱也需要jsLib，在这里处理
+    // Rhino沙箱的jsLib会随执行上下文注入，这里只同步降级引擎的库内容。
     logger.debug(TAG, `已设置jsLib (${jsLib.length}字符)`);
   }
   

@@ -121,6 +121,8 @@ export class WelcomeGuideTestHelper {
         return 'IMAGE_SOURCE_GUIDE (图源引导)';
       case GuideStep.BOOK_SOURCE_GUIDE:
         return 'BOOK_SOURCE_GUIDE (书源引导)';
+      case GuideStep.REMOTE_LIBRARY_GUIDE:
+        return 'REMOTE_LIBRARY_GUIDE (远程书库引导)';
       case GuideStep.CUSTOM_EXPERIENCE:
         return 'CUSTOM_EXPERIENCE (自定义体验)';
       case GuideStep.ANALYTICS_PERMISSION:
@@ -144,6 +146,7 @@ export class WelcomeGuideTestHelper {
       GuideStep.DATA_IMPORT,
       GuideStep.IMAGE_SOURCE_GUIDE,
       GuideStep.BOOK_SOURCE_GUIDE,
+      GuideStep.REMOTE_LIBRARY_GUIDE,
       GuideStep.CUSTOM_EXPERIENCE,
       GuideStep.ANALYTICS_PERMISSION,
       GuideStep.LIBRARY_INTRO,

@@ -112,7 +112,7 @@ export struct NovelSettingsPage {
     {
       title: '订阅源管理',
       subtitle: '新增、编辑、刷新 RSS 源',
-      icon: $r('sys.symbol.rectangle_stack'),
+      icon: $r('sys.symbol.website'),
       iconColor: '#3F51B5',
       route: 'RssSubscriptionManagementPage'
     },

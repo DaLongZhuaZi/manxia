@@ -71,6 +71,25 @@ interface DisplayModeTransitionProfile {
   overlayFadeOutDurationMs: number;
 }
 
+export type AppFloatingWindowRouteName = 'TransferFloatingWindowPage';
+
+export interface AppFloatingWindowConfig {
+  routeName: AppFloatingWindowRouteName;
+  title: string;
+  widthVp: number;
+  heightVp: number;
+  xVp: number;
+  yVp: number;
+  zLevel: number;
+}
+
+interface AppFloatingWindowPixelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /**
  * 窗口管理器 - 基于HarmonyOS NEXT API 12最新规范
  * 提供完整的显示模式管理、沉浸式显示、系统栏设置等功能
@@ -84,7 +103,8 @@ export class WindowManager {
   private static windowStageRef: window.WindowStage | null = null;
   private static windowStageEventCallback: ((event: window.WindowStageEventType) => void) | null = null;
   private static themeChangeCallback: ((theme: ThemeType) => void) | null = null;
-  private static isBackgroundPrivacyModeEnabled: boolean = false;
+  private static isMainWindowBackgroundPrivacyModeEnabled: boolean = false;
+  private static isFloatingWindowBackgroundPrivacyModeEnabled: boolean = false;
   private static readonly TRANSITION_OVERLAY_VISIBLE_KEY = 'window_mode_transition_overlay_visible';
   private static readonly TRANSITION_OVERLAY_OPACITY_KEY = 'window_mode_transition_overlay_opacity';
   private static readonly TRANSITION_OVERLAY_USE_BLUR_KEY = 'window_mode_transition_overlay_use_blur';
@@ -94,6 +114,11 @@ export class WindowManager {
   private static transitionNavigationTimer: number = -1;
   private static transitionOverlayCleanupTimer: number = -1;
   private static transitionGeneration: number = 0;
+  private static floatingWindowRef: window.Window | null = null;
+  private static floatingWindowRouteName: string = '';
+  private static isFloatingWindowOpening: boolean = false;
+  private static readonly FLOATING_WINDOW_VISIBLE_KEY = 'app_floating_window_visible';
+  private static readonly FLOATING_WINDOW_ROUTE_KEY = 'app_floating_window_route';
 
   /**
    * 获取当前 Ability 的主窗口。
@@ -207,24 +232,68 @@ export class WindowManager {
 
   private static applyBackgroundPrivacyMode(isInBackground: boolean, source: string): void {
     const shouldEnable = WindowManager.shouldEnableBackgroundPrivacyMode(isInBackground);
-    if (WindowManager.isBackgroundPrivacyModeEnabled === shouldEnable) {
-      return;
-    }
 
     const mainWindow = WindowManager.getMainWindowFromWindowStageRef(`background privacy mode: ${source}`);
-    if (!mainWindow) {
+    if (mainWindow) {
+      WindowManager.applyPrivacyModeToWindow(
+        mainWindow,
+        shouldEnable,
+        '主窗口',
+        WindowManager.isMainWindowBackgroundPrivacyModeEnabled,
+        (applied: boolean): void => {
+          WindowManager.isMainWindowBackgroundPrivacyModeEnabled = applied;
+        },
+        source
+      );
+    } else if (!shouldEnable) {
+      WindowManager.isMainWindowBackgroundPrivacyModeEnabled = false;
+    }
+
+    WindowManager.applyFloatingWindowBackgroundPrivacyMode(shouldEnable, source);
+  }
+
+  private static applyFloatingWindowBackgroundPrivacyMode(shouldEnable: boolean, source: string): void {
+    const targetWindow = WindowManager.floatingWindowRef;
+    if (!targetWindow) {
       if (!shouldEnable) {
-        WindowManager.isBackgroundPrivacyModeEnabled = false;
+        WindowManager.isFloatingWindowBackgroundPrivacyModeEnabled = false;
       }
       return;
     }
 
-    WindowManager.isBackgroundPrivacyModeEnabled = shouldEnable;
-    mainWindow.setWindowPrivacyMode(shouldEnable).then((): void => {
-      logger.info(WindowManager.TAG, `后台隐私窗口模式已更新: enabled=${shouldEnable}, source=${source}`);
+    WindowManager.applyPrivacyModeToWindow(
+      targetWindow,
+      shouldEnable,
+      '应用内小窗',
+      WindowManager.isFloatingWindowBackgroundPrivacyModeEnabled,
+      (applied: boolean): void => {
+        WindowManager.isFloatingWindowBackgroundPrivacyModeEnabled = applied;
+      },
+      source
+    );
+  }
+
+  private static applyPrivacyModeToWindow(
+    targetWindow: window.Window,
+    shouldEnable: boolean,
+    windowLabel: string,
+    currentState: boolean,
+    updateState: (applied: boolean) => void,
+    source: string
+  ): void {
+    if (currentState === shouldEnable) {
+      return;
+    }
+
+    updateState(shouldEnable);
+    targetWindow.setWindowPrivacyMode(shouldEnable).then((): void => {
+      logger.info(WindowManager.TAG, `${windowLabel}后台隐私窗口模式已更新: enabled=${shouldEnable}, source=${source}`);
     }).catch((error: BusinessError): void => {
-      logger.warn(WindowManager.TAG, `后台隐私窗口模式更新失败: enabled=${shouldEnable}, source=${source}, reason=${JSON.stringify(error)}`);
-      WindowManager.isBackgroundPrivacyModeEnabled = !shouldEnable;
+      logger.warn(
+        WindowManager.TAG,
+        `${windowLabel}后台隐私窗口模式更新失败: enabled=${shouldEnable}, source=${source}, reason=${JSON.stringify(error)}`
+      );
+      updateState(!shouldEnable);
     });
   }
 
@@ -243,14 +312,15 @@ export class WindowManager {
 
   private static resolveBackgroundStateByWindowStageEvent(event: window.WindowStageEventType): boolean | null {
     switch (event) {
-      case window.WindowStageEventType.INACTIVE:
       case window.WindowStageEventType.HIDDEN:
-      case window.WindowStageEventType.PAUSED:
         return true;
       case window.WindowStageEventType.SHOWN:
       case window.WindowStageEventType.ACTIVE:
       case window.WindowStageEventType.RESUMED:
         return false;
+      case window.WindowStageEventType.INACTIVE:
+      case window.WindowStageEventType.PAUSED:
+        return null;
       default:
         // 未知事件不强制切换前后台状态
         return null;
@@ -1199,6 +1269,278 @@ export class WindowManager {
     }
   }
 
+  static isFloatingWindowVisible(routeName?: AppFloatingWindowRouteName): boolean {
+    if (!WindowManager.floatingWindowRef) {
+      return false;
+    }
+    if (!routeName) {
+      return true;
+    }
+    return WindowManager.floatingWindowRouteName === routeName;
+  }
+
+  private static syncFloatingWindowBackgroundPrivacyMode(source: string): void {
+    const isInBackground = AppStorage.get<boolean>(WindowManager.BACKGROUND_STORAGE_KEY) === true;
+    const shouldEnable = WindowManager.shouldEnableBackgroundPrivacyMode(isInBackground);
+    WindowManager.applyFloatingWindowBackgroundPrivacyMode(shouldEnable, source);
+  }
+
+  static async openAppFloatingWindow(config: AppFloatingWindowConfig): Promise<boolean> {
+    if (WindowManager.isFloatingWindowOpening) {
+      logger.warn(WindowManager.TAG, `应用内小窗正在打开中: route=${config.routeName}`);
+      return false;
+    }
+
+    const windowStage = WindowManager.windowStageRef;
+    if (!windowStage) {
+      logger.warn(WindowManager.TAG, `无法打开应用内小窗，WindowStage未初始化: route=${config.routeName}`);
+      return false;
+    }
+
+    if (WindowManager.floatingWindowRef && WindowManager.floatingWindowRouteName === config.routeName) {
+      return await WindowManager.showExistingFloatingWindow(config);
+    }
+
+    if (WindowManager.floatingWindowRef) {
+      await WindowManager.closeAppFloatingWindow('切换应用内小窗内容');
+    }
+
+    WindowManager.isFloatingWindowOpening = true;
+    const windowName = `manxia_app_float_${config.routeName}`;
+    const pixelRect = WindowManager.resolveFloatingWindowPixelRect(config);
+    const rect: window.Rect = {
+      left: pixelRect.x,
+      top: pixelRect.y,
+      width: pixelRect.width,
+      height: pixelRect.height
+    };
+    const options: window.SubWindowOptions = {
+      title: config.title,
+      decorEnabled: false,
+      isModal: false,
+      windowRect: rect,
+      maximizeSupported: false,
+      zLevel: config.zLevel,
+      outlineEnabled: false
+    };
+
+    try {
+      const subWindow = await windowStage.createSubWindowWithOptions(windowName, options);
+      WindowManager.floatingWindowRef = subWindow;
+      WindowManager.floatingWindowRouteName = config.routeName;
+      AppStorage.setOrCreate(WindowManager.FLOATING_WINDOW_VISIBLE_KEY, true);
+      AppStorage.setOrCreate(WindowManager.FLOATING_WINDOW_ROUTE_KEY, config.routeName);
+
+      await WindowManager.configureFloatingWindow(subWindow, config);
+      await subWindow.setUIContent(`pages/${config.routeName}`);
+      await subWindow.showWindow();
+      WindowManager.syncFloatingWindowBackgroundPrivacyMode('应用内小窗打开');
+      logger.info(
+        WindowManager.TAG,
+        `应用内小窗已打开: route=${config.routeName}, rect=${pixelRect.x},${pixelRect.y},${pixelRect.width},${pixelRect.height}`
+      );
+      return true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(WindowManager.TAG, `打开应用内小窗失败: route=${config.routeName}, error=${errorMessage}`);
+      try {
+        await WindowManager.destroyFloatingWindowRef('打开失败清理');
+      } catch (cleanupError) {
+        logger.warn(WindowManager.TAG, `打开失败后清理应用内小窗引用异常: ${String(cleanupError)}`);
+      }
+      return false;
+    } finally {
+      WindowManager.isFloatingWindowOpening = false;
+    }
+  }
+
+  private static async showExistingFloatingWindow(config: AppFloatingWindowConfig): Promise<boolean> {
+    const existingWindow = WindowManager.floatingWindowRef;
+    if (!existingWindow) {
+      return false;
+    }
+
+    try {
+      await WindowManager.configureFloatingWindow(existingWindow, config);
+      await existingWindow.showWindow();
+      AppStorage.setOrCreate(WindowManager.FLOATING_WINDOW_VISIBLE_KEY, true);
+      AppStorage.setOrCreate(WindowManager.FLOATING_WINDOW_ROUTE_KEY, config.routeName);
+      WindowManager.syncFloatingWindowBackgroundPrivacyMode('应用内小窗唤起');
+      logger.info(WindowManager.TAG, `已唤起现有应用内小窗: route=${config.routeName}`);
+      return true;
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `唤起现有应用内小窗失败，将重新创建: ${String(error)}`);
+      await WindowManager.closeAppFloatingWindow('现有小窗不可用');
+      return await WindowManager.openAppFloatingWindow(config);
+    }
+  }
+
+  private static async configureFloatingWindow(
+    targetWindow: window.Window,
+    config: AppFloatingWindowConfig
+  ): Promise<void> {
+    try {
+      targetWindow.setWindowBackgroundColor('#00000000');
+      targetWindow.setWindowDecorVisible(false);
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `设置应用内小窗基础外观失败: ${String(error)}`);
+    }
+
+    try {
+      await targetWindow.setWindowShadowEnabled(false);
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `关闭应用内小窗系统阴影开关失败: ${String(error)}`);
+    }
+
+    try {
+      targetWindow.setWindowShadowRadius(0);
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `清除应用内小窗系统阴影半径失败: ${String(error)}`);
+    }
+
+    try {
+      await targetWindow.setWindowCornerRadius(18);
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `设置应用内小窗圆角失败: ${String(error)}`);
+    }
+
+    const pixelRect = WindowManager.resolveFloatingWindowPixelRect(config);
+    await targetWindow.resize(pixelRect.width, pixelRect.height);
+    await targetWindow.moveWindowTo(pixelRect.x, pixelRect.y);
+    try {
+      await targetWindow.setSubWindowModal(false);
+      await targetWindow.setSubWindowZLevel(config.zLevel);
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `设置应用内小窗层级失败: ${String(error)}`);
+    }
+  }
+
+  private static resolveFloatingWindowPixelRect(config: AppFloatingWindowConfig): AppFloatingWindowPixelRect {
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      const density = Math.max(displayInfo.densityDPI / 160, 1);
+      const width = Math.round(config.widthVp * density);
+      const height = Math.round(config.heightVp * density);
+      const maxX = Math.max(0, displayInfo.width - width);
+      const maxY = Math.max(0, displayInfo.height - height);
+      const rect: AppFloatingWindowPixelRect = {
+        x: Math.round(Math.max(0, Math.min(config.xVp * density, maxX))),
+        y: Math.round(Math.max(0, Math.min(config.yVp * density, maxY))),
+        width: Math.max(1, Math.min(width, displayInfo.width)),
+        height: Math.max(1, Math.min(height, displayInfo.height))
+      };
+      return rect;
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `解析应用内小窗像素尺寸失败，使用原始配置: ${String(error)}`);
+      const fallbackRect: AppFloatingWindowPixelRect = {
+        x: Math.round(config.xVp),
+        y: Math.round(config.yVp),
+        width: Math.max(1, Math.round(config.widthVp)),
+        height: Math.max(1, Math.round(config.heightVp))
+      };
+      return fallbackRect;
+    }
+  }
+
+  static async closeAppFloatingWindow(reason: string = '用户关闭'): Promise<boolean> {
+    if (!WindowManager.floatingWindowRef) {
+      AppStorage.setOrCreate(WindowManager.FLOATING_WINDOW_VISIBLE_KEY, false);
+      AppStorage.setOrCreate(WindowManager.FLOATING_WINDOW_ROUTE_KEY, '');
+      return true;
+    }
+
+    try {
+      await WindowManager.destroyFloatingWindowRef(reason);
+      logger.info(WindowManager.TAG, `应用内小窗已关闭: reason=${reason}`);
+      return true;
+    } catch (error) {
+      logger.error(WindowManager.TAG, `关闭应用内小窗失败: reason=${reason}, error=${String(error)}`);
+      return false;
+    }
+  }
+
+  static getAppFloatingWindowRect(): window.Rect | null {
+    const targetWindow = WindowManager.floatingWindowRef;
+    if (!targetWindow) {
+      return null;
+    }
+
+    try {
+      const properties = targetWindow.getWindowProperties();
+      const sourceRect = properties.windowRect;
+      const rect: window.Rect = {
+        left: sourceRect.left,
+        top: sourceRect.top,
+        width: sourceRect.width,
+        height: sourceRect.height
+      };
+      return rect;
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `获取应用内小窗位置失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  static async moveAppFloatingWindowTo(x: number, y: number): Promise<boolean> {
+    const targetWindow = WindowManager.floatingWindowRef;
+    if (!targetWindow) {
+      return false;
+    }
+
+    try {
+      await targetWindow.moveWindowTo(Math.round(x), Math.round(y));
+      return true;
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `移动应用内小窗失败: x=${x}, y=${y}, error=${String(error)}`);
+      return false;
+    }
+  }
+
+  static async moveAppFloatingWindowByVpOffset(
+    startX: number,
+    startY: number,
+    offsetXVp: number,
+    offsetYVp: number
+  ): Promise<boolean> {
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      const density = Math.max(displayInfo.densityDPI / 160, 1);
+      return await WindowManager.moveAppFloatingWindowTo(
+        startX + offsetXVp * density,
+        startY + offsetYVp * density
+      );
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `按vp偏移移动应用内小窗失败: ${String(error)}`);
+      return await WindowManager.moveAppFloatingWindowTo(startX + offsetXVp, startY + offsetYVp);
+    }
+  }
+
+  static async toggleAppFloatingWindow(config: AppFloatingWindowConfig): Promise<boolean> {
+    if (WindowManager.isFloatingWindowVisible(config.routeName)) {
+      return await WindowManager.closeAppFloatingWindow('用户切换关闭');
+    }
+    return await WindowManager.openAppFloatingWindow(config);
+  }
+
+  private static async destroyFloatingWindowRef(reason: string): Promise<void> {
+    const targetWindow = WindowManager.floatingWindowRef;
+    WindowManager.floatingWindowRef = null;
+    WindowManager.floatingWindowRouteName = '';
+    WindowManager.isFloatingWindowBackgroundPrivacyModeEnabled = false;
+    AppStorage.setOrCreate(WindowManager.FLOATING_WINDOW_VISIBLE_KEY, false);
+    AppStorage.setOrCreate(WindowManager.FLOATING_WINDOW_ROUTE_KEY, '');
+    if (!targetWindow) {
+      return;
+    }
+
+    try {
+      await targetWindow.destroyWindow();
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `销毁应用内小窗失败: reason=${reason}, error=${String(error)}`);
+      throw new Error(`销毁应用内小窗失败: ${String(error)}`);
+    }
+  }
+
   private static applyDisplayModeWithMainWindow(mainWindow: window.Window, mode: DisplayMode): void {
     switch (mode) {
       case DisplayMode.FULL_IMMERSIVE:
@@ -1257,6 +1599,7 @@ export class WindowManager {
   }
 
   static dispose(): void {
+    void WindowManager.closeAppFloatingWindow('WindowManager销毁');
     WindowManager.clearManagedDisplayTransitionTimers();
     WindowManager.initializeTransitionOverlayState();
     AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_OPACITY_KEY, 0);

@@ -870,7 +870,7 @@ export struct ReaderKitViewerComponent {
    * 获取 Reader Kit 文件类型
    */
   private getReaderKitFileType(): string {
-    // TODO: 根据实际 Reader Kit API 返回正确的文件类型枚举
+    // ReaderKit 当前按文件路径创建处理器，这里保留格式字符串用于诊断和兜底路由。
     return this.ebook.format;
   }
 

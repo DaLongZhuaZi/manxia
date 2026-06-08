@@ -49,6 +49,12 @@ export interface CodeEditorController {
   undo: () => void;
   redo: () => void;
   findText: (text: string) => void;
+  replaceText: (oldText: string, newText: string, replaceAll?: boolean) => void;
+  insertText: (text: string) => void;
+  formatCode: () => void;
+  getSelectedText: () => Promise<string>;
+  getCursorPosition: () => Promise<CursorPosition>;
+  getLineCount: () => Promise<number>;
   goToLine: (line: number) => void;
   setTheme: (theme: EditorTheme) => void;
   setFontSize: (size: number) => void;
@@ -275,7 +281,7 @@ export struct CodeEditorComponent {
     if (!this.isReady) return { line: 1, column: 1 };
     try {
       const result = await this.webController.runJavaScript('JSON.stringify(getCursorPosition())');
-      return SafeUtils.parseObj(result as string) as CursorPosition;
+      return SafeUtils.parseObj<CursorPosition>(result as string);
     } catch (e) {
       logger.error(TAG, `获取光标位置失败: ${e}`);
       return { line: 1, column: 1 };
@@ -349,6 +355,12 @@ export struct CodeEditorComponent {
         undo: () => this.undo(),
         redo: () => this.redo(),
         findText: (text: string) => this.findText(text),
+        replaceText: (oldText: string, newText: string, replaceAll?: boolean) => this.replaceText(oldText, newText, replaceAll),
+        insertText: (text: string) => this.insertText(text),
+        formatCode: () => this.formatCode(),
+        getSelectedText: () => this.getSelectedText(),
+        getCursorPosition: () => this.getCursorPosition(),
+        getLineCount: () => this.getLineCount(),
         goToLine: (line: number) => this.goToLine(line),
         setTheme: (theme: EditorTheme) => this.setTheme(theme),
         setFontSize: (size: number) => this.setFontSize(size),
@@ -366,6 +378,12 @@ export struct CodeEditorComponent {
   private onContentChanged(content: string): void {
     if (this.callbacks.onContentChanged) {
       this.callbacks.onContentChanged(content);
+    }
+  }
+
+  private onSaveRequested(content: string): void {
+    if (this.callbacks.onSave) {
+      this.callbacks.onSave(content);
     }
   }
   
@@ -394,10 +412,13 @@ export struct CodeEditorComponent {
             },
             onContentChanged: (content: string) => {
               this.onContentChanged(content);
+            },
+            onSave: (content: string) => {
+              this.onSaveRequested(content);
             }
           },
           name: 'arkts',
-          methodList: ['onEditorReady', 'onContentChanged'],
+          methodList: ['onEditorReady', 'onContentChanged', 'onSave'],
           controller: this.webController
         })
       

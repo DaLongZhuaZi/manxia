@@ -13,6 +13,7 @@ import { logger } from '../Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { curves } from '@kit.ArkUI';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { EBookBackgroundSettings } from './BookTransitionOverlay';
 
 const TAG = 'BookOpenTransition';
@@ -162,6 +163,7 @@ export struct BookOpenTransition {
   private canvasSettings: RenderingContextSettings = new RenderingContextSettings(true);
   private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.canvasSettings);
   private coverPixelMap: image.PixelMap | null = null;
+  private coverPixelMapOwned: boolean = false;
   private backgroundImagePixelMap: image.PixelMap | null = null;  // 背景图片（用于Canvas绘制）
   
   // 存储截图的本地副本（防止引用丢失）
@@ -302,11 +304,23 @@ export struct BookOpenTransition {
     
     // 检查是否为网络图片（HTTP/HTTPS URL）
     if (this.coverImagePath.startsWith('http://') || this.coverImagePath.startsWith('https://')) {
-      logger.info(TAG, `检测到网络图片: ${this.coverImagePath}，跳过PixelMap加载，使用默认封面尺寸`);
-      // 网络图片无法直接通过createImageSource加载，设置默认封面尺寸比例
-      this.coverOriginalWidth = 210;  // 默认封面宽度
-      this.coverOriginalHeight = 300; // 默认封面高度（0.7比例）
-      this.isSystemResource = true;   // 标记为特殊资源，使用渐变效果
+      logger.info(TAG, `检测到网络图片: ${this.coverImagePath}`);
+      const cachedCoverPixelMap = getCoverImageManager().getCachedPixelMap(this.coverImagePath);
+      if (cachedCoverPixelMap) {
+        this.coverPixelMap = cachedCoverPixelMap;
+        this.coverPixelMapOwned = false;
+        const cachedInfo = cachedCoverPixelMap.getImageInfoSync();
+        this.coverOriginalWidth = cachedInfo.size.width;
+        this.coverOriginalHeight = cachedInfo.size.height;
+        this.isSystemResource = false;
+        logger.info(TAG, `复用预加载封面PixelMap: ${this.coverOriginalWidth}x${this.coverOriginalHeight}`);
+      } else {
+        logger.info(TAG, '网络封面未命中PixelMap缓存，使用Image覆盖层兜底');
+        // 网络图片无法直接通过createImageSource加载，设置默认封面尺寸比例
+        this.coverOriginalWidth = 210;  // 默认封面宽度
+        this.coverOriginalHeight = 300; // 默认封面高度（0.7比例）
+        this.isSystemResource = true;   // 标记为特殊资源，使用Image覆盖层兜底
+      }
       // 直接开始动画，使用默认渐变效果
       if (this.componentWidth > 0 && this.componentHeight > 0) {
         this.startTransition();
@@ -326,6 +340,7 @@ export struct BookOpenTransition {
       
       const imageSource = image.createImageSource(imagePath);
       this.coverPixelMap = await imageSource.createPixelMap();
+      this.coverPixelMapOwned = true;
       
       // 获取图片原始尺寸
       const imageInfo = await imageSource.getImageInfo();
@@ -352,10 +367,11 @@ export struct BookOpenTransition {
   }
   
   private releaseCoverPixelMap(): void {
-    if (this.coverPixelMap) {
+    if (this.coverPixelMap && this.coverPixelMapOwned) {
       this.coverPixelMap.release();
-      this.coverPixelMap = null;
     }
+    this.coverPixelMap = null;
+    this.coverPixelMapOwned = false;
   }
 
   private resolveAppMediaImageSource(raw: string): Resource {

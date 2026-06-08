@@ -55,6 +55,10 @@ export class DialogSurfaceStyleHelper {
     return DialogSurfaceStyleHelper.getPopupCardToken().backgroundEffect;
   }
 
+  static getPopupCardRadius(): number {
+    return DialogSurfaceStyleHelper.getPopupCardToken().radius;
+  }
+
   static getPopupCardShadowColor(themeState: ThemeAwareState): ResourceColor {
     const token: GlassStyleToken = DialogSurfaceStyleHelper.getPopupCardToken();
     if (token.shadowColor && token.shadowColor.length > 0) {

@@ -136,6 +136,10 @@
       editor.onDidChangeModelContent(function() {
         notifyContentChanged();
       });
+
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function() {
+        notifySaveRequested();
+      });
       
       // 通知ArkTS编辑器已就绪
       notifyEditorReady();
@@ -160,6 +164,16 @@
         }
       } catch (e) {
         console.error('notifyContentChanged error:', e);
+      }
+    }
+
+    function notifySaveRequested() {
+      try {
+        if (window.arkts && window.arkts.onSave) {
+          window.arkts.onSave(editor.getValue());
+        }
+      } catch (e) {
+        console.error('notifySaveRequested error:', e);
       }
     }
     

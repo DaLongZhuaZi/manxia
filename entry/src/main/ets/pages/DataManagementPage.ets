@@ -33,7 +33,7 @@ import fs from '@ohos.file.fs';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 
 import { UpdateRecordData } from '../Framework/Database/DatabaseTypes';
-import { UniversalDialogManager, ButtonStyle, DialogButton, UniversalDialogOptions } from '../Framework/Components/UniversalDialog';
+import { UniversalDialogManager, ButtonStyle, DialogButton, UniversalDialogOptions, UniversalDialogCustomContentParam } from '../Framework/Components/UniversalDialog';
 import { EBook, EBookMetadata } from '../Models/EBookModels';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 import { generateUUID } from '../Framework/Utils/UUIDGenerator';
@@ -59,6 +59,13 @@ import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from '.
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import {
+  ExternalFileTaskFactory,
+  ExternalFileTaskParams,
+  ExternalFileTaskSource
+} from '../Framework/ExternalFile/ExternalFileTaskTypes';
+import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
+import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Framework/Reader/MangaReadFlowImportReporter';
 
 const TAG = 'DataManagementPage';
 const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
@@ -68,8 +75,17 @@ const APP_STORAGE_TRANSFER_TRACKING_ACTIVE = 'pendingTransferTrackingActive';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 // NavDestinationContext接口定义
+interface NavDestinationPathInfo {
+  param?: Object;
+}
+
 interface NavDestinationContext {
   pathStack: NavPathStack;
+  pathInfo?: NavDestinationPathInfo;
+}
+
+export interface DataManagementExternalFileParams {
+  externalFileTask?: ExternalFileTaskParams;
 }
 
 /**
@@ -255,120 +271,142 @@ interface ChapterMergeDialogData {
   newChapterTitle: string;
 }
 
+interface MergeDialogBuilderParam extends UniversalDialogCustomContentParam {
+  data: MergeDialogData;
+  themeState: ThemeAwareState;
+  selectedTargetId: string;
+  onRadioChange: (id: string) => void;
+  appFontFamily: string;
+}
+
+interface ChapterMergeDialogBuilderParam extends UniversalDialogCustomContentParam {
+  data: ChapterMergeDialogData;
+  themeState: ThemeAwareState;
+  appFontFamily: string;
+}
+
+function asMergeDialogBuilderParam(param: UniversalDialogCustomContentParam): MergeDialogBuilderParam {
+  return param as MergeDialogBuilderParam;
+}
+
+function asChapterMergeDialogBuilderParam(param: UniversalDialogCustomContentParam): ChapterMergeDialogBuilderParam {
+  return param as ChapterMergeDialogBuilderParam;
+}
+
 
 /**
  * 构建漫画合并弹窗的自定义内容
  */
 @Builder
-function buildMergeDialogContent(data: MergeDialogData, themeState: ThemeAwareState, selectedTargetId: string, onRadioChange: (id: string) => void, appFontFamily: string): void {
+function buildMergeDialogContent(param: UniversalDialogCustomContentParam): void {
   Column({ space: 12 }) {
     Text('检测到可能的重复漫画')
       .fontSize(18)
       .fontWeight(FontWeight.Bold)
-      .fontFamily(appFontFamily)
-      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+      .fontFamily(asMergeDialogBuilderParam(param).appFontFamily)
+      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', asMergeDialogBuilderParam(param).themeState.currentTheme))
 
     Column({ space: 4 }) {
-      Text(`待导入：${data.sourceTitle}`)
+      Text(`待导入：${asMergeDialogBuilderParam(param).data.sourceTitle}`)
         .fontSize(14)
-        .fontFamily(appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
-      Text(`作者：${data.sourceAuthor}`)
+        .fontFamily(asMergeDialogBuilderParam(param).appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', asMergeDialogBuilderParam(param).themeState.currentTheme))
+      Text(`作者：${asMergeDialogBuilderParam(param).data.sourceAuthor}`)
         .fontSize(12)
-        .fontFamily(appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+        .fontFamily(asMergeDialogBuilderParam(param).appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', asMergeDialogBuilderParam(param).themeState.currentTheme))
     }
     .width('100%')
 
-    if (data.candidates.length > 0) {
+    if (asMergeDialogBuilderParam(param).data.candidates.length > 0) {
       Column({ space: 8 }) {
         Text('请选择要合并到的已有漫画：')
           .fontSize(13)
-          .fontFamily(appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+          .fontFamily(asMergeDialogBuilderParam(param).appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', asMergeDialogBuilderParam(param).themeState.currentTheme))
 
         Scroll() {
           Column({ space: 8 }) {
-            ForEach(data.candidates, (c: MergeDialogCandidate) => {
+            ForEach(asMergeDialogBuilderParam(param).data.candidates, (c: MergeDialogCandidate) => {
               Row({ space: 8 }) {
                 Radio({ value: c.id, group: 'mergeTarget' })
                   .onChange((checked: boolean) => {
                     if (checked) {
-                      onRadioChange(c.id);
+                      asMergeDialogBuilderParam(param).onRadioChange(c.id);
                     }
                   })
                 Column({ space: 2 }) {
                   Text(`${c.title}`)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
-                    .fontFamily(appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+                    .fontFamily(asMergeDialogBuilderParam(param).appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', asMergeDialogBuilderParam(param).themeState.currentTheme))
                   Text(`作者：${c.author}｜匹配：${getMatchStrengthLabel(c.strength)}｜原因：${getDuplicateReasonsLabel(c.reasons)}`)
                     .fontSize(12)
-                    .fontFamily(appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+                    .fontFamily(asMergeDialogBuilderParam(param).appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', asMergeDialogBuilderParam(param).themeState.currentTheme))
                 }
                 .layoutWeight(1)
               }
               .width('100%')
               .padding({ left: 4, right: 4, top: 6, bottom: 6 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', themeState.currentTheme))
-              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', themeState.currentTheme), radius: 6 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', asMergeDialogBuilderParam(param).themeState.currentTheme))
+              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', asMergeDialogBuilderParam(param).themeState.currentTheme), radius: 6 })
             })
           }
           .width('100%')
         }
         .width('100%')
         .height(180)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', themeState.currentTheme))
-        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', themeState.currentTheme), radius: 8 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', asMergeDialogBuilderParam(param).themeState.currentTheme))
+        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', asMergeDialogBuilderParam(param).themeState.currentTheme), radius: 8 })
       }
       .width('100%')
     } else {
       Text('未找到可用的合并候选项，将作为新漫画导入。')
         .fontSize(13)
-        .fontFamily(appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+        .fontFamily(asMergeDialogBuilderParam(param).appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', asMergeDialogBuilderParam(param).themeState.currentTheme))
     }
   }
   .width('100%')
   .padding({ left: 16, right: 16, top: 16, bottom: 16 })
-  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', themeState.currentTheme))
-  .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', themeState.currentTheme), radius: 10 })
+  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', asMergeDialogBuilderParam(param).themeState.currentTheme))
+  .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', asMergeDialogBuilderParam(param).themeState.currentTheme), radius: 10 })
 }
 
 /**
  * 构建章节合并弹窗的自定义内容
  */
 @Builder
-function buildChapterMergeDialogContent(data: ChapterMergeDialogData, themeState: ThemeAwareState, appFontFamily: string): void {
+function buildChapterMergeDialogContent(param: UniversalDialogCustomContentParam): void {
   Column({ space: 12 }) {
     Text('检测到重复章节')
       .fontSize(18)
       .fontWeight(FontWeight.Bold)
-      .fontFamily(appFontFamily)
-      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+      .fontFamily(asChapterMergeDialogBuilderParam(param).appFontFamily)
+      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', asChapterMergeDialogBuilderParam(param).themeState.currentTheme))
 
     Column({ space: 4 }) {
-      Text(`漫画：${data.mangaTitle}`)
+      Text(`漫画：${asChapterMergeDialogBuilderParam(param).data.mangaTitle}`)
         .fontSize(14)
-        .fontFamily(appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
-      Text(`已有章节：${data.existingChapterTitle}`)
+        .fontFamily(asChapterMergeDialogBuilderParam(param).appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', asChapterMergeDialogBuilderParam(param).themeState.currentTheme))
+      Text(`已有章节：${asChapterMergeDialogBuilderParam(param).data.existingChapterTitle}`)
         .fontSize(12)
-        .fontFamily(appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
-      Text(`新导入：${data.newChapterTitle}`)
+        .fontFamily(asChapterMergeDialogBuilderParam(param).appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', asChapterMergeDialogBuilderParam(param).themeState.currentTheme))
+      Text(`新导入：${asChapterMergeDialogBuilderParam(param).data.newChapterTitle}`)
         .fontSize(12)
-        .fontFamily(appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+        .fontFamily(asChapterMergeDialogBuilderParam(param).appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', asChapterMergeDialogBuilderParam(param).themeState.currentTheme))
     }
     .width('100%')
   }
   .width('100%')
   .padding({ left: 16, right: 16, top: 16, bottom: 16 })
-  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', themeState.currentTheme))
-  .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', themeState.currentTheme), radius: 10 })
+  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', asChapterMergeDialogBuilderParam(param).themeState.currentTheme))
+  .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', asChapterMergeDialogBuilderParam(param).themeState.currentTheme), radius: 10 })
 }
 
 /**
@@ -672,6 +710,8 @@ struct DataManagementPage {
   
   // 状态变量
   @State pathStack: NavPathStack = new NavPathStack();
+  private routeExternalFileTask: ExternalFileTaskParams | null = null;
+  private hasHandledRouteExternalFileTask: boolean = false;
   
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -709,12 +749,52 @@ struct DataManagementPage {
   // 批量导入策略
   @State private batchImportStrategy: 'ask' | 'merge_all' | 'create_all' = 'ask'; // 默认每次询问
   @State private showBatchStrategyDialog: boolean = false;
+  private lastMangaImportReadFlowId: string = '';
+  private fileImportEventSubscribed: boolean = false;
+  private readonly fileImportRequestedListener = (payload: IEventPayload): void => {
+    const filePayload = payload as FileImportRequestedPayload;
+    logger.info(TAG, `收到文件导入请求: ${filePayload.fileUri}, 类型: ${filePayload.fileType}`);
+
+    if (filePayload.fileType === 'comic') {
+      this.handleExternalComicImport(filePayload.fileUri);
+    } else if (filePayload.fileType === 'ebook') {
+      this.handleExternalEBookImport(filePayload.fileUri);
+    }
+  };
   
   // 计算属性：是否正在处理
   private isProcessing(): boolean {
     return this.importProgress.status !== ImportStatus.IDLE && 
            this.importProgress.status !== ImportStatus.COMPLETED && 
            this.importProgress.status !== ImportStatus.ERROR;
+  }
+
+  private recordMangaImportFlow(
+    contentId: string,
+    contentTitle: string,
+    chapterId: string,
+    chapterTitle: string,
+    pageCount: number,
+    chapterCount: number,
+    sourcePath: string,
+    targetPath: string,
+    reason: string
+  ): string {
+    const report: MangaReadFlowImportReport = new MangaReadFlowImportReport();
+    report.contentId = contentId;
+    report.contentTitle = contentTitle;
+    report.chapterId = chapterId;
+    report.chapterTitle = chapterTitle;
+    report.pageCount = pageCount;
+    report.chapterCount = chapterCount;
+    report.sourcePath = sourcePath;
+    report.targetPath = targetPath;
+    report.sourceId = 'local_import';
+    report.reason = reason;
+    report.success = true;
+    const sessionId: string = MangaReadFlowImportReporter.record(report);
+    this.lastMangaImportReadFlowId = sessionId;
+    return sessionId;
   }
   
   // 管理器实例
@@ -1176,6 +1256,9 @@ struct DataManagementPage {
     try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
     
     let firstCoverPath = '';
+    let totalPageCount = 0;
+    let firstChapterId = '';
+    let firstChapterTitle = '';
     
     // 处理每个章节
     for (let i = 0; i < group.chapters.length; i++) {
@@ -1217,6 +1300,11 @@ struct DataManagementPage {
       
       // 添加页面信息
       await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
+      totalPageCount += imageFiles.length;
+      if (firstChapterId.length <= 0) {
+        firstChapterId = chapterId;
+        firstChapterTitle = chapter.title;
+      }
       
       // 记录第一个章节的第一张图片作为封面
       if (i === 0 && imageFiles.length > 0) {
@@ -1240,6 +1328,17 @@ struct DataManagementPage {
     }
     
     logger.info(TAG, `Download导入成功: ${group.title}`);
+    this.recordMangaImportFlow(
+      mangaId,
+      group.title,
+      firstChapterId,
+      firstChapterTitle,
+      totalPageCount,
+      group.chapters.length,
+      group.chapters.length > 0 ? group.chapters[0].fileUri : '',
+      mangaPath,
+      'download_batch_group_import_completed'
+    );
   }
   
   /**
@@ -1399,6 +1498,17 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.COMPLETED, '导入完成', 100);
       this.getUIContext().getPromptAction().showToast({ message: '导入成功' });
       this.pendingMangaFiles = [];
+      this.recordMangaImportFlow(
+        mangaId,
+        result.title,
+        chapterId,
+        chapterInput.title,
+        imageFiles.length,
+        1,
+        result.sourceFileUri || this.currentFileUri,
+        chapterPath,
+        'download_single_import_completed'
+      );
       
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
       
@@ -1567,6 +1677,17 @@ struct DataManagementPage {
     }
     
     logger.info(TAG, `原地导入成功: ${title}, 路径: ${chapterPath}, 图片数: ${imageFiles.length}`);
+    this.recordMangaImportFlow(
+      mangaId,
+      comicInfo?.title || title,
+      chapterId,
+      '第1话',
+      imageFiles.length,
+      1,
+      fileUri,
+      chapterPath,
+      'download_in_place_import_completed'
+    );
   }
   
   /**
@@ -1888,14 +2009,20 @@ struct DataManagementPage {
     // 使用 UniversalDialogManager 展示通用弹窗
     return await new Promise<MergeDecision>((resolve) => {
       let selectedTargetId: string = defaultId; // 默认选中最佳候选
+      const customBuilderParam: MergeDialogBuilderParam = {
+        data: data,
+        themeState: this.themeState,
+        selectedTargetId: selectedTargetId,
+        onRadioChange: (id: string): void => {
+          selectedTargetId = id;
+        },
+        appFontFamily: this.appFontFamily
+      } as MergeDialogBuilderParam;
 
       const dialogOptions: UniversalDialogOptions = {
         title: `合并漫画：${input.title}（候选 ${candidates.length}）`,
-        customBuilder: () => {
-          buildMergeDialogContent(data, this.themeState, selectedTargetId, (id: string) => {
-            selectedTargetId = id;
-          }, this.appFontFamily);
-        },
+        customBuilder: wrapBuilder(buildMergeDialogContent),
+        customBuilderParam: customBuilderParam,
         buttons: [
           {
             text: '取消',
@@ -1963,11 +2090,15 @@ struct DataManagementPage {
 
     // 使用 UniversalDialogManager 展示通用弹窗
     return await new Promise<MergeAction>((resolve) => {
+      const customBuilderParam: ChapterMergeDialogBuilderParam = {
+        data: data,
+        themeState: this.themeState,
+        appFontFamily: this.appFontFamily
+      } as ChapterMergeDialogBuilderParam;
       const dialogOptions: UniversalDialogOptions = {
         title: `章节合并：${chapterInput.title}（所属：${mangaTitle}）`,
-        customBuilder: () => {
-          buildChapterMergeDialogContent(data, this.themeState, this.appFontFamily);
-        },
+        customBuilder: wrapBuilder(buildChapterMergeDialogContent),
+        customBuilderParam: customBuilderParam,
         buttons: [
           {
             text: '跳过',
@@ -2178,8 +2309,103 @@ struct DataManagementPage {
     // 订阅文件导入请求事件
     this.subscribeFileImportEvent();
 
+    if (this.handleRouteExternalFileTaskIfNeeded('aboutToAppear')) {
+      return;
+    }
+
     // 检查是否有待导入的文件（从外部打开）
     this.checkPendingFileImport();
+  }
+
+  private setRouteExternalFileTask(params: DataManagementExternalFileParams | undefined): void {
+    if (!params || !params.externalFileTask) {
+      return;
+    }
+    this.routeExternalFileTask = ExternalFileTaskFactory.clone(params.externalFileTask);
+    logger.info(TAG, `已接收外部文件独立任务参数: kind=${this.routeExternalFileTask.kind}, count=${this.routeExternalFileTask.uris.length}`);
+    this.handleRouteExternalFileTaskIfNeeded('onReady');
+  }
+
+  private handleRouteExternalFileTaskIfNeeded(source: string): boolean {
+    if (this.hasHandledRouteExternalFileTask || !this.routeExternalFileTask) {
+      return false;
+    }
+    const task = this.routeExternalFileTask;
+    if (task.uris.length <= 0) {
+      logger.warn(TAG, `外部文件独立任务缺少URI: source=${source}, kind=${task.kind}`);
+      this.hasHandledRouteExternalFileTask = true;
+      return true;
+    }
+    this.hasHandledRouteExternalFileTask = true;
+    setTimeout((): void => {
+      void this.handleExternalFileTaskParams(task);
+    }, 500);
+    logger.info(TAG, `已调度外部文件独立任务: source=${source}, kind=${task.kind}, count=${task.uris.length}`);
+    return true;
+  }
+
+  private async handleExternalFileTaskParams(task: ExternalFileTaskParams): Promise<void> {
+    try {
+      if (task.uris.length > 1) {
+        await this.handleExternalFileTaskBatch(task);
+        return;
+      }
+      const primaryUri = ExternalFileTaskFactory.resolvePrimaryUri(task);
+      await this.handlePendingFileWithCategory(
+        primaryUri,
+        task.mimeType,
+        String(task.kind),
+        String(task.source),
+        task.target,
+        ExternalFileTaskFactory.resolveDisplayName(task)
+      );
+    } catch (error) {
+      logger.error(TAG, `处理外部文件独立任务失败: ${String(error)}`);
+      this.finalizeTrackedTransferImport('import_failed');
+    }
+  }
+
+  private async handleExternalFileTaskBatch(task: ExternalFileTaskParams): Promise<void> {
+    logger.info(TAG, `处理外部文件批量任务: kind=${task.kind}, count=${task.uris.length}`);
+    const kind = String(task.kind);
+    if (kind === 'comic') {
+      await this.handlePendingShareFiles(task.uris, String(task.kind));
+      return;
+    }
+    if (kind === 'ebook') {
+      for (let i = 0; i < task.uris.length; i++) {
+        await this.handleExternalEBookImport(task.uris[i]);
+      }
+      return;
+    }
+    if (kind === 'pdf') {
+      for (let i = 0; i < task.uris.length; i++) {
+        await this.handlePdfImportWithCategorySelection(task.uris[i]);
+      }
+      return;
+    }
+
+    for (let i = 0; i < task.uris.length; i++) {
+      const singleTask = this.createSingleUriExternalTask(task, task.uris[i]);
+      await this.handlePendingFileWithCategory(
+        ExternalFileTaskFactory.resolvePrimaryUri(singleTask),
+        singleTask.mimeType,
+        String(singleTask.kind),
+        String(singleTask.source),
+        singleTask.target,
+        ExternalFileTaskFactory.resolveDisplayName(singleTask)
+      );
+    }
+  }
+
+  private createSingleUriExternalTask(sourceTask: ExternalFileTaskParams, uri: string): ExternalFileTaskParams {
+    const singleTask = ExternalFileTaskFactory.clone(sourceTask);
+    singleTask.uris = [uri];
+    singleTask.displayName = ExternalFileTaskFactory.extractFileName(uri);
+    if (singleTask.displayName.length <= 0) {
+      singleTask.displayName = sourceTask.displayName;
+    }
+    return singleTask;
   }
 
   /**
@@ -2329,6 +2555,7 @@ struct DataManagementPage {
       case 'font':
       case 'code':
       case 'avif':
+      case 'image':
         this.handoffNetworkFolderImportToMainMenu(category, fileUri, resolvedName);
         return;
       default:
@@ -2340,6 +2567,32 @@ struct DataManagementPage {
 
   private handoffNetworkFolderImportToMainMenu(category: string, fileUri: string, displayName: string): void {
     logger.info(TAG, `网络文件夹文件交由首页处理: 分类=${category}, 文件=${displayName}`);
+
+    const taskKind = ExternalFileTaskFactory.normalizeKind(category);
+    const externalTask = ExternalFileTaskFactory.createSingleFileTask(
+      taskKind,
+      fileUri,
+      displayName,
+      ExternalFileTaskSource.NETWORK_FOLDER,
+      displayName,
+      category === 'code' ? this.inferCodeLanguageFromFileName(displayName) : '',
+      'download_dir'
+    );
+    void openExternalFileTaskInIsolatedAbility(
+      this.uiContext,
+      externalTask,
+      'DataManagementPage.networkFolderHandoff'
+    ).then((started: boolean): void => {
+      if (started) {
+        logger.info(TAG, `网络文件夹文件已交由独立任务处理: 分类=${category}, 文件=${displayName}`);
+      } else {
+        this.handoffNetworkFolderImportToMainMenuFallback(category, fileUri, displayName);
+      }
+    });
+  }
+
+  private handoffNetworkFolderImportToMainMenuFallback(category: string, fileUri: string, displayName: string): void {
+    logger.info(TAG, `网络文件夹文件回退首页处理: 分类=${category}, 文件=${displayName}`);
 
     if (category === 'backup') {
       AppStorage.setOrCreate('pendingBackupUri', fileUri);
@@ -2371,10 +2624,10 @@ struct DataManagementPage {
       return;
     }
 
-    if (category === 'avif') {
+    if (category === 'avif' || category === 'image') {
       AppStorage.setOrCreate('pendingAvifUri', fileUri);
-      AppStorage.setOrCreate('pendingFileCategory', 'avif');
-      this.navigateToMainMenuForNetworkImport('AVIF 图片');
+      AppStorage.setOrCreate('pendingFileCategory', category);
+      this.navigateToMainMenuForNetworkImport(category === 'avif' ? 'AVIF 图片' : '图片文件');
       return;
     }
   }
@@ -2625,17 +2878,11 @@ struct DataManagementPage {
    * 订阅文件导入请求事件
    */
   private subscribeFileImportEvent(): void {
-    eventBus.subscribe(GameEvent.FILE_IMPORT_REQUESTED, (payload: IEventPayload) => {
-      const filePayload = payload as FileImportRequestedPayload;
-      logger.info(TAG, `收到文件导入请求: ${filePayload.fileUri}, 类型: ${filePayload.fileType}`);
-      
-      // 根据文件类型处理导入
-      if (filePayload.fileType === 'comic') {
-        this.handleExternalComicImport(filePayload.fileUri);
-      } else if (filePayload.fileType === 'ebook') {
-        this.handleExternalEBookImport(filePayload.fileUri);
-      }
-    });
+    if (this.fileImportEventSubscribed) {
+      return;
+    }
+    eventBus.subscribe(GameEvent.FILE_IMPORT_REQUESTED, this.fileImportRequestedListener);
+    this.fileImportEventSubscribed = true;
   }
 
   /**
@@ -3058,6 +3305,10 @@ struct DataManagementPage {
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
+    }
+    if (this.fileImportEventSubscribed) {
+      eventBus.unsubscribe(GameEvent.FILE_IMPORT_REQUESTED, this.fileImportRequestedListener);
+      this.fileImportEventSubscribed = false;
     }
   }
 
@@ -5013,6 +5264,17 @@ struct DataManagementPage {
       databaseStored: true,
       filesOrganized: true
     });
+    this.recordMangaImportFlow(
+      mangaId,
+      result.title,
+      chapterId,
+      chapterInfoInput.title,
+      parsedStructure.totalImageCount,
+      1,
+      this.currentFileUri,
+      parsedStructure.extractedPath,
+      'local_tankoubon_import_completed'
+    );
   }
   
   /**
@@ -5138,6 +5400,17 @@ struct DataManagementPage {
       databaseStored: true,
       filesOrganized: true
     });
+    this.recordMangaImportFlow(
+      mangaId,
+      result.title,
+      chapterId,
+      chapterInfoInput.title,
+      parsedStructure.totalImageCount,
+      1,
+      this.currentFileUri,
+      parsedStructure.extractedPath,
+      'local_single_chapter_import_completed'
+    );
   }
 
   /**
@@ -5181,6 +5454,8 @@ struct DataManagementPage {
     
     // 导入每个章节
     let totalPages = 0;
+    let firstChapterId = '';
+    let firstChapterTitle = '';
     for (let i = 0; i < result.chapters.length; i++) {
       const chapter = result.chapters[i];
       this.updateProgress(ImportStatus.IMPORTING, `正在导入章节 ${i + 1}/${result.chapters.length}: ${chapter.title}`, 30 + (i / result.chapters.length) * 60);
@@ -5198,6 +5473,10 @@ struct DataManagementPage {
       
       const chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
       logger.info(TAG, `创建章节 ${i + 1}: ${chapterId}`);
+      if (firstChapterId.length <= 0) {
+        firstChapterId = chapterId;
+        firstChapterTitle = chapter.title;
+      }
       
       // 整理文件并添加页面信息
       const comicInfoForOrganize: ComicInfoInput = {
@@ -5230,6 +5509,17 @@ struct DataManagementPage {
       databaseStored: true,
       filesOrganized: true
     });
+    this.recordMangaImportFlow(
+      mangaId,
+      result.title,
+      firstChapterId,
+      firstChapterTitle,
+      totalPages,
+      result.chapters.length,
+      this.currentFileUri,
+      result.chapters.length > 0 ? result.chapters[0].path : '',
+      'local_multi_chapter_import_completed'
+    );
   }
 
   /**
@@ -7678,7 +7968,7 @@ struct DataManagementPage {
    */
   private getFileIconResource(filename: string): Resource {
     const ext = this.getDownloadFileExtension(filename);
-    if (DataManagementPage.MANGA_EXTENSIONS.includes(ext)) return $r('sys.symbol.rectangle_stack');
+    if (DataManagementPage.MANGA_EXTENSIONS.includes(ext)) return $r('sys.symbol.picture');
     if (DataManagementPage.EBOOK_EXTENSIONS.includes(ext)) return $r('sys.symbol.book');
     if (DataManagementPage.PDF_EXTENSIONS.includes(ext)) return $r('sys.symbol.doc_plaintext');
     if (DataManagementPage.NOVEL_EXTENSIONS.includes(ext)) return $r('sys.symbol.text_book_closed');
@@ -7694,7 +7984,7 @@ struct DataManagementPage {
       Row({ space: 0 }) {
         // 选择文件导入Tab
         Row() {
-          SymbolGlyph($r('sys.symbol.doc_plaintext_2'))
+          SymbolGlyph($r('sys.symbol.folder_badge_plus'))
             .fontSize(14)
             .fontColor([this.primaryTab === 'file_select'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
@@ -7773,7 +8063,7 @@ struct DataManagementPage {
       Row({ space: 0 }) {
         // 漫画Tab
         Row() {
-          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          SymbolGlyph($r('sys.symbol.picture'))
             .fontSize(12)
             .fontColor([this.secondaryTab === 'manga'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
@@ -7880,7 +8170,7 @@ struct DataManagementPage {
     Column({ space: 16 }) {
       Column({ space: 8 }) {
         Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.rectangle_stack')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          SymbolGlyph($r('sys.symbol.picture')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           Text('漫画导入')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
@@ -7901,7 +8191,7 @@ struct DataManagementPage {
       Row({ space: 8 }) {
         Button({ stateEffect: true }) {
           Row({ space: 6 }) {
-            SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(16).fontColor([Color.White])
+            SymbolGlyph($r('sys.symbol.picture')).fontSize(16).fontColor([Color.White])
             Text('选择漫画文件').fontSize(14).fontColor(Color.White).fontFamily(this.appFontFamily)
           }
         }
@@ -8248,7 +8538,7 @@ struct DataManagementPage {
           if (this.pendingMangaFiles.length > 0) {
             Column({ space: 6 }) {
               Row({ space: 8 }) {
-                SymbolGlyph($r('sys.symbol.rectangle_stack'))
+                SymbolGlyph($r('sys.symbol.picture'))
                   .fontSize(16)
                   .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
                 Text(`漫画文件 (${this.pendingMangaFiles.length})`)
@@ -8522,6 +8812,8 @@ struct DataManagementPage {
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, '主导航目标页 onReady 已触发');
       this.pathStack = context.pathStack;
+      const params = context.pathInfo?.param as DataManagementExternalFileParams | undefined;
+      this.setRouteExternalFileTask(params);
     })
     .backgroundColor(Color.Transparent)
   }

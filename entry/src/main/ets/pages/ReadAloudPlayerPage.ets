@@ -1,5 +1,6 @@
 ﻿import { promptAction, LengthMetrics } from '@kit.ArkUI';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
@@ -16,6 +17,8 @@ import {
   getNovelAudioReadAloudSessionManager
 } from '../Framework/ReadAloud/NovelAudioReadAloudSessionManager';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
+import { ReadAloudPlayerAbilityParams } from '../Framework/ReadAloud/ReadAloudPlayerAbilityParamStore';
+import { READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON } from '../Framework/ReadAloud/ReadAloudPlayerAbilityConstants';
 
 const TAG = 'ReadAloudPlayerPage';
 const PLAYER_SKIP_CHARS: number = 420;
@@ -75,6 +78,7 @@ export struct ReadAloudPlayerPage {
   private novelAudioSessionManager = getNovelAudioReadAloudSessionManager();
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   private returnHostPage: string = '';
+  private playerHostMode: string = '';
   private hasCapturedRouteState: boolean = false;
   private displayRestoreTimer: number = -1;
   private sleepTimerRefreshTimer: number = -1;
@@ -160,6 +164,9 @@ export struct ReadAloudPlayerPage {
   }
 
   private resolveStoredDisplayMode(): DisplayMode {
+    if (this.playerHostMode === READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON) {
+      return this.previousDisplayMode;
+    }
     const storedMode = (AppStorage.get<string>('ReadAloudPlayerReturnDisplayMode') ?? '').trim();
     switch (storedMode) {
       case DisplayMode.DEFAULT:
@@ -179,8 +186,10 @@ export struct ReadAloudPlayerPage {
       return;
     }
     this.ensureUiContext();
-    this.previousDisplayMode = this.resolveStoredDisplayMode();
-    this.returnHostPage = (AppStorage.get<string>('ReadAloudPlayerReturnHostPage') ?? '').trim();
+    if (this.playerHostMode !== READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON) {
+      this.previousDisplayMode = this.resolveStoredDisplayMode();
+      this.returnHostPage = (AppStorage.get<string>('ReadAloudPlayerReturnHostPage') ?? '').trim();
+    }
     this.hasCapturedRouteState = true;
     logger.info(
       TAG,
@@ -978,6 +987,51 @@ export struct ReadAloudPlayerPage {
     });
     this.refreshPlayerState();
   }
+
+  private applyAbilityRouteParams(params: ReadAloudPlayerAbilityParams | null): NovelReaderPageParams | null {
+    if (!params) {
+      this.playerHostMode = '';
+      return null;
+    }
+    this.playerHostMode = READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON;
+    this.returnHostPage = params.returnHostPage;
+    this.previousDisplayMode = params.returnDisplayMode ?? WindowManager.getCurrentMode();
+    this.hasCapturedRouteState = false;
+    return params.launchParams;
+  }
+
+  private resolveRouteParam(rawParam: Object | null | undefined): NovelReaderPageParams | null {
+    if (!rawParam) {
+      this.playerHostMode = '';
+      return null;
+    }
+    const abilityParams = rawParam as ReadAloudPlayerAbilityParams;
+    if (abilityParams.launchParams !== undefined ||
+      abilityParams.returnHostPage !== undefined ||
+      abilityParams.returnDisplayMode !== undefined) {
+      return this.applyAbilityRouteParams(abilityParams);
+    }
+    this.playerHostMode = '';
+    return rawParam as NovelReaderPageParams;
+  }
+
+  private terminateIsolatedPlayerAbility(): void {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      if (!hostContext) {
+        logger.warn(TAG, '独立听书播放器退出失败：UIAbilityContext 为空');
+        return;
+      }
+      hostContext.terminateSelf().then((): void => {
+        logger.info(TAG, '独立听书播放器实例已退出');
+      }).catch((error: Object | string | number | boolean): void => {
+        logger.warn(TAG, `独立听书播放器实例退出失败: ${String(error)}`);
+      });
+    } catch (error) {
+      logger.warn(TAG, `独立听书播放器实例退出异常: ${String(error)}`);
+    }
+  }
+
   private closePage(): void {
     try {
       if (this.returnHostPage.length > 0) {
@@ -990,7 +1044,11 @@ export struct ReadAloudPlayerPage {
       } else {
         this.restorePreviousDisplayMode('closePage');
       }
-      this.pathStack.pop();
+      if (this.playerHostMode === READ_ALOUD_PLAYER_ABILITY_HOST_SINGLETON) {
+        this.terminateIsolatedPlayerAbility();
+      } else {
+        this.pathStack.pop();
+      }
     } catch (error) {
       logger.warn(TAG, `返回失败: ${String(error)}`);
     }
@@ -1819,7 +1877,7 @@ export struct ReadAloudPlayerPage {
     .mode(NavDestinationMode.STANDARD)
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
-      const routeParam = context.pathInfo.param as NovelReaderPageParams | null;
+      const routeParam = this.resolveRouteParam(context.pathInfo.param as Object | null);
       void this.initializeNovelAudioSessionIfNeeded(routeParam);
       this.entered = false;
       setTimeout(() => {

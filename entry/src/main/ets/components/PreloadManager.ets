@@ -462,22 +462,34 @@ export class PreloadManager {
    * @param count 需要获取的任务数量
    * @returns 任务列表
    */
-  getNextBatchToLoad(count: number): PreloadItem[] {
+  getNextBatchToLoad(count: number): PreloadTaskItem[] {
     if (this.queue.size === 0 || count <= 0) {
       return [];
     }
 
     // 按优先级排序
-    const sorted = Array.from(this.queue.values()).sort((a, b) => {
+    const sorted: PreloadItem[] = Array.from(this.queue.values()).sort((a: PreloadItem, b: PreloadItem): number => {
       if (a.priority !== b.priority) {
         return b.priority - a.priority;
       }
-      const distA = Math.abs(a.pageIndex - this.currentPage);
-      const distB = Math.abs(b.pageIndex - this.currentPage);
+      const distA: number = Math.abs(a.pageIndex - this.currentPage);
+      const distB: number = Math.abs(b.pageIndex - this.currentPage);
       return distA - distB;
     });
 
-    return sorted.slice(0, count);
+    const tasks: PreloadTaskItem[] = [];
+    const limit: number = Math.min(count, sorted.length);
+    for (let i = 0; i < limit; i++) {
+      const item: PreloadItem = sorted[i];
+      const task: PreloadTaskItem = {
+        pageIndex: item.pageIndex,
+        pageId: item.pageId,
+        url: item.url,
+        priority: item.priority
+      } as PreloadTaskItem;
+      tasks.push(task);
+    }
+    return tasks;
   }
 
   /**

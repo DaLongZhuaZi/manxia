@@ -1,0 +1,471 @@
+﻿{
+  "module": {
+    "name": "entry",
+    "querySchemes": [
+      "mqq",
+      "mqqapi",
+      "mqqwpa",
+      "manxia"
+    ],
+    "type": "entry",
+    "description": "$string:app_module_desc",
+    "mainElement": "EntryAbility",
+    "srcEntry": "./ets/MyAbilityStage.ets",
+    "metadata": [
+      {
+        "name": "utd.declarations",
+        "resource": "$profile:utd"
+      }
+    ],
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    "fileContextMenu": "$profile:file_context_menu",
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:icon_startwindow",
+        "startWindowBackground": "$color:transport",
+        "exported": true,
+        "continuable": true,
+        "orientation": "auto_rotation",
+        "backgroundModes": ["dataTransfer", "audioPlayback"],
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "ohos.want.action.home"
+            ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "type": "application/x-cbz",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/x-cbr",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/zip",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/x-7z-compressed",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/x-rar-compressed",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/epub+zip",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/epub",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/mobi",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/azw3",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/pdf",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "text/plain",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "image/avif",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "image/*",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/octet-stream",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/x-mxbak",
+                "linkFeature": "FileOpen"
+              }
+            ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "manxia",
+                "host": "open",
+                "path": ""
+              },
+              {
+                "scheme": "manxia",
+                "host": "detail",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
+                "host": "search",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
+                "host": "source",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
+                "host": "novel",
+                "pathRegex": ".*"
+              },
+              {
+                "scheme": "manxia",
+                "host": "page",
+                "pathRegex": ".*"
+              }
+            ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "https",
+                "host": "manxia.top",
+                "pathStartWith": "d/",
+                "linkFeature": "AppLinkOpening"
+              },
+              {
+                "scheme": "https",
+                "host": "manxia.top",
+                "path": "n",
+                "linkFeature": "AppLinkOpening"
+              },
+              {
+                "scheme": "https",
+                "host": "manxia.top",
+                "pathStartWith": "s/",
+                "linkFeature": "AppLinkOpening"
+              },
+              {
+                "scheme": "https",
+                "host": "manxia.top",
+                "path": "transfer",
+                "linkFeature": "AppLinkOpening"
+              }
+            ],
+            "domainVerify": true
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "type": "*/*",
+                "pathRegex": ".*\\.(7z|rar|mxbak|mxbackup|cbz|cbr)$"
+              }
+            ]
+          }
+        ],
+        "metadata": [
+          {
+            "name": "ohos.ability.shortcuts",
+            "resource": "$profile:shortcuts_config"
+          }
+        ]
+      },
+      {
+        "name": "MangaReaderAbility",
+        "srcEntry": "./ets/MangaReaderAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "EBookReaderAbility",
+        "srcEntry": "./ets/EBookReaderAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "NovelReaderAbility",
+        "srcEntry": "./ets/NovelReaderAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "ReadAloudPlayerAbility",
+        "srcEntry": "./ets/ReadAloudPlayerAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "singleton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation",
+        "backgroundModes": ["audioPlayback"]
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "EntryBackupAbility",
+        "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
+        "type": "backup",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.backup",
+            "resource": "$profile:backup_config"
+          }
+        ]
+      },
+      {
+        "name": "EntryFormAbility",
+        "srcEntry": "./ets/entryformability/EntryFormAbility.ets",
+        "type": "form",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:form_config"
+          }
+        ]
+      },
+      {
+        "name": "ShareExtAbility",
+        "srcEntry": "./ets/ShareExtAbility/ShareExtAbility.ets",
+        "type": "share",
+        "exported": true,
+        "description": "接收系统分享的文件",
+        "skills": [
+          {
+            "actions": [
+              "ohos.want.action.sendData"
+            ],
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.image",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "general.file",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.archive",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.pdf",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.zip",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.7z",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.rar",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.ebook",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.plain-text",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "com.manxia.avif",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "type": "application/octet-stream",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "content"
+              }
+            ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.sendData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "type": "*/*",
+                "pathRegex": ".*\\.(7z|rar|mxbak|mxbackup|cbz|cbr)$"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET",
+        "reason": "$string:get_internet_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.GET_NETWORK_INFO",
+        "reason": "$string:get_network_info_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.DISTRIBUTED_DATASYNC",
+        "reason": "$string:distributed_data_sync_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
+        "reason": "$string:background_running_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.PRIVACY_WINDOW",
+        "usedScene": {
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.DETECT_GESTURE"
+      },
+      {
+        "name": "ohos.permission.VIBRATE",
+        "reason": "$string:get_vibrate_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.ACCESS_BIOMETRIC",
+        "reason": "$string:biometric_permission_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      }
+    ]
+  }
+}

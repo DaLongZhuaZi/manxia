@@ -11,6 +11,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/Th
 import { FontAwareState } from '../../Framework/Components/FontAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Framework/Tracking/trackers/SuwayomiTracker';
+import { SettingsManager } from '../../Framework/Managers/SettingsManager';
 import { SettingsPanelSurfaceHelper } from './SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
@@ -19,6 +20,8 @@ import { SettingsPageTitleBarManager } from './SettingsPageTitleBarManager';
 
 const TAG = 'SuwayomiSettingsPage';
 const TITLE_BAR_HEIGHT: number = 56;
+const SUWAYOMI_TAB_INDEX: number = 5;
+const SETTINGS_TAB_INDEX: number = 6;
 
 // 页面参数接口
 interface SuwayomiWebUIParams {
@@ -42,6 +45,7 @@ export struct SuwayomiSettingsPage {
   @State password: string = '';
   @State useAuth: boolean = false;
   @State useBrowsePageAsEntry: boolean = false;
+  @State showSuwayomiInBottomBar: boolean = false;
 
   // UI 状态
   @State isLoading: boolean = false;
@@ -51,6 +55,7 @@ export struct SuwayomiSettingsPage {
   @State showPassword: boolean = false;
 
   private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   private componentId: string = 'SuwayomiSettingsPage';
 
   private markSettingsScrolling(): void {
@@ -95,6 +100,66 @@ export struct SuwayomiSettingsPage {
     this.password = config.password;
     this.useAuth = config.useAuth;
     this.useBrowsePageAsEntry = config.useBrowsePageAsEntry ?? false;
+    await this.loadBottomBarVisibility();
+  }
+
+  private async loadBottomBarVisibility(): Promise<void> {
+    try {
+      const visibleTabs = await this.settingsManager.getVisibleTabs();
+      this.showSuwayomiInBottomBar = visibleTabs.includes(SUWAYOMI_TAB_INDEX);
+    } catch (error) {
+      logger.error(TAG, '加载 Suwayomi 底栏入口设置失败', String(error));
+      this.showSuwayomiInBottomBar = false;
+    }
+  }
+
+  private buildVisibleTabsWithTarget(currentTabs: number[], targetIndex: number, visible: boolean): number[] {
+    const nextTabs: number[] = [];
+    for (let index = 0; index < currentTabs.length; index++) {
+      const tabIndex = currentTabs[index];
+      if (tabIndex !== targetIndex && !nextTabs.includes(tabIndex)) {
+        nextTabs.push(tabIndex);
+      }
+    }
+
+    if (!visible) {
+      return nextTabs;
+    }
+
+    const settingsIndex = nextTabs.indexOf(SETTINGS_TAB_INDEX);
+    if (settingsIndex >= 0) {
+      nextTabs.splice(settingsIndex, 0, targetIndex);
+    } else {
+      nextTabs.push(targetIndex);
+    }
+    return nextTabs;
+  }
+
+  private async saveBottomBarVisibility(isOn: boolean): Promise<void> {
+    const previousValue = this.showSuwayomiInBottomBar;
+    this.showSuwayomiInBottomBar = isOn;
+    try {
+      const currentTabs = await this.settingsManager.getVisibleTabs();
+      const nextTabs = this.buildVisibleTabsWithTarget(currentTabs, SUWAYOMI_TAB_INDEX, isOn);
+      await this.settingsManager.setVisibleTabs(nextTabs);
+      AppStorage.setOrCreate('visible_tabs', nextTabs);
+      logger.info(TAG, `Suwayomi 底栏入口已${isOn ? '显示' : '隐藏'}: ${JSON.stringify(nextTabs)}`);
+      this.showRestartRequiredDialog();
+    } catch (error) {
+      this.showSuwayomiInBottomBar = previousValue;
+      logger.error(TAG, '保存 Suwayomi 底栏入口设置失败', String(error));
+      this.showToast('保存底栏入口设置失败');
+    }
+  }
+
+  private showRestartRequiredDialog(): void {
+    this.getUIContext().getPromptAction().showDialog({
+      title: '配置已保存',
+      message: '底栏入口设置已保存，需要重启APP才能生效。',
+      buttons: [
+        { text: '知道了', color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) }
+      ]
+    });
   }
 
   private async testConnection(): Promise<void> {
@@ -357,6 +422,75 @@ export struct SuwayomiSettingsPage {
                 .textAlign(TextAlign.Center)
                 .fontFamily(this.appFontFamily)
             }
+
+            // 功能说明
+            Column({ space: 12 }) {
+              Text('入口设置')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .alignSelf(ItemAlign.Start)
+                .fontFamily(this.appFontFamily)
+
+              Row() {
+                Column({ space: 4 }) {
+                  Text('在底栏当中显示 Suwayomi')
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .fontFamily(this.appFontFamily)
+
+                  Text('调整后需要重启APP才能生效')
+                    .fontSize(12)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .fontFamily(this.appFontFamily)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.showSuwayomiInBottomBar })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    void this.saveBottomBarVisibility(isOn);
+                  })
+              }
+              .width('100%')
+
+              Row() {
+                Text('主页面点击 Suwayomi 入口时直达浏览页')
+                  .fontSize(14)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .fontFamily(this.appFontFamily)
+
+                Blank()
+
+                Toggle({ type: ToggleType.Switch, isOn: this.useBrowsePageAsEntry })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    this.useBrowsePageAsEntry = isOn;
+                    void this.saveConfigSilently();
+                  })
+              }
+              .width('100%')
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(SettingsPanelSurfaceHelper.getBackground(this.themeState.currentTheme))
+            .linearGradient(SettingsPanelSurfaceHelper.getSurfaceGradient(this.themeState.currentTheme))
+            .backgroundBlurStyle(SettingsPanelSurfaceHelper.getBlurStyle(this.themeState.currentTheme), SettingsPanelSurfaceHelper.getBlurOptions(this.themeState.currentTheme))
+            .backgroundEffect(SettingsPanelSurfaceHelper.getBackgroundEffect(this.themeState.currentTheme))
+            .borderRadius(SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme))
+            .clip(true)
+            .border({ width: SettingsPanelSurfaceHelper.getBorderWidth(this.themeState.currentTheme), color: SettingsPanelSurfaceHelper.getBorderColor(this.themeState.currentTheme) })
+            .shadow({
+              radius: SettingsPanelSurfaceHelper.getRadius(this.themeState.currentTheme) + 4,
+              color: SettingsPanelSurfaceHelper.getShadowColor(this.themeState.currentTheme),
+              offsetX: 0,
+              offsetY: 8
+            })
+            .alignItems(HorizontalAlign.Start)
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
             // 功能说明
             Column({ space: 12 }) {

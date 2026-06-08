@@ -1,12 +1,15 @@
+import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 import { ContinuationTriggeredPayload } from '../Framework/EventBus';
+import { REMOTE_CONTROL_ABILITY_INSTANCE_ID_KEY } from '../Framework/RemoteControl/RemoteControlAbilityConstants';
 
 const TAG = 'RemoteControlPage';
 
 @Component
 export struct RemoteControlPage {
-  @Consume('pageStack') pageStack: NavPathStack;
+  @Consume('NavPathStack') pageStack: NavPathStack;
+  @LocalStorageProp(REMOTE_CONTROL_ABILITY_INSTANCE_ID_KEY) private remoteControlAbilityInstanceId: string = '';
   
   @State private sessionId: string = '';
   @State private bookId: string = '';
@@ -17,6 +20,7 @@ export struct RemoteControlPage {
   @State private sourceType: string = '';
   @State private connectionStatus: 'connecting' | 'online' | 'offline' | 'error' = 'connecting';
   @State private errorMessage: string = '';
+  private callbacksRegistered: boolean = false;
 
   private onRemoteDataChanged = (state: SyncReadingState) => {
     if (state.sessionId === this.sessionId && state.instructionType !== 'cmd:next_page'
@@ -55,13 +59,13 @@ export struct RemoteControlPage {
   aboutToDisappear() {
     logger.info(TAG, 'RemoteControlPage aboutToDisappear');
     // 断开遥控器连接，但不需要终止分布式会话（因为目标端可能还要继续阅读）
-    distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
-    distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
+    this.detachRemoteCallbacks();
   }
 
   private onReady(context: NavDestinationContext) {
     const params = context.pathInfo.param as ContinuationTriggeredPayload;
     if (params) {
+      this.detachRemoteCallbacks();
       this.sessionId = params.sessionId;
       this.bookId = params.bookId;
       this.chapterIndex = params.chapterIndex;
@@ -79,9 +83,55 @@ export struct RemoteControlPage {
         this.readingOffset = latestState.offset;
       }
 
-      distributedDataSyncManager.addOnDataChangedCallback(this.onRemoteDataChanged);
-      distributedDataSyncManager.addOnStatusChangedCallback(this.onRemoteStatusChanged);
+      this.attachRemoteCallbacks();
     }
+  }
+
+  private attachRemoteCallbacks(): void {
+    if (this.callbacksRegistered) {
+      return;
+    }
+    distributedDataSyncManager.addOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.addOnStatusChangedCallback(this.onRemoteStatusChanged);
+    this.callbacksRegistered = true;
+  }
+
+  private detachRemoteCallbacks(): void {
+    if (!this.callbacksRegistered) {
+      return;
+    }
+    distributedDataSyncManager.removeOnDataChangedCallback(this.onRemoteDataChanged);
+    distributedDataSyncManager.removeOnStatusChangedCallback(this.onRemoteStatusChanged);
+    this.callbacksRegistered = false;
+  }
+
+  private isHostedByIsolatedAbility(): boolean {
+    return this.remoteControlAbilityInstanceId.length > 0;
+  }
+
+  private async closeRemoteControl(leaveSession: boolean, reason: string): Promise<void> {
+    if (leaveSession) {
+      distributedDataSyncManager.leaveSession();
+    }
+    this.detachRemoteCallbacks();
+
+    if (this.isHostedByIsolatedAbility()) {
+      try {
+        const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+        if (!hostContext) {
+          logger.warn(TAG, `独立遥控器关闭失败，回退页面栈: reason=${reason}`);
+          this.pageStack.pop();
+          return;
+        }
+        logger.info(TAG, `独立遥控器关闭: reason=${reason}, instanceId=${this.remoteControlAbilityInstanceId}`);
+        await hostContext.terminateSelf();
+        return;
+      } catch (error) {
+        logger.warn(TAG, `独立遥控器关闭异常，回退页面栈: reason=${reason}, error=${String(error)}`);
+      }
+    }
+
+    this.pageStack.pop();
   }
 
   private sendCommand(cmd: string) {
@@ -106,7 +156,7 @@ export struct RemoteControlPage {
           .width(48)
           .height(48)
           .onClick(() => {
-            this.pageStack.pop();
+            void this.closeRemoteControl(false, 'back');
           })
 
           Text('遥控器模式')
@@ -125,9 +175,7 @@ export struct RemoteControlPage {
           .width(48)
           .height(48)
           .onClick(() => {
-            // 退出并主动离开会话
-            distributedDataSyncManager.leaveSession();
-            this.pageStack.pop();
+            void this.closeRemoteControl(true, 'leave_session');
           })
         }
         .width('100%')

@@ -160,6 +160,7 @@ export class ImageCacheManager {
   // 优化：Cookie内存缓存（避免每次请求都查询数据库）
   private cookieCache = new Map<number, CookieCacheEntry>();
   private readonly COOKIE_CACHE_TTL = 5 * 60 * 1000; // 5分钟过期
+  private cleanupTimerId: number = -1;
   
   // 默认配置
   private config: ImageCacheConfig = {
@@ -1435,10 +1436,20 @@ export class ImageCacheManager {
    * 启动清理定时器
    */
   private startCleanupTimer(): void {
+    if (this.cleanupTimerId >= 0) {
+      return;
+    }
     // 每小时清理一次过期缓存
-    setInterval(() => {
+    this.cleanupTimerId = setInterval(() => {
       this.cleanupExpiredCache();
-    }, 60 * 60 * 1000);
+    }, 60 * 60 * 1000) as number;
+  }
+
+  public stopCleanupTimer(): void {
+    if (this.cleanupTimerId >= 0) {
+      clearInterval(this.cleanupTimerId);
+      this.cleanupTimerId = -1;
+    }
   }
 
   /**

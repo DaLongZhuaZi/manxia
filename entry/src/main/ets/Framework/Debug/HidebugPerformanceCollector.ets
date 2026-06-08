@@ -401,8 +401,7 @@ export class HidebugPerformanceCollector {
       // 获取调试状态
       debugInfo.isDebugState = hidebug.isDebugState();
       
-      // GWP-Asan状态获取
-      // TODO: API 20启用后取消注释以下代码
+      // GWP-Asan状态当前不采集；如后续SDK暴露稳定方法，再在这里接入。
       // try {
       //   // 使用正确的方法名获取GWP-Asan灰度状态
       //   debugInfo.gwpAsanState = hidebug.getGwpAsanGrayscaleState();
@@ -411,7 +410,6 @@ export class HidebugPerformanceCollector {
       //   debugInfo.gwpAsanState = 0;
       // }
       
-      // 临时返回默认值，等待API 20启用
       debugInfo.gwpAsanState = 0;
       
     } catch (error) {
@@ -621,8 +619,7 @@ export class HidebugPerformanceCollector {
       // 获取调试状态
       debugInfo.isDebugState = hidebug.isDebugState();
       
-      // GWP-Asan状态获取
-      // TODO: API 20启用后取消注释以下代码
+      // GWP-Asan状态当前不采集；如后续SDK暴露稳定方法，再在这里接入。
       // try {
       //   // 使用正确的方法名获取GWP-Asan灰度状态
       //   debugInfo.gwpAsanState = hidebug.getGwpAsanGrayscaleState();
@@ -631,7 +628,6 @@ export class HidebugPerformanceCollector {
       //   debugInfo.gwpAsanState = 0;
       // }
       
-      // 临时返回默认值，等待API 20启用
       debugInfo.gwpAsanState = 0;
       
     } catch (error) {

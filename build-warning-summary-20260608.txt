@@ -1,0 +1,270 @@
+﻿TOTAL=1191
+
+BY_MESSAGE
+
+Count Name                                                                                                         
+----- ----                                                                                                         
+ 1017 Function may throw exceptions. Special handling is required.                                                 
+   95 'key' can only be used for testing directories                                                               
+   22 The system capacity of this api 'motion' is not supported on all devices                                     
+   10 The system capacity of this api 'HoldingHandStatus' is not supported on all devices                          
+    8 The API is not supported on all devices. Use the canIUse condition to determine whether the API is supported.
+    7 The system capacity of this api 'OperatingHandStatus' is not supported on all devices                        
+    5 To use this API, you need to apply for the permissions: ohos.permission.READ_PASTEBOARD                      
+    4 The system capacity of this api 'backgroundTaskManager' is not supported on all devices                      
+    3 The system capacity of this api 'RIGHT_HAND_OPERATED' is not supported on all devices                        
+    3 The system capacity of this api 'UNKNOWN_STATUS' is not supported on all devices                             
+    3 The system capacity of this api 'LEFT_HAND_OPERATED' is not supported on all devices                         
+    2 The system capacity of this api 'BOTH_HANDS_HELD' is not supported on all devices                            
+    2 The system capacity of this api 'NOT_HELD' is not supported on all devices                                   
+    2 The system capacity of this api 'off' is not supported on all devices                                        
+    2 The system capacity of this api 'on' is not supported on all devices                                         
+    2 The system capacity of this api 'LEFT_HAND_HELD' is not supported on all devices                             
+    2 The system capacity of this api 'RIGHT_HAND_HELD' is not supported on all devices                            
+    1 The system capacity of this api 'getRecentOperatingHandStatus' is not supported on all devices               
+    1 To use this API, you need to apply for the permissions: ohos.permission.SET_WINDOW_TRANSPARENT               
+
+
+
+
+TOP_50_FILES
+
+Count Name                                                                       
+----- ----                                                                       
+  170 entry\src\main\ets\Framework\Novel\NovelDataManager.ets                    
+   93 entry\src\main\ets\Framework\Rss\RssSubscriptionDataManager.ets            
+   61 entry\src\main\ets\Framework\Managers\HoldingAwarenessManager.ets          
+   41 entry\src\main\ets\Framework\Subscription\SubscriptionDataManager.ets      
+   35 entry\src\main\ets\pages\RssSubscriptionManagementPage.ets                 
+   35 entry\src\main\ets\pages\NovelSourceManagementPage.ets                     
+   35 entry\src\main\ets\pages\UnifiedDetailPage.ets                             
+   31 entry\src\main\ets\pages\TransferPage.ets                                  
+   28 entry\src\main\ets\pages\BackupPage.ets                                    
+   27 entry\src\main\ets\components\MangaViewer.ets                              
+   23 entry\src\main\ets\Framework\Database\DatabaseManager.ets                  
+   23 entry\src\main\ets\pages\DataManagementPage.ets                            
+   23 entry\src\main\ets\pages\DownloadSyncPage.ets                              
+   19 entry\src\main\ets\pages\EpubWebViewReaderPage.ets                         
+   19 entry\src\main\ets\pages\MainMenuPage.ets                                  
+   18 entry\src\main\ets\components\editor\CodeEditorComponent.ets               
+   17 entry\src\main\ets\Framework\Managers\EnhancedBackupManager.ets            
+   15 entry\src\main\ets\Utils\SafeFileUtils.ets                                 
+   15 entry\src\main\ets\Utils\WindowManager.ets                                 
+   15 entry\src\main\ets\pages\AnnotationCenterPage.ets                          
+   13 entry\src\main\ets\pages\NovelReadAloudPage.ets                            
+   13 entry\src\main\ets\pages\NovelReaderPage.ets                               
+   13 entry\src\main\ets\pages\FileEditorPage.ets                                
+   12 entry\src\main\ets\pages\MangaReaderPage.ets                               
+   12 entry\src\main\ets\Framework\ReadAloud\ReadAloudMediaSession.ets           
+   11 entry\src\main\ets\pages\EBookImageReaderPage.ets                          
+   11 entry\src\main\ets\Framework\Components\ReadAloudCacheDialogComponent.ets  
+   11 entry\src\main\ets\Framework\Network\NetworkFolderManager.ets              
+   10 entry\src\main\ets\pages\settings\MainMenuSettingsSubPage.ets              
+   10 entry\src\main\ets\pages\WelcomeGuidePage.ets                              
+   10 entry\src\main\ets\Framework\Services\TransferUploadStoreService.ets       
+   10 entry\src\main\ets\pages\BookSourceManagementPage.ets                      
+   10 entry\src\main\ets\pages\SubscriptionManagementPage.ets                    
+    9 entry\src\main\ets\pages\RssSubscriptionPage.ets                           
+    9 entry\src\main\ets\pages\NovelDictRulePage.ets                             
+    9 entry\src\main\ets\Framework\Components\NovelSettingsDialogComponent.ets   
+    9 entry\src\main\ets\components\TextReaderComponent.ets                      
+    9 entry\src\main\ets\Framework\Components\GroupManagementDialog.ets          
+    9 entry\src\main\ets\pages\NovelTxtTocRulePage.ets                           
+    8 entry\src\main\ets\pages\ReadAloudPlayerPage.ets                           
+    8 entry\src\main\ets\Framework\Cache\OnlineImageLoader.ets                   
+    8 entry\src\main\ets\pages\JsvmPlaygroundPage.ets                            
+    8 entry\src\main\ets\pages\EBookReaderPage.ets                               
+    8 entry\src\main\ets\Framework\Components\TrackingSettingsDialogComponent.ets
+    8 entry\src\main\ets\pages\MangaDetailPage.ets                               
+    7 entry\src\main\ets\pages\StorageManagementPage.ets                         
+    7 entry\src\main\ets\Framework\Components\EpubWebViewReaderComponent.ets     
+    7 entry\src\main\ets\pages\SourceDetailPage.ets                              
+    7 entry\src\main\ets\pages\NovelReplaceRulePage.ets                          
+    7 entry\src\main\ets\Utils\CryptoUtils.ets                                   
+
+
+
+
+MANGA_READER_RELATED_FILES
+
+Count Name                                                                   
+----- ----                                                                   
+   35 entry\src\main\ets\pages\NovelSourceManagementPage.ets                 
+   27 entry\src\main\ets\components\MangaViewer.ets                          
+   19 entry\src\main\ets\pages\EpubWebViewReaderPage.ets                     
+   13 entry\src\main\ets\pages\NovelReaderPage.ets                           
+   12 entry\src\main\ets\pages\MangaReaderPage.ets                           
+   11 entry\src\main\ets\pages\EBookImageReaderPage.ets                      
+   10 entry\src\main\ets\pages\BookSourceManagementPage.ets                  
+    9 entry\src\main\ets\components\TextReaderComponent.ets                  
+    8 entry\src\main\ets\pages\EBookReaderPage.ets                           
+    8 entry\src\main\ets\Framework\Cache\OnlineImageLoader.ets               
+    8 entry\src\main\ets\pages\MangaDetailPage.ets                           
+    7 entry\src\main\ets\Framework\Components\EpubWebViewReaderComponent.ets 
+    7 entry\src\main\ets\pages\SourceDetailPage.ets                          
+    4 entry\src\main\ets\Framework\Download\OnlineMangaArchiveService.ets    
+    4 entry\src\main\ets\pages\NovelSourceLoginPage.ets                      
+    4 entry\src\main\ets\pages\settings\SuwayomiWebUIPage.ets                
+    2 entry\src\main\ets\pages\OnlineEBookDetailPage.ets                     
+    2 entry\src\main\ets\Framework\Parsers\EBookParser.ets                   
+    2 entry\src\main\ets\Framework\Services\SourceDetailSearchExecutor.ets   
+    2 entry\src\main\ets\Framework\Source\KomgaConfigStore.ets               
+    2 entry\src\main\ets\pages\MangaSettingsPage.ets                         
+    2 entry\src\main\ets\Framework\Components\EBookMetadataDialog.ets        
+    1 entry\src\main\ets\pages\RssSourceDebugPage.ets                        
+    1 entry\src\main\ets\pages\EBookSettingsPage.ets                         
+    1 entry\src\main\ets\Framework\Components\ChangeSourceDialogComponent.ets
+    1 entry\src\main\ets\components\source\ProxyConfigDialog.ets             
+    1 entry\src\main\ets\pages\SourceManagementPage.ets                      
+    1 entry\src\main\ets\components\TextReaderSettingsPanel.ets              
+    1 entry\src\main\ets\Framework\Parsers\PdfToMangaImporter.ets            
+    1 entry\src\main\ets\Framework\Components\MangaImportDialog.ets          
+    1 entry\src\main\ets\pages\settings\KomgaSettingsPage.ets                
+    1 entry\src\main\ets\Framework\Scraper\GoogleBooksScraper.ets            
+    1 entry\src\main\ets\Framework\WebView\InvisibleWebViewComponent.ets     
+    1 entry\src\main\ets\Framework\Source\KomgaCacheManager.ets              
+    1 entry\src\main\ets\Framework\WebView\WebViewSourceManager.ets          
+    1 entry\src\main\ets\pages\KomgaReaderPage.ets                           
+    1 entry\src\main\ets\components\MainMenuKomgaTabContent.ets              
+    1 entry\src\main\ets\pages\ZLibraryReaderPage.ets                        
+    1 entry\src\main\ets\pages\KomgaMangaDetailPage.ets                      
+    1 entry\src\main\ets\pages\KomgaBrowsePage.ets                           
+    1 entry\src\main\ets\pages\KomgaLibraryDetailPage.ets                    
+    1 entry\src\main\ets\pages\SuwayomiMangaDetailPage.ets                   
+
+
+
+
+OPTIONAL_PROP_WARNINGS
+
+
+KEY_WARNINGS
+
+Rel                                                        Line Col
+---                                                        ---- ---
+entry\src\main\ets\components\MangaViewer.ets              4890  14
+entry\src\main\ets\components\MangaViewer.ets              4920  14
+entry\src\main\ets\components\MangaViewer.ets              4953  14
+entry\src\main\ets\components\MangaViewer.ets              5066   8
+entry\src\main\ets\components\MangaViewer.ets              5135  18
+entry\src\main\ets\components\MangaViewer.ets              5163  18
+entry\src\main\ets\components\MangaViewer.ets              5187  18
+entry\src\main\ets\components\MangaViewer.ets              5220  18
+entry\src\main\ets\components\MangaViewer.ets              5248  18
+entry\src\main\ets\components\MangaViewer.ets              5272  18
+entry\src\main\ets\components\MangaViewer.ets              5306  16
+entry\src\main\ets\components\MangaViewer.ets              5345  10
+entry\src\main\ets\components\MangaViewer.ets              5360  16
+entry\src\main\ets\components\MangaViewer.ets              5421  16
+entry\src\main\ets\components\MangaViewer.ets              5481   8
+entry\src\main\ets\components\MangaViewer.ets              5856  14
+entry\src\main\ets\components\MangaViewer.ets              6049   6
+entry\src\main\ets\components\MangaViewer.ets              6344  14
+entry\src\main\ets\components\MangaViewer.ets              6370  12
+entry\src\main\ets\components\MangaViewer.ets              6391  12
+entry\src\main\ets\components\MangaViewer.ets              6666   6
+entry\src\main\ets\components\MangaViewer.ets              6694   6
+entry\src\main\ets\components\MangaViewer.ets              6796  12
+entry\src\main\ets\components\MangaViewer.ets              6904  10
+entry\src\main\ets\components\MangaViewer.ets              6938  12
+entry\src\main\ets\components\MangaViewer.ets              8956   8
+entry\src\main\ets\components\MangaViewer.ets             13010   6
+entry\src\main\ets\pages\MangaSettingsPage.ets             1283  18
+entry\src\main\ets\pages\MangaSettingsPage.ets             1369  20
+entry\src\main\ets\pages\MangaDetailPage.ets               4650  14
+entry\src\main\ets\pages\WelcomeGuidePage.ets              1443  16
+entry\src\main\ets\pages\WelcomeGuidePage.ets              1480  16
+entry\src\main\ets\pages\WelcomeGuidePage.ets              1534  16
+entry\src\main\ets\pages\WelcomeGuidePage.ets              1571  16
+entry\src\main\ets\pages\TransferPage.ets                  2220   6
+entry\src\main\ets\pages\TransferPage.ets                  2250   8
+entry\src\main\ets\pages\TransferPage.ets                  2276   8
+entry\src\main\ets\pages\TransferPage.ets                  2315   6
+entry\src\main\ets\pages\TransferPage.ets                  2349   6
+entry\src\main\ets\pages\TransferPage.ets                  2376   6
+entry\src\main\ets\pages\TransferPage.ets                  2449   6
+entry\src\main\ets\pages\TransferPage.ets                  2481   6
+entry\src\main\ets\pages\TransferPage.ets                  2513   6
+entry\src\main\ets\pages\TransferPage.ets                  2545   6
+entry\src\main\ets\pages\TransferPage.ets                  2639   6
+entry\src\main\ets\pages\TransferPage.ets                  2786   6
+entry\src\main\ets\pages\TransferPage.ets                  2923   6
+entry\src\main\ets\pages\TransferPage.ets                  2949   6
+entry\src\main\ets\pages\TransferPage.ets                  3103   6
+entry\src\main\ets\pages\TransferPage.ets                  3342   6
+entry\src\main\ets\pages\TransferPage.ets                  3480   6
+entry\src\main\ets\pages\TransferPage.ets                  3533   6
+entry\src\main\ets\pages\TransferPage.ets                  3613   6
+entry\src\main\ets\pages\TransferPage.ets                  3693   6
+entry\src\main\ets\pages\TransferPage.ets                  3805   6
+entry\src\main\ets\pages\TransferPage.ets                  3907   6
+entry\src\main\ets\pages\TransferPage.ets                  3930  16
+entry\src\main\ets\pages\TransferPage.ets                  3995   6
+entry\src\main\ets\pages\TransferPage.ets                  4050   6
+entry\src\main\ets\pages\TransferPage.ets                  4165   6
+entry\src\main\ets\pages\TransferPage.ets                  4236   6
+entry\src\main\ets\pages\TransferPage.ets                  4336   6
+entry\src\main\ets\pages\TransferPage.ets                  4362   8
+entry\src\main\ets\pages\TransferPage.ets                  4373   6
+entry\src\main\ets\pages\TransferPage.ets                  4451   6
+entry\src\main\ets\components\TextReaderSettingsPanel.ets   506   8
+entry\src\main\ets\pages\CoverSelectionPage.ets             344   8
+entry\src\main\ets\pages\CoverSelectionPage.ets             360   8
+entry\src\main\ets\pages\StorageManagementPage.ets         1104   6
+entry\src\main\ets\pages\StorageManagementPage.ets         1216   6
+entry\src\main\ets\pages\StorageManagementPage.ets         1336   6
+entry\src\main\ets\pages\StorageManagementPage.ets         1459   6
+entry\src\main\ets\pages\StorageManagementPage.ets         1541   8
+entry\src\main\ets\pages\StorageManagementPage.ets         1576  10
+entry\src\main\ets\pages\EBookSettingsPage.ets             1715  18
+entry\src\main\ets\pages\MainMenuPage.ets                 14219   8
+entry\src\main\ets\pages\MainMenuPage.ets                 21463   6
+entry\src\main\ets\pages\MainMenuPage.ets                 21561   6
+entry\src\main\ets\pages\MainMenuPage.ets                 21661   6
+entry\src\main\ets\pages\MainMenuPage.ets                 21756   6
+entry\src\main\ets\pages\MainMenuPage.ets                 21965   6
+entry\src\main\ets\pages\MainMenuPage.ets                 24847   6
+entry\src\main\ets\pages\MainMenuPage.ets                 25228   6
+entry\src\main\ets\pages\MainMenuPage.ets                 25651   6
+entry\src\main\ets\pages\MainMenuPage.ets                 30800  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30812  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30819  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30831  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30883  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30924  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30934  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30944  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30954  12
+entry\src\main\ets\pages\MainMenuPage.ets                 30964  12
+entry\src\main\ets\pages\TransferFloatingWindowPage.ets     558   6
+
+
+
+
+PERMISSION_WARNINGS
+
+Rel                                                        Line Col Message                                                                                       
+---                                                        ---- --- -------                                                                                       
+entry\src\main\ets\Utils\WindowManager.ets                 1336  26 To use this API, you need to apply for the permissions: ohos.permission.SET_WINDOW_TRANSPARENT
+entry\src\main\ets\pages\BookSourceManagementPage.ets       518  64 To use this API, you need to apply for the permissions: ohos.permission.READ_PASTEBOARD       
+entry\src\main\ets\pages\NovelReplaceRulePage.ets           186  36 To use this API, you need to apply for the permissions: ohos.permission.READ_PASTEBOARD       
+entry\src\main\ets\pages\NovelTxtTocRulePage.ets            224  36 To use this API, you need to apply for the permissions: ohos.permission.READ_PASTEBOARD       
+entry\src\main\ets\pages\NovelDictRulePage.ets              208  36 To use this API, you need to apply for the permissions: ohos.permission.READ_PASTEBOARD       
+entry\src\main\ets\pages\RssSubscriptionManagementPage.ets 1118  65 To use this API, you need to apply for the permissions: ohos.permission.READ_PASTEBOARD       
+
+
+
+
+RESOURCE_CONFLICTS
+
+Count Name                   
+----- ----                   
+    4 module_desc            
+    3 LibraryAbility_desc    
+    3 LibraryAbility_label   
+    1 Library_desc           
+    1 start_window_background
+    1 Library_label          
+
+
+

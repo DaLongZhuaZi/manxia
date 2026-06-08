@@ -6,6 +6,9 @@ import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { TabContentCacheManager, KomgaCacheData } from '../Framework/Cache/TabContentCacheManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import KomgaCacheManager from '../Framework/Source/KomgaCacheManager';
@@ -83,9 +86,12 @@ export struct KomgaBrowsePage {
   @State hasMore: boolean = false;
   @State currentPage: number = 1;
   @State errorMessage: string = '';
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
 
   private executor: KomgaSourceExecutor = getKomgaSourceExecutor();
   private cacheManager: TabContentCacheManager = TabContentCacheManager.getInstance();
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   private componentId: string = 'KomgaBrowsePage';
   private readonly prefsName: string = 'komga_browse_prefs';
   private initialized: boolean = false;
@@ -97,6 +103,7 @@ export struct KomgaBrowsePage {
       this.fontState = newState;
     });
     void this.prepare();
+    void this.refreshPageGuide('aboutToAppear');
   }
 
   aboutToDisappear(): void {
@@ -110,6 +117,71 @@ export struct KomgaBrowsePage {
 
   private toast(message: string): void {
     this.getUIContext().getPromptAction().showToast({ message: message, duration: 1800 });
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_komga_root');
+    } catch (error) {
+      logger.warn(TAG, `获取 Komga 引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.KOMGA);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.KOMGA) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    if (this.prepareGuidePresentation(step.anchorId) && !trigger.endsWith('_after_prepare')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_prepare`);
+      }, 180);
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+      setTimeout(() => {
+        void this.refreshPageGuide('retry_layout');
+      }, 120);
+    }
+    logger.debug(TAG, `Komga 引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private prepareGuidePresentation(anchorId?: string): boolean {
+    if (anchorId === 'guide_komga_filters' && !this.showFilters) {
+      this.showFilters = true;
+      void this.savePreferences();
+      return true;
+    }
+    if (anchorId === 'guide_komga_content' && this.showFilters) {
+      this.showFilters = false;
+      void this.savePreferences();
+      return true;
+    }
+    return false;
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   private revealPageContent(): void {
@@ -727,7 +799,7 @@ export struct KomgaBrowsePage {
   private buildLibraryEntryCard(library: KomgaLibraryOption) {
     Row({ space: 10 }) {
       Stack() {
-        SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+        SymbolGlyph($r('sys.symbol.bookshelf'))
           .fontSize(18)
           .fontColor([this.color('accent_blue')])
       }
@@ -839,6 +911,7 @@ export struct KomgaBrowsePage {
     .backgroundColor(this.color('panel_background'))
     .borderRadius(22)
     .border({ width: 1, color: this.color('panel_border') })
+    .id('guide_komga_overview')
   }
 
   @Builder
@@ -1086,6 +1159,7 @@ export struct KomgaBrowsePage {
       .backgroundColor(this.color('panel_background'))
       .borderRadius(20)
       .border({ width: 1, color: this.color('panel_border') })
+      .id('guide_komga_filters')
 
       if (this.browseMode === 'library' && this.filterOptions.libraries.length > 0) {
         Column({ space: 10 }) {
@@ -1192,7 +1266,7 @@ export struct KomgaBrowsePage {
         .border({ width: 1, color: this.color('panel_border') })
       } else if (this.items.length <= 0) {
         Column({ space: 12 }) {
-          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          SymbolGlyph($r('sys.symbol.picture'))
             .fontSize(28)
             .fontColor([this.color('text_muted')])
           Text(this.searchQuery.trim().length > 0 ? '没有找到匹配内容' : '当前没有可浏览内容')
@@ -1247,6 +1321,7 @@ export struct KomgaBrowsePage {
       }
     }
     .width('100%')
+    .id('guide_komga_content')
   }
 
   build() {
@@ -1310,9 +1385,30 @@ export struct KomgaBrowsePage {
         })
         .width('100%')
         .height('100%')
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
       }
       .width('100%')
       .height('100%')
+      .id('guide_komga_root')
     }
     .title('Komga 浏览')
     .onReady((context: NavDestinationContext) => {
@@ -1320,6 +1416,7 @@ export struct KomgaBrowsePage {
     })
     .onShown(() => {
       this.revealPageContent();
+      void this.refreshPageGuide('onShown');
     })
   }
 }

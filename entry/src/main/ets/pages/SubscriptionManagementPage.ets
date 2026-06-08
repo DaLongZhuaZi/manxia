@@ -1102,7 +1102,7 @@ export struct SubscriptionManagementPage {
   }
 
   private getCreateModeSymbol(mode: SubscriptionCreateMode): Resource {
-    return $r('sys.symbol.bookshelf_badge_checkmark');
+    return $r('sys.symbol.bookshelf');
   }
 
   private isCreateModeSelected(mode: SubscriptionCreateMode): boolean {
@@ -1495,7 +1495,7 @@ export struct SubscriptionManagementPage {
       {
         id: 'refresh',
         label: '刷新',
-        symbol: $r('sys.symbol.bookshelf_badge_checkmark'),
+        symbol: $r('sys.symbol.arrow_clockwise'),
         enabled: !this.isBusy && this.runningRuleId.length <= 0,
         onClick: () => {
           void this.refreshRules();
@@ -1931,7 +1931,7 @@ export struct SubscriptionManagementPage {
           Column() {
             this.buildActionButton(
               this.runningRuleId === rule.id ? '检查中...' : '现在检查',
-              $r('sys.symbol.bookshelf_badge_checkmark'),
+              $r('sys.symbol.checkmark_circle'),
               SubscriptionPageButtonTone.SECONDARY,
               this.runningRuleId.length <= 0,
               () => {
@@ -2057,7 +2057,7 @@ export struct SubscriptionManagementPage {
   private buildEmptyState() {
     Column({ space: 16 }) {
       Row({ space: 8 }) {
-        SymbolGlyph($r('sys.symbol.bookshelf_badge_checkmark'))
+        SymbolGlyph($r('sys.symbol.bell'))
           .fontSize(18)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
         Text('还没有更新提醒')
@@ -2182,7 +2182,7 @@ export struct SubscriptionManagementPage {
   private buildCreateShelfOptionChip(shelf: TypeShelf) {
     Button() {
       Row({ space: 6 }) {
-        SymbolGlyph($r('sys.symbol.bookshelf_badge_checkmark'))
+        SymbolGlyph($r('sys.symbol.bookshelf'))
           .fontSize(14)
           .fontColor([this.createSelectedShelfId === shelf.id
             ? Color.White
@@ -2441,7 +2441,7 @@ export struct SubscriptionManagementPage {
   private buildCreateDialogTargetTab() {
     Column({ space: 12 }) {
       Row({ space: 8 }) {
-        SymbolGlyph($r('sys.symbol.bookshelf_badge_checkmark'))
+        SymbolGlyph($r('sys.symbol.bell'))
           .fontSize(16)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
         Text('提醒对象')
@@ -2762,8 +2762,8 @@ export struct SubscriptionManagementPage {
     } else {
       Column({ space: 12 }) {
         Row({ space: 8 }) {
-          this.buildCreateDialogTabButton('基础', $r('sys.symbol.bookshelf_badge_checkmark'), 0)
-          this.buildCreateDialogTabButton('筛选', $r('sys.symbol.bookshelf_badge_checkmark'), 1)
+          this.buildCreateDialogTabButton('基础', $r('sys.symbol.bell'), 0)
+          this.buildCreateDialogTabButton('筛选', $r('sys.symbol.funnel'), 1)
           this.buildCreateDialogTabButton('操作', $r('sys.symbol.gearshape'), 2)
         }
         .width('100%')

@@ -1,20 +1,27 @@
 # 更新日志
 
-## v0.1.1 (104802306)
+## v0.1.1 (104802307)
 
 ### 核心重构
-- 全面消除ESObject，30+文件迁移至Record与显式接口
-- DistributedDataSyncManager改为多回调模式，支持独立注册与注销
-- 移除definite assignment assertion，组件@Prop改为带默认值
-- GlobalTaskCoordinator新增IPageManager接口，消除ESObject
+- 漫画阅读器拆分为资源加载、预加载、Webtoon、卷页、PixelMap 生命周期和阅读流程监控模块
+- 新增独立 Ability：听书播放器、文件编辑器、外部文件任务、遥控器
+- 备份恢复扩展为事务化恢复、失败传播、Preferences、小说规则、追踪记录和敏感云配置分离
+- 系统资源目录更新：4027 个 Symbol、系统颜色和系统媒体资源预览
 
 ### 功能与优化
-- 9处showToast迁移至UIContext.getPromptAction()
-- 搜索调度改为滑动窗口并发，合并网络任务队列避免卡顿
-- Suwayomi新增扩展章节信息接口
-- Komga配置保存规范化
-- NGF编排器新增完成承诺，延迟分布式会话加入
+- 文件编辑器支持多实例、多标签、快照恢复、Ctrl/Cmd+S、能力审计和图源/书源联动保存
+- 外部文件打开、系统分享、局域网传书、网络文件夹导入统一走独立任务流程
+- 传书页新增应用内小窗，Cloudflare Worker 新增信令房间、深链和 WebRTC 文件发送实验
+- Suwayomi / Komga 加入默认远程书库入口、设置开关、欢迎引导和 Komga 页面内引导
+- 主书库新增双指多选、滑动删除、更多操作按钮和混合内容批量删除
 
 ### 其他修复
-- 清理UTF-8 BOM标记
-- 修复变量替换正则与非法属性附加
+- AVIF 测试页扩展为通用图片预览，支持 AVIF/JPG/PNG/WebP 等格式
+- WebDAV 备份增加文件名净化、索引规范化、32 MiB 回退限制和原子下载替换
+- SafeFileUtils 与 TarPackager 改为严格读写、路径校验和流式处理
+- 封面缓存增加失败冷却和 PixelMap 淘汰释放，下载管理器增加状态索引
+- 阅读统计页、弹窗、隐私认证和系统资源预览页完成视觉与布局优化
+- 新增构建告警摘要、AGENTS 本机命令规则和本次高风险改动备份文件
+
+### 已知问题
+- 独立 Ability、小窗、Cloudflare 信令、WebRTC 传输和完整备份恢复仍需更多真机与网络环境验证

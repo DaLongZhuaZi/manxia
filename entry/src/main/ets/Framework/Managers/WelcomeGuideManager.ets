@@ -29,7 +29,8 @@ export enum GuideStep {
   CUSTOM_EXPERIENCE = 5,  // 自定义体验引导
   ANALYTICS_PERMISSION = 6, // 通知权限与使用场景
   LIBRARY_INTRO = 7,     // 隐私书库与SFW模式说明
-  COMPLETED = 8          // 完成
+  REMOTE_LIBRARY_GUIDE = 8, // Suwayomi 与 Komga 远程书库引导
+  COMPLETED = 9          // 完成
 }
 
 export enum GuideFlowMode {
@@ -90,6 +91,32 @@ export class WelcomeGuideManager {
       return GuideStep.CUSTOM_EXPERIENCE;
     }
     return step;
+  }
+
+  private getNextStepForCurrentStep(step: GuideStep): GuideStep {
+    switch (step) {
+      case GuideStep.WELCOME:
+        return GuideStep.THEME_SELECTION;
+      case GuideStep.THEME_SELECTION:
+        return GuideStep.DATA_IMPORT;
+      case GuideStep.DATA_IMPORT:
+        return this.isSourceFeaturesEnabled() ? GuideStep.IMAGE_SOURCE_GUIDE : GuideStep.REMOTE_LIBRARY_GUIDE;
+      case GuideStep.IMAGE_SOURCE_GUIDE:
+        return GuideStep.BOOK_SOURCE_GUIDE;
+      case GuideStep.BOOK_SOURCE_GUIDE:
+        return GuideStep.REMOTE_LIBRARY_GUIDE;
+      case GuideStep.REMOTE_LIBRARY_GUIDE:
+        return GuideStep.CUSTOM_EXPERIENCE;
+      case GuideStep.CUSTOM_EXPERIENCE:
+        return GuideStep.ANALYTICS_PERMISSION;
+      case GuideStep.ANALYTICS_PERMISSION:
+        return GuideStep.LIBRARY_INTRO;
+      case GuideStep.LIBRARY_INTRO:
+        return GuideStep.COMPLETED;
+      case GuideStep.COMPLETED:
+      default:
+        return GuideStep.COMPLETED;
+    }
   }
 
   /**
@@ -339,8 +366,8 @@ export class WelcomeGuideManager {
       if (!this.isInitialized) {
         await this.initialize();
       }
-      if (this.currentStep < GuideStep.COMPLETED) {
-        this.currentStep = this.normalizeStep((this.currentStep + 1) as GuideStep);
+      if (this.currentStep !== GuideStep.COMPLETED) {
+        this.currentStep = this.normalizeStep(this.getNextStepForCurrentStep(this.currentStep));
         await this.saveGuideState();
         logger.info(TAG, `进入下一步: ${this.currentStep}`);
       }

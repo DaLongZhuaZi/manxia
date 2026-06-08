@@ -8,4 +8,6 @@ export interface EBookReaderParams {
   readerHostMode?: string;
   readerInstanceId?: string;
   readerTitle?: string;
+  originImportId?: string;
+  originImportKind?: string;
 }

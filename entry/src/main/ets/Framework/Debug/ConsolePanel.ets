@@ -231,8 +231,7 @@ export class ConsolePanel {
           if (perf.length === 0) return '暂无性能数据。';
           return `系统性能:\n${perf.map(p => `${p.name}: ${typeof p.averageTime === 'number' ? p.averageTime.toFixed(2) : '未知'}ms`).join('\n')}`;
         case 'config':
-          // ... (config 命令逻辑保持不变)
-          return 'config 命令待实现';
+          return 'config 命令当前未接入配置源；请通过设置页修改运行配置。';
         default:
           return `未知命令: ${cmd}. 输入 'help' 查看可用命令。`;
       }
@@ -367,5 +366,4 @@ export struct ConsolePanelComponent {
     // Component build logic here
   }
 }
-
 

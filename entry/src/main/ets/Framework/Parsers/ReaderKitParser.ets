@@ -364,12 +364,10 @@ export class ReaderKitEBookParser {
   }
 
   /**
-   * 获取 Reader Kit 文件类型枚举
-   * 注意：实际的枚举值需要根据 Reader Kit API 文档确定
+   * 获取 Reader Kit 文件类型
    */
   private getReaderKitFileType(): string {
-    // TODO: 根据实际 Reader Kit API 返回正确的文件类型枚举
-    // 例如: reader.FileType.EPUB, reader.FileType.MOBI 等
+    // ReaderKit 当前按文件路径创建处理器，这里保留格式字符串用于诊断和兜底路由。
     return this.format;
   }
 }

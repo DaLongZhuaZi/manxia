@@ -52,6 +52,9 @@ export struct LoadingPage {
   
   /** 状态更新定时器 */
   private updateTimer: number | null = null;
+  private readonly stateChangeListener = (event: LoadingStateChangeEvent): void => {
+    this.onStateChange(event);
+  };
   
   aboutToAppear(): void {
     this.uiContext = this.getUIContext();
@@ -64,7 +67,7 @@ export struct LoadingPage {
     this.updateSnapshot();
     
     // 添加状态变更监听器
-    this.loadingManager.addStateChangeListener(this.onStateChange.bind(this));
+    this.loadingManager.addStateChangeListener(this.stateChangeListener);
     
     // 启动定时更新
     this.startPeriodicUpdate();
@@ -85,7 +88,7 @@ export struct LoadingPage {
     }
     
     // 移除监听器
-    this.loadingManager.removeStateChangeListener(this.onStateChange.bind(this));
+    this.loadingManager.removeStateChangeListener(this.stateChangeListener);
     
     logger.lifecycle('LoadingPage', '加载页面已销毁');
   }

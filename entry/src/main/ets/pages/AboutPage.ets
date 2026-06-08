@@ -26,8 +26,8 @@ import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelpe
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-const APP_TEST_INVITE_URL = 'https://appgallery.huawei.com/apptest/5enwyzzrrmQ';
-const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/6a3f68c8a1506b2ddcab54807e0b0e96?invitationCode=AcNZnnBCQbh';
+const APP_TEST_INVITE_URL = 'https://appgallery.huawei.com/apptest/4PlqU4ygat3';
+const APP_GALLERY_INVITE_URL = 'https://appgallery.huawei.com/apptest/join/960c21d20aa4dd8955f0c9ac3c0e4a33?invitationCode=8vTXct0EstJ';
 
 interface InviteTestLinkOption {
   label: string;
@@ -36,16 +36,17 @@ interface InviteTestLinkOption {
 
 @CustomDialog
 struct InviteTestEntryDialog {
-  controller: CustomDialogController;
+  controller?: CustomDialogController;
   @Prop themeState: ThemeAwareState;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   onSelectAppTest: () => void = () => {};
   onSelectAppGallery: () => void = () => {};
+  onRequestClose: () => void = () => {};
   onCancel: () => void = () => {};
 
   private handleSelect(action: () => void): void {
+    this.onRequestClose();
     action();
-    this.controller.close();
   }
 
   build() {
@@ -78,7 +79,7 @@ struct InviteTestEntryDialog {
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-            Text('进入 AppTest 邀测页')
+            Text('需要先安装 AppTest')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -114,7 +115,7 @@ struct InviteTestEntryDialog {
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-            Text('进入应用市场邀测加入页')
+            Text('跳转到应用市场邀测页')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -150,8 +151,8 @@ struct InviteTestEntryDialog {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
         .borderRadius(12)
         .onClick(() => {
+          this.onRequestClose();
           this.onCancel();
-          this.controller.close();
         })
     }
     .width('86%')
@@ -555,42 +556,53 @@ struct AboutPage {
   }
 
   /**
-   * 显示邀测版本入口选择框
+   * 关闭邀测版本入口选择框
    */
-  private showInviteTestActionMenu(): void {
+  private closeInviteTestDialog(): void {
     if (this.inviteTestDialogController) {
       try {
         this.inviteTestDialogController.close();
       } catch (error) {
-        logger.warn(TAG, `关闭旧邀测弹窗失败: ${String(error)}`);
+        logger.warn(TAG, `关闭邀测弹窗失败: ${String(error)}`);
       }
       this.inviteTestDialogController = null;
     }
+  }
+
+  /**
+   * 显示邀测版本入口选择框
+   */
+  private showInviteTestActionMenu(): void {
+    this.closeInviteTestDialog();
 
     const controller = new CustomDialogController({
       builder: InviteTestEntryDialog({
         themeState: this.themeState,
         onSelectAppTest: () => {
-          this.inviteTestDialogController = null;
           void this.openInviteTestLink({
             label: 'AppTest邀请',
             url: APP_TEST_INVITE_URL
           });
         },
         onSelectAppGallery: () => {
-          this.inviteTestDialogController = null;
           void this.openInviteTestLink({
             label: '应用市场邀请',
             url: APP_GALLERY_INVITE_URL
           });
         },
+        onRequestClose: () => {
+          this.closeInviteTestDialog();
+        },
         onCancel: () => {
           logger.debug(TAG, '邀测入口选择已取消或关闭');
-          this.inviteTestDialogController = null;
         }
       }),
       alignment: DialogAlignment.Center,
       autoCancel: true,
+      cancel: () => {
+        logger.debug(TAG, '邀测入口选择已取消或关闭');
+        this.inviteTestDialogController = null;
+      },
       customStyle: true
     });
     this.inviteTestDialogController = controller;

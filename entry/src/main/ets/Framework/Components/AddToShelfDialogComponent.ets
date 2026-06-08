@@ -106,7 +106,7 @@ export struct AddToShelfDialogComponent {
               ListItem() {
                 Row({ space: 12 }) {
                   Column() {
-                    SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+                    SymbolGlyph($r('sys.symbol.bookshelf'))
                       .fontSize(24)
                       .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
                   }
@@ -151,7 +151,7 @@ export struct AddToShelfDialogComponent {
                 ListItem() {
                   Row({ space: 12 }) {
                     Column() {
-                      SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+                      SymbolGlyph($r('sys.symbol.bookshelf'))
                         .fontSize(24)
                         .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
                     }

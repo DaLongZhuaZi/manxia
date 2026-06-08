@@ -177,7 +177,7 @@ export struct DownloadDialogComponent {
     Column({ space: 16 }) {
       Row({ space: 12 }) {
         Column() {
-          SymbolGlyph($r('sys.symbol.doc_plaintext_2'))
+          SymbolGlyph($r('sys.symbol.arrow_down_circle'))
             .fontSize(24)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
         }

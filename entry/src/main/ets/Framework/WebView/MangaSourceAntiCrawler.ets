@@ -225,7 +225,7 @@ export class MangaSourceAntiCrawler {
       const config = this.config.captcha as CaptchaConfig;
 
       if (config.autoSolve) {
-        // 自动解决验证码（需要第三方服务）
+        // 自动验证码依赖外部识别服务，本地版本只返回明确受限原因。
         return await this.autoSolveCaptcha(captchaType);
       } else {
         // 手动处理验证码
@@ -564,13 +564,12 @@ export class MangaSourceAntiCrawler {
   }
 
   async autoSolveCaptcha(type: string): Promise<CaptchaResult> {
-    // 这里需要集成第三方验证码解决服务
     logger.warn(TAG, '自动解决验证码功能需要第三方服务支持');
     return {
       detected: true,
       type: type as 'recaptcha' | 'hcaptcha' | 'image' | 'text' | 'unknown',
       solved: false,
-      error: '自动解决验证码功能暂未实现'
+      error: '自动解决验证码需要接入第三方验证码识别服务，本地版本不自动提交验证码'
     };
   }
 

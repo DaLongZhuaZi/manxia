@@ -1259,7 +1259,7 @@ export struct ReadAloudCacheDialogComponent {
           this.buildGlassSectionChrome()
           Column({ space: 10 }) {
             Row({ space: 8 }) {
-              SymbolGlyph($r('sys.symbol.book'))
+              SymbolGlyph($r('sys.symbol.speaker'))
                 .fontSize(16)
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
               Text('听书缓存暂不可用')
@@ -1313,7 +1313,7 @@ export struct ReadAloudCacheDialogComponent {
           Column({ space: 12 }) {
             Row({ space: 10 }) {
               Row({ space: 10 }) {
-                SymbolGlyph($r('sys.symbol.book'))
+                SymbolGlyph($r('sys.symbol.speaker'))
                   .fontSize(16)
                   .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
                 Column({ space: 2 }) {
@@ -1674,7 +1674,7 @@ export struct ReadAloudCacheDialogComponent {
 
             Row({ space: 8 }) {
               this.buildReadAloudCacheDialogTabButton('缓存', $r('sys.symbol.arrow_down_circle'), 0)
-              this.buildReadAloudCacheDialogTabButton('管理', $r('sys.symbol.rectangle_stack'), 1)
+              this.buildReadAloudCacheDialogTabButton('管理', $r('sys.symbol.list_bullet'), 1)
               this.buildReadAloudCacheDialogTabButton('设置', $r('sys.symbol.gearshape'), 2)
             }
             .width('100%')

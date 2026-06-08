@@ -10,6 +10,7 @@ import { OnlineImageLoader, OnlineLoadOptions, RequestHeaders } from '../Cache/O
 import { isAvifFormat } from './AvifDecoder';
 
 const TAG = 'CoverImageManager';
+const MAX_COVER_CACHE_COUNT: number = 160;
 
 // 封面缓存（URL -> PixelMap）
 const coverCache: Map<string, image.PixelMap> = new Map();
@@ -19,6 +20,38 @@ const loadingUrls: Set<string> = new Set();
 
 // 加载回调队列
 const loadCallbacks: Map<string, Array<(pixelMap: image.PixelMap | null) => void>> = new Map();
+
+function releaseCoverPixelMap(pixelMap: image.PixelMap): void {
+  try {
+    pixelMap.release();
+  } catch (_e) {
+    // 忽略释放错误
+  }
+}
+
+function touchCoverCache(url: string, pixelMap: image.PixelMap): void {
+  coverCache.delete(url);
+  coverCache.set(url, pixelMap);
+}
+
+function evictCoverCacheIfNeeded(): void {
+  while (coverCache.size > MAX_COVER_CACHE_COUNT) {
+    let oldestUrl: string = '';
+    for (const cacheKey of coverCache.keys()) {
+      oldestUrl = cacheKey;
+      break;
+    }
+    if (oldestUrl.length === 0) {
+      break;
+    }
+    const pixelMap = coverCache.get(oldestUrl);
+    coverCache.delete(oldestUrl);
+    if (pixelMap) {
+      releaseCoverPixelMap(pixelMap);
+    }
+    logger.debug(TAG, `淘汰封面内存缓存: ${oldestUrl.substring(0, 50)}...`);
+  }
+}
 
 /**
  * 封面图片管理器单例
@@ -39,7 +72,12 @@ export class CoverImageManager {
    * 获取封面PixelMap（如果已缓存）
    */
   getCachedPixelMap(url: string): image.PixelMap | null {
-    return coverCache.get(url) || null;
+    const cached = coverCache.get(url);
+    if (!cached) {
+      return null;
+    }
+    touchCoverCache(url, cached);
+    return cached;
   }
   
   /**
@@ -63,6 +101,7 @@ export class CoverImageManager {
     // 检查缓存
     const cached = coverCache.get(url);
     if (cached) {
+      touchCoverCache(url, cached);
       return cached;
     }
     
@@ -138,13 +177,19 @@ export class CoverImageManager {
       
       if (pixelMap) {
         // 缓存结果
-        coverCache.set(url, pixelMap);
+        const oldPixelMap = coverCache.get(url);
+        if (oldPixelMap && oldPixelMap !== pixelMap) {
+          releaseCoverPixelMap(oldPixelMap);
+        }
+        touchCoverCache(url, pixelMap);
+        evictCoverCacheIfNeeded();
         logger.debug(TAG, `封面预加载成功: ${url.substring(0, 50)}...`);
       }
       
       // 通知等待的回调
       const callbacks = loadCallbacks.get(url) || [];
-      callbacks.forEach(cb => cb(pixelMap));
+      const callbacksSnapshot: Array<(pixelMap: image.PixelMap | null) => void> = callbacks.slice();
+      callbacksSnapshot.forEach(cb => cb(pixelMap));
       loadCallbacks.delete(url);
       
       return pixelMap;
@@ -153,7 +198,8 @@ export class CoverImageManager {
       
       // 通知等待的回调
       const callbacks = loadCallbacks.get(url) || [];
-      callbacks.forEach(cb => cb(null));
+      const callbacksSnapshot: Array<(pixelMap: image.PixelMap | null) => void> = callbacks.slice();
+      callbacksSnapshot.forEach(cb => cb(null));
       loadCallbacks.delete(url);
       
       return null;
@@ -181,11 +227,7 @@ export class CoverImageManager {
    */
   clearCache(): void {
     coverCache.forEach((pixelMap) => {
-      try {
-        pixelMap.release();
-      } catch (e) {
-        // 忽略释放错误
-      }
+      releaseCoverPixelMap(pixelMap);
     });
     coverCache.clear();
     logger.info(TAG, '封面缓存已清理');
@@ -204,11 +246,7 @@ export class CoverImageManager {
   removeFromCache(url: string): void {
     const pixelMap = coverCache.get(url);
     if (pixelMap) {
-      try {
-        pixelMap.release();
-      } catch (e) {
-        // 忽略释放错误
-      }
+      releaseCoverPixelMap(pixelMap);
       coverCache.delete(url);
     }
   }

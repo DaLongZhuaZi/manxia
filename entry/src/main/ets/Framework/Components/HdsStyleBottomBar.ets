@@ -188,7 +188,7 @@ export struct HdsStyleBottomBar {
     if (config.systemIcon) {
       return config.systemIcon;
     }
-    return $r('sys.symbol.books_vertical_fill');
+    return $r('sys.symbol.bookshelf');
   }
 
   private getGlassBarOpacity(): number {

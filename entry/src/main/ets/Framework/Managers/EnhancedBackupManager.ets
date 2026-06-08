@@ -50,6 +50,17 @@ import {
   HistoryBackupSection,
   OnlineDataBackupSection,
   CloudConfigBackupSection,
+  PreferenceBackupSection,
+  PreferenceEntryBackup,
+  PreferenceEntryValue,
+  PreferenceStoreBackup,
+  NovelChapterBackup,
+  NovelContentCacheBackup,
+  NovelReaderSettingsBackup,
+  NovelReplaceRuleBackup,
+  NovelTxtTocRuleBackup,
+  NovelDictRuleBackup,
+  TrackRecordBackup,
   UnifiedAnnotationBackupItem,
   ProxyConfigBackup,
   FontSettingsBackup,
@@ -70,7 +81,7 @@ import { LegadoBookSource, LegadoSourceImportResult } from '../Novel/LegadoSourc
 import { BrowseHistoryInput, BrowseHistoryItem } from '../Novel/NovelSettingsManager';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { DatabaseRecord } from '../Database/DatabaseTypes';
+import { DatabaseRecord, DatabaseValue } from '../Database/DatabaseTypes';
 
 // WebDAV配置类型
 interface WebDAVSettingsConfig {
@@ -100,10 +111,41 @@ interface WebDAVSettingsForRestore {
   needCreateDir: boolean;
 }
 
+interface UnifiedAnnotationAnchorJson {
+  chapterId?: string;
+  chapterTitle?: string;
+  chapterIndex?: number;
+  pageIndex?: number;
+  pageProgress?: number;
+  startOffset?: number;
+  endOffset?: number;
+}
+
 
 const TAG = 'EnhancedBackupManager';
 const BACKUP_VERSION = '2.0';
 const BACKUP_EXTENSION = '.mxbak';
+const NON_SENSITIVE_PREFERENCE_STORES: string[] = [
+  'user_theme_config',
+  'theme_preferences',
+  'novel_settings',
+  'novel_book_rule_settings',
+  'cache_config',
+  'global_search_preferences',
+  'app_guide_preferences',
+  'interaction_prefs',
+  'reading_analytics_preferences',
+  'welcome_guide_preferences',
+  'font_settings'
+];
+const SENSITIVE_PREFERENCE_STORES: string[] = [
+  'legado_cookies',
+  'komga_config',
+  'komga_reading_progress',
+  'network_folder_preferences',
+  'auth_storage',
+  'suwayomi_source_config'
+];
 const CREATE_UNIFIED_ANNOTATION_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS unified_annotation (
     id TEXT PRIMARY KEY,
@@ -128,6 +170,13 @@ const CREATE_UNIFIED_ANNOTATION_TABLE_SQL = `
     isDeleted INTEGER DEFAULT 0
   )
 `;
+
+interface BackupSectionRestoreTask {
+  name: string;
+  enabled: boolean;
+  transactional: boolean;
+  runner: () => Promise<void>;
+}
 
 /**
  * 恢复选项接口
@@ -199,11 +248,64 @@ export class EnhancedBackupManager {
     // [修复] 构造函数不再立即初始化管理器，推迟到首次访问时
   }
 
+  private toDatabaseArgs(values: DatabaseValue[]): DatabaseValue[] {
+    return values;
+  }
+
   static getInstance(): EnhancedBackupManager {
     if (!EnhancedBackupManager.instance) {
       EnhancedBackupManager.instance = new EnhancedBackupManager();
     }
     return EnhancedBackupManager.instance;
+  }
+
+  private copyFileAtomicSync(sourcePath: string, targetPath: string): void {
+    const tempPath = `${targetPath}.restore_${Date.now()}.tmp`;
+    try {
+      SafeFileUtils.copyFileSyncStrict(sourcePath, tempPath);
+      if (!SafeFileUtils.accessSync(tempPath)) {
+        throw new Error(`复制临时文件后不存在: ${tempPath}`);
+      }
+      this.replaceFileSync(tempPath, targetPath);
+    } catch (error) {
+      this.cleanupTempFileSync(tempPath);
+      throw new Error(`原子复制文件失败: ${sourcePath} -> ${targetPath}, ${error}`);
+    }
+  }
+
+  private replaceFileSync(tempPath: string, targetPath: string): void {
+    try {
+      SafeFileUtils.renameSyncStrict(tempPath, targetPath);
+      return;
+    } catch (renameError) {
+      logger.warn(TAG, `直接替换文件失败，尝试暂存旧文件后重试: ${renameError}`);
+    }
+
+    if (SafeFileUtils.accessSync(targetPath)) {
+      const previousPath = `${targetPath}.previous_${Date.now()}.tmp`;
+      SafeFileUtils.renameSyncStrict(targetPath, previousPath);
+      try {
+        SafeFileUtils.renameSyncStrict(tempPath, targetPath);
+        this.cleanupTempFileSync(previousPath);
+        return;
+      } catch (replaceError) {
+        if (SafeFileUtils.accessSync(previousPath) && !SafeFileUtils.accessSync(targetPath)) {
+          SafeFileUtils.renameSyncStrict(previousPath, targetPath);
+        }
+        throw new Error(`替换文件失败且已尝试恢复旧文件: ${replaceError}`);
+      }
+    }
+    SafeFileUtils.renameSyncStrict(tempPath, targetPath);
+  }
+
+  private cleanupTempFileSync(tempPath: string): void {
+    try {
+      if (SafeFileUtils.accessSync(tempPath)) {
+        SafeFileUtils.unlinkSyncStrict(tempPath);
+      }
+    } catch (cleanupError) {
+      logger.warn(TAG, `清理临时文件失败: ${cleanupError}`);
+    }
   }
 
   /**
@@ -254,8 +356,12 @@ export class EnhancedBackupManager {
         
       } catch (error) {
         // 清理临时目录
-        await this.cleanupTempDir(tempDir);
-        throw new Error(`备份清理失败: ${error}`);
+        try {
+          await this.cleanupTempDir(tempDir);
+        } catch (cleanupError) {
+          logger.warn(TAG, `备份失败后清理临时目录失败: ${cleanupError}`);
+        }
+        throw new Error(`备份创建流程失败: ${error}`);
       }
       
     } catch (error) {
@@ -282,7 +388,7 @@ export class EnhancedBackupManager {
       restoreFavorites: true,
       restoreOnlineData: true,
       restoreMediaFiles: true,
-      restoreCloudConfig: true,
+      restoreCloudConfig: false,
       conflictStrategy: 'replace'
     };
     
@@ -323,8 +429,12 @@ export class EnhancedBackupManager {
         logger.info(TAG, '备份恢复完成');
         
       } catch (error) {
-        await this.cleanupTempDir(tempDir);
-        throw new Error(`备份恢复清理失败: ${error}`);
+        try {
+          await this.cleanupTempDir(tempDir);
+        } catch (cleanupError) {
+          logger.warn(TAG, `恢复失败后清理临时目录失败: ${cleanupError}`);
+        }
+        throw new Error(`备份恢复流程失败: ${error}`);
       }
       
     } catch (error) {
@@ -346,7 +456,7 @@ export class EnhancedBackupManager {
         const jsonPath = `${tempDir}/backup.json`;
         const backupData: BackupData = await this.loadJSON(jsonPath);
         
-        const stat = SafeFileUtils.statSync(filePath);
+        const stat = SafeFileUtils.statSyncStrict(filePath);
         
         const metadata: BackupMetadata = {
           version: backupData.version,
@@ -358,7 +468,8 @@ export class EnhancedBackupManager {
             novel: backupData.novel?.library?.length || 0,
             ebook: backupData.ebook?.library?.length || 0,
             sources: (backupData.sources?.manga?.length || 0) + (backupData.sources?.novel?.length || 0),
-            annotations: backupData.annotations?.records?.length || 0
+            annotations: backupData.annotations?.records?.length || 0,
+            tracking: backupData.tracking?.records?.length || 0
           },
           options: backupData.options || DEFAULT_BACKUP_OPTIONS,
           fileSize: stat.size
@@ -369,8 +480,12 @@ export class EnhancedBackupManager {
         return metadata;
         
       } catch (error) {
-        await this.cleanupTempDir(tempDir);
-        throw new Error(`元数据清理失败: ${error}`);
+        try {
+          await this.cleanupTempDir(tempDir);
+        } catch (cleanupError) {
+          logger.warn(TAG, `读取元数据失败后清理临时目录失败: ${cleanupError}`);
+        }
+        throw new Error(`元数据读取流程失败: ${error}`);
       }
       
     } catch (error) {
@@ -443,7 +558,13 @@ export class EnhancedBackupManager {
       novel: {
         library: options.includeNovelLibrary ? await this.exportNovelLibrary() : [],
         readProgress: options.includeReadProgress ? await this.exportNovelReadProgress() : [],
-        categories: []
+        categories: [],
+        chapters: options.includeNovelLibrary ? await this.exportNovelChapters() : [],
+        contentCache: options.includeNovelLibrary ? await this.exportNovelContentCache() : [],
+        readerSettings: options.includeSettings ? await this.exportNovelReaderSettings() : [],
+        replaceRules: options.includeSettings ? await this.exportNovelReplaceRules() : [],
+        txtTocRules: options.includeSettings ? await this.exportNovelTxtTocRules() : [],
+        dictRules: options.includeSettings ? await this.exportNovelDictRules() : []
       },
       
       ebook: {
@@ -459,7 +580,8 @@ export class EnhancedBackupManager {
         reader: readerSettings,
         general: generalSettings,
         privacy: privacySettings,
-        allSettings: allSettings
+        allSettings: allSettings,
+        preferenceStores: options.includeSettings ? await this.exportPreferenceStores(NON_SENSITIVE_PREFERENCE_STORES) : undefined
       },
       
       history: {
@@ -469,6 +591,10 @@ export class EnhancedBackupManager {
 
       annotations: {
         records: options.includeAnnotations ? await this.exportUnifiedAnnotations() : []
+      },
+
+      tracking: {
+        records: options.includeReadProgress ? await this.exportTrackRecords() : []
       },
       
       cloudConfig: options.includeCloudConfig ? await this.exportCloudConfig() : undefined,
@@ -595,6 +721,13 @@ export class EnhancedBackupManager {
     } catch (error) {
       logger.warn(TAG, `导出FTP配置失败: ${error}`);
     }
+
+    try {
+      result.preferences = await this.exportPreferenceStores(SENSITIVE_PREFERENCE_STORES);
+      logger.info(TAG, `导出敏感偏好配置: ${result.preferences.stores.length}个存储`);
+    } catch (error) {
+      logger.warn(TAG, `导出敏感偏好配置失败: ${error}`);
+    }
     
     return result;
   }
@@ -643,7 +776,7 @@ export class EnhancedBackupManager {
       restoreFavorites: true,
       restoreOnlineData: true,
       restoreMediaFiles: true,
-      restoreCloudConfig: true,
+      restoreCloudConfig: false,
       conflictStrategy: 'replace'
     };
     
@@ -656,143 +789,327 @@ export class EnhancedBackupManager {
   private async restoreBackupDataWithOptions(backupData: BackupData, options: RestoreOptions): Promise<void> {
     logger.info(TAG, `开始选择性数据恢复，策略: ${options.conflictStrategy}`);
     logger.info(TAG, `备份数据检查: manga=${!!backupData.manga}, manga.library=${!!backupData.manga?.library}, 数量=${backupData.manga?.library?.length || 0}`);
-    
-    try {
-      if (options.restoreMangaLibrary && backupData.manga?.library) {
-        logger.info(TAG, `开始恢复漫画库，数量: ${backupData.manga.library.length}`);
-        await this.restoreMangaLibraryWithStrategy(backupData.manga.library, options.conflictStrategy);
-      } else {
-        logger.info(TAG, `跳过漫画库恢复: restoreMangaLibrary=${options.restoreMangaLibrary}, hasLibrary=${!!backupData.manga?.library}`);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复漫画库失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreNovelLibrary && backupData.novel?.library) {
-        await this.restoreNovelLibraryWithStrategy(backupData.novel.library, options.conflictStrategy);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复小说库失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreEBookLibrary && backupData.ebook?.library) {
-        await this.restoreEBookLibraryWithStrategy(backupData.ebook.library, options.conflictStrategy);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复电子书库失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreSources && backupData.sources?.manga) {
-        await this.restoreMangaSourcesWithStrategy(backupData.sources.manga, options.conflictStrategy);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复漫画源失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreSources && backupData.sources?.novel) {
-        await this.restoreNovelSourcesWithStrategy(backupData.sources.novel, options.conflictStrategy);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复小说源失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreReadProgress && backupData.manga?.readProgress) {
-        await this.restoreMangaReadProgress(backupData.manga.readProgress);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复漫画阅读进度失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreReadProgress && backupData.novel?.readProgress) {
-        await this.restoreNovelReadProgress(backupData.novel.readProgress);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复小说阅读进度失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreSettings && backupData.settings) {
-        await this.restoreSettings(backupData.settings);
-        // 恢复整个设置表
-        if (backupData.settings.allSettings) {
-          await this.restoreAllSettings(backupData.settings.allSettings);
+
+    const failures: string[] = [];
+    const tasks: BackupSectionRestoreTask[] = [
+      {
+        name: '漫画库',
+        enabled: options.restoreMangaLibrary && !!backupData.manga?.library,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.manga?.library) {
+            return;
+          }
+          logger.info(TAG, `开始恢复漫画库，数量: ${backupData.manga.library.length}`);
+          await this.restoreMangaLibraryWithStrategy(backupData.manga.library, options.conflictStrategy);
+        }
+      },
+      {
+        name: '小说库',
+        enabled: options.restoreNovelLibrary && !!backupData.novel?.library,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.novel?.library) {
+            return;
+          }
+          await this.restoreNovelLibraryWithStrategy(backupData.novel.library, options.conflictStrategy);
+        }
+      },
+      {
+        name: '小说章节',
+        enabled: options.restoreNovelLibrary && !!backupData.novel?.chapters,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.novel?.chapters) {
+            return;
+          }
+          await this.restoreNovelChapters(backupData.novel.chapters, options.conflictStrategy);
+        }
+      },
+      {
+        name: '小说正文缓存',
+        enabled: options.restoreNovelLibrary && !!backupData.novel?.contentCache,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.novel?.contentCache) {
+            return;
+          }
+          await this.restoreNovelContentCache(backupData.novel.contentCache, options.conflictStrategy);
+        }
+      },
+      {
+        name: '电子书库',
+        enabled: options.restoreEBookLibrary && !!backupData.ebook?.library,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.ebook?.library) {
+            return;
+          }
+          await this.restoreEBookLibraryWithStrategy(backupData.ebook.library, options.conflictStrategy);
+        }
+      },
+      {
+        name: '漫画源',
+        enabled: options.restoreSources && !!backupData.sources?.manga,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.sources?.manga) {
+            return;
+          }
+          await this.restoreMangaSourcesWithStrategy(backupData.sources.manga, options.conflictStrategy);
+        }
+      },
+      {
+        name: '小说源',
+        enabled: options.restoreSources && !!backupData.sources?.novel,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.sources?.novel) {
+            return;
+          }
+          await this.restoreNovelSourcesWithStrategy(backupData.sources.novel, options.conflictStrategy);
+        }
+      },
+      {
+        name: '漫画阅读进度',
+        enabled: options.restoreReadProgress && !!backupData.manga?.readProgress,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.manga?.readProgress) {
+            return;
+          }
+          await this.restoreMangaReadProgress(backupData.manga.readProgress);
+        }
+      },
+      {
+        name: '小说阅读进度',
+        enabled: options.restoreReadProgress && !!backupData.novel?.readProgress,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.novel?.readProgress) {
+            return;
+          }
+          await this.restoreNovelReadProgress(backupData.novel.readProgress);
+        }
+      },
+      {
+        name: '第三方追踪记录',
+        enabled: options.restoreReadProgress && !!backupData.tracking?.records,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.tracking?.records) {
+            return;
+          }
+          await this.restoreTrackRecords(backupData.tracking.records, options.conflictStrategy);
+        }
+      },
+      {
+        name: '设置',
+        enabled: options.restoreSettings && !!backupData.settings,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.settings) {
+            return;
+          }
+          await this.restoreSettings(backupData.settings);
+          // 恢复整个设置表
+          if (backupData.settings.allSettings) {
+            await this.restoreAllSettings(backupData.settings.allSettings);
+          }
+          if (backupData.settings.preferenceStores) {
+            await this.restorePreferenceStores(backupData.settings.preferenceStores);
+          }
+          if (backupData.novel?.readerSettings) {
+            await this.restoreNovelReaderSettings(backupData.novel.readerSettings);
+          }
+          if (backupData.novel?.replaceRules) {
+            await this.restoreNovelReplaceRules(backupData.novel.replaceRules);
+          }
+          if (backupData.novel?.txtTocRules) {
+            await this.restoreNovelTxtTocRules(backupData.novel.txtTocRules);
+          }
+          if (backupData.novel?.dictRules) {
+            await this.restoreNovelDictRules(backupData.novel.dictRules);
+          }
+        }
+      },
+      {
+        name: '历史记录',
+        enabled: options.restoreHistory && !!backupData.history,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.history) {
+            return;
+          }
+          await this.restoreHistory(backupData.history);
+        }
+      },
+      {
+        name: '统一标注',
+        enabled: options.restoreAnnotations && !!backupData.annotations?.records,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.annotations?.records) {
+            return;
+          }
+          await this.restoreUnifiedAnnotationsWithStrategy(backupData.annotations.records, options.conflictStrategy);
+        }
+      },
+      {
+        name: 'WebView配置',
+        enabled: options.restoreWebViewConfig && !!backupData.webview,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.webview) {
+            return;
+          }
+          await this.restoreWebViewConfigs(backupData.webview.configs);
+        }
+      },
+      {
+        name: '下载任务',
+        enabled: options.restoreDownloadTasks && !!backupData.downloads,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.downloads) {
+            return;
+          }
+          await this.restoreDownloadTasks(backupData.downloads.tasks);
+        }
+      },
+      {
+        name: '收藏',
+        enabled: options.restoreFavorites && !!backupData.favorites,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.favorites) {
+            return;
+          }
+          await this.restoreFavorites(backupData.favorites.favorites);
+        }
+      },
+      {
+        name: '在线数据',
+        enabled: options.restoreOnlineData && !!backupData.onlineData,
+        transactional: true,
+        runner: async () => {
+          if (!backupData.onlineData) {
+            return;
+          }
+          await this.restoreOnlineData(backupData.onlineData);
+        }
+      },
+      {
+        name: '云存储配置',
+        enabled: options.restoreCloudConfig && !!backupData.cloudConfig,
+        transactional: false,
+        runner: async () => {
+          if (!backupData.cloudConfig) {
+            return;
+          }
+          await this.restoreCloudConfig(backupData.cloudConfig);
         }
       }
-    } catch (error) {
-      logger.error(TAG, `恢复设置失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreHistory && backupData.history) {
-        await this.restoreHistory(backupData.history);
+    ];
+
+    for (const task of tasks) {
+      if (!task.enabled) {
+        logger.info(TAG, `跳过${task.name}恢复`);
       }
-    } catch (error) {
-      logger.error(TAG, `恢复历史记录失败: ${error}`);
     }
 
-    try {
-      if (options.restoreAnnotations && backupData.annotations?.records) {
-        await this.restoreUnifiedAnnotationsWithStrategy(backupData.annotations.records, options.conflictStrategy);
+    const transactionalTasks: BackupSectionRestoreTask[] = [];
+    const nonTransactionalTasks: BackupSectionRestoreTask[] = [];
+    for (const task of tasks) {
+      if (!task.enabled) {
+        continue;
       }
-    } catch (error) {
-      logger.error(TAG, `恢复统一标注失败: ${error}`);
+      if (task.transactional) {
+        transactionalTasks.push(task);
+      } else {
+        nonTransactionalTasks.push(task);
+      }
     }
-    
-    try {
-      if (options.restoreWebViewConfig && backupData.webview) {
-        await this.restoreWebViewConfigs(backupData.webview.configs);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复WebView配置失败: ${error}`);
+
+    const databaseFailures = await this.runDirectDatabaseRestoreTasksInTransaction(transactionalTasks);
+    for (const databaseFailure of databaseFailures) {
+      failures.push(databaseFailure);
     }
-    
-    try {
-      if (options.restoreDownloadTasks && backupData.downloads) {
-        await this.restoreDownloadTasks(backupData.downloads.tasks);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复下载任务失败: ${error}`);
+    if (databaseFailures.length > 0) {
+      throw new Error(`数据恢复部分失败，已停止后续非事务恢复: ${failures.join('; ')}`);
     }
-    
-    try {
-      if (options.restoreFavorites && backupData.favorites) {
-        await this.restoreFavorites(backupData.favorites.favorites);
+
+    for (const task of nonTransactionalTasks) {
+      try {
+        await task.runner();
+      } catch (error) {
+        const message = `${task.name}: ${String(error)}`;
+        failures.push(message);
+        logger.error(TAG, `恢复${task.name}失败: ${error}`);
       }
-    } catch (error) {
-      logger.error(TAG, `恢复收藏失败: ${error}`);
     }
-    
-    try {
-      if (options.restoreOnlineData && backupData.onlineData) {
-        await this.restoreOnlineData(backupData.onlineData);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复在线数据失败: ${error}`);
-    }
-    
-    try {
-      if (options.restoreCloudConfig && backupData.cloudConfig) {
-        await this.restoreCloudConfig(backupData.cloudConfig);
-      }
-    } catch (error) {
-      logger.error(TAG, `恢复云存储配置失败: ${error}`);
+
+    if (failures.length > 0) {
+      throw new Error(`数据恢复部分失败: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, '数据恢复完成');
   }
-  
+
+  private async runDirectDatabaseRestoreTasksInTransaction(tasks: BackupSectionRestoreTask[]): Promise<string[]> {
+    if (tasks.length === 0) {
+      return [];
+    }
+
+    const failures: string[] = [];
+    let transactionStarted = false;
+    try {
+      await this.dbManager.beginTransaction();
+      transactionStarted = true;
+
+      for (const task of tasks) {
+        try {
+          await task.runner();
+        } catch (error) {
+          const message = `${task.name}: ${String(error)}`;
+          failures.push(message);
+          logger.error(TAG, `恢复${task.name}失败: ${error}`);
+        }
+      }
+
+      if (failures.length > 0) {
+        await this.dbManager.rollBack();
+        transactionStarted = false;
+        logger.warn(TAG, `数据库恢复事务已回滚: ${failures.join('; ')}`);
+        return failures;
+      }
+
+      await this.dbManager.commit();
+      transactionStarted = false;
+      logger.info(TAG, `数据库恢复事务提交完成: ${tasks.length} 个任务`);
+    } catch (error) {
+      if (transactionStarted) {
+        try {
+          await this.dbManager.rollBack();
+          logger.warn(TAG, `数据库恢复事务异常后已回滚: ${error}`);
+        } catch (rollbackError) {
+          logger.error(TAG, `数据库恢复事务回滚失败: ${rollbackError}`);
+          failures.push(`数据库事务回滚失败: ${String(rollbackError)}`);
+        }
+      }
+      failures.push(`数据库事务: ${String(error)}`);
+    }
+
+    return failures;
+  }
+
   /**
    * 恢复云存储配置（包含WebDAV、Suwayomi、FTP）
    */
   private async restoreCloudConfig(cloudConfig: CloudConfigBackupSection): Promise<void> {
     const context = getGlobalContext();
-    
+    const failures: string[] = [];
+
     // 1. 恢复WebDAV配置
     if (cloudConfig.webdav) {
       try {
@@ -809,6 +1126,7 @@ export class EnhancedBackupManager {
         await webdavPrefs.flush();
         logger.info(TAG, `WebDAV配置恢复成功: ${cloudConfig.webdav.serverUrl}`);
       } catch (error) {
+        failures.push(`WebDAV: ${String(error)}`);
         logger.error(TAG, `恢复WebDAV配置失败: ${error}`);
       }
     }
@@ -825,6 +1143,7 @@ export class EnhancedBackupManager {
         await suwayomiPrefs.flush();
         logger.info(TAG, `Suwayomi配置恢复成功: ${cloudConfig.suwayomi.serverUrl}`);
       } catch (error) {
+        failures.push(`Suwayomi: ${String(error)}`);
         logger.error(TAG, `恢复Suwayomi配置失败: ${error}`);
       }
     }
@@ -866,6 +1185,7 @@ export class EnhancedBackupManager {
         }
         logger.info(TAG, `已恢复 Komga 配置，共 ${restoredConfig.instances.length} 个实例`);
       } catch (error) {
+        failures.push(`Komga: ${String(error)}`);
         logger.error(TAG, `恢复 Komga 配置失败：${String(error)}`);
       }
     }
@@ -877,8 +1197,23 @@ export class EnhancedBackupManager {
         await ftpPrefs.flush();
         logger.info(TAG, `FTP连接配置恢复成功: ${cloudConfig.ftp.connections.length}个`);
       } catch (error) {
+        failures.push(`FTP: ${String(error)}`);
         logger.error(TAG, `恢复FTP配置失败: ${error}`);
       }
+    }
+
+    if (cloudConfig.preferences) {
+      try {
+        await this.restorePreferenceStores(cloudConfig.preferences);
+        logger.info(TAG, '敏感偏好配置恢复成功');
+      } catch (error) {
+        failures.push(`敏感偏好配置: ${String(error)}`);
+        logger.error(TAG, `恢复敏感偏好配置失败: ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`云存储配置恢复失败: ${failures.join('; ')}`);
     }
   }
   
@@ -894,14 +1229,14 @@ export class EnhancedBackupManager {
     try {
       const dataManager = (await import('../Data/DataManager')).DataManager.getInstance();
       let successCount = 0;
-      let failCount = 0;
-      
+      const failures: string[] = [];
+
       for (const setting of allSettings) {
         try {
           await dataManager.saveSetting(setting.settingKey, setting.settingValue, setting.settingType);
           successCount++;
         } catch (e) {
-          failCount++;
+          failures.push(`${setting.settingKey}: ${String(e)}`);
           logger.warn(TAG, `恢复设置失败: ${setting.settingKey}`);
         }
       }
@@ -909,10 +1244,14 @@ export class EnhancedBackupManager {
       // 重新加载设置到缓存
       await this.settingsManager.initialize();
       this.settingsManager.syncToAppStorage();
-      
-      logger.info(TAG, `设置表恢复完成: 成功=${successCount}, 失败=${failCount}`);
+
+      logger.info(TAG, `设置表恢复完成: 成功=${successCount}, 失败=${failures.length}`);
+      if (failures.length > 0) {
+        throw new Error(`设置表恢复失败 ${failures.length}/${allSettings.length}: ${failures.join('; ')}`);
+      }
     } catch (error) {
       logger.error(TAG, `恢复设置表失败: ${error}`);
+      throw new Error(String(error));
     }
   }
 
@@ -925,7 +1264,7 @@ export class EnhancedBackupManager {
         logger.info(TAG, '正在复制媒体文件: 封面');
         const coversDir = `${tempDir}/covers`;
         if (!SafeFileUtils.accessSync(coversDir)) {
-          SafeFileUtils.mkdirSync(coversDir, true);
+          SafeFileUtils.mkdirSyncStrict(coversDir, true);
         }
         // [修复] 传入备份根目录，漫画放在根目录/manga下而不是covers/manga下
         await this.copyCoverImages(coversDir, tempDir, backupData.manga.library, backupData.novel?.library);
@@ -939,7 +1278,7 @@ export class EnhancedBackupManager {
         logger.info(TAG, '正在复制媒体文件: 章节');
         const chaptersDir = `${tempDir}/chapters`;
         if (!SafeFileUtils.accessSync(chaptersDir)) {
-          SafeFileUtils.mkdirSync(chaptersDir, true);
+          SafeFileUtils.mkdirSyncStrict(chaptersDir, true);
         }
         await this.copyChapterImages(chaptersDir);
         logger.info(TAG, '媒体文件复制完成: 章节');
@@ -949,7 +1288,7 @@ export class EnhancedBackupManager {
         logger.info(TAG, '正在复制媒体文件: 电子书');
         const ebooksDir = `${tempDir}/ebooks`;
         if (!SafeFileUtils.accessSync(ebooksDir)) {
-          SafeFileUtils.mkdirSync(ebooksDir, true);
+          SafeFileUtils.mkdirSyncStrict(ebooksDir, true);
         }
         await this.copyEBookFiles(ebooksDir, backupData.ebook.library);
         logger.info(TAG, '媒体文件复制完成: 电子书');
@@ -975,6 +1314,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, '自定义字体文件复制完成');
     } catch (error) {
       logger.error(TAG, `复制媒体文件失败: ${error}`);
+      throw new Error(`复制媒体文件失败: ${error}`);
     }
   }
   
@@ -992,7 +1332,7 @@ export class EnhancedBackupManager {
     
     const iconsTargetDir = `${tempDir}/icons`;
     if (!SafeFileUtils.accessSync(iconsTargetDir)) {
-      SafeFileUtils.mkdirSync(iconsTargetDir, true);
+      SafeFileUtils.mkdirSyncStrict(iconsTargetDir, true);
     }
     
     try {
@@ -1000,6 +1340,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, `图源icon复制完成: ${count} 个文件`);
     } catch (error) {
       logger.error(TAG, `复制图源icon失败: ${error}`);
+      throw new Error(`复制图源icon失败: ${error}`);
     }
   }
   
@@ -1029,10 +1370,11 @@ export class EnhancedBackupManager {
       
       const fontsTargetDir = `${tempDir}/fonts`;
       if (!SafeFileUtils.accessSync(fontsTargetDir)) {
-        SafeFileUtils.mkdirSync(fontsTargetDir, true);
+        SafeFileUtils.mkdirSyncStrict(fontsTargetDir, true);
       }
       
       let copiedCount = 0;
+      const failures: string[] = [];
       for (const font of customFontsRaw) {
         const filePath = String(font['filePath'] || '');
         if (!filePath) {
@@ -1043,6 +1385,7 @@ export class EnhancedBackupManager {
         logger.info(TAG, `检查字体文件: ${filePath}`);
         
         if (!SafeFileUtils.accessSync(filePath)) {
+          failures.push(`字体文件不存在: ${filePath}`);
           logger.warn(TAG, `字体文件不存在: ${filePath}`);
           continue;
         }
@@ -1052,12 +1395,17 @@ export class EnhancedBackupManager {
         const targetPath = `${fontsTargetDir}/${fileName}`;
         
         try {
-          SafeFileUtils.copyFileSync(filePath, targetPath);
+          this.copyFileAtomicSync(filePath, targetPath);
           copiedCount++;
           logger.info(TAG, `已复制字体文件: ${fileName}`);
         } catch (copyError) {
+          failures.push(`${fileName}: ${String(copyError)}`);
           logger.error(TAG, `复制字体文件失败: ${fileName}, ${copyError}`);
         }
+      }
+
+      if (failures.length > 0) {
+        throw new Error(`复制自定义字体失败 ${failures.length}/${customFontsRaw.length}: ${failures.join('; ')}`);
       }
       
       logger.info(TAG, `自定义字体复制完成: ${copiedCount} 个文件`);
@@ -1075,6 +1423,7 @@ export class EnhancedBackupManager {
       }
     } catch (error) {
       logger.error(TAG, `复制自定义字体失败: ${error}`);
+      throw new Error(`复制自定义字体失败: ${error}`);
     }
   }
   
@@ -1103,7 +1452,7 @@ export class EnhancedBackupManager {
       // 直接复制所有封面子目录（不仅限于已知图源）
       for (const dirName of coverDirs) {
         const sourcePath = `${sourceCoversDir}/${dirName}`;
-        const stat = SafeFileUtils.statSync(sourcePath);
+        const stat = SafeFileUtils.statSyncStrict(sourcePath);
         
         if (!stat.isDirectory()) continue;
         
@@ -1113,7 +1462,7 @@ export class EnhancedBackupManager {
         // 创建目标目录
         const targetDir = `${coversDir}/${dirName}`;
         if (!SafeFileUtils.accessSync(targetDir)) {
-          SafeFileUtils.mkdirSync(targetDir, true);
+          SafeFileUtils.mkdirSyncStrict(targetDir, true);
         }
         
         // 复制封面文件
@@ -1127,6 +1476,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, `图源封面复制完成: ${copiedCount} 个文件`);
     } catch (error) {
       logger.error(TAG, `复制图源封面失败: ${error}`);
+      throw new Error(`复制图源封面失败: ${error}`);
     }
   }
   
@@ -1136,10 +1486,11 @@ export class EnhancedBackupManager {
   private async exportNovelSourcesToFiles(tempDir: string, novelSources: NovelSourceBackup[]): Promise<void> {
     const legadoDir = `${tempDir}/legadoextensions`;
     if (!SafeFileUtils.accessSync(legadoDir)) {
-      SafeFileUtils.mkdirSync(legadoDir, true);
+      SafeFileUtils.mkdirSyncStrict(legadoDir, true);
     }
     
     let exportedCount = 0;
+    const failures: string[] = [];
     
     for (const source of novelSources) {
       try {
@@ -1190,15 +1541,23 @@ export class EnhancedBackupManager {
         
         // 写入JSON文件（数组格式，兼容Legado导入）
         const jsonContent = JSON.stringify([sourceConfig], null, 2);
-        const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        SafeFileUtils.writeSync(file.fd, jsonContent);
-        SafeFileUtils.closeSync(file);
+        const file = SafeFileUtils.openSyncStrict(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        try {
+          SafeFileUtils.writeExactSync(file.fd, jsonContent);
+        } finally {
+          SafeFileUtils.closeSync(file);
+        }
         
         exportedCount++;
         logger.debug(TAG, `已导出书源: ${source.bookSourceName}`);
       } catch (error) {
+        failures.push(`${source.bookSourceName || source.name || source.bookSourceUrl}: ${String(error)}`);
         logger.warn(TAG, `导出书源失败: ${source.bookSourceName}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`导出书源失败 ${failures.length}/${novelSources.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, `书源导出完成: ${exportedCount}/${novelSources.length}`);
@@ -1213,6 +1572,7 @@ export class EnhancedBackupManager {
     const filesDir = this.sandboxManager.getDirectory('files');
     let totalDirs = 0;
     let totalFiles = 0;
+    const failures: string[] = [];
     
     try {
       // 复制漫画相关文件（包括封面和章节图片）
@@ -1227,7 +1587,7 @@ export class EnhancedBackupManager {
         // [修复] 漫画放在备份根目录/manga下，而不是covers/manga下
         const mangaTarget = `${backupRootDir}/manga`;
         if (!SafeFileUtils.accessSync(mangaTarget)) {
-          SafeFileUtils.mkdirSync(mangaTarget, true);
+          SafeFileUtils.mkdirSyncStrict(mangaTarget, true);
         }
         
         // 方法1：基于数据库记录的漫画列表
@@ -1266,7 +1626,7 @@ export class EnhancedBackupManager {
               if (foundDir) {
                 const targetMangaDir = `${mangaTarget}/download_import/${sanitizedTitle}`;
                 if (!SafeFileUtils.accessSync(targetMangaDir)) {
-                  SafeFileUtils.mkdirSync(targetMangaDir, true);
+                  SafeFileUtils.mkdirSyncStrict(targetMangaDir, true);
                 }
                 const count = await this.copyDirectoryRecursive(foundDir, targetMangaDir);
                 totalFiles += count;
@@ -1274,7 +1634,7 @@ export class EnhancedBackupManager {
                 
                 // [修复] 生成ComicInfo.xml元数据文件
                 try {
-                  this.generateMangaMetadataXml(manga, targetMangaDir);
+                  await this.generateMangaMetadataXml(manga, targetMangaDir);
                   logger.debug(TAG, `已生成漫画元数据: ${targetMangaDir}/ComicInfo.xml`);
                 } catch (e) {
                   logger.warn(TAG, `生成漫画元数据失败: ${String(e)}`);
@@ -1307,7 +1667,7 @@ export class EnhancedBackupManager {
               if (mangaDir && SafeFileUtils.accessSync(mangaDir)) {
                 const targetMangaDir = `${mangaTarget}/download_import/${sanitizedTitle}`;
                 if (!SafeFileUtils.accessSync(targetMangaDir)) {
-                  SafeFileUtils.mkdirSync(targetMangaDir, true);
+                  SafeFileUtils.mkdirSyncStrict(targetMangaDir, true);
                 }
                 const count = await this.copyDirectoryRecursive(mangaDir, targetMangaDir);
                 totalFiles += count;
@@ -1345,7 +1705,7 @@ export class EnhancedBackupManager {
             if (SafeFileUtils.accessSync(mangaDir)) {
               const targetMangaDir = `${mangaTarget}/${sourceName}/${comicName}`;
               if (!SafeFileUtils.accessSync(targetMangaDir)) {
-                SafeFileUtils.mkdirSync(targetMangaDir, true);
+                SafeFileUtils.mkdirSyncStrict(targetMangaDir, true);
               }
               const count = await this.copyDirectoryRecursive(mangaDir, targetMangaDir);
               totalFiles += count;
@@ -1359,6 +1719,7 @@ export class EnhancedBackupManager {
               logger.warn(TAG, `漫画目录未找到: ${mangaDir}`);
             }
           } catch (error) {
+            failures.push(`${manga.title}: ${String(error)}`);
             logger.error(TAG, `复制漫画失败 ${manga.title}: ${error}`);
           }
         }
@@ -1371,7 +1732,7 @@ export class EnhancedBackupManager {
           
           for (const sourceEntry of sourceEntries) {
             const sourcePath = `${comicsDir}/${sourceEntry}`;
-            const stat = SafeFileUtils.statSync(sourcePath);
+            const stat = SafeFileUtils.statSyncStrict(sourcePath);
             
             if (stat.isDirectory()) {
               const comicEntries = SafeFileUtils.listFileSync(sourcePath);
@@ -1379,7 +1740,7 @@ export class EnhancedBackupManager {
               
               for (const comicEntry of comicEntries) {
                 const comicPath = `${sourcePath}/${comicEntry}`;
-                const comicStat = SafeFileUtils.statSync(comicPath);
+                const comicStat = SafeFileUtils.statSyncStrict(comicPath);
                 
                 if (comicStat.isDirectory()) {
                   const targetPath = `${mangaTarget}/${sourceEntry}/${comicEntry}`;
@@ -1387,7 +1748,7 @@ export class EnhancedBackupManager {
                   // 检查是否已经复制过
                   if (!SafeFileUtils.accessSync(targetPath)) {
                     if (!SafeFileUtils.accessSync(`${mangaTarget}/${sourceEntry}`)) {
-                      SafeFileUtils.mkdirSync(`${mangaTarget}/${sourceEntry}`, true);
+                      SafeFileUtils.mkdirSyncStrict(`${mangaTarget}/${sourceEntry}`, true);
                     }
                     const count = await this.copyDirectoryRecursive(comicPath, targetPath);
                     if (count > 0) {
@@ -1402,6 +1763,7 @@ export class EnhancedBackupManager {
           }
         } catch (error) {
           logger.error(TAG, `Failed to scan comics directory: ${error}`);
+          failures.push(`扫描漫画目录失败: ${String(error)}`);
         }
         
         logger.info(TAG, `Copied ${totalFiles} files from ${totalDirs} manga directories`);
@@ -1413,7 +1775,7 @@ export class EnhancedBackupManager {
       const novelCoversDir = `${filesDir}/novel_covers`;
       const novelTarget = `${coversDir}/novel`;
       if (!SafeFileUtils.accessSync(novelTarget)) {
-        SafeFileUtils.mkdirSync(novelTarget, true);
+        SafeFileUtils.mkdirSyncStrict(novelTarget, true);
       }
       
       if (novelList && novelList.length > 0) {
@@ -1423,7 +1785,7 @@ export class EnhancedBackupManager {
             const novelFolderPath = `${novelTarget}/${sanitizedName}`;
             
             if (!SafeFileUtils.accessSync(novelFolderPath)) {
-              SafeFileUtils.mkdirSync(novelFolderPath, true);
+              SafeFileUtils.mkdirSyncStrict(novelFolderPath, true);
             }
             
             // 复制封面图片（如果有本地封面）
@@ -1431,7 +1793,7 @@ export class EnhancedBackupManager {
               const coverExt = novel.coverLocalPath.includes('.') ? 
                 novel.coverLocalPath.substring(novel.coverLocalPath.lastIndexOf('.')) : '.jpg';
               const coverTargetPath = `${novelFolderPath}/cover${coverExt}`;
-              SafeFileUtils.copyFileSync(novel.coverLocalPath, coverTargetPath);
+              this.copyFileAtomicSync(novel.coverLocalPath, coverTargetPath);
               totalFiles++;
               logger.debug(TAG, `已复制小说封面: ${sanitizedName}`);
             }
@@ -1440,6 +1802,7 @@ export class EnhancedBackupManager {
             await this.generateNovelMetadataXml(novel, novelFolderPath);
             totalDirs++;
           } catch (error) {
+            failures.push(`${novel.name}: ${String(error)}`);
             logger.warn(TAG, `复制小说封面失败 ${novel.name}: ${error}`);
           }
         }
@@ -1458,7 +1821,7 @@ export class EnhancedBackupManager {
       if (SafeFileUtils.accessSync(ebookCoversDir)) {
         const ebookTarget = `${coversDir}/ebook`;
         if (!SafeFileUtils.accessSync(ebookTarget)) {
-          SafeFileUtils.mkdirSync(ebookTarget, true);
+          SafeFileUtils.mkdirSyncStrict(ebookTarget, true);
         }
         const count = await this.copyDirectoryRecursive(ebookCoversDir, ebookTarget);
         totalFiles += count;
@@ -1469,8 +1832,12 @@ export class EnhancedBackupManager {
       }
       
       logger.info(TAG, `Copied ${totalFiles} files from ${totalDirs} cover directories`);
+      if (failures.length > 0) {
+        throw new Error(`复制封面媒体失败 ${failures.length}: ${failures.join('; ')}`);
+      }
     } catch (error) {
       logger.error(TAG, `Failed to copy cover images: ${error}`);
+      throw new Error(`复制封面图片失败: ${error}`);
     }
   }
 
@@ -1487,7 +1854,7 @@ export class EnhancedBackupManager {
       if (SafeFileUtils.accessSync(mangaCacheDir)) {
         const mangaTarget = `${targetDir}/manga`;
         if (!SafeFileUtils.accessSync(mangaTarget)) {
-          SafeFileUtils.mkdirSync(mangaTarget, true);
+          SafeFileUtils.mkdirSyncStrict(mangaTarget, true);
         }
         const count = await this.copyDirectoryRecursive(mangaCacheDir, mangaTarget);
         totalFiles += count;
@@ -1509,6 +1876,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, `Total chapter images copied: ${totalFiles}`);
     } catch (error) {
       logger.error(TAG, `Failed to copy chapter images: ${error}`);
+      throw new Error(`复制章节图片失败: ${error}`);
     }
   }
 
@@ -1522,6 +1890,7 @@ export class EnhancedBackupManager {
     
     try {
       let copiedCount = 0;
+      const failures: string[] = [];
       
       for (const ebook of ebookList) {
         try {
@@ -1541,7 +1910,7 @@ export class EnhancedBackupManager {
           // 创建电子书专属文件夹
           const ebookFolderPath = `${targetDir}/${sanitizedTitle}`;
           if (!SafeFileUtils.accessSync(ebookFolderPath)) {
-            SafeFileUtils.mkdirSync(ebookFolderPath, true);
+            SafeFileUtils.mkdirSyncStrict(ebookFolderPath, true);
           }
           
           // [修复] 保留原始文件名，而不是使用书名作为文件名
@@ -1558,22 +1927,20 @@ export class EnhancedBackupManager {
           const targetFilePath = `${ebookFolderPath}/${newFileName}`;
           
           if (SafeFileUtils.accessSync(sourcePath)) {
-            await fs.copyFile(sourcePath, targetFilePath);
+            this.copyFileAtomicSync(sourcePath, targetFilePath);
             logger.debug(TAG, `已复制电子书文件: ${newFileName}`);
           } else {
             // 尝试在Download目录查找
             if (downloadDirPath) {
               const downloadPath = `${downloadDirPath}/ebooks/${originalFileName}`;
               if (SafeFileUtils.accessSync(downloadPath)) {
-                await fs.copyFile(downloadPath, targetFilePath);
+                this.copyFileAtomicSync(downloadPath, targetFilePath);
                 logger.debug(TAG, `已从Download复制电子书文件: ${newFileName}`);
               } else {
-                logger.warn(TAG, `电子书文件未找到: ${sourcePath}`);
-                continue;
+                throw new Error(`电子书文件未找到: ${sourcePath}`);
               }
             } else {
-              logger.warn(TAG, `电子书文件未找到: ${sourcePath}`);
-              continue;
+              throw new Error(`电子书文件未找到: ${sourcePath}`);
             }
           }
           
@@ -1581,7 +1948,7 @@ export class EnhancedBackupManager {
           if (ebook.coverPath && SafeFileUtils.accessSync(ebook.coverPath)) {
             const coverExt = ebook.coverPath.includes('.') ? ebook.coverPath.substring(ebook.coverPath.lastIndexOf('.')) : '.jpg';
             const coverTargetPath = `${ebookFolderPath}/cover${coverExt}`;
-            await fs.copyFile(ebook.coverPath, coverTargetPath);
+            this.copyFileAtomicSync(ebook.coverPath, coverTargetPath);
             logger.debug(TAG, `已复制电子书封面: cover${coverExt}`);
           }
           
@@ -1590,13 +1957,19 @@ export class EnhancedBackupManager {
           
           copiedCount++;
         } catch (error) {
+          failures.push(`${ebook.title}: ${String(error)}`);
           logger.error(TAG, `复制电子书失败 ${ebook.title}: ${String(error)}`);
         }
+      }
+
+      if (failures.length > 0) {
+        throw new Error(`复制电子书失败 ${failures.length}/${ebookList.length}: ${failures.join('; ')}`);
       }
       
       logger.info(TAG, `已复制 ${copiedCount} 本电子书（文件夹结构）`);
     } catch (error) {
       logger.error(TAG, `复制电子书文件失败: ${error}`);
+      throw new Error(`复制电子书文件失败: ${error}`);
     }
   }
 
@@ -1606,7 +1979,7 @@ export class EnhancedBackupManager {
    */
   private async copyDirectoryRecursive(sourceDir: string, targetDir: string): Promise<number> {
     if (!SafeFileUtils.accessSync(targetDir)) {
-      SafeFileUtils.mkdirSync(targetDir, true);
+      SafeFileUtils.mkdirSyncStrict(targetDir, true);
     }
     
     let fileCount = 0;
@@ -1616,12 +1989,12 @@ export class EnhancedBackupManager {
       const sourcePath = `${sourceDir}/${entry}`;
       const targetPath = `${targetDir}/${entry}`;
       
-      const stat = SafeFileUtils.statSync(sourcePath);
+      const stat = SafeFileUtils.statSyncStrict(sourcePath);
       if (stat.isDirectory()) {
         const subCount = await this.copyDirectoryRecursive(sourcePath, targetPath);
         fileCount += subCount;
       } else {
-        SafeFileUtils.copyFileSync(sourcePath, targetPath);
+        this.copyFileAtomicSync(sourcePath, targetPath);
         fileCount++;
       }
     }
@@ -1635,6 +2008,7 @@ export class EnhancedBackupManager {
    */
   private async restoreMediaFiles(tempDir: string): Promise<void> {
     logger.info(TAG, 'Restoring media files...');
+    const failures: string[] = [];
     
     // [修复] 首先列出临时目录内容，用于调试
     let tempContents: string[] = [];
@@ -1655,6 +2029,7 @@ export class EnhancedBackupManager {
         logger.info(TAG, `开始恢复字体文件，源目录: ${fontsDir}`);
         await this.restoreCustomFonts(fontsDir);
       } catch (fontError) {
+        failures.push(`字体文件: ${String(fontError)}`);
         logger.error(TAG, `恢复字体文件失败: ${fontError}`);
       }
     } else {
@@ -1666,6 +2041,7 @@ export class EnhancedBackupManager {
           await this.restoreCustomFonts(fontsDir);
         }
       } catch (accessError) {
+        failures.push(`字体目录访问失败: ${String(accessError)}`);
         logger.warn(TAG, `字体目录不存在或无法访问: ${fontsDir}`);
       }
     }
@@ -1677,6 +2053,7 @@ export class EnhancedBackupManager {
         await this.restoreMangaFromBackup(mangaDir);
       }
     } catch (mangaError) {
+      failures.push(`漫画文件: ${String(mangaError)}`);
       logger.error(TAG, `恢复漫画失败: ${mangaError}`);
     }
     
@@ -1688,6 +2065,7 @@ export class EnhancedBackupManager {
         await this.restoreMangaSourceCovers(coversDir);
       }
     } catch (coversError) {
+      failures.push(`封面文件: ${String(coversError)}`);
       logger.error(TAG, `恢复封面失败: ${coversError}`);
     }
     
@@ -1698,6 +2076,7 @@ export class EnhancedBackupManager {
         await this.restoreChapterImages(chaptersDir);
       }
     } catch (chaptersError) {
+      failures.push(`章节图片: ${String(chaptersError)}`);
       logger.error(TAG, `恢复章节图片失败: ${chaptersError}`);
     }
     
@@ -1708,6 +2087,7 @@ export class EnhancedBackupManager {
         await this.restoreEBookFiles(ebooksDir);
       }
     } catch (ebooksError) {
+      failures.push(`电子书文件: ${String(ebooksError)}`);
       logger.error(TAG, `恢复电子书失败: ${ebooksError}`);
     }
     
@@ -1718,6 +2098,7 @@ export class EnhancedBackupManager {
         await this.restoreNovelSourcesFromFiles(legadoDir);
       }
     } catch (legadoError) {
+      failures.push(`书源文件: ${String(legadoError)}`);
       logger.error(TAG, `恢复书源文件失败: ${legadoError}`);
     }
     
@@ -1728,7 +2109,12 @@ export class EnhancedBackupManager {
         await this.restoreSourceIcons(iconsDir);
       }
     } catch (iconsError) {
+      failures.push(`图源icon: ${String(iconsError)}`);
       logger.error(TAG, `恢复图源icon失败: ${iconsError}`);
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`媒体文件恢复部分失败: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Media files restored successfully');
@@ -1744,10 +2130,10 @@ export class EnhancedBackupManager {
     // 确保目标目录存在
     const parentDir = `${filesDir}/extensions-source`;
     if (!SafeFileUtils.accessSync(parentDir)) {
-      SafeFileUtils.mkdirSync(parentDir, true);
+      SafeFileUtils.mkdirSyncStrict(parentDir, true);
     }
     if (!SafeFileUtils.accessSync(targetDir)) {
-      SafeFileUtils.mkdirSync(targetDir, true);
+      SafeFileUtils.mkdirSyncStrict(targetDir, true);
     }
     
     try {
@@ -1755,6 +2141,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, `图源icon恢复完成: ${count} 个文件`);
     } catch (error) {
       logger.error(TAG, `恢复图源icon失败: ${error}`);
+      throw new Error(`恢复图源icon失败: ${error}`);
     }
   }
   
@@ -1774,7 +2161,7 @@ export class EnhancedBackupManager {
     // 确保目标目录存在
     try {
       if (!SafeFileUtils.accessSync(targetDir)) {
-        SafeFileUtils.mkdirSync(targetDir, true);
+        SafeFileUtils.mkdirSyncStrict(targetDir, true);
         logger.info(TAG, `已创建字体目标目录`);
       } else {
         logger.info(TAG, `字体目标目录已存在`);
@@ -1812,31 +2199,38 @@ export class EnhancedBackupManager {
     
     // 逐个复制字体文件
     let copiedCount = 0;
+    const failures: string[] = [];
     for (const fileName of sourceFiles) {
       const sourcePath = `${fontsDir}/${fileName}`;
       const targetPath = `${targetDir}/${fileName}`;
       
       try {
         // 检查是否是文件
-        const stat = SafeFileUtils.statSync(sourcePath);
+        const stat = SafeFileUtils.statSyncStrict(sourcePath);
         if (stat.isDirectory()) {
           logger.debug(TAG, `跳过目录: ${fileName}`);
           continue;
         }
         
         logger.info(TAG, `正在复制: ${sourcePath} -> ${targetPath}`);
-        SafeFileUtils.copyFileSync(sourcePath, targetPath);
+        this.copyFileAtomicSync(sourcePath, targetPath);
         
         // 验证复制成功
         if (SafeFileUtils.accessSync(targetPath)) {
           copiedCount++;
           logger.info(TAG, `✓ 已复制字体文件: ${fileName}`);
         } else {
+          failures.push(`${fileName}: 复制后文件不存在`);
           logger.error(TAG, `✗ 复制后文件不存在: ${targetPath}`);
         }
       } catch (copyError) {
+        failures.push(`${fileName}: ${String(copyError)}`);
         logger.error(TAG, `复制字体文件失败: ${fileName}, ${copyError}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`自定义字体恢复失败 ${failures.length}/${sourceFiles.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, `自定义字体恢复完成: ${copiedCount}/${sourceFiles.length} 个文件`);
@@ -1861,7 +2255,7 @@ export class EnhancedBackupManager {
     const targetCoversDir = `${filesDir}/covers`;
     
     if (!SafeFileUtils.accessSync(targetCoversDir)) {
-      SafeFileUtils.mkdirSync(targetCoversDir, true);
+      SafeFileUtils.mkdirSyncStrict(targetCoversDir, true);
     }
     
     let restoredCount = 0;
@@ -1870,7 +2264,7 @@ export class EnhancedBackupManager {
       const entries = SafeFileUtils.listFileSync(coversDir);
       for (const entry of entries) {
         const sourcePath = `${coversDir}/${entry}`;
-        const stat = SafeFileUtils.statSync(sourcePath);
+        const stat = SafeFileUtils.statSyncStrict(sourcePath);
         
         // 跳过非目录项和特殊目录（manga, ebook, novel等）
         if (!stat.isDirectory()) continue;
@@ -1879,7 +2273,7 @@ export class EnhancedBackupManager {
         // 这是图源封面目录（以pkg命名）
         const targetDir = `${targetCoversDir}/${entry}`;
         if (!SafeFileUtils.accessSync(targetDir)) {
-          SafeFileUtils.mkdirSync(targetDir, true);
+          SafeFileUtils.mkdirSyncStrict(targetDir, true);
         }
         
         const count = await this.copyDirectoryRecursive(sourcePath, targetDir);
@@ -1890,6 +2284,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, `图源封面恢复完成: ${restoredCount} 个文件`);
     } catch (error) {
       logger.error(TAG, `恢复图源封面失败: ${error}`);
+      throw new Error(`恢复图源封面失败: ${error}`);
     }
   }
   
@@ -1928,10 +2323,15 @@ export class EnhancedBackupManager {
           logger.warn(TAG, `导入书源文件失败: ${file}, ${error}`);
         }
       }
+
+      if (failedCount > 0) {
+        throw new Error(`书源恢复失败: 成功=${importedCount}, 失败=${failedCount}`);
+      }
       
       logger.info(TAG, `书源恢复完成: 成功 ${importedCount}, 失败 ${failedCount}`);
     } catch (error) {
       logger.error(TAG, `恢复书源失败: ${error}`);
+      throw new Error(`恢复书源失败: ${error}`);
     }
   }
 
@@ -1948,14 +2348,14 @@ export class EnhancedBackupManager {
     
     const downloadMangaTarget = `${downloadDirPath}/manga`;
     if (!SafeFileUtils.accessSync(downloadMangaTarget)) {
-      SafeFileUtils.mkdirSync(downloadMangaTarget, true);
+      SafeFileUtils.mkdirSyncStrict(downloadMangaTarget, true);
     }
     
     // 遍历备份中的漫画目录
     const sourceEntries = SafeFileUtils.listFileSync(mangaSource);
     for (const sourceEntry of sourceEntries) {
       const sourcePath = `${mangaSource}/${sourceEntry}`;
-      const stat = SafeFileUtils.statSync(sourcePath);
+      const stat = SafeFileUtils.statSyncStrict(sourcePath);
       
       if (stat.isDirectory()) {
         if (sourceEntry === 'download_import') {
@@ -1963,11 +2363,11 @@ export class EnhancedBackupManager {
           const importEntries = SafeFileUtils.listFileSync(sourcePath);
           for (const importEntry of importEntries) {
             const importPath = `${sourcePath}/${importEntry}`;
-            const importStat = SafeFileUtils.statSync(importPath);
+            const importStat = SafeFileUtils.statSyncStrict(importPath);
             if (importStat.isDirectory()) {
               const targetPath = `${downloadMangaTarget}/${importEntry}`;
               if (!SafeFileUtils.accessSync(targetPath)) {
-                SafeFileUtils.mkdirSync(targetPath, true);
+                SafeFileUtils.mkdirSyncStrict(targetPath, true);
               }
               await this.copyDirectoryRecursive(importPath, targetPath);
               logger.info(TAG, `已恢复漫画: ${importEntry}`);
@@ -1977,7 +2377,7 @@ export class EnhancedBackupManager {
           // 其他源的漫画
           const targetPath = `${downloadMangaTarget}/${sourceEntry}`;
           if (!SafeFileUtils.accessSync(targetPath)) {
-            SafeFileUtils.mkdirSync(targetPath, true);
+            SafeFileUtils.mkdirSyncStrict(targetPath, true);
           }
           await this.copyDirectoryRecursive(sourcePath, targetPath);
           logger.info(TAG, `已恢复漫画: ${sourceEntry}`);
@@ -2003,14 +2403,14 @@ export class EnhancedBackupManager {
         if (downloadDirPath) {
           const downloadMangaTarget = `${downloadDirPath}/manga`;
           if (!SafeFileUtils.accessSync(downloadMangaTarget)) {
-            SafeFileUtils.mkdirSync(downloadMangaTarget, true);
+            SafeFileUtils.mkdirSyncStrict(downloadMangaTarget, true);
           }
           
           // 遍历备份中的漫画目录
           const sourceEntries = SafeFileUtils.listFileSync(mangaSource);
           for (const sourceEntry of sourceEntries) {
             const sourcePath = `${mangaSource}/${sourceEntry}`;
-            const stat = SafeFileUtils.statSync(sourcePath);
+            const stat = SafeFileUtils.statSyncStrict(sourcePath);
             
             if (stat.isDirectory()) {
               // 检查是否为download_import目录
@@ -2019,11 +2419,11 @@ export class EnhancedBackupManager {
                 const importEntries = SafeFileUtils.listFileSync(sourcePath);
                 for (const importEntry of importEntries) {
                   const importPath = `${sourcePath}/${importEntry}`;
-                  const importStat = SafeFileUtils.statSync(importPath);
+                  const importStat = SafeFileUtils.statSyncStrict(importPath);
                   if (importStat.isDirectory()) {
                     const targetPath = `${downloadMangaTarget}/${importEntry}`;
                     if (!SafeFileUtils.accessSync(targetPath)) {
-                      SafeFileUtils.mkdirSync(targetPath, true);
+                      SafeFileUtils.mkdirSyncStrict(targetPath, true);
                     }
                     await this.copyDirectoryRecursive(importPath, targetPath);
                     logger.info(TAG, `已恢复Download漫画: ${importEntry}`);
@@ -2033,7 +2433,7 @@ export class EnhancedBackupManager {
                 // 其他源的漫画恢复到Download/漫匣/manga目录
                 const targetPath = `${downloadMangaTarget}/${sourceEntry}`;
                 if (!SafeFileUtils.accessSync(targetPath)) {
-                  SafeFileUtils.mkdirSync(targetPath, true);
+                  SafeFileUtils.mkdirSyncStrict(targetPath, true);
                 }
                 await this.copyDirectoryRecursive(sourcePath, targetPath);
                 logger.info(TAG, `Restored manga source: ${sourceEntry}`);
@@ -2045,7 +2445,7 @@ export class EnhancedBackupManager {
           // 回退：恢复到沙盒comics目录
           const mangaTarget = this.sandboxManager.getDirectory('comics');
           if (!SafeFileUtils.accessSync(mangaTarget)) {
-            SafeFileUtils.mkdirSync(mangaTarget, true);
+            SafeFileUtils.mkdirSyncStrict(mangaTarget, true);
           }
           await this.copyDirectoryRecursive(mangaSource, mangaTarget);
           logger.info(TAG, 'Restored manga covers to sandbox');
@@ -2062,7 +2462,7 @@ export class EnhancedBackupManager {
           novelTarget = `${filesDir}/novel_covers`;
         }
         if (!SafeFileUtils.accessSync(novelTarget)) {
-          SafeFileUtils.mkdirSync(novelTarget, true);
+          SafeFileUtils.mkdirSyncStrict(novelTarget, true);
         }
         await this.copyDirectoryRecursive(novelSource, novelTarget);
         logger.info(TAG, `已恢复小说封面到: ${novelTarget}`);
@@ -2074,13 +2474,14 @@ export class EnhancedBackupManager {
       if (SafeFileUtils.accessSync(ebookSource)) {
         const ebookTarget = `${filesDir}/ebook_covers`;
         if (!SafeFileUtils.accessSync(ebookTarget)) {
-          SafeFileUtils.mkdirSync(ebookTarget, true);
+          SafeFileUtils.mkdirSyncStrict(ebookTarget, true);
         }
         await this.copyDirectoryRecursive(ebookSource, ebookTarget);
         logger.info(TAG, '已恢复电子书封面（旧格式）');
       }
     } catch (error) {
       logger.error(TAG, `Failed to restore cover images: ${error}`);
+      throw new Error(`恢复封面图片失败: ${error}`);
     }
   }
 
@@ -2096,7 +2497,7 @@ export class EnhancedBackupManager {
       if (SafeFileUtils.accessSync(mangaSource)) {
         const mangaTarget = `${cacheDir}/manga_images`;
         if (!SafeFileUtils.accessSync(mangaTarget)) {
-          SafeFileUtils.mkdirSync(mangaTarget, true);
+          SafeFileUtils.mkdirSyncStrict(mangaTarget, true);
         }
         await this.copyDirectoryRecursive(mangaSource, mangaTarget);
         logger.info(TAG, 'Restored manga chapter images');
@@ -2107,13 +2508,14 @@ export class EnhancedBackupManager {
       if (SafeFileUtils.accessSync(imagesSource)) {
         const imagesTarget = `${cacheDir}/images`;
         if (!SafeFileUtils.accessSync(imagesTarget)) {
-          SafeFileUtils.mkdirSync(imagesTarget, true);
+          SafeFileUtils.mkdirSyncStrict(imagesTarget, true);
         }
         await this.copyDirectoryRecursive(imagesSource, imagesTarget);
         logger.info(TAG, 'Restored cached images');
       }
     } catch (error) {
       logger.error(TAG, `Failed to restore chapter images: ${error}`);
+      throw new Error(`恢复章节图片失败: ${error}`);
     }
   }
 
@@ -2133,7 +2535,7 @@ export class EnhancedBackupManager {
     }
     
     if (!SafeFileUtils.accessSync(targetBaseDir)) {
-      SafeFileUtils.mkdirSync(targetBaseDir, true);
+      SafeFileUtils.mkdirSyncStrict(targetBaseDir, true);
     }
     
     try {
@@ -2142,20 +2544,20 @@ export class EnhancedBackupManager {
       
       for (const entry of entries) {
         const sourcePath = `${sourceDir}/${entry}`;
-        const stat = SafeFileUtils.statSync(sourcePath);
+        const stat = SafeFileUtils.statSyncStrict(sourcePath);
         
         if (stat.isDirectory()) {
           // 新的文件夹结构：每个电子书一个文件夹
           const targetFolderPath = `${targetBaseDir}/${entry}`;
           if (!SafeFileUtils.accessSync(targetFolderPath)) {
-            SafeFileUtils.mkdirSync(targetFolderPath, true);
+            SafeFileUtils.mkdirSyncStrict(targetFolderPath, true);
           }
           await this.copyDirectoryRecursive(sourcePath, targetFolderPath);
           logger.info(TAG, `已恢复电子书文件夹: ${entry}`);
         } else {
           // 旧的单文件结构：直接复制文件
           const targetFilePath = `${targetBaseDir}/${entry}`;
-          SafeFileUtils.copyFileSync(sourcePath, targetFilePath);
+          this.copyFileAtomicSync(sourcePath, targetFilePath);
           logger.info(TAG, `已恢复电子书文件: ${entry}`);
         }
       }
@@ -2163,6 +2565,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, `电子书文件恢复完成，目标目录: ${targetBaseDir}`);
     } catch (error) {
       logger.error(TAG, `恢复电子书文件失败: ${error}`);
+      throw new Error(`恢复电子书文件失败: ${error}`);
     }
   }
 
@@ -2173,6 +2576,7 @@ export class EnhancedBackupManager {
     logger.info(TAG, `正在恢复漫画库: ${items.length} 项`);
     
     const downloadDirPath = AppStorage.get<string>('downloadSyncDirPath');
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -2389,6 +2793,7 @@ export class EnhancedBackupManager {
             ]);
             logger.info(TAG, `恢复阅读进度: ${item.title}, chapter=${item.lastReadChapterId}, page=${item.lastReadPage}`);
           } catch (e) {
+            failures.push(`${item.title} 阅读进度: ${String(e)}`);
             logger.error(TAG, `恢复阅读进度失败: ${item.title}, ${e}`);
           }
         }
@@ -2406,12 +2811,19 @@ export class EnhancedBackupManager {
             ]);
             logger.info(TAG, `恢复收藏状态: ${item.title}`);
           } catch (e) {
+            failures.push(`${item.title} 收藏状态: ${String(e)}`);
             logger.error(TAG, `恢复收藏状态失败: ${item.title}, ${e}`);
           }
         }
       } catch (error) {
+        const message = `${item.title}: ${String(error)}`;
+        failures.push(message);
         logger.error(TAG, `Failed to restore manga: ${item.title}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`漫画库恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Manga library restore completed');
@@ -2426,6 +2838,7 @@ export class EnhancedBackupManager {
     
     const downloadDirPath = AppStorage.get<string>('downloadSyncDirPath');
     const baseDir = downloadDirPath ? `${downloadDirPath}/novel` : `${this.sandboxManager.getDirectory('files')}/novel`;
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -2502,8 +2915,14 @@ export class EnhancedBackupManager {
         await this.novelDataManager.saveBook(novel);
         logger.info(TAG, `已恢复小说: ${item.name}`);
       } catch (error) {
+        const message = `${item.name}: ${String(error)}`;
+        failures.push(message);
         logger.error(TAG, `恢复小说失败: ${item.name}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说库恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, '小说库恢复完成');
@@ -2521,6 +2940,7 @@ export class EnhancedBackupManager {
     
     // 确定基础目录
     const baseDir = downloadDirPath ? `${downloadDirPath}/ebooks` : sandboxEbooksDir;
+    const failures: string[] = [];
     
     for (const item of items) {
       // 跳过内置电子书
@@ -2661,6 +3081,7 @@ export class EnhancedBackupManager {
             ]);
             logger.info(TAG, `恢复电子书阅读进度: ${item.title}, chapterIndex=${chapterIndex}, domPos长度=${domPosVal.length}`);
           } catch (e) {
+            failures.push(`${item.title} 阅读进度: ${String(e)}`);
             logger.error(TAG, `恢复电子书阅读进度失败: ${item.title}, ${e}`);
           }
         }
@@ -2692,14 +3113,21 @@ export class EnhancedBackupManager {
             ]);
             logger.info(TAG, `恢复电子书设置: ${item.title}`);
           } catch (e) {
+            failures.push(`${item.title} 阅读设置: ${String(e)}`);
             logger.error(TAG, `恢复电子书设置失败: ${item.title}, ${e}`);
           }
         }
         
         logger.info(TAG, `已恢复电子书: ${item.title}, 路径: ${newFilePath}`);
       } catch (error) {
+        const message = `${item.title}: ${String(error)}`;
+        failures.push(message);
         logger.error(TAG, `恢复电子书失败: ${item.title}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`电子书库恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, '电子书库恢复完成');
@@ -2936,6 +3364,207 @@ export class EnhancedBackupManager {
   }
 
   /**
+   * 导出小说章节表
+   */
+  private async exportNovelChapters(): Promise<NovelChapterBackup[]> {
+    try {
+      const sql = 'SELECT * FROM novel_chapter ORDER BY bookId ASC, chapterIndex ASC';
+      const results = await this.dbManager.querySql(sql);
+      const items: NovelChapterBackup[] = [];
+
+      for (const record of results) {
+        const rec = record as Record<string, DatabaseRecord>;
+        items.push({
+          id: String(rec['id'] || ''),
+          bookId: String(rec['bookId'] || ''),
+          url: String(rec['url'] || ''),
+          title: String(rec['title'] || ''),
+          chapterIndex: Number(rec['chapterIndex'] || 0),
+          isVolume: Number(rec['isVolume'] || 0),
+          isVip: Number(rec['isVip'] || 0),
+          isPay: Number(rec['isPay'] || 0),
+          isDownloaded: Number(rec['isDownloaded'] || 0),
+          contentPath: String(rec['contentPath'] || ''),
+          wordCount: Number(rec['wordCount'] || 0),
+          updateTime: Number(rec['updateTime'] || 0),
+          createTime: Number(rec['createTime'] || 0)
+        });
+      }
+
+      logger.info(TAG, `Exported novel chapters: ${items.length} items`);
+      return items;
+    } catch (error) {
+      logger.error(TAG, `Failed to export novel chapters: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出小说正文缓存
+   */
+  private async exportNovelContentCache(): Promise<NovelContentCacheBackup[]> {
+    try {
+      const sql = 'SELECT * FROM novel_content_cache ORDER BY createTime DESC';
+      const results = await this.dbManager.querySql(sql);
+      const items: NovelContentCacheBackup[] = [];
+
+      for (const record of results) {
+        const rec = record as Record<string, DatabaseRecord>;
+        items.push({
+          id: String(rec['id'] || ''),
+          chapterId: String(rec['chapterId'] || ''),
+          content: String(rec['content'] || ''),
+          wordCount: Number(rec['wordCount'] || 0),
+          createTime: Number(rec['createTime'] || 0),
+          expireTime: Number(rec['expireTime'] || 0)
+        });
+      }
+
+      logger.info(TAG, `Exported novel content cache: ${items.length} items`);
+      return items;
+    } catch (error) {
+      logger.error(TAG, `Failed to export novel content cache: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出小说阅读器设置
+   */
+  private async exportNovelReaderSettings(): Promise<NovelReaderSettingsBackup[]> {
+    try {
+      const sql = 'SELECT * FROM novel_reader_settings ORDER BY updateTime DESC';
+      const results = await this.dbManager.querySql(sql);
+      const items: NovelReaderSettingsBackup[] = [];
+
+      for (const record of results) {
+        const rec = record as Record<string, DatabaseRecord>;
+        items.push({
+          id: String(rec['id'] || ''),
+          userId: String(rec['userId'] || 'default'),
+          fontSize: Number(rec['fontSize'] || 18),
+          lineHeight: Number(rec['lineHeight'] || 1.8),
+          letterSpacing: Number(rec['letterSpacing'] || 0),
+          paragraphSpacing: Number(rec['paragraphSpacing'] || 16),
+          fontFamily: String(rec['fontFamily'] || 'HarmonyOS Sans'),
+          textColor: String(rec['textColor'] || '#333333'),
+          backgroundColor: String(rec['backgroundColor'] || '#F5F5DC'),
+          brightness: Number(rec['brightness'] || 1),
+          keepScreenOn: Number(rec['keepScreenOn'] || 1),
+          volumeKeyTurn: Number(rec['volumeKeyTurn'] || 1),
+          clickTurn: Number(rec['clickTurn'] || 1),
+          autoScroll: Number(rec['autoScroll'] || 0),
+          autoScrollSpeed: Number(rec['autoScrollSpeed'] || 50),
+          createTime: Number(rec['createTime'] || 0),
+          updateTime: Number(rec['updateTime'] || 0)
+        });
+      }
+
+      logger.info(TAG, `Exported novel reader settings: ${items.length} items`);
+      return items;
+    } catch (error) {
+      logger.error(TAG, `Failed to export novel reader settings: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出小说替换规则
+   */
+  private async exportNovelReplaceRules(): Promise<NovelReplaceRuleBackup[]> {
+    try {
+      const sql = 'SELECT * FROM novel_replace_rule ORDER BY ruleOrder ASC';
+      const results = await this.dbManager.querySql(sql);
+      const items: NovelReplaceRuleBackup[] = [];
+
+      for (const record of results) {
+        const rec = record as Record<string, DatabaseRecord>;
+        items.push({
+          id: String(rec['id'] || ''),
+          name: String(rec['name'] || ''),
+          pattern: String(rec['pattern'] || ''),
+          replacement: String(rec['replacement'] || ''),
+          isRegex: Number(rec['isRegex'] || 0),
+          scope: String(rec['scope'] || 'all'),
+          enabled: Number(rec['enabled'] || 0),
+          ruleOrder: Number(rec['ruleOrder'] || 0),
+          sourceIds: String(rec['sourceIds'] || ''),
+          createTime: Number(rec['createTime'] || 0),
+          updateTime: Number(rec['updateTime'] || 0)
+        });
+      }
+
+      logger.info(TAG, `Exported novel replace rules: ${items.length} items`);
+      return items;
+    } catch (error) {
+      logger.error(TAG, `Failed to export novel replace rules: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出TXT目录识别规则
+   */
+  private async exportNovelTxtTocRules(): Promise<NovelTxtTocRuleBackup[]> {
+    try {
+      const sql = 'SELECT * FROM novel_txt_toc_rule ORDER BY serialNumber ASC';
+      const results = await this.dbManager.querySql(sql);
+      const items: NovelTxtTocRuleBackup[] = [];
+
+      for (const record of results) {
+        const rec = record as Record<string, DatabaseRecord>;
+        items.push({
+          id: String(rec['id'] || ''),
+          name: String(rec['name'] || ''),
+          rule: String(rec['rule'] || ''),
+          example: String(rec['example'] || ''),
+          serialNumber: Number(rec['serialNumber'] || 0),
+          enabled: Number(rec['enabled'] || 0),
+          createTime: Number(rec['createTime'] || 0),
+          updateTime: Number(rec['updateTime'] || 0)
+        });
+      }
+
+      logger.info(TAG, `Exported novel txt toc rules: ${items.length} items`);
+      return items;
+    } catch (error) {
+      logger.error(TAG, `Failed to export novel txt toc rules: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出小说词典规则
+   */
+  private async exportNovelDictRules(): Promise<NovelDictRuleBackup[]> {
+    try {
+      const sql = 'SELECT * FROM novel_dict_rule ORDER BY sortNumber ASC';
+      const results = await this.dbManager.querySql(sql);
+      const items: NovelDictRuleBackup[] = [];
+
+      for (const record of results) {
+        const rec = record as Record<string, DatabaseRecord>;
+        items.push({
+          id: String(rec['id'] || ''),
+          name: String(rec['name'] || ''),
+          urlRule: String(rec['urlRule'] || ''),
+          showRule: String(rec['showRule'] || ''),
+          enabled: Number(rec['enabled'] || 0),
+          sortNumber: Number(rec['sortNumber'] || 0),
+          createTime: Number(rec['createTime'] || 0),
+          updateTime: Number(rec['updateTime'] || 0)
+        });
+      }
+
+      logger.info(TAG, `Exported novel dict rules: ${items.length} items`);
+      return items;
+    } catch (error) {
+      logger.error(TAG, `Failed to export novel dict rules: ${error}`);
+      return [];
+    }
+  }
+
+  /**
    * 导出电子书库
    * [修复] 从ebook_reading_progress表获取阅读进度
    */
@@ -2944,11 +3573,11 @@ export class EnhancedBackupManager {
       const sql = 'SELECT * FROM ebook_info WHERE title != ?';
       const results = await this.dbManager.querySql(sql, ['漫匣使用手册']);
       const backupItems: EBookBackupItem[] = [];
-      
+
       for (const record of results) {
         const ebook = record as Record<string, DatabaseRecord>;
         const bookId = String(ebook['id']);
-        
+
         // [修复] 从ebook_reading_progress表获取阅读进度（包含关键字段）
         const progressSql = 'SELECT * FROM ebook_reading_progress WHERE bookId = ? ORDER BY lastReadTime DESC LIMIT 1';
         const progressResults = await this.dbManager.querySql(progressSql, [bookId]);
@@ -3162,6 +3791,150 @@ export class EnhancedBackupManager {
       logger.error(TAG, `Failed to export novel read progress: ${error}`);
       return [];
     }
+  }
+
+  /**
+   * 导出第三方追踪记录
+   */
+  private async exportTrackRecords(): Promise<TrackRecordBackup[]> {
+    try {
+      const sql = 'SELECT * FROM track_record ORDER BY updateTime DESC';
+      const results = await this.dbManager.querySql(sql);
+      const records: TrackRecordBackup[] = [];
+
+      for (const record of results) {
+        const rec = record as Record<string, DatabaseRecord>;
+        records.push({
+          id: String(rec['id'] || ''),
+          contentId: String(rec['contentId'] || ''),
+          contentType: String(rec['contentType'] || 'manga'),
+          trackerId: Number(rec['trackerId'] || 0),
+          remoteId: String(rec['remoteId'] || ''),
+          remoteTitle: String(rec['remoteTitle'] || ''),
+          remoteUrl: String(rec['remoteUrl'] || ''),
+          lastChapterRead: Number(rec['lastChapterRead'] || 0),
+          totalChapters: Number(rec['totalChapters'] || 0),
+          score: Number(rec['score'] || 0),
+          status: Number(rec['status'] || 0),
+          startedReadingDate: Number(rec['startedReadingDate'] || 0),
+          finishedReadingDate: Number(rec['finishedReadingDate'] || 0),
+          lastSyncTime: Number(rec['lastSyncTime'] || 0),
+          syncStatus: String(rec['syncStatus'] || 'pending'),
+          createTime: Number(rec['createTime'] || 0),
+          updateTime: Number(rec['updateTime'] || 0)
+        });
+      }
+
+      logger.info(TAG, `Exported track records: ${records.length} items`);
+      return records;
+    } catch (error) {
+      logger.error(TAG, `Failed to export track records: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出指定Preferences文件
+   */
+  private async exportPreferenceStores(storeNames: string[]): Promise<PreferenceBackupSection> {
+    const section: PreferenceBackupSection = { stores: [] };
+    for (const storeName of storeNames) {
+      try {
+        const store = await this.exportPreferenceStore(storeName);
+        if (store.entries.length > 0) {
+          section.stores.push(store);
+        }
+      } catch (error) {
+        logger.warn(TAG, `导出Preferences失败: ${storeName}, ${error}`);
+      }
+    }
+    return section;
+  }
+
+  private async exportPreferenceStore(storeName: string): Promise<PreferenceStoreBackup> {
+    const context = getGlobalContext();
+    const store = await preferences.getPreferences(context, storeName);
+    const raw = await store.getAll();
+    const rawRecord = raw as Record<string, Object>;
+    const keys: string[] = Object.keys(rawRecord);
+    const entries: PreferenceEntryBackup[] = [];
+
+    for (const key of keys) {
+      const rawValue = rawRecord[key];
+      const value = this.normalizePreferenceEntryValue(rawValue);
+      if (value === null) {
+        logger.warn(TAG, `跳过不支持的Preferences值: ${storeName}.${key}`);
+        continue;
+      }
+      entries.push({
+        key: key,
+        value: value
+      });
+    }
+
+    logger.info(TAG, `导出Preferences: ${storeName}, ${entries.length}项`);
+    return {
+      storeName: storeName,
+      entries: entries
+    };
+  }
+
+  private normalizePreferenceEntryValue(value: Object): PreferenceEntryValue | null {
+    if (typeof value === 'string') {
+      return String(value);
+    }
+    if (typeof value === 'number') {
+      return Number(value);
+    }
+    if (typeof value === 'boolean') {
+      return Boolean(value);
+    }
+    if (Array.isArray(value)) {
+      return this.normalizePreferenceEntryArray(value as Object[]);
+    }
+    return null;
+  }
+
+  private normalizePreferenceEntryArray(value: Object[]): PreferenceEntryValue | null {
+    if (value.length === 0) {
+      return [] as string[];
+    }
+
+    const firstValue = value[0];
+    if (typeof firstValue === 'string') {
+      const result: string[] = [];
+      for (const item of value) {
+        if (typeof item !== 'string') {
+          return null;
+        }
+        result.push(String(item));
+      }
+      return result;
+    }
+
+    if (typeof firstValue === 'number') {
+      const result: number[] = [];
+      for (const item of value) {
+        if (typeof item !== 'number') {
+          return null;
+        }
+        result.push(Number(item));
+      }
+      return result;
+    }
+
+    if (typeof firstValue === 'boolean') {
+      const result: boolean[] = [];
+      for (const item of value) {
+        if (typeof item !== 'boolean') {
+          return null;
+        }
+        result.push(Boolean(item));
+      }
+      return result;
+    }
+
+    return null;
   }
 
   /**
@@ -3629,6 +4402,7 @@ export class EnhancedBackupManager {
     let restoredCount = 0;
     let skippedCount = 0;
     let failedCount = 0;
+    const failures: string[] = [];
 
     for (const rawItem of items) {
       const item = this.normalizeUnifiedAnnotationBackupItem(rawItem);
@@ -3680,6 +4454,7 @@ export class EnhancedBackupManager {
         restoredCount++;
       } catch (error) {
         failedCount++;
+        failures.push(`${item.id}: ${String(error)}`);
         logger.warn(TAG, `恢复统一标注失败: id=${item.id}, error=${error}`);
       }
     }
@@ -3688,6 +4463,9 @@ export class EnhancedBackupManager {
       TAG,
       `统一标注恢复完成: success=${restoredCount}, skipped=${skippedCount}, failed=${failedCount}, strategy=${strategy}`
     );
+    if (failures.length > 0) {
+      throw new Error(`统一标注恢复失败 ${failedCount}/${items.length}: ${failures.join('; ')}`);
+    }
   }
 
   private normalizeUnifiedAnnotationBackupItem(item: UnifiedAnnotationBackupItem): UnifiedAnnotationBackupItem {
@@ -3752,12 +4530,11 @@ export class EnhancedBackupManager {
     if (trimmed.length <= 0) {
       return '{}';
     }
-    try {
-      SafeUtils.parseObj<Object>(trimmed);
+    const parsed = SafeUtils.parseOptional<UnifiedAnnotationAnchorJson>(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return trimmed;
-    } catch {
-      return '{}';
     }
+    return '{}';
   }
 
   private async ensureUnifiedAnnotationTable(): Promise<void> {
@@ -3778,7 +4555,8 @@ export class EnhancedBackupManager {
    */
   private async restoreMangaSources(items: MangaSourceBackup[]): Promise<void> {
     logger.info(TAG, `Restoring manga sources: ${items.length} items`);
-    
+    const failures: string[] = [];
+
     for (const item of items) {
       try {
         const now = Date.now();
@@ -3816,10 +4594,15 @@ export class EnhancedBackupManager {
         ]);
         logger.debug(TAG, `Restored manga source: ${item.name}`);
       } catch (error) {
+        failures.push(`${item.name}: ${String(error)}`);
         logger.error(TAG, `Failed to restore manga source: ${item.name}, ${error}`);
       }
     }
-    
+
+    if (failures.length > 0) {
+      throw new Error(`漫画源恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+
     logger.info(TAG, 'Manga sources restore completed (full fields)');
   }
 
@@ -3831,7 +4614,8 @@ export class EnhancedBackupManager {
     
     let successCount = 0;
     let skipCount = 0;
-    
+    const failures: string[] = [];
+
     for (const item of items) {
       try {
         // 检查是否有完整的configJson
@@ -3879,10 +4663,15 @@ export class EnhancedBackupManager {
         successCount++;
         logger.debug(TAG, `Restored novel source: ${bookSourceName}`);
       } catch (error) {
+        failures.push(`${item.bookSourceName || item.name}: ${String(error)}`);
         logger.error(TAG, `Failed to restore novel source: ${item.bookSourceName || item.name}, ${error}`);
       }
     }
-    
+
+    if (failures.length > 0) {
+      throw new Error(`小说源恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+
     logger.info(TAG, `Novel sources restore completed: ${successCount} success, ${skipCount} skipped`);
   }
 
@@ -3894,6 +4683,7 @@ export class EnhancedBackupManager {
     logger.info(TAG, `Restoring manga read progress: ${items.length} items`);
     
     const now = Date.now();
+    const failures: string[] = [];
     for (const item of items) {
       try {
         // 先检查comicId和chapterId是否存在
@@ -3917,8 +4707,13 @@ export class EnhancedBackupManager {
           now  // createTime
         ]);
       } catch (error) {
+        failures.push(`${item.mangaId}/${item.chapterId}: ${String(error)}`);
         logger.error(TAG, `Failed to restore manga read progress: ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`漫画阅读进度恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Manga read progress restore completed');
@@ -3929,7 +4724,8 @@ export class EnhancedBackupManager {
    */
   private async restoreNovelReadProgress(items: NovelReadProgressBackup[]): Promise<void> {
     logger.info(TAG, `Restoring novel read progress: ${items.length} items`);
-    
+    const failures: string[] = [];
+
     for (const item of items) {
       try {
         await this.novelDataManager.saveReadProgress({
@@ -3941,11 +4737,397 @@ export class EnhancedBackupManager {
           readTime: item.readTime
         });
       } catch (error) {
+        failures.push(`${item.bookId}/${item.chapterId}: ${String(error)}`);
         logger.error(TAG, `Failed to restore novel read progress: ${error}`);
       }
     }
-    
+
+    if (failures.length > 0) {
+      throw new Error(`小说阅读进度恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+
     logger.info(TAG, 'Novel read progress restore completed');
+  }
+
+  private async restoreNovelChapters(
+    items: NovelChapterBackup[],
+    strategy: 'skip' | 'replace' | 'merge'
+  ): Promise<void> {
+    logger.info(TAG, `Restoring novel chapters: ${items.length} items`);
+    const failures: string[] = [];
+    let skippedCount = 0;
+    const sql = `INSERT OR REPLACE INTO novel_chapter (
+      id, bookId, url, title, chapterIndex, isVolume, isVip, isPay,
+      isDownloaded, contentPath, wordCount, updateTime, createTime
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    for (const item of items) {
+      try {
+        if (!item.id || !item.bookId || !item.url) {
+          skippedCount++;
+          continue;
+        }
+        const bookRows = await this.dbManager.querySql('SELECT id FROM novel_book WHERE id = ? LIMIT 1', [item.bookId]);
+        if (bookRows.length === 0) {
+          skippedCount++;
+          continue;
+        }
+        if (strategy === 'skip') {
+          const existingRows = await this.dbManager.querySql(
+            'SELECT id FROM novel_chapter WHERE id = ? OR (bookId = ? AND url = ?) LIMIT 1',
+            this.toDatabaseArgs([item.id, item.bookId, item.url])
+          );
+          if (existingRows.length > 0) {
+            skippedCount++;
+            continue;
+          }
+        }
+        await this.dbManager.executeSql(sql, this.toDatabaseArgs([
+          item.id,
+          item.bookId,
+          item.url,
+          item.title,
+          item.chapterIndex,
+          item.isVolume,
+          item.isVip,
+          item.isPay,
+          item.isDownloaded,
+          item.contentPath,
+          item.wordCount,
+          item.updateTime,
+          item.createTime
+        ]));
+      } catch (error) {
+        failures.push(`${item.bookId}/${item.id}: ${String(error)}`);
+        logger.error(TAG, `Failed to restore novel chapter: ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说章节恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+
+    logger.info(TAG, `Novel chapters restore completed, skipped=${skippedCount}`);
+  }
+
+  private async restoreNovelContentCache(
+    items: NovelContentCacheBackup[],
+    strategy: 'skip' | 'replace' | 'merge'
+  ): Promise<void> {
+    logger.info(TAG, `Restoring novel content cache: ${items.length} items`);
+    const failures: string[] = [];
+    let skippedCount = 0;
+    const sql = `INSERT OR REPLACE INTO novel_content_cache (
+      id, chapterId, content, wordCount, createTime, expireTime
+    ) VALUES (?, ?, ?, ?, ?, ?)`;
+
+    for (const item of items) {
+      try {
+        if (!item.id || !item.chapterId) {
+          skippedCount++;
+          continue;
+        }
+        const chapterRows = await this.dbManager.querySql('SELECT id FROM novel_chapter WHERE id = ? LIMIT 1', [item.chapterId]);
+        if (chapterRows.length === 0) {
+          skippedCount++;
+          continue;
+        }
+        if (strategy === 'skip') {
+          const existingRows = await this.dbManager.querySql('SELECT id FROM novel_content_cache WHERE chapterId = ? LIMIT 1', [item.chapterId]);
+          if (existingRows.length > 0) {
+            skippedCount++;
+            continue;
+          }
+        }
+        await this.dbManager.executeSql(sql, this.toDatabaseArgs([
+          item.id,
+          item.chapterId,
+          item.content,
+          item.wordCount,
+          item.createTime,
+          item.expireTime
+        ]));
+      } catch (error) {
+        failures.push(`${item.chapterId}: ${String(error)}`);
+        logger.error(TAG, `Failed to restore novel content cache: ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说正文缓存恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+
+    logger.info(TAG, `Novel content cache restore completed, skipped=${skippedCount}`);
+  }
+
+  private async restoreNovelReaderSettings(items: NovelReaderSettingsBackup[]): Promise<void> {
+    logger.info(TAG, `Restoring novel reader settings: ${items.length} items`);
+    const failures: string[] = [];
+    const sql = `INSERT OR REPLACE INTO novel_reader_settings (
+      id, userId, fontSize, lineHeight, letterSpacing, paragraphSpacing, fontFamily,
+      textColor, backgroundColor, brightness, keepScreenOn, volumeKeyTurn, clickTurn,
+      autoScroll, autoScrollSpeed, createTime, updateTime
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    for (const item of items) {
+      try {
+        await this.dbManager.executeSql(sql, this.toDatabaseArgs([
+          item.id,
+          item.userId,
+          item.fontSize,
+          item.lineHeight,
+          item.letterSpacing,
+          item.paragraphSpacing,
+          item.fontFamily,
+          item.textColor,
+          item.backgroundColor,
+          item.brightness,
+          item.keepScreenOn,
+          item.volumeKeyTurn,
+          item.clickTurn,
+          item.autoScroll,
+          item.autoScrollSpeed,
+          item.createTime,
+          item.updateTime
+        ]));
+      } catch (error) {
+        failures.push(`${item.userId}: ${String(error)}`);
+        logger.error(TAG, `Failed to restore novel reader settings: ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说阅读器设置恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+  }
+
+  private async restoreNovelReplaceRules(items: NovelReplaceRuleBackup[]): Promise<void> {
+    logger.info(TAG, `Restoring novel replace rules: ${items.length} items`);
+    const failures: string[] = [];
+    const sql = `INSERT OR REPLACE INTO novel_replace_rule (
+      id, name, pattern, replacement, isRegex, scope, enabled, ruleOrder,
+      sourceIds, createTime, updateTime
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    for (const item of items) {
+      try {
+        await this.dbManager.executeSql(sql, this.toDatabaseArgs([
+          item.id,
+          item.name,
+          item.pattern,
+          item.replacement,
+          item.isRegex,
+          item.scope,
+          item.enabled,
+          item.ruleOrder,
+          item.sourceIds,
+          item.createTime,
+          item.updateTime
+        ]));
+      } catch (error) {
+        failures.push(`${item.id}: ${String(error)}`);
+        logger.error(TAG, `Failed to restore novel replace rule: ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说替换规则恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+  }
+
+  private async restoreNovelTxtTocRules(items: NovelTxtTocRuleBackup[]): Promise<void> {
+    logger.info(TAG, `Restoring novel txt toc rules: ${items.length} items`);
+    const failures: string[] = [];
+    const sql = `INSERT OR REPLACE INTO novel_txt_toc_rule (
+      id, name, rule, example, serialNumber, enabled, createTime, updateTime
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    for (const item of items) {
+      try {
+        await this.dbManager.executeSql(sql, this.toDatabaseArgs([
+          item.id,
+          item.name,
+          item.rule,
+          item.example,
+          item.serialNumber,
+          item.enabled,
+          item.createTime,
+          item.updateTime
+        ]));
+      } catch (error) {
+        failures.push(`${item.id}: ${String(error)}`);
+        logger.error(TAG, `Failed to restore novel txt toc rule: ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`TXT目录规则恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+  }
+
+  private async restoreNovelDictRules(items: NovelDictRuleBackup[]): Promise<void> {
+    logger.info(TAG, `Restoring novel dict rules: ${items.length} items`);
+    const failures: string[] = [];
+    const sql = `INSERT OR REPLACE INTO novel_dict_rule (
+      id, name, urlRule, showRule, enabled, sortNumber, createTime, updateTime
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    for (const item of items) {
+      try {
+        await this.dbManager.executeSql(sql, this.toDatabaseArgs([
+          item.id,
+          item.name,
+          item.urlRule,
+          item.showRule,
+          item.enabled,
+          item.sortNumber,
+          item.createTime,
+          item.updateTime
+        ]));
+      } catch (error) {
+        failures.push(`${item.id}: ${String(error)}`);
+        logger.error(TAG, `Failed to restore novel dict rule: ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说词典规则恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+  }
+
+  private async restoreTrackRecords(
+    items: TrackRecordBackup[],
+    strategy: 'skip' | 'replace' | 'merge'
+  ): Promise<void> {
+    logger.info(TAG, `Restoring track records: ${items.length} items`);
+    const failures: string[] = [];
+    let skippedCount = 0;
+    const sql = `INSERT OR REPLACE INTO track_record (
+      id, contentId, contentType, trackerId, remoteId, remoteTitle, remoteUrl,
+      lastChapterRead, totalChapters, score, status, startedReadingDate,
+      finishedReadingDate, lastSyncTime, syncStatus, createTime, updateTime
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    for (const item of items) {
+      try {
+        if (!item.id || !item.contentId || item.trackerId <= 0) {
+          skippedCount++;
+          continue;
+        }
+        const existingRows = await this.dbManager.querySql(
+          'SELECT updateTime FROM track_record WHERE contentId = ? AND trackerId = ? LIMIT 1',
+          this.toDatabaseArgs([item.contentId, item.trackerId])
+        );
+        if (existingRows.length > 0 && strategy === 'skip') {
+          skippedCount++;
+          continue;
+        }
+        if (existingRows.length > 0 && strategy === 'merge') {
+          const existingRecord = existingRows[0] as Record<string, DatabaseRecord>;
+          const existingUpdateTime = Number(existingRecord['updateTime'] || 0);
+          if (existingUpdateTime > item.updateTime) {
+            skippedCount++;
+            continue;
+          }
+        }
+        await this.dbManager.executeSql(sql, this.toDatabaseArgs([
+          item.id,
+          item.contentId,
+          item.contentType,
+          item.trackerId,
+          item.remoteId,
+          item.remoteTitle,
+          item.remoteUrl,
+          item.lastChapterRead,
+          item.totalChapters,
+          item.score,
+          item.status,
+          item.startedReadingDate,
+          item.finishedReadingDate,
+          item.lastSyncTime,
+          item.syncStatus,
+          item.createTime,
+          item.updateTime
+        ]));
+      } catch (error) {
+        failures.push(`${item.contentId}/${item.trackerId}: ${String(error)}`);
+        logger.error(TAG, `Failed to restore track record: ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`第三方追踪记录恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
+    }
+
+    logger.info(TAG, `Track records restore completed, skipped=${skippedCount}`);
+  }
+
+  private async restorePreferenceStores(section: PreferenceBackupSection): Promise<void> {
+    if (!section.stores || section.stores.length === 0) {
+      return;
+    }
+
+    const failures: string[] = [];
+    for (const store of section.stores) {
+      try {
+        await this.restorePreferenceStore(store);
+      } catch (error) {
+        failures.push(`${store.storeName}: ${String(error)}`);
+        logger.error(TAG, `恢复Preferences失败: ${store.storeName}, ${error}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`Preferences恢复失败 ${failures.length}/${section.stores.length}: ${failures.join('; ')}`);
+    }
+  }
+
+  private async restorePreferenceStore(storeBackup: PreferenceStoreBackup): Promise<void> {
+    const context = getGlobalContext();
+    const store = await preferences.getPreferences(context, storeBackup.storeName);
+    for (const entry of storeBackup.entries) {
+      await this.putPreferenceEntryValue(store, entry.key, entry.value);
+    }
+    await store.flush();
+    logger.info(TAG, `恢复Preferences: ${storeBackup.storeName}, ${storeBackup.entries.length}项`);
+  }
+
+  private async putPreferenceEntryValue(
+    store: preferences.Preferences,
+    key: string,
+    value: PreferenceEntryValue
+  ): Promise<void> {
+    if (typeof value === 'string') {
+      await store.put(key, value);
+      return;
+    }
+    if (typeof value === 'number') {
+      await store.put(key, value);
+      return;
+    }
+    if (typeof value === 'boolean') {
+      await store.put(key, value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        const empty: string[] = [];
+        await store.put(key, empty);
+        return;
+      }
+      const firstValue = value[0];
+      if (typeof firstValue === 'string') {
+        await store.put(key, value as string[]);
+        return;
+      }
+      if (typeof firstValue === 'number') {
+        await store.put(key, value as number[]);
+        return;
+      }
+      if (typeof firstValue === 'boolean') {
+        await store.put(key, value as boolean[]);
+      }
+    }
   }
 
   /**
@@ -4005,6 +5187,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, 'Settings restore completed');
     } catch (error) {
       logger.error(TAG, `Failed to restore settings: ${error}`);
+      throw new Error(String(error));
     }
   }
 
@@ -4047,6 +5230,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, 'History restore completed');
     } catch (error) {
       logger.error(TAG, `Failed to restore history: ${error}`);
+      throw new Error(String(error));
     }
   }
 
@@ -4055,7 +5239,8 @@ export class EnhancedBackupManager {
    */
   private async restoreWebViewConfigs(configs: WebViewConfigBackup[]): Promise<void> {
     logger.info(TAG, `Restoring WebView configs: ${configs.length} items`);
-    
+    const failures: string[] = [];
+
     for (const config of configs) {
       try {
         const now = Date.now();
@@ -4085,10 +5270,15 @@ export class EnhancedBackupManager {
           updateTime
         ]);
       } catch (error) {
+        failures.push(`${config.sourceId}: ${String(error)}`);
         logger.error(TAG, `Failed to restore WebView config: ${error}`);
       }
     }
-    
+
+    if (failures.length > 0) {
+      throw new Error(`WebView配置恢复失败 ${failures.length}/${configs.length}: ${failures.join('; ')}`);
+    }
+
     logger.info(TAG, 'WebView configs restore completed');
   }
 
@@ -4097,7 +5287,8 @@ export class EnhancedBackupManager {
    */
   private async restoreDownloadTasks(tasks: DownloadTaskBackup[]): Promise<void> {
     logger.info(TAG, `Restoring download tasks: ${tasks.length} items`);
-    
+    const failures: string[] = [];
+
     for (const task of tasks) {
       try {
         const startTime = Number(task.startTime ?? task.updateTime ?? 0);
@@ -4124,10 +5315,15 @@ export class EnhancedBackupManager {
           completeTime
         ]);
       } catch (error) {
+        failures.push(`${task.id}: ${String(error)}`);
         logger.error(TAG, `Failed to restore download task: ${error}`);
       }
     }
-    
+
+    if (failures.length > 0) {
+      throw new Error(`下载任务恢复失败 ${failures.length}/${tasks.length}: ${failures.join('; ')}`);
+    }
+
     logger.info(TAG, 'Download tasks restore completed');
   }
 
@@ -4136,7 +5332,8 @@ export class EnhancedBackupManager {
    */
   private async restoreFavorites(favorites: FavoriteBackup[]): Promise<void> {
     logger.info(TAG, `Restoring favorites: ${favorites.length} items`);
-    
+    const failures: string[] = [];
+
     for (const fav of favorites) {
       try {
         const lastReadTime = Number(fav.lastReadTime ?? fav.updateTime ?? 0);
@@ -4154,10 +5351,15 @@ export class EnhancedBackupManager {
           fav.readProgress || 0
         ]);
       } catch (error) {
+        failures.push(`${fav.comicId}: ${String(error)}`);
         logger.error(TAG, `Failed to restore favorite: ${error}`);
       }
     }
-    
+
+    if (failures.length > 0) {
+      throw new Error(`收藏恢复失败 ${failures.length}/${favorites.length}: ${failures.join('; ')}`);
+    }
+
     logger.info(TAG, 'Favorites restore completed');
   }
 
@@ -4167,7 +5369,8 @@ export class EnhancedBackupManager {
   private async restoreOnlineData(data: OnlineDataBackupSection): Promise<void> {
     const comics = data.comics as OnlineComicBackup[] | undefined;
     const readHistory = data.readHistory as OnlineReadHistoryBackup[] | undefined;
-    
+    const failures: string[] = [];
+
     logger.info(TAG, `Restoring online data: ${comics?.length ?? 0} comics, ${readHistory?.length ?? 0} history`);
     
     if (comics && comics.length > 0) {
@@ -4243,6 +5446,7 @@ export class EnhancedBackupManager {
             }
           }
         } catch (error) {
+          failures.push(`在线漫画 ${comic.title}: ${String(error)}`);
           logger.error(TAG, `Failed to restore online comic: ${comic.title}, ${error}`);
         }
       }
@@ -4269,11 +5473,16 @@ export class EnhancedBackupManager {
             history.createTime || history.readTime || Date.now()
           ]);
         } catch (error) {
+          failures.push(`在线阅读历史 ${history.comicId}/${history.chapterId}: ${String(error)}`);
           logger.error(TAG, `Failed to restore online read history: ${error}`);
         }
       }
     }
-    
+
+    if (failures.length > 0) {
+      throw new Error(`在线数据恢复失败: ${failures.join('; ')}`);
+    }
+
     logger.info(TAG, 'Online data restore completed');
   }
 
@@ -4283,7 +5492,7 @@ export class EnhancedBackupManager {
   private async createTempBackupDir(timestamp: number): Promise<string> {
     const tempDir = `${this.sandboxManager.getDirectory('cache')}/backup_temp_${timestamp}`;
     if (!SafeFileUtils.accessSync(tempDir)) {
-      SafeFileUtils.mkdirSync(tempDir, true);
+      SafeFileUtils.mkdirSyncStrict(tempDir, true);
     }
     return tempDir;
   }
@@ -4291,7 +5500,7 @@ export class EnhancedBackupManager {
   private async createTempRestoreDir(): Promise<string> {
     const tempDir = `${this.sandboxManager.getDirectory('cache')}/restore_temp_${Date.now()}`;
     if (!SafeFileUtils.accessSync(tempDir)) {
-      SafeFileUtils.mkdirSync(tempDir, true);
+      SafeFileUtils.mkdirSyncStrict(tempDir, true);
     }
     return tempDir;
   }
@@ -4320,12 +5529,12 @@ export class EnhancedBackupManager {
       const entries = SafeFileUtils.listFileSync(dirPath);
       for (const entry of entries) {
         const fullPath = `${dirPath}/${entry}`;
-        const stat = SafeFileUtils.statSync(fullPath);
+        const stat = SafeFileUtils.statSyncStrict(fullPath);
         
         if (stat.isDirectory()) {
           this.deleteDirectoryRecursive(fullPath);
         } else {
-          SafeFileUtils.unlinkSync(fullPath);
+          SafeFileUtils.unlinkSyncStrict(fullPath);
         }
       }
       
@@ -4338,7 +5547,7 @@ export class EnhancedBackupManager {
   private async getBackupsDirectory(): Promise<string> {
     const backupsDir = `${this.sandboxManager.getDirectory('files')}/backups`;
     if (!SafeFileUtils.accessSync(backupsDir)) {
-      SafeFileUtils.mkdirSync(backupsDir, true);
+      SafeFileUtils.mkdirSyncStrict(backupsDir, true);
     }
     return backupsDir;
   }
@@ -4394,6 +5603,7 @@ export class EnhancedBackupManager {
    */
   private async restoreMangaLibraryWithStrategy(items: MangaBackupItem[], strategy: 'skip' | 'replace' | 'merge'): Promise<void> {
     logger.info(TAG, `Restoring manga library with strategy: ${strategy}, ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -4417,8 +5627,13 @@ export class EnhancedBackupManager {
         
         await this.restoreMangaLibrary([item]);
       } catch (error) {
+        failures.push(`${item.title}: ${String(error)}`);
         logger.error(TAG, `Failed to restore manga: ${item.title}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`漫画库冲突策略恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Manga library restore completed');
@@ -4426,6 +5641,7 @@ export class EnhancedBackupManager {
 
   private async restoreNovelLibraryWithStrategy(items: NovelBackupItem[], strategy: 'skip' | 'replace' | 'merge'): Promise<void> {
     logger.info(TAG, `Restoring novel library with strategy: ${strategy}, ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -4448,8 +5664,13 @@ export class EnhancedBackupManager {
         
         await this.restoreNovelLibrary([item]);
       } catch (error) {
+        failures.push(`${item.name}: ${String(error)}`);
         logger.error(TAG, `Failed to restore novel: ${item.name}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`小说库冲突策略恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Novel library restore completed');
@@ -4457,6 +5678,7 @@ export class EnhancedBackupManager {
 
   private async restoreEBookLibraryWithStrategy(items: EBookBackupItem[], strategy: 'skip' | 'replace' | 'merge'): Promise<void> {
     logger.info(TAG, `Restoring ebook library with strategy: ${strategy}, ${items.length} items`);
+    const failures: string[] = [];
     
     for (const item of items) {
       try {
@@ -4489,8 +5711,13 @@ export class EnhancedBackupManager {
         
         await this.restoreEBookLibrary([item]);
       } catch (error) {
+        failures.push(`${item.title}: ${String(error)}`);
         logger.error(TAG, `Failed to restore ebook: ${item.title}, ${error}`);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`电子书库冲突策略恢复失败 ${failures.length}/${items.length}: ${failures.join('; ')}`);
     }
     
     logger.info(TAG, 'Ebook library restore completed');
@@ -4534,16 +5761,14 @@ export class EnhancedBackupManager {
       const backupFolderPath = `${downloadDirPath}/backup`;
       
       // 确保backup文件夹存在
-      try {
-        SafeFileUtils.accessSync(backupFolderPath);
-      } catch (e) {
-        SafeFileUtils.mkdirSync(backupFolderPath);
+      if (!SafeFileUtils.accessSync(backupFolderPath)) {
+        SafeFileUtils.mkdirSyncStrict(backupFolderPath, true);
         logger.info(TAG, `创建backup文件夹: ${backupFolderPath}`);
       }
 
       // 复制备份文件到backup文件夹
       const destPath = `${backupFolderPath}/${fileName}`;
-      await fs.copyFile(sourcePath, destPath);
+      this.copyFileAtomicSync(sourcePath, destPath);
       
       logger.info(TAG, `备份文件已导出到: ${destPath}`);
       return destPath;
@@ -4580,13 +5805,17 @@ export class EnhancedBackupManager {
       const xmlContent = MetadataXmlGenerator.generateComicInfoXml(metadata);
       const xmlPath = `${targetDir}/ComicInfo.xml`;
       
-      const file = SafeFileUtils.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      SafeFileUtils.writeSync(file.fd, xmlContent);
-      SafeFileUtils.closeSync(file);
+      const file = SafeFileUtils.openSyncStrict(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      try {
+        SafeFileUtils.writeExactSync(file.fd, xmlContent);
+      } finally {
+        SafeFileUtils.closeSync(file);
+      }
       
       logger.debug(TAG, `已生成漫画元数据: ${xmlPath}`);
     } catch (error) {
       logger.warn(TAG, `生成漫画元数据XML失败: ${manga.title}, ${error}`);
+      throw new Error(`生成漫画元数据XML失败: ${manga.title}, ${error}`);
     }
   }
 
@@ -4614,13 +5843,17 @@ export class EnhancedBackupManager {
       const xmlContent = MetadataXmlGenerator.generateEBookMetadataXml(metadata);
       const xmlPath = `${targetDir}/metadata.xml`;
       
-      const file = SafeFileUtils.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      SafeFileUtils.writeSync(file.fd, xmlContent);
-      SafeFileUtils.closeSync(file);
+      const file = SafeFileUtils.openSyncStrict(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      try {
+        SafeFileUtils.writeExactSync(file.fd, xmlContent);
+      } finally {
+        SafeFileUtils.closeSync(file);
+      }
       
       logger.debug(TAG, `已生成电子书元数据: ${xmlPath}`);
     } catch (error) {
       logger.warn(TAG, `生成电子书元数据XML失败: ${ebook.title}, ${error}`);
+      throw new Error(`生成电子书元数据XML失败: ${ebook.title}, ${error}`);
     }
   }
 
@@ -4649,13 +5882,17 @@ export class EnhancedBackupManager {
       const xmlContent = MetadataXmlGenerator.generateNovelMetadataXml(metadata);
       const xmlPath = `${targetDir}/metadata.xml`;
       
-      const file = SafeFileUtils.openSync(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      SafeFileUtils.writeSync(file.fd, xmlContent);
-      SafeFileUtils.closeSync(file);
+      const file = SafeFileUtils.openSyncStrict(xmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      try {
+        SafeFileUtils.writeExactSync(file.fd, xmlContent);
+      } finally {
+        SafeFileUtils.closeSync(file);
+      }
       
       logger.debug(TAG, `已生成小说元数据: ${xmlPath}`);
     } catch (error) {
       logger.warn(TAG, `生成小说元数据XML失败: ${novel.name}, ${error}`);
+      throw new Error(`生成小说元数据XML失败: ${novel.name}, ${error}`);
     }
   }
   
@@ -4832,6 +6069,7 @@ export class EnhancedBackupManager {
       logger.info(TAG, `========== 字体设置恢复完成 ==========`);
     } catch (error) {
       logger.error(TAG, `恢复字体设置失败: ${error}`);
+      throw new Error(String(error));
     }
   }
 }

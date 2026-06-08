@@ -74,13 +74,15 @@ import { DuplicateDetectionDialog } from '../Framework/Components/DuplicateDetec
 import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 
 // 数据管理器导入
-import { DataManager, ChapterInfo, PageInfo, OnlineChapterInfo } from '../Framework/Data/DataManager';
+import { DataManager, ComicInfo, ChapterInfo, PageInfo, OnlineChapterInfo, OnlineComicInfo } from '../Framework/Data/DataManager';
+import { DatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DataService } from '../Framework/Services/DataService';
 import { MangaDetailLoader, MangaDetailLoadParams, MangaDetailLoadResult, MangaLoadProgressCallback, ChapterProgressInfo } from '../Framework/Loaders/MangaDetailLoader';
 import webview from '@ohos.web.webview';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { RemoteLibraryMangaBridge } from '../Framework/Source/RemoteLibraryMangaBridge';
+import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Framework/Source/RemoteLibraryShelfManager';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
@@ -109,6 +111,7 @@ import {
   IEventPayload,
   CoverChangedPayload,
   BasePayload,
+  MangaDeletedPayload,
   ReadAloudCacheUpdatedPayload,
   MangaCacheUpdatedPayload
 } from '../Framework/EventBus';
@@ -165,6 +168,7 @@ import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
 import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
+import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
@@ -206,6 +210,7 @@ const RECOMMEND_MIN_SCORE = 15;      // 本地推荐最低相关度阈值
 const SHELF_CONTENT_CARD_COVER_W = 90;   // 同书架卡片封面宽度
 const SHELF_CONTENT_CARD_COVER_H = 130;  // 同书架卡片封面高度
 const SHELF_CONTENT_MAX_COUNT = 20;      // 最多显示同书架内容数量
+const SHELF_CONTENT_CANDIDATE_SCAN_COUNT = 60;
 
 /**
  * 同书架内容筛选类型
@@ -316,6 +321,14 @@ interface DialogResult {
   index: number;
 }
 
+interface UnifiedDeleteTarget {
+  contentType: UnifiedContentType;
+  contentId: string;
+  title: string;
+  contentTypeLabel: string;
+  isRemoteProviderManga: boolean;
+}
+
 @Component
 export struct UnifiedDetailPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -417,6 +430,7 @@ export struct UnifiedDetailPage {
   @State downloadCurrentChapterTitle: string = '';      // 当前正在下载的章节标题
   private downloadCallbackRegistered: boolean = false;  // 是否已注册下载回调
   private downloadCallback: UnifiedDownloadCallback | null = null;
+  private cacheStatusRefreshTimer: number = -1;
   
   // 换源对话框状态（已提取至 ChangeSourceDialogComponent）
   @State changeSourceDialogLoadSignal: number = 0;
@@ -439,12 +453,14 @@ export struct UnifiedDetailPage {
   
   // 书架相关状态
   private typeShelfManager: TypeShelfManager = getTypeShelfManager();
+  private remoteLibraryShelfManager: RemoteLibraryShelfManager = getRemoteLibraryShelfManager();
   @State isInShelf: boolean = false;                    // 是否已在书架中
   @State currentShelfName: string = '';                 // 当前所在书架名称
   @State currentShelfId: string = '';                   // 当前所在书架ID
   @State addToShelfDialogLoadSignal: number = 0;
   @State availableCustomShelves: TypeShelf[] = [];      // 可用的自定义书架列表（传递给组件）
   @State isShelfActionPending: boolean = false;         // 书架操作进行中（防重复点击）
+  @State isDeletingContent: boolean = false;            // 内容删除进行中（防重复点击）
 
   // 重复检测状态
   @State duplicateDetectionMatches: DuplicateMatchItem[] = [];
@@ -1015,6 +1031,23 @@ export struct UnifiedDetailPage {
       clearTimeout(this.onlineEBookRecoveryTimer);
       this.onlineEBookRecoveryTimer = -1;
     }
+  }
+
+  private clearCacheStatusRefreshTimer(): void {
+    if (this.cacheStatusRefreshTimer >= 0) {
+      clearTimeout(this.cacheStatusRefreshTimer);
+      this.cacheStatusRefreshTimer = -1;
+    }
+  }
+
+  private scheduleCacheStatusRefresh(): void {
+    if (this.cacheStatusRefreshTimer >= 0) {
+      return;
+    }
+    this.cacheStatusRefreshTimer = setTimeout(() => {
+      this.cacheStatusRefreshTimer = -1;
+      void this.loadCacheStatus();
+    }, 800);
   }
 
   private buildOnlineEBookVerificationInfo(
@@ -2223,6 +2256,7 @@ export struct UnifiedDetailPage {
     this.pendingInitialContentLoad = false;
     this.initialContentLoadTriggered = false;
     this.clearOnlineEBookRecoveryTimer();
+    this.clearCacheStatusRefreshTimer();
     
     // 取消下载回调注册
     if (this.downloadCallbackRegistered) {
@@ -3906,7 +3940,8 @@ export struct UnifiedDetailPage {
     
     // [修复] 使用章节阅读进度中的页码，而不是总是从第一页开始
     const chapterProgress = this.chapterProgressMap.get(chapter.id);
-    readerParams.pageIndex = chapterProgress ? chapterProgress.lastReadPageIndex : 0;
+    const rawPageIndex: number = chapterProgress ? chapterProgress.lastReadPageIndex : 0;
+    readerParams.pageIndex = Number.isFinite(rawPageIndex) && rawPageIndex >= 0 ? Math.floor(rawPageIndex) : 0;
     logger.info(TAG, `阅读页码: chapterId=${chapter.id}, pageIndex=${readerParams.pageIndex} (来源: ${chapterProgress ? 'chapterProgressMap' : '默认'})`);
 
     // 触发翻开过渡动画
@@ -4156,11 +4191,16 @@ export struct UnifiedDetailPage {
 
     if (sourceType === LegadoBookSourceType.AUDIO) {
       params.autoStartReadAloud = true;
-      AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', 'UnifiedDetailPage');
-      AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
       AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
       logger.info(TAG, `开始听书直达播放器页: 章节索引=${chapterIndex}, 图源=${sourceId}, 章节地址=${params.chapterUrl}`);
-      this.navigateWithManagedWindowTransition('ReadAloudPlayerPage', params);
+      openReadAloudPlayerInIsolatedAbility(
+        this.getUIContext(),
+        this.pathStack,
+        TAG,
+        'UnifiedDetailPage',
+        WindowManager.getCurrentMode(),
+        params
+      );
       return;
     }
     params.autoStartReadAloud = true;
@@ -4296,6 +4336,276 @@ export struct UnifiedDetailPage {
       return DuplicateCheckContentType.NOVEL;
     }
   }
+
+  private async showDeleteContentConfirm(): Promise<void> {
+    if (!this.content || this.isDeletingContent) {
+      return;
+    }
+
+    const target: UnifiedDeleteTarget | null = await this.resolveDeleteTarget();
+    if (!target || target.contentId.length <= 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '未找到可删除的内容记录', duration: 1800 });
+      return;
+    }
+
+    const actionText: string = target.isRemoteProviderManga ? '移除' : '删除';
+    const message: string = target.isRemoteProviderManga
+      ? `确定要将「${target.title}」从本地书架移除吗？\n\n此操作会移除本地书架记录和本地封面缓存，不会删除远程服务端内容。`
+      : `确定要删除「${target.title}」吗？\n\n此操作会删除${target.contentTypeLabel}记录、阅读进度、相关缓存和本地文件，且不可撤销。`;
+    this.getUIContext().getPromptAction().showDialog({
+      title: target.isRemoteProviderManga ? '确认移除' : '确认删除',
+      message: message,
+      buttons: [
+        { text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') },
+        { text: actionText, color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme) }
+      ]
+    }).then((result: DialogResult) => {
+      if (result.index === 1) {
+        void this.deleteCurrentContent(target);
+      }
+    });
+  }
+
+  private async resolveDeleteTarget(): Promise<UnifiedDeleteTarget | null> {
+    if (!this.content) {
+      return null;
+    }
+
+    let contentId: string = this.content.id || '';
+    let isRemoteProviderManga: boolean = false;
+    if (this.content.contentType === UnifiedContentType.MANGA) {
+      contentId = await this.resolveMangaDeleteId(contentId);
+      isRemoteProviderManga = this.isRemoteProviderMangaContent();
+    } else if (this.content.contentType === UnifiedContentType.EBOOK) {
+      const ebook: EBook | null = EBookAdapter.getOriginalEBook(this.content);
+      contentId = ebook?.id || contentId;
+    } else if (this.content.contentType === UnifiedContentType.NOVEL) {
+      contentId = await this.resolveNovelDeleteId();
+    }
+
+    const target: UnifiedDeleteTarget = {
+      contentType: this.content.contentType,
+      contentId: contentId,
+      title: this.content.title || this.getContentTypeName(),
+      contentTypeLabel: this.getContentTypeName(),
+      isRemoteProviderManga: isRemoteProviderManga
+    };
+    return target;
+  }
+
+  private isRemoteProviderMangaContent(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.MANGA) {
+      return false;
+    }
+
+    const originalManga: Manga | null = MangaAdapter.getOriginalManga(this.content);
+    if (originalManga) {
+      return RemoteLibraryMangaBridge.getInstance().isRemoteProviderManga(originalManga);
+    }
+
+    return RemoteLibraryMangaBridge.parseProviderMangaId(this.content.id) !== null;
+  }
+
+  private async resolveMangaDeleteId(currentContentId: string): Promise<string> {
+    if (currentContentId.length > 0) {
+      const directComic: ComicInfo | null = await this.dataManager.getComicById(currentContentId);
+      if (directComic) {
+        return currentContentId;
+      }
+      const onlineComic: OnlineComicInfo | null = await this.dataManager.getOnlineComicInfoById(currentContentId);
+      if (onlineComic) {
+        return currentContentId;
+      }
+    }
+
+    const paramId: string = this.pageParams?.contentId || '';
+    if (paramId.length > 0 && paramId !== currentContentId) {
+      const paramComic: ComicInfo | null = await this.dataManager.getComicById(paramId);
+      if (paramComic) {
+        return paramId;
+      }
+      const paramOnlineComic: OnlineComicInfo | null = await this.dataManager.getOnlineComicInfoById(paramId);
+      if (paramOnlineComic) {
+        return paramId;
+      }
+    }
+
+    if (paramId.length > 0) {
+      const externalRecord: DatabaseRecord | null = await this.dataManager.getComicByExternalId(paramId);
+      if (externalRecord) {
+        const externalComicId: string = String(externalRecord.id || '');
+        if (externalComicId.length > 0) {
+          return externalComicId;
+        }
+      }
+      const onlineComicByExternal: OnlineComicInfo | null = await this.dataManager.getOnlineComicByExternalId(paramId);
+      if (onlineComicByExternal && onlineComicByExternal.id.length > 0) {
+        return onlineComicByExternal.id;
+      }
+    }
+
+    return currentContentId || paramId;
+  }
+
+  private async resolveNovelDeleteId(): Promise<string> {
+    if (!this.content) {
+      return '';
+    }
+
+    const originalNovel: LegadoBook | null = NovelAdapter.getOriginalNovel(this.content);
+    if (originalNovel?.id && originalNovel.id.length > 0) {
+      const directBook: NovelBook | null = await this.novelDataManager.getBook(originalNovel.id);
+      if (directBook) {
+        return directBook.id;
+      }
+    }
+
+    const sourceId: string = this.content.sourceId || this.pageParams?.sourceId || '';
+    const bookUrl: string = this.content.id || this.pageParams?.contentId || '';
+    const bookByUrl: NovelBook | null = await this.novelDataManager.getBookByUrl(sourceId, bookUrl);
+    if (bookByUrl) {
+      return bookByUrl.id;
+    }
+
+    const directByContentId: NovelBook | null = await this.novelDataManager.getBook(bookUrl);
+    if (directByContentId) {
+      return directByContentId.id;
+    }
+
+    if (sourceId.length > 0 && bookUrl.length > 0) {
+      const constructedId: string = this.getNovelCacheBookId(sourceId, bookUrl);
+      const constructedBook: NovelBook | null = await this.novelDataManager.getBook(constructedId);
+      if (constructedBook) {
+        return constructedBook.id;
+      }
+      return constructedId;
+    }
+
+    return bookUrl;
+  }
+
+  private mapUnifiedTypeToCategoryType(contentType: UnifiedContentType): ContentType {
+    switch (contentType) {
+      case UnifiedContentType.MANGA:
+        return ContentType.MANGA;
+      case UnifiedContentType.EBOOK:
+        return ContentType.EBOOK;
+      case UnifiedContentType.NOVEL:
+        return ContentType.NOVEL;
+      default:
+        return ContentType.MANGA;
+    }
+  }
+
+  private async removeDeletedContentFromShelves(target: UnifiedDeleteTarget): Promise<void> {
+    const categoryManager: BookshelfCategoryManager = this.typeShelfManager.getCategoryManager();
+    const contentType: ContentType = this.mapUnifiedTypeToCategoryType(target.contentType);
+    await categoryManager.removeItemFromCategory(target.contentId, contentType);
+    if (this.content && this.content.id.length > 0 && target.contentId !== this.content.id) {
+      await categoryManager.removeItemFromCategory(this.content.id, contentType);
+    }
+  }
+
+  private publishContentDeletedEvent(target: UnifiedDeleteTarget): void {
+    switch (target.contentType) {
+      case UnifiedContentType.MANGA:
+        eventBus.publish(GameEvent.MANGA_DELETED, new MangaDeletedPayload(target.contentId));
+        break;
+      case UnifiedContentType.EBOOK:
+        eventBus.publish(GameEvent.EBOOK_LIST_REFRESH_NEEDED, new BasePayload());
+        eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
+        break;
+      case UnifiedContentType.NOVEL:
+        eventBus.publish(GameEvent.NOVEL_LIST_REFRESH_NEEDED, new BasePayload());
+        eventBus.publish(GameEvent.NOVEL_UPDATED, new BasePayload());
+        break;
+    }
+  }
+
+  private returnAfterDelete(): void {
+    try {
+      const globalStack: NavPathStack | undefined = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (globalStack && globalStack.size() > 0) {
+        globalStack.pop();
+        return;
+      }
+    } catch (error) {
+      logger.warn(TAG, `删除后返回全局导航栈失败: ${String(error)}`);
+    }
+
+    try {
+      if (this.pathStack.size() > 0) {
+        this.pathStack.pop();
+      }
+    } catch (error) {
+      logger.warn(TAG, `删除后返回当前导航栈失败: ${String(error)}`);
+    }
+  }
+
+  private getLibraryFilesDir(): string {
+    const hostContext: common.UIAbilityContext = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
+    if (!hostContext || typeof hostContext.filesDir !== 'string') {
+      return '';
+    }
+    return hostContext.filesDir;
+  }
+
+  private async removeRemoteProviderMangaFromShelf(): Promise<void> {
+    if (!this.content) {
+      throw new Error('当前内容为空');
+    }
+
+    const originalManga: Manga | null = MangaAdapter.getOriginalManga(this.content);
+    if (!originalManga) {
+      throw new Error('未找到远程漫画记录');
+    }
+
+    const filesDir: string = this.getLibraryFilesDir();
+    if (filesDir.length <= 0) {
+      throw new Error('无法获取本地书架目录');
+    }
+
+    await this.remoteLibraryShelfManager.removeFromLocalLibrary(originalManga, filesDir);
+  }
+
+  private async deleteCurrentContent(target: UnifiedDeleteTarget): Promise<void> {
+    if (this.isDeletingContent) {
+      return;
+    }
+
+    this.isDeletingContent = true;
+    try {
+      logger.info(TAG, `开始删除统一详情页内容: type=${target.contentType}, id=${target.contentId}, title=${target.title}`);
+      switch (target.contentType) {
+        case UnifiedContentType.MANGA:
+          if (target.isRemoteProviderManga) {
+            await this.removeRemoteProviderMangaFromShelf();
+          } else {
+            await this.dataManager.deleteComic(target.contentId);
+          }
+          break;
+        case UnifiedContentType.EBOOK:
+          await this.ebookDataManager.deleteEBook(target.contentId);
+          break;
+        case UnifiedContentType.NOVEL:
+          await this.novelDataManager.deleteBook(target.contentId);
+          break;
+      }
+
+      await this.removeDeletedContentFromShelves(target);
+      this.publishContentDeletedEvent(target);
+      const successMessage: string = target.isRemoteProviderManga ? '移除成功' : '删除成功';
+      this.getUIContext().getPromptAction().showToast({ message: successMessage, duration: 1500 });
+      this.returnAfterDelete();
+    } catch (error) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `删除统一详情页内容失败: ${errorMessage}`);
+      this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${errorMessage}`, duration: 2200 });
+    } finally {
+      this.isDeletingContent = false;
+    }
+  }
+
   /**
    * 获取过滤后的章节列表
    */
@@ -5469,18 +5779,30 @@ export struct UnifiedDetailPage {
     try {
       const shelfItems: CategoryItem[] = this.typeShelfManager.getShelfItems(this.currentShelfId);
       const currentId = this.content.id;
+      const candidateItems: CategoryItem[] = [];
+      const mangaCandidateIds: string[] = [];
       const items: ShelfContentItem[] = [];
 
-      for (let i = 0; i < shelfItems.length && items.length < SHELF_CONTENT_MAX_COUNT; i++) {
+      for (let i = 0; i < shelfItems.length && candidateItems.length < SHELF_CONTENT_CANDIDATE_SCAN_COUNT; i++) {
         const catItem = shelfItems[i];
+        if (catItem.itemId === currentId) {
+          continue;
+        }
+        candidateItems.push(catItem);
+        if (catItem.contentType === ContentType.MANGA && !mangaCandidateIds.includes(catItem.itemId)) {
+          mangaCandidateIds.push(catItem.itemId);
+        }
+      }
 
-        // 跳过当前内容
-        if (catItem.itemId === currentId) continue;
+      const mangaInfoMap: Map<string, ComicInfo> = await this.dataManager.getComicsByIds(mangaCandidateIds);
+
+      for (let i = 0; i < candidateItems.length && items.length < SHELF_CONTENT_MAX_COUNT; i++) {
+        const catItem = candidateItems[i];
 
         try {
           switch (catItem.contentType) {
             case ContentType.MANGA: {
-              const comic = await this.dataManager.getComicById(catItem.itemId);
+              const comic = mangaInfoMap.get(catItem.itemId);
               if (comic) {
                 const coverUrl = comic.coverLocalPath || comic.coverUrl || '';
                 const item: ShelfContentItem = {
@@ -5770,7 +6092,7 @@ export struct UnifiedDetailPage {
         } else {
           // 占位符
           Column() {
-            SymbolGlyph($r('sys.symbol.text_book_closed'))
+            SymbolGlyph($r('sys.symbol.book_open_fill'))
               .fontSize(48)
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
           }
@@ -5911,7 +6233,7 @@ export struct UnifiedDetailPage {
             // 正常模式：显示添加书架按钮
             Button() {
               Row({ space: 6 }) {
-                SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+                SymbolGlyph($r('sys.symbol.bookshelf'))
                   .fontSize(14)
                   .fontColor([this.isInShelf
                     ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
@@ -5944,7 +6266,7 @@ export struct UnifiedDetailPage {
                   .height(14)
                   .color(Color.White)
               } else {
-                SymbolGlyph($r('sys.symbol.text_book_closed'))
+                SymbolGlyph($r('sys.symbol.book_open_fill'))
                   .fontSize(14)
                   .fontColor([Color.White])
               }
@@ -5964,7 +6286,7 @@ export struct UnifiedDetailPage {
           if (this.canShowReadAloudButton()) {
             Button() {
               Row({ space: 6 }) {
-                SymbolGlyph($r('sys.symbol.Celia'))
+                SymbolGlyph($r('sys.symbol.speaker'))
                   .fontSize(14)
                   .fontColor([Color.White])
                 Text(this.getReadAloudButtonLabel())
@@ -6639,7 +6961,7 @@ export struct UnifiedDetailPage {
 
             Button() {
               Row({ space: 6 }) {
-                SymbolGlyph($r('sys.symbol.worldclock_fill_1'))
+                SymbolGlyph($r('sys.symbol.globe_and_keyboard'))
                   .fontSize(16)
                   .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
                 Text('浏览器')
@@ -6682,7 +7004,7 @@ export struct UnifiedDetailPage {
 
           Button() {
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.Celia'))
+              SymbolGlyph($r('sys.symbol.picture'))
                 .fontSize(16)
                 .fontColor([this.isGeneratingCover
                   ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
@@ -6723,7 +7045,7 @@ export struct UnifiedDetailPage {
 
           Button() {
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.Celia'))
+              SymbolGlyph($r('sys.symbol.picture'))
                 .fontSize(16)
                 .fontColor([this.isGeneratingCover
                   ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
@@ -6797,7 +7119,7 @@ export struct UnifiedDetailPage {
         // 分享按钮
         Button() {
           Row({ space: 6 }) {
-            SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+            SymbolGlyph($r('sys.symbol.share'))
               .fontSize(16)
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
             Text('分享')
@@ -6811,6 +7133,32 @@ export struct UnifiedDetailPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(18)
         .onClick(() => this.openShareDialogFromDetail())
+
+        Button() {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(16)
+              .fontColor([this.isDeletingContent
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+            Text(this.isDeletingContent ? '删除中...' : '删除')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.isDeletingContent
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+          }
+        }
+        .height(36)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .borderWidth(1)
+        .borderColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+        .enabled(!this.isDeletingContent)
+        .onClick(() => {
+          void this.showDeleteContentConfirm();
+        })
 
         Button() {
           Row({ space: 6 }) {
@@ -7208,7 +7556,7 @@ export struct UnifiedDetailPage {
         Column({ space: 12 }) {
           Row() {
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.heart_square_stack_fill'))
+              SymbolGlyph($r('sys.symbol.bookshelf'))
                 .fontSize(16)
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
               Text(this.currentShelfName ? `「${this.currentShelfName}」书架` : '同书架内容')
@@ -7304,7 +7652,7 @@ export struct UnifiedDetailPage {
                               .borderRadius(6)
                           } else {
                             Column() {
-                              SymbolGlyph($r('sys.symbol.text_book_closed'))
+                              SymbolGlyph($r('sys.symbol.book_open_fill'))
                                 .fontSize(32)
                                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
                             }
@@ -7436,7 +7784,7 @@ export struct UnifiedDetailPage {
                           .borderRadius(6)
                       } else {
                         Column() {
-                          SymbolGlyph($r('sys.symbol.text_book_closed'))
+                          SymbolGlyph($r('sys.symbol.book_open_fill'))
                             .fontSize(32)
                             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
                         }
@@ -8050,7 +8398,7 @@ export struct UnifiedDetailPage {
           this.downloadCurrentChapterTitle = task.chapterTitle || '';
           this.isDownloading = task.status === UnifiedTaskStatus.DOWNLOADING || task.status === UnifiedTaskStatus.PENDING;
           if (task.downloadedCount > 0 && task.downloadedCount !== previousDownloaded) {
-            void this.loadCacheStatus();
+            this.scheduleCacheStatusRefresh();
           }
         }
       },
@@ -8060,6 +8408,7 @@ export struct UnifiedDetailPage {
           this.downloadProgressCurrent = 0;
           this.downloadProgressTotal = 0;
           this.downloadCurrentChapterTitle = '';
+          this.clearCacheStatusRefreshTimer();
           void this.loadCacheStatus();
           logger.info(TAG, `缓存完成: ${task.contentTitle}`);
         }
@@ -8068,6 +8417,7 @@ export struct UnifiedDetailPage {
         if (this.content && this.isCurrentContentTask(task)) {
           this.isDownloading = false;
           this.downloadCurrentChapterTitle = '';
+          this.clearCacheStatusRefreshTimer();
           logger.error(TAG, `缓存失败: ${task.contentTitle}, ${error}`);
         }
       }
@@ -8084,6 +8434,7 @@ export struct UnifiedDetailPage {
       this.unifiedDownloadManager.unregisterGlobalCallback(this.downloadCallback);
       this.downloadCallback = null;
     }
+    this.clearCacheStatusRefreshTimer();
     this.downloadCallbackRegistered = false;
     logger.info(TAG, '已标记缓存回调为未注册');
   }
@@ -8731,7 +9082,7 @@ export struct UnifiedDetailPage {
         // 分享
         Button() {
           Column({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+            SymbolGlyph($r('sys.symbol.share'))
               .fontSize(24)
               .fontColor([Color.White])
             Text('分享')
@@ -8976,7 +9327,7 @@ export struct UnifiedDetailPage {
               .borderRadius(12)
           } else {
             Column() {
-              SymbolGlyph($r('sys.symbol.text_book_closed'))
+              SymbolGlyph($r('sys.symbol.book_open_fill'))
                 .fontSize(48)
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
             }
@@ -9161,7 +9512,7 @@ export struct UnifiedDetailPage {
         } else {
           Button() {
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+              SymbolGlyph($r('sys.symbol.bookshelf'))
                 .fontSize(13)
                 .fontColor([this.isInShelf
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
@@ -9283,7 +9634,7 @@ export struct UnifiedDetailPage {
                 .height(14)
                 .color(Color.White)
             } else {
-              SymbolGlyph($r('sys.symbol.text_book_closed'))
+              SymbolGlyph($r('sys.symbol.book_open_fill'))
                 .fontSize(14)
                 .fontColor([Color.White])
             }
@@ -9309,7 +9660,7 @@ export struct UnifiedDetailPage {
         if (this.canShowReadAloudButton()) {
           Button() {
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.Celia'))
+              SymbolGlyph($r('sys.symbol.speaker'))
                 .fontSize(13)
                 .fontColor([Color.White])
               Text(this.getReadAloudButtonLabel())

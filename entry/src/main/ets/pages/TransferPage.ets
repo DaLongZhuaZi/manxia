@@ -10,6 +10,7 @@ import { SettingsPageTitleBarManager } from './settings/SettingsPageTitleBarMana
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
+import { AppFloatingWindowConfig, WindowManager } from '../Utils/WindowManager';
 import { getTransferConfigManager, TransferConfigManager } from '../Framework/Managers/TransferConfigManager';
 import { getLocalTransferServerService, LocalTransferServerService } from '../Framework/Services/LocalTransferServerService';
 import {
@@ -21,7 +22,11 @@ import {
   getTransferNativeRtcService,
   TransferNativeRtcService
 } from '../Framework/Services/TransferNativeRtcService';
-import { getTransferUploadStoreService, TransferUploadStoreService } from '../Framework/Services/TransferUploadStoreService';
+import {
+  getTransferUploadStoreService,
+  TransferExternalFileTaskPrepareResult,
+  TransferUploadStoreService
+} from '../Framework/Services/TransferUploadStoreService';
 import {
   getTransferRtcFileReceiverService,
   TransferRtcFileReceiverResult,
@@ -65,6 +70,7 @@ import {
   parseTransferNativeRtcSdpSignalPayload
 } from '../Models/TransferModels';
 import type { NetworkFolderImportCategory } from '../Models/NetworkFolderModels';
+import { openExternalFileTaskInIsolatedAbility } from '../Framework/ExternalFile/ExternalFileTaskLauncher';
 
 const TAG = 'TransferPage';
 const TRANSFER_ACCENT_COLOR: string = '#0F8A6C';
@@ -74,6 +80,15 @@ const ACTION_STYLE_NEUTRAL: number = 0;
 const ACTION_STYLE_PRIMARY: number = 1;
 const ACTION_STYLE_INFO: number = 2;
 const ACTION_STYLE_DANGER: number = 3;
+const TRANSFER_FLOATING_WINDOW_CONFIG: AppFloatingWindowConfig = {
+  routeName: 'TransferFloatingWindowPage',
+  title: '局域网传书',
+  widthVp: 300,
+  heightVp: 220,
+  xVp: 16,
+  yVp: 120,
+  zLevel: 8
+};
 
 type TransferThemeColorType = 'background' | 'panel_background' | 'comp_background_tertiary' |
   'comp_background_secondary' | 'text_primary' | 'text_secondary' | 'text_muted' | 'text_white' |
@@ -458,6 +473,7 @@ struct TransferPageContent {
   @State private lanAccessBusy: boolean = false;
   @State private lanAccessStatusText: string = '等待公网房间和局域网服务就绪。';
   @State private lastLanAccessSentText: string = '尚未下发';
+  @State private floatingWindowVisible: boolean = false;
 
   aboutToAppear(): void {
     void ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, undefined, (newState: ThemeAwareState) => {
@@ -468,6 +484,7 @@ struct TransferPageContent {
     this.refreshSignalSnapshot();
     this.refreshNativeRtcSnapshot();
     this.refreshRtcFileReceiverSnapshot();
+    this.refreshFloatingWindowState();
     void this.refreshUploads();
     void this.drainNativeRtcEvents();
     void this.tryAutoSendLanAccess(false);
@@ -537,6 +554,10 @@ struct TransferPageContent {
 
   private refreshSignalSnapshot(): void {
     this.applySignalRuntime(this.signalService.getRuntimeState());
+  }
+
+  private refreshFloatingWindowState(): void {
+    this.floatingWindowVisible = WindowManager.isFloatingWindowVisible('TransferFloatingWindowPage');
   }
 
   private refreshNativeRtcSnapshot(): void {
@@ -857,6 +878,7 @@ struct TransferPageContent {
     this.heroStatus = nextViewState.status;
     this.heroAddressCount = nextViewState.localAddresses.length;
     this.heroBusy = nextViewState.isBusy;
+    this.refreshFloatingWindowState();
     this.handleUploadCompletionUiSignal(previousViewState, nextViewState);
   }
 
@@ -953,6 +975,7 @@ struct TransferPageContent {
     this.refreshTimer = setInterval(() => {
       this.refreshSnapshot();
       this.refreshSignalSnapshot();
+      this.refreshFloatingWindowState();
       void this.drainNativeRtcEvents();
       void this.refreshUploads();
       void this.tryAutoSendLanAccess(false);
@@ -967,6 +990,7 @@ struct TransferPageContent {
     try {
       this.refreshSnapshot();
       this.refreshSignalSnapshot();
+      this.refreshFloatingWindowState();
       await this.drainNativeRtcEvents();
       await this.tryAutoSendLanAccess(false);
       await this.refreshUploads();
@@ -1058,10 +1082,21 @@ struct TransferPageContent {
   }
 
   private getImportDestinationName(category: NetworkFolderImportCategory): string {
-    if (this.shouldRouteRecordToDataManagement(category)) {
-      return '导入页面';
+    switch (category) {
+      case 'backup':
+        return '备份恢复窗口';
+      case 'json':
+        return 'JSON 处理窗口';
+      case 'font':
+        return '字体导入窗口';
+      case 'code':
+        return '文件编辑窗口';
+      case 'avif':
+      case 'image':
+        return '图片预览窗口';
+      default:
+        return '独立导入窗口';
     }
-    return '应用入口';
   }
 
   private navigateToImportDestination(record: TransferUploadRecord): boolean {
@@ -1167,6 +1202,34 @@ struct TransferPageContent {
     }
   }
 
+  private async startExternalFileTaskForUploadRecord(
+    prepareResult: TransferExternalFileTaskPrepareResult
+  ): Promise<boolean> {
+    return await openExternalFileTaskInIsolatedAbility(
+      this.getUIContext(),
+      prepareResult.taskParams,
+      'TransferPage.continueImport'
+    );
+  }
+
+  private async fallbackToLegacyImportDestination(recordId: string): Promise<boolean> {
+    const fallbackRecord = await this.uploadStoreService.prepareRecordFallbackImport(recordId);
+    if (fallbackRecord === null) {
+      return false;
+    }
+    return this.navigateToImportDestination(fallbackRecord);
+  }
+
+  private async handleToggleFloatingWindow(): Promise<void> {
+    const nextVisible = await WindowManager.toggleAppFloatingWindow(TRANSFER_FLOATING_WINDOW_CONFIG);
+    this.refreshFloatingWindowState();
+    if (nextVisible) {
+      this.showToast(this.floatingWindowVisible ? '应用内小窗已打开' : '应用内小窗已关闭');
+    } else {
+      this.showToast('应用内小窗操作失败');
+    }
+  }
+
   private async handleStopService(): Promise<void> {
     if (this.viewState.isBusy) {
       return;
@@ -1198,19 +1261,25 @@ struct TransferPageContent {
     }
     this.setBusyState(true);
     try {
-      const record = await this.uploadStoreService.prepareRecordForDataManagement(recordId);
-      if (record === null) {
+      const prepareResult = await this.uploadStoreService.prepareRecordForExternalFileTask(recordId);
+      if (prepareResult === null) {
         this.showToast('未找到可导入的上传记录');
         return;
       }
       await this.refreshUploads();
       this.refreshSnapshot();
-      const navigated = this.navigateToImportDestination(record);
+      const started = await this.startExternalFileTaskForUploadRecord(prepareResult);
+      if (started) {
+        this.showToast(`已打开${this.getImportDestinationName(prepareResult.record.importCategory)}：${prepareResult.record.fileName}`);
+        return;
+      }
+
+      const navigated = await this.fallbackToLegacyImportDestination(recordId);
       if (!navigated) {
         this.showToast('已准备导入，但当前无法自动跳转');
         return;
       }
-      this.showToast(`已准备导入到${this.getImportDestinationName(record.importCategory)}：${record.fileName}`);
+      this.showToast(`已准备导入：${prepareResult.record.fileName}`);
     } catch (error) {
       logger.error(TAG, `准备导入上传记录失败: ${String(error)}`);
       this.showToast(`准备导入失败: ${String(error)}`);
@@ -2283,6 +2352,33 @@ struct TransferPageContent {
     })
   }
 
+  @Builder
+  private buildHeroFloatingWindowButton() {
+    Button() {
+      Row({ space: 6 }) {
+        SymbolGlyph(this.floatingWindowVisible ? $r('sys.symbol.xmark') : $r('sys.symbol.rectangle_on_rectangle'))
+          .fontSize(14)
+          .fontColor([this.color('text_primary')])
+
+        Text(this.floatingWindowVisible ? '关闭小窗' : '小窗')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.color('text_primary'))
+          .maxLines(1)
+      }
+      .justifyContent(FlexAlign.Center)
+    }
+    .height(36)
+    .borderRadius(12)
+    .layoutWeight(1)
+    .backgroundColor(this.color('comp_background_tertiary'))
+    .padding({ left: 12, right: 12 })
+    .key(`transfer_hero_float_${this.floatingWindowVisible ? 'visible' : 'hidden'}`)
+    .onClick(() => {
+      void this.handleToggleFloatingWindow();
+    })
+  }
+
   private getHeroSignalMetaText(): string {
     return `Peer ${this.heroSignalPeerCount} · ${this.getHeroSignalExpireText()} · ${this.lastLanAccessSentText}`;
   }
@@ -2363,7 +2459,7 @@ struct TransferPageContent {
   private buildHeroSignalCopyRoomCodeButton() {
     Button() {
       Row({ space: 6 }) {
-        SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+        SymbolGlyph($r('sys.symbol.text_clipboard'))
           .fontSize(14)
           .fontColor([this.getHeroSignalActionForegroundColor(ACTION_STYLE_INFO, this.isHeroSignalCopyRoomCodeEnabled())])
 
@@ -2811,6 +2907,7 @@ struct TransferPageContent {
         this.buildHeroServiceToggleButton()
         this.buildHeroCopyAddressButton()
         this.buildHeroRefreshButton()
+        this.buildHeroFloatingWindowButton()
       }
       .width('100%')
     }
@@ -3155,7 +3252,7 @@ struct TransferPageContent {
       Row({ space: 12 }) {
         this.buildTransferActionButton(
           '复制房间码',
-          $r('sys.symbol.checkmark_circle_fill'),
+          $r('sys.symbol.text_clipboard'),
           ACTION_STYLE_NEUTRAL,
           !this.signalBusy && this.signalRuntime.roomCode.length > 0,
           true,
@@ -3197,7 +3294,7 @@ struct TransferPageContent {
       Row({ space: 12 }) {
         this.buildTransferActionButton(
           '复制房间指引',
-          $r('sys.symbol.doc_plaintext'),
+          $r('sys.symbol.text_clipboard'),
           ACTION_STYLE_INFO,
           !this.signalBusy && this.signalRuntime.roomCode.length > 0,
           true,
@@ -3320,7 +3417,7 @@ struct TransferPageContent {
       Row({ space: 12 }) {
         this.buildTransferActionButton(
           '检测能力',
-          $r('sys.symbol.checkmark_circle_fill'),
+          $r('sys.symbol.diagnostic_analytics'),
           ACTION_STYLE_NEUTRAL,
           !this.nativeRtcBusy,
           true,
@@ -3747,7 +3844,7 @@ struct TransferPageContent {
 
         this.buildTransferActionButton(
           '复制配对码',
-          $r('sys.symbol.checkmark_circle_fill'),
+          $r('sys.symbol.text_clipboard'),
           ACTION_STYLE_NEUTRAL,
           this.viewState.quickAssistReady && !this.viewState.isBusy,
           true,
@@ -3762,7 +3859,7 @@ struct TransferPageContent {
       Row({ space: 12 }) {
         this.buildTransferActionButton(
           '复制连接指引',
-          $r('sys.symbol.doc_plaintext'),
+          $r('sys.symbol.text_clipboard'),
           ACTION_STYLE_INFO,
           this.viewState.quickAssistReady && !this.viewState.isBusy,
           true,
@@ -3774,7 +3871,7 @@ struct TransferPageContent {
 
         this.buildTransferActionButton(
           '系统分享',
-          $r('sys.symbol.arrowshape_turn_up_right'),
+          $r('sys.symbol.share'),
           ACTION_STYLE_NEUTRAL,
           this.viewState.quickAssistReady && !this.viewState.isBusy,
           true,

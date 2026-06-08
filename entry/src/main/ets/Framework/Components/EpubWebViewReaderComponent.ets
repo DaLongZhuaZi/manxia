@@ -4653,7 +4653,7 @@ export struct EpubWebViewReaderComponent {
     Menu() {
       MenuItem({
         content: '复制',
-        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.doc_text')).fontSize('18vp')
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.text_clipboard')).fontSize('18vp')
       })
         .onClick(() => {
           this.copyWebSelectedText();
@@ -4690,7 +4690,7 @@ export struct EpubWebViewReaderComponent {
       }
       MenuItem({
         content: '分享',
-        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.arrowshape_turn_up_right')).fontSize('18vp')
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.share')).fontSize('18vp')
       })
         .onClick(() => {
           void this.shareWebSelectedText();

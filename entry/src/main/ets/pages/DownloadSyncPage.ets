@@ -49,6 +49,7 @@ import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from '.
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { MangaReadFlowImportReport, MangaReadFlowImportReporter } from '../Framework/Reader/MangaReadFlowImportReporter';
 
 const TAG = 'DownloadSyncPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -153,6 +154,35 @@ struct DownloadSyncPage {
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   private archivePasswordCache: Map<string, string> = new Map();
   private lastArchivePassword: string = '';
+  private lastMangaImportReadFlowId: string = '';
+
+  private recordMangaImportFlow(
+    contentId: string,
+    contentTitle: string,
+    chapterId: string,
+    chapterTitle: string,
+    pageCount: number,
+    chapterCount: number,
+    sourcePath: string,
+    targetPath: string,
+    reason: string
+  ): string {
+    const report: MangaReadFlowImportReport = new MangaReadFlowImportReport();
+    report.contentId = contentId;
+    report.contentTitle = contentTitle;
+    report.chapterId = chapterId;
+    report.chapterTitle = chapterTitle;
+    report.pageCount = pageCount;
+    report.chapterCount = chapterCount;
+    report.sourcePath = sourcePath;
+    report.targetPath = targetPath;
+    report.sourceId = 'download_import';
+    report.reason = reason;
+    report.success = true;
+    const sessionId: string = MangaReadFlowImportReporter.record(report);
+    this.lastMangaImportReadFlowId = sessionId;
+    return sessionId;
+  }
   
   // 电子书导入临时数据
   @State private pendingEbookData: EBook | null = null;
@@ -582,7 +612,7 @@ A: 不会，原文件保持不变。`;
 
   private getFileIconResource(filename: string): Resource {
     const ext = this.getDownloadFileExtension(filename);
-    if (DownloadSyncPage.MANGA_EXTENSIONS.includes(ext)) return $r('sys.symbol.rectangle_stack');
+    if (DownloadSyncPage.MANGA_EXTENSIONS.includes(ext)) return $r('sys.symbol.picture');
     if (DownloadSyncPage.EBOOK_EXTENSIONS.includes(ext)) return $r('sys.symbol.book');
     if (DownloadSyncPage.PDF_EXTENSIONS.includes(ext)) return $r('sys.symbol.doc_plaintext');
     if (DownloadSyncPage.NOVEL_EXTENSIONS.includes(ext)) return $r('sys.symbol.text_book_closed');
@@ -592,12 +622,12 @@ A: 不会，原文件保持不变。`;
   private getReservedFolderSymbol(name: string): Resource {
     switch (name.toLowerCase()) {
       case 'ebooks': return $r('sys.symbol.book');
-      case 'manga': return $r('sys.symbol.rectangle_stack');
+      case 'manga': return $r('sys.symbol.picture');
       case 'novel': return $r('sys.symbol.text_book_closed');
       case 'storage': return $r('sys.symbol.externaldrive');
-      case 'covers': return $r('sys.symbol.camera');
+      case 'covers': return $r('sys.symbol.picture');
       case 'temp': return $r('sys.symbol.clock');
-      case 'backup': return $r('sys.symbol.arrow_clockwise');
+      case 'backup': return $r('sys.symbol.arrow_2_circlepath');
       case 'legadoextensions': return $r('sys.symbol.gearshape');
       default: return $r('sys.symbol.folder_fill');
     }
@@ -1194,7 +1224,7 @@ A: 不会，原文件保持不变。`;
       Row({ space: 0 }) {
         // 文件扫描与导入Tab
         Row() {
-          SymbolGlyph($r('sys.symbol.folder'))
+          SymbolGlyph($r('sys.symbol.folder_badge_plus'))
             .fontSize(12)
             .fontColor([this.currentTabIndex === 0
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
@@ -1222,7 +1252,7 @@ A: 不会，原文件保持不变。`;
 
         // 手动浏览导入Tab
         Row() {
-          SymbolGlyph($r('sys.symbol.checkmark_circle'))
+          SymbolGlyph($r('sys.symbol.folder'))
             .fontSize(12)
             .fontColor([this.currentTabIndex === 1
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
@@ -1286,7 +1316,7 @@ A: 不会，原文件保持不变。`;
       // 统计信息
       Column({ space: 8 }) {
         Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.checkmark_circle')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          SymbolGlyph($r('sys.symbol.folder')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           Text('手动浏览与导入')
             .fontSize(18)
             .fontFamily(this.appFontFamily)
@@ -2021,7 +2051,7 @@ A: 不会，原文件保持不变。`;
       if (this.pendingMangaFiles.length > 0) {
         Column({ space: 6 }) {
           Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.rectangle_stack'))
+            SymbolGlyph($r('sys.symbol.picture'))
               .fontSize(16)
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             Text(`漫画文件 (${this.pendingMangaFiles.length})`)
@@ -2433,6 +2463,9 @@ A: 不会，原文件保持不变。`;
     try { SafeFileUtils.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
     
     let firstCoverPath = '';
+    let totalPageCount = 0;
+    let firstChapterId = '';
+    let firstChapterTitle = '';
     
     for (let i = 0; i < group.chapters.length; i++) {
       const chapter = group.chapters[i];
@@ -2492,6 +2525,11 @@ A: 不会，原文件保持不变。`;
       } as ChapterInfoInput);
       
       await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
+      totalPageCount += imageFiles.length;
+      if (firstChapterId.length <= 0) {
+        firstChapterId = chapterId;
+        firstChapterTitle = chapter.title;
+      }
       
       if (i === 0 && imageFiles.length > 0) {
         imageFiles.sort();
@@ -2516,6 +2554,17 @@ A: 不会，原文件保持不变。`;
     }
     
     logger.info(TAG, `Download导入成功: ${group.title}`);
+    this.recordMangaImportFlow(
+      mangaId,
+      group.title,
+      firstChapterId,
+      firstChapterTitle,
+      totalPageCount,
+      group.chapters.length,
+      group.chapters.length > 0 ? group.chapters[0].fileUri : '',
+      mangaPath,
+      'download_sync_batch_group_import_completed'
+    );
   }
 
   /**
@@ -2731,6 +2780,17 @@ A: 不会，原文件保持不变。`;
       this.updateProgress(ImportStatus.COMPLETED, '导入完成', 100);
       this.getUIContext().getPromptAction().showToast({ message: '导入成功' });
       await this.reloadDownloadImportState();
+      this.recordMangaImportFlow(
+        mangaId,
+        result.title,
+        chapterId,
+        '第1话',
+        imageFiles.length,
+        1,
+        result.sourceFileUri || this.currentFileUri,
+        chapterPath,
+        'download_sync_single_import_completed'
+      );
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
       
       if (result.sourceFileUri) {

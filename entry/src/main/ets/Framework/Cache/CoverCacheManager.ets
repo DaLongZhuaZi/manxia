@@ -34,7 +34,9 @@ export class CoverCacheManager {
 
   private coverBasePath: string = '';
   private downloadQueue: Map<string, Promise<string>> = new Map();
-  private failedDownloads: Set<string> = new Set(); // 记录失败的下载，避免重复尝试
+  private failedDownloads: Map<string, number> = new Map(); // 记录失败时间，避免短时间重复尝试
+  private readonly failedDownloadTtlMs: number = 30 * 60 * 1000;
+  private readonly maxFailedDownloadRecords: number = 500;
   private isPathInitialized: boolean = false;
   private initializationPromise: Promise<void> | null = null;
   private pendingContextLogged: boolean = false;
@@ -53,6 +55,55 @@ export class CoverCacheManager {
       CoverCacheManager.instance = new CoverCacheManager();
     }
     return CoverCacheManager.instance;
+  }
+
+  private isFailedDownloadFresh(cacheKey: string): boolean {
+    const failedAt = this.failedDownloads.get(cacheKey);
+    if (!failedAt) {
+      return false;
+    }
+    if (Date.now() - failedAt <= this.failedDownloadTtlMs) {
+      return true;
+    }
+    this.failedDownloads.delete(cacheKey);
+    return false;
+  }
+
+  private recordFailedDownload(cacheKey: string): void {
+    this.failedDownloads.set(cacheKey, Date.now());
+    this.trimFailedDownloadRecords();
+  }
+
+  private clearFailedDownload(cacheKey: string): void {
+    this.failedDownloads.delete(cacheKey);
+  }
+
+  private trimFailedDownloadRecords(): void {
+    const now = Date.now();
+    const expiredKeys: string[] = [];
+    this.failedDownloads.forEach((failedAt: number, cacheKey: string) => {
+      if (now - failedAt > this.failedDownloadTtlMs) {
+        expiredKeys.push(cacheKey);
+      }
+    });
+    for (const cacheKey of expiredKeys) {
+      this.failedDownloads.delete(cacheKey);
+    }
+
+    while (this.failedDownloads.size > this.maxFailedDownloadRecords) {
+      let oldestKey: string = '';
+      let oldestTime: number = 9007199254740991;
+      this.failedDownloads.forEach((failedAt: number, cacheKey: string) => {
+        if (failedAt < oldestTime) {
+          oldestTime = failedAt;
+          oldestKey = cacheKey;
+        }
+      });
+      if (oldestKey.length === 0) {
+        break;
+      }
+      this.failedDownloads.delete(oldestKey);
+    }
   }
 
   /**
@@ -434,8 +485,8 @@ export class CoverCacheManager {
     const referer = this.resolvePhotos18Referer(headers);
     const cacheKey = isPhotos18 ? `${sourceId}_${externalId}_${referer}` : `${sourceId}_${externalId}`;
     
-    // 如果之前下载失败过，不再重试
-    if (this.failedDownloads.has(cacheKey)) {
+    // 如果短时间内下载失败过，不再重试；过期后允许恢复
+    if (this.isFailedDownloadFresh(cacheKey)) {
       logger.debug(TAG, `跳过已失败的封面: ${externalId}`);
       return null;
     }
@@ -460,16 +511,19 @@ export class CoverCacheManager {
       if (!result) {
         if (!isPhotos18) {
           // 下载失败，记录到失败集合
-          this.failedDownloads.add(cacheKey);
+          this.recordFailedDownload(cacheKey);
         } else {
           logger.warn(TAG, `Photos18封面下载失败，不写入失败黑名单: ${externalId}`);
         }
-      } else if (isPhotos18) {
-        const recordKey = this.getCoverRecordKey(sourceId, externalId);
-        this.photos18CoverRecords.set(recordKey, {
-          localPath: result,
-          referer: referer
-        });
+      } else {
+        this.clearFailedDownload(cacheKey);
+        if (isPhotos18) {
+          const recordKey = this.getCoverRecordKey(sourceId, externalId);
+          this.photos18CoverRecords.set(recordKey, {
+            localPath: result,
+            referer: referer
+          });
+        }
       }
       return result;
 

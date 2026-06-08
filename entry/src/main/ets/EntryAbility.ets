@@ -43,6 +43,7 @@ import {
   NETWORK_FOLDER_COMIC_EXTENSIONS,
   NETWORK_FOLDER_EBOOK_EXTENSIONS,
   NETWORK_FOLDER_FONT_EXTENSIONS,
+  NETWORK_FOLDER_IMAGE_EXTENSIONS,
   NETWORK_FOLDER_JSON_EXTENSIONS
 } from './Models/NetworkFolderModels';
 import {
@@ -59,6 +60,13 @@ import {
 import { BasePayload, eventBus, GameEvent, ContinuationTriggeredPayload } from './Framework/EventBus';
 import { distributedFileManager } from './Framework/Distributed/DistributedFileManager';
 import { distributedDataSyncManager } from './Framework/Distributed/DistributedDataSyncManager';
+import { openExternalFileTaskInIsolatedAbilityByContext } from './Framework/ExternalFile/ExternalFileTaskLauncher';
+import {
+  ExternalFileTaskFactory,
+  ExternalFileTaskKind,
+  ExternalFileTaskParams,
+  ExternalFileTaskSource
+} from './Framework/ExternalFile/ExternalFileTaskTypes';
 
 export default class EntryAbility extends UIAbility {
 
@@ -94,7 +102,7 @@ export default class EntryAbility extends UIAbility {
     // 检查是否通过文件打开应用
     else if (want.uri) {
       logger.info('EntryAbility', `📁 通过文件打开应用: ${want.uri}, type=${want.type || 'unknown'}`);
-      this.handleFileOpen(want.uri, want.type || '');
+      this.handleFileOpen(want.uri, want.type || '', ExternalFileTaskSource.FILE_OPEN);
     } else if (want.parameters) {
       // 兼容性处理：某些系统可能将文件信息放在parameters中
       const uri = want.parameters['uri'] as string;
@@ -105,10 +113,10 @@ export default class EntryAbility extends UIAbility {
       
       if (fileUris && fileUris.length > 0) {
         logger.info('EntryAbility', `📁 通过右键菜单打开文件: ${fileUris[0]}, handler=${menuHandler}`);
-        this.handleFileOpen(fileUris[0], '');
+        this.handleFileOpen(fileUris[0], '', ExternalFileTaskSource.FILE_CONTEXT_MENU);
       } else if (uri) {
         logger.info('EntryAbility', `📁 通过参数打开文件: ${uri}`);
-        this.handleFileOpen(uri, type || '');
+        this.handleFileOpen(uri, type || '', ExternalFileTaskSource.FILE_OPEN);
       }
     }
 
@@ -617,6 +625,7 @@ export default class EntryAbility extends UIAbility {
 
   // 文件类型常量
   private static readonly FILE_TYPE_AVIF: string = 'avif';
+  private static readonly FILE_TYPE_IMAGE: string = 'image';
   private static readonly FILE_TYPE_BACKUP: string = 'backup';
   private static readonly FILE_TYPE_COMIC: string = 'comic';
   private static readonly FILE_TYPE_EBOOK: string = 'ebook';
@@ -739,6 +748,11 @@ export default class EntryAbility extends UIAbility {
     if (this.isExtensionIn(extension, NETWORK_FOLDER_AVIF_EXTENSIONS)) {
       return EntryAbility.FILE_TYPE_AVIF;
     }
+
+    // 普通图片
+    if (this.isExtensionIn(extension, NETWORK_FOLDER_IMAGE_EXTENSIONS)) {
+      return EntryAbility.FILE_TYPE_IMAGE;
+    }
     
     // 备份文件
     if (this.isExtensionIn(extension, NETWORK_FOLDER_BACKUP_EXTENSIONS)) {
@@ -782,19 +796,95 @@ export default class EntryAbility extends UIAbility {
     return EntryAbility.FILE_TYPE_UNKNOWN;
   }
 
+  private mapFileTypeToExternalTaskKind(fileType: string): ExternalFileTaskKind {
+    switch (fileType) {
+      case EntryAbility.FILE_TYPE_AVIF:
+        return ExternalFileTaskKind.AVIF;
+      case EntryAbility.FILE_TYPE_IMAGE:
+        return ExternalFileTaskKind.IMAGE;
+      case EntryAbility.FILE_TYPE_BACKUP:
+        return ExternalFileTaskKind.BACKUP;
+      case EntryAbility.FILE_TYPE_COMIC:
+        return ExternalFileTaskKind.COMIC;
+      case EntryAbility.FILE_TYPE_EBOOK:
+        return ExternalFileTaskKind.EBOOK;
+      case EntryAbility.FILE_TYPE_PDF:
+        return ExternalFileTaskKind.PDF;
+      case EntryAbility.FILE_TYPE_JSON:
+        return ExternalFileTaskKind.JSON;
+      case EntryAbility.FILE_TYPE_FONT:
+        return ExternalFileTaskKind.FONT;
+      case EntryAbility.FILE_TYPE_CODE:
+        return ExternalFileTaskKind.CODE;
+      default:
+        return ExternalFileTaskKind.UNKNOWN;
+    }
+  }
+
+  private buildExternalFileTaskParams(
+    uri: string,
+    mimeType: string,
+    source: ExternalFileTaskSource
+  ): ExternalFileTaskParams {
+    const fileType = this.getFileTypeFromUri(uri);
+    const kind = this.mapFileTypeToExternalTaskKind(fileType);
+    const codeExt = this.getFileExtension(uri);
+    const language = kind === ExternalFileTaskKind.CODE
+      ? EntryAbility.CODE_EXTENSIONS.get(codeExt) || 'plaintext'
+      : '';
+    return ExternalFileTaskFactory.createSingleFileTask(
+      kind,
+      uri,
+      mimeType,
+      source,
+      ExternalFileTaskFactory.extractFileName(uri),
+      language
+    );
+  }
+
+  private inferCodeLanguageFromFileName(fileName: string): string {
+    const codeExt = this.getFileExtension(fileName);
+    return EntryAbility.CODE_EXTENSIONS.get(codeExt) || 'plaintext';
+  }
+
+  private handleFileOpen(uri: string, mimeType: string, source: ExternalFileTaskSource = ExternalFileTaskSource.FILE_OPEN): void {
+    const taskParams = this.buildExternalFileTaskParams(uri, mimeType, source);
+    logger.info('EntryAbility', `📁 文件类型识别: ${taskParams.kind}, URI: ${uri}`);
+
+    void openExternalFileTaskInIsolatedAbilityByContext(
+      this.context,
+      taskParams,
+      'EntryAbility.fileOpen'
+    ).then((started: boolean): void => {
+      if (started) {
+        logger.info('EntryAbility', `✅ 已交由外部文件独立实例处理: ${uri}`);
+        return;
+      }
+      this.handleFileOpenFallback(uri, mimeType);
+      this.notifyFileOpenToUI();
+    });
+  }
+
   /**
    * 处理文件打开请求
    * 根据文件类型设置不同的AppStorage标记，供后续页面处理
    */
-  private handleFileOpen(uri: string, mimeType: string): void {
+  private handleFileOpenFallback(uri: string, mimeType: string): void {
     const fileType = this.getFileTypeFromUri(uri);
-    logger.info('EntryAbility', `📁 文件类型识别: ${fileType}, URI: ${uri}`);
+    logger.info('EntryAbility', `📁 文件独立实例不可用，回退旧流程: ${fileType}, URI: ${uri}`);
     
     switch (fileType) {
       case EntryAbility.FILE_TYPE_AVIF:
         // AVIF文件：跳转到AVIF查看器
         logger.info('EntryAbility', `🖼️ 检测到AVIF文件，将打开AVIF查看器`);
         AppStorage.setOrCreate('pendingAvifUri', uri);
+        break;
+
+      case EntryAbility.FILE_TYPE_IMAGE:
+        // 普通图片：跳转到图片查看器
+        logger.info('EntryAbility', `🖼️ 检测到图片文件，将打开图片查看器`);
+        AppStorage.setOrCreate('pendingAvifUri', uri);
+        AppStorage.setOrCreate('pendingFileCategory', 'image');
         break;
         
       case EntryAbility.FILE_TYPE_BACKUP:
@@ -972,6 +1062,7 @@ export default class EntryAbility extends UIAbility {
     const shareFiles = want.parameters['share_import_files'] as string[];
     const shareType = want.parameters['share_import_type'] as string;
     const shareSource = want.parameters['share_import_source'] as string;
+    const shareLanguage = want.parameters['share_import_language'] as string;
 
     if (!shareFiles || !Array.isArray(shareFiles) || shareFiles.length === 0) {
       logger.warn('EntryAbility', '未找到有效的分享文件');
@@ -979,7 +1070,68 @@ export default class EntryAbility extends UIAbility {
     }
 
     logger.info('EntryAbility', `📤 通过系统分享接收文件: ${shareFiles.length} 个, 类型: ${shareType}, 来源: ${shareSource}`);
-    
+
+    const taskKind = ExternalFileTaskFactory.normalizeKind(shareType || 'comic');
+    const taskParams = ExternalFileTaskFactory.createShareTask(
+      taskKind,
+      shareFiles,
+      ExternalFileTaskSource.SYSTEM_SHARE,
+      shareFiles.length > 0 ? ExternalFileTaskFactory.extractFileName(shareFiles[0]) : ''
+    );
+    if (taskKind === ExternalFileTaskKind.CODE) {
+      const language = shareLanguage && shareLanguage.length > 0
+        ? shareLanguage
+        : this.inferCodeLanguageFromFileName(ExternalFileTaskFactory.extractFileName(shareFiles[0]));
+      taskParams.language = language;
+    }
+    void openExternalFileTaskInIsolatedAbilityByContext(
+      this.context,
+      taskParams,
+      'EntryAbility.shareImport'
+    ).then((started: boolean): void => {
+      if (started) {
+        logger.info('EntryAbility', `✅ 系统分享已交由外部文件独立实例处理: count=${shareFiles.length}`);
+        return;
+      }
+      this.handleShareImportFallback(shareFiles, shareType, shareSource, taskParams.language);
+      this.notifyFileOpenToUI();
+    });
+  }
+
+  private handleShareImportFallback(shareFiles: string[], shareType: string, shareSource: string, language: string = ''): void {
+    const firstFile = shareFiles.length > 0 ? shareFiles[0] : '';
+    if (firstFile.length <= 0) {
+      return;
+    }
+
+    switch (shareType) {
+      case EntryAbility.FILE_TYPE_AVIF:
+      case EntryAbility.FILE_TYPE_IMAGE:
+        AppStorage.setOrCreate('pendingAvifUri', firstFile);
+        AppStorage.setOrCreate('pendingFileCategory', shareType);
+        return;
+      case EntryAbility.FILE_TYPE_BACKUP:
+        AppStorage.setOrCreate('pendingBackupUri', firstFile);
+        AppStorage.setOrCreate('pendingFileCategory', 'backup');
+        AppStorage.setOrCreate('backupImportPending', true);
+        return;
+      case EntryAbility.FILE_TYPE_JSON:
+        AppStorage.setOrCreate('pendingJsonUri', firstFile);
+        AppStorage.setOrCreate('pendingFileCategory', 'json');
+        return;
+      case EntryAbility.FILE_TYPE_FONT:
+        AppStorage.setOrCreate('pendingFontUri', firstFile);
+        AppStorage.setOrCreate('pendingFileCategory', 'font');
+        return;
+      case EntryAbility.FILE_TYPE_CODE:
+        AppStorage.setOrCreate('pendingCodeUri', firstFile);
+        AppStorage.setOrCreate('pendingCodeLanguage', language.length > 0 ? language : this.inferCodeLanguageFromFileName(firstFile));
+        AppStorage.setOrCreate('pendingFileCategory', 'code');
+        return;
+      default:
+        break;
+    }
+
     // 保存到AppStorage，供后续页面处理（数组需要转为JSON字符串）
     AppStorage.setOrCreate('pendingShareFiles', JSON.stringify(shareFiles));
     AppStorage.setOrCreate('pendingShareType', shareType || 'comic');
@@ -1000,7 +1152,6 @@ export default class EntryAbility extends UIAbility {
     // 优先处理文件分享导入（share_import_files是系统分享的特征键）
     if (want.parameters && want.parameters['share_import_files']) {
       this.handleShareImport(want);
-      this.notifyFileOpenToUI();
       return;
     }
 
@@ -1021,8 +1172,7 @@ export default class EntryAbility extends UIAbility {
     // 检查是否通过文件URI打开应用
     if (want.uri) {
       logger.info('EntryAbility', `📁 通过文件打开应用（onNewWant）: ${want.uri}`);
-      this.handleFileOpen(want.uri, want.type || '');
-      this.notifyFileOpenToUI();
+      this.handleFileOpen(want.uri, want.type || '', ExternalFileTaskSource.FILE_OPEN);
       return;
     }
     
@@ -1034,13 +1184,11 @@ export default class EntryAbility extends UIAbility {
       
       if (fileUris && fileUris.length > 0) {
         logger.info('EntryAbility', `📁 通过参数打开文件（onNewWant）: ${fileUris[0]}`);
-        this.handleFileOpen(fileUris[0], '');
-        this.notifyFileOpenToUI();
+        this.handleFileOpen(fileUris[0], '', ExternalFileTaskSource.FILE_CONTEXT_MENU);
         return;
       } else if (uri) {
         logger.info('EntryAbility', `📁 通过参数打开文件（onNewWant）: ${uri}`);
-        this.handleFileOpen(uri, type || '');
-        this.notifyFileOpenToUI();
+        this.handleFileOpen(uri, type || '', ExternalFileTaskSource.FILE_OPEN);
         return;
       }
     }

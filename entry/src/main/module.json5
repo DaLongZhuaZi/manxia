@@ -1,4 +1,4 @@
-﻿{
+{
   "module": {
     "name": "entry",
     "querySchemes": [
@@ -237,7 +237,8 @@
         "description": "$string:EntryAbility_desc",
         "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:icon_startwindow",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
         "startWindowBackground": "$color:transport",
         "launchType": "multiton",
         "removeMissionAfterTerminate": true,
@@ -250,7 +251,8 @@
         "description": "$string:EntryAbility_desc",
         "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:icon_startwindow",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
         "startWindowBackground": "$color:transport",
         "launchType": "multiton",
         "removeMissionAfterTerminate": true,
@@ -263,9 +265,67 @@
         "description": "$string:EntryAbility_desc",
         "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:icon_startwindow",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
         "startWindowBackground": "$color:transport",
         "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "ReadAloudPlayerAbility",
+        "srcEntry": "./ets/ReadAloudPlayerAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "singleton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation",
+        "backgroundModes": ["audioPlayback"]
+      },
+      {
+        "name": "FileEditorAbility",
+        "srcEntry": "./ets/FileEditorAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "ExternalFileTaskAbility",
+        "srcEntry": "./ets/ExternalFileTaskAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "multiton",
+        "removeMissionAfterTerminate": true,
+        "exported": false,
+        "orientation": "auto_rotation"
+      },
+      {
+        "name": "RemoteControlAbility",
+        "srcEntry": "./ets/RemoteControlAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindow": "$profile:start_window_hidden",
+        "startWindowIcon": "$media:start_window_transparent",
+        "startWindowBackground": "$color:transport",
+        "launchType": "singleton",
         "removeMissionAfterTerminate": true,
         "exported": false,
         "orientation": "auto_rotation"
@@ -394,7 +454,7 @@
         "name": "ohos.permission.INTERNET",
         "reason": "$string:get_internet_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
           "when": "always"
         }
       },
@@ -402,7 +462,7 @@
         "name": "ohos.permission.GET_NETWORK_INFO",
         "reason": "$string:get_network_info_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
           "when": "inuse"
         }
       },
@@ -410,7 +470,7 @@
         "name": "ohos.permission.DISTRIBUTED_DATASYNC",
         "reason": "$string:distributed_data_sync_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
           "when": "always"
         }
       },
@@ -418,14 +478,14 @@
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
         "reason": "$string:background_running_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
           "when": "always"
         }
       },
       {
         "name": "ohos.permission.PRIVACY_WINDOW",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
           "when": "always"
         }
       },
@@ -436,7 +496,7 @@
         "name": "ohos.permission.VIBRATE",
         "reason": "$string:get_vibrate_reason",
         "usedScene": {
-          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility"],
+          "abilities": ["EntryAbility", "MangaReaderAbility", "EBookReaderAbility", "NovelReaderAbility", "ReadAloudPlayerAbility", "FileEditorAbility", "ExternalFileTaskAbility", "RemoteControlAbility"],
           "when": "inuse"
         }
       },

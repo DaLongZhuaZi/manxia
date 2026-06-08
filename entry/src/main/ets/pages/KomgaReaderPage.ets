@@ -10,6 +10,15 @@ import { getKomgaSourceExecutor, KomgaSourceExecutor } from '../Framework/Source
 import { KomgaContentType, KomgaReaderProgress } from '../Framework/Source/KomgaModels';
 import { KomgaImage } from '../components/KomgaImage';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { MangaReadFlowMonitor } from '../Framework/Reader/MangaReadFlowMonitor';
+import {
+  MangaReadFlowEvent,
+  MangaReadFlowEventType,
+  MangaReadFlowModeKind,
+  MangaReadFlowSessionInfo,
+  MangaReadFlowSeverity,
+  MangaReadFlowSourceKind
+} from '../Framework/Reader/MangaReadFlowTypes';
 
 const TAG = 'KomgaReaderPage';
 const READING_PROGRESS_STORE: string = 'komga_reading_progress';
@@ -55,6 +64,9 @@ export struct KomgaReaderPage {
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   private controlsVisibilityTimer: number = -1;
   private isFullscreenApplied: boolean = false;
+  private mangaReadFlowMonitor: MangaReadFlowMonitor = MangaReadFlowMonitor.getInstance();
+  private mangaReadFlowSessionId: string = '';
+  private mangaReadFlowLoadStartedAt: number = 0;
 
   private getHostContext(): common.UIAbilityContext {
     const context = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
@@ -73,6 +85,11 @@ export struct KomgaReaderPage {
 
   aboutToDisappear(): void {
     void this.saveReadingProgress();
+    if (this.mangaReadFlowSessionId.length > 0) {
+      this.recordReadFlowEvent(MangaReadFlowEventType.CLEANUP, 'legacy_komga_disappear', true, 0, 'KomgaImage manages legacy asset loading');
+      this.mangaReadFlowMonitor.endSession(this.mangaReadFlowSessionId, 'about_to_disappear');
+      this.mangaReadFlowSessionId = '';
+    }
     if (this.controlsVisibilityTimer >= 0) {
       clearTimeout(this.controlsVisibilityTimer);
       this.controlsVisibilityTimer = -1;
@@ -176,6 +193,93 @@ export struct KomgaReaderPage {
     return `${this.contentType}_${this.itemId}`;
   }
 
+  private ensureReadFlowSession(): void {
+    if (this.mangaReadFlowSessionId.length > 0) {
+      return;
+    }
+    const info: MangaReadFlowSessionInfo = new MangaReadFlowSessionInfo();
+    info.sessionId = this.mangaReadFlowMonitor.createSessionId('legacy_komga');
+    info.sourceKind = MangaReadFlowSourceKind.LEGACY_REMOTE;
+    info.modeKind = MangaReadFlowModeKind.LEGACY_KOMGA;
+    info.contentId = this.itemId;
+    info.contentTitle = this.mangaTitle;
+    info.chapterId = this.chapterId;
+    info.chapterTitle = this.chapterTitle;
+    info.pageIndex = this.currentPage;
+    info.pageCount = this.pages.length;
+    info.readerInstanceId = this.instanceId;
+    info.readerHostMode = 'legacy_komga';
+    this.mangaReadFlowSessionId = this.mangaReadFlowMonitor.startSession(info);
+  }
+
+  private recordReadFlowEvent(
+    eventType: MangaReadFlowEventType,
+    reason: string,
+    success: boolean = true,
+    elapsedMs: number = 0,
+    detail: string = ''
+  ): void {
+    this.ensureReadFlowSession();
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      eventType,
+      this.itemId,
+      this.chapterId,
+      this.currentPage,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.LEGACY_REMOTE;
+    event.modeKind = MangaReadFlowModeKind.LEGACY_KOMGA;
+    event.chapterTitle = this.chapterTitle;
+    event.pageCount = this.pages.length;
+    event.elapsedMs = elapsedMs;
+    event.success = success;
+    event.detail = detail;
+    event.severity = success ? MangaReadFlowSeverity.INFO : MangaReadFlowSeverity.ERROR;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordReadFlowError(reason: string, errorMessage: string): void {
+    this.ensureReadFlowSession();
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      MangaReadFlowEventType.ERROR,
+      this.itemId,
+      this.chapterId,
+      this.currentPage,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.LEGACY_REMOTE;
+    event.modeKind = MangaReadFlowModeKind.LEGACY_KOMGA;
+    event.chapterTitle = this.chapterTitle;
+    event.pageCount = this.pages.length;
+    event.success = false;
+    event.errorMessage = errorMessage;
+    event.severity = MangaReadFlowSeverity.ERROR;
+    event.detail = 'legacy remote reader is not using unified asset pipeline';
+    this.mangaReadFlowMonitor.record(event);
+  }
+
+  private recordReadFlowDegraded(reason: string, detail: string): void {
+    this.ensureReadFlowSession();
+    const event: MangaReadFlowEvent = this.mangaReadFlowMonitor.createEvent(
+      this.mangaReadFlowSessionId,
+      MangaReadFlowEventType.FLOW_DEGRADED,
+      this.itemId,
+      this.chapterId,
+      this.currentPage,
+      reason
+    );
+    event.sourceKind = MangaReadFlowSourceKind.LEGACY_REMOTE;
+    event.modeKind = MangaReadFlowModeKind.LEGACY_KOMGA;
+    event.chapterTitle = this.chapterTitle;
+    event.pageCount = this.pages.length;
+    event.success = true;
+    event.severity = MangaReadFlowSeverity.WARN;
+    event.detail = detail;
+    this.mangaReadFlowMonitor.record(event);
+  }
+
   private copyChapters(source?: ChapterInfo[]): ChapterInfo[] {
     if (source === null || source === undefined || source.length <= 0) {
       return [];
@@ -224,19 +328,36 @@ export struct KomgaReaderPage {
     const current: ChapterInfo = this.chapterList[this.chapterIndex];
     this.chapterId = current.id;
     this.chapterTitle = current.title;
+    this.recordReadFlowEvent(MangaReadFlowEventType.CHAPTER_RESOLVED, 'legacy_komga_chapter_bound', true, 0, '');
   }
 
   private async loadPages(forceRefresh: boolean = false): Promise<void> {
     if (this.chapterId.length <= 0) {
       this.errorMessage = '章节 ID 无效';
+      this.recordReadFlowError('legacy_komga_invalid_chapter', this.errorMessage);
       return;
     }
 
     this.isLoading = true;
     this.errorMessage = '';
+    this.mangaReadFlowLoadStartedAt = Date.now();
+    this.recordReadFlowDegraded(
+      'legacy_komga_asset_pipeline_bypass',
+      '旧 Komga 阅读页使用 KomgaImage 组件加载图片，不走 MangaAssetLoadCoordinator'
+    );
     try {
       await this.executor.initialize(forceRefresh);
       this.pages = await this.executor.getPages(this.chapterId, this.instanceId, forceRefresh);
+      this.recordReadFlowEvent(
+        MangaReadFlowEventType.PAGES_RESOLVED,
+        forceRefresh ? 'legacy_komga_pages_loaded_force' : 'legacy_komga_pages_loaded',
+        true,
+        Date.now() - this.mangaReadFlowLoadStartedAt,
+        'KomgaImage manages legacy asset loading'
+      );
+      if (this.pages.length <= 0) {
+        this.recordReadFlowError('legacy_komga_empty_pages', '旧 Komga 阅读页返回空页面列表');
+      }
       await this.restoreReadingProgress();
       if (this.currentPage >= 0 && this.currentPage < this.pages.length) {
         this.swiperController.changeIndex(this.currentPage);
@@ -244,6 +365,7 @@ export struct KomgaReaderPage {
     } catch (error) {
       logger.error(TAG, `加载 Komga 阅读页面失败: ${String(error)}`);
       this.errorMessage = `加载失败：${String(error)}`;
+      this.recordReadFlowError('legacy_komga_pages_failed', String(error));
     } finally {
       this.isLoading = false;
     }
@@ -286,8 +408,10 @@ export struct KomgaReaderPage {
       };
       store.putSync(this.getProgressKey(), JSON.stringify(payload));
       await store.flush();
+      this.recordReadFlowEvent(MangaReadFlowEventType.PROGRESS_SAVED, 'legacy_komga_progress_saved', true, 0, '');
     } catch (error) {
       logger.warn(TAG, `保存 Komga 阅读进度失败: ${String(error)}`);
+      this.recordReadFlowError('legacy_komga_progress_failed', String(error));
     }
   }
 
@@ -307,6 +431,7 @@ export struct KomgaReaderPage {
     this.topBarTranslateY = 0;
     this.bottomBarTranslateY = 0;
     this.controlsBackdropOpacity = 1;
+    this.recordReadFlowEvent(MangaReadFlowEventType.CHAPTER_RESOLVED, 'legacy_komga_chapter_switched', true, 0, '');
     await this.loadPages();
   }
 
@@ -341,6 +466,7 @@ export struct KomgaReaderPage {
       return;
     }
     this.currentPage = index;
+    this.recordReadFlowEvent(MangaReadFlowEventType.PAGE_CHANGED, 'legacy_komga_go_to_page', true, 0, '');
     this.swiperController.changeIndex(index);
     void this.saveReadingProgress();
   }
@@ -356,7 +482,7 @@ export struct KomgaReaderPage {
   private buildTopBar() {
     Row({ space: 10 }) {
       Button() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
+        SymbolGlyph($r('sys.symbol.arrow_left'))
           .fontSize(22)
           .fontColor([Color.White])
       }
@@ -594,6 +720,7 @@ export struct KomgaReaderPage {
       .loop(false)
       .onChange((index: number) => {
         this.currentPage = index;
+        this.recordReadFlowEvent(MangaReadFlowEventType.PAGE_CHANGED, 'legacy_komga_swiper_change', true, 0, '');
         void this.saveReadingProgress();
       })
       .onClick(() => this.toggleControls())

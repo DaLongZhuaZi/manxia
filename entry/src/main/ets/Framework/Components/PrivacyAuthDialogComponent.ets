@@ -1,10 +1,10 @@
 ﻿// 文件路径: entry/src/main/ets/Framework/Components/PrivacyAuthDialogComponent.ets
 // 职责: 隐私模式密码验证对话框组件，从MainMenuPage提取的独立组件
 
-import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { SourceDialogScaffold } from './SourceDialogScaffold';
+import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { PrivacyModeManager } from '../Managers/PrivacyModeManager';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 
@@ -196,40 +196,41 @@ export struct PrivacyAuthDialogComponent {
       SourceDialogScaffold({
         themeState: this.themeState,
         closeOnMaskTap: !this.privacyAuthSubmitting,
-        dialogWidth: '88%',
-        maxWidth: 480,
-        maxHeight: '84%',
-        contentPadding: 18,
+        dialogWidth: '90%',
+        maxWidth: 560,
+        maxHeight: '86%',
+        contentPadding: 24,
+        dialogRadius: DialogSurfaceStyleHelper.getPopupCardRadius(),
+        shadowOffsetY: 8,
         zIndexValue: 9400,
         onMaskTap: () => {
           this.closePrivacyAuthDialog();
         }
       }) {
-        Column({ space: 14 }) {
+        Column({ space: 20 }) {
           Text(this.getPrivacyAuthDialogTitle())
             .fontSize(20)
-            .fontWeight(FontWeight.Bold)
+            .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
             .textAlign(TextAlign.Start)
 
           Text(this.getPrivacyAuthDialogDescription())
-            .fontSize(13)
+            .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .lineHeight(20)
             .width('100%')
             .textAlign(TextAlign.Start)
 
-          Column({ space: 10 }) {
+          Column({ space: 12 }) {
             TextInput({ placeholder: '请输入隐私密码', text: this.privacyAuthPasswordInput })
               .type(this.privacyAuthShowPassword ? InputType.Normal : InputType.Password)
               .width('100%')
-              .height(44)
               .fontFamily(this.appFontFamily)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-              .borderRadius(10)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+              .borderRadius(8)
               .onChange((value: string) => {
                 this.privacyAuthPasswordInput = value;
                 if (this.privacyAuthErrorMessage.length > 0) {
@@ -244,10 +245,9 @@ export struct PrivacyAuthDialogComponent {
               TextInput({ placeholder: '请再次输入隐私密码', text: this.privacyAuthPasswordConfirmInput })
                 .type(this.privacyAuthShowPassword ? InputType.Normal : InputType.Password)
                 .width('100%')
-                .height(44)
                 .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-                .borderRadius(10)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+                .borderRadius(8)
                 .onChange((value: string) => {
                   this.privacyAuthPasswordConfirmInput = value;
                   if (this.privacyAuthErrorMessage.length > 0) {
@@ -261,22 +261,24 @@ export struct PrivacyAuthDialogComponent {
 
             Row({ space: 8 }) {
               Button() {
-                SymbolGlyph($r(this.privacyAuthShowPassword ? 'sys.symbol.eye_slash' : 'sys.symbol.eye'))
-                  .fontSize(16)
-                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                Row({ space: 6 }) {
+                  SymbolGlyph($r(this.privacyAuthShowPassword ? 'sys.symbol.eye_slash' : 'sys.symbol.eye'))
+                    .fontSize(14)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+
+                  Text(this.privacyAuthShowPassword ? '隐藏密码' : '显示密码')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                }
               }
-              .width(34)
-              .height(34)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-              .borderRadius(17)
+              .height(24)
+              .padding({ left: 8, right: 8 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+              .borderRadius(8)
               .onClick(() => {
                 this.privacyAuthShowPassword = !this.privacyAuthShowPassword;
               })
-
-              Text(this.privacyAuthShowPassword ? '隐藏密码' : '显示密码')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
@@ -295,12 +297,10 @@ export struct PrivacyAuthDialogComponent {
           Row({ space: 12 }) {
             Button(this.privacyAuthDialogMode === 'setup' ? '暂不设置' : '取消')
               .layoutWeight(1)
-              .height(40)
               .fontSize(14)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-              .borderRadius(10)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
               .enabled(!this.privacyAuthSubmitting)
               .onClick(() => {
                 this.closePrivacyAuthDialog();
@@ -308,13 +308,12 @@ export struct PrivacyAuthDialogComponent {
 
             Button(this.getPrivacyAuthConfirmButtonText())
               .layoutWeight(1)
-              .height(40)
               .fontSize(14)
               .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              .borderRadius(10)
+              .fontColor(Color.White)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .enabled(!this.privacyAuthSubmitting)
+              .opacity(this.privacyAuthSubmitting ? 0.5 : 1.0)
               .onClick(() => {
                 void this.submitPrivacyAuthDialog();
               })

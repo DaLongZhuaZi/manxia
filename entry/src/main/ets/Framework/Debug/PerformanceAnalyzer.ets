@@ -469,8 +469,8 @@ export class PerformanceAnalyzer {
       });
     }
 
-    // 检查内存使用
-    if (this.metrics.memory.used > this.thresholds.maxMemory) {
+    // 检查内存使用；0 表示当前平台未采集到该指标
+    if (this.metrics.memory.used > 0 && this.metrics.memory.used > this.thresholds.maxMemory) {
       this.addWarning({
         type: PerformanceWarningType.HIGH_MEMORY,
         message: `High memory usage: ${typeof this.metrics.memory.used === 'number' ? this.metrics.memory.used.toFixed(1) : '未知'} MB`,
@@ -495,8 +495,8 @@ export class PerformanceAnalyzer {
       }
     }
 
-    // 检查CPU使用率
-    if (this.metrics.cpu.usage > this.thresholds.maxCPUUsage) {
+    // 检查CPU使用率；0 表示当前平台未采集到该指标
+    if (this.metrics.cpu.usage > 0 && this.metrics.cpu.usage > this.thresholds.maxCPUUsage) {
       this.addWarning({
         type: PerformanceWarningType.HIGH_CPU,
         message: `High CPU usage: ${typeof this.metrics.cpu.usage === 'number' ? this.metrics.cpu.usage.toFixed(1) : '未知'}%`,
@@ -533,22 +533,15 @@ export class PerformanceAnalyzer {
     return values.reduce((sum, value) => sum + value, 0) / values.length;
   }
 
-  /**
-   * 获取内存使用量（模拟）
-   */
   private getMemoryUsage(): number {
-    // HarmonyOS 没有直接的内存API，这里返回模拟值
-    return Math.random() * 200 + 100; // 100-300 MB
+    return 0;
   }
 
-  /**
-   * 获取CPU指标（模拟）
-   */
   private getCPUMetrics(): CPUMetrics {
     return {
-      usage: Math.random() * 100,
-      temperature: Math.random() * 30 + 40, // 40-70°C
-      frequency: Math.random() * 1000 + 2000 // 2000-3000 MHz
+      usage: 0,
+      temperature: 0,
+      frequency: 0
     };
   }
 

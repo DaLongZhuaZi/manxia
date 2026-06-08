@@ -89,6 +89,7 @@ import { EBookReaderParams } from './EBookReaderRouteTypes';
 import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
 import { READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
+import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
 
 const TAG = 'EpubWebViewReaderPage';
@@ -2376,15 +2377,15 @@ export struct EpubWebViewReaderPage {
       logger.warn(TAG, 'EPUB 听书独立页打开失败：朗读上下文未就绪');
       return;
     }
-    const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
-    if (!globalStack) {
-      logger.warn(TAG, 'GlobalNavStack not found, cannot open ReadAloudPlayerPage');
-      return;
-    }
-    AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', 'EpubWebViewReaderPage');
-    AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
     AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
-    globalStack.pushPathByName('ReadAloudPlayerPage', undefined);
+    openReadAloudPlayerInIsolatedAbility(
+      this.getUIContext(),
+      AppStorage.get<NavPathStack>('GlobalNavStack'),
+      TAG,
+      'EpubWebViewReaderPage',
+      WindowManager.getCurrentMode(),
+      null
+    );
   }
 
   private toggleReadAloudFromToolbar(): void {
@@ -3607,7 +3608,7 @@ export struct EpubWebViewReaderPage {
   }
 
   private getAutoPageTurnIconResource(): Resource {
-    return this.autoPageTurnEnabled ? $r('sys.symbol.airplane_departure') : $r('sys.symbol.airplane_arrival');
+    return this.autoPageTurnEnabled ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill');
   }
 
   // ──── 工具栏显隐 ────
@@ -4525,7 +4526,7 @@ export struct EpubWebViewReaderPage {
         Blank()
 
         Button() {
-          SymbolGlyph($r('sys.symbol.circle_on_circle'))
+          SymbolGlyph($r('sys.symbol.page_turning'))
             .fontSize(22)
             .fontColor([this.getToolbarIconColor()])
         }
@@ -4567,7 +4568,7 @@ export struct EpubWebViewReaderPage {
             .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
 
           Row() {
-            SymbolGlyph($r('sys.symbol.Celia'))
+            SymbolGlyph($r('sys.symbol.gearshape'))
               .fontSize(16)
               .fontColor([this.readAloudPlaying ? Color.White : this.getToolbarIconColor()])
           }

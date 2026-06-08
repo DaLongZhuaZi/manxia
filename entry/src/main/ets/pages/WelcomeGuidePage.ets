@@ -107,9 +107,9 @@ struct WelcomeGuidePage {
       title: '欢迎您使用漫匣',
       subtitle: '感谢您的支持',
       description: this.sourceFeaturesEnabled
-        ? '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入与图源、书源。接下来将引导您快速了解应用的核心功能。'
-        : '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入。接下来将引导您快速了解应用的核心功能。',
-      icon: $r('sys.symbol.books_vertical_fill'),
+        ? '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入、图源、书源，以及 Suwayomi / Komga 远程书库。接下来将引导您快速了解应用的核心功能。'
+        : '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入，以及 Suwayomi / Komga 远程书库。接下来将引导您快速了解应用的核心功能。',
+      icon: $r('sys.symbol.bookshelf'),
       buttonText: '开始引导流程',
       showSkip: false
     };
@@ -140,7 +140,7 @@ struct WelcomeGuidePage {
         title: '图源说明',
         subtitle: '了解图源支持情况',
         description: '漫匣仅支持使用自有图源。图源用于获取在线漫画内容，不同图源提供不同源站的漫画资源。点击主页面底栏中的「图源」，然后点击“图源导入”，输入下面的仓库地址即可同步仓库',
-        icon: $r('sys.symbol.rectangle_stack'),
+        icon: $r('sys.symbol.picture'),
         buttonText: '下一步',
         showSkip: false
       };
@@ -157,6 +157,16 @@ struct WelcomeGuidePage {
       steps.set(GuideStep.BOOK_SOURCE_GUIDE, bookSourceGuideContent);
     }
 
+    const remoteLibraryGuideContent: GuideStepContent = {
+      title: '远程书库',
+      subtitle: '接入 Suwayomi 与 Komga',
+      description: '如果您已经有 Suwayomi 或 Komga 服务端，可以在漫匣中连接实例、浏览服务端书库、查看详情并继续阅读。首次使用建议先完成服务器地址与账号配置，之后可从底栏入口或管理页快速进入。',
+      icon: $r('sys.symbol.computer_host_fill'),
+      buttonText: '继续下一步',
+      showSkip: false
+    };
+    steps.set(GuideStep.REMOTE_LIBRARY_GUIDE, remoteLibraryGuideContent);
+
     // 自定义体验引导步骤
     const customExperienceContent: GuideStepContent = {
       title: '自定义体验',
@@ -172,7 +182,7 @@ struct WelcomeGuidePage {
       title: '通知权限',
       subtitle: '让重要提醒更及时',
       description: '通知权限主要用于下载完成、内容更新、局域网传书和其他关键提醒。',
-      icon: $r('sys.symbol.worldclock_fill_1'),
+      icon: $r('sys.symbol.bell'),
       buttonText: '继续',
       showSkip: false
     };
@@ -214,6 +224,10 @@ struct WelcomeGuidePage {
 
     if (params.singleGuideStep === GuideStep.BOOK_SOURCE_GUIDE) {
       return GuideStep.BOOK_SOURCE_GUIDE;
+    }
+
+    if (params.singleGuideStep === GuideStep.REMOTE_LIBRARY_GUIDE) {
+      return GuideStep.REMOTE_LIBRARY_GUIDE;
     }
 
     return null;
@@ -710,7 +724,17 @@ struct WelcomeGuidePage {
           void this.finishSourceFeatureGuideAndExit();
           break;
         }
-        logger.debug(TAG, '执行 BOOK_SOURCE_GUIDE 步骤处理，直接进入自定义体验步骤');
+        logger.debug(TAG, '执行 BOOK_SOURCE_GUIDE 步骤处理，进入远程书库引导');
+        this.animateStepChange(() => {
+          this.currentStep = GuideStep.REMOTE_LIBRARY_GUIDE;
+          void this.welcomeGuideManager.setCurrentStep(GuideStep.REMOTE_LIBRARY_GUIDE);
+          void this.handleStepEntered(GuideStep.REMOTE_LIBRARY_GUIDE);
+          logger.info(TAG, `步骤已更新到: ${this.currentStep}`);
+        });
+        break;
+
+      case GuideStep.REMOTE_LIBRARY_GUIDE:
+        logger.debug(TAG, '执行 REMOTE_LIBRARY_GUIDE 步骤处理，直接进入自定义体验步骤');
         this.animateStepChange(() => {
           this.currentStep = GuideStep.CUSTOM_EXPERIENCE;
           void this.welcomeGuideManager.setCurrentStep(GuideStep.CUSTOM_EXPERIENCE);
@@ -754,7 +778,7 @@ struct WelcomeGuidePage {
     let nextStep: GuideStep = this.currentStep;
     switch (this.currentStep) {
       case GuideStep.DATA_IMPORT:
-        nextStep = this.sourceFeaturesEnabled ? GuideStep.IMAGE_SOURCE_GUIDE : GuideStep.CUSTOM_EXPERIENCE;
+        nextStep = this.sourceFeaturesEnabled ? GuideStep.IMAGE_SOURCE_GUIDE : GuideStep.REMOTE_LIBRARY_GUIDE;
         break;
       default:
         return;
@@ -861,12 +885,38 @@ struct WelcomeGuidePage {
     }
   }
 
+  private navigateToRemoteLibrarySettings(targetPage: string): void {
+    try {
+      const router = this.uiContext?.getRouter();
+      if (!router) {
+        logger.warn(TAG, `Router不可用，无法跳转到远程书库设置: ${targetPage}`);
+        return;
+      }
+
+      const params: MainMenuRouteParams = {
+        targetPage: targetPage,
+        fromGuide: true
+      };
+
+      router.pushUrl({
+        url: 'pages/MainMenuPage',
+        params
+      }).then(() => {
+        logger.info(TAG, `导航到远程书库设置成功: ${targetPage}`);
+      }).catch((error: Error) => {
+        logger.error(TAG, `导航到远程书库设置失败: ${targetPage}`, error.message);
+      });
+    } catch (error) {
+      logger.error(TAG, `导航到远程书库设置异常: ${targetPage}, error=${String(error)}`);
+    }
+  }
+
   /**
    * 导航到Download同步页面
    */
   private async navigateToDownloadSync(): Promise<void> {
     try {
-      const nextStep = this.sourceFeaturesEnabled ? GuideStep.IMAGE_SOURCE_GUIDE : GuideStep.CUSTOM_EXPERIENCE;
+      const nextStep = this.sourceFeaturesEnabled ? GuideStep.IMAGE_SOURCE_GUIDE : GuideStep.REMOTE_LIBRARY_GUIDE;
       await this.welcomeGuideManager.setCurrentStep(nextStep);
 
       const router = this.uiContext?.getRouter();
@@ -1188,7 +1238,7 @@ struct WelcomeGuidePage {
     Column({ space: 12 }) {
       Column({ space: 10 }) {
         Row({ space: 10 }) {
-          SymbolGlyph($r('sys.symbol.worldclock_fill_1'))
+          SymbolGlyph($r('sys.symbol.bell'))
             .fontSize(18)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
           Text('下载完成后及时提醒您查看结果')
@@ -1200,7 +1250,7 @@ struct WelcomeGuidePage {
         }
 
         Row({ space: 10 }) {
-          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+          SymbolGlyph($r('sys.symbol.bookshelf'))
             .fontSize(18)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
           Text('图源/书源更新、局域网传书等重要状态也会用通知提示')
@@ -1302,7 +1352,7 @@ struct WelcomeGuidePage {
     Column() {
       Button() {
         Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          SymbolGlyph($r('sys.symbol.picture'))
             .fontSize(16)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
 
@@ -1333,6 +1383,93 @@ struct WelcomeGuidePage {
     .width('100%')
     .padding({ left: 32, right: 32 })
     .margin({ bottom: 32 })
+  }
+
+  @Builder
+  private buildRemoteLibraryGuideActionSection() {
+    Column({ space: 12 }) {
+      Row({ space: 10 }) {
+        SymbolGlyph($r('sys.symbol.computer_host_fill'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+        Text('Suwayomi 适合连接漫画服务器，Komga 适合连接自建漫画库和阅读列表。配置完成后，它们会出现在主页面入口中。')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .textAlign(TextAlign.Start)
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(16)
+
+      Row({ space: 12 }) {
+        Button() {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.computer_host_fill'))
+              .fontSize(15)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+
+            Text('配置 Suwayomi')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .justifyContent(FlexAlign.Center)
+          .width('100%')
+        }
+        .height(42)
+        .layoutWeight(1)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .borderRadius(21)
+        .enabled(!this.isAnimating)
+        .opacity(this.isAnimating ? 0.6 : 1.0)
+        .onClick(() => {
+          if (!this.isAnimating) {
+            this.navigateToRemoteLibrarySettings('SuwayomiSettingsPage');
+          }
+        })
+
+        Button() {
+          Row({ space: 8 }) {
+            Image($r('app.media.komga_icon'))
+              .width(16)
+              .height(16)
+
+            Text('配置 Komga')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .justifyContent(FlexAlign.Center)
+          .width('100%')
+        }
+        .height(42)
+        .layoutWeight(1)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .borderRadius(21)
+        .enabled(!this.isAnimating)
+        .opacity(this.isAnimating ? 0.6 : 1.0)
+        .onClick(() => {
+          if (!this.isAnimating) {
+            this.navigateToRemoteLibrarySettings('KomgaSettingsPage');
+          }
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 32, right: 32 })
+    .margin({ bottom: 28 })
   }
 
   @Builder
@@ -1875,6 +2012,7 @@ struct WelcomeGuidePage {
                 bottom: (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE &&
                   (this.sourceFeaturesEnabled || this.isSingleGuidePreview())) ||
                   this.currentStep === GuideStep.BOOK_SOURCE_GUIDE ||
+                  this.currentStep === GuideStep.REMOTE_LIBRARY_GUIDE ||
                   this.currentStep === GuideStep.CUSTOM_EXPERIENCE ||
                   this.currentStep === GuideStep.ANALYTICS_PERMISSION ||
                   this.currentStep === GuideStep.LIBRARY_INTRO
@@ -1930,6 +2068,10 @@ struct WelcomeGuidePage {
 
             if (this.currentStep === GuideStep.BOOK_SOURCE_GUIDE) {
               this.buildBookSourceGuideActionSection()
+            }
+
+            if (this.currentStep === GuideStep.REMOTE_LIBRARY_GUIDE) {
+              this.buildRemoteLibraryGuideActionSection()
             }
 
             if (this.currentStep === GuideStep.CUSTOM_EXPERIENCE) {

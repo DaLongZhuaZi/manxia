@@ -45,12 +45,14 @@ import { SettingsImmersiveTitleActionItem, SettingsPageTitleBarManager } from '.
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
+import { ExternalFileTaskParamStore } from '../Framework/ExternalFile/ExternalFileTaskParamStore';
 
 const TAG = 'BackupPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 const APP_STORAGE_TRANSFER_RECORD_ID = 'pendingTransferRecordId';
 const APP_STORAGE_TRANSFER_RESULT = 'pendingTransferImportResult';
 const APP_STORAGE_TRANSFER_TRACKING_ACTIVE = 'pendingTransferTrackingActive';
+const BACKUP_COPY_BUFFER_SIZE: number = 1024 * 1024;
 
 interface ThemeState {
   currentTheme: ThemeType;
@@ -75,6 +77,25 @@ interface NativeTestConfig {
   customTestContent: string;
 }
 
+interface FileCopyProgress {
+  bytesCopied: number;
+  totalBytes: number;
+}
+
+interface NavDestinationPathInfo {
+  param?: Object;
+}
+
+interface NavDestinationContext {
+  pathStack: NavPathStack;
+  pathInfo?: NavDestinationPathInfo;
+}
+
+export interface BackupExternalImportParams {
+  externalBackupUri?: string;
+  externalTaskInstanceId?: string;
+}
+
 @ComponentV2
 struct BackupPage {
   @Local themeState: ThemeState = { currentTheme: ThemeType.DARK };
@@ -86,6 +107,9 @@ struct BackupPage {
   private enhancedBackupManager = getEnhancedBackupManager();
   private webdavManager = getWebDAVBackupManager();
   pathStack: NavPathStack = new NavPathStack();
+  private routeExternalBackupUri: string = '';
+  private routeExternalTaskInstanceId: string = '';
+  private hasHandledRouteExternalBackup: boolean = false;
   
   // Tab状态
   @Local currentTab: 'local' | 'cloud' | 'native_test' | 'ftp' = 'local';
@@ -329,11 +353,35 @@ struct BackupPage {
     this.loadBackupFiles();
     
     // 检查是否有外部导入的备份文件
-    this.checkPendingBackupImport();
+    if (!this.handleRouteExternalBackupImport('aboutToAppear')) {
+      this.checkPendingBackupImport();
+    }
     this.applyPendingSearchTarget();
     setTimeout(() => {
       void this.refreshPageGuide('aboutToAppear');
     }, 120);
+  }
+
+  private setRouteExternalBackupParams(params: BackupExternalImportParams | undefined): void {
+    if (!params || !params.externalBackupUri || params.externalBackupUri.length <= 0) {
+      return;
+    }
+    this.routeExternalBackupUri = params.externalBackupUri;
+    this.routeExternalTaskInstanceId = params.externalTaskInstanceId ?? '';
+    logger.info(TAG, `已接收独立备份恢复任务参数: uri=${this.routeExternalBackupUri}, instance=${this.routeExternalTaskInstanceId}`);
+    this.handleRouteExternalBackupImport('onReady');
+  }
+
+  private handleRouteExternalBackupImport(source: string): boolean {
+    if (this.hasHandledRouteExternalBackup || this.routeExternalBackupUri.length <= 0) {
+      return false;
+    }
+    this.hasHandledRouteExternalBackup = true;
+    setTimeout((): void => {
+      void this.importBackupFromUri(this.routeExternalBackupUri);
+    }, 500);
+    logger.info(TAG, `已调度独立备份恢复任务: source=${source}, uri=${this.routeExternalBackupUri}`);
+    return true;
   }
 
   private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
@@ -486,6 +534,14 @@ struct BackupPage {
     }
   }
 
+  private releaseExternalBackupTaskLock(reason: string): void {
+    if (this.routeExternalTaskInstanceId.length <= 0) {
+      return;
+    }
+    ExternalFileTaskParamStore.getInstance().releaseBackupRestoreLock(this.routeExternalTaskInstanceId);
+    logger.info(TAG, `已释放独立备份恢复锁: instance=${this.routeExternalTaskInstanceId}, reason=${reason}`);
+  }
+
   private resolveReadableImportPath(sourceUri: string): string {
     const trimmedUri = sourceUri.trim();
     try {
@@ -550,6 +606,7 @@ struct BackupPage {
           action: () => {
             logger.info(TAG, '用户取消导入备份');
             this.finalizeTrackedTransferImport('import_cancelled');
+            this.releaseExternalBackupTaskLock('cancel');
           }
         },
         secondaryButton: {
@@ -565,6 +622,7 @@ struct BackupPage {
       logger.error(TAG, `从URI导入备份失败: ${error}`);
       this.getUIContext().getPromptAction().showToast({ message: `导入失败: ${error}` });
       this.finalizeTrackedTransferImport('import_failed');
+      this.releaseExternalBackupTaskLock('import_error');
     }
   }
   
@@ -572,6 +630,7 @@ struct BackupPage {
    * 执行从外部URI导入的备份恢复操作
    */
   private async executeRestoreFromExternalUri(uri: string): Promise<void> {
+    let tempPath = '';
     try {
       this.isRestoringBackup = true;
       logger.info(TAG, `开始执行备份恢复: ${uri}`);
@@ -579,34 +638,19 @@ struct BackupPage {
       
       // 将外部文件复制到沙箱临时目录
       const sandboxManager = SandboxManager.getInstance();
-      const tempPath = sandboxManager.getDirectory('temp') + '/temp_restore_' + Date.now() + '.mxbak';
+      tempPath = sandboxManager.getDirectory('temp') + '/temp_restore_' + Date.now() + '.mxbak';
       
-      // 复制文件
-      const srcFile = SafeFileUtils.openSync(readablePath, fileIo.OpenMode.READ_ONLY);
-      const stat = SafeFileUtils.statSync(srcFile.fd);
-      const buffer = new ArrayBuffer(stat.size);
-      SafeFileUtils.readSync(srcFile.fd, buffer);
-      SafeFileUtils.closeSync(srcFile);
+      const copyProgress = await this.copyFileByChunksAtomic(readablePath, tempPath);
       
-      const dstFile = SafeFileUtils.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-      SafeFileUtils.writeSync(dstFile.fd, buffer);
-      SafeFileUtils.closeSync(dstFile);
-      
-      logger.info(TAG, `备份文件已复制到: ${tempPath}, 大小: ${stat.size} 字节`);
+      logger.info(TAG, `备份文件已复制到: ${tempPath}, 大小: ${copyProgress.bytesCopied} 字节`);
       
       // 使用EnhancedBackupManager恢复备份（它会解压tar文件）
       await this.enhancedBackupManager.restoreBackup(tempPath);
-      
-      // 删除临时文件
-      try {
-        SafeFileUtils.unlinkSync(tempPath);
-      } catch (e) {
-        logger.warn(TAG, `删除临时文件失败: ${e}`);
-      }
-      
+
       this.getUIContext().getPromptAction().showToast({ message: '备份恢复成功！' });
       logger.info(TAG, '备份恢复成功');
       this.finalizeTrackedTransferImport('imported');
+      this.releaseExternalBackupTaskLock('restore_success');
       
       // 刷新备份列表
       this.loadBackupFiles();
@@ -615,12 +659,17 @@ struct BackupPage {
       logger.error(TAG, `执行恢复失败: ${error}`);
       this.getUIContext().getPromptAction().showToast({ message: `恢复失败: ${error}` });
       this.finalizeTrackedTransferImport('import_failed');
+      this.releaseExternalBackupTaskLock('restore_failed');
     } finally {
+      if (tempPath.length > 0) {
+        this.cleanupLocalTempFile(tempPath);
+      }
       this.isRestoringBackup = false;
     }
   }
   
   aboutToDisappear(): void {
+    this.releaseExternalBackupTaskLock('disappear');
     if (this.cloudSyncTimer !== undefined) {
       clearTimeout(this.cloudSyncTimer);
       this.cloudSyncTimer = undefined;
@@ -1049,7 +1098,7 @@ struct BackupPage {
           password: settings.password,
           basePath: settings.basePath,
           timeoutMs: 30000,
-          verifySSL: false // 禁用SSL验证以支持自签名证书
+          verifySSL: true
         };
         const nativeClient = new WebDAVNativeClient(nativeConfig);
         await nativeClient.initialize();
@@ -1138,7 +1187,7 @@ struct BackupPage {
         password: this.webdavSettings.password,
         basePath: this.webdavSettings.basePath,
         timeoutMs: 30000,
-        verifySSL: false // 禁用SSL验证以支持自签名证书
+        verifySSL: true
       };
 
       const summary = await quickTestWebDAVNative(nativeConfig);
@@ -1180,7 +1229,7 @@ struct BackupPage {
         password: this.webdavSettings.password,
         basePath: this.webdavSettings.basePath,
         timeoutMs: 30000,
-        verifySSL: false // 禁用SSL验证以支持自签名证书
+        verifySSL: true
       };
 
       const client = new WebDAVNativeClient(nativeConfig);
@@ -1571,34 +1620,64 @@ struct BackupPage {
   async createBackup(): Promise<void> {
     this.showBackupOptions();
   }
+
+  private confirmSensitiveCloudBackup(options: BackupOptions): void {
+    if (!options.includeCloudConfig) {
+      this.createBackupWithOptions(options);
+      return;
+    }
+
+    this.getUIContext().showAlertDialog({
+      title: '确认备份云存储配置',
+      message: '云存储配置包含 WebDAV、Suwayomi、Komga、FTP 的账号、密码和 API Key。请只在你能妥善保存备份文件时启用。',
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+          logger.info(TAG, '用户取消备份云存储配置');
+        }
+      },
+      secondaryButton: {
+        value: '继续备份',
+        fontColor: Color.Red,
+        action: () => {
+          this.createBackupWithOptions(options);
+        }
+      }
+    });
+  }
+
+  private confirmSensitiveCloudRestore(options: RestoreOptions): void {
+    if (!options.restoreCloudConfig) {
+      this.restoreBackupWithOptions(options);
+      return;
+    }
+
+    this.getUIContext().showAlertDialog({
+      title: '确认恢复云存储配置',
+      message: '恢复云存储配置会写入 WebDAV、Suwayomi、Komga、FTP 的账号、密码和 API Key，并覆盖当前相关配置。',
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+          logger.info(TAG, '用户取消恢复云存储配置');
+        }
+      },
+      secondaryButton: {
+        value: '继续恢复',
+        fontColor: Color.Red,
+        action: () => {
+          this.restoreBackupWithOptions(options);
+        }
+      }
+    });
+  }
   
   async showRestoreOptions(backupInfo: BackupFileInfo): Promise<void> {
     try {
-      // 读取备份元数据（getBackupMetadata内部会解压并读取数据）
-      const metadata = await this.enhancedBackupManager.getBackupMetadata(backupInfo.filePath);
-      
-      // 由于我们需要完整的备份数据来显示详情，这里需要再次解压读取
-      // 使用公共API而不是私有方法
-      const sandboxManager = SandboxManager.getInstance();
-      const tempDir = `${sandboxManager.getDirectory('cache')}/restore_preview_${Date.now()}`;
-      
-      // 创建临时目录
-      if (!await sandboxManager.exists(tempDir)) {
-        await sandboxManager.createDirectory(tempDir);
-      }
-      
-      // 使用getTarPackager获取公共实例
-      const tarPackager = await import('../Framework/Utils/TarPackager').then(m => m.getTarPackager());
-      await tarPackager.extractTarArchive(backupInfo.filePath, tempDir);
-      
-      // 读取JSON文件
-      const jsonPath = `${tempDir}/backup.json`;
-      const jsonBuffer = await sandboxManager.readFile(jsonPath);
-      const jsonContent = new util.TextDecoder('utf-8').decodeToString(new Uint8Array(jsonBuffer));
-      const backupData = SafeUtils.parseObj(jsonContent) as BackupData;
-      
-      // 清理临时目录
-      await sandboxManager.deleteDirectory(tempDir);
+      const backupData = await this.loadBackupDataForPreview(backupInfo);
       
       this.currentRestoreBackup = backupInfo;
       this.restoreBackupData = backupData;
@@ -1609,6 +1688,49 @@ struct BackupPage {
         message: `读取备份失败: ${error}`,
         duration: 3000
       });
+    }
+  }
+
+  private async loadBackupDataForPreview(backupInfo: BackupFileInfo): Promise<BackupData> {
+    if (!backupInfo.fileName.endsWith('.mxbackup') && !backupInfo.fileName.endsWith('.mxbak')) {
+      const sandboxManager = SandboxManager.getInstance();
+      const jsonContent = await sandboxManager.readTextFile(backupInfo.filePath);
+      return SafeUtils.parseObj(jsonContent) as BackupData;
+    }
+
+    const sandboxManager = SandboxManager.getInstance();
+    const tempDir = `${sandboxManager.getDirectory('cache')}/restore_preview_${Date.now()}`;
+    try {
+      if (!await sandboxManager.exists(tempDir)) {
+        await sandboxManager.createDirectory(tempDir);
+      }
+
+      const tarPackager = await import('../Framework/Utils/TarPackager').then(m => m.getTarPackager());
+      await tarPackager.extractTarArchive(backupInfo.filePath, tempDir);
+
+      const jsonPath = `${tempDir}/backup.json`;
+      const jsonContent = await sandboxManager.readTextFile(jsonPath);
+      return SafeUtils.parseObj(jsonContent) as BackupData;
+    } finally {
+      await this.deleteDirectoryRecursive(tempDir);
+    }
+  }
+
+  private async deleteDirectoryRecursive(path: string): Promise<void> {
+    try {
+      const stat = await fileIo.stat(path);
+      if (!stat.isDirectory()) {
+        await fileIo.unlink(path);
+        return;
+      }
+
+      const entries = await fileIo.listFile(path);
+      for (const entry of entries) {
+        await this.deleteDirectoryRecursive(`${path}/${entry}`);
+      }
+      await fileIo.rmdir(path);
+    } catch (error) {
+      logger.warn(TAG, `清理目录失败: ${path}, ${error}`);
     }
   }
 
@@ -1664,6 +1786,122 @@ struct BackupPage {
       });
     }
   }
+
+  private async copyFileByChunks(sourcePath: string, targetPath: string): Promise<FileCopyProgress> {
+    const sourceFile = await fileIo.open(sourcePath, fileIo.OpenMode.READ_ONLY);
+    let targetFile: fileIo.File | null = null;
+    try {
+      targetFile = await fileIo.open(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      const stat = await fileIo.stat(sourceFile.fd);
+      const totalBytes = stat.size;
+      let offset = 0;
+      let copied = 0;
+
+      while (offset < totalBytes) {
+        const remaining = totalBytes - offset;
+        const chunkSize = remaining > BACKUP_COPY_BUFFER_SIZE ? BACKUP_COPY_BUFFER_SIZE : remaining;
+        const buffer = new ArrayBuffer(chunkSize);
+        const readBytes = await fileIo.read(sourceFile.fd, buffer, { length: chunkSize });
+        if (readBytes <= 0) {
+          throw new Error(`读取备份文件失败: offset=${offset}, readBytes=${readBytes}`);
+        }
+        if (readBytes !== chunkSize) {
+          throw new Error(`备份文件读取不完整: expected=${chunkSize}, actual=${readBytes}`);
+        }
+
+        const writtenBytes = await fileIo.write(targetFile.fd, buffer, { length: readBytes });
+        if (writtenBytes !== readBytes) {
+          throw new Error(`备份文件写入不完整: expected=${readBytes}, actual=${writtenBytes}`);
+        }
+
+        offset += readBytes;
+        copied += writtenBytes;
+      }
+
+      return { bytesCopied: copied, totalBytes: totalBytes };
+    } finally {
+      if (targetFile) {
+        await fileIo.close(targetFile);
+      }
+      await fileIo.close(sourceFile);
+    }
+  }
+
+  private async copyFileByChunksAtomic(sourcePath: string, targetPath: string): Promise<FileCopyProgress> {
+    const tempPath = `${targetPath}.copy_${Date.now()}.tmp`;
+    try {
+      const progress = await this.copyFileByChunks(sourcePath, tempPath);
+      this.replaceLocalFileAfterCopy(tempPath, targetPath);
+      return progress;
+    } catch (error) {
+      this.cleanupLocalTempFile(tempPath);
+      throw new Error(`原子复制备份文件失败: ${error}`);
+    }
+  }
+
+  private replaceLocalFileAfterCopy(tempPath: string, targetPath: string): void {
+    try {
+      SafeFileUtils.renameSyncStrict(tempPath, targetPath);
+      return;
+    } catch (renameError) {
+      logger.warn(TAG, `直接替换导入文件失败，尝试暂存旧文件后重试: ${renameError}`);
+    }
+
+    if (SafeFileUtils.accessSync(targetPath)) {
+      const previousPath = `${targetPath}.previous_${Date.now()}.tmp`;
+      SafeFileUtils.renameSyncStrict(targetPath, previousPath);
+      try {
+        SafeFileUtils.renameSyncStrict(tempPath, targetPath);
+        this.cleanupLocalTempFile(previousPath);
+        return;
+      } catch (replaceError) {
+        if (SafeFileUtils.accessSync(previousPath) && !SafeFileUtils.accessSync(targetPath)) {
+          SafeFileUtils.renameSyncStrict(previousPath, targetPath);
+        }
+        throw new Error(`替换导入文件失败且已尝试恢复旧文件: ${replaceError}`);
+      }
+    }
+    SafeFileUtils.renameSyncStrict(tempPath, targetPath);
+  }
+
+  private cleanupLocalTempFile(tempPath: string): void {
+    try {
+      if (SafeFileUtils.accessSync(tempPath)) {
+        SafeFileUtils.unlinkSyncStrict(tempPath);
+      }
+    } catch (cleanupError) {
+      logger.warn(TAG, `清理临时文件失败: ${cleanupError}`);
+    }
+  }
+
+  private resolveBackupImportExtension(uri: string): string {
+    const fileName = this.resolveFileNameFromUri(uri).toLowerCase();
+    if (fileName.endsWith('.mxbak')) {
+      return '.mxbak';
+    }
+    if (fileName.endsWith('.mxbackup')) {
+      return '.mxbackup';
+    }
+    return '.json';
+  }
+
+  private resolveFileNameFromUri(uri: string): string {
+    try {
+      const uriObj = new coreFileUri.FileUri(uri);
+      return uriObj.name;
+    } catch (error) {
+      logger.debug(TAG, `解析导入文件名失败，使用URI片段: ${error}`);
+    }
+
+    try {
+      const cleanUri = uri.split('?')[0].split('#')[0];
+      const rawName = cleanUri.substring(cleanUri.lastIndexOf('/') + 1);
+      return decodeURIComponent(rawName);
+    } catch (decodeError) {
+      logger.warn(TAG, `解析导入文件URI失败: ${decodeError}`);
+      return '';
+    }
+  }
   
   async exportBackup(backupInfo: BackupFileInfo): Promise<void> {
     try {
@@ -1673,16 +1911,7 @@ struct BackupPage {
       const uris = await documentViewPicker.save(documentSaveOptions);
       
       if (uris && uris.length > 0) {
-        const sourceFile = await fileIo.open(backupInfo.filePath, fileIo.OpenMode.READ_ONLY);
-        const destFile = await fileIo.open(uris[0], fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-        
-        const stat = await fileIo.stat(backupInfo.filePath);
-        const buffer = new ArrayBuffer(stat.size);
-        await fileIo.read(sourceFile.fd, buffer);
-        await fileIo.write(destFile.fd, buffer);
-        
-        await fileIo.close(sourceFile);
-        await fileIo.close(destFile);
+        await this.copyFileByChunks(backupInfo.filePath, uris[0]);
         
         this.getUIContext().getPromptAction().showToast({
           message: '备份文件已导出',
@@ -1706,12 +1935,6 @@ struct BackupPage {
       const uris = await documentViewPicker.select(documentSelectOptions);
       
       if (uris && uris.length > 0) {
-        const sourceFile = await fileIo.open(uris[0], fileIo.OpenMode.READ_ONLY);
-        const stat = await fileIo.stat(sourceFile.fd);
-        const buffer = new ArrayBuffer(stat.size);
-        await fileIo.read(sourceFile.fd, buffer);
-        await fileIo.close(sourceFile);
-        
         const sandboxManager = SandboxManager.getInstance();
         const filesDir = sandboxManager.getDirectory('files');
         const backupDir = `${filesDir}/backups`;
@@ -1720,11 +1943,10 @@ struct BackupPage {
           await sandboxManager.createDirectory(backupDir);
         }
         
-        const fileName = `imported_backup_${Date.now()}.json`;
+        const extension = this.resolveBackupImportExtension(uris[0]);
+        const fileName = `imported_backup_${Date.now()}${extension}`;
         const destPath = `${backupDir}/${fileName}`;
-        const destFile = await fileIo.open(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-        await fileIo.write(destFile.fd, buffer);
-        await fileIo.close(destFile);
+        await this.copyFileByChunksAtomic(uris[0], destPath);
         
         await this.loadBackupFiles();
         
@@ -1780,7 +2002,7 @@ struct BackupPage {
     if (this.showBackupOptionsDialog) {
       BackupOptionsDialog({
         onConfirm: (options: BackupOptions) => {
-          this.createBackupWithOptions(options);
+          this.confirmSensitiveCloudBackup(options);
         },
         onCancel: () => {
           this.showBackupOptionsDialog = false;
@@ -1797,7 +2019,7 @@ struct BackupPage {
         backupData: this.restoreBackupData,
         metadata: this.currentRestoreBackup.metadata,
         onConfirm: (options: RestoreOptions) => {
-          this.restoreBackupWithOptions(options);
+          this.confirmSensitiveCloudRestore(options);
         },
         onCancel: () => {
           this.showRestoreOptionsDialog = false;
@@ -2078,6 +2300,11 @@ struct BackupPage {
       }
     })
     */
+    .onReady((context: NavDestinationContext) => {
+      this.pathStack = context.pathStack;
+      const params = context.pathInfo?.param as BackupExternalImportParams | undefined;
+      this.setRouteExternalBackupParams(params);
+    })
     .onShown(() => {
       void this.refreshPageGuide('onShown');
     })

@@ -2045,7 +2045,7 @@ export struct AnnotationCenterPage {
 
         Button() {
           Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+            SymbolGlyph($r('sys.symbol.share'))
               .fontSize(12)
               .fontColor(['#2563EB'])
             Text('分享')
@@ -2207,7 +2207,7 @@ export struct AnnotationCenterPage {
           Row({ space: 8 }) {
             Button() {
               Row({ space: 4 }) {
-                SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+                SymbolGlyph($r('sys.symbol.share'))
                   .fontSize(12)
                   .fontColor(['#FFFFFF'])
                 Text('系统分享')
@@ -2243,7 +2243,7 @@ export struct AnnotationCenterPage {
 
             Button() {
               Row({ space: 4 }) {
-                SymbolGlyph($r('sys.symbol.doc_text'))
+                SymbolGlyph($r('sys.symbol.text_clipboard'))
                   .fontSize(12)
                   .fontColor([$r('app.color.text_primary')])
                 Text('仅复制')
@@ -2389,7 +2389,7 @@ export struct AnnotationCenterPage {
 
               Button() {
                 Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+                  SymbolGlyph($r('sys.symbol.share'))
                     .fontSize(12)
                     .fontColor(['#2563EB'])
                   Text('分享已选')
@@ -2406,7 +2406,7 @@ export struct AnnotationCenterPage {
 
               Button() {
                 Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.doc_text'))
+                  SymbolGlyph($r('sys.symbol.text_clipboard'))
                     .fontSize(12)
                     .fontColor(['#FFFFFF'])
                   Text('拼接复制')

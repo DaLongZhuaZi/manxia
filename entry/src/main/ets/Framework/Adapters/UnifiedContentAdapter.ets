@@ -19,11 +19,25 @@ import { LegadoBook, LegadoChapter } from '../Novel/LegadoSourceTypes';
 import { logger } from '../../Utils/Logger';
 
 const TAG = 'UnifiedContentAdapter';
+const MAX_VALID_TIMESTAMP_MS = 8640000000000000;
 
 /**
  * 漫画适配器
  */
 export class MangaAdapter {
+  private static toSafePublishDate(value: number | Date): string | undefined {
+    let timestamp: number;
+    if (typeof value === 'number') {
+      timestamp = value;
+    } else {
+      timestamp = value.getTime();
+    }
+    if (!Number.isFinite(timestamp) || Math.abs(timestamp) > MAX_VALID_TIMESTAMP_MS) {
+      return undefined;
+    }
+    return new Date(timestamp).toISOString();
+  }
+
   /**
    * 将漫画数据转换为统一内容模型
    */
@@ -242,14 +256,10 @@ export class MangaAdapter {
     
     // 安全获取发布日期
     let safePublishDate: string | undefined = undefined;
-    try {
-      if (typeof chapter.publishDate === 'number') {
-        safePublishDate = new Date(chapter.publishDate).toISOString();
-      } else if (chapter.publishDate) {
-        safePublishDate = String(chapter.publishDate);
-      }
-    } catch (err) {
-      logger.warn(TAG, `[toUnifiedChapter] 获取发布日期失败: ${String(err)}`);
+    if (typeof chapter.publishDate === 'number') {
+      safePublishDate = MangaAdapter.toSafePublishDate(chapter.publishDate);
+    } else if (chapter.publishDate instanceof Date) {
+      safePublishDate = MangaAdapter.toSafePublishDate(chapter.publishDate);
     }
     
     return {

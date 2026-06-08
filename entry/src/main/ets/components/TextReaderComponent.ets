@@ -6739,7 +6739,7 @@ export struct TextReaderComponent {
     Menu() {
       MenuItem({
         content: '复制',
-        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.doc_text')).fontSize('18vp')
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.text_clipboard')).fontSize('18vp')
       })
         .onClick(() => {
           this.copySelectedText();
@@ -6783,7 +6783,7 @@ export struct TextReaderComponent {
       }
       MenuItem({
         content: '分享',
-        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.arrowshape_turn_up_right')).fontSize('18vp')
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.share')).fontSize('18vp')
       })
         .onClick(() => {
           void this.shareSelectedText();
