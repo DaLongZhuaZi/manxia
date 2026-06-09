@@ -9,11 +9,14 @@ import { ThemeType } from '../Managers/ThemeManager';
 import { TabContentCacheManager, BookSourceCacheData } from '../Cache/TabContentCacheManager';
 import { ContentFilterManager } from '../Managers/ContentFilterManager';
 import { getNovelSourceManager } from '../Novel/NovelSourceManager';
+import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
+import { getLegadoMangaSourceBridge, LegadoMangaVirtualSource } from '../Novel/LegadoMangaSourceBridge';
 import { getNovelInitializer } from '../Novel/NovelInitializer';
 import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { PageSettingsHelper, DetailPageType } from '../../pages/settings/PageSettingsSubPage';
 import { NovelDetailPageParams, NovelSearchPageParams } from '../../pages/NovelBookshelfPage';
+import { MangaDetailPageParams } from '../../pages/MangaDetailPage';
 import { SettingsPageSurfaceManager } from '../../pages/settings/SettingsPageSurfaceManager';
 import { AvifImage } from '../../components/AvifImage';
 import { DataManager } from '../Data/DataManager';
@@ -470,7 +473,7 @@ export struct BookSourceTabContent {
     if (!this.selectedBookSourceId) return;
     try {
       const sourceManager = getNovelSourceManager();
-      const newKinds = sourceManager.getExploreKinds(this.selectedBookSourceId);
+      const newKinds = await sourceManager.getExploreKindsAsync(this.selectedBookSourceId);
       const cachedIndex = this.selectedBookSourceKindIndex;
       this.bookSourceExploreKinds = newKinds;
       if (cachedIndex >= 0 && cachedIndex < newKinds.length) {
@@ -573,7 +576,43 @@ export struct BookSourceTabContent {
     }
   }
 
-  private openBookDetail(book: NovelSearchResult): void {
+  private async openBookDetail(book: NovelSearchResult): Promise<void> {
+    const sourceManager = getNovelSourceManager();
+    const source = sourceManager.getSource(book.sourceId);
+    if (source && source.bookSourceType === LegadoBookSourceType.IMAGE) {
+      const virtualSource: LegadoMangaVirtualSource | null =
+        await getLegadoMangaSourceBridge().ensureVirtualComicSource(source);
+      if (!virtualSource || virtualSource.sourceId <= 0) {
+        promptAction.showToast({ message: '漫画书源桥接失败，请稍后重试' });
+        return;
+      }
+
+      const pageType = PageSettingsHelper.getMangaDetailPageType();
+      if (pageType === DetailPageType.UNIFIED) {
+        const unifiedParams: UnifiedDetailPageParams = {
+          contentType: UnifiedContentType.MANGA,
+          contentId: book.bookUrl,
+          sourceId: String(virtualSource.sourceId),
+          sourceName: book.sourceName,
+          sourcePkg: virtualSource.pkg,
+          cachedTitle: book.name,
+          cachedCover: book.coverUrl,
+          cachedAuthor: book.author
+        };
+        this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+      } else {
+        const params: MangaDetailPageParams = {
+          mangaId: book.bookUrl,
+          sourceId: virtualSource.sourceId,
+          sourcePkg: virtualSource.pkg,
+          cachedTitle: book.name,
+          cachedCover: book.coverUrl
+        };
+        this.pathStack.pushPathByName('MangaDetailPage', params);
+      }
+      return;
+    }
+
     const pageType = PageSettingsHelper.getNovelDetailPageType();
     if (pageType === DetailPageType.UNIFIED) {
       const unifiedParams: UnifiedDetailPageParams = {
@@ -713,7 +752,7 @@ export struct BookSourceTabContent {
       .aspectRatio(0.7)
       .borderRadius(8)
       .clip(true)
-      .onClick(() => this.openBookDetail(book))
+      .onClick(() => { void this.openBookDetail(book); })
 
       Column({ space: 4 }) {
         Text(book.name)
@@ -744,7 +783,7 @@ export struct BookSourceTabContent {
       .width('100%')
       .alignItems(HorizontalAlign.Start)
       .padding({ left: 2, right: 2 })
-      .onClick(() => this.openBookDetail(book))
+      .onClick(() => { void this.openBookDetail(book); })
     }
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
@@ -807,7 +846,7 @@ export struct BookSourceTabContent {
     .border({ width: this.getCardBorderWidth(), color: this.getCardBorderColor() })
     .borderRadius(16)
     .shadow({ radius: this.getCardRadius(), color: this.getCardShadowColor(), offsetX: 0, offsetY: 2 })
-    .onClick(() => this.openBookDetail(book))
+    .onClick(() => { void this.openBookDetail(book); })
   }
 
   @Builder

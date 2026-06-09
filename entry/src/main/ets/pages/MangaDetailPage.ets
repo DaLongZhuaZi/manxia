@@ -20,7 +20,8 @@ import {
   ImageSourceType,
   ReadingMode,
   ReadingDirection,
-  MangaPage
+  MangaPage,
+  MangaImageRequestHeader
 } from '../Models/MangaModels';
 import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus, StatusConverter } from '../Framework/Types/StatusEnums';
@@ -39,9 +40,11 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint }
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../Framework/WebView/MangaSourceEngine';
-import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
+import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from '../Framework/WebView/MangaSourceTypes';
 import { WebViewDataCacheManager } from '../Framework/Cache/WebViewDataCacheManager';
 import { ChapterPreloadManager, ChapterInfo } from '../Framework/Preload/ChapterPreloadManager';
+import { getLegadoMangaSourceBridge, LegadoMangaDetailResult, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
+import { DownloadPageItem } from '../Framework/Download/DownloadManager';
 
 import { LengthMetrics, curves, UIContext } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
@@ -1387,6 +1390,10 @@ struct MangaDetailPage {
       }
       this.useWebView = await this.webViewManager.isWebViewSource(this.sourceId);
       logger.info(TAG, `图源ID: ${this.sourceId}, 是否WebView源: ${this.useWebView}`);
+      if (await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.sourceId)) {
+        await this.loadLegadoMangaData();
+        return;
+      }
     }
 
 
@@ -1706,6 +1713,165 @@ struct MangaDetailPage {
       logger.error(TAG, '达到最大重试次数，加载失败');
       this.loadError = errorMessage;
     }
+  }
+
+  private async loadLegadoMangaData(): Promise<void> {
+    try {
+      if (!this.pageParams || !this.pageParams.mangaId || this.sourceId <= 0) {
+        this.handleLoadError('缺少Legado漫画参数');
+        return;
+      }
+
+      logger.info(TAG, `开始加载Legado漫画详情: sourceId=${this.sourceId}, mangaId=${this.pageParams.mangaId}`);
+      const bridgeResult: LegadoMangaDetailResult | null =
+        await getLegadoMangaSourceBridge().loadDetailWithChapters(
+          this.sourceId,
+          this.pageParams.mangaId,
+          this.pageParams.cachedTitle,
+          this.pageParams.cachedCover || this.pageParams.cachedCoverPath
+        );
+
+      if (!bridgeResult) {
+        this.handleLoadError('Legado漫画桥接加载失败');
+        return;
+      }
+
+      this.currentManga = bridgeResult.manga;
+      this.currentManga.chapters = bridgeResult.chapters;
+      this.applyLegadoCoverHeaders(bridgeResult);
+      this.sourceName = bridgeResult.sourceName;
+      this.sourcePkg = bridgeResult.sourcePkg;
+      this.isLocalManga = false;
+      this.mangaIsNSFW = this.currentManga.isNSFW === true;
+      this.filteredChapters = bridgeResult.chapters;
+      this.chapterDataSource.setChapters(bridgeResult.chapters);
+
+      await this.loadFavoriteStatus(this.currentManga.id);
+      await this.loadReadingProgressFromDatabase(this.currentManga.id);
+      await this.loadChapterProgressData();
+      this.updateFilteredChapters();
+
+      if (this.loadTimeoutTimerId) {
+        clearTimeout(this.loadTimeoutTimerId);
+        this.loadTimeoutTimerId = 0;
+      }
+      if (!this.isSilentRefresh) {
+        this.isLoading = false;
+      }
+      this.isChapterLoading = false;
+      this.isRefreshing = false;
+      this.isLoadInProgress = false;
+      this.retryCount = 0;
+      logger.info(TAG, `Legado漫画详情加载完成: ${this.currentManga.title}, chapters=${bridgeResult.chapters.length}`);
+    } catch (error) {
+      if (this.loadTimeoutTimerId) {
+        clearTimeout(this.loadTimeoutTimerId);
+        this.loadTimeoutTimerId = 0;
+      }
+      this.isLoadInProgress = false;
+      this.handleLoadError(`Legado漫画加载失败: ${String(error)}`);
+    }
+  }
+
+  private applyLegadoCoverHeaders(bridgeResult: LegadoMangaDetailResult): void {
+    const coverUrl = bridgeResult.manga.coverImagePath || '';
+    if (coverUrl.length <= 0) {
+      return;
+    }
+    const mangaExternalId = bridgeResult.manga.sourceInfo && bridgeResult.manga.sourceInfo.externalId ?
+      bridgeResult.manga.sourceInfo.externalId : bridgeResult.manga.id;
+    const headers: MangaImageRequestHeader[] = getLegadoMangaSourceBridge().buildImageRequestHeaders({
+      source: bridgeResult.source,
+      pageUrl: coverUrl,
+      chapterUrl: mangaExternalId
+    });
+    this.applyMangaHeaderEntriesToCover(headers);
+  }
+
+  private applyMangaHeaderEntriesToCover(headers: MangaImageRequestHeader[]): void {
+    if (headers.length <= 0) {
+      return;
+    }
+    const target: OnlineRequestHeaders = {} as OnlineRequestHeaders;
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      this.applyConfiguredCoverHeader(target, header.name, header.value);
+    }
+    if (this.hasConfiguredCoverHeaders(target)) {
+      this.coverHttpHeaders = target;
+      this.updateCoverPartitionFromHeaders(target);
+    }
+  }
+
+  private async fetchLegadoDownloadPages(
+    chapterId: string,
+    mangaId: string,
+    chapterExternalId: string
+  ): Promise<DownloadPageItem[]> {
+    if (this.sourceId <= 0) {
+      return [];
+    }
+    let mangaExternalId: string = mangaId;
+    let resolvedChapterExternalId: string = chapterExternalId.length > 0 ? chapterExternalId : chapterId;
+    const dm = DataManager.getInstance();
+    try {
+      const onlineComic: OnlineComicInfo | null = await dm.getOnlineComicInfoById(mangaId);
+      if (onlineComic && onlineComic.externalId.length > 0) {
+        mangaExternalId = onlineComic.externalId;
+      }
+    } catch (error) {
+      logger.warn(TAG, `读取Legado漫画外部ID失败: mangaId=${mangaId}, ${String(error)}`);
+    }
+    try {
+      const onlineChapter = await dm.getOnlineChapterById(chapterId);
+      if (onlineChapter && onlineChapter.externalId.length > 0) {
+        resolvedChapterExternalId = onlineChapter.externalId;
+      }
+    } catch (error) {
+      logger.warn(TAG, `读取Legado章节外部ID失败: chapterId=${chapterId}, ${String(error)}`);
+    }
+
+    const bridgePages: LegadoMangaPageResult | null =
+      await getLegadoMangaSourceBridge().loadPageList(this.sourceId, mangaExternalId, resolvedChapterExternalId);
+    if (!bridgePages || bridgePages.pages.length <= 0) {
+      return [];
+    }
+
+    getLegadoMangaSourceBridge().savePagesToDatabase(chapterId, bridgePages.pages).catch((error: Error) => {
+      logger.warn(TAG, `保存Legado漫画页面失败: chapterId=${chapterId}, ${String(error)}`);
+    });
+
+    const items: DownloadPageItem[] = [];
+    for (let i = 0; i < bridgePages.pages.length; i++) {
+      const page = bridgePages.pages[i];
+      if (!page || !page.imageUrl || page.imageUrl.trim().length <= 0) {
+        continue;
+      }
+      items.push({
+        url: page.imageUrl,
+        headers: this.buildDownloadHeaderRecord(page.requestHeaders)
+      });
+    }
+    return items;
+  }
+
+  private buildDownloadHeaderRecord(headers?: PageRequestHeader[]): Record<string, string> | undefined {
+    if (!headers || headers.length <= 0) {
+      return undefined;
+    }
+    const result: Record<string, string> = {};
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      if (!header || !header.name || !header.value) {
+        continue;
+      }
+      const name = String(header.name).trim();
+      const value = String(header.value).trim();
+      if (name.length > 0 && value.length > 0) {
+        result[name] = value;
+      }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
   }
 
   /**
@@ -3259,6 +3425,7 @@ struct MangaDetailPage {
               chapterId: chapterId,
               pageNumber: j,
               imageUrl: pageInfo.imageUrl,
+              requestHeaders: this.serializePageRequestHeaders(pageInfo.requestHeaders),
               width: pageInfo.width || 0,
               height: pageInfo.height || 0,
               fileSize: 0
@@ -3292,6 +3459,32 @@ struct MangaDetailPage {
       case MangaStatus.CANCELLED: return '已取消';
       default: return '未知';
     }
+  }
+
+  private serializePageRequestHeaders(headers: PageRequestHeader[] | undefined): string {
+    if (!headers || headers.length <= 0) {
+      return '';
+    }
+    const normalized: PageRequestHeader[] = [];
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      if (!header) {
+        continue;
+      }
+      const name = String(header.name || '').trim();
+      const value = String(header.value || '').trim();
+      if (name.length <= 0 || value.length <= 0) {
+        continue;
+      }
+      normalized.push({
+        name: name,
+        value: value
+      } as PageRequestHeader);
+    }
+    if (normalized.length <= 0) {
+      return '';
+    }
+    return SafeUtils.stringifyJson(normalized, '');
   }
 
   /**
@@ -6066,6 +6259,9 @@ struct MangaDetailPage {
       // 为每个选中的章节创建下载任务
       let successCount = 0;
       let failCount = 0;
+      const isLegadoBridgeSource: boolean = this.pageParams?.sourceId
+        ? await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.pageParams.sourceId)
+        : false;
 
       for (const chapter of selectedChapterList) {
         try {
@@ -6095,7 +6291,20 @@ struct MangaDetailPage {
           // 根据是否为在线漫画选择不同的下载方法
           if (this.pageParams?.sourceId) {
             // 在线漫画：使用公共Download目录
-            if (imageUrls.length > 0) {
+            if (isLegadoBridgeSource) {
+              const externalMangaId: string = mangaIdForApi;
+              const externalChapterId: string = chapterIdForApi;
+              await downloadManager.createOnlineMangaDownloadTaskWithFetcher(
+                manga.id,
+                manga.title,
+                chapter.id,
+                chapter.title,
+                this.pageParams.sourceId,
+                async (_chapterId: string, _mangaId: string): Promise<DownloadPageItem[]> => {
+                  return await this.fetchLegadoDownloadPages(chapter.id, externalMangaId, externalChapterId);
+                }
+              );
+            } else if (imageUrls.length > 0) {
               // 已有图片列表，直接下载
               await downloadManager.createOnlineMangaDownloadTask(
                 manga.id,

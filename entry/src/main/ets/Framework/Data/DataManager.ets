@@ -475,9 +475,15 @@ export interface OnlinePageInfoInput {
   chapterId: string;
   pageNumber: number;
   imageUrl: string;
+  requestHeaders?: string;
   width: number;
   height: number;
   fileSize: number;
+}
+
+export interface OnlinePageRequestHeader {
+  name: string;
+  value: string;
 }
 
 export interface OnlineReadHistory {
@@ -534,6 +540,7 @@ export interface OnlinePageInfo {
   chapterId: string;
   pageNumber: number;
   imageUrl: string;
+  requestHeaders?: string;
   localPath?: string;  // [新增] 下载后的本地文件路径
   width: number;
   height: number;
@@ -936,6 +943,7 @@ export class DataManager {
       chapterId: (obj.chapterId as string) || '',
       pageNumber: Number(obj.pageNumber) || Number((obj as ESObject).index as number) || 0,
       imageUrl: (obj.imageUrl as string) || '',
+      requestHeaders: (obj.requestHeaders as string) || '',
       localPath: (obj.localPath as string) || undefined,  // [新增] 本地文件路径
       width: Number(obj.width) || 0,
       height: Number(obj.height) || 0,
@@ -1088,7 +1096,7 @@ export class DataManager {
   public async getOnlineChapterPages(chapterId: string): Promise<OnlinePageInfo[]> {
     try {
       // [性能优化] 只查询实际使用的列，避免 SELECT * 的数据传输开销
-      const sql = `SELECT id, chapterId, pageNumber, imageUrl, localPath, width, height, fileSize, createTime
+      const sql = `SELECT id, chapterId, pageNumber, imageUrl, requestHeaders, localPath, width, height, fileSize, createTime
                    FROM online_page WHERE chapterId = ? ORDER BY pageNumber ASC`;
       const result = await this.databaseManager.querySql(sql, [chapterId]);
       const pages: OnlinePageInfo[] = [];
@@ -1176,7 +1184,7 @@ export class DataManager {
    */
   public async getAllOnlinePagesByComicId(comicId: string): Promise<Map<string, OnlinePageInfo[]>> {
     try {
-      const sql = `SELECT op.id, op.chapterId, op.pageNumber, op.imageUrl, op.localPath,
+      const sql = `SELECT op.id, op.chapterId, op.pageNumber, op.imageUrl, op.requestHeaders, op.localPath,
                           op.width, op.height, op.fileSize, op.createTime
                    FROM online_page op
                    INNER JOIN online_chapter oc ON op.chapterId = oc.id
@@ -3971,6 +3979,20 @@ export class DataManager {
   }
 
   /**
+   * 按 pkg 启用/停用图源记录
+   */
+  async setComicSourceEnabledByPkg(pkg: string, enabled: boolean): Promise<void> {
+    try {
+      const sql: string = 'UPDATE comic_source SET isEnabled = ?, lastUpdateTime = ? WHERE pkg = ?';
+      await this.databaseManager.executeSql(sql, [enabled ? 1 : 0, Date.now(), pkg]);
+      logger.info(TAG, `已更新图源启用状态: pkg=${pkg}, enabled=${enabled}`);
+    } catch (error) {
+      logger.error(TAG, `按pkg更新图源启用状态失败: pkg=${pkg}`, String(error));
+      throw new Error(String(error));
+    }
+  }
+
+  /**
    * 根据名称获取图源记录
    */
   async getComicSourceByName(sourceName: string): Promise<ComicSourceDatabaseRecord | null> {
@@ -5222,13 +5244,14 @@ export class DataManager {
       const now = Date.now();
       const pageId = this.generateId();
       const sql = `INSERT INTO online_page 
-                   (id, chapterId, pageNumber, imageUrl, width, height, fileSize, createTime) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+                   (id, chapterId, pageNumber, imageUrl, requestHeaders, width, height, fileSize, createTime) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       await this.databaseManager.executeSql(sql, [
         pageId,
         pageInput.chapterId,
         pageInput.pageNumber,
         pageInput.imageUrl,
+        pageInput.requestHeaders || '',
         pageInput.width,
         pageInput.height,
         pageInput.fileSize,
@@ -5255,13 +5278,13 @@ export class DataManager {
       await this.databaseManager.beginTransaction();
       try {
         const sql = `INSERT INTO online_page 
-                     (id, chapterId, pageNumber, imageUrl, width, height, fileSize, createTime) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+                     (id, chapterId, pageNumber, imageUrl, requestHeaders, width, height, fileSize, createTime) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         for (let i = 0; i < pages.length; i++) {
           const p = pages[i];
           const pageId = this.generateId();
           await this.databaseManager.executeSql(sql, [
-            pageId, chapterId, p.pageNumber, p.imageUrl, p.width, p.height, p.fileSize, now
+            pageId, chapterId, p.pageNumber, p.imageUrl, p.requestHeaders || '', p.width, p.height, p.fileSize, now
           ]);
         }
         await this.databaseManager.commit();
@@ -5398,13 +5421,14 @@ export class DataManager {
       const now = Date.now();
       const pageId = this.generateId();
       const sql = `INSERT INTO online_page 
-                   (id, chapterId, pageNumber, imageUrl, width, height, fileSize, createTime) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+                   (id, chapterId, pageNumber, imageUrl, requestHeaders, width, height, fileSize, createTime) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       await this.databaseManager.executeSql(sql, [
         pageId,
         chapterId,
         (pageData.pageNumber as number) ?? (pageData.index as number) ?? 0,
         pageData.imageUrl as string,
+        (pageData.requestHeaders as string) || '',
         (pageData.width as number) || 0,
         (pageData.height as number) || 0,
         (pageData.fileSize as number) || 0,

@@ -71,7 +71,7 @@ interface DatabaseConfigType {
 // 数据库配置常量
 const DATABASE_CONFIG: DatabaseConfigType = {
   DATABASE_NAME: 'manxia_comic.db',
-  DATABASE_VERSION: 14,
+  DATABASE_VERSION: 15,
   ENCRYPT: false
 };
 
@@ -243,6 +243,11 @@ export class DatabaseManager {
           try { await store.executeSql('UPDATE online_comic_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
           try { await store.executeSql('UPDATE online_comic_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
           logger.info(TAG, '✅ [ONLINE_COMIC_INFO] 列添加完成');
+        } else if (tableName === 'ONLINE_PAGE') {
+          logger.info(TAG, '🔧 [ONLINE_PAGE] 添加页面请求头列');
+          try { await store.executeSql("ALTER TABLE online_page ADD COLUMN requestHeaders TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql("UPDATE online_page SET requestHeaders = '' WHERE requestHeaders IS NULL"); } catch (e) {}
+          logger.info(TAG, '✅ [ONLINE_PAGE] 列添加完成');
         } else if (tableName === 'EBOOK_INFO') {
           logger.info(TAG, '🔧 [EBOOK_INFO] 添加隐私列');
           try { await store.executeSql('ALTER TABLE ebook_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}

@@ -86,16 +86,17 @@ import { getRemoteLibraryShelfManager, RemoteLibraryShelfManager } from '../Fram
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
+import { AntiCrawlerConfig, PageRequestHeader } from '../Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
 import { getNovelContentProcessor } from '../Framework/Novel/NovelContentProcessor';
 import { getNovelTxtTocRuleManager, TxtTocRule } from '../Framework/Novel/NovelTxtTocRuleManager';
 import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Framework/Novel/NovelReplaceRuleManager';
+import { getLegadoMangaSourceBridge, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
 
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
-import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadType, UnifiedTaskStatus, UnifiedDownloadTask, UnifiedDownloadCallback, MangaChapterDownloadItem, PageListFetcher } from '../Framework/Download/UnifiedDownloadManager';
+import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadType, UnifiedTaskStatus, UnifiedDownloadTask, UnifiedDownloadCallback, MangaChapterDownloadItem, PageListFetcher, DownloadPageItem } from '../Framework/Download/UnifiedDownloadManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { getCoverImageManager, CoverImageManager } from '../Framework/Image/CoverImageManager';
 import { OnlineLoadOptions, RequestHeaders } from '../Framework/Cache/OnlineImageLoader';
@@ -3912,6 +3913,7 @@ export struct UnifiedDetailPage {
       readerParams.sourceId = Number(this.content.sourceId);
       readerParams.mangaId = this.content.id;
       readerParams.sourceName = this.content.sourceName || '';
+      readerParams.sourcePkg = this.content.sourcePkg || this.pageParams?.sourcePkg || undefined;
       
       // 判断章节是否已下载
       const isDownloaded = chapter.isDownloaded || false;
@@ -4793,11 +4795,73 @@ export struct UnifiedDetailPage {
    */
   private createPageListFetcher(): PageListFetcher {
     const dataManager = this.dataManager;
-    const fetcher: PageListFetcher = async (chapterId: string, mangaId: string): Promise<string[]> => {
+    const sourceIdText: string = this.normalizeTrackingText(this.content?.sourceId || this.pageParams?.sourceId);
+    const sourceId: number = Number(sourceIdText);
+    const fetcher: PageListFetcher = async (chapterId: string, mangaId: string): Promise<string[] | DownloadPageItem[]> => {
+      if (sourceId > 0 && await getLegadoMangaSourceBridge().isLegadoMangaSourceId(sourceId)) {
+        const legadoItems = await this.fetchLegadoMangaDownloadPages(sourceId, chapterId, mangaId);
+        if (legadoItems.length > 0) {
+          return legadoItems;
+        }
+      }
       const pages = await dataManager.getOnlineChapterPages(chapterId);
       return pages.map(p => p.imageUrl);
     };
     return fetcher;
+  }
+
+  private async fetchLegadoMangaDownloadPages(
+    sourceId: number,
+    chapterId: string,
+    mangaId: string
+  ): Promise<DownloadPageItem[]> {
+    const comicInfo: OnlineComicInfo | null = await this.dataManager.getOnlineComicInfoById(mangaId);
+    const chapterInfo: OnlineChapterInfo | null = await this.dataManager.getOnlineChapterById(chapterId);
+    const mangaExternalId: string = comicInfo && comicInfo.externalId.length > 0 ? comicInfo.externalId : mangaId;
+    const chapterExternalId: string = chapterInfo && chapterInfo.externalId.length > 0 ? chapterInfo.externalId : chapterId;
+
+    const bridgeResult: LegadoMangaPageResult | null =
+      await getLegadoMangaSourceBridge().loadPageList(sourceId, mangaExternalId, chapterExternalId);
+    if (!bridgeResult || bridgeResult.pages.length <= 0) {
+      return [];
+    }
+
+    getLegadoMangaSourceBridge().savePagesToDatabase(chapterId, bridgeResult.pages).catch((error: Error) => {
+      logger.warn(TAG, `保存Legado漫画下载页面失败: chapterId=${chapterId}, ${String(error)}`);
+    });
+
+    const items: DownloadPageItem[] = [];
+    for (let i = 0; i < bridgeResult.pages.length; i++) {
+      const page = bridgeResult.pages[i];
+      if (!page || !page.imageUrl || page.imageUrl.trim().length <= 0) {
+        continue;
+      }
+      const item: DownloadPageItem = {
+        url: page.imageUrl,
+        headers: this.buildDownloadHeaderRecord(page.requestHeaders)
+      };
+      items.push(item);
+    }
+    return items;
+  }
+
+  private buildDownloadHeaderRecord(headers?: PageRequestHeader[]): Record<string, string> | undefined {
+    if (!headers || headers.length <= 0) {
+      return undefined;
+    }
+    const result: Record<string, string> = {};
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      if (!header || !header.name || !header.value) {
+        continue;
+      }
+      const name = String(header.name).trim();
+      const value = String(header.value).trim();
+      if (name.length > 0 && value.length > 0) {
+        result[name] = value;
+      }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
   }
 
   private isPhotos18Content(): boolean {

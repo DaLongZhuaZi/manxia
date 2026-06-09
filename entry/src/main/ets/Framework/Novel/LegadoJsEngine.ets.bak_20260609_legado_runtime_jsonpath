@@ -1815,7 +1815,6 @@ export class LegadoJsEngine {
         getMemory: function(key) { return __cacheStore['mem_' + key] || ''; },
         putMemory: function(key, value) { __cacheStore['mem_' + key] = value; return value; },
         getFromMemory: function(key) { return __cacheStore['mem_' + key] || ''; },
-        putFromMemory: function(key, value) { __cacheStore['mem_' + key] = value; return value; },
         delete: function(key) { delete __cacheStore[key]; },
         deleteMemory: function(key) { delete __cacheStore['mem_' + key]; }
       };
@@ -4589,32 +4588,6 @@ export class LegadoJsEngine {
         getCookie: function(url) { return __cookieStore[url] || ''; },
         setCookie: function(url, value) { __cookieStore[url] = value; },
         removeCookie: function(url) { delete __cookieStore[url]; },
-        getKey: function(cookieStr, key) {
-          if (!cookieStr) return '';
-          if (!key) return cookieStr;
-          var regex = new RegExp(key + '=([^;]*)');
-          var match = String(cookieStr).match(regex);
-          return match ? match[1] : '';
-        },
-        mergeCookie: function(url, newCookie) {
-          var existing = this.getCookie(url) || '';
-          if (!existing) {
-            this.setCookie(url, newCookie);
-            return newCookie || '';
-          }
-          var cookies = {};
-          existing.split(';').forEach(function(part) {
-            var eqIdx = part.indexOf('=');
-            if (eqIdx > 0) cookies[part.substring(0, eqIdx).trim()] = part.substring(eqIdx + 1).trim();
-          });
-          String(newCookie || '').split(';').forEach(function(part) {
-            var eqIdx = part.indexOf('=');
-            if (eqIdx > 0) cookies[part.substring(0, eqIdx).trim()] = part.substring(eqIdx + 1).trim();
-          });
-          var merged = Object.keys(cookies).map(function(k) { return k + '=' + cookies[k]; }).join('; ');
-          this.setCookie(url, merged);
-          return merged;
-        },
         cookieJar: __cookieStore
       };
       
@@ -4626,7 +4599,6 @@ export class LegadoJsEngine {
         getMemory: function(key) { return __cacheStore['mem_' + key] || ''; },
         putMemory: function(key, value) { __cacheStore['mem_' + key] = value; return value; },
         getFromMemory: function(key) { return __cacheStore['mem_' + key] || ''; },
-        putFromMemory: function(key, value) { __cacheStore['mem_' + key] = value; return value; },
         delete: function(key) { delete __cacheStore[key]; },
         deleteMemory: function(key) { delete __cacheStore['mem_' + key]; }
       };
@@ -5770,9 +5742,9 @@ export class LegadoJsEngine {
         removeCookie: function(url) { delete __cookieStore[url]; },
         
         // 缓存操作
-        getCache: function(cacheKey) { return cache.get(cacheKey); },
-        putCache: function(cacheKey, value, saveTime) { return cache.put(cacheKey, value); },
-        deleteCache: function(cacheKey) { return cache.delete(cacheKey); },
+        getCache: function(key) { return ''; },
+        putCache: function(key, value, saveTime) { },
+        deleteCache: function(key) { },
         
         // 文件操作
         cacheFile: function(url) { return ''; },
@@ -5791,12 +5763,18 @@ export class LegadoJsEngine {
         
         // HTML解析
         parseHtml: function(html) {
-          return __nativeCreateParsedDocument(html);
+          return {
+            select: function(selector) { return null; },
+            selectFirst: function(selector) { return null; },
+            text: function() { return html.replace(/<[^>]+>/g, ''); },
+            html: function() { return html; },
+            attr: function(name) { return ''; }
+          };
         },
         
         // JSON解析
         parseJson: function(json) {
-          try { return __nativeCreateParsedDocument(json); } catch(e) { return null; }
+          try { return SafeUtils.parseObj(json); } catch(e) { return null; }
         },
         
         // 字符串处理

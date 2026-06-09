@@ -295,30 +295,10 @@ interface SourceDetailJsonConfig {
   settings?: SourceSettingsConfig;
 }
 
-interface SourceDetailShadowStyle {
-  radius: number;
-  color: ResourceStr | string;
-  offsetX: number;
-  offsetY: number;
-}
-
-interface SourceDetailPaddingStyle {
-  left?: number;
-  right?: number;
-  top?: number;
-  bottom?: number;
-}
-
-interface SourceDetailPositionStyle {
-  x: Length;
-  y: Length;
-}
-
 @Component
 export struct SourceDetailPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
-  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
@@ -342,22 +322,6 @@ export struct SourceDetailPage {
   @State showCredentialDialog: boolean = false; // 显示凭据登录对话框
   @State showCfVerifyDialog: boolean = false; // 显示Cloudflare验证对话框
   @State showWebViewDebugDialog: boolean = false; // 显示WebView调试对话框
-  @State webViewDebugMinimized: boolean = false; // WebView调试窗口是否最小化
-  @State debugWebViewUrl: string = 'about:blank'; // 调试窗口当前URL
-  @State debugWebViewLastVisualUrl: string = ''; // 最近一次可视页面URL
-  @State debugWebViewTitle: string = 'WebView调试'; // 调试窗口页面标题
-  @State debugWebViewLoadProgress: number = 0; // 调试窗口加载进度
-  @State debugWebViewLoading: boolean = false; // 调试窗口加载状态
-  @State debugWebViewCanGoBack: boolean = false; // 调试窗口后退状态
-  @State debugWebViewCanGoForward: boolean = false; // 调试窗口前进状态
-  @State debugWebViewLastResult: string = ''; // 调试框架操作结果
-  @State debugWebViewLastPageError: string = ''; // 主文档加载错误
-  @State debugWebViewIgnoredResourceErrorCount: number = 0; // 已忽略的子资源错误数量
-  @State debugWebViewLastIgnoredResourceError: string = ''; // 最近一次被忽略的子资源错误
-  @State debugWebViewHasCompletedPageLoad: boolean = false; // 当前页面是否已有成功加载记录
-  @State debugWebViewBallX: number = 24; // 调试悬浮球X坐标
-  @State debugWebViewBallY: number = 180; // 调试悬浮球Y坐标
-  @State debugWebViewBallScale: number = 1; // 调试悬浮球缩放
   @State isLoggedIn: boolean = false; // 登录状态
   @State requiresCredentialLogin: boolean = false; // 是否需要凭据登录
   @State userAvatarUrl: string = ''; // 用户头像URL
@@ -430,10 +394,6 @@ export struct SourceDetailPage {
   private webViewSourceManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private sourceDetailSearchExecutor: SourceDetailSearchExecutor = getSourceDetailSearchExecutor();
   private authManager: WebViewAuthManager = WebViewAuthManager.getInstance();
-  private debugWebViewBallStartX: number = 24;
-  private debugWebViewBallStartY: number = 180;
-  private debugWebViewBallBaseX: number = 24;
-  private debugWebViewBallBaseY: number = 180;
   private loginUrl: string = '';
   private photos18CoverBootstrapPromise: Promise<void> | null = null;
   private photos18CurrentReferer: string = '';
@@ -3208,288 +3168,11 @@ export struct SourceDetailPage {
         label: '调试',
         onClick: () => {
           logger.info(TAG, '点击调试按钮，显示WebView调试窗口');
-          this.openWebViewDebugWindow();
+          this.showWebViewDebugDialog = true;
         },
         enabled: this.useWebView
       }
     ];
-  }
-
-  private showSourceDebugToast(message: string): void {
-    try {
-      this.getUIContext().getPromptAction().showToast({
-        message: message,
-        duration: 1800
-      });
-    } catch (error) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      logger.warn(TAG, `显示图源调试Toast失败: ${errorMessage}`);
-    }
-  }
-
-  private openWebViewDebugWindow(): void {
-    if (!this.useWebView) {
-      this.showSourceDebugToast('当前图源未启用WebView');
-      return;
-    }
-    this.showWebViewDebugDialog = true;
-    this.webViewDebugMinimized = false;
-    this.syncDebugWebViewNavigationState();
-  }
-
-  private minimizeWebViewDebugWindow(): void {
-    this.webViewDebugMinimized = true;
-  }
-
-  private closeWebViewDebugWindow(): void {
-    this.showWebViewDebugDialog = false;
-    this.webViewDebugMinimized = false;
-  }
-
-  private syncDebugWebViewNavigationState(): void {
-    if (!this.webViewControllerAttached) {
-      this.debugWebViewCanGoBack = false;
-      this.debugWebViewCanGoForward = false;
-      return;
-    }
-
-    try {
-      this.debugWebViewCanGoBack = this.webViewController.accessBackward();
-      this.debugWebViewCanGoForward = this.webViewController.accessForward();
-    } catch (error) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      this.debugWebViewCanGoBack = false;
-      this.debugWebViewCanGoForward = false;
-      logger.warn(TAG, `同步WebView导航状态失败: ${errorMessage}`);
-    }
-  }
-
-  private debugWebViewBack(): void {
-    try {
-      if (this.webViewControllerAttached && this.webViewController.accessBackward()) {
-        this.webViewController.backward();
-      }
-      this.syncDebugWebViewNavigationState();
-    } catch (error) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      logger.warn(TAG, `WebView调试后退失败: ${errorMessage}`);
-      this.showSourceDebugToast('WebView后退失败');
-    }
-  }
-
-  private debugWebViewForward(): void {
-    try {
-      if (this.webViewControllerAttached && this.webViewController.accessForward()) {
-        this.webViewController.forward();
-      }
-      this.syncDebugWebViewNavigationState();
-    } catch (error) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      logger.warn(TAG, `WebView调试前进失败: ${errorMessage}`);
-      this.showSourceDebugToast('WebView前进失败');
-    }
-  }
-
-  private debugWebViewRefresh(): void {
-    try {
-      if (this.webViewControllerAttached) {
-        this.webViewController.refresh();
-      }
-    } catch (error) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      logger.warn(TAG, `WebView调试刷新失败: ${errorMessage}`);
-      this.showSourceDebugToast('WebView刷新失败');
-    }
-  }
-
-  private async runDebugWebViewScript(actionName: string, script: string): Promise<void> {
-    if (!this.webViewControllerAttached) {
-      this.debugWebViewLastResult = `${actionName}: WebView控制器尚未附加`;
-      this.showSourceDebugToast('WebView尚未就绪');
-      return;
-    }
-
-    try {
-      const result: string = await this.webViewController.runJavaScript(script);
-      this.debugWebViewLastResult = result && result.length > 0 ? result : `${actionName}: 已执行`;
-      logger.info(TAG, `WebView调试脚本执行完成: ${actionName}, resultLength=${this.debugWebViewLastResult.length}`);
-    } catch (error) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      this.debugWebViewLastResult = `${actionName}: ${errorMessage}`;
-      logger.warn(TAG, `WebView调试脚本执行失败: ${actionName}, ${errorMessage}`);
-      this.showSourceDebugToast(`${actionName}失败`);
-    }
-  }
-
-  private async inspectDebugWebViewDom(): Promise<void> {
-    const script: string =
-      '(() => {' +
-        'const anchors = Array.from(document.querySelectorAll("a[href]")).slice(0, 12).map((a) => ({ text: (a.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 80), href: a.href }));' +
-        'const images = Array.from(document.querySelectorAll("img")).slice(0, 12).map((img) => img.currentSrc || img.src || img.getAttribute("data-src") || "");' +
-        'return JSON.stringify({ url: location.href, title: document.title, readyState: document.readyState, bodyTextLength: (document.body && document.body.innerText ? document.body.innerText.length : 0), anchors: anchors, images: images }, null, 2);' +
-      '})()';
-    await this.runDebugWebViewScript('DOM快照', script);
-  }
-
-  private async inspectDebugWebViewCookies(): Promise<void> {
-    const script: string =
-      '(() => {' +
-        'return JSON.stringify({ url: location.href, cookie: document.cookie }, null, 2);' +
-      '})()';
-    await this.runDebugWebViewScript('Cookie快照', script);
-  }
-
-  private async saveDebugWebViewCookies(): Promise<void> {
-    if (!this.webViewControllerAttached) {
-      this.debugWebViewLastResult = 'Cookie同步: WebView控制器尚未附加';
-      this.showSourceDebugToast('WebView尚未就绪');
-      return;
-    }
-
-    try {
-      const baseUrl: string = this.sourceInfo?.baseUrl || this.debugWebViewUrl;
-      const refreshOk: boolean = await CookieManager.getInstance().forceCaptureWebViewCookies(
-        this.sourceId,
-        this.webViewController,
-        baseUrl
-      );
-      this.debugWebViewLastResult = `Cookie同步: ${refreshOk ? '成功' : '未捕获到可保存Cookie'}`;
-      this.showSourceDebugToast(this.debugWebViewLastResult);
-    } catch (error) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      this.debugWebViewLastResult = `Cookie同步失败: ${errorMessage}`;
-      logger.warn(TAG, `WebView调试Cookie同步失败: ${errorMessage}`);
-      this.showSourceDebugToast('Cookie同步失败');
-    }
-  }
-
-  private clearDebugWebViewResult(): void {
-    this.debugWebViewLastResult = '';
-  }
-
-  private isDebugWebViewVisualUrl(url: string): boolean {
-    const normalizedUrl: string = url.trim().toLowerCase();
-    return normalizedUrl.length > 0 && normalizedUrl !== 'about:blank';
-  }
-
-  private rememberDebugWebViewUrl(url: string): void {
-    if (url.length === 0) {
-      return;
-    }
-    this.debugWebViewUrl = url;
-    if (this.isDebugWebViewVisualUrl(url)) {
-      this.debugWebViewLastVisualUrl = url;
-    }
-  }
-
-  private getSourceWebViewSrc(expanded: boolean): string {
-    const currentUrl: string = this.debugWebViewUrl.trim();
-    if (expanded) {
-      if (this.isDebugWebViewVisualUrl(currentUrl)) {
-        return currentUrl;
-      }
-      const visualUrl: string = this.debugWebViewLastVisualUrl.trim();
-      if (visualUrl.length > 0) {
-        return visualUrl;
-      }
-    }
-    if (currentUrl.length > 0) {
-      return currentUrl;
-    }
-    return 'about:blank';
-  }
-
-  private formatDebugResourceError(errorCode: number, errorInfo: string, requestUrl: string): string {
-    const urlText: string = requestUrl.length > 0 ? requestUrl : 'unknown-url';
-    return `${errorInfo} (${errorCode}) ${urlText}`;
-  }
-
-  private isDebugWebViewTransientError(errorInfo: string): boolean {
-    const normalizedInfo: string = errorInfo.toLowerCase();
-    return normalizedInfo.includes('err_failed') ||
-      normalizedInfo.includes('connection_closed') ||
-      normalizedInfo.includes('connection closed') ||
-      normalizedInfo.includes('err_aborted') ||
-      normalizedInfo.includes('aborted');
-  }
-
-  private handleDebugWebViewResourceError(errorCode: number, errorInfo: string, requestUrl: string, isMainFrame: boolean): void {
-    const message: string = this.formatDebugResourceError(errorCode, errorInfo, requestUrl);
-    if (isMainFrame) {
-      if (this.debugWebViewHasCompletedPageLoad || this.isDebugWebViewTransientError(errorInfo)) {
-        this.debugWebViewIgnoredResourceErrorCount += 1;
-        this.debugWebViewLastIgnoredResourceError = message;
-        logger.debug(TAG, `WebView主文档非致命错误已忽略，保留调试页面状态: ${message}`);
-        return;
-      }
-      this.debugWebViewLastPageError = message;
-      logger.warn(TAG, `WebView主文档加载错误: ${message}`);
-      return;
-    }
-
-    this.debugWebViewIgnoredResourceErrorCount += 1;
-    this.debugWebViewLastIgnoredResourceError = message;
-    logger.debug(TAG, `WebView子资源错误已忽略: ${message}`);
-  }
-
-  private isDebugWebViewExpanded(): boolean {
-    return (this.showWebViewDebugDialog && !this.webViewDebugMinimized) || this.showCfVerifyDialog;
-  }
-
-  private getDebugWebViewPosition(expanded: boolean, embedded: boolean): SourceDetailPositionStyle {
-    if (embedded) {
-      return { x: 0, y: 0 };
-    }
-    if (this.showCfVerifyDialog) {
-      return { x: '5%', y: '35%' };
-    }
-    if (expanded) {
-      return { x: '2.5%', y: '31%' };
-    }
-    return { x: -100, y: -100 };
-  }
-
-  private getDebugWebViewWidth(expanded: boolean, embedded: boolean): Length {
-    if (embedded) {
-      return '100%';
-    }
-    if (this.showCfVerifyDialog) {
-      return '90%';
-    }
-    if (expanded) {
-      return '95%';
-    }
-    return 100;
-  }
-
-  private getDebugWebViewHeight(expanded: boolean, embedded: boolean): Length {
-    if (embedded) {
-      return '100%';
-    }
-    if (this.showCfVerifyDialog) {
-      return 400;
-    }
-    if (expanded && this.debugWebViewLastResult.length > 0) {
-      return '32%';
-    }
-    if (expanded) {
-      return '46%';
-    }
-    return 100;
-  }
-
-  private getDebugLoadingStateColor(): Resource {
-    if (this.debugWebViewLoading) {
-      return ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme);
-    }
-    return ThemeAwareHelper.getTestManagementThemedColor('button_success', this.themeState.currentTheme);
-  }
-
-  private getDebugControllerStateColor(): Resource {
-    if (this.webViewControllerAttached) {
-      return ThemeAwareHelper.getTestManagementThemedColor('button_info', this.themeState.currentTheme);
-    }
-    return ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme);
   }
 
   build() {
@@ -3574,9 +3257,45 @@ export struct SourceDetailPage {
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        // 后台WebView组件：调试/验证窗口未展开时保持离屏承接，避免影响工作流
-        if (this.useWebView && !this.isDebugWebViewExpanded()) {
-          this.buildSourceWebView(false, false)
+        // 隐藏的WebView组件（仅在使用WebView系统时渲染，调试模式下显示）
+        // 注意：src使用about:blank，所有导航由controller控制，避免状态变化时重新加载
+        if (this.useWebView) {
+          Web({
+            src: 'about:blank',
+            controller: this.webViewController
+          })
+            .width(this.showWebViewDebugDialog ? '100%' : 1)
+            .height(this.showWebViewDebugDialog ? '100%' : 1)
+            .opacity(this.showWebViewDebugDialog ? 1 : 0)
+            .visibility(this.showWebViewDebugDialog ? Visibility.Visible : Visibility.None)
+            .javaScriptAccess(true)
+            .domStorageAccess(true)
+            .fileAccess(true)
+            .mixedMode(MixedMode.All)
+            .cacheMode(CacheMode.Default)
+            
+            .onControllerAttached(() => {
+              logger.info(TAG, 'WebView控制器已附加');
+              this.webViewControllerAttached = true;
+              this.webViewController.setCustomUserAgent(this.sourceUserAgent);
+              this.sourceDetailSearchExecutor.attachWebViewController(this.webViewController);
+            })
+            .onPageBegin((event) => {
+              logger.debug(TAG, `WebView页面开始加载: ${event.url}`);
+            })
+            .onPageEnd((event) => {
+              logger.debug(TAG, `WebView页面加载完成: ${event.url}`);
+              try {
+                WebViewAuthManager.getInstance().captureCookiesFromController(this.sourceId, this.webViewController);
+              } catch (e) {
+                const msg: string = e instanceof Error ? e.message : String(e);
+                logger.warn(TAG, `页面结束捕获Cookie失败: ${msg}`);
+              }
+            })
+            .onErrorReceive((event) => {
+              const errorInfo = event.error.getErrorInfo();
+              logger.error(TAG, `WebView错误: ${errorInfo}`);
+            })
         }
 
         // 登录对话框（WebView登录）
@@ -3610,13 +3329,9 @@ export struct SourceDetailPage {
           this.buildCfVerifyDialog()
         }
         
-        // WebView调试悬浮窗
-        if (this.useWebView && this.showWebViewDebugDialog && !this.webViewDebugMinimized && !this.showCfVerifyDialog) {
+        // WebView调试对话框
+        if (this.showWebViewDebugDialog) {
           this.buildWebViewDebugDialog()
-        }
-
-        if (this.useWebView && this.showWebViewDebugDialog && this.webViewDebugMinimized) {
-          this.buildWebViewDebugFloatingBall()
         }
 
         // 搜索歧义选择对话框（纯数字输入时）
@@ -4756,15 +4471,13 @@ export struct SourceDetailPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .padding({ left: 16, right: 16, bottom: 8 })
         
-        // 主WebView组件嵌入验证窗口，避免被悬浮层占位区域遮挡
-        Stack() {
-          this.buildSourceWebView(true, true)
-        }
+        // WebView - 使用主WebView控制器
+        Web({ src: 'about:blank', controller: this.webViewController })
           .width('100%')
           .height(400)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .borderRadius(10)
-          .clip(true)
+          .onPageEnd(() => {
+            logger.info(TAG, 'CF验证页面加载完成');
+          })
       }
       .width('90%')
       .constraintSize({ maxWidth: 760, maxHeight: '90%' })
@@ -4785,431 +4498,44 @@ export struct SourceDetailPage {
     .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
+  /**
+   * 构建WebView调试对话框（仅显示标题栏和关闭按钮，WebView内容由主WebView组件显示）
+   */
   @Builder
-  buildSourceWebView(expanded: boolean, embedded: boolean) {
-    Web({
-      src: this.getSourceWebViewSrc(expanded),
-      controller: this.webViewController
-    })
-      .opacity(expanded ? 1 : 0)
-      .visibility(Visibility.Visible)
-      .javaScriptAccess(true)
-      .domStorageAccess(true)
-      .fileAccess(true)
-      .mixedMode(MixedMode.All)
-      .cacheMode(CacheMode.Default)
-      .databaseAccess(true)
-      .onlineImageAccess(true)
-      .zoomAccess(true)
-      .overviewModeAccess(true)
-      .onControllerAttached(() => {
-        logger.info(TAG, 'WebView控制器已附加');
-        this.webViewControllerAttached = true;
-        this.webViewController.setCustomUserAgent(this.sourceUserAgent);
-        this.sourceDetailSearchExecutor.attachWebViewController(this.webViewController);
-        this.syncDebugWebViewNavigationState();
-      })
-      .onPageBegin((event) => {
-        const url: string = event?.url ? event.url : '';
-        this.debugWebViewLoading = true;
-        this.debugWebViewLoadProgress = 0;
-        this.debugWebViewLastPageError = '';
-        this.debugWebViewIgnoredResourceErrorCount = 0;
-        this.debugWebViewLastIgnoredResourceError = '';
-        this.debugWebViewHasCompletedPageLoad = false;
-        this.rememberDebugWebViewUrl(url);
-        logger.debug(TAG, `WebView页面开始加载: ${url}`);
-      })
-      .onPageEnd((event) => {
-        const url: string = event?.url ? event.url : '';
-        this.debugWebViewLoading = false;
-        this.debugWebViewLoadProgress = 100;
-        this.debugWebViewHasCompletedPageLoad = true;
-        this.debugWebViewLastPageError = '';
-        this.rememberDebugWebViewUrl(url);
-        this.syncDebugWebViewNavigationState();
-        logger.debug(TAG, `WebView页面加载完成: ${url}`);
-        try {
-          WebViewAuthManager.getInstance().captureCookiesFromController(this.sourceId, this.webViewController);
-        } catch (e) {
-          const msg: string = e instanceof Error ? e.message : String(e);
-          logger.warn(TAG, `页面结束捕获Cookie失败: ${msg}`);
-        }
-      })
-      .onProgressChange((event) => {
-        this.debugWebViewLoadProgress = event?.newProgress ? event.newProgress : 0;
-      })
-      .onTitleReceive((event) => {
-        if (event?.title && event.title.length > 0) {
-          this.debugWebViewTitle = event.title;
-        }
-      })
-      .onErrorReceive((event) => {
-        const errorInfo: string = event.error.getErrorInfo();
-        const errorCode: number = event.error.getErrorCode();
-        const requestUrl: string = event.request.getRequestUrl();
-        const isMainFrame: boolean = event.request.isMainFrame();
-        this.handleDebugWebViewResourceError(errorCode, errorInfo, requestUrl, isMainFrame);
-      })
-      .position(this.getDebugWebViewPosition(expanded, embedded))
-      .width(this.getDebugWebViewWidth(expanded, embedded))
-      .height(this.getDebugWebViewHeight(expanded, embedded))
-      .borderRadius(expanded ? (this.showCfVerifyDialog ? 10 : 8) : 0)
-      .clip(expanded || this.showCfVerifyDialog)
-      .border({
-        width: (expanded && !embedded) ? 1 : 0,
-        color: ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
-      })
-      .zIndex(embedded ? 0 : (expanded ? 101 : 0))
-  }
-
-  @Builder
-  private buildWebViewDebugDialog() {
-    Stack() {
+  buildWebViewDebugDialog() {
+    Column() {
+      // 顶部标题栏
       Row() {
-        Blank()
-          .width('100%')
-          .height('100%')
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-          .backgroundColor('rgba(0, 0, 0, 0.35)')
-          .onClick(() => {
-            this.minimizeWebViewDebugWindow();
-          })
-      }
-      .width('100%')
-      .height('100%')
-
-      Column() {
-        this.buildWebViewDebugTitleBar()
-        this.buildWebViewDebugStatusBar()
-        this.buildWebViewDebugToolbar()
-        this.buildWebViewDebugContent()
-      }
-      .width('95%')
-      .height('85%')
-      .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight } as SourceDetailPaddingStyle)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_dark', this.themeState.currentTheme))
-      .borderRadius(12)
-      .padding(16)
-      .shadow({
-        radius: 24,
-        color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme),
-        offsetX: 0,
-        offsetY: 4
-      } as SourceDetailShadowStyle)
-      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('border_dark', this.themeState.currentTheme) })
-      .alignSelf(ItemAlign.Center)
-      .justifyContent(FlexAlign.Start)
-      .margin({ top: '7.5%' })
-      .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
-        .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 180, curve: Curve.EaseOut })))
-      .onClick(() => {
-      })
-    }
-    .width('100%')
-    .height('100%')
-    .alignContent(Alignment.Center)
-    .zIndex(100)
-  }
-
-  @Builder
-  private buildWebViewDebugTitleBar() {
-    Row() {
-      Row({ space: 8 }) {
-        SymbolGlyph($r('sys.symbol.code_lab'))
-          .fontSize(20)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme)])
-
-        Column({ space: 2 }) {
-          Text('图源 WebView 调试')
-            .fontSize(18)
-            .fontFamily(this.appFontFamily)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
-
-          Text(this.debugWebViewTitle)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-      }
-      .layoutWeight(1)
-
-      Row({ space: 8 }) {
-        this.buildDebugIconButton($r('sys.symbol.minus'), '最小化', true, () => {
-          this.minimizeWebViewDebugWindow();
-        })
-        this.buildDebugIconButton($r('sys.symbol.xmark'), '关闭', true, () => {
-          this.closeWebViewDebugWindow();
-        })
-      }
-    }
-    .width('100%')
-    .height(52)
-    .padding({ bottom: 12 })
-    .justifyContent(FlexAlign.SpaceBetween)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  private buildWebViewDebugStatusBar() {
-    Column({ space: 8 }) {
-      Row({ space: 8 }) {
-        Text(this.debugWebViewLoading ? `加载中 ${this.debugWebViewLoadProgress}%` : '已就绪')
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getDebugLoadingStateColor())
-
-        Text(this.webViewControllerAttached ? '控制器已附加' : '等待控制器')
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getDebugControllerStateColor())
-
-        if (this.debugWebViewIgnoredResourceErrorCount > 0) {
-          Text(`资源错误已忽略 ${this.debugWebViewIgnoredResourceErrorCount}`)
-            .fontSize(11)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        }
-
-        Blank()
-      }
-      .width('100%')
-
-      Text(this.debugWebViewUrl)
-        .fontSize(12)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .padding({ left: 10, right: 10, top: 6, bottom: 6 } as SourceDetailPaddingStyle)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-        .borderRadius(8)
-        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme) })
-
-      if (this.debugWebViewLastPageError.length > 0) {
-        Text(`主文档错误: ${this.debugWebViewLastPageError}`)
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }
-    }
-    .width('100%')
-    .padding({ bottom: 10 })
-  }
-
-  @Builder
-  private buildWebViewDebugToolbar() {
-    Scroll() {
-      Row({ space: 8 }) {
-        this.buildDebugIconButton($r('sys.symbol.chevron_left'), '后退', this.debugWebViewCanGoBack, () => {
-          this.debugWebViewBack();
-        })
-        this.buildDebugIconButton($r('sys.symbol.chevron_right'), '前进', this.debugWebViewCanGoForward, () => {
-          this.debugWebViewForward();
-        })
-        this.buildDebugIconButton($r('sys.symbol.arrow_clockwise'), '刷新', this.webViewControllerAttached, () => {
-          this.debugWebViewRefresh();
-        })
-        this.buildDebugTextButton('DOM', this.webViewControllerAttached, () => {
-          void this.inspectDebugWebViewDom();
-        })
-        this.buildDebugTextButton('Cookie', this.webViewControllerAttached, () => {
-          void this.inspectDebugWebViewCookies();
-        })
-        this.buildDebugTextButton('同步Cookie', this.webViewControllerAttached, () => {
-          void this.saveDebugWebViewCookies();
-        })
-        this.buildDebugTextButton('清空结果', this.debugWebViewLastResult.length > 0, () => {
-          this.clearDebugWebViewResult();
-        })
-      }
-      .height(40)
-    }
-    .width('100%')
-    .height(48)
-    .scrollable(ScrollDirection.Horizontal)
-    .scrollBar(BarState.Off)
-    .padding({ bottom: 8 })
-  }
-
-  @Builder
-  private buildWebViewDebugContent() {
-    Column({ space: 10 }) {
-      Stack() {
-        this.buildSourceWebView(true, true)
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(8)
-      .clip(true)
-      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme) })
-
-      if (this.debugWebViewLastResult.length > 0) {
-        this.buildWebViewDebugResultPanel()
-      }
-    }
-    .width('100%')
-    .layoutWeight(1)
-  }
-
-  @Builder
-  private buildWebViewDebugResultPanel() {
-    Column({ space: 6 }) {
-      Row() {
-        Text('框架结果')
-          .fontSize(12)
+        Text('WebView调试')
+          .fontSize(18)
           .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
         Blank()
-        Button('清空')
-          .height(28)
-          .fontSize(11)
+        
+        Button('关闭')
+          .fontSize(14)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
-          .borderRadius(6)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onClick(() => {
-            this.clearDebugWebViewResult();
+            this.showWebViewDebugDialog = false;
           })
       }
       .width('100%')
-      .height(30)
-
-      Scroll() {
-        Text(this.debugWebViewLastResult)
-          .fontSize(11)
-          .fontFamily('HarmonyOS Sans Mono')
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width('100%')
-      }
-      .width('100%')
-      .height(96)
-      .scrollable(ScrollDirection.Vertical)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('row_even', this.themeState.currentTheme))
-      .borderRadius(6)
-      .padding(8)
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+      
+      // 提示文字
+      Text('当前WebView显示的页面内容，可用于调试图源解析问题')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .padding({ left: 16, right: 16, bottom: 8 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
     }
     .width('100%')
-    .padding(10)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(8)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme) })
-  }
-
-  @Builder
-  private buildDebugIconButton(symbol: Resource, label: string, enabled: boolean, onTap: () => void) {
-    Button({ type: ButtonType.Normal }) {
-      SymbolGlyph(symbol)
-        .fontSize(18)
-        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme)])
-    }
-    .width(40)
-    .height(36)
-    .enabled(enabled)
-    .opacity(enabled ? 1 : 0.42)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
-    .accessibilityText(label)
-    .onClick(() => {
-      if (enabled) {
-        onTap();
-      }
-    })
-  }
-
-  @Builder
-  private buildDebugTextButton(label: string, enabled: boolean, onTap: () => void) {
-    Button(label)
-      .height(36)
-      .fontSize(12)
-      .fontFamily(this.appFontFamily)
-      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
-      .enabled(enabled)
-      .opacity(enabled ? 1 : 0.42)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
-      .borderRadius(8)
-      .padding({ left: 12, right: 12 } as SourceDetailPaddingStyle)
-      .onClick(() => {
-        if (enabled) {
-          onTap();
-        }
-      })
-  }
-
-  @Builder
-  buildWebViewDebugFloatingBall() {
-    Stack() {
-      Button({ type: ButtonType.Normal }) {
-        Column({ space: 2 }) {
-          SymbolGlyph($r('sys.symbol.code_lab'))
-            .fontSize(22)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-          Text('Web')
-            .fontSize(9)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .opacity(0.82)
-        }
-      }
-      .width(64)
-      .height(64)
-      .borderRadius(32)
-      .backgroundColor(Color.Transparent)
-    }
-    .width(72)
-    .height(72)
-    .borderRadius(36)
-    .backgroundColor(ThemeManager.getInstance().getPopupBlurOptions().backgroundColorResource)
-    .backgroundBlurStyle(ThemeManager.getInstance().getPopupBlurOptions().blurStyle)
-    .shadow({
-      radius: ThemeManager.getInstance().getPopupBlurOptions().radius,
-      color: ThemeManager.getInstance().getPopupBlurOptions().shadowColor,
-      offsetX: 0,
-      offsetY: 2
-    } as SourceDetailShadowStyle)
-    .position({ x: this.debugWebViewBallX, y: this.debugWebViewBallY })
-    .scale({ x: this.debugWebViewBallScale, y: this.debugWebViewBallScale })
-    .onClick(() => {
-      this.openWebViewDebugWindow();
-    })
-    .gesture(
-      PanGesture()
-        .onActionStart(() => {
-          this.debugWebViewBallStartX = this.debugWebViewBallX;
-          this.debugWebViewBallStartY = this.debugWebViewBallY;
-          this.debugWebViewBallBaseX = this.debugWebViewBallX;
-          this.debugWebViewBallBaseY = this.debugWebViewBallY;
-          this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
-            this.debugWebViewBallScale = 0.96;
-          });
-        })
-        .onActionUpdate((event: GestureEvent) => {
-          this.debugWebViewBallX = this.debugWebViewBallBaseX + event.offsetX;
-          this.debugWebViewBallY = this.debugWebViewBallBaseY + event.offsetY;
-        })
-        .onActionEnd(() => {
-          const dx: number = this.debugWebViewBallX - this.debugWebViewBallStartX;
-          const dy: number = this.debugWebViewBallY - this.debugWebViewBallStartY;
-          const dist2: number = dx * dx + dy * dy;
-          if (dist2 <= 25) {
-            this.openWebViewDebugWindow();
-          }
-          this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
-            this.debugWebViewBallScale = 1;
-          });
-        })
-    )
-    .hitTestBehavior(HitTestMode.Block)
+    .position({ x: 0, y: 0 })
     .zIndex(100)
   }
 

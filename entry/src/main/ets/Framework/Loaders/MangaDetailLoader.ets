@@ -6,13 +6,15 @@
  */
 
 import { logger } from '../../Utils/Logger';
+import { SafeUtils } from '../../Utils/SafeUtils';
 import {
   Manga,
   MangaChapter,
   MangaPage,
   ReadingProgress,
   ImageSourceType,
-  MangaMetadata
+  MangaMetadata,
+  MangaImageRequestHeader
 } from '../../Models/MangaModels';
 import { DEFAULT_READING_SETTINGS, ReadingSettings } from '../../Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus } from '../Types/StatusEnums';
@@ -30,8 +32,9 @@ import {
 import { DataService } from '../Services/DataService';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../WebView/MangaSourceEngine';
-import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo } from '../WebView/MangaSourceTypes';
+import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from '../WebView/MangaSourceTypes';
 import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
+import { getLegadoMangaSourceBridge, LegadoMangaDetailResult } from '../Novel/LegadoMangaSourceBridge';
 import webview from '@ohos.web.webview';
 
 const TAG = 'MangaDetailLoader';
@@ -182,6 +185,11 @@ export class MangaDetailLoader {
       this.currentSourceName = params.sourceName || '';
       this.currentSourcePkg = params.sourcePkg || '';
       this.coverHttpHeaders = {};
+
+      if (this.currentSourceId > 0 && await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.currentSourceId)) {
+        const legadoResult = await this.loadLegadoMangaWithProgress(params, callback);
+        return legadoResult;
+      }
       
       // 第一阶段：获取基本信息
       const comicInfo = await this.dataManager.getComicById(params.mangaId);
@@ -392,6 +400,7 @@ export class MangaDetailLoader {
                     chapterId: chapter.id,
                     pageNumber: j,
                     imageUrl: pageInfo.imageUrl,
+                    requestHeaders: this.serializePageRequestHeaders(pageInfo.requestHeaders),
                     width: pageInfo.width || 0,
                     height: pageInfo.height || 0,
                     fileSize: 0
@@ -707,6 +716,97 @@ export class MangaDetailLoader {
       }
       return result;
     }
+  }
+
+  private async loadLegadoMangaWithProgress(
+    params: MangaDetailLoadParams,
+    callback: MangaLoadProgressCallback
+  ): Promise<MangaDetailLoadResult> {
+    const result: MangaDetailLoadResult = {
+      success: false,
+      manga: null,
+      chapters: [],
+      isFavorite: false,
+      isLocalManga: false,
+      sourceId: this.currentSourceId,
+      sourceName: this.currentSourceName,
+      coverHttpHeaders: {}
+    };
+
+    try {
+      const externalMangaId = params.externalMangaId || params.mangaId;
+      const bridgeResult: LegadoMangaDetailResult | null =
+        await getLegadoMangaSourceBridge().loadDetailWithChapters(
+          this.currentSourceId,
+          externalMangaId,
+          params.cachedTitle,
+          params.cachedCover || params.cachedCoverPath
+        );
+
+      if (!bridgeResult) {
+        result.errorMessage = 'Legado漫画桥接加载失败';
+        if (callback.onError) {
+          callback.onError(result.errorMessage);
+        }
+        return result;
+      }
+
+      this.currentSourceName = bridgeResult.sourceName;
+      this.currentSourcePkg = bridgeResult.sourcePkg;
+      result.sourceName = bridgeResult.sourceName;
+      result.manga = bridgeResult.manga;
+      result.chapters = bridgeResult.chapters;
+      result.manga.chapters = bridgeResult.chapters;
+      this.coverHttpHeaders = this.buildLegadoCoverHeaderMap(bridgeResult);
+      result.coverHttpHeaders = this.coverHttpHeaders;
+      result.isFavorite = await this.checkFavoriteStatus(bridgeResult.manga.id);
+      result.success = true;
+
+      if (callback.onBasicInfoLoaded) {
+        await callback.onBasicInfoLoaded(bridgeResult.manga, result.isFavorite);
+      }
+      if (callback.onChaptersLoaded) {
+        await callback.onChaptersLoaded(bridgeResult.chapters);
+      }
+
+      logger.info(TAG, `[Legado漫画] 详情加载完成: ${bridgeResult.manga.title}, chapters=${bridgeResult.chapters.length}`);
+      return result;
+    } catch (error) {
+      result.errorMessage = `Legado漫画加载失败: ${String(error)}`;
+      logger.error(TAG, result.errorMessage);
+      if (callback.onError) {
+        callback.onError(result.errorMessage);
+      }
+      return result;
+    }
+  }
+
+  private buildLegadoCoverHeaderMap(bridgeResult: LegadoMangaDetailResult): Record<string, string> {
+    const coverUrl = bridgeResult.manga.coverImagePath || '';
+    const mangaExternalId = bridgeResult.manga.sourceInfo && bridgeResult.manga.sourceInfo.externalId ?
+      bridgeResult.manga.sourceInfo.externalId : bridgeResult.manga.id;
+    if (coverUrl.length <= 0) {
+      return {};
+    }
+    const headers = getLegadoMangaSourceBridge().buildImageRequestHeaders({
+      source: bridgeResult.source,
+      pageUrl: coverUrl,
+      chapterUrl: mangaExternalId
+    });
+    return this.convertMangaHeadersToRecord(headers);
+  }
+
+  private convertMangaHeadersToRecord(headers: MangaImageRequestHeader[]): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      const key = header.name.trim();
+      const value = header.value.trim();
+      if (key.length > 0 && value.length > 0) {
+        result[key] = value;
+      }
+    }
+    return result;
   }
   
   /**
@@ -1753,6 +1853,7 @@ export class MangaDetailLoader {
               chapterId: chapterId,
               pageNumber: j,
               imageUrl: pageInfo.imageUrl,
+              requestHeaders: this.serializePageRequestHeaders(pageInfo.requestHeaders),
               width: pageInfo.width || 0,
               height: pageInfo.height || 0,
               fileSize: 0
@@ -1776,6 +1877,32 @@ export class MangaDetailLoader {
     // 默认启用页面预取
     // 可以根据图源ID或其他条件决定是否预取
     return true;
+  }
+
+  private serializePageRequestHeaders(headers: PageRequestHeader[] | undefined): string {
+    if (!headers || headers.length <= 0) {
+      return '';
+    }
+    const normalized: PageRequestHeader[] = [];
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      if (!header) {
+        continue;
+      }
+      const name = String(header.name || '').trim();
+      const value = String(header.value || '').trim();
+      if (name.length <= 0 || value.length <= 0) {
+        continue;
+      }
+      normalized.push({
+        name: name,
+        value: value
+      } as PageRequestHeader);
+    }
+    if (normalized.length <= 0) {
+      return '';
+    }
+    return SafeUtils.stringifyJson(normalized, '');
   }
   
   /**

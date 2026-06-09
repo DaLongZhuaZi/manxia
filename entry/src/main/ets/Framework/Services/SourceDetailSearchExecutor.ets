@@ -16,6 +16,7 @@ import { EngineResult, SearchResult } from '../WebView/MangaSourceEngine';
 import { DirectSearchResult, MangaInfo } from '../WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import CookieManager from '../Managers/CookieManager';
+import { getLegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';
 
 const TAG = 'SourceDetailSearchExecutor';
 const DEFAULT_MOBILE_USER_AGENT: string = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
@@ -152,12 +153,25 @@ export class SourceDetailSearchExecutor {
       return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索关键词为空');
     }
 
+    if (getLegadoMangaSourceBridge().isLegadoMangaRecord(sourceRecord)) {
+      return await this.executeLegadoMangaSearch(context, query);
+    }
+
     if (usedWebView) {
       return await this.runWebViewExclusive<SourceDetailSearchResult>(async (): Promise<SourceDetailSearchResult> => {
         return await this.executeSearch(context);
       });
     }
     return await this.executeSearch(context);
+  }
+
+  private async executeLegadoMangaSearch(
+    context: SourceDetailSearchContext,
+    keyword: string
+  ): Promise<SourceDetailSearchResult> {
+    logger.info(TAG, `使用 Legado IMAGE 桥接搜索: source=${context.sourceName}, keyword="${keyword}"`);
+    const comics: ComicInfo[] = await getLegadoMangaSourceBridge().search(context.sourceId, keyword, context.page);
+    return this.buildHttpListResult(context, keyword, comics, comics.length >= DEFAULT_PAGE_SIZE, 'Legado IMAGE bridge');
   }
 
   private async executeSearch(context: SourceDetailSearchContext): Promise<SourceDetailSearchResult> {

@@ -9,6 +9,11 @@
  * HTML格式化器
  * 用于将HTML内容转换为纯文本，保留必要的格式
  */
+interface LegadoImageUrlOptionSplit {
+  url: string;
+  optionSuffix: string;
+}
+
 export class HtmlFormatter {
   // &nbsp; 空格
   private static readonly nbspRegex = /(&nbsp;)+/gi;
@@ -34,6 +39,10 @@ export class HtmlFormatter {
   private static readonly indent2Regex = /^[\n\s]+/;
   // 结尾空白
   private static readonly lastRegex = /[\n\s]+$/;
+  // Legado原版图片标签格式：src、data-src、任意data-*，并兼容带参数占位的src
+  private static readonly formatImageRegex: RegExp =
+    /<img[^>]*\ssrc\s*=\s*(?:"([^"{>]*\{(?:[^{}]|\{[^}>]+\})+\})"|'([^'{>]*\{(?:[^{}]|\{[^}>]+\})+\})'|([^'"\s>]*\{(?:[^{}]|\{[^}>]+\})+\}))[^>]*>|<img[^>]*\s(?:data-src|src)\s*=\s*(?:"([^'">]+)"|'([^'">]+)'|([^\s"'<>]+))[^>]*>|<img[^>]*\sdata-[^=>]*=\s*(?:"([^'">]*)"|'([^'">]*)'|([^\s"'<>]*))[^>]*>/gi;
+  private static readonly legadoUrlOptionSeparatorRegex: RegExp = /\s*,\s*(?=\{)/;
 
   /**
    * 格式化HTML为纯文本
@@ -88,18 +97,63 @@ export class HtmlFormatter {
   static formatKeepImg(html: string | null | undefined, baseUrl?: string): string {
     if (!html) return '';
     
-    let result = HtmlFormatter.format(html, true);
-    
-    // 处理图片URL，转换为绝对路径
-    if (baseUrl) {
-      result = result.replace(/<img[^>]*\ssrc\s*=\s*["']([^"']+)["'][^>]*>/gi, 
-        (_match: string, src: string): string => {
-          const absoluteUrl = HtmlFormatter.resolveUrl(src, baseUrl);
-          return `<img src="${absoluteUrl}">`;
-        });
+    const keepImgHtml = HtmlFormatter.format(html, true);
+    let appendPos = 0;
+    let result = '';
+    HtmlFormatter.formatImageRegex.lastIndex = 0;
+    let match = HtmlFormatter.formatImageRegex.exec(keepImgHtml);
+    while (match) {
+      result += keepImgHtml.substring(appendPos, match.index);
+      const rawSrc = HtmlFormatter.readFirstRegexGroup(match, 1, 9);
+      const separatedUrl = HtmlFormatter.separateLegadoImageUrlOption(rawSrc);
+      const absoluteUrl = HtmlFormatter.resolveUrl(separatedUrl.url, baseUrl || '');
+      result += `<img src="${absoluteUrl}${separatedUrl.optionSuffix}">`;
+      appendPos = match.index + match[0].length;
+      match = HtmlFormatter.formatImageRegex.exec(keepImgHtml);
+    }
+
+    if (appendPos < keepImgHtml.length) {
+      result += keepImgHtml.substring(appendPos);
     }
     
     return result;
+  }
+
+  private static readFirstRegexGroup(match: RegExpExecArray, startIndex: number, endIndex: number): string {
+    for (let i = startIndex; i <= endIndex && i < match.length; i++) {
+      const value = match[i];
+      if (value && value.length > 0) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  static resolveUrlForImage(url: string, baseUrl: string): string {
+    const separatedUrl = HtmlFormatter.separateLegadoImageUrlOption(url);
+    return HtmlFormatter.resolveUrl(separatedUrl.url, baseUrl) + separatedUrl.optionSuffix;
+  }
+
+  static getUrlWithoutLegadoOption(url: string): string {
+    return HtmlFormatter.separateLegadoImageUrlOption(url).url;
+  }
+
+  static getLegadoUrlOptionSuffix(url: string): string {
+    return HtmlFormatter.separateLegadoImageUrlOption(url).optionSuffix;
+  }
+
+  private static separateLegadoImageUrlOption(url: string): LegadoImageUrlOptionSplit {
+    const trimmed = url ? HtmlFormatter.unescapeHtml(url.trim()) : '';
+    if (trimmed.length <= 0) {
+      return { url: '', optionSuffix: '' };
+    }
+    const match = HtmlFormatter.legadoUrlOptionSeparatorRegex.exec(trimmed);
+    if (!match || match.index <= 0) {
+      return { url: trimmed, optionSuffix: '' };
+    }
+    const imageUrl = trimmed.substring(0, match.index).trim();
+    const optionSuffix = ',' + trimmed.substring(match.index + match[0].length).trim();
+    return { url: imageUrl, optionSuffix: optionSuffix };
   }
 
   /**
@@ -107,37 +161,69 @@ export class HtmlFormatter {
    */
   private static resolveUrl(url: string, baseUrl: string): string {
     if (!url) return '';
+    const trimmedUrl = url.trim();
     
     // 已经是绝对URL
-    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('//')) {
-      if (url.startsWith('//')) {
-        return 'https:' + url;
+    if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://') || trimmedUrl.startsWith('//')) {
+      if (trimmedUrl.startsWith('//')) {
+        return 'https:' + trimmedUrl;
       }
-      return url;
+      return trimmedUrl;
     }
     
     // data URL
-    if (url.startsWith('data:')) {
-      return url;
+    if (trimmedUrl.startsWith('data:')) {
+      return trimmedUrl;
     }
     
     try {
       // 解析baseUrl
-      const baseMatch = baseUrl.match(/^(https?:\/\/[^\/]+)/);
-      if (!baseMatch) return url;
+      const baseMatch = baseUrl.match(/^(https?:\/\/[^\/?#]+)([^?#]*)?([?#].*)?$/);
+      if (!baseMatch) return trimmedUrl;
       
       const origin = baseMatch[1];
-      
-      if (url.startsWith('/')) {
-        return origin + url;
-      } else {
-        // 相对路径
-        const basePath = baseUrl.replace(/[^\/]*$/, '');
-        return basePath + url;
+      const basePath = baseMatch[2] && baseMatch[2].length > 0 ? baseMatch[2] : '/';
+      const baseWithoutSuffix = origin + basePath;
+      if (trimmedUrl.startsWith('?') || trimmedUrl.startsWith('#')) {
+        return baseWithoutSuffix.replace(/[?#].*$/, '') + trimmedUrl;
       }
+      
+      let pathWithSuffix = '';
+      if (trimmedUrl.startsWith('/')) {
+        pathWithSuffix = trimmedUrl;
+      } else if (basePath.endsWith('/')) {
+        pathWithSuffix = basePath + trimmedUrl;
+      } else {
+        const lastSlash = basePath.lastIndexOf('/');
+        const parentPath = lastSlash >= 0 ? basePath.substring(0, lastSlash + 1) : '/';
+        pathWithSuffix = parentPath + trimmedUrl;
+      }
+      return origin + HtmlFormatter.normalizeUrlPath(pathWithSuffix);
     } catch (e) {
-      return url;
+      return trimmedUrl;
     }
+  }
+
+  private static normalizeUrlPath(pathWithSuffix: string): string {
+    const suffixMatch = pathWithSuffix.match(/([?#].*)$/);
+    const suffix = suffixMatch ? suffixMatch[1] : '';
+    const path = suffixMatch ? pathWithSuffix.substring(0, pathWithSuffix.length - suffix.length) : pathWithSuffix;
+    const segments = path.split('/');
+    const normalizedSegments: string[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      if (segment.length === 0 || segment === '.') {
+        continue;
+      }
+      if (segment === '..') {
+        if (normalizedSegments.length > 0) {
+          normalizedSegments.pop();
+        }
+        continue;
+      }
+      normalizedSegments.push(segment);
+    }
+    return '/' + normalizedSegments.join('/') + suffix;
   }
 
   /**

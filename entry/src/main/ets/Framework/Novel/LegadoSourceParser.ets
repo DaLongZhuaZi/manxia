@@ -16,10 +16,19 @@ import {
   LegadoContentRule,
   LegadoExploreRule,
   LegadoExploreKind,
+  LegadoExploreKindStyle,
+  LegadoReviewRule,
   LegadoSourceImportResult
 } from './LegadoSourceTypes';
 
 const TAG = 'LegadoSourceParser';
+
+interface LegadoOldUrlOption {
+  method?: string;
+  charset?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
 
 /**
  * Legado书源解析器类
@@ -93,40 +102,581 @@ export class LegadoSourceParser {
       return null;
     }
 
+    const isOldFlatSource = this.hasOldFlatSourceFields(obj);
+    const oldSearchUrl = this.toNewUrl(this.readStringField(obj, 'ruleSearchUrl'));
+    const oldExploreUrl = this.toNewUrls(this.readStringField(obj, 'ruleFindUrl'));
+    const resolvedSearchUrl = this.readStringField(obj, 'searchUrl') || oldSearchUrl;
+    const resolvedExploreUrl = this.readStringField(obj, 'exploreUrl') || oldExploreUrl;
+    const resolvedHeader = this.readStringField(obj, 'header') ||
+      this.uaToHeader(this.readStringField(obj, 'httpUserAgent'));
+    const enabledValue = this.readField(obj, 'enabled') !== undefined
+      ? this.readField(obj, 'enabled')
+      : this.readField(obj, 'enable');
+    const enabledExploreFallback = isOldFlatSource && (!resolvedExploreUrl || resolvedExploreUrl.trim().length <= 0)
+      ? false
+      : true;
+    const parsedSearchRule = this.parseSearchRule(this.parseRuleObject(obj.ruleSearch));
+    const parsedExploreRule = this.parseExploreRule(this.parseRuleObject(obj.ruleExplore));
+    const parsedBookInfoRule = this.parseBookInfoRule(this.parseRuleObject(obj.ruleBookInfo));
+    const parsedTocRule = this.parseTocRule(this.parseRuleObject(obj.ruleToc));
+    const parsedContentRule = this.parseContentRule(this.parseRuleObject(obj.ruleContent));
+
     const source: LegadoBookSource = {
       bookSourceUrl: String(obj.bookSourceUrl),
       bookSourceName: String(obj.bookSourceName),
       bookSourceType: this.parseBookSourceType(obj.bookSourceType),
       bookSourceGroup: obj.bookSourceGroup ? String(obj.bookSourceGroup) : undefined,
-      bookUrlPattern: obj.bookUrlPattern ? String(obj.bookUrlPattern) : undefined,
-      customOrder: typeof obj.customOrder === 'number' ? obj.customOrder : 0,
-      enabled: obj.enabled !== false,
-      enabledExplore: obj.enabledExplore !== false,
+      bookUrlPattern: this.readStringField(obj, 'bookUrlPattern') ||
+        this.readStringField(obj, 'ruleBookUrlPattern'),
+      customOrder: this.parseNumberField(
+        this.readField(obj, 'customOrder') !== undefined
+          ? this.readField(obj, 'customOrder')
+          : this.readField(obj, 'serialNumber'),
+        0
+      ),
+      enabled: this.parseBooleanField(enabledValue, true),
+      enabledExplore: this.parseBooleanField(obj.enabledExplore, enabledExploreFallback),
       jsLib: obj.jsLib ? String(obj.jsLib) : undefined,
-      enabledCookieJar: obj.enabledCookieJar === true,
+      enabledCookieJar: this.parseBooleanField(obj.enabledCookieJar, true),
       concurrentRate: obj.concurrentRate ? String(obj.concurrentRate) : undefined,
-      header: obj.header ? String(obj.header) : undefined,
+      header: resolvedHeader,
       loginUrl: obj.loginUrl ? String(obj.loginUrl) : undefined,
       loginUi: obj.loginUi ? String(obj.loginUi) : undefined,
       loginCheckJs: obj.loginCheckJs ? String(obj.loginCheckJs) : undefined,
       coverDecodeJs: obj.coverDecodeJs ? String(obj.coverDecodeJs) : undefined,
       bookSourceComment: obj.bookSourceComment ? String(obj.bookSourceComment) : undefined,
       variableComment: obj.variableComment ? String(obj.variableComment) : undefined,
-      lastUpdateTime: typeof obj.lastUpdateTime === 'number' ? obj.lastUpdateTime : Date.now(),
-      respondTime: typeof obj.respondTime === 'number' ? obj.respondTime : 180000,
+      lastUpdateTime: this.parseNumberField(obj.lastUpdateTime, Date.now()),
+      respondTime: this.parseNumberField(obj.respondTime, 180000),
       weight: 0, // 导入的书源默认不置顶，忽略原始weight值
-      exploreUrl: obj.exploreUrl ? String(obj.exploreUrl) : undefined,
+      exploreUrl: resolvedExploreUrl,
       exploreScreen: obj.exploreScreen ? String(obj.exploreScreen) : undefined,
-      searchUrl: obj.searchUrl ? String(obj.searchUrl) : undefined,
-      ruleExplore: this.parseExploreRule(obj.ruleExplore as ESObject),
-      ruleSearch: this.parseSearchRule(obj.ruleSearch as ESObject),
-      ruleBookInfo: this.parseBookInfoRule(obj.ruleBookInfo as ESObject),
-      ruleToc: this.parseTocRule(obj.ruleToc as ESObject),
-      ruleContent: this.parseContentRule(obj.ruleContent as ESObject)
+      searchUrl: resolvedSearchUrl,
+      ruleExplore: this.mergeExploreRule(parsedExploreRule, this.parseOldExploreRule(obj)),
+      ruleSearch: this.mergeSearchRule(parsedSearchRule, this.parseOldSearchRule(obj)),
+      ruleBookInfo: this.mergeBookInfoRule(parsedBookInfoRule, this.parseOldBookInfoRule(obj)),
+      ruleToc: this.mergeTocRule(parsedTocRule, this.parseOldTocRule(obj)),
+      ruleContent: this.mergeContentRule(parsedContentRule, this.parseOldContentRule(obj)),
+      ruleReview: this.parseReviewRule(this.parseRuleObject(obj.ruleReview))
     };
 
     this.source = source;
     return source;
+  }
+
+  private hasOldFlatSourceFields(obj: ESObject): boolean {
+    const oldFieldNames: string[] = [
+      'ruleSearchUrl',
+      'ruleFindUrl',
+      'ruleSearchList',
+      'ruleFindList',
+      'ruleBookName',
+      'ruleChapterList',
+      'ruleBookContent',
+      'httpUserAgent',
+      'serialNumber',
+      'enable',
+      'ruleBookUrlPattern'
+    ];
+    for (let i = 0; i < oldFieldNames.length; i++) {
+      if (this.hasField(obj, oldFieldNames[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private hasField(obj: ESObject, key: string): boolean {
+    if (obj === null || obj === undefined || typeof obj !== 'object') {
+      return false;
+    }
+    return Object.keys(obj).includes(key);
+  }
+
+  private readField(obj: ESObject, key: string): Object | undefined {
+    if (!this.hasField(obj, key)) {
+      return undefined;
+    }
+    const record = obj as Record<string, Object>;
+    return record[key];
+  }
+
+  private readStringField(obj: ESObject, key: string): string {
+    const value = this.readField(obj, key);
+    if (value === null || value === undefined) {
+      return '';
+    }
+    const text = String(value).trim();
+    return text;
+  }
+
+  private preferString(primary: string | undefined, fallback: string | undefined): string | undefined {
+    if (primary !== undefined && primary !== null && primary.length > 0) {
+      return primary;
+    }
+    if (fallback !== undefined && fallback !== null && fallback.length > 0) {
+      return fallback;
+    }
+    return undefined;
+  }
+
+  private parseOldSearchRule(obj: ESObject): LegadoSearchRule | undefined {
+    const rule: LegadoSearchRule = {
+      bookList: this.toNewRule(this.readStringField(obj, 'ruleSearchList')),
+      name: this.toNewRule(this.readStringField(obj, 'ruleSearchName')),
+      author: this.toNewRule(this.readStringField(obj, 'ruleSearchAuthor')),
+      intro: this.toNewRule(this.readStringField(obj, 'ruleSearchIntroduce')),
+      kind: this.toNewRule(this.readStringField(obj, 'ruleSearchKind')),
+      bookUrl: this.toNewRule(this.readStringField(obj, 'ruleSearchNoteUrl')),
+      coverUrl: this.toNewRule(this.readStringField(obj, 'ruleSearchCoverUrl')),
+      lastChapter: this.toNewRule(this.readStringField(obj, 'ruleSearchLastChapter'))
+    };
+    return this.hasSearchRuleContent(rule) ? rule : undefined;
+  }
+
+  private parseOldExploreRule(obj: ESObject): LegadoExploreRule | undefined {
+    const rule: LegadoExploreRule = {
+      bookList: this.toNewRule(this.readStringField(obj, 'ruleFindList')),
+      name: this.toNewRule(this.readStringField(obj, 'ruleFindName')),
+      author: this.toNewRule(this.readStringField(obj, 'ruleFindAuthor')),
+      intro: this.toNewRule(this.readStringField(obj, 'ruleFindIntroduce')),
+      kind: this.toNewRule(this.readStringField(obj, 'ruleFindKind')),
+      bookUrl: this.toNewRule(this.readStringField(obj, 'ruleFindNoteUrl')),
+      coverUrl: this.toNewRule(this.readStringField(obj, 'ruleFindCoverUrl')),
+      lastChapter: this.toNewRule(this.readStringField(obj, 'ruleFindLastChapter'))
+    };
+    return this.hasExploreRuleContent(rule) ? rule : undefined;
+  }
+
+  private parseOldBookInfoRule(obj: ESObject): LegadoBookInfoRule | undefined {
+    const rule: LegadoBookInfoRule = {
+      init: this.toNewRule(this.readStringField(obj, 'ruleBookInfoInit')),
+      name: this.toNewRule(this.readStringField(obj, 'ruleBookName')),
+      author: this.toNewRule(this.readStringField(obj, 'ruleBookAuthor')),
+      intro: this.toNewRule(this.readStringField(obj, 'ruleIntroduce')),
+      kind: this.toNewRule(this.readStringField(obj, 'ruleBookKind')),
+      coverUrl: this.toNewRule(this.readStringField(obj, 'ruleCoverUrl')),
+      lastChapter: this.toNewRule(this.readStringField(obj, 'ruleBookLastChapter')),
+      tocUrl: this.toNewRule(this.readStringField(obj, 'ruleChapterUrl'))
+    };
+    return this.hasBookInfoRuleContent(rule) ? rule : undefined;
+  }
+
+  private parseOldTocRule(obj: ESObject): LegadoTocRule | undefined {
+    const rule: LegadoTocRule = {
+      chapterList: this.toNewRule(this.readStringField(obj, 'ruleChapterList')),
+      chapterName: this.toNewRule(this.readStringField(obj, 'ruleChapterName')),
+      chapterUrl: this.toNewRule(this.readStringField(obj, 'ruleContentUrl')),
+      nextTocUrl: this.toNewRule(this.readStringField(obj, 'ruleChapterUrlNext'))
+    };
+    return this.hasTocRuleContent(rule) ? rule : undefined;
+  }
+
+  private parseOldContentRule(obj: ESObject): LegadoContentRule | undefined {
+    let content = this.toNewRule(this.readStringField(obj, 'ruleBookContent'));
+    if (content !== undefined && content.startsWith('$') && !content.startsWith('$.')) {
+      content = content.substring(1);
+    }
+    const rule: LegadoContentRule = {
+      content: content,
+      replaceRegex: this.toNewRule(this.readStringField(obj, 'ruleBookContentReplace')),
+      nextContentUrl: this.toNewRule(this.readStringField(obj, 'ruleContentUrlNext'))
+    };
+    return this.hasContentRuleContent(rule) ? rule : undefined;
+  }
+
+  private mergeSearchRule(primary: LegadoSearchRule | undefined, fallback: LegadoSearchRule | undefined):
+    LegadoSearchRule | undefined {
+    if (!primary) {
+      return fallback;
+    }
+    if (!fallback) {
+      return primary;
+    }
+    return {
+      checkKeyWord: primary.checkKeyWord,
+      bookList: this.preferString(primary.bookList, fallback.bookList),
+      name: this.preferString(primary.name, fallback.name),
+      author: this.preferString(primary.author, fallback.author),
+      intro: this.preferString(primary.intro, fallback.intro),
+      kind: this.preferString(primary.kind, fallback.kind),
+      lastChapter: this.preferString(primary.lastChapter, fallback.lastChapter),
+      updateTime: primary.updateTime,
+      bookUrl: this.preferString(primary.bookUrl, fallback.bookUrl),
+      coverUrl: this.preferString(primary.coverUrl, fallback.coverUrl),
+      wordCount: primary.wordCount
+    };
+  }
+
+  private mergeExploreRule(primary: LegadoExploreRule | undefined, fallback: LegadoExploreRule | undefined):
+    LegadoExploreRule | undefined {
+    if (!primary) {
+      return fallback;
+    }
+    if (!fallback) {
+      return primary;
+    }
+    return {
+      bookList: this.preferString(primary.bookList, fallback.bookList),
+      name: this.preferString(primary.name, fallback.name),
+      author: this.preferString(primary.author, fallback.author),
+      intro: this.preferString(primary.intro, fallback.intro),
+      kind: this.preferString(primary.kind, fallback.kind),
+      lastChapter: this.preferString(primary.lastChapter, fallback.lastChapter),
+      updateTime: primary.updateTime,
+      bookUrl: this.preferString(primary.bookUrl, fallback.bookUrl),
+      coverUrl: this.preferString(primary.coverUrl, fallback.coverUrl),
+      wordCount: primary.wordCount
+    };
+  }
+
+  private mergeBookInfoRule(primary: LegadoBookInfoRule | undefined, fallback: LegadoBookInfoRule | undefined):
+    LegadoBookInfoRule | undefined {
+    if (!primary) {
+      return fallback;
+    }
+    if (!fallback) {
+      return primary;
+    }
+    return {
+      init: this.preferString(primary.init, fallback.init),
+      name: this.preferString(primary.name, fallback.name),
+      author: this.preferString(primary.author, fallback.author),
+      intro: this.preferString(primary.intro, fallback.intro),
+      kind: this.preferString(primary.kind, fallback.kind),
+      lastChapter: this.preferString(primary.lastChapter, fallback.lastChapter),
+      updateTime: primary.updateTime,
+      coverUrl: this.preferString(primary.coverUrl, fallback.coverUrl),
+      tocUrl: this.preferString(primary.tocUrl, fallback.tocUrl),
+      wordCount: primary.wordCount,
+      canReName: primary.canReName,
+      downloadUrls: primary.downloadUrls
+    };
+  }
+
+  private mergeTocRule(primary: LegadoTocRule | undefined, fallback: LegadoTocRule | undefined):
+    LegadoTocRule | undefined {
+    if (!primary) {
+      return fallback;
+    }
+    if (!fallback) {
+      return primary;
+    }
+    return {
+      preUpdateJs: primary.preUpdateJs,
+      chapterList: this.preferString(primary.chapterList, fallback.chapterList),
+      chapterName: this.preferString(primary.chapterName, fallback.chapterName),
+      chapterUrl: this.preferString(primary.chapterUrl, fallback.chapterUrl),
+      formatJs: primary.formatJs,
+      isVolume: primary.isVolume,
+      isVip: primary.isVip,
+      isPay: primary.isPay,
+      updateTime: primary.updateTime,
+      nextTocUrl: this.preferString(primary.nextTocUrl, fallback.nextTocUrl)
+    };
+  }
+
+  private mergeContentRule(primary: LegadoContentRule | undefined, fallback: LegadoContentRule | undefined):
+    LegadoContentRule | undefined {
+    if (!primary) {
+      return fallback;
+    }
+    if (!fallback) {
+      return primary;
+    }
+    return {
+      content: this.preferString(primary.content, fallback.content),
+      title: primary.title,
+      nextContentUrl: this.preferString(primary.nextContentUrl, fallback.nextContentUrl),
+      webJs: primary.webJs,
+      sourceRegex: primary.sourceRegex,
+      replaceRegex: this.preferString(primary.replaceRegex, fallback.replaceRegex),
+      imageStyle: primary.imageStyle,
+      imageDecode: primary.imageDecode,
+      payAction: primary.payAction
+    };
+  }
+
+  private hasSearchRuleContent(rule: LegadoSearchRule): boolean {
+    return !!(rule.checkKeyWord || rule.bookList || rule.name || rule.author || rule.intro || rule.kind ||
+      rule.lastChapter || rule.updateTime || rule.bookUrl || rule.coverUrl || rule.wordCount);
+  }
+
+  private hasExploreRuleContent(rule: LegadoExploreRule): boolean {
+    return !!(rule.bookList || rule.name || rule.author || rule.intro || rule.kind || rule.lastChapter ||
+      rule.updateTime || rule.bookUrl || rule.coverUrl || rule.wordCount);
+  }
+
+  private hasBookInfoRuleContent(rule: LegadoBookInfoRule): boolean {
+    return !!(rule.init || rule.name || rule.author || rule.intro || rule.kind || rule.lastChapter ||
+      rule.updateTime || rule.coverUrl || rule.tocUrl || rule.wordCount || rule.canReName || rule.downloadUrls);
+  }
+
+  private hasTocRuleContent(rule: LegadoTocRule): boolean {
+    return !!(rule.preUpdateJs || rule.chapterList || rule.chapterName || rule.chapterUrl || rule.formatJs ||
+      rule.isVolume || rule.isVip || rule.isPay || rule.updateTime || rule.nextTocUrl);
+  }
+
+  private hasContentRuleContent(rule: LegadoContentRule): boolean {
+    return !!(rule.content || rule.title || rule.nextContentUrl || rule.webJs || rule.sourceRegex ||
+      rule.replaceRegex || rule.imageStyle || rule.imageDecode || rule.payAction);
+  }
+
+  private toNewRule(oldRule: string): string | undefined {
+    if (oldRule.trim().length <= 0) {
+      return undefined;
+    }
+    let newRule = oldRule.trim();
+    let reverse = false;
+    let allInOne = false;
+    if (newRule.startsWith('-')) {
+      reverse = true;
+      newRule = newRule.substring(1);
+    }
+    if (newRule.startsWith('+')) {
+      allInOne = true;
+      newRule = newRule.substring(1);
+    }
+
+    const lowerRule = newRule.toLowerCase();
+    const shouldAdaptDefaultRule = !lowerRule.startsWith('@css:') &&
+      !lowerRule.startsWith('@xpath:') &&
+      !newRule.startsWith('//') &&
+      !newRule.startsWith('##') &&
+      !newRule.startsWith(':') &&
+      !lowerRule.includes('@js:') &&
+      !lowerRule.includes('<js>');
+
+    if (shouldAdaptDefaultRule) {
+      if (newRule.includes('#') && !newRule.includes('##')) {
+        newRule = newRule.replace(/#/g, '##');
+      }
+      if (newRule.includes('|') && !newRule.includes('||')) {
+        if (newRule.includes('##')) {
+          const parts = newRule.split('##');
+          if (parts.length > 0 && parts[0].includes('|')) {
+            let rebuilt = parts[0].replace(/\|/g, '||');
+            for (let i = 1; i < parts.length; i++) {
+              rebuilt += `##${parts[i]}`;
+            }
+            newRule = rebuilt;
+          }
+        } else {
+          newRule = newRule.replace(/\|/g, '||');
+        }
+      }
+      if (newRule.includes('&') && !newRule.includes('&&') && !lowerRule.includes('http') && !newRule.startsWith('/')) {
+        newRule = newRule.replace(/&/g, '&&');
+      }
+    }
+
+    if (allInOne) {
+      newRule = `+${newRule}`;
+    }
+    if (reverse) {
+      newRule = `-${newRule}`;
+    }
+    return newRule;
+  }
+
+  private toNewUrls(oldUrls: string): string | undefined {
+    const trimmed = oldUrls.trim();
+    if (trimmed.length <= 0) {
+      return undefined;
+    }
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith('@js:') || lower.startsWith('<js>')) {
+      return trimmed;
+    }
+    if (!trimmed.includes('\n') && !trimmed.includes('&&')) {
+      return this.toNewUrl(trimmed);
+    }
+    const segments = trimmed.split(/(?:&&|\r?\n)+/);
+    const result: string[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const converted = this.toNewUrl(segments[i].trim());
+      if (converted !== undefined && converted.length > 0) {
+        result.push(converted.replace(/\n\s*/g, ''));
+      }
+    }
+    return result.length > 0 ? result.join('\n') : undefined;
+  }
+
+  private toNewUrl(oldUrl: string): string | undefined {
+    const trimmed = oldUrl.trim();
+    if (trimmed.length <= 0) {
+      return undefined;
+    }
+    let url = trimmed;
+    if (url.toLowerCase().startsWith('<js>')) {
+      return url.replace(/=searchKey/g, '={{key}}').replace(/=searchPage/g, '={{page}}');
+    }
+
+    const option: LegadoOldUrlOption = {};
+    const headerMatch = url.match(/@Header:\{.+?\}/i);
+    if (headerMatch && headerMatch.index !== undefined) {
+      const headerText = headerMatch[0].substring(8);
+      const headerRecord = this.parseOldHeaderText(headerText);
+      if (headerRecord !== undefined) {
+        option.headers = headerRecord;
+      }
+      url = url.substring(0, headerMatch.index) +
+        url.substring(headerMatch.index + headerMatch[0].length);
+    }
+
+    const charsetSplitIndex = url.indexOf('|');
+    if (charsetSplitIndex >= 0) {
+      const charsetPart = url.substring(charsetSplitIndex + 1);
+      url = url.substring(0, charsetSplitIndex);
+      const equalIndex = charsetPart.indexOf('=');
+      if (equalIndex >= 0) {
+        const charset = charsetPart.substring(equalIndex + 1).trim();
+        if (charset.length > 0) {
+          option.charset = charset;
+        }
+      }
+    }
+
+    const jsList: string[] = [];
+    url = this.extractOldUrlJsBlocks(url, jsList);
+    url = url.replace(/\{/g, '<').replace(/\}/g, '>');
+    url = url.replace(/searchKey/g, '{{key}}');
+    url = url.replace(/<searchPage([-+]1)>/g, '{{page$1}}')
+      .replace(/searchPage([-+]1)/g, '{{page$1}}')
+      .replace(/searchPage/g, '{{page}}');
+    for (let i = 0; i < jsList.length; i++) {
+      const convertedJs = jsList[i].replace(/searchKey/g, 'key').replace(/searchPage/g, 'page');
+      url = url.replace(this.buildOldUrlJsPlaceholder(i), convertedJs);
+    }
+
+    const postSplitIndex = url.indexOf('@');
+    if (postSplitIndex >= 0) {
+      option.method = 'POST';
+      option.body = url.substring(postSplitIndex + 1);
+      url = url.substring(0, postSplitIndex);
+    }
+
+    if (this.hasOldUrlOptionContent(option)) {
+      url += `,${SafeUtils.stringifyJson(option, '{}')}`;
+    }
+    return url;
+  }
+
+  private extractOldUrlJsBlocks(url: string, jsList: string[]): string {
+    let result = url;
+    const jsPattern = /\{\{.+?\}\}/i;
+    let match = result.match(jsPattern);
+    while (match && match.index !== undefined) {
+      jsList.push(match[0]);
+      const placeholder = this.buildOldUrlJsPlaceholder(jsList.length - 1);
+      result = result.substring(0, match.index) +
+        placeholder +
+        result.substring(match.index + match[0].length);
+      match = result.match(jsPattern);
+    }
+    return result;
+  }
+
+  private buildOldUrlJsPlaceholder(index: number): string {
+    return `__LEGADO_OLD_JS_${index}__`;
+  }
+
+  private hasOldUrlOptionContent(option: LegadoOldUrlOption): boolean {
+    return option.method !== undefined ||
+      option.charset !== undefined ||
+      option.headers !== undefined ||
+      option.body !== undefined;
+  }
+
+  private parseOldHeaderText(headerText: string): Record<string, string> | undefined {
+    const trimmed = headerText.trim();
+    if (trimmed.length <= 0) {
+      return undefined;
+    }
+    const strictParsed = this.tryParseOldHeaderRecord(trimmed);
+    if (strictParsed !== undefined) {
+      return strictParsed;
+    }
+    const fixedHeader = trimmed
+      .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$-]*)\s*:/g, '$1"$2":')
+      .replace(/([{,]\s*)'([^']+)'\s*:/g, '$1"$2":')
+      .replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, (match: string, value: string): string => {
+        const escapedValue = value.replace(/"/g, '\\"');
+        return `:"${escapedValue}"`;
+      });
+    const fixedParsed = this.tryParseOldHeaderRecord(fixedHeader);
+    if (fixedParsed !== undefined) {
+      return fixedParsed;
+    }
+    return this.parseOldHeaderPairs(trimmed);
+  }
+
+  private tryParseOldHeaderRecord(headerJson: string): Record<string, string> | undefined {
+    try {
+      const parsed = SafeUtils.parseObj<Record<string, Object>>(headerJson);
+      if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return undefined;
+      }
+      const keys = Object.keys(parsed);
+      if (keys.length <= 0) {
+        return undefined;
+      }
+      const headers: Record<string, string> = {};
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i].trim();
+        const value = parsed[key];
+        if (key.length > 0 && value !== undefined && value !== null) {
+          headers[key] = String(value);
+        }
+      }
+      return Object.keys(headers).length > 0 ? headers : undefined;
+    } catch (_error) {
+      return undefined;
+    }
+  }
+
+  private parseOldHeaderPairs(headerText: string): Record<string, string> | undefined {
+    let body = headerText.trim();
+    if (body.startsWith('{') && body.endsWith('}')) {
+      body = body.substring(1, body.length - 1);
+    }
+    const headers: Record<string, string> = {};
+    const pairs = body.split(',');
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i].trim();
+      const splitIndex = pair.indexOf(':');
+      if (splitIndex <= 0) {
+        continue;
+      }
+      const key = this.trimHeaderToken(pair.substring(0, splitIndex));
+      const value = this.trimHeaderToken(pair.substring(splitIndex + 1));
+      if (key.length > 0 && value.length > 0) {
+        headers[key] = value;
+      }
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  }
+
+  private trimHeaderToken(value: string): string {
+    let result = value.trim();
+    if (result.length >= 2) {
+      const first = result.charAt(0);
+      const last = result.charAt(result.length - 1);
+      if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
+        result = result.substring(1, result.length - 1).trim();
+      }
+    }
+    return result;
+  }
+
+  private uaToHeader(userAgent: string): string | undefined {
+    const trimmed = userAgent.trim();
+    if (trimmed.length <= 0) {
+      return undefined;
+    }
+    const header: Record<string, string> = {};
+    header['User-Agent'] = trimmed;
+    return SafeUtils.stringifyJson(header, '');
   }
 
   /**
@@ -142,7 +692,89 @@ export class LegadoSourceParser {
         default: return LegadoBookSourceType.TEXT;
       }
     }
+    if (typeof type === 'string') {
+      const normalized = type.trim().toLowerCase();
+      switch (normalized) {
+        case '0':
+        case 'default':
+        case 'text':
+        case 'book':
+        case 'novel':
+          return LegadoBookSourceType.TEXT;
+        case '1':
+        case 'audio':
+        case 'tts':
+          return LegadoBookSourceType.AUDIO;
+        case '2':
+        case 'image':
+        case 'manga':
+        case 'comic':
+          return LegadoBookSourceType.IMAGE;
+        case '3':
+        case 'file':
+        case 'download':
+          return LegadoBookSourceType.FILE;
+        default:
+          return LegadoBookSourceType.TEXT;
+      }
+    }
     return LegadoBookSourceType.TEXT;
+  }
+
+  private parseBooleanField(value: ESObject, fallback: boolean): boolean {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      return value !== 0;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'y') {
+        return true;
+      }
+      if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'n') {
+        return false;
+      }
+    }
+    return fallback;
+  }
+
+  private parseNumberField(value: ESObject, fallback: number): number {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value.trim());
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return fallback;
+  }
+
+  private parseRuleObject(value: ESObject): ESObject {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length === 0) {
+        return null;
+      }
+      try {
+        const parsed = SafeUtils.parseObj<Record<string, Object>>(trimmed);
+        if (parsed !== null && parsed !== undefined && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as ESObject;
+        }
+      } catch (_error) {
+      }
+      return null;
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return value;
+    }
+    return null;
   }
 
   /**
@@ -257,6 +889,19 @@ export class LegadoSourceParser {
     };
   }
 
+  private parseReviewRule(obj: ESObject): LegadoReviewRule | undefined {
+    if (!obj) {
+      return undefined;
+    }
+
+    return {
+      reviewList: obj.reviewList ? String(obj.reviewList) : undefined,
+      content: obj.content ? String(obj.content) : undefined,
+      author: obj.author ? String(obj.author) : undefined,
+      time: obj.time ? String(obj.time) : undefined
+    };
+  }
+
   /**
    * 解析发现分类URL
    */
@@ -267,21 +912,16 @@ export class LegadoSourceParser {
 
     const kinds: LegadoExploreKind[] = [];
 
+    const ruleStr = exploreUrl.trim();
+
     // 检查是否为JSON格式
-    if (exploreUrl.trim().startsWith('[')) {
+    if (ruleStr.startsWith('[')) {
       try {
-        const parsed: Object = SafeUtils.parseObj(exploreUrl);
+        const parsed: Object = SafeUtils.parseObj(ruleStr);
         const parsedArray = parsed as Record<string, Object>[];
         for (let i = 0; i < parsedArray.length; i++) {
-          const item = parsedArray[i];
-          if (item['title'] && item['url']) {
-            const kind: LegadoExploreKind = {
-              title: String(item['title']),
-              url: String(item['url'])
-            };
-            if (item['style']) {
-              kind.style = item['style'] as Record<string, Object>;
-            }
+          const kind = this.parseExploreKindObject(parsedArray[i]);
+          if (kind) {
             kinds.push(kind);
           }
         }
@@ -291,8 +931,8 @@ export class LegadoSourceParser {
       }
     }
 
-    // 按换行分割
-    const lines = exploreUrl.split('\n');
+    // Legado 原版按 (&&|\n)+ 分割，URL 可省略
+    const lines = ruleStr.split(/(?:&&|\n)+/);
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) {
@@ -301,15 +941,51 @@ export class LegadoSourceParser {
 
       // 格式: 分类名::URL
       const parts = trimmed.split('::');
-      if (parts.length >= 2) {
-        kinds.push({
-          title: parts[0].trim(),
-          url: parts.slice(1).join('::').trim()
-        });
+      const title = parts[0].trim();
+      if (title.length === 0) {
+        continue;
       }
+      const url = parts.length >= 2 ? parts.slice(1).join('::').trim() : '';
+      kinds.push({
+        title: title,
+        url: url
+      });
     }
 
     return kinds;
+  }
+
+  private parseExploreKindObject(item: Record<string, Object>): LegadoExploreKind | null {
+    const titleValue = this.pickStringField(item, ['title', 'name']);
+    if (titleValue.length === 0) {
+      return null;
+    }
+
+    const kind: LegadoExploreKind = {
+      title: titleValue,
+      url: this.pickStringField(item, ['url'])
+    };
+
+    const styleValue = item['style'];
+    if (styleValue && typeof styleValue === 'object' && !Array.isArray(styleValue)) {
+      kind.style = styleValue as LegadoExploreKindStyle;
+    }
+
+    return kind;
+  }
+
+  private pickStringField(item: Record<string, Object>, fieldNames: string[]): string {
+    for (let i = 0; i < fieldNames.length; i++) {
+      const value = item[fieldNames[i]];
+      if (value === undefined || value === null) {
+        continue;
+      }
+      const text = String(value).trim();
+      if (text.length > 0) {
+        return text;
+      }
+    }
+    return '';
   }
 
   /**

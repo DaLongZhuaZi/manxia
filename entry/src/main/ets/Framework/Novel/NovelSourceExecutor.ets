@@ -20,6 +20,7 @@ import {
 import { LegadoSourceParser } from './LegadoSourceParser';
 import { LegadoRuleAnalyzer } from './LegadoRuleAnalyzer';
 import { LegadoUrlAnalyzer, ParsedUrlRequest, RequestMethod } from './LegadoUrlAnalyzer';
+import { getLegadoJsEngine, JsContext, LegadoJsSourceEffects } from './LegadoJsEngine';
 import { getNovelReplaceRuleManager, ReplaceScope } from './NovelReplaceRuleManager';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { HtmlFormatter } from './HtmlFormatter';
@@ -42,6 +43,7 @@ interface ChapterListParseResult {
 interface ContentParseResult {
   content: string;
   nextUrl: string | null;
+  nextUrls?: string[];
 }
 
 /**
@@ -117,15 +119,7 @@ export class NovelSourceExecutor {
       source.bookSourceUrl,
       source.jsLib || ''
     );
-    this.urlAnalyzer
-      .setVariable('__source_bookSourceName', source.bookSourceName || '')
-      .setVariable('__source_bookSourceGroup', source.bookSourceGroup || '')
-      .setVariable('__source_bookSourceComment', source.bookSourceComment || '')
-      .setVariable('__source_header', source.header || '')
-      .setVariable('__source_loginUrl', source.loginUrl || '')
-      .setVariable('__source_loginUi', source.loginUi || '')
-      .setVariable('__source_loginCheckJs', source.loginCheckJs || '')
-      .setVariable('__source_variableComment', source.variableComment || '');
+    this.injectSourceContextToUrlAnalyzer();
   }
   
   /**
@@ -134,12 +128,100 @@ export class NovelSourceExecutor {
   private ensureJsLib(): void {
     // 仅更新当前执行器的URL解析器快照，避免并发校验时污染全局jsLib
     this.urlAnalyzer.setJsLib(this.source.jsLib || '');
+    this.injectSourceContextToUrlAnalyzer();
   }
 
   private createRuleAnalyzer(): LegadoRuleAnalyzer {
     const analyzer = new LegadoRuleAnalyzer();
     analyzer.setJsLib(this.source.jsLib || '');
+    const contextVariables = this.buildRuleAnalyzerContextVariables();
+    const keys = Object.keys(contextVariables);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      analyzer.put(key, contextVariables[key]);
+    }
     return analyzer;
+  }
+
+  private buildRuleAnalyzerContextVariables(): Record<string, string> {
+    const sourceVariables = this.buildSourceContextVariables();
+    const urlVariables = this.urlAnalyzer.getVariablesSnapshot();
+    const merged: Record<string, string> = {};
+
+    const sourceKeys = Object.keys(sourceVariables);
+    for (let i = 0; i < sourceKeys.length; i++) {
+      const key = sourceKeys[i];
+      merged[key] = sourceVariables[key];
+    }
+
+    const urlKeys = Object.keys(urlVariables);
+    for (let i = 0; i < urlKeys.length; i++) {
+      const key = urlKeys[i];
+      merged[key] = urlVariables[key];
+    }
+    return merged;
+  }
+
+  private injectSourceContextToUrlAnalyzer(): void {
+    this.urlAnalyzer.setVariables(this.buildSourceContextVariables());
+  }
+
+  private buildSourceContextVariables(): Record<string, string> {
+    const loginManager = getNovelLoginManager();
+    const sourceId = this.source.bookSourceUrl || '';
+    const sourceData = loginManager.getSourceDataSnapshot(sourceId);
+    const variables: Record<string, string> = {};
+    variables['sourceUrl'] = sourceId;
+    variables['__source_bookSourceName'] = this.source.bookSourceName || '';
+    variables['__source_bookSourceGroup'] = this.source.bookSourceGroup || '';
+    variables['__source_bookSourceComment'] = this.source.bookSourceComment || '';
+    variables['__source_header'] = this.source.header || '';
+    variables['__source_loginUrl'] = this.source.loginUrl || '';
+    variables['__source_loginUi'] = this.source.loginUi || '';
+    variables['__source_loginCheckJs'] = this.source.loginCheckJs || '';
+    variables['__source_variableComment'] = this.source.variableComment || '';
+    variables['__loginInfo'] = loginManager.getLoginInfo(sourceId);
+    variables['__loginHeader'] = loginManager.getLoginHeader(sourceId);
+    variables['__sourceVariable'] = loginManager.getSourceVariable(sourceId);
+    variables['__sourceData'] = JSON.stringify(sourceData);
+    variables['cookie'] = loginManager.getCookieString(sourceId);
+    return variables;
+  }
+
+  private persistSourceEffects(effects?: LegadoJsSourceEffects): void {
+    if (!effects) {
+      return;
+    }
+
+    const sourceId = this.source.bookSourceUrl || '';
+    if (sourceId.length <= 0) {
+      return;
+    }
+
+    const loginManager = getNovelLoginManager();
+    if (effects.loginInfo !== undefined) {
+      loginManager.putLoginInfo(sourceId, effects.loginInfo);
+    }
+    if (effects.removeLoginHeader === true) {
+      loginManager.removeLoginHeader(sourceId);
+    }
+    if (effects.loginHeader !== undefined) {
+      loginManager.putLoginHeader(sourceId, effects.loginHeader);
+    }
+    if (effects.sourceVariable !== undefined) {
+      loginManager.setSourceVariable(sourceId, effects.sourceVariable);
+    }
+    if (effects.data && effects.data.length > 0) {
+      for (let i = 0; i < effects.data.length; i++) {
+        const item = effects.data[i];
+        if (!item || item.key.length <= 0) {
+          continue;
+        }
+        loginManager.putSourceData(sourceId, item.key, item.value);
+      }
+    }
+
+    this.injectSourceContextToUrlAnalyzer();
   }
 
   private searchParseTrace(messageBuilder: () => string): void {
@@ -290,6 +372,9 @@ export class NovelSourceExecutor {
     if (NovelSourceExecutor.JS_RULE_TOKEN_PATTERN.test(urlTemplate)) {
       return true;
     }
+    if (/(?:^|[,{\s])["']?js["']?\s*:/i.test(urlTemplate)) {
+      return true;
+    }
     return urlTemplate.includes('{{') && urlTemplate.includes('}}');
   }
 
@@ -350,7 +435,87 @@ export class NovelSourceExecutor {
       .replace(/&amp;/gi, '&')
       .replace(/&#38;/gi, '&')
       .replace(/&#x26;/gi, '&');
+    normalized = this.stripRequestSourceMarker(normalized);
+    normalized = this.pickEmbeddedAbsoluteRequestUrl(normalized);
     return normalized;
+  }
+
+  private stripRequestSourceMarker(url: string): string {
+    const markerMatch = url.match(/^(https?:\/\/[^\/?#]+)(##[^\/?#]*|#[^\/?#]*)(?=\/)/i);
+    if (!markerMatch || markerMatch.length < 3) {
+      return url;
+    }
+    return `${markerMatch[1]}${url.substring(markerMatch[1].length + markerMatch[2].length)}`;
+  }
+
+  private pickEmbeddedAbsoluteRequestUrl(url: string): string {
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return url;
+    }
+    const secondHttp = url.indexOf('http://', 8);
+    const secondHttps = url.indexOf('https://', 8);
+    let secondIndex = -1;
+    if (secondHttp >= 0 && secondHttps >= 0) {
+      secondIndex = Math.min(secondHttp, secondHttps);
+    } else if (secondHttp >= 0) {
+      secondIndex = secondHttp;
+    } else if (secondHttps >= 0) {
+      secondIndex = secondHttps;
+    }
+    if (secondIndex <= 0) {
+      return url;
+    }
+    const beforeSecond = url.substring(0, secondIndex);
+    if (beforeSecond.includes('?') || beforeSecond.includes('&')) {
+      return url;
+    }
+    return url.substring(secondIndex);
+  }
+
+  private normalizeParsedUrl(rawUrl: string | undefined, baseUrl: string, fallbackUrl: string = ''): string {
+    const normalizedRawUrl = this.normalizeRequestUrl(rawUrl || '');
+    const trimmedUrl = normalizedRawUrl.trim();
+    if (trimmedUrl.length <= 0) {
+      return fallbackUrl;
+    }
+    if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
+      return trimmedUrl;
+    }
+    if (trimmedUrl.startsWith('//')) {
+      const baseScheme = baseUrl.startsWith('http://') ? 'http:' : 'https:';
+      return `${baseScheme}${trimmedUrl}`;
+    }
+    if (trimmedUrl.startsWith('data:') || trimmedUrl.startsWith('javascript:')) {
+      return trimmedUrl;
+    }
+    if (!baseUrl || baseUrl.trim().length <= 0) {
+      return trimmedUrl;
+    }
+
+    try {
+      const normalizedBaseUrl = this.normalizeRequestUrl(baseUrl);
+      const originMatch = normalizedBaseUrl.match(/^(https?:\/\/[^\/?#]+)/i);
+      if (trimmedUrl.startsWith('/')) {
+        return originMatch ? `${originMatch[1]}${trimmedUrl}` : trimmedUrl;
+      }
+
+      const hashIndex = normalizedBaseUrl.indexOf('#');
+      const withoutHash = hashIndex >= 0 ? normalizedBaseUrl.substring(0, hashIndex) : normalizedBaseUrl;
+      const queryIndex = withoutHash.indexOf('?');
+      let basePath = queryIndex >= 0 ? withoutHash.substring(0, queryIndex) : withoutHash;
+      if (!basePath.endsWith('/')) {
+        const slashIndex = basePath.lastIndexOf('/');
+        if (slashIndex >= 0) {
+          basePath = basePath.substring(0, slashIndex + 1);
+        } else {
+          basePath = `${basePath}/`;
+        }
+      }
+      return `${basePath}${trimmedUrl}`;
+    } catch (error) {
+      logger.warn(TAG, `规则URL绝对化失败: raw=${trimmedUrl}, base=${baseUrl}, error=${String(error)}`);
+      return trimmedUrl;
+    }
   }
 
   /**
@@ -371,22 +536,34 @@ export class NovelSourceExecutor {
     }
 
     try {
+      let request: ParsedUrlRequest;
       if (this.shouldAnalyzeUrlAsync(urlTemplate)) {
         this.ensureJsLib();
-        return await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+        request = await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+      } else {
+        request = this.urlAnalyzer.analyzeUrl(urlTemplate, key, page);
+        if (this.hasUnresolvedRuleTokens(request.url)) {
+          this.ensureJsLib();
+          request = await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
+        }
       }
-
-      const request = this.urlAnalyzer.analyzeUrl(urlTemplate, key, page);
-      if (this.hasUnresolvedRuleTokens(request.url)) {
-        this.ensureJsLib();
-        return await this.urlAnalyzer.analyzeUrlAsync(urlTemplate, key, page);
-      }
+      this.persistUrlAnalyzerSourceEffects();
       return request;
     } finally {
       if (hasRuntimeBaseUrl) {
         this.urlAnalyzer.setBaseUrl(originalBaseUrl);
       }
     }
+  }
+
+  private persistUrlAnalyzerSourceEffects(): void {
+    this.persistSourceEffects(this.urlAnalyzer.getSourceEffectsSnapshot());
+    this.urlAnalyzer.clearSourceEffects();
+  }
+
+  private persistRuleAnalyzerSourceEffects(analyzer: LegadoRuleAnalyzer): void {
+    this.persistSourceEffects(analyzer.getSourceEffectsSnapshot());
+    analyzer.clearSourceEffects();
   }
   async getBookInfo(bookUrl: string): Promise<LegadoBook | null> {
     this.ensureJsLib();
@@ -449,12 +626,15 @@ export class NovelSourceExecutor {
     this.ensureJsLib();
     const allContent: string[] = [];
     let currentUrl: string | null = chapter.url;
+    const pendingUrls: string[] = [];
+    const visitedUrls: Set<string> = new Set<string>();
     let pageCount = 0;
     const maxPages = 20;
 
     try {
       await this.prepareContentRuleVariables(chapter);
       while (currentUrl && pageCount < maxPages) {
+        visitedUrls.add(currentUrl);
         const request = await this.analyzeRequestUrl(currentUrl, undefined, undefined, chapter.bookUrl);
         const response = await this.executeRequest(request);
 
@@ -468,10 +648,17 @@ export class NovelSourceExecutor {
           allContent.push(contentResult.content);
         }
 
-        if (contentResult.nextUrl && contentResult.nextUrl !== currentUrl) {
-          currentUrl = contentResult.nextUrl;
+        const nextUrls = this.normalizeNextContentUrls(contentResult, request.url, visitedUrls, pendingUrls);
+        if (nextUrls.length > 0) {
+          for (let i = 0; i < nextUrls.length; i++) {
+            pendingUrls.push(nextUrls[i]);
+          }
+        }
+
+        if (pendingUrls.length > 0) {
+          currentUrl = pendingUrls.shift() || null;
           pageCount++;
-          logger.debug(TAG, `正文分页 ${pageCount}: ${contentResult.nextUrl}`);
+          logger.debug(TAG, `正文分页 ${pageCount}: ${currentUrl}`);
         } else {
           currentUrl = null;
         }
@@ -721,6 +908,80 @@ export class NovelSourceExecutor {
     return parser.parseExploreKinds(this.source.exploreUrl);
   }
 
+  async getExploreKindsAsync(): Promise<LegadoExploreKind[]> {
+    if (!this.source.exploreUrl) {
+      return [];
+    }
+
+    this.ensureJsLib();
+    const exploreUrl = this.source.exploreUrl.trim();
+    const lowerExploreUrl = exploreUrl.toLowerCase();
+    if (
+      lowerExploreUrl.startsWith('@js:') ||
+      lowerExploreUrl.startsWith('@js：') ||
+      lowerExploreUrl.startsWith('＠js:') ||
+      lowerExploreUrl.startsWith('＠js：') ||
+      lowerExploreUrl.startsWith('<js>')
+    ) {
+      const evaluated = await this.evaluateExploreKindsScript(exploreUrl);
+      if (evaluated.trim().length <= 0) {
+        return [];
+      }
+      const parser = new LegadoSourceParser();
+      return parser.parseExploreKinds(evaluated);
+    }
+
+    return this.getExploreKinds();
+  }
+
+  private async evaluateExploreKindsScript(exploreUrl: string): Promise<string> {
+    const jsCode = this.extractExploreKindsJsCode(exploreUrl);
+    if (jsCode.trim().length <= 0) {
+      return '';
+    }
+    try {
+      const context: JsContext = {
+        result: '',
+        src: '',
+        baseUrl: LegadoSourceParser.getBaseUrl(this.source),
+        key: '',
+        page: 1,
+        variables: this.buildRuleAnalyzerContextVariables(),
+        jsLib: this.source.jsLib || '',
+        source: this.source as ESObject
+      };
+      const executeResult = await getLegadoJsEngine().execute(jsCode, context);
+      this.persistSourceEffects(executeResult.sourceEffects);
+      if (!executeResult.success) {
+        logger.warn(TAG, `发现分类JS执行失败 [${this.source.bookSourceName}]: ${executeResult.error || ''}`);
+        return '';
+      }
+      return String(executeResult.result || '').trim();
+    } catch (error) {
+      logger.warn(TAG, `发现分类JS执行异常 [${this.source.bookSourceName}]: ${String(error)}`);
+      return '';
+    }
+  }
+
+  private extractExploreKindsJsCode(exploreUrl: string): string {
+    const trimmed = exploreUrl.trim();
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith('@js:') || lower.startsWith('@js：')) {
+      return trimmed.substring(4);
+    }
+    if (lower.startsWith('＠js:') || lower.startsWith('＠js：')) {
+      return trimmed.substring(4);
+    }
+    if (lower.startsWith('<js>')) {
+      const endIndex = lower.lastIndexOf('</js>');
+      if (endIndex > 4) {
+        return trimmed.substring(4, endIndex);
+      }
+      return trimmed.substring(4);
+    }
+    return trimmed;
+  }
+
   /**
    * 是否有发现功能
    */
@@ -777,12 +1038,12 @@ export class NovelSourceExecutor {
       const searchBook: LegadoSearchBook = {
         origin: this.source.bookSourceUrl,
         originName: this.source.bookSourceName,
-        bookUrl: itemAnalyzer.getString(rule.bookUrl) || baseUrl,
+        bookUrl: this.normalizeParsedUrl(itemAnalyzer.getString(rule.bookUrl), baseUrl, baseUrl),
         name: name,
         author: itemAnalyzer.getString(rule.author) || '',
         kind: itemAnalyzer.getString(rule.kind),
         intro: itemAnalyzer.getString(rule.intro),
-        coverUrl: itemAnalyzer.getString(rule.coverUrl),
+        coverUrl: this.normalizeParsedUrl(itemAnalyzer.getString(rule.coverUrl), baseUrl),
         latestChapterTitle: itemAnalyzer.getString(rule.lastChapter),
         wordCount: itemAnalyzer.getString(rule.wordCount),
         type: this.source.bookSourceType
@@ -801,6 +1062,9 @@ export class NovelSourceExecutor {
   private async executeRequest(request: ParsedUrlRequest): Promise<string | null> {
     try {
       request.url = this.normalizeRequestUrl(request.url);
+      if (request.requestUrl && request.requestUrl.length > 0) {
+        request.requestUrl = this.normalizeRequestUrl(request.requestUrl);
+      }
 
       if (this.hasUnresolvedRuleTokens(request.url)) {
         logger.error(TAG, `URL包含未解析的规则: ${request.url.substring(0, 100)}...`);
@@ -836,22 +1100,19 @@ export class NovelSourceExecutor {
         return null;
       }
 
+      const httpUrl = request.requestUrl && request.requestUrl.length > 0 ? request.requestUrl : request.url;
       logger.debug(TAG, `请求: ${request.method} ${request.url}`);
       if (request.body) {
         logger.debug(TAG, `请求Body: ${request.body}`);
       }
 
       const httpRequest = http.createHttp();
-      const needCustomDecode: boolean = !!request.charset &&
-        request.charset.toLowerCase() !== 'utf-8' &&
-        request.charset.toLowerCase() !== 'utf8';
-
       const options: http.HttpRequestOptions = {
         method: request.method === RequestMethod.POST ? http.RequestMethod.POST : http.RequestMethod.GET,
         header: this.buildHeaders(request.headers),
         connectTimeout: REQUEST_TIMEOUT_MS,
         readTimeout: REQUEST_TIMEOUT_MS,
-        expectDataType: needCustomDecode ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING
+        expectDataType: http.HttpDataType.ARRAY_BUFFER
       };
 
       const proxyManager = ProxyManager.getInstance();
@@ -862,7 +1123,7 @@ export class NovelSourceExecutor {
 
       if (request.method === RequestMethod.POST) {
         const header = options.header as Record<string, string>;
-        if (!header['Content-Type']) {
+        if (!this.hasHeader(header, 'Content-Type')) {
           if (request.body && (request.body.trim().startsWith('{') || request.body.trim().startsWith('['))) {
             header['Content-Type'] = 'application/json; charset=utf-8';
           } else {
@@ -870,28 +1131,16 @@ export class NovelSourceExecutor {
           }
         }
         if (request.body) {
-          options.extraData = request.body;
+          options.extraData = request.encodedBody !== undefined ? request.encodedBody : request.body;
         }
-        logger.debug(TAG, `POST Content-Type: ${header['Content-Type']}`);
+        logger.debug(TAG, `POST Content-Type: ${this.getHeaderValue(header, 'Content-Type')}`);
       }
 
-      const response = await httpRequest.request(request.url, options);
+      const response = await httpRequest.request(httpUrl, options);
       httpRequest.destroy();
 
       if (response.responseCode >= 200 && response.responseCode < 300) {
-        if (needCustomDecode && response.result instanceof ArrayBuffer) {
-          try {
-            const decoder = new util.TextDecoder(request.charset);
-            const result = decoder.decodeToString(new Uint8Array(response.result));
-            logger.debug(TAG, `使用${request.charset}解码响应，长度: ${result.length}`);
-            return result;
-          } catch (decodeError) {
-            logger.warn(TAG, `使用${request.charset}解码失败，尝试UTF-8: ${String(decodeError)}`);
-            const decoder = new util.TextDecoder('utf-8');
-            return decoder.decodeToString(new Uint8Array(response.result));
-          }
-        }
-        return typeof response.result === 'string' ? response.result : String(response.result);
+        return this.decodeHttpResponseBody(response, request.charset);
       }
 
       const responseBody = typeof response.result === 'string' ? response.result : String(response.result);
@@ -907,6 +1156,169 @@ export class NovelSourceExecutor {
       return null;
     }
   }
+
+  private normalizeNextContentUrls(
+    contentResult: ContentParseResult,
+    currentUrl: string,
+    visitedUrls: Set<string>,
+    pendingUrls: string[]
+  ): string[] {
+    const result: string[] = [];
+    const candidates = contentResult.nextUrls && contentResult.nextUrls.length > 0
+      ? contentResult.nextUrls
+      : (contentResult.nextUrl ? [contentResult.nextUrl] : []);
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = (candidates[i] || '').trim();
+      if (candidate.length <= 0 || candidate === currentUrl) {
+        continue;
+      }
+      if (visitedUrls.has(candidate) || pendingUrls.includes(candidate) || result.includes(candidate)) {
+        continue;
+      }
+      result.push(candidate);
+    }
+    return result;
+  }
+
+  private decodeHttpResponseBody(response: http.HttpResponse, explicitCharset?: string): string {
+    const bytes = this.getResponseBytes(response.result);
+    if (bytes === null) {
+      if (typeof response.result === 'string') {
+        return this.stripTextBom(response.result);
+      }
+      return this.stripTextBom(String(response.result));
+    }
+
+    const sourceCharset = this.normalizeCharsetName(explicitCharset);
+    if (sourceCharset.length > 0) {
+      return this.stripTextBom(this.decodeBytesWithCharset(bytes, sourceCharset));
+    }
+
+    const contentType = this.getResponseHeaderValue(response.header, 'content-type');
+    const headerCharset = this.extractCharsetFromText(contentType);
+    if (headerCharset.length > 0) {
+      return this.stripTextBom(this.decodeBytesWithCharset(bytes, headerCharset));
+    }
+
+    const utf8Text = this.stripTextBom(this.decodeBytesWithCharset(bytes, 'utf-8'));
+    const metaCharset = this.extractHtmlMetaCharset(utf8Text);
+    if (metaCharset.length > 0 && metaCharset.toLowerCase() !== 'utf-8') {
+      return this.stripTextBom(this.decodeBytesWithCharset(bytes, metaCharset));
+    }
+    return utf8Text;
+  }
+
+  private getResponseBytes(result: string | Object | ArrayBuffer): Uint8Array | null {
+    if (result instanceof ArrayBuffer) {
+      return new Uint8Array(result);
+    }
+    return null;
+  }
+
+  private decodeBytesWithCharset(bytes: Uint8Array, charset: string): string {
+    const normalizedCharset = this.normalizeCharsetName(charset);
+    const decoderCharset = normalizedCharset.length > 0 ? normalizedCharset : 'utf-8';
+    try {
+      const decoder = util.TextDecoder.create(decoderCharset, { ignoreBOM: true });
+      return decoder.decodeToString(bytes);
+    } catch (error) {
+      if (decoderCharset.toLowerCase() !== 'utf-8') {
+        logger.warn(TAG, `响应按${decoderCharset}解码失败，回退UTF-8: ${this.formatError(error as Object)}`);
+        const fallbackDecoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
+        return fallbackDecoder.decodeToString(bytes);
+      }
+      logger.warn(TAG, `响应按UTF-8解码失败: ${this.formatError(error as Object)}`);
+      return '';
+    }
+  }
+
+  private getResponseHeaderValue(headerObject: Object, name: string): string {
+    const targetName = name.toLowerCase();
+    const headers = headerObject as Record<string, Object>;
+    const keys = Object.keys(headers);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (key.toLowerCase() === targetName) {
+        return this.headerValueToString(headers[key]);
+      }
+    }
+    return '';
+  }
+
+  private headerValueToString(value: Object): string {
+    if (Array.isArray(value)) {
+      const values = value as Object[];
+      const parts: string[] = [];
+      for (let i = 0; i < values.length; i++) {
+        parts.push(String(values[i]));
+      }
+      return parts.join('; ');
+    }
+    return String(value);
+  }
+
+  private extractCharsetFromText(text: string): string {
+    if (text.length === 0) {
+      return '';
+    }
+    const charsetMatch = text.match(/charset\s*=\s*["']?\s*([^"';,\s>]+)/i);
+    if (!charsetMatch || charsetMatch.length < 2) {
+      return '';
+    }
+    return this.normalizeCharsetName(charsetMatch[1]);
+  }
+
+  private extractHtmlMetaCharset(html: string): string {
+    if (html.length === 0) {
+      return '';
+    }
+    const preview = html.length > 8192 ? html.substring(0, 8192) : html;
+    const directMetaMatch = preview.match(/<meta[^>]+charset\s*=\s*["']?\s*([^"'\s/>;]+)/i);
+    if (directMetaMatch && directMetaMatch.length >= 2) {
+      return this.normalizeCharsetName(directMetaMatch[1]);
+    }
+    const contentMetaMatch = preview.match(/<meta[^>]+content\s*=\s*["'][^"']*charset\s*=\s*([^"';,\s>]+)/i);
+    if (contentMetaMatch && contentMetaMatch.length >= 2) {
+      return this.normalizeCharsetName(contentMetaMatch[1]);
+    }
+    return '';
+  }
+
+  private normalizeCharsetName(charset?: string): string {
+    if (!charset) {
+      return '';
+    }
+    let normalized = charset.trim();
+    while (normalized.startsWith('"') || normalized.startsWith("'") || normalized.startsWith('`')) {
+      normalized = normalized.substring(1);
+    }
+    while (normalized.endsWith('"') || normalized.endsWith("'") || normalized.endsWith('`') ||
+      normalized.endsWith(';') || normalized.endsWith(',')) {
+      normalized = normalized.substring(0, normalized.length - 1).trim();
+    }
+    const lower = normalized.toLowerCase();
+    if (lower === 'utf8') {
+      return 'utf-8';
+    }
+    if (lower === 'utf16') {
+      return 'utf-16';
+    }
+    if (lower === 'unicode') {
+      return 'utf-16';
+    }
+    if (lower === 'escape') {
+      return '';
+    }
+    return normalized;
+  }
+
+  private stripTextBom(text: string): string {
+    if (text.length > 0 && text.charCodeAt(0) === 0xFEFF) {
+      return text.substring(1);
+    }
+    return text;
+  }
+
   private parseDataUrl(url: string): string {
     try {
       logger.debug(TAG, `解析data:URL: ${url.substring(0, Math.min(200, url.length))}...`);
@@ -1023,6 +1435,9 @@ export class NovelSourceExecutor {
   private async executeRequestWithError(request: ParsedUrlRequest): Promise<HttpRequestResult> {
     try {
       request.url = this.normalizeRequestUrl(request.url);
+      if (request.requestUrl && request.requestUrl.length > 0) {
+        request.requestUrl = this.normalizeRequestUrl(request.requestUrl);
+      }
 
       if (this.hasUnresolvedRuleTokens(request.url)) {
         const errorType = this.analyzeJsError(request.url);
@@ -1072,22 +1487,19 @@ export class NovelSourceExecutor {
         return result;
       }
 
+      const httpUrl = request.requestUrl && request.requestUrl.length > 0 ? request.requestUrl : request.url;
       logger.debug(TAG, `请求: ${request.method} ${request.url}`);
       if (request.body) {
         logger.debug(TAG, `请求Body: ${request.body}`);
       }
 
       const httpRequest = http.createHttp();
-      const needCustomDecode: boolean = !!request.charset &&
-        request.charset.toLowerCase() !== 'utf-8' &&
-        request.charset.toLowerCase() !== 'utf8';
-
       const options: http.HttpRequestOptions = {
         method: request.method === RequestMethod.POST ? http.RequestMethod.POST : http.RequestMethod.GET,
         header: this.buildHeaders(request.headers),
         connectTimeout: REQUEST_TIMEOUT_MS,
         readTimeout: REQUEST_TIMEOUT_MS,
-        expectDataType: needCustomDecode ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING
+        expectDataType: http.HttpDataType.ARRAY_BUFFER
       };
 
       const proxyMgr = ProxyManager.getInstance();
@@ -1097,7 +1509,7 @@ export class NovelSourceExecutor {
 
       if (request.method === RequestMethod.POST) {
         const header = options.header as Record<string, string>;
-        if (!header['Content-Type']) {
+        if (!this.hasHeader(header, 'Content-Type')) {
           if (request.body && (request.body.trim().startsWith('{') || request.body.trim().startsWith('['))) {
             header['Content-Type'] = 'application/json; charset=utf-8';
           } else {
@@ -1105,29 +1517,16 @@ export class NovelSourceExecutor {
           }
         }
         if (request.body) {
-          options.extraData = request.body;
+          options.extraData = request.encodedBody !== undefined ? request.encodedBody : request.body;
         }
-        logger.debug(TAG, `POST Content-Type: ${header['Content-Type']}`);
+        logger.debug(TAG, `POST Content-Type: ${this.getHeaderValue(header, 'Content-Type')}`);
       }
 
-      const response = await httpRequest.request(request.url, options);
+      const response = await httpRequest.request(httpUrl, options);
       httpRequest.destroy();
 
       if (response.responseCode >= 200 && response.responseCode < 300) {
-        let responseStr: string;
-        if (needCustomDecode && response.result instanceof ArrayBuffer) {
-          try {
-            const decoder = new util.TextDecoder(request.charset);
-            responseStr = decoder.decodeToString(new Uint8Array(response.result));
-            logger.debug(TAG, `使用${request.charset}解码响应，长度: ${responseStr.length}`);
-          } catch (decodeError) {
-            logger.warn(TAG, `使用${request.charset}解码失败，尝试UTF-8: ${String(decodeError)}`);
-            const decoder = new util.TextDecoder('utf-8');
-            responseStr = decoder.decodeToString(new Uint8Array(response.result));
-          }
-        } else {
-          responseStr = typeof response.result === 'string' ? response.result : String(response.result);
-        }
+        const responseStr: string = this.decodeHttpResponseBody(response, request.charset);
         const successResult: HttpRequestResult = {
           response: responseStr,
           errorType: SearchErrorType.NONE,
@@ -1245,6 +1644,22 @@ export class NovelSourceExecutor {
     return headers;
   }
 
+  private hasHeader(headers: Record<string, string>, name: string): boolean {
+    return this.getHeaderValue(headers, name).length > 0;
+  }
+
+  private getHeaderValue(headers: Record<string, string>, name: string): string {
+    const target = name.toLowerCase();
+    const keys = Object.keys(headers);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (key.toLowerCase() === target) {
+        return String(headers[key] || '');
+      }
+    }
+    return '';
+  }
+
   /**
    * 解析搜索结果（异步版本，支持JS规则）
    */
@@ -1298,6 +1713,7 @@ export class NovelSourceExecutor {
 
     // 使用异步方法获取元素，支持JS规则
     const bookElements = await analyzer.getElementsAsync(rule.bookList);
+    this.persistRuleAnalyzerSourceEffects(analyzer);
     this.searchParseTrace((): string => `[书源:${this.source.bookSourceName}] bookList解析结果: ${bookElements.length} 个元素`);
 
     const scanLimit = Math.min(bookElements.length, maxElementScan);
@@ -1393,7 +1809,7 @@ export class NovelSourceExecutor {
       // 解析bookUrl（使用异步方法支持JS规则）
       const bookUrlRuleValue = readRuleValue(rule.bookUrl, bookUrlUseAsync);
       const bookUrlRaw = typeof bookUrlRuleValue === 'string' ? bookUrlRuleValue : await bookUrlRuleValue;
-      const bookUrl = bookUrlRaw || baseUrl;
+      const bookUrl = this.normalizeParsedUrl(bookUrlRaw, baseUrl, baseUrl);
       await maybeYield();
 
       const authorRuleValue = readRuleValue(rule.author, authorUseAsync);
@@ -1406,7 +1822,8 @@ export class NovelSourceExecutor {
       const intro = typeof introRuleValue === 'string' ? introRuleValue : await introRuleValue;
       await maybeYield();
       const coverRuleValue = readRuleValue(rule.coverUrl, coverUrlUseAsync);
-      const coverUrl = typeof coverRuleValue === 'string' ? coverRuleValue : await coverRuleValue;
+      const coverUrlRaw = typeof coverRuleValue === 'string' ? coverRuleValue : await coverRuleValue;
+      const coverUrl = this.normalizeParsedUrl(coverUrlRaw, baseUrl);
       await maybeYield();
       const chapterRuleValue = readRuleValue(rule.lastChapter, latestChapterUseAsync);
       const latestChapterTitle = typeof chapterRuleValue === 'string' ? chapterRuleValue : await chapterRuleValue;
@@ -1414,6 +1831,7 @@ export class NovelSourceExecutor {
       const wordCountRuleValue = readRuleValue(rule.wordCount, wordCountUseAsync);
       const wordCount = typeof wordCountRuleValue === 'string' ? wordCountRuleValue : await wordCountRuleValue;
       await maybeYield();
+      this.persistRuleAnalyzerSourceEffects(itemAnalyzer);
       
       // 始终输出第一个元素的bookUrl解析信息（用于调试）
       if (i === 0) {
@@ -1495,7 +1913,7 @@ export class NovelSourceExecutor {
       logger.debug(TAG, `解析书名结果: "${resolvedName}", 规则: ${rule?.name}`);
     }
 
-    const tocUrl = rule?.tocUrl ? analyzer.getString(rule.tocUrl) : '';
+    const tocUrl = rule?.tocUrl ? this.normalizeParsedUrl(analyzer.getString(rule.tocUrl), baseUrl) : '';
     if (this.isInvalidParsedTocUrl(tocUrl)) {
       logger.warn(TAG, `目录URL疑似缺少关键参数，详情解析失败: ${tocUrl}`);
       return null;
@@ -1509,6 +1927,7 @@ export class NovelSourceExecutor {
     }
 
     this.syncRuleVariablesToUrlAnalyzer(analyzer.getVariablesSnapshot());
+    this.persistRuleAnalyzerSourceEffects(analyzer);
 
     if (contentToAnalyze.length < 50000) {
       logger.debug(TAG, `解析书籍详情: name=${resolvedName}, bookUrl=${bookUrl}, tocUrl=${tocUrl}`);
@@ -1523,7 +1942,7 @@ export class NovelSourceExecutor {
       author: rule?.author ? analyzer.getString(rule.author) : '',
       kind: rule?.kind ? analyzer.getString(rule.kind) : undefined,
       intro: rule?.intro ? analyzer.getString(rule.intro) : undefined,
-      coverUrl: rule?.coverUrl ? analyzer.getString(rule.coverUrl) : undefined,
+      coverUrl: rule?.coverUrl ? this.normalizeParsedUrl(analyzer.getString(rule.coverUrl), baseUrl) : undefined,
       tocUrl: tocUrl || bookUrl,
       latestChapterTitle: rule?.lastChapter ? analyzer.getString(rule.lastChapter) : undefined,
       wordCount: rule?.wordCount ? analyzer.getString(rule.wordCount) : undefined,
@@ -1691,7 +2110,7 @@ export class NovelSourceExecutor {
     index: number,
     baseUrl: string
   ): string {
-    const normalizedUrl = rawUrl.trim();
+    const normalizedUrl = this.normalizeParsedUrl(rawUrl, baseUrl);
     if (normalizedUrl.length > 0) {
       return normalizedUrl;
     }
@@ -1712,6 +2131,37 @@ export class NovelSourceExecutor {
       return null;
     }
     return urls[0].trim();
+  }
+
+  private extractFirstParsedUrl(input: string, baseUrl: string): string | null {
+    const rawUrl = this.extractFirstNonEmptyLine(input);
+    if (rawUrl === null) {
+      return null;
+    }
+    const parsedUrl = this.normalizeParsedUrl(rawUrl, baseUrl);
+    return parsedUrl.length > 0 ? parsedUrl : null;
+  }
+
+  private extractParsedUrlList(inputs: string[], baseUrl: string): string[] {
+    const result: string[] = [];
+    for (let i = 0; i < inputs.length; i++) {
+      const rawInput = inputs[i];
+      if (!rawInput || rawInput.trim().length <= 0) {
+        continue;
+      }
+      const pieces = rawInput.split('\n');
+      for (let j = 0; j < pieces.length; j++) {
+        const rawUrl = pieces[j].trim();
+        if (rawUrl.length <= 0) {
+          continue;
+        }
+        const parsedUrl = this.normalizeParsedUrl(rawUrl, baseUrl);
+        if (parsedUrl.length > 0 && !result.includes(parsedUrl)) {
+          result.push(parsedUrl);
+        }
+      }
+    }
+    return result;
   }
 
   private resolveContentFallbackWhenRuleMissing(chapter: LegadoChapter): string {
@@ -1741,6 +2191,7 @@ export class NovelSourceExecutor {
     analyzer.setContent(html, baseUrl);
 
     const chapterElements = await analyzer.getElementsAsync(rule.chapterList);
+    this.persistRuleAnalyzerSourceEffects(analyzer);
 
     for (let i = 0; i < chapterElements.length; i++) {
       const itemAnalyzer = this.createRuleAnalyzer();
@@ -1760,6 +2211,7 @@ export class NovelSourceExecutor {
       const fallbackUrl = this.resolveChapterUrlWithFallback(url, title, isVolume, startIndex + i, baseUrl);
       const updateTag = rule.updateTime ? await itemAnalyzer.getStringAsync(rule.updateTime) : '';
       const chapterVariable = this.buildChapterVariablePayload(itemAnalyzer.getVariablesSnapshot());
+      this.persistRuleAnalyzerSourceEffects(itemAnalyzer);
 
       const chapter: LegadoChapter = {
         id: this.generateId(),
@@ -1780,7 +2232,8 @@ export class NovelSourceExecutor {
     let nextUrl: string | null = null;
     if (rule.nextTocUrl) {
       const nextUrlStr = await analyzer.getStringAsync(rule.nextTocUrl);
-      nextUrl = this.extractFirstNonEmptyLine(nextUrlStr);
+      this.persistRuleAnalyzerSourceEffects(analyzer);
+      nextUrl = this.extractFirstParsedUrl(nextUrlStr, baseUrl);
     }
 
     const result: ChapterListParseResult = { chapters: chapters, nextUrl: nextUrl };
@@ -1805,6 +2258,7 @@ export class NovelSourceExecutor {
     analyzer.setContent(html, baseUrl);
 
     let content = await analyzer.getStringAsync(rule.content);
+    this.persistRuleAnalyzerSourceEffects(analyzer);
     if (!content) {
       const emptyResult: ContentParseResult = { content: '', nextUrl: null };
       return emptyResult;
@@ -1816,13 +2270,48 @@ export class NovelSourceExecutor {
         audioContent = HtmlFormatter.unescapeHtml(audioContent);
       }
       let nextUrl: string | null = null;
+      let nextUrls: string[] = [];
       if (rule.nextContentUrl) {
-        const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
-        nextUrl = this.extractFirstNonEmptyLine(nextUrlStr);
+        nextUrls = this.extractParsedUrlList(analyzer.getStringList(rule.nextContentUrl), baseUrl);
+        if (nextUrls.length <= 0) {
+          const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
+          this.persistRuleAnalyzerSourceEffects(analyzer);
+          nextUrl = this.extractFirstParsedUrl(nextUrlStr, baseUrl);
+        } else {
+          nextUrl = nextUrls[0];
+        }
       }
       logger.debug(TAG, `听书源正文保持原始模式: chapter=${chapter.title}, contentLength=${audioContent.length}`);
-      const audioResult: ContentParseResult = { content: audioContent, nextUrl: nextUrl };
+      const audioResult: ContentParseResult = { content: audioContent, nextUrl: nextUrl, nextUrls: nextUrls };
       return audioResult;
+    }
+
+    if (this.source.bookSourceType === LegadoBookSourceType.IMAGE) {
+      content = HtmlFormatter.formatKeepImg(content, baseUrl);
+      if (content.indexOf('&') > -1) {
+        content = HtmlFormatter.unescapeHtml(content);
+      }
+
+      if (rule.replaceRegex && content) {
+        content = this.applyReplaceRules(content, rule.replaceRegex);
+      }
+
+      let nextUrl: string | null = null;
+      let nextUrls: string[] = [];
+      if (rule.nextContentUrl) {
+        nextUrls = this.extractParsedUrlList(analyzer.getStringList(rule.nextContentUrl), baseUrl);
+        if (nextUrls.length <= 0) {
+          const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
+          this.persistRuleAnalyzerSourceEffects(analyzer);
+          nextUrl = this.extractFirstParsedUrl(nextUrlStr, baseUrl);
+        } else {
+          nextUrl = nextUrls[0];
+        }
+      }
+
+      logger.debug(TAG, `漫画书源正文保持图片模式: chapter=${chapter.title}, contentLength=${content.length}`);
+      const imageResult: ContentParseResult = { content: content, nextUrl: nextUrl, nextUrls: nextUrls };
+      return imageResult;
     }
 
     content = HtmlFormatter.format(content, false);
@@ -1840,12 +2329,19 @@ export class NovelSourceExecutor {
     content = HtmlFormatter.cleanContent(content);
 
     let nextUrl: string | null = null;
+    let nextUrls: string[] = [];
     if (rule.nextContentUrl) {
-      const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
-      nextUrl = this.extractFirstNonEmptyLine(nextUrlStr);
+      nextUrls = this.extractParsedUrlList(analyzer.getStringList(rule.nextContentUrl), baseUrl);
+      if (nextUrls.length <= 0) {
+        const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
+        this.persistRuleAnalyzerSourceEffects(analyzer);
+        nextUrl = this.extractFirstParsedUrl(nextUrlStr, baseUrl);
+      } else {
+        nextUrl = nextUrls[0];
+      }
     }
 
-    const result: ContentParseResult = { content: content, nextUrl: nextUrl };
+    const result: ContentParseResult = { content: content, nextUrl: nextUrl, nextUrls: nextUrls };
     return result;
   }
   private async parseContent(html: string, baseUrl: string, chapter: LegadoChapter): Promise<string> {

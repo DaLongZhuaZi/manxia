@@ -44,6 +44,7 @@ import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgro
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { SourceDetailSearchExecutor, getSourceDetailSearchExecutor } from '../Framework/Services/SourceDetailSearchExecutor';
+import { MangaDetailPageParams } from './MangaDetailPage';
 
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -1268,6 +1269,7 @@ export struct GlobalSearchPage {
             contentId: item.rawOnlineComic.id,
             sourceId: item.sourceId,
             sourceName: item.sourceName,
+            sourcePkg: item.sourcePkg,
             cachedTitle: item.title,
             cachedCoverPath: this.getUnifiedDetailCachedCoverPath(item),
             cachedCover: this.getUnifiedDetailCachedCover(item),
@@ -1280,7 +1282,18 @@ export struct GlobalSearchPage {
             comicId: item.rawOnlineComic.id,
             comicTitle: item.rawOnlineComic.title
           };
-          stack.pushPath({ name: 'SourceDetailPage', param: navParam });
+          if (item.sourcePkg && item.sourcePkg.startsWith('legado.image.')) {
+            const mangaDetailParam: MangaDetailPageParams = {
+              mangaId: item.rawOnlineComic.id,
+              sourceId: parseInt(item.sourceId),
+              sourcePkg: item.sourcePkg,
+              cachedTitle: item.title,
+              cachedCover: this.getUnifiedDetailCachedCover(item)
+            };
+            stack.pushPath({ name: 'MangaDetailPage', param: mangaDetailParam });
+          } else {
+            stack.pushPath({ name: 'SourceDetailPage', param: navParam });
+          }
         }
         logger.debug(TAG, `导航到在线漫画详情页: ${item.rawOnlineComic.title}, pageType=${pageType}`);
       }

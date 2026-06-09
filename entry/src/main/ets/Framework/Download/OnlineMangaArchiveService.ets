@@ -1254,13 +1254,14 @@ export class OnlineMangaArchiveService {
         const page = candidate.pageFiles[i];
         await this.databaseManager.executeSql(
           `INSERT INTO online_page
-           (id, chapterId, pageNumber, imageUrl, localPath, width, height, fileSize, isDownloaded, createTime)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, chapterId, pageNumber, imageUrl, requestHeaders, localPath, width, height, fileSize, isDownloaded, createTime)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             generateDbId('online_page'),
             chapterId,
             page.pageIndex,
             page.imageUrl,
+            '',
             page.sourcePath,
             page.width,
             page.height,

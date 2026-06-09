@@ -891,6 +891,7 @@ export interface OnlinePageBackup {
   chapterId: string;
   pageNumber: number;
   imageUrl: string;
+  requestHeaders?: string;
   localPath?: string;
   width: number;
   height: number;

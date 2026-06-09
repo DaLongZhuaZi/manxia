@@ -392,24 +392,13 @@ export class NovelSourceValidator {
   /**
    * 解析用于发现校验的首个可用URL
    */
-  private resolveDiscoveryValidationUrl(source: LegadoBookSource, executor: NovelSourceExecutor): string | null {
+  private async resolveDiscoveryValidationUrl(source: LegadoBookSource, executor: NovelSourceExecutor): Promise<string | null> {
     if (!source.exploreUrl) {
       return null;
     }
 
     const trimmedExploreUrl = source.exploreUrl.trim();
-    const lowerExploreUrl = trimmedExploreUrl.toLowerCase();
-    if (
-      lowerExploreUrl.startsWith('@js:') ||
-      lowerExploreUrl.startsWith('@js：') ||
-      lowerExploreUrl.startsWith('＠js:') ||
-      lowerExploreUrl.startsWith('＠js：') ||
-      lowerExploreUrl.startsWith('<js>')
-    ) {
-      return null;
-    }
-
-    const exploreKinds = executor.getExploreKinds();
+    const exploreKinds = await executor.getExploreKindsAsync();
     for (let i = 0; i < exploreKinds.length; i++) {
       const kindUrl = exploreKinds[i].url ? exploreKinds[i].url.trim() : '';
       if (kindUrl.length > 0 && !this.isDynamicRuleUrl(kindUrl)) {
@@ -592,7 +581,7 @@ export class NovelSourceValidator {
       result.checkedItems.push('发现');
       try {
         // 解析发现URL获取第一个分类
-        const discoveryUrl = this.resolveDiscoveryValidationUrl(source, executor);
+        const discoveryUrl = await this.resolveDiscoveryValidationUrl(source, executor);
         if (!discoveryUrl) {
           if (isAudioSource) {
             this.removeErrorGroup(result, ValidationErrorType.DISCOVERY_EMPTY);

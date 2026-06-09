@@ -57,3 +57,15 @@ export { NovelReplaceRuleManager, getNovelReplaceRuleManager, ReplaceRule, Repla
 
 // 书源校验器
 export { NovelSourceValidator, getNovelSourceValidator, SourceValidationResult, BatchValidationResult, ValidationProgressCallback } from './NovelSourceValidator';
+
+// Legado漫画桥接
+export {
+  LegadoMangaSourceBridge,
+  getLegadoMangaSourceBridge,
+  LegadoMangaVirtualSource,
+  LegadoMangaDetailResult,
+  LegadoMangaChapterResult,
+  LegadoMangaPageResult,
+  LegadoImageRequestContext
+} from './LegadoMangaSourceBridge';
+export { LegadoMangaImageExtractor } from './LegadoMangaImageExtractor';

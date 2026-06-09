@@ -7,11 +7,12 @@
  */
 
 import { logger } from '../../Utils/Logger';
-import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoSourceImportResult, LegadoExploreKind } from './LegadoSourceTypes';
+import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoSourceImportResult, LegadoExploreKind, LegadoBookSourceType } from './LegadoSourceTypes';
 import { LegadoSourceParser } from './LegadoSourceParser';
 import { NovelSourceExecutor, SearchParseOptions } from './NovelSourceExecutor';
 import { NovelSourceInfo, NovelSearchResult } from '../../Models/NovelModels';
 import { getNovelDataManager } from './NovelDataManager';
+import { getLegadoMangaSourceBridge } from './LegadoMangaSourceBridge';
 import { LargeFileJSONParser, ParseProgressCallback, ParseConfig, ParseResult } from './LargeFileJSONParser';
 import { fileIo as fs } from '@kit.CoreFileKit';
 
@@ -132,6 +133,7 @@ export class NovelSourceManager {
             logger.warn(TAG, `书源 ${source.bookSourceName} 保存到数据库失败: ${String(dbError)}`);
           }
         }
+        await this.syncLegadoImageVirtualSource(source);
         
         results.push({
           success: true,
@@ -204,6 +206,7 @@ export class NovelSourceManager {
         } catch (dbError) {
           logger.warn(TAG, `书源 ${source.bookSourceName} 保存到数据库失败: ${String(dbError)}`);
         }
+        await this.syncLegadoImageVirtualSource(source);
         
         results.push({
           success: true,
@@ -273,6 +276,7 @@ export class NovelSourceManager {
    * 删除书源（同时从数据库删除）
    */
   async deleteSource(sourceId: string): Promise<boolean> {
+    const deletedSource = this.sources.get(sourceId) || null;
     this.executors.delete(sourceId);
     const deleted = this.sources.delete(sourceId);
     
@@ -281,6 +285,9 @@ export class NovelSourceManager {
       try {
         const dataManager = getNovelDataManager();
         await dataManager.deleteSource(sourceId);
+        if (deletedSource) {
+          await this.disableLegadoImageVirtualSource(deletedSource);
+        }
         logger.info(TAG, `已删除书源: ${sourceId}`);
       } catch (error) {
         logger.warn(TAG, `从数据库删除书源失败: ${String(error)}`);
@@ -305,10 +312,33 @@ export class NovelSourceManager {
       } catch (error) {
         logger.warn(TAG, `更新书源状态失败: ${String(error)}`);
       }
+      await this.syncLegadoImageVirtualSource(source);
       
       return true;
     }
     return false;
+  }
+
+  private async syncLegadoImageVirtualSource(source: LegadoBookSource): Promise<void> {
+    if (source.bookSourceType !== LegadoBookSourceType.IMAGE) {
+      return;
+    }
+    try {
+      await getLegadoMangaSourceBridge().ensureVirtualComicSource(source);
+    } catch (error) {
+      logger.warn(TAG, `同步Legado漫画虚拟图源失败: ${source.bookSourceName}, ${String(error)}`);
+    }
+  }
+
+  private async disableLegadoImageVirtualSource(source: LegadoBookSource): Promise<void> {
+    if (source.bookSourceType !== LegadoBookSourceType.IMAGE) {
+      return;
+    }
+    try {
+      await getLegadoMangaSourceBridge().disableVirtualComicSource(source);
+    } catch (error) {
+      logger.warn(TAG, `停用Legado漫画虚拟图源失败: ${source.bookSourceName}, ${String(error)}`);
+    }
   }
 
   /**
@@ -542,6 +572,14 @@ export class NovelSourceManager {
     return executor.getExploreKinds();
   }
 
+  async getExploreKindsAsync(sourceId: string): Promise<LegadoExploreKind[]> {
+    const executor = this.getExecutor(sourceId);
+    if (!executor) {
+      return [];
+    }
+    return await executor.getExploreKindsAsync();
+  }
+
   /**
    * 获取发现页书籍列表
    */
@@ -592,7 +630,11 @@ export class NovelSourceManager {
       const dataManager = getNovelDataManager();
       const allSources = this.getAllSources();
       for (const source of allSources) {
+        const fullSource = this.sources.get(source.id) || null;
         await dataManager.deleteSource(source.id);
+        if (fullSource) {
+          await this.disableLegadoImageVirtualSource(fullSource);
+        }
       }
     } catch (error) {
       logger.warn(TAG, `清除数据库书源失败: ${String(error)}`);
@@ -713,6 +755,7 @@ export class NovelSourceManager {
             
             // 保存到数据库
             await dataManager.saveSource(source);
+            await this.syncLegadoImageVirtualSource(source);
             
             result.successCount++;
             progress?.onImportProgress?.(result.successCount, parsedSources.length, source.bookSourceName);
@@ -753,40 +796,8 @@ export class NovelSourceManager {
         return null;
       }
 
-      const source: LegadoBookSource = {
-        bookSourceUrl: String(obj['bookSourceUrl']),
-        bookSourceName: String(obj['bookSourceName']),
-        bookSourceType: typeof obj['bookSourceType'] === 'number' ? obj['bookSourceType'] : 0,
-        bookSourceGroup: obj['bookSourceGroup'] ? String(obj['bookSourceGroup']) : undefined,
-        bookUrlPattern: obj['bookUrlPattern'] ? String(obj['bookUrlPattern']) : undefined,
-        customOrder: typeof obj['customOrder'] === 'number' ? obj['customOrder'] : 0,
-        enabled: obj['enabled'] !== false,
-        enabledExplore: obj['enabledExplore'] !== false,
-        jsLib: obj['jsLib'] ? String(obj['jsLib']) : undefined,
-        enabledCookieJar: obj['enabledCookieJar'] === true,
-        concurrentRate: obj['concurrentRate'] ? String(obj['concurrentRate']) : undefined,
-        header: obj['header'] ? String(obj['header']) : undefined,
-        loginUrl: obj['loginUrl'] ? String(obj['loginUrl']) : undefined,
-        loginUi: obj['loginUi'] ? String(obj['loginUi']) : undefined,
-        loginCheckJs: obj['loginCheckJs'] ? String(obj['loginCheckJs']) : undefined,
-        coverDecodeJs: obj['coverDecodeJs'] ? String(obj['coverDecodeJs']) : undefined,
-        bookSourceComment: obj['bookSourceComment'] ? String(obj['bookSourceComment']) : undefined,
-        variableComment: obj['variableComment'] ? String(obj['variableComment']) : undefined,
-        lastUpdateTime: typeof obj['lastUpdateTime'] === 'number' ? obj['lastUpdateTime'] : Date.now(),
-        respondTime: typeof obj['respondTime'] === 'number' ? obj['respondTime'] : 180000,
-        weight: 0,
-        isNSFW: obj['isNSFW'] === true || obj['isNSFW'] === 1,
-        exploreUrl: obj['exploreUrl'] ? String(obj['exploreUrl']) : undefined,
-        exploreScreen: obj['exploreScreen'] ? String(obj['exploreScreen']) : undefined,
-        searchUrl: obj['searchUrl'] ? String(obj['searchUrl']) : undefined,
-        ruleExplore: obj['ruleExplore'] as ESObject,
-        ruleSearch: obj['ruleSearch'] as ESObject,
-        ruleBookInfo: obj['ruleBookInfo'] as ESObject,
-        ruleToc: obj['ruleToc'] as ESObject,
-        ruleContent: obj['ruleContent'] as ESObject
-      };
-
-      return source;
+      const parser = new LegadoSourceParser();
+      return parser.parseFromJSON(JSON.stringify(obj));
     } catch (error) {
       logger.warn(TAG, `转换书源对象失败: ${String(error)}`);
       return null;

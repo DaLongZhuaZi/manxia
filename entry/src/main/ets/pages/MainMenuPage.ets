@@ -30836,7 +30836,7 @@ struct MainMenuPage {
 
   private getEffectiveBottomBarOffset(): number {
     if (this.isOverlayBottomNavTab(this.currentTabIndex)) {
-      return this.getBottomBarTravelDistance();
+      return this.bottomBarOffsetY;
     }
     if (!this.mainPageBottomBarAnimationEnabled) {
       return 0;
