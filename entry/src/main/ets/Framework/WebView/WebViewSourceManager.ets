@@ -24,6 +24,7 @@ import { AntiCrawlerConfig } from './MangaSourceTypes';
 import { DataManager } from '../Data/DataManager';
 import { WebViewAuthManager } from './WebViewAuthManager';
 import { UserAgentManager } from '../Managers/UserAgentManager';
+import { LegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';
 
 const TAG = 'WebViewSourceManager';
 
@@ -384,6 +385,10 @@ export class WebViewSourceManager implements IWebViewSourceManager {
    */
   async isWebViewSource(sourceId: number): Promise<boolean> {
     try {
+      const record: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(sourceId);
+      if (LegadoMangaSourceBridge.getInstance().isLegadoMangaRecord(record)) {
+        return false;
+      }
       const config: Object | null = await this.dataManager.getSourceConfig(sourceId);
       return !!config && !!(config as Record<string, Object | undefined>)['workflows'];
     } catch (error) {
@@ -472,6 +477,11 @@ export class WebViewSourceManager implements IWebViewSourceManager {
       
       if (!config) {
         throw new Error(`图源配置不存在: ID=${sourceId}, 名称="${sourceName}"`);
+      }
+
+      const actualSourceRecord: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(actualSourceId);
+      if (LegadoMangaSourceBridge.getInstance().isLegadoMangaRecord(actualSourceRecord)) {
+        throw new Error(`Legado IMAGE 虚拟图源不应创建 WebView 引擎: ID=${actualSourceId}, 名称="${actualSourceName}"`);
       }
       
       // 检查是否为WebView类型

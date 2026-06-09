@@ -13,8 +13,14 @@
  */
 
 import { logger } from '../../Utils/Logger';
-import { LegadoUrlOption } from './LegadoSourceTypes';
-import { getLegadoJsEngine, JsContext } from './LegadoJsEngine';
+import { LegadoHeaderOption, LegadoUrlOption } from './LegadoSourceTypes';
+import {
+  getLegadoJsEngine,
+  JsContext,
+  LegadoJsSourceDataChange,
+  LegadoJsSourceEffects
+} from './LegadoJsEngine';
+import { util } from '@kit.ArkTS';
 
 const TAG = 'LegadoUrlAnalyzer';
 
@@ -31,9 +37,11 @@ export enum RequestMethod {
  */
 export interface ParsedUrlRequest {
   url: string;
+  requestUrl?: string;
   method: RequestMethod;
   headers: Record<string, string>;
   body?: string;
+  encodedBody?: string;
   charset?: string;
   useWebView?: boolean;
   webJs?: string;
@@ -61,6 +69,22 @@ interface JsExecutionOutcome {
   useSimpleFallback: boolean;
 }
 
+interface EncodedRequestParts {
+  requestUrl?: string;
+  encodedBody?: string;
+}
+
+interface NormalizedUrlOption {
+  method?: RequestMethod;
+  headers?: Record<string, string>;
+  body?: string;
+  charset?: string;
+  useWebView?: boolean;
+  webJs?: string;
+  retry?: number;
+  js?: string;
+}
+
 /**
  * URL解析器类
  */
@@ -71,6 +95,7 @@ export class LegadoUrlAnalyzer {
   private page: number = 1;
   private sourceUrl: string = '';  // 书源URL，用于JS中的source.getKey()
   private jsLib: string = '';      // 书源JS库快照（避免并发串源）
+  private sourceEffects: LegadoJsSourceEffects = {};
 
   constructor(baseUrl?: string, sourceUrl?: string, jsLib?: string) {
     if (baseUrl) {
@@ -119,6 +144,14 @@ export class LegadoUrlAnalyzer {
     return this;
   }
 
+  getVariablesSnapshot(): Record<string, string> {
+    const snapshot: Record<string, string> = {};
+    this.variables.forEach((value: string, key: string): void => {
+      snapshot[key] = value;
+    });
+    return snapshot;
+  }
+
   /**
    * 解析URL模板（同步版本，不执行JS）
    */
@@ -142,6 +175,7 @@ export class LegadoUrlAnalyzer {
     let useWebView = false;
     let webJs: string | undefined;
     let retry = 0;
+    let optionJs: string | undefined;
     
     // 特殊处理: data:协议URL直接返回，不进行任何解析
     // data:URL用于在书源间传递数据，格式如: data:;base64,{json},{extra}
@@ -187,27 +221,15 @@ export class LegadoUrlAnalyzer {
     if (optionStr) {
       const option = this.parseUrlOption(optionStr);
       if (option) {
-        if (option.method?.toUpperCase() === 'POST') {
-          method = RequestMethod.POST;
-        }
-        if (option.headers) {
-          headers = option.headers;
-        }
-        if (option.body) {
-          body = option.body;
-        }
-        if (option.charset) {
-          charset = option.charset;
-        }
-        if (option.webView) {
-          useWebView = true;
-        }
-        if (option.webJs) {
-          webJs = option.webJs;
-        }
-        if (option.retry) {
-          retry = option.retry;
-        }
+        const normalizedOption = this.normalizeUrlOption(option);
+        if (normalizedOption.method) method = normalizedOption.method;
+        if (normalizedOption.headers) headers = normalizedOption.headers;
+        if (normalizedOption.body !== undefined) body = normalizedOption.body;
+        if (normalizedOption.charset) charset = normalizedOption.charset;
+        if (normalizedOption.useWebView) useWebView = true;
+        if (normalizedOption.webJs) webJs = normalizedOption.webJs;
+        if (normalizedOption.retry !== undefined) retry = normalizedOption.retry;
+        if (normalizedOption.js) optionJs = normalizedOption.js;
       }
     }
 
@@ -226,12 +248,21 @@ export class LegadoUrlAnalyzer {
     // 步骤7: 解析相对URL
     let url = this.resolveUrl(ruleUrl);
     url = this.cleanUrl(url);
+    if (optionJs && optionJs.trim().length > 0) {
+      const optionJsResult = this.executeJsSimple(optionJs, url);
+      if (optionJsResult !== null && optionJsResult.trim().length > 0) {
+        url = this.cleanUrl(this.resolveUrl(optionJsResult));
+      }
+    }
+    const encodedParts = LegadoUrlAnalyzer.buildEncodedRequestParts(url, method, body, charset, headers);
 
     return {
       url,
+      requestUrl: encodedParts.requestUrl,
       method,
       headers,
       body,
+      encodedBody: encodedParts.encodedBody,
       charset,
       useWebView,
       webJs,
@@ -262,6 +293,7 @@ export class LegadoUrlAnalyzer {
     let useWebView = false;
     let webJs: string | undefined;
     let retry = 0;
+    let optionJs: string | undefined;
     
     // 特殊处理: data:协议URL直接返回，不进行任何解析
     // data:URL用于在书源间传递数据，格式如: data:;base64,{json},{extra}
@@ -307,27 +339,15 @@ export class LegadoUrlAnalyzer {
     if (optionStr) {
       const option = this.parseUrlOption(optionStr);
       if (option) {
-        if (option.method?.toUpperCase() === 'POST') {
-          method = RequestMethod.POST;
-        }
-        if (option.headers) {
-          headers = option.headers;
-        }
-        if (option.body) {
-          body = option.body;
-        }
-        if (option.charset) {
-          charset = option.charset;
-        }
-        if (option.webView) {
-          useWebView = true;
-        }
-        if (option.webJs) {
-          webJs = option.webJs;
-        }
-        if (option.retry) {
-          retry = option.retry;
-        }
+        const normalizedOption = this.normalizeUrlOption(option);
+        if (normalizedOption.method) method = normalizedOption.method;
+        if (normalizedOption.headers) headers = normalizedOption.headers;
+        if (normalizedOption.body !== undefined) body = normalizedOption.body;
+        if (normalizedOption.charset) charset = normalizedOption.charset;
+        if (normalizedOption.useWebView) useWebView = true;
+        if (normalizedOption.webJs) webJs = normalizedOption.webJs;
+        if (normalizedOption.retry !== undefined) retry = normalizedOption.retry;
+        if (normalizedOption.js) optionJs = normalizedOption.js;
       }
     }
 
@@ -346,12 +366,23 @@ export class LegadoUrlAnalyzer {
     // 步骤7: 解析相对URL
     let url = this.resolveUrl(ruleUrl);
     url = this.cleanUrl(url);
+    if (optionJs && optionJs.trim().length > 0) {
+      const optionJsResult = await this.executeJsAsync(optionJs, url);
+      if (optionJsResult.success && optionJsResult.result.trim().length > 0) {
+        url = this.cleanUrl(this.resolveUrl(optionJsResult.result));
+      } else if (!optionJsResult.success) {
+        logger.warn(TAG, `URL选项js执行失败: ${optionJsResult.error || ''}`);
+      }
+    }
+    const encodedParts = LegadoUrlAnalyzer.buildEncodedRequestParts(url, method, body, charset, headers);
 
     return {
       url,
+      requestUrl: encodedParts.requestUrl,
       method,
       headers,
       body,
+      encodedBody: encodedParts.encodedBody,
       charset,
       useWebView,
       webJs,
@@ -493,11 +524,12 @@ export class LegadoUrlAnalyzer {
    * 参考: AnalyzeUrl.kt 的 replaceKeyPageJs()
    */
   private replaceKeyPageJs(ruleUrl: string): string {
-    if (!ruleUrl.includes('{{') || !ruleUrl.includes('}}')) {
-      return ruleUrl;
+    let normalizedRuleUrl = this.replaceGetTokens(ruleUrl);
+    if (!normalizedRuleUrl.includes('{{') || !normalizedRuleUrl.includes('}}')) {
+      return normalizedRuleUrl;
     }
 
-    return this.innerRule(ruleUrl, '{{', '}}', (expr: string): string => {
+    return this.innerRule(normalizedRuleUrl, '{{', '}}', (expr: string): string => {
       // 尝试作为简单变量处理
       const trimmedExpr = expr.trim();
       
@@ -508,11 +540,14 @@ export class LegadoUrlAnalyzer {
       if (trimmedExpr === 'page') {
         return String(this.page);
       }
-      if (trimmedExpr === 'source.bookSourceUrl' || trimmedExpr === 'source.getKey()' || trimmedExpr === 'source.getKey') {
+      if (this.isSourceUrlExpression(trimmedExpr)) {
         return this.sourceUrl || this.baseUrl;
       }
       if (this.variables.has(trimmedExpr)) {
         return this.variables.get(trimmedExpr) || '';
+      }
+      if (this.isUrlSideEffectExpression(trimmedExpr)) {
+        return '';
       }
 
       // 尝试作为JS表达式执行
@@ -530,11 +565,12 @@ export class LegadoUrlAnalyzer {
    * 替换 {{...}} 内嵌JS/变量（异步版本）
    */
   private async replaceKeyPageJsAsync(ruleUrl: string): Promise<string> {
-    if (!ruleUrl.includes('{{') || !ruleUrl.includes('}}')) {
-      return ruleUrl;
+    let normalizedRuleUrl = this.replaceGetTokens(ruleUrl);
+    if (!normalizedRuleUrl.includes('{{') || !normalizedRuleUrl.includes('}}')) {
+      return normalizedRuleUrl;
     }
 
-    return await this.innerRuleAsync(ruleUrl, '{{', '}}', async (expr: string): Promise<string> => {
+    return await this.innerRuleAsync(normalizedRuleUrl, '{{', '}}', async (expr: string): Promise<string> => {
       const trimmedExpr = expr.trim();
       
       // 检查是否是简单变量
@@ -544,11 +580,25 @@ export class LegadoUrlAnalyzer {
       if (trimmedExpr === 'page') {
         return String(this.page);
       }
-      if (trimmedExpr === 'source.bookSourceUrl' || trimmedExpr === 'source.getKey()' || trimmedExpr === 'source.getKey') {
+      if (this.isSourceUrlExpression(trimmedExpr)) {
         return this.sourceUrl || this.baseUrl;
       }
       if (this.variables.has(trimmedExpr)) {
         return this.variables.get(trimmedExpr) || '';
+      }
+      if (this.isUrlSideEffectExpression(trimmedExpr)) {
+        const sideEffectResult = await this.executeJsAsync(trimmedExpr);
+        if (sideEffectResult.success && sideEffectResult.result.trim().length > 0) {
+          return sideEffectResult.result;
+        }
+        return '';
+      }
+
+      if (!this.isLikelyComplexJs(trimmedExpr)) {
+        const simpleResult = this.executeJsSimple(trimmedExpr);
+        if (simpleResult !== null) {
+          return simpleResult;
+        }
       }
 
       // 作为JS表达式执行
@@ -673,9 +723,13 @@ export class LegadoUrlAnalyzer {
         }
       }
 
-      // 处理 source.getKey() - 返回书源URL
-      if (code.includes('source.getKey()')) {
-        code = code.replace(/source\.getKey\(\)/g, `"${this.sourceUrl}"`);
+      // 处理 source.key/source.bookSourceUrl/source.getKey() - 返回书源URL
+      if (code.includes('source.getKey') || code.includes('source.key') || code.includes('source.bookSourceUrl')) {
+        const sourceUrlValue = this.sourceUrl || this.baseUrl;
+        code = code.replace(/source\.getKey\(\)/g, `"${sourceUrlValue}"`);
+        code = code.replace(/source\.getKey\b/g, `"${sourceUrlValue}"`);
+        code = code.replace(/source\.key\b/g, `"${sourceUrlValue}"`);
+        code = code.replace(/source\.bookSourceUrl\b/g, `"${sourceUrlValue}"`);
       }
 
       // 处理简单的纯字符串
@@ -767,10 +821,10 @@ export class LegadoUrlAnalyzer {
         return String(result);
       }
 
-      // 处理 encodeURI(key) 或 java.encodeURI(key)
-      const encodeMatch = code.match(/(?:java\.)?encodeURI\s*\(\s*key\s*\)/i);
+      // 处理 encodeURI(key) 或 java.encodeURI(key, "gbk")
+      const encodeMatch = code.match(/(?:java\.)?encodeURI\s*\(\s*key\s*(?:,\s*["']([^"']+)["']\s*)?\)/i);
       if (encodeMatch) {
-        return encodeURIComponent(this.key);
+        return LegadoUrlAnalyzer.encode(this.key, encodeMatch[1]);
       }
 
       // 处理 encodeURIComponent(key)
@@ -863,6 +917,8 @@ export class LegadoUrlAnalyzer {
 
       // 直接传递jsCode，buildNativeScript会自动添加source对象
       const executeResult = await jsEngine.execute(jsCode, context);
+      this.syncVariablesFromRecord(executeResult.variables);
+      this.syncSourceEffects(executeResult.sourceEffects);
       if (executeResult.success && !executeResult.error) {
         if (!(executeResult.result.trim().length === 0 && this.isLikelyComplexJs(jsCode))) {
           const successResult: JsExecutionOutcome = {
@@ -917,6 +973,99 @@ export class LegadoUrlAnalyzer {
       };
       return failedResult;
     }
+  }
+
+  private isUrlSideEffectExpression(expr: string): boolean {
+    const trimmed = expr.trim();
+    return trimmed.includes('cookie.removeCookie') ||
+      trimmed.includes('cookie.setCookie') ||
+      trimmed.includes('java.put(') ||
+      trimmed.includes('java.putCache(') ||
+      trimmed.includes('java.deleteCache(');
+  }
+
+  private syncVariablesFromRecord(variables?: Record<string, string>): void {
+    if (!variables) {
+      return;
+    }
+    const keys = Object.keys(variables);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = variables[key];
+      if (key && key.length > 0 && value !== undefined && value !== null) {
+        this.variables.set(key, String(value));
+      }
+    }
+  }
+
+  private syncSourceEffects(effects?: LegadoJsSourceEffects): void {
+    if (!effects) {
+      return;
+    }
+    if (effects.loginInfo !== undefined && effects.loginInfo !== null) {
+      this.sourceEffects.loginInfo = String(effects.loginInfo);
+    }
+    if (effects.loginHeader !== undefined && effects.loginHeader !== null) {
+      this.sourceEffects.loginHeader = String(effects.loginHeader);
+    }
+    if (effects.sourceVariable !== undefined && effects.sourceVariable !== null) {
+      this.sourceEffects.sourceVariable = String(effects.sourceVariable);
+    }
+    if (effects.removeLoginHeader === true) {
+      this.sourceEffects.removeLoginHeader = true;
+    }
+    if (effects.data && effects.data.length > 0) {
+      const existing: LegadoJsSourceDataChange[] = this.sourceEffects.data ? this.sourceEffects.data : [];
+      for (let i = 0; i < effects.data.length; i++) {
+        const item = effects.data[i];
+        if (!item) {
+          continue;
+        }
+        const key = String(item.key || '').trim();
+        if (key.length <= 0) {
+          continue;
+        }
+        existing.push({
+          key: key,
+          value: String(item.value || '')
+        });
+      }
+      if (existing.length > 0) {
+        this.sourceEffects.data = existing;
+      }
+    }
+  }
+
+  getSourceEffectsSnapshot(): LegadoJsSourceEffects {
+    const snapshot: LegadoJsSourceEffects = {};
+    if (this.sourceEffects.loginInfo !== undefined) {
+      snapshot.loginInfo = this.sourceEffects.loginInfo;
+    }
+    if (this.sourceEffects.loginHeader !== undefined) {
+      snapshot.loginHeader = this.sourceEffects.loginHeader;
+    }
+    if (this.sourceEffects.sourceVariable !== undefined) {
+      snapshot.sourceVariable = this.sourceEffects.sourceVariable;
+    }
+    if (this.sourceEffects.removeLoginHeader === true) {
+      snapshot.removeLoginHeader = true;
+    }
+    if (this.sourceEffects.data && this.sourceEffects.data.length > 0) {
+      const changes: LegadoJsSourceDataChange[] = [];
+      for (let i = 0; i < this.sourceEffects.data.length; i++) {
+        const item = this.sourceEffects.data[i];
+        changes.push({
+          key: item.key,
+          value: item.value
+        });
+      }
+      snapshot.data = changes;
+    }
+    return snapshot;
+  }
+
+  clearSourceEffects(): void {
+    this.sourceEffects = {};
   }
 
   private isLikelyComplexJs(jsCode: string): boolean {
@@ -1051,6 +1200,410 @@ export class LegadoUrlAnalyzer {
     }
   }
 
+  private static buildEncodedRequestParts(
+    url: string,
+    method: RequestMethod,
+    body: string | undefined,
+    charset: string | undefined,
+    headers: Record<string, string>
+  ): EncodedRequestParts {
+    const result: EncodedRequestParts = {};
+    if (method === RequestMethod.GET) {
+      result.requestUrl = LegadoUrlAnalyzer.buildEncodedGetUrl(url, charset);
+      return result;
+    }
+
+    result.requestUrl = url;
+    if (body !== undefined) {
+      result.encodedBody = LegadoUrlAnalyzer.shouldEncodePostForm(body, headers)
+        ? LegadoUrlAnalyzer.encodeParams(body, charset, false)
+        : body;
+    }
+    return result;
+  }
+
+  private static buildEncodedGetUrl(url: string, charset?: string): string {
+    const queryStart = url.indexOf('?');
+    if (queryStart < 0) {
+      return url;
+    }
+    const hashStart = url.indexOf('#', queryStart + 1);
+    const path = url.substring(0, queryStart);
+    const query = hashStart >= 0 ? url.substring(queryStart + 1, hashStart) : url.substring(queryStart + 1);
+    const fragment = hashStart >= 0 ? url.substring(hashStart) : '';
+    if (query.length <= 0) {
+      return url;
+    }
+    const encodedQuery = LegadoUrlAnalyzer.encodeParams(query, charset, true);
+    return `${path}?${encodedQuery}${fragment}`;
+  }
+
+  private static shouldEncodePostForm(body: string, headers: Record<string, string>): boolean {
+    const trimmedBody = body.trim();
+    if (trimmedBody.length <= 0) {
+      return true;
+    }
+    if (LegadoUrlAnalyzer.isJsonBody(trimmedBody) || LegadoUrlAnalyzer.isXmlBody(trimmedBody)) {
+      return false;
+    }
+    return !LegadoUrlAnalyzer.hasHeader(headers, 'Content-Type');
+  }
+
+  private static isJsonBody(value: string): boolean {
+    return (value.startsWith('{') && value.endsWith('}')) ||
+      (value.startsWith('[') && value.endsWith(']'));
+  }
+
+  private static isXmlBody(value: string): boolean {
+    return value.startsWith('<') && value.endsWith('>');
+  }
+
+  private static hasHeader(headers: Record<string, string>, headerName: string): boolean {
+    const target = headerName.toLowerCase();
+    const keys = Object.keys(headers);
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i].toLowerCase() === target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static encodeParams(params: string, charset: string | undefined, isQuery: boolean): string {
+    const normalizedCharset = charset ? charset.trim().toLowerCase() : '';
+    const checkEncoded = normalizedCharset.length <= 0;
+    if (isQuery && normalizedCharset !== 'escape' && LegadoUrlAnalyzer.isEncodedQuery(params)) {
+      return params;
+    }
+    if (isQuery) {
+      return LegadoUrlAnalyzer.percentEncodeByAllowedSet(params, normalizedCharset, true, checkEncoded);
+    }
+
+    const parts: string[] = [];
+    let pos = 0;
+    while (pos <= params.length) {
+      let ampOffset = params.indexOf('&', pos);
+      if (ampOffset < 0) {
+        ampOffset = params.length;
+      }
+      const eqOffset = params.indexOf('=', pos);
+      if (eqOffset < 0 || eqOffset > ampOffset) {
+        const keyOnly = params.substring(pos, ampOffset);
+        parts.push(LegadoUrlAnalyzer.encodeFormComponent(keyOnly, normalizedCharset, checkEncoded));
+      } else {
+        const key = params.substring(pos, eqOffset);
+        const value = params.substring(eqOffset + 1, ampOffset);
+        parts.push(`${LegadoUrlAnalyzer.encodeFormComponent(key, normalizedCharset, checkEncoded)}=${LegadoUrlAnalyzer.encodeFormComponent(value, normalizedCharset, checkEncoded)}`);
+      }
+      if (ampOffset >= params.length) {
+        break;
+      }
+      pos = ampOffset + 1;
+    }
+    return parts.join('&');
+  }
+
+  private static encodeFormComponent(value: string, charset: string, checkEncoded: boolean): string {
+    if (checkEncoded && LegadoUrlAnalyzer.isEncodedForm(value)) {
+      return value;
+    }
+    if (charset === 'escape') {
+      return LegadoUrlAnalyzer.escapeEncode(value);
+    }
+    return LegadoUrlAnalyzer.percentEncodeByAllowedSet(value, charset, false, false);
+  }
+
+  private static percentEncodeByAllowedSet(
+    value: string,
+    charset: string,
+    isQuery: boolean,
+    checkEncoded: boolean
+  ): string {
+    const result: string[] = [];
+    let i = 0;
+    while (i < value.length) {
+      const char = value.charAt(i);
+      if (checkEncoded && char === '%' && i + 2 < value.length &&
+        LegadoUrlAnalyzer.isHexChar(value.charAt(i + 1)) && LegadoUrlAnalyzer.isHexChar(value.charAt(i + 2))) {
+        result.push(value.substring(i, i + 3));
+        i += 3;
+        continue;
+      }
+      if (LegadoUrlAnalyzer.isAllowedUrlChar(char, isQuery)) {
+        result.push(char);
+      } else if (!isQuery && char === ' ') {
+        result.push('+');
+      } else {
+        result.push(LegadoUrlAnalyzer.percentEncodeChar(char, charset));
+      }
+      i++;
+    }
+    return result.join('');
+  }
+
+  private static percentEncodeChar(char: string, charset: string): string {
+    if (charset === 'escape') {
+      return LegadoUrlAnalyzer.escapeEncode(char);
+    }
+    try {
+      const encoder = charset.length > 0 ? new util.TextEncoder(charset) : new util.TextEncoder('utf-8');
+      const encoded = encoder.encodeInto(char);
+      const bytes = new Uint8Array(encoded.buffer);
+      const parts: string[] = [];
+      for (let i = 0; i < bytes.length; i++) {
+        parts.push(`%${bytes[i].toString(16).toUpperCase().padStart(2, '0')}`);
+      }
+      return parts.join('');
+    } catch (error) {
+      logger.warn(TAG, `按${charset || 'utf-8'}编码URL参数失败，回退encodeURIComponent: ${String(error)}`);
+      return encodeURIComponent(char);
+    }
+  }
+
+  private static isAllowedUrlChar(char: string, isQuery: boolean): boolean {
+    const code = char.charCodeAt(0);
+    if ((code >= 0x30 && code <= 0x39) ||
+      (code >= 0x41 && code <= 0x5A) ||
+      (code >= 0x61 && code <= 0x7A)) {
+      return true;
+    }
+    const allowed = isQuery ? "!$&()*+,-./:;=?@[\\]^_`{|}~" : "*-._";
+    return allowed.indexOf(char) >= 0;
+  }
+
+  private static isEncodedQuery(value: string): boolean {
+    for (let i = 0; i < value.length; i++) {
+      const char = value.charAt(i);
+      if (LegadoUrlAnalyzer.isAllowedUrlChar(char, true)) {
+        continue;
+      }
+      if (char === '%' && i + 2 < value.length &&
+        LegadoUrlAnalyzer.isHexChar(value.charAt(i + 1)) && LegadoUrlAnalyzer.isHexChar(value.charAt(i + 2))) {
+        i += 2;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  private static isEncodedForm(value: string): boolean {
+    for (let i = 0; i < value.length; i++) {
+      const char = value.charAt(i);
+      if (LegadoUrlAnalyzer.isAllowedUrlChar(char, false)) {
+        continue;
+      }
+      if (char === '%' && i + 2 < value.length &&
+        LegadoUrlAnalyzer.isHexChar(value.charAt(i + 1)) && LegadoUrlAnalyzer.isHexChar(value.charAt(i + 2))) {
+        i += 2;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  private static isHexChar(char: string): boolean {
+    return /^[0-9a-fA-F]$/.test(char);
+  }
+
+  private static escapeEncode(value: string): string {
+    const result: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const code = value.charCodeAt(i);
+      if ((code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)) {
+        result.push(value.charAt(i));
+        continue;
+      }
+      if (code < 16) {
+        result.push(`%0${code.toString(16)}`);
+      } else if (code < 256) {
+        result.push(`%${code.toString(16)}`);
+      } else {
+        result.push(`%u${code.toString(16)}`);
+      }
+    }
+    return result.join('');
+  }
+
+  private replaceGetTokens(input: string): string {
+    if (!input.includes('@get:')) {
+      return input;
+    }
+    return input.replace(/@get:\{([^}]+)\}/gi, (_match: string, key: string): string => {
+      const trimmedKey = key.trim();
+      if (trimmedKey.length <= 0) {
+        return '';
+      }
+      if (trimmedKey === 'key') {
+        return this.key;
+      }
+      if (trimmedKey === 'page') {
+        return String(this.page);
+      }
+      if (trimmedKey === 'baseUrl') {
+        return this.baseUrl;
+      }
+      if (trimmedKey === 'sourceUrl') {
+        return this.sourceUrl || this.baseUrl;
+      }
+      return this.variables.get(trimmedKey) || '';
+    });
+  }
+
+  private isSourceUrlExpression(expr: string): boolean {
+    return expr === 'source.key' ||
+      expr === 'source.bookSourceUrl' ||
+      expr === 'source.getKey()' ||
+      expr === 'source.getKey';
+  }
+
+  private normalizeUrlOption(option: LegadoUrlOption): NormalizedUrlOption {
+    const normalized: NormalizedUrlOption = {};
+    const methodText = option.method ? option.method.trim().toUpperCase() : '';
+    let bodyText = option.body;
+
+    if ((bodyText === undefined || bodyText === null) && option.data !== undefined && option.data !== null) {
+      bodyText = this.stringifyOptionData(option.data);
+    }
+
+    if (methodText === 'POST' || (methodText.length <= 0 && bodyText !== undefined)) {
+      normalized.method = RequestMethod.POST;
+    }
+
+    const mergedHeaders: Record<string, string> = {};
+    this.mergeHeaders(mergedHeaders, option.headers);
+    this.mergeHeaders(mergedHeaders, option.header);
+    if (Object.keys(mergedHeaders).length > 0) {
+      normalized.headers = mergedHeaders;
+    }
+
+    if (bodyText !== undefined && bodyText !== null) {
+      normalized.body = bodyText;
+    }
+    if (option.charset) normalized.charset = option.charset;
+    if (option.webView) normalized.useWebView = true;
+    if (option.webJs) normalized.webJs = option.webJs;
+    if (option.retry !== undefined) normalized.retry = option.retry;
+    if (option.js) normalized.js = option.js;
+    return normalized;
+  }
+
+  private mergeHeaders(target: Record<string, string>, source?: LegadoHeaderOption): void {
+    if (!source) {
+      return;
+    }
+    const normalized = this.normalizeHeaderOption(source);
+    if (!normalized) {
+      return;
+    }
+    const keys = Object.keys(normalized);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = normalized[key];
+      if (value !== undefined && value !== null) {
+        target[key] = String(value);
+      }
+    }
+  }
+
+  private normalizeHeaderOption(source: LegadoHeaderOption): Record<string, string> | undefined {
+    if (typeof source !== 'string') {
+      return source;
+    }
+    const trimmed = source.trim();
+    if (trimmed.length <= 0) {
+      return undefined;
+    }
+
+    const parsed = this.tryParseHeaderRecord(trimmed);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+
+    const fixedHeader = trimmed
+      .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$-]*)\s*:/g, '$1"$2":')
+      .replace(/([{,]\s*)'([^']+)'\s*:/g, '$1"$2":')
+      .replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, (match: string, value: string): string => {
+        const escapedValue = value.replace(/"/g, '\\"');
+        return `:"${escapedValue}"`;
+      });
+    const fixedParsed = this.tryParseHeaderRecord(fixedHeader);
+    if (fixedParsed !== undefined) {
+      return fixedParsed;
+    }
+
+    return this.parseHeaderPairs(trimmed);
+  }
+
+  private tryParseHeaderRecord(headerJson: string): Record<string, string> | undefined {
+    const parsed = SafeUtils.parseObj<Record<string, Object>>(headerJson);
+    if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const keys = Object.keys(parsed);
+    if (keys.length <= 0) {
+      return undefined;
+    }
+    const headers: Record<string, string> = {};
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i].trim();
+      const value = parsed[key];
+      if (key.length > 0 && value !== undefined && value !== null) {
+        headers[key] = String(value);
+      }
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  }
+
+  private parseHeaderPairs(headerText: string): Record<string, string> | undefined {
+    let body = headerText.trim();
+    if (body.startsWith('{') && body.endsWith('}')) {
+      body = body.substring(1, body.length - 1);
+    }
+    const headers: Record<string, string> = {};
+    const pairs = body.split(',');
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i].trim();
+      const splitIndex = pair.indexOf(':');
+      if (splitIndex <= 0) {
+        continue;
+      }
+      const key = this.trimHeaderToken(pair.substring(0, splitIndex));
+      const value = this.trimHeaderToken(pair.substring(splitIndex + 1));
+      if (key.length > 0 && value.length > 0) {
+        headers[key] = value;
+      }
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  }
+
+  private trimHeaderToken(value: string): string {
+    let result = value.trim();
+    if (result.length >= 2) {
+      const first = result.charAt(0);
+      const last = result.charAt(result.length - 1);
+      if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
+        result = result.substring(1, result.length - 1).trim();
+      }
+    }
+    return result;
+  }
+
+  private stringifyOptionData(data: string | Record<string, string>): string {
+    if (typeof data === 'string') {
+      return data;
+    }
+    const pairs: string[] = [];
+    const keys = Object.keys(data);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = data[key];
+      pairs.push(`${key}=${value}`);
+    }
+    return pairs.join('&');
+  }
+
   /**
    * 解析URL选项JSON（宽松模式）
    * 参考Legado原版GSON宽松解析，支持以下非标准格式：
@@ -1066,11 +1619,9 @@ export class LegadoUrlAnalyzer {
     
     let jsonStr = optionStr.trim();
     
-    // 步骤1: 首先尝试标准JSON解析
-    try {
-      return SafeUtils.parseObj(jsonStr) as LegadoUrlOption;
-    } catch (e) {
-      // 标准解析失败，尝试宽松解析
+    const strictOption = this.tryParseUrlOptionJson(jsonStr);
+    if (strictOption !== null) {
+      return strictOption;
     }
     
     // 步骤2: 宽松JSON修复
@@ -1109,7 +1660,11 @@ export class LegadoUrlAnalyzer {
       
       logger.debug(TAG, `宽松JSON修复: 原始=${optionStr.substring(0, 100)}, 修复后=${fixedJson.substring(0, 100)}`);
       
-      return SafeUtils.parseObj(fixedJson) as LegadoUrlOption;
+      const fixedOption = this.tryParseUrlOptionJson(fixedJson);
+      if (fixedOption !== null) {
+        return fixedOption;
+      }
+      return this.manualParseUrlOption(jsonStr);
     } catch (e2) {
       // 步骤3: 如果还是失败，尝试手动解析关键字段
       try {
@@ -1119,6 +1674,33 @@ export class LegadoUrlAnalyzer {
         return null;
       }
     }
+  }
+
+  private tryParseUrlOptionJson(jsonStr: string): LegadoUrlOption | null {
+    const parsed: LegadoUrlOption = SafeUtils.parseObj<LegadoUrlOption>(jsonStr);
+    if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    if (!this.hasUrlOptionField(parsed) && jsonStr.trim() !== '{}') {
+      return null;
+    }
+    return parsed;
+  }
+
+  private hasUrlOptionField(option: LegadoUrlOption): boolean {
+    return option.method !== undefined ||
+      option.charset !== undefined ||
+      option.headers !== undefined ||
+      option.header !== undefined ||
+      option.body !== undefined ||
+      option.data !== undefined ||
+      option.retry !== undefined ||
+      option.type !== undefined ||
+      option.webView !== undefined ||
+      option.webJs !== undefined ||
+      option.js !== undefined ||
+      option.serverID !== undefined ||
+      option.webViewDelayTime !== undefined;
   }
   
   /**
@@ -1159,6 +1741,18 @@ export class LegadoUrlAnalyzer {
     if (bodyMatch) {
       option.body = bodyMatch[1].trim();
     }
+    if (!option.body) {
+      let dataMatch = optionStr.match(/data\s*[:=]\s*"([^"]*)"/i);
+      if (!dataMatch) {
+        dataMatch = optionStr.match(/data\s*[:=]\s*'([^']*)'/i);
+      }
+      if (!dataMatch) {
+        dataMatch = optionStr.match(/data\s*[:=]\s*([^,}"']+)/i);
+      }
+      if (dataMatch) {
+        option.data = dataMatch[1].trim();
+      }
+    }
     
     // 提取charset字段
     const charsetMatch = optionStr.match(/charset\s*[:=]\s*["']?([^"',}\s]+)["']?/i);
@@ -1184,8 +1778,8 @@ export class LegadoUrlAnalyzer {
       option.retry = parseInt(retryMatch[1]);
     }
     
-    // 提取headers字段（复杂对象，尝试提取）
-    const headersMatch = optionStr.match(/headers\s*[:=]\s*(\{[^}]*\})/i);
+    // 提取headers/header字段（复杂对象，尝试提取）
+    const headersMatch = optionStr.match(/(?:headers|header)\s*[:=]\s*(\{[^}]*\})/i);
     if (headersMatch) {
       try {
         // 递归修复headers的JSON
@@ -1199,7 +1793,7 @@ export class LegadoUrlAnalyzer {
     }
     
     // 如果至少提取到了method或body，认为解析成功
-    if (option.method || option.body) {
+    if (option.method || option.body || option.data) {
       logger.debug(TAG, `手动解析URL选项成功: method=${option.method}, body=${option.body?.substring(0, 50)}`);
       return option;
     }

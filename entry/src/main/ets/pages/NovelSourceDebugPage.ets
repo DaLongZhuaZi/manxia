@@ -15,9 +15,10 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { NovelSourceExecutor } from '../Framework/Novel/NovelSourceExecutor';
+import { LegadoMangaImageExtractor } from '../Framework/Novel/LegadoMangaImageExtractor';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
@@ -318,7 +319,23 @@ export struct NovelSourceDebugPage {
       if (content && content.length > 0) {
         this.chapterContent = content;
         this.addLog('success', `获取正文成功，${content.length} 字符 (${elapsed}ms)`);
-        this.addLog('debug', `正文预览: ${content.substring(0, 200)}...`);
+        if (this.source && this.source.bookSourceType === LegadoBookSourceType.IMAGE) {
+          const imageUrls = LegadoMangaImageExtractor.extractImageUrls(content, chapter.url);
+          const pageSegments = content.split('\n\n').filter((segment: string): boolean => segment.trim().length > 0).length;
+          this.addLog('success', `漫画图片解析成功，${imageUrls.length} 张图片`);
+          this.addLog('debug', `分页正文统计: ${pageSegments} 段，章节URL=${chapter.url}`);
+          const headerSummary = this.buildImageHeaderDebugSummary(this.source, chapter.url);
+          this.addLog('debug', `图片请求头摘要: ${headerSummary}`);
+          const sampleCount = Math.min(5, imageUrls.length);
+          for (let i = 0; i < sampleCount; i++) {
+            this.addLog('debug', `图片${i + 1}: ${imageUrls[i]}`);
+          }
+          if (imageUrls.length === 0) {
+            this.addLog('warn', 'IMAGE书源正文未解析到图片，请检查ruleContent.content或图片属性');
+          }
+        } else {
+          this.addLog('debug', `正文预览: ${content.substring(0, 200)}...`);
+        }
       } else {
         this.addLog('warn', `获取正文失败，返回空数据 (${elapsed}ms)`);
       }
@@ -327,6 +344,25 @@ export struct NovelSourceDebugPage {
     }
     
     this.isRunning = false;
+  }
+
+  private buildImageHeaderDebugSummary(source: LegadoBookSource, chapterUrl: string): string {
+    const parts: string[] = [];
+    if (source.header && source.header.trim().length > 0) {
+      parts.push(`source.header=${source.header.length}字符`);
+    } else {
+      parts.push('source.header=空');
+    }
+    if (source.loginUrl && source.loginUrl.trim().length > 0) {
+      parts.push('login=已配置');
+    } else {
+      parts.push('login=未配置');
+    }
+    if (chapterUrl && chapterUrl.trim().length > 0) {
+      parts.push('Referer=章节URL');
+    }
+    parts.push('User-Agent=默认/书源');
+    return parts.join(', ');
   }
 
   /**

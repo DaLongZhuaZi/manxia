@@ -195,13 +195,13 @@ export struct NovelExplorePage {
     }
   }
 
-  loadExploreKinds(): void {
+  async loadExploreKinds(): Promise<void> {
     if (!this.selectedSourceId) {
       this.isLoading = false;
       return;
     }
     
-    const kinds = this.sourceManager.getExploreKinds(this.selectedSourceId);
+    const kinds = await this.sourceManager.getExploreKindsAsync(this.selectedSourceId);
     this.exploreKinds = kinds;
     this.selectedKindIndex = 0;
     

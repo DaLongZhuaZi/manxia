@@ -7,7 +7,7 @@
  */
 
 import { logger } from '../../Utils/Logger';
-import { MangaDownloadManager, DownloadTaskInfo, TaskStatus, PageListFetcher } from './DownloadManager';
+import { MangaDownloadManager, DownloadTaskInfo, TaskStatus, PageListFetcher, DownloadPageItem } from './DownloadManager';
 import { getNovelChapterCacheManager, NovelChapterCacheManager, DownloadProgressCallback as NovelDownloadCallback } from '../Novel/NovelChapterCacheManager';
 import { LegadoChapter } from '../Novel/LegadoSourceTypes';
 import { AppNotificationManager } from '../Managers/NotificationManager';
@@ -820,4 +820,4 @@ export function getUnifiedDownloadManager(): UnifiedDownloadManager {
   return UnifiedDownloadManager.getInstance();
 }
 
-export { PageListFetcher };
+export { PageListFetcher, DownloadPageItem };

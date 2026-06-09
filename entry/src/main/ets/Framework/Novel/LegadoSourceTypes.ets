@@ -414,15 +414,21 @@ export interface LegadoParsedRule {
 /**
  * URL选项
  */
+export type LegadoHeaderOption = string | Record<string, string>;
+
 export interface LegadoUrlOption {
   /** 请求方法 */
   method?: string;
   /** 瀛楃闆?*/
   charset?: string;
   /** 璇锋眰澶?*/
-  headers?: Record<string, string>;
+  headers?: LegadoHeaderOption;
+  /** Legado别名：请求头 */
+  header?: LegadoHeaderOption;
   /** 璇锋眰浣?*/
   body?: string;
+  /** Legado别名：请求体 */
+  data?: string | Record<string, string>;
   /** 重试次数 */
   retry?: number;
   /** 类型 */

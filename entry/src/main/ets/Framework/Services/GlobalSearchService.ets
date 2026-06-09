@@ -19,6 +19,7 @@ import { EBook } from '../../Models/EBookModels';
 import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../../Models/NovelModels';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { SourceDetailSearchExecutor, SourceDetailSearchResult, getSourceDetailSearchExecutor } from './SourceDetailSearchExecutor';
+import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
 
 const TAG = 'GlobalSearchService';
 
@@ -66,6 +67,7 @@ export interface UnifiedSearchItem {
   onlineSourceType?: OnlineSourceType; // 在线源类型
   sourceId: string;                  // 源ID
   sourceName: string;                // 源名称
+  sourcePkg?: string;                // 图源稳定包名（Legado IMAGE 虚拟图源恢复用）
   // 原始数据
   rawManga?: ComicInfo;
   rawEbook?: EBook;
@@ -178,7 +180,9 @@ export class GlobalSearchService {
    */
   getAvailableNovelSources(): NovelSourceInfo[] {
     try {
-      return this.novelSourceManager.getEnabledSources().filter(s => s.searchable);
+      return this.novelSourceManager.getEnabledSources().filter((source: NovelSourceInfo): boolean => {
+        return source.searchable && source.bookSourceType !== LegadoBookSourceType.IMAGE;
+      });
     } catch (error) {
       logger.error(TAG, `获取小说书源失败: ${error}`);
       return [];
@@ -321,6 +325,7 @@ export class GlobalSearchService {
         onlineSourceType: OnlineSourceType.MANGA_SOURCE,
         sourceId: String(sourceId),
         sourceName: sourceSearchResult.sourceName || sourceName,
+        sourcePkg: source?.pkg || '',
         rawOnlineComic: comic
       }));
     } catch (error) {

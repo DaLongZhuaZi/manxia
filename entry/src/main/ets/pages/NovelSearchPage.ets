@@ -11,6 +11,8 @@ import { promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
+import { LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { getLegadoMangaSourceBridge, LegadoMangaVirtualSource } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { getNovelSettingsManager, NovelSettingsManager } from '../Framework/Novel/NovelSettingsManager';
 import { NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -21,6 +23,7 @@ import { DeviceAdaptationManager, DeviceChangeListener } from '../Framework/Mana
 import { AppColors } from '../Framework/Theme/AppColors';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { MangaDetailPageParams } from './MangaDetailPage';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { SettingsImmersiveTitleBar } from './settings/SettingsImmersiveTitleBar';
@@ -696,7 +699,43 @@ export struct NovelSearchPage {
     return path;
   }
 
-  openBookDetail(book: NovelSearchResult): void {
+  async openBookDetail(book: NovelSearchResult): Promise<void> {
+    const sourceManager = getNovelSourceManager();
+    const source = sourceManager.getSource(book.sourceId);
+    if (source && source.bookSourceType === LegadoBookSourceType.IMAGE) {
+      const virtualSource: LegadoMangaVirtualSource | null =
+        await getLegadoMangaSourceBridge().ensureVirtualComicSource(source);
+      if (!virtualSource || virtualSource.sourceId <= 0) {
+        promptAction.showToast({ message: '漫画书源桥接失败，请稍后重试' });
+        return;
+      }
+
+      const pageType = PageSettingsHelper.getMangaDetailPageType();
+      if (pageType === DetailPageType.UNIFIED) {
+        const unifiedParams: UnifiedDetailPageParams = {
+          contentType: UnifiedContentType.MANGA,
+          contentId: book.bookUrl,
+          sourceId: String(virtualSource.sourceId),
+          sourceName: book.sourceName,
+          sourcePkg: virtualSource.pkg,
+          cachedTitle: book.name,
+          cachedCover: book.coverUrl,
+          cachedAuthor: book.author
+        };
+        this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+      } else {
+        const mangaParams: MangaDetailPageParams = {
+          mangaId: book.bookUrl,
+          sourceId: virtualSource.sourceId,
+          sourcePkg: virtualSource.pkg,
+          cachedTitle: book.name,
+          cachedCover: book.coverUrl
+        };
+        this.pathStack.pushPathByName('MangaDetailPage', mangaParams);
+      }
+      return;
+    }
+
     // 根据页面设置决定使用哪个详情页
     const pageType = PageSettingsHelper.getNovelDetailPageType();
     
@@ -1285,7 +1324,7 @@ export struct NovelSearchPage {
       offsetX: 0,
       offsetY: 8
     })
-    .onClick(() => this.openBookDetail(book))
+    .onClick(() => { void this.openBookDetail(book); })
   }
 
   @Builder
@@ -1386,7 +1425,7 @@ export struct NovelSearchPage {
       offsetX: 0,
       offsetY: 8
     })
-    .onClick(() => this.openBookDetail(book))
+    .onClick(() => { void this.openBookDetail(book); })
   }
 
   @Builder

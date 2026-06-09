@@ -245,6 +245,7 @@ export interface OnlinePageInfoDatabaseRecord {
   chapterId: string;
   pageNumber: number;
   imageUrl: string;
+  requestHeaders?: string;
   width: number;
   height: number;
   fileSize: number;
@@ -787,6 +788,7 @@ export function convertOnlinePageInfoToDbFormat(record: OnlinePageInfoDatabaseRe
     "chapterId": record.chapterId,
     "pageNumber": record.pageNumber,
     "imageUrl": record.imageUrl,
+    "requestHeaders": record.requestHeaders ? record.requestHeaders : '',
     "width": record.width,
     "height": record.height,
     "fileSize": record.fileSize,
@@ -944,6 +946,7 @@ export interface GenericQueryRecord {
   // page 表字段
   index?: DatabaseValue;
   imageUrl?: DatabaseValue;
+  requestHeaders?: DatabaseValue;
   localPath?: DatabaseValue;
   width?: DatabaseValue;
   height?: DatabaseValue;

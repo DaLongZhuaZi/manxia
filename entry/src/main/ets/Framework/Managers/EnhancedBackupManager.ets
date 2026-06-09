@@ -4247,6 +4247,7 @@ export class EnhancedBackupManager {
               chapterId: String(pageRecord['chapterId'] || ''),
               pageNumber: Number(pageRecord['pageNumber'] || 0),
               imageUrl: String(pageRecord['imageUrl'] || ''),
+              requestHeaders: String(pageRecord['requestHeaders'] || ''),
               localPath: String(pageRecord['localPath'] || ''),
               width: Number(pageRecord['width'] || 0),
               height: Number(pageRecord['height'] || 0),
@@ -5427,13 +5428,14 @@ export class EnhancedBackupManager {
               const pages = chapter.pages as OnlinePageBackup[] | undefined;
               if (pages) {
                 for (const page of pages) {
-                  const sqlPage = 'INSERT OR REPLACE INTO online_page (id, chapterId, pageNumber, imageUrl, localPath, width, height, fileSize, isDownloaded, createTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+                  const sqlPage = 'INSERT OR REPLACE INTO online_page (id, chapterId, pageNumber, imageUrl, requestHeaders, localPath, width, height, fileSize, isDownloaded, createTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
                   
                   await this.dbManager.executeSql(sqlPage, [
                     page.id,
                     page.chapterId || chapter.id,
                     page.pageNumber,
                     page.imageUrl,
+                    page.requestHeaders || '',
                     page.localPath || '',
                     page.width || 0,
                     page.height || 0,

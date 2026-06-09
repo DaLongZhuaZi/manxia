@@ -70,6 +70,7 @@ import {
   PageDimensionsInfo
 } from '../Utils/DoublePageSmartLayoutHelper';
 import { PageInfo as SourcePageInfo, PageRequestHeader as SourcePageRequestHeader } from '../Framework/WebView/MangaSourceTypes';
+import { getLegadoMangaSourceBridge, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { MangaSourceAPIEngine } from '../Framework/WebView/MangaSourceAPIEngine';
 import { ChapterPreloadManager } from '../Framework/Preload/ChapterPreloadManager';
 import { OnlineArchiveExtractedPage, OnlineArchiveExtractResult, OnlineMangaArchiveService } from '../Framework/Download/OnlineMangaArchiveService';
@@ -1875,6 +1876,110 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
     return clonedHeaders.length > 0 ? clonedHeaders : undefined;
   }
 
+  private serializeSourcePageRequestHeaders(headers: SourcePageRequestHeader[] | undefined): string {
+    if (!headers || headers.length <= 0) {
+      return '';
+    }
+    const normalized: SourcePageRequestHeader[] = [];
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      if (!header) {
+        continue;
+      }
+      const name = String(header.name || '').trim();
+      const value = String(header.value || '').trim();
+      if (name.length <= 0 || value.length <= 0) {
+        continue;
+      }
+      normalized.push({
+        name: name,
+        value: value
+      } as SourcePageRequestHeader);
+    }
+    if (normalized.length <= 0) {
+      return '';
+    }
+    return SafeUtils.stringifyJson(normalized, '');
+  }
+
+  private parseOnlinePageRequestHeaders(pageInfo: OnlinePageInfo): MangaImageRequestHeader[] | undefined {
+    const rawHeaders = pageInfo.requestHeaders || '';
+    if (rawHeaders.trim().length <= 0) {
+      return undefined;
+    }
+    const parsed: SourcePageRequestHeader[] = SafeUtils.parseArr<SourcePageRequestHeader[]>(rawHeaders);
+    if (!parsed || parsed.length <= 0) {
+      return undefined;
+    }
+    const clonedHeaders: MangaImageRequestHeader[] = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const header = parsed[i];
+      if (!header) {
+        continue;
+      }
+      const name = String(header.name || '').trim();
+      const value = String(header.value || '').trim();
+      if (name.length <= 0 || value.length <= 0) {
+        continue;
+      }
+      clonedHeaders.push({
+        name: name,
+        value: value
+      } as MangaImageRequestHeader);
+    }
+    return clonedHeaders.length > 0 ? clonedHeaders : undefined;
+  }
+
+  private parseOnlinePageSourceRequestHeaders(pageInfo: OnlinePageInfo): SourcePageRequestHeader[] | undefined {
+    const rawHeaders = pageInfo.requestHeaders || '';
+    if (rawHeaders.trim().length <= 0) {
+      return undefined;
+    }
+    const parsed: SourcePageRequestHeader[] = SafeUtils.parseArr<SourcePageRequestHeader[]>(rawHeaders);
+    if (!parsed || parsed.length <= 0) {
+      return undefined;
+    }
+    const clonedHeaders: SourcePageRequestHeader[] = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const header = parsed[i];
+      if (!header) {
+        continue;
+      }
+      const name = String(header.name || '').trim();
+      const value = String(header.value || '').trim();
+      if (name.length <= 0 || value.length <= 0) {
+        continue;
+      }
+      clonedHeaders.push({
+        name: name,
+        value: value
+      } as SourcePageRequestHeader);
+    }
+    return clonedHeaders.length > 0 ? clonedHeaders : undefined;
+  }
+
+  private hasNetworkPagesWithoutRequestHeaders(pages: MangaPage[]): boolean {
+    if (!pages || pages.length <= 0) {
+      return false;
+    }
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      if (!page) {
+        continue;
+      }
+      const imageUrl = page.imageUrl || page.imagePath || '';
+      const isNetworkPage = page.sourceType === ImageSourceType.NETWORK &&
+        (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'));
+      if (!isNetworkPage) {
+        continue;
+      }
+      if (!page.requestHeaders || page.requestHeaders.length <= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private isKomiicSourceForReader(): boolean {
     let baseUrl = '';
     const engine: MangaSourceEngine | null = this.mangaEngine;
@@ -3388,6 +3493,9 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
         // 直接使用传递的漫画对象（通常来自WebView图源）
       const isWebViewSource = params.contentType === MangaReaderContentType.OnlineUndownloaded ||
                            params.contentType === MangaReaderContentType.OnlineDownloaded;
+      const isLegadoBridgeSource: boolean = params.sourceId !== undefined && params.sourceId > 0
+        ? await getLegadoMangaSourceBridge().isLegadoMangaSourceId(params.sourceId)
+        : false;
 
 
       if (params.manga) {
@@ -3457,7 +3565,7 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
         }
         
         // 如果是WebView图源，初始化MangaSourceEngine
-        if (isWebViewSource && params.sourceId) {
+        if (isWebViewSource && params.sourceId && !isLegadoBridgeSource) {
             this.currentSourceId = params.sourceId;
             this.currentSourcePkg = params.sourcePkg || '';
               logger.info(TAG, `✅ MangaSourceEngine初始化成功`);
@@ -4028,7 +4136,60 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
         logger.debug(TAG, `📄 第一页数据: imageUrl="${firstPage.imageUrl}", imagePath="${firstPage.imagePath}"`);
       }
 
-      if (isWebViewSource && this.mangaEngine && !hasValidPages) {
+      const isLegadoBridgeCurrentSource: boolean = this.currentSourceId > 0
+        ? await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.currentSourceId)
+        : false;
+      const shouldReloadLegadoBridgePages: boolean = isLegadoBridgeCurrentSource &&
+        (!hasValidPages || this.hasNetworkPagesWithoutRequestHeaders(this.readerState.currentChapter.pages));
+      if (isWebViewSource && shouldReloadLegadoBridgePages) {
+        const externalMangaId = await this.getExternalMangaIdForOnlineUndownloaded(params.mangaId || manga.id);
+        let externalChapterId: string;
+        if (params.chapterId && !params.chapterId.startsWith('id_') && !params.chapterId.startsWith('local_')) {
+          externalChapterId = params.chapterId;
+        } else {
+          externalChapterId = await this.getExternalChapterIdForOnlineUndownloaded(this.readerState.currentChapter);
+        }
+
+        const bridgePages: LegadoMangaPageResult | null =
+          await getLegadoMangaSourceBridge().loadPageList(this.currentSourceId, externalMangaId, externalChapterId);
+        if (!bridgePages || bridgePages.pages.length === 0) {
+          const errorMsg = 'Legado漫画页面列表为空';
+          this.readerState.errorMessage = errorMsg;
+          this.readerState.isLoading = false;
+          throw new Error(errorMsg);
+        }
+
+        const currentChapterId = this.readerState.currentChapter.id;
+        const mangaPages: MangaPage[] = bridgePages.pages.map((pageInfo: SourcePageInfo, index: number): MangaPage => {
+          return {
+            id: `${currentChapterId}_page_${pageInfo.page}`,
+            index: index,
+            sourceType: ImageSourceType.NETWORK,
+            imagePath: pageInfo.imageUrl,
+            imageUrl: pageInfo.imageUrl,
+            width: pageInfo.width,
+            height: pageInfo.height,
+            fileSize: 0,
+            requestHeaders: this.cloneSourcePageRequestHeaders(pageInfo),
+            isLoaded: false
+          } as MangaPage;
+        });
+        this.readerState.currentChapter.pages = mangaPages;
+        this.readerState.currentChapter.totalPages = bridgePages.pages.length;
+        getLegadoMangaSourceBridge().savePagesToDatabase(currentChapterId, bridgePages.pages).catch((err: Error) => {
+          logger.warn(TAG, `Legado漫画页面保存失败: ${err.message}`);
+        });
+        if (this.mangaViewerComponent) {
+          this.mangaViewerComponent.kickstartLoading();
+        }
+        this.recordMangaReadFlowRecovered(
+          'legado_bridge_page_list_resolved',
+          `chapterId=${currentChapterId}, pages=${bridgePages.pages.length}`
+        );
+        didDynamicPageList = true;
+      }
+
+      if (isWebViewSource && this.mangaEngine && !isLegadoBridgeCurrentSource && !hasValidPages) {
         logger.info(TAG, 'WebView chapter has no valid local pages, fallback to source getPageList');
 
         // [P0] Cache-first: already cached online pages should bypass network page-list flow.
@@ -4071,6 +4232,7 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
               width: pageInfo.width,
               height: pageInfo.height,
               fileSize: pageInfo.fileSize,
+              requestHeaders: this.parseOnlinePageRequestHeaders(pageInfo),
               isLoaded: false
             } as MangaPage;
           });
@@ -4221,7 +4383,8 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
                 page: p.pageNumber,
                 imageUrl: p.imageUrl,
                 width: p.width,
-                height: p.height
+                height: p.height,
+                requestHeaders: this.parseOnlinePageSourceRequestHeaders(p)
               } as SourcePageInfo;
               return sp;
             });
@@ -7007,6 +7170,7 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
         chapterId: chapterId,
         pageNumber: i,
         imageUrl: pageInfo.imageUrl,
+        requestHeaders: this.serializeSourcePageRequestHeaders(pageInfo.requestHeaders),
         width: pageInfo.width || 0,
         height: pageInfo.height || 0,
         fileSize: 0
@@ -7063,6 +7227,81 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
       if (archiveLoaded) {
         return;
       }
+    }
+
+    const isLegadoBridgeSource: boolean = this.currentSourceId > 0
+      ? await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.currentSourceId)
+      : false;
+    if (isLegadoBridgeSource) {
+      if (!this.shouldRefreshVolatileSourcePages()) {
+        try {
+          const dataManager = DataManager.getInstance();
+          const cachedOnlinePages = await dataManager.getOnlineChapterPages(chapter.id);
+          const validCachedOnlinePages = cachedOnlinePages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
+          if (validCachedOnlinePages.length > 0) {
+            const cachedMangaPages: MangaPage[] = validCachedOnlinePages.map((p: OnlinePageInfo, index: number): MangaPage => {
+              return {
+                id: p.id || `${chapter.id}_page_${p.pageNumber}`,
+                index: index,
+                sourceType: p.localPath && p.localPath.length > 0 ? ImageSourceType.LOCAL : ImageSourceType.NETWORK,
+                imagePath: p.localPath && p.localPath.length > 0 ? p.localPath : p.imageUrl,
+                imageUrl: p.imageUrl,
+                localPath: p.localPath,
+                width: p.width,
+                height: p.height,
+                fileSize: p.fileSize,
+                requestHeaders: this.parseOnlinePageRequestHeaders(p),
+                isLoaded: false
+              } as MangaPage;
+            });
+            if (!this.hasNetworkPagesWithoutRequestHeaders(cachedMangaPages)) {
+              chapter.pages = maxPages > 0 && maxPages < cachedMangaPages.length
+                ? cachedMangaPages.slice(0, maxPages)
+                : cachedMangaPages;
+              chapter.totalPages = cachedMangaPages.length;
+              logger.info(TAG, `[缓存优先] Legado漫画命中 online_page: 章节=${chapter.title}, 页数=${chapter.pages.length}/${cachedMangaPages.length}`);
+              return;
+            }
+            logger.info(TAG, `[缓存优先] Legado漫画缓存缺少请求头，刷新页面列表: 章节=${chapter.title}`);
+          }
+        } catch (cacheError) {
+          logger.warn(TAG, `Legado漫画缓存优先查询失败: ${String(cacheError)}`);
+        }
+      }
+
+      const externalChapterId = await this.getExternalChapterIdForOnlineUndownloaded(chapter);
+      const externalMangaId = await this.getExternalMangaIdForOnlineUndownloaded(this.readerState.currentManga?.id || '');
+      const bridgePages: LegadoMangaPageResult | null =
+        await getLegadoMangaSourceBridge().loadPageList(this.currentSourceId, externalMangaId, externalChapterId);
+      if (!bridgePages || bridgePages.pages.length === 0) {
+        throw new Error('Legado漫画页面列表为空');
+      }
+
+      let pagesToPreload = bridgePages.pages;
+      if (maxPages > 0 && maxPages < bridgePages.pages.length) {
+        pagesToPreload = bridgePages.pages.slice(0, maxPages);
+      }
+      chapter.pages = pagesToPreload.map((pageInfo: SourcePageInfo, index: number): MangaPage => {
+        return {
+          id: `${chapter.id}_page_${pageInfo.page}`,
+          index: index,
+          sourceType: ImageSourceType.NETWORK,
+          imagePath: pageInfo.imageUrl,
+          imageUrl: pageInfo.imageUrl,
+          width: pageInfo.width,
+          height: pageInfo.height,
+          fileSize: 0,
+          requestHeaders: this.cloneSourcePageRequestHeaders(pageInfo),
+          isLoaded: false
+        } as MangaPage;
+      });
+      chapter.totalPages = bridgePages.pages.length;
+
+      getLegadoMangaSourceBridge().savePagesToDatabase(chapter.id, bridgePages.pages).catch((err: Error) => {
+        logger.warn(TAG, `Legado漫画页面保存失败: ${err.message}`);
+      });
+      logger.info(TAG, `✅ Legado漫画章节 ${chapter.title} 页面加载完成: ${chapter.pages.length}/${bridgePages.pages.length}`);
+      return;
     }
 
     // 如果MangaEngine未初始化，尝试从数据库加载页面信息
@@ -7139,6 +7378,7 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
               width: dbPage.width,
               height: dbPage.height,
               fileSize: dbPage.fileSize,
+              requestHeaders: this.parseOnlinePageRequestHeaders(dbPage),
               isLoaded: false
             };
           });
@@ -7183,6 +7423,7 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
               width: p.width,
               height: p.height,
               fileSize: p.fileSize,
+              requestHeaders: this.parseOnlinePageRequestHeaders(p),
               isLoaded: false
             } as MangaPage;
           });

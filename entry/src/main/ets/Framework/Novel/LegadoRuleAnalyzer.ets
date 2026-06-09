@@ -9,10 +9,16 @@
 
 import { logger } from '../../Utils/Logger';
 import { LegadoRuleMode, LegadoParsedRule } from './LegadoSourceTypes';
-import { getLegadoJsEngine, JsContext } from './LegadoJsEngine';
+import {
+  getLegadoJsEngine,
+  JsContext,
+  LegadoJsSourceDataChange,
+  LegadoJsSourceEffects
+} from './LegadoJsEngine';
 import { LegadoHtmlBridge, createLegadoHtmlBridge, HTMLElement as HtmlElement } from '../../libs/htmlparser';
 
 const TAG = 'LegadoRuleAnalyzer';
+const REGEX_GROUP_PAYLOAD_KEY = '__legadoRegexGroups';
 
 /**
  * 性能保护配置
@@ -70,6 +76,11 @@ interface CssSelectorResult {
   attr: string;
 }
 
+enum IndexSelectorItemType {
+  Single = 0,
+  Range = 1
+}
+
 /**
  * 索引范围接口
  */
@@ -77,6 +88,18 @@ interface IndexRange {
   start: number;
   end: number;
   step: number;
+  startOmitted: boolean;
+  endOmitted: boolean;
+}
+
+interface IndexSelectorItem {
+  itemType: IndexSelectorItemType;
+  index: number;
+  start: number;
+  end: number;
+  step: number;
+  startOmitted: boolean;
+  endOmitted: boolean;
 }
 
 /**
@@ -88,6 +111,12 @@ interface IndexSelectorResult {
   exclude: boolean;
   indexes: number[];
   ranges: IndexRange[];
+  items: IndexSelectorItem[];
+}
+
+interface JsonFilterOperatorMatch {
+  operator: string;
+  index: number;
 }
 
 /**
@@ -96,6 +125,18 @@ interface IndexSelectorResult {
 interface RuleSplitResult {
   rules: string[];
   splitType: string;
+}
+
+interface RuleReplaceParts {
+  rule: string;
+  replaceRegex?: string;
+  replacement?: string;
+  replaceFirst: boolean;
+}
+
+interface RegexGroupPayload {
+  __legadoRegexGroups: string[];
+  __legadoRegexText: string;
 }
 
 class TagRegexPair {
@@ -275,6 +316,7 @@ export class LegadoRuleAnalyzer {
   private baseUrl: string = '';
   private isJSON: boolean = false;
   private variables: Map<string, string> = new Map();
+  private sourceEffects: LegadoJsSourceEffects = {};
   private htmlBridge: LegadoHtmlBridge | null = null;
   private htmlToTextCache: Map<string, string> = new Map();
   private maxElementsLimit: number = 0;
@@ -481,39 +523,7 @@ export class LegadoRuleAnalyzer {
     let mode = LegadoRuleMode.Default;
     const putMap: Record<string, string> = {};
 
-    // 处理@put规则
-    // Legado的@put格式是 @put:{key:value,key2:value2}，不是标准JSON
-    const putPattern = /@put:\{([^}]+)\}/gi;
-    let putMatch = putPattern.exec(rule);
-    while (putMatch !== null) {
-      rule = rule.replace(putMatch[0], '');
-      try {
-        // 尝试标准JSON解析
-        const putJson = SafeUtils.parseObj(`{${putMatch[1]}}`) as Record<string, string>;
-        Object.keys(putJson).forEach(key => {
-          putMap[key] = putJson[key];
-        });
-      } catch (e) {
-        // [修复] 如果JSON解析失败，尝试解析Legado的key:value格式
-        // 格式: id:id,name:name,author:author
-        try {
-          const pairs = putMatch[1].split(',');
-          for (const pair of pairs) {
-            const colonIndex = pair.indexOf(':');
-            if (colonIndex > 0) {
-              const key = pair.substring(0, colonIndex).trim();
-              const value = pair.substring(colonIndex + 1).trim();
-              if (key && value) {
-                putMap[key] = value;
-              }
-            }
-          }
-        } catch (e2) {
-          logger.warn(TAG, `解析@put规则失败: ${putMatch[1]}`);
-        }
-      }
-      putMatch = putPattern.exec(rule);
-    }
+    rule = this.splitPutRule(rule, putMap);
 
     // 识别规则模式
     if (rule.startsWith('@XPath:') || rule.startsWith('@xpath:')) {
@@ -569,17 +579,11 @@ export class LegadoRuleAnalyzer {
     let replacement: string | undefined;
     let replaceFirst = false;
 
-    const regexParts = rule.split('##');
-    if (regexParts.length > 1) {
-      rule = regexParts[0];
-      replaceRegex = regexParts[1];
-      if (regexParts.length > 2) {
-        replacement = regexParts[2];
-      }
-      if (regexParts.length > 3) {
-        replaceFirst = true;
-      }
-    }
+    const replaceParts = this.splitReplaceRule(rule);
+    rule = replaceParts.rule;
+    replaceRegex = replaceParts.replaceRegex;
+    replacement = replaceParts.replacement;
+    replaceFirst = replaceParts.replaceFirst;
 
     const parsedRule: LegadoParsedRule = {
       mode,
@@ -593,6 +597,174 @@ export class LegadoRuleAnalyzer {
     return parsedRule;
   }
 
+  private splitPutRule(ruleText: string, putMap: Record<string, string>): string {
+    let result = '';
+    let cursor = 0;
+    while (cursor < ruleText.length) {
+      const markerIndex = this.indexOfIgnoreCase(ruleText, '@put:{', cursor);
+      if (markerIndex < 0) {
+        result += ruleText.substring(cursor);
+        break;
+      }
+      result += ruleText.substring(cursor, markerIndex);
+      const braceStart = markerIndex + 5;
+      const braceEnd = this.findBalancedBraceEnd(ruleText, braceStart);
+      if (braceEnd < 0) {
+        result += ruleText.substring(markerIndex);
+        break;
+      }
+      const putBody = ruleText.substring(braceStart + 1, braceEnd);
+      this.parsePutRuleBody(putBody, putMap);
+      cursor = braceEnd + 1;
+    }
+    return result.trim();
+  }
+
+  private indexOfIgnoreCase(text: string, search: string, fromIndex: number): number {
+    const lowerText = text.toLowerCase();
+    const lowerSearch = search.toLowerCase();
+    return lowerText.indexOf(lowerSearch, fromIndex);
+  }
+
+  private parsePutRuleBody(body: string, putMap: Record<string, string>): void {
+    try {
+      const parsed = SafeUtils.parseObj(`{${body}}`) as Record<string, string>;
+      const keys = Object.keys(parsed);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i].trim();
+        const value = parsed[key] === undefined || parsed[key] === null ? '' : String(parsed[key]).trim();
+        if (key.length > 0 && value.length > 0) {
+          putMap[key] = value;
+        }
+      }
+      return;
+    } catch (_error) {
+    }
+
+    const pairs = this.splitTopLevelText(body, ',');
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i].trim();
+      if (pair.length <= 0) {
+        continue;
+      }
+      const colonIndex = this.findTopLevelChar(pair, ':');
+      if (colonIndex <= 0) {
+        continue;
+      }
+      const rawKey = pair.substring(0, colonIndex).trim();
+      const rawValue = pair.substring(colonIndex + 1).trim();
+      const key = this.unquoteRuleText(rawKey);
+      const value = this.unquoteRuleText(rawValue);
+      if (key.length > 0 && value.length > 0) {
+        putMap[key] = value;
+      }
+    }
+  }
+
+  private splitTopLevelText(text: string, delimiter: string): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let quote = '';
+    let escaped = false;
+    let braceDepth = 0;
+    let bracketDepth = 0;
+    let parenDepth = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quote.length > 0) {
+        current += ch;
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        current += ch;
+        continue;
+      }
+      if (ch === '{') {
+        braceDepth++;
+      } else if (ch === '}' && braceDepth > 0) {
+        braceDepth--;
+      } else if (ch === '[') {
+        bracketDepth++;
+      } else if (ch === ']' && bracketDepth > 0) {
+        bracketDepth--;
+      } else if (ch === '(') {
+        parenDepth++;
+      } else if (ch === ')' && parenDepth > 0) {
+        parenDepth--;
+      }
+      if (ch === delimiter && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
+        parts.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    parts.push(current);
+    return parts;
+  }
+
+  private findTopLevelChar(text: string, target: string): number {
+    let quote = '';
+    let escaped = false;
+    let braceDepth = 0;
+    let bracketDepth = 0;
+    let parenDepth = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quote.length > 0) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        continue;
+      }
+      if (ch === '{') {
+        braceDepth++;
+      } else if (ch === '}' && braceDepth > 0) {
+        braceDepth--;
+      } else if (ch === '[') {
+        bracketDepth++;
+      } else if (ch === ']' && bracketDepth > 0) {
+        bracketDepth--;
+      } else if (ch === '(') {
+        parenDepth++;
+      } else if (ch === ')' && parenDepth > 0) {
+        parenDepth--;
+      }
+      if (ch === target && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private unquoteRuleText(text: string): string {
+    const trimmed = text.trim();
+    if (trimmed.length >= 2) {
+      const first = trimmed[0];
+      const last = trimmed[trimmed.length - 1];
+      if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+        return trimmed.substring(1, trimmed.length - 1);
+      }
+    }
+    return trimmed;
+  }
+
   /**
    * 获取字符串结果
    * 支持规则分割符: && (与), || (或), %% (交叉合并)
@@ -603,18 +775,7 @@ export class LegadoRuleAnalyzer {
     }
 
     try {
-      // 先处理 @get:{xxx} 变量获取
-      let processedRule = ruleStr;
-      if (processedRule.includes('@get:')) {
-        processedRule = processedRule.replace(/@get:\{([^}]+)\}/gi, (match: string, key: string): string => {
-          return this.variables.get(key.trim()) || '';
-        });
-      }
-      
-      // 检查是否包含{{}}模板变量，如果有则先替换
-      if (processedRule.includes('{{') && processedRule.includes('}}')) {
-        return this.replaceTemplateVariables(processedRule);
-      }
+      const processedRule = this.preprocessRuleText(ruleStr);
 
       // 处理规则分割符
       const splitResult = this.splitRuleStr(processedRule);
@@ -639,18 +800,7 @@ export class LegadoRuleAnalyzer {
     }
 
     try {
-      // 先处理 @get:{xxx} 变量获取
-      let processedRule = ruleStr;
-      if (processedRule.includes('@get:')) {
-        processedRule = processedRule.replace(/@get:\{([^}]+)\}/gi, (match: string, key: string): string => {
-          return this.variables.get(key.trim()) || '';
-        });
-      }
-      
-      // 检查是否包含{{}}模板变量，如果有则先替换
-      if (processedRule.includes('{{') && processedRule.includes('}}')) {
-        return this.replaceTemplateVariables(processedRule);
-      }
+      const processedRule = await this.preprocessRuleTextAsync(ruleStr);
 
       // 处理规则分割符
       const splitResult = this.splitRuleStr(processedRule);
@@ -695,6 +845,11 @@ export class LegadoRuleAnalyzer {
    * 获取单个规则的字符串结果（异步版本）
    */
   private async getStringSingleAsync(ruleStr: string): Promise<string> {
+    const chainedParts = this.splitJsonFirstRuleChain(ruleStr);
+    if (chainedParts.length > 1) {
+      return await this.getStringFromJsonFirstRuleChainAsync(chainedParts);
+    }
+
     // 检查是否是组合规则：主规则@js:JS代码
     const jsPostfixMatch = ruleStr.match(/^(.+?)@js:(.+)$/i);
     if (jsPostfixMatch) {
@@ -714,11 +869,49 @@ export class LegadoRuleAnalyzer {
     
     return await this.getStringSingleInternalAsync(ruleStr);
   }
+
+  private async getStringFromJsonFirstRuleChainAsync(parts: string[]): Promise<string> {
+    const firstResult = await this.getStringSingleInternalAsync(parts[0]);
+    if (firstResult.length <= 0) {
+      return '';
+    }
+    let currentContent = firstResult;
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      const result = await this.getStringSingleInternalAsyncWithContent(part, currentContent);
+      if (result.length <= 0) {
+        return '';
+      }
+      currentContent = result;
+    }
+    return currentContent;
+  }
+
+  private async getStringSingleInternalAsyncWithContent(ruleStr: string, content: string): Promise<string> {
+    const originalContent = this.content;
+    const originalBridge = this.htmlBridge;
+    const originalIsJSON = this.isJSON;
+    this.content = content;
+    this.isJSON = this.checkIsJSON(content);
+    this.htmlBridge = null;
+    try {
+      return await this.getStringSingleInternalAsync(ruleStr);
+    } finally {
+      this.content = originalContent;
+      this.isJSON = originalIsJSON;
+      this.htmlBridge = originalBridge;
+    }
+  }
   
   /**
    * 内部方法：获取单个规则的字符串结果（异步版本）
    */
   private async getStringSingleInternalAsync(ruleStr: string): Promise<string> {
+    const regexGroupValue = this.getStringFromRegexGroupPayload(ruleStr);
+    if (regexGroupValue !== null) {
+      return regexGroupValue;
+    }
+
     const parsedRule = this.parseRule(ruleStr);
     if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
       logger.debug(TAG, `getStringSingleInternalAsync: mode=${parsedRule.mode}, rule=${ruleStr.substring(0, 50)}...`);
@@ -939,6 +1132,11 @@ export class LegadoRuleAnalyzer {
    * 支持组合规则：如 $.name@js:java.put("name",result);result
    */
   private getStringSingle(ruleStr: string): string {
+    const chainedParts = this.splitJsonFirstRuleChain(ruleStr);
+    if (chainedParts.length > 1) {
+      return this.getStringFromJsonFirstRuleChain(chainedParts);
+    }
+
     // 检查是否是组合规则：主规则@js:JS代码
     // 例如：$.name@js:java.put("name",result);result
     const jsPostfixMatch = ruleStr.match(/^(.+?)@js:(.+)$/i);
@@ -957,14 +1155,101 @@ export class LegadoRuleAnalyzer {
       }
       return '';
     }
-    
+
     return this.getStringSingleInternal(ruleStr);
+  }
+
+  private splitJsonFirstRuleChain(ruleStr: string): string[] {
+    const trimmed = ruleStr.trim();
+    if (!this.startsWithJsonRulePrefix(trimmed)) {
+      return [ruleStr];
+    }
+    const parts: string[] = [];
+    let current = '';
+    let quote = '';
+    let escaped = false;
+    let bracketDepth = 0;
+    let parenDepth = 0;
+    let braceDepth = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (quote.length > 0) {
+        current += ch;
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        current += ch;
+        continue;
+      }
+      if (ch === '[') {
+        bracketDepth++;
+      } else if (ch === ']' && bracketDepth > 0) {
+        bracketDepth--;
+      } else if (ch === '(') {
+        parenDepth++;
+      } else if (ch === ')' && parenDepth > 0) {
+        parenDepth--;
+      } else if (ch === '{') {
+        braceDepth++;
+      } else if (ch === '}' && braceDepth > 0) {
+        braceDepth--;
+      }
+      if (ch === '@' && bracketDepth === 0 && parenDepth === 0 && braceDepth === 0) {
+        if (current.trim().length > 0) {
+          parts.push(current.trim());
+        }
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    if (current.trim().length > 0) {
+      parts.push(current.trim());
+    }
+    return parts.length > 1 ? parts : [ruleStr];
+  }
+
+  private startsWithJsonRulePrefix(rule: string): boolean {
+    return rule.startsWith('$.') ||
+      rule.startsWith('$[') ||
+      rule.startsWith('@Json:') ||
+      rule.startsWith('@json:');
+  }
+
+  private getStringFromJsonFirstRuleChain(parts: string[]): string {
+    const firstResult = this.getStringSingleInternal(parts[0]);
+    if (firstResult.length <= 0) {
+      return '';
+    }
+    let currentContent = firstResult;
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      const result = this.getStringSingleInternalWithContent(part, currentContent);
+      if (result.length <= 0) {
+        return '';
+      }
+      currentContent = result;
+    }
+    return currentContent;
   }
   
   /**
    * 内部方法：获取单个规则的字符串结果
    */
   private getStringSingleInternal(ruleStr: string): string {
+    const regexGroupValue = this.getStringFromRegexGroupPayload(ruleStr);
+    if (regexGroupValue !== null) {
+      return regexGroupValue;
+    }
+
     const parsedRule = this.parseRule(ruleStr);
     
     // 处理put变量
@@ -1003,6 +1288,50 @@ export class LegadoRuleAnalyzer {
     }
 
     return result;
+  }
+
+  private getStringSingleInternalWithContent(ruleStr: string, content: string): string {
+    const originalContent = this.content;
+    const originalBridge = this.htmlBridge;
+    const originalIsJSON = this.isJSON;
+    this.content = content;
+    this.isJSON = this.checkIsJSON(content);
+    this.htmlBridge = null;
+    try {
+      return this.getStringSingleInternal(ruleStr);
+    } finally {
+      this.content = originalContent;
+      this.isJSON = originalIsJSON;
+      this.htmlBridge = originalBridge;
+    }
+  }
+
+  private preprocessRuleText(ruleStr: string): string {
+    let processedRule = ruleStr;
+    if (processedRule.includes('@get:')) {
+      processedRule = processedRule.replace(/@get:\{([^}]+)\}/gi, (_match: string, key: string): string => {
+        return this.variables.get(key.trim()) || '';
+      });
+    }
+
+    if (processedRule.includes('{{') && processedRule.includes('}}')) {
+      processedRule = this.replaceTemplateVariables(processedRule);
+    }
+    return processedRule;
+  }
+
+  private async preprocessRuleTextAsync(ruleStr: string): Promise<string> {
+    let processedRule = ruleStr;
+    if (processedRule.includes('@get:')) {
+      processedRule = processedRule.replace(/@get:\{([^}]+)\}/gi, (_match: string, key: string): string => {
+        return this.variables.get(key.trim()) || '';
+      });
+    }
+
+    if (processedRule.includes('{{') && processedRule.includes('}}')) {
+      processedRule = await this.replaceTemplateVariablesAsync(processedRule);
+    }
+    return processedRule;
   }
 
   /**
@@ -1073,6 +1402,11 @@ export class LegadoRuleAnalyzer {
         const value = this.getStringSingle(trimmedExpr.substring(1));
         return value || '';
       }
+
+      if (this.looksLikeRuleExpression(trimmedExpr)) {
+        const value = this.getStringSingle(trimmedExpr);
+        return value || '';
+      }
       
       // 尝试作为JSONPath解析
       const value = this.getStringByJsonPath('$.' + trimmedExpr);
@@ -1080,6 +1414,77 @@ export class LegadoRuleAnalyzer {
     });
     
     return result;
+  }
+
+  private async replaceTemplateVariablesAsync(template: string): Promise<string> {
+    let result = '';
+    const pattern = /\{\{([^}]+)\}\}/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null = pattern.exec(template);
+    while (match !== null) {
+      result += template.substring(lastIndex, match.index);
+      result += await this.resolveTemplateExpressionAsync(match[1]);
+      lastIndex = pattern.lastIndex;
+      match = pattern.exec(template);
+    }
+    result += template.substring(lastIndex);
+
+    result = result.replace(/@get:\{([^}]+)\}/gi, (rawMatch: string, key: string): string => {
+      const trimmedKey = key.trim();
+      return this.variables.get(trimmedKey) || '';
+    });
+    return result;
+  }
+
+  private async resolveTemplateExpressionAsync(expr: string): Promise<string> {
+    const trimmedExpr = expr.trim();
+    if (trimmedExpr.length <= 0) {
+      return '';
+    }
+    if (trimmedExpr.startsWith('$.') || trimmedExpr.startsWith('$[')) {
+      return this.getStringByJsonPath(trimmedExpr);
+    }
+    if (trimmedExpr.includes('||')) {
+      const parts = trimmedExpr.split('||').map((p: string): string => p.trim());
+      for (let i = 0; i < parts.length; i++) {
+        const value = await this.resolveTemplateExpressionAsync(parts[i]);
+        if (value.length > 0) {
+          return value;
+        }
+      }
+      return '';
+    }
+    if (trimmedExpr.startsWith("'") && trimmedExpr.endsWith("'")) {
+      return trimmedExpr.slice(1, -1);
+    }
+    if (trimmedExpr.startsWith('"') && trimmedExpr.endsWith('"')) {
+      return trimmedExpr.slice(1, -1);
+    }
+    if (this.variables.has(trimmedExpr)) {
+      return this.variables.get(trimmedExpr) || '';
+    }
+    if (trimmedExpr.startsWith('@@')) {
+      return await this.getStringSingleAsync(trimmedExpr.substring(2));
+    }
+    if (trimmedExpr.startsWith('@') && !trimmedExpr.startsWith('@get:')) {
+      return await this.getStringSingleAsync(trimmedExpr.substring(1));
+    }
+    if (this.looksLikeRuleExpression(trimmedExpr)) {
+      return await this.getStringSingleAsync(trimmedExpr);
+    }
+    return await this.evalJSAsync(trimmedExpr);
+  }
+
+  private looksLikeRuleExpression(expr: string): boolean {
+    return expr.startsWith('$.') ||
+      expr.startsWith('$[') ||
+      expr.startsWith('//') ||
+      expr.startsWith('@XPath:') ||
+      expr.startsWith('@xpath:') ||
+      expr.startsWith('@Json:') ||
+      expr.startsWith('@json:') ||
+      expr.startsWith('@CSS:') ||
+      expr.startsWith('@css:');
   }
 
   /**
@@ -1092,13 +1497,14 @@ export class LegadoRuleAnalyzer {
     }
 
     try {
+      const processedRule = this.preprocessRuleText(ruleStr);
       // 处理规则分割符
-      const splitResult = this.splitRuleStr(ruleStr);
+      const splitResult = this.splitRuleStr(processedRule);
       if (splitResult.rules.length > 1) {
         return this.getStringListWithSplitRules(splitResult.rules, splitResult.splitType);
       }
 
-      return this.getStringListSingle(ruleStr);
+      return this.getStringListSingle(processedRule);
     } catch (error) {
       logger.error(TAG, `解析列表规则失败: ${ruleStr}, 错误: ${String(error)}`);
       return [];
@@ -1158,6 +1564,11 @@ export class LegadoRuleAnalyzer {
    * 获取单个规则的字符串列表
    */
   private getStringListSingle(ruleStr: string): string[] {
+    const chainedParts = this.splitJsonFirstRuleChain(ruleStr);
+    if (chainedParts.length > 1) {
+      return this.getStringListFromJsonFirstRuleChain(chainedParts);
+    }
+
     const parsedRule = this.parseRule(ruleStr);
     let results: string[] = [];
 
@@ -1188,6 +1599,29 @@ export class LegadoRuleAnalyzer {
     return results;
   }
 
+  private getStringListFromJsonFirstRuleChain(parts: string[]): string[] {
+    const firstItems = this.getElementsSingle(parts[0]);
+    if (firstItems.length <= 0) {
+      return [];
+    }
+    const tailRule = parts.slice(1).join('@');
+    const results: string[] = [];
+    for (let i = 0; i < firstItems.length; i++) {
+      const item = firstItems[i];
+      const value = this.getStringSingleInternalWithContent(tailRule, item);
+      if (value.length > 0) {
+        const lines = value.split('\n');
+        for (let j = 0; j < lines.length; j++) {
+          const line = lines[j].trim();
+          if (line.length > 0) {
+            results.push(line);
+          }
+        }
+      }
+    }
+    return results;
+  }
+
   /**
    * 获取元素列表（用于遍历）
    */
@@ -1197,9 +1631,10 @@ export class LegadoRuleAnalyzer {
     }
 
     try {
+      const processedRule = this.preprocessRuleText(ruleStr);
       // 先处理 || 操作符（或操作，第一个有结果就返回）
-      if (ruleStr.includes('||')) {
-        const orParts = this.safeSplit(ruleStr, '||');
+      if (processedRule.includes('||')) {
+        const orParts = this.safeSplit(processedRule, '||');
         for (const part of orParts) {
           const trimmedPart = part.trim();
           if (trimmedPart) {
@@ -1214,7 +1649,7 @@ export class LegadoRuleAnalyzer {
         return [];
       }
       
-      return this.getElementsSingle(ruleStr);
+      return this.getElementsSingle(processedRule);
     } catch (error) {
       logger.error(TAG, `获取元素列表失败: ${ruleStr}, 错误: ${String(error)}`);
       return [];
@@ -1230,9 +1665,10 @@ export class LegadoRuleAnalyzer {
     }
 
     try {
+      const processedRule = await this.preprocessRuleTextAsync(ruleStr);
       // 先处理 || 操作符（或操作，第一个有结果就返回）
-      if (ruleStr.includes('||')) {
-        const orParts = this.safeSplit(ruleStr, '||');
+      if (processedRule.includes('||')) {
+        const orParts = this.safeSplit(processedRule, '||');
         for (const part of orParts) {
           const trimmedPart = part.trim();
           if (trimmedPart) {
@@ -1247,7 +1683,7 @@ export class LegadoRuleAnalyzer {
         return [];
       }
       
-      return await this.getElementsSingleAsync(ruleStr, jsContext);
+      return await this.getElementsSingleAsync(processedRule, jsContext);
     } catch (error) {
       logger.error(TAG, `异步获取元素列表失败: ${ruleStr.substring(0, 100)}, 错误: ${String(error)}`);
       return [];
@@ -1259,6 +1695,11 @@ export class LegadoRuleAnalyzer {
    * 支持换行符分隔的链式规则：class.xxx\n<js>...</js>\na
    */
   private async getElementsSingleAsync(ruleStr: string, jsContext?: JsContext): Promise<string[]> {
+    const chainedParts = this.splitJsonFirstRuleChain(ruleStr);
+    if (chainedParts.length > 1) {
+      return await this.getElementsFromJsonFirstRuleChainAsync(chainedParts, jsContext);
+    }
+
     // 检查是否包含换行符分隔的链式规则（包含<js>标签的情况）
     // 格式：selector\n<js>...</js>\nselector
     if (ruleStr.includes('\n') && ruleStr.includes('<js>')) {
@@ -1276,6 +1717,9 @@ export class LegadoRuleAnalyzer {
         break;
       case LegadoRuleMode.XPath:
         results = this.getElementsByXPath(parsedRule.rule);
+        break;
+      case LegadoRuleMode.Regex:
+        results = this.getElementsByRegex(parsedRule.rule);
         break;
       case LegadoRuleMode.Js:
         // 执行JS代码，然后解析结果
@@ -1300,6 +1744,8 @@ export class LegadoRuleAnalyzer {
             context.jsLib = this.jsLib;
           }
           const executeResult = await jsEngine.execute(jsCode, context);
+          this.syncVariablesFromRecord(executeResult.variables);
+          this.syncSourceEffects(executeResult.sourceEffects);
           if (!executeResult.success) {
             logger.warn(TAG, `JS规则执行失败: ${executeResult.error || 'unknown error'}`);
             break;
@@ -1345,6 +1791,35 @@ export class LegadoRuleAnalyzer {
     }
     // 性能优化：减少日志输出
     // logger.debug(TAG, `getElementsSingleAsync: 结果数量=${results.length}`);
+    return results;
+  }
+
+  private async getElementsFromJsonFirstRuleChainAsync(parts: string[], jsContext?: JsContext): Promise<string[]> {
+    const firstItems = this.getElementsSingle(parts[0]);
+    if (firstItems.length <= 0) {
+      return [];
+    }
+    const tailRule = parts.slice(1).join('@');
+    const results: string[] = [];
+    for (let i = 0; i < firstItems.length; i++) {
+      const item = firstItems[i];
+      const originalContent = this.content;
+      const originalBridge = this.htmlBridge;
+      const originalIsJSON = this.isJSON;
+      this.content = item;
+      this.isJSON = this.checkIsJSON(item);
+      this.htmlBridge = null;
+      try {
+        const itemResults = await this.getElementsSingleAsync(tailRule, jsContext);
+        for (let j = 0; j < itemResults.length; j++) {
+          results.push(itemResults[j]);
+        }
+      } finally {
+        this.content = originalContent;
+        this.isJSON = originalIsJSON;
+        this.htmlBridge = originalBridge;
+      }
+    }
     return results;
   }
   
@@ -1408,6 +1883,8 @@ export class LegadoRuleAnalyzer {
         };
         
         const executeResult = await jsEngine.execute(jsCode, context);
+        this.syncVariablesFromRecord(executeResult.variables);
+        this.syncSourceEffects(executeResult.sourceEffects);
         if (!executeResult.success) {
           logger.warn(TAG, `链式规则JS执行失败: ${executeResult.error || 'unknown error'}`);
           continue;
@@ -1464,6 +1941,11 @@ export class LegadoRuleAnalyzer {
    * 获取单个规则的元素列表
    */
   private getElementsSingle(ruleStr: string): string[] {
+    const chainedParts = this.splitJsonFirstRuleChain(ruleStr);
+    if (chainedParts.length > 1) {
+      return this.getElementsFromJsonFirstRuleChain(chainedParts);
+    }
+
     const parsedRule = this.parseRule(ruleStr);
     // 性能优化：减少日志输出
     // logger.debug(TAG, `getElementsSingle: 规则=${ruleStr.substring(0, 100)}, 模式=${parsedRule.mode}`);
@@ -1475,6 +1957,9 @@ export class LegadoRuleAnalyzer {
         break;
       case LegadoRuleMode.XPath:
         results = this.getElementsByXPath(parsedRule.rule);
+        break;
+      case LegadoRuleMode.Regex:
+        results = this.getElementsByRegex(parsedRule.rule);
         break;
       case LegadoRuleMode.Js:
         // JS规则需要执行JS代码，然后解析结果
@@ -1493,6 +1978,35 @@ export class LegadoRuleAnalyzer {
     return results;
   }
 
+  private getElementsFromJsonFirstRuleChain(parts: string[]): string[] {
+    const firstItems = this.getElementsSingle(parts[0]);
+    if (firstItems.length <= 0) {
+      return [];
+    }
+    const tailRule = parts.slice(1).join('@');
+    const results: string[] = [];
+    for (let i = 0; i < firstItems.length; i++) {
+      const item = firstItems[i];
+      const originalContent = this.content;
+      const originalBridge = this.htmlBridge;
+      const originalIsJSON = this.isJSON;
+      this.content = item;
+      this.isJSON = this.checkIsJSON(item);
+      this.htmlBridge = null;
+      try {
+        const itemResults = this.getElementsSingle(tailRule);
+        for (let j = 0; j < itemResults.length; j++) {
+          results.push(itemResults[j]);
+        }
+      } finally {
+        this.content = originalContent;
+        this.isJSON = originalIsJSON;
+        this.htmlBridge = originalBridge;
+      }
+    }
+    return results;
+  }
+
   // ==================== JSONPath解析 ====================
 
   /**
@@ -1501,12 +2015,16 @@ export class LegadoRuleAnalyzer {
   private getStringByJsonPath(path: string): string {
     try {
       const data: Object = SafeUtils.parseObj(this.content);
+      const embeddedResult: string | null = this.replaceJsonPathEmbeddedRules(path, data as ESObject);
+      if (embeddedResult !== null) {
+        return embeddedResult;
+      }
       const result: Object | null = this.evaluateJsonPath(data as ESObject, path);
       if (result === null || result === undefined) {
         return '';
       }
       if (Array.isArray(result)) {
-        return result.length > 0 ? this.valueToString(result[0]) : '';
+        return result.map((item: ESObject): string => this.valueToString(item)).join('\n');
       }
       return this.valueToString(result);
     } catch (error) {
@@ -1534,6 +2052,10 @@ export class LegadoRuleAnalyzer {
   private getStringListByJsonPath(path: string): string[] {
     try {
       const data: Object = SafeUtils.parseObj(this.content);
+      const embeddedResult: string | null = this.replaceJsonPathEmbeddedRules(path, data as ESObject);
+      if (embeddedResult !== null) {
+        return embeddedResult.length > 0 ? [embeddedResult] : [];
+      }
       const result: Object | null = this.evaluateJsonPath(data as ESObject, path);
       if (Array.isArray(result)) {
         return result.map((item: ESObject): string => this.valueToString(item));
@@ -1566,15 +2088,103 @@ export class LegadoRuleAnalyzer {
         return [];
       }
       
+      const embeddedResult: string | null = this.replaceJsonPathEmbeddedRules(path, data as ESObject);
+      if (embeddedResult !== null) {
+        return embeddedResult.length > 0 ? [embeddedResult] : [];
+      }
       const result: Object | null = this.evaluateJsonPath(data as ESObject, path);
       if (Array.isArray(result)) {
-        return result.map((item: ESObject): string => JSON.stringify(item));
+        return result.map((item: ESObject): string => this.valueToElementString(item));
       }
-      return result !== null && result !== undefined ? [JSON.stringify(result)] : [];
+      return result !== null && result !== undefined ? [this.valueToElementString(result as ESObject)] : [];
     } catch (error) {
       logger.warn(TAG, `JSONPath元素解析失败: ${path}, 错误: ${String(error)}`);
       return [];
     }
+  }
+
+  private replaceJsonPathEmbeddedRules(path: string, data: ESObject): string | null {
+    const hasEmbeddedRule = path.includes('{$.') || path.includes('{$[');
+    if (!hasEmbeddedRule) {
+      return null;
+    }
+
+    let result = '';
+    let lastIndex = 0;
+    let replaced = false;
+    for (let i = 0; i < path.length; i++) {
+      if (path[i] !== '{' || i + 2 >= path.length || path[i + 1] !== '$') {
+        continue;
+      }
+      const pathStart = path[i + 2];
+      if (pathStart !== '.' && pathStart !== '[') {
+        continue;
+      }
+
+      const endIndex = this.findBalancedBraceEnd(path, i);
+      if (endIndex < 0) {
+        continue;
+      }
+
+      const innerPath = path.substring(i + 1, endIndex);
+      const value: ESObject = this.evaluateJsonPath(data, innerPath);
+      const valueString = this.jsonPathResultToString(value);
+      if (valueString.length > 0) {
+        result += path.substring(lastIndex, i);
+        result += valueString;
+        lastIndex = endIndex + 1;
+        replaced = true;
+      }
+      i = endIndex;
+    }
+
+    if (!replaced) {
+      return null;
+    }
+    result += path.substring(lastIndex);
+    return result;
+  }
+
+  private jsonPathResultToString(value: ESObject): string {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    if (Array.isArray(value)) {
+      return value.map((item: ESObject): string => this.valueToString(item)).join('\n');
+    }
+    return this.valueToString(value);
+  }
+
+  private findBalancedBraceEnd(text: string, startIndex: number): number {
+    let depth = 0;
+    let quote = '';
+    let escaped = false;
+    for (let i = startIndex; i < text.length; i++) {
+      const ch = text[i];
+      if (quote.length > 0) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        continue;
+      }
+      if (ch === '{') {
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          return i;
+        }
+      }
+    }
+    return -1;
   }
 
   /**
@@ -1596,9 +2206,8 @@ export class LegadoRuleAnalyzer {
 
     // 处理递归下降 $..xxx 语法
     if (normalizedPath.startsWith('.')) {
-      // $..xxx 形式，递归搜索所有层级
-      const searchKey = normalizedPath.substring(1); // 去掉开头的.
-      return this.recursiveSearch(data, searchKey);
+      // $..xxx 形式，递归搜索所有层级，并继续应用后续路径
+      return this.evaluateRecursiveJsonPath(data, normalizedPath.substring(1));
     }
 
     // 处理 $[*] 或 $.* 形式 - 返回所有元素
@@ -1607,7 +2216,7 @@ export class LegadoRuleAnalyzer {
         return data;
       }
       if (typeof data === 'object' && data !== null) {
-        return Object.values(data as Record<string, ESObject>);
+        return this.getJsonObjectValues(data);
       }
       return data;
     }
@@ -1626,26 +2235,16 @@ export class LegadoRuleAnalyzer {
         if (Array.isArray(current)) {
           // 如果还有后续路径，对每个元素应用后续路径
           if (i < parts.length - 1) {
-            const remainingPath = parts.slice(i + 1).join('.');
-            const results: ESObject[] = [];
-            const currentArray: ESObject[] = current as ESObject[];
-            for (let j = 0; j < currentArray.length; j++) {
-              const currentItem: ESObject = currentArray[j];
-              const itemResult: ESObject = this.evaluateJsonPath(currentItem, '$.' + remainingPath);
-              if (itemResult !== null && itemResult !== undefined) {
-                if (Array.isArray(itemResult)) {
-                  results.push(...(itemResult as ESObject[]));
-                } else {
-                  results.push(itemResult);
-                }
-              }
-            }
-            return results;
+            return this.evaluateJsonPathForItems(current as ESObject[], parts, i + 1);
           }
           return current;
         }
         if (typeof current === 'object' && current !== null) {
-          return Object.values(current as Record<string, ESObject>);
+          const values: ESObject[] = this.getJsonObjectValues(current);
+          if (i < parts.length - 1) {
+            return this.evaluateJsonPathForItems(values, parts, i + 1);
+          }
+          return values;
         }
         return current;
       }
@@ -1657,33 +2256,34 @@ export class LegadoRuleAnalyzer {
           // 返回所有元素，并继续处理后续路径
           if (Array.isArray(current)) {
             if (i < parts.length - 1) {
-              const remainingPath = parts.slice(i + 1).join('.');
-              const results: ESObject[] = [];
-              const currentArray: ESObject[] = current as ESObject[];
-              for (let j = 0; j < currentArray.length; j++) {
-                const currentItem: ESObject = currentArray[j];
-                const itemResult: ESObject = this.evaluateJsonPath(currentItem, '$.' + remainingPath);
-                if (itemResult !== null && itemResult !== undefined) {
-                  if (Array.isArray(itemResult)) {
-                    results.push(...(itemResult as ESObject[]));
-                  } else {
-                    results.push(itemResult);
-                  }
-                }
-              }
-              return results;
+              return this.evaluateJsonPathForItems(current as ESObject[], parts, i + 1);
             }
             return current;
           }
+          if (typeof current === 'object' && current !== null) {
+            const values: ESObject[] = this.getJsonObjectValues(current);
+            if (i < parts.length - 1) {
+              return this.evaluateJsonPathForItems(values, parts, i + 1);
+            }
+            return values;
+          }
         } else {
-          const index = parseInt(indexStr);
-          if (!isNaN(index) && Array.isArray(current)) {
-            current = current[index] as ESObject;
+          const bracketFieldName = this.parseJsonBracketFieldName(indexStr);
+          if (bracketFieldName !== null) {
+            current = this.getJsonBracketFieldValue(current, bracketFieldName);
+          } else if (Array.isArray(current)) {
+            const selected: ESObject[] = this.selectJsonArrayItems(current as ESObject[], indexStr);
+            if (selected.length === 1 && !indexStr.includes(',') && !indexStr.includes(':')) {
+              current = selected[0];
+            } else {
+              current = selected as ESObject;
+            }
           }
         }
       } else {
         // 处理属性访问
         if (typeof current === 'object' && current !== null) {
+          const fieldName = this.parseJsonPathFieldName(part);
           // 如果当前是数组，对每个元素获取属性
           if (Array.isArray(current)) {
             const results: ESObject[] = [];
@@ -1691,7 +2291,7 @@ export class LegadoRuleAnalyzer {
             for (let j = 0; j < currentArray.length; j++) {
               const arrayItem: ESObject = currentArray[j];
               if (typeof arrayItem === 'object' && arrayItem !== null) {
-                const itemValue: ESObject = (arrayItem as Record<string, ESObject>)[part];
+                const itemValue: ESObject = (arrayItem as Record<string, ESObject>)[fieldName];
                 if (itemValue !== null && itemValue !== undefined) {
                   results.push(itemValue);
                 }
@@ -1699,7 +2299,7 @@ export class LegadoRuleAnalyzer {
             }
             current = results as ESObject;
           } else {
-            current = (current as Record<string, ESObject>)[part];
+            current = (current as Record<string, ESObject>)[fieldName];
           }
         } else {
           return null;
@@ -1708,6 +2308,551 @@ export class LegadoRuleAnalyzer {
     }
 
     return current;
+  }
+
+  private evaluateRecursiveJsonPath(data: ESObject, recursivePath: string): ESObject {
+    const parts = this.splitJsonPath(recursivePath);
+    if (parts.length === 0) {
+      return [];
+    }
+    const matches: ESObject[] = this.recursiveSearch(data, this.parseJsonPathFieldName(parts[0]));
+    if (parts.length === 1) {
+      return matches as ESObject;
+    }
+    return this.evaluateJsonPathForItems(matches, parts, 1);
+  }
+
+  private getJsonObjectValues(value: ESObject): ESObject[] {
+    if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) {
+      return [];
+    }
+    const record = value as Record<string, ESObject>;
+    const keys: string[] = Object.keys(record);
+    const results: ESObject[] = [];
+    for (let i = 0; i < keys.length; i++) {
+      results.push(record[keys[i]]);
+    }
+    return results;
+  }
+
+  private evaluateJsonPathForItems(items: ESObject[], parts: string[], startIndex: number): ESObject[] {
+    const results: ESObject[] = [];
+    const remainingPath = parts.slice(startIndex).join('.');
+    for (let i = 0; i < items.length; i++) {
+      const itemResult: ESObject = this.evaluateJsonPath(items[i], '$.' + remainingPath);
+      this.appendJsonPathResult(results, itemResult);
+    }
+    return results;
+  }
+
+  private appendJsonPathResult(results: ESObject[], value: ESObject): void {
+    if (value === null || value === undefined) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      const valueArray: ESObject[] = value as ESObject[];
+      for (let i = 0; i < valueArray.length; i++) {
+        results.push(valueArray[i]);
+      }
+      return;
+    }
+    results.push(value);
+  }
+
+  private parseJsonPathFieldName(part: string): string {
+    const trimmed = part.trim();
+    const quoted = this.parseJsonBracketFieldName(trimmed);
+    return quoted !== null ? quoted : trimmed;
+  }
+
+  private parseJsonBracketFieldName(indexStr: string): string | null {
+    const trimmed = indexStr.trim();
+    if (trimmed.length < 2) {
+      return null;
+    }
+    const first = trimmed[0];
+    const last = trimmed[trimmed.length - 1];
+    if ((first === "'" && last === "'") || (first === '"' && last === '"')) {
+      return this.unescapeJsonPathQuotedText(trimmed.substring(1, trimmed.length - 1));
+    }
+    return null;
+  }
+
+  private unescapeJsonPathQuotedText(text: string): string {
+    if (text.indexOf('\\') < 0) {
+      return text;
+    }
+    let result = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch !== '\\' || i + 1 >= text.length) {
+        result += ch;
+        continue;
+      }
+      const next = text[i + 1];
+      if (next === 'n') {
+        result += '\n';
+      } else if (next === 'r') {
+        result += '\r';
+      } else if (next === 't') {
+        result += '\t';
+      } else if (next === 'b') {
+        result += '\b';
+      } else if (next === 'f') {
+        result += '\f';
+      } else if (next === 'u' && i + 5 < text.length) {
+        const hex = text.substring(i + 2, i + 6);
+        const code = parseInt(hex, 16);
+        if (!Number.isNaN(code)) {
+          result += String.fromCharCode(code);
+          i += 5;
+          continue;
+        }
+        result += next;
+      } else {
+        result += next;
+      }
+      i++;
+    }
+    return result;
+  }
+
+  private getJsonBracketFieldValue(current: ESObject, fieldName: string): ESObject {
+    if (current === null || current === undefined) {
+      return null;
+    }
+    if (Array.isArray(current)) {
+      const results: ESObject[] = [];
+      const currentArray: ESObject[] = current as ESObject[];
+      for (let i = 0; i < currentArray.length; i++) {
+        const item: ESObject = currentArray[i];
+        const value: ESObject = this.getJsonObjectFieldValue(item, fieldName);
+        if (value !== null && value !== undefined) {
+          results.push(value);
+        }
+      }
+      return results as ESObject;
+    }
+    return this.getJsonObjectFieldValue(current, fieldName);
+  }
+
+  private getJsonObjectFieldValue(item: ESObject, fieldName: string): ESObject {
+    if (item === null || item === undefined || typeof item !== 'object' || Array.isArray(item)) {
+      return null;
+    }
+    const record = item as Record<string, ESObject>;
+    const keys: string[] = Object.keys(record);
+    if (keys.includes(fieldName)) {
+      return record[fieldName];
+    }
+    const trimmedFieldName = fieldName.trim();
+    if (trimmedFieldName !== fieldName && keys.includes(trimmedFieldName)) {
+      return record[trimmedFieldName];
+    }
+    return null;
+  }
+
+  private selectJsonArrayItems(items: ESObject[], indexExpr: string): ESObject[] {
+    const filterExpr = this.extractJsonFilterExpression(indexExpr);
+    if (filterExpr !== null) {
+      return this.filterJsonArrayItems(items, filterExpr);
+    }
+
+    const results: ESObject[] = [];
+    const parts = indexExpr.split(',');
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) {
+        continue;
+      }
+      if (trimmed.includes(':')) {
+        this.appendJsonArraySlice(results, items, trimmed);
+      } else {
+        const index = parseInt(trimmed);
+        if (!Number.isNaN(index)) {
+          const actualIndex = index < 0 ? items.length + index : index;
+          if (actualIndex >= 0 && actualIndex < items.length) {
+            results.push(items[actualIndex]);
+          }
+        }
+      }
+    }
+    return results;
+  }
+
+  private extractJsonFilterExpression(indexExpr: string): string | null {
+    const trimmed = indexExpr.trim();
+    if (!trimmed.startsWith('?(') || !trimmed.endsWith(')')) {
+      return null;
+    }
+    return trimmed.substring(2, trimmed.length - 1).trim();
+  }
+
+  private filterJsonArrayItems(items: ESObject[], filterExpr: string): ESObject[] {
+    const results: ESObject[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item: ESObject = items[i];
+      if (this.evaluateJsonFilter(item, filterExpr)) {
+        results.push(item);
+      }
+    }
+    return results;
+  }
+
+  private evaluateJsonFilter(item: ESObject, filterExpr: string): boolean {
+    const orParts = this.splitJsonFilterByOperator(filterExpr, '||');
+    for (let i = 0; i < orParts.length; i++) {
+      const andParts = this.splitJsonFilterByOperator(orParts[i], '&&');
+      let andMatched = true;
+      for (let j = 0; j < andParts.length; j++) {
+        if (!this.evaluateJsonFilterSingle(item, andParts[j].trim())) {
+          andMatched = false;
+          break;
+        }
+      }
+      if (andMatched) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private splitJsonFilterByOperator(expr: string, operator: string): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let quote = '';
+    let escaped = false;
+    let parenDepth = 0;
+    let regexMode = false;
+    for (let i = 0; i < expr.length; i++) {
+      const ch = expr[i];
+      if (quote.length > 0) {
+        current += ch;
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (regexMode) {
+        current += ch;
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '/') {
+          regexMode = false;
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        current += ch;
+        continue;
+      }
+      if (ch === '/' && i > 0 && expr[i - 1] === '~') {
+        regexMode = true;
+        current += ch;
+        continue;
+      }
+      if (ch === '(') {
+        parenDepth++;
+      } else if (ch === ')' && parenDepth > 0) {
+        parenDepth--;
+      }
+      if (parenDepth === 0 && expr.substring(i, i + operator.length) === operator) {
+        parts.push(current.trim());
+        current = '';
+        i += operator.length - 1;
+      } else {
+        current += ch;
+      }
+    }
+    if (current.trim().length > 0) {
+      parts.push(current.trim());
+    }
+    return parts.length > 0 ? parts : [expr];
+  }
+
+  private evaluateJsonFilterSingle(item: ESObject, expression: string): boolean {
+    let expr = expression.trim();
+    if (expr.length <= 0) {
+      return false;
+    }
+    if (expr.startsWith('!')) {
+      return !this.evaluateJsonFilterSingle(item, expr.substring(1));
+    }
+    if (expr.startsWith('(') && expr.endsWith(')')) {
+      return this.evaluateJsonFilter(item, expr.substring(1, expr.length - 1));
+    }
+
+    const containsMatch = expr.match(/^@\.([A-Za-z0-9_\-.$\[\]]+)\s+contains\s+(.+)$/);
+    if (containsMatch) {
+      const actual = this.valueToString(this.getJsonFilterFieldValue(item, containsMatch[1]));
+      const expected = this.valueToString(this.parseJsonFilterLiteral(containsMatch[2]) as ESObject);
+      return actual.indexOf(expected) >= 0;
+    }
+
+    const operatorMatch = this.findJsonFilterOperator(expr);
+    if (operatorMatch !== null) {
+      const left = expr.substring(0, operatorMatch.index).trim();
+      const right = expr.substring(operatorMatch.index + operatorMatch.operator.length).trim();
+      return this.evaluateJsonFilterComparison(item, left, operatorMatch.operator, right);
+    }
+
+    if (expr.startsWith('@.')) {
+      return this.isTruthyJsonValue(this.getJsonFilterFieldValue(item, expr.substring(2)));
+    }
+    if (expr === '@') {
+      return this.isTruthyJsonValue(item);
+    }
+    return false;
+  }
+
+  private findJsonFilterOperator(expr: string): JsonFilterOperatorMatch | null {
+    const operators: string[] = ['==', '!=', '>=', '<=', '=~', '>', '<', '='];
+    let quote = '';
+    let escaped = false;
+    for (let i = 0; i < expr.length; i++) {
+      const ch = expr[i];
+      if (quote.length > 0) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        continue;
+      }
+      for (let j = 0; j < operators.length; j++) {
+        const operator = operators[j];
+        if (expr.substring(i, i + operator.length) === operator) {
+          const result: JsonFilterOperatorMatch = {
+            operator: operator,
+            index: i
+          };
+          return result;
+        }
+      }
+    }
+    return null;
+  }
+
+  private evaluateJsonFilterComparison(item: ESObject, leftExpr: string, operator: string, rightExpr: string): boolean {
+    const leftValue: ESObject = this.resolveJsonFilterValue(item, leftExpr);
+    if (operator === '=~') {
+      return this.matchJsonFilterRegex(this.valueToString(leftValue), rightExpr);
+    }
+
+    const rightValue: ESObject = this.resolveJsonFilterValue(item, rightExpr);
+    if (operator === '==' || operator === '=') {
+      return this.compareJsonFilterEquality(leftValue, rightValue);
+    }
+    if (operator === '!=') {
+      return !this.compareJsonFilterEquality(leftValue, rightValue);
+    }
+
+    const leftNumber = Number(this.valueToString(leftValue));
+    const rightNumber = Number(this.valueToString(rightValue));
+    if (!Number.isNaN(leftNumber) && !Number.isNaN(rightNumber)) {
+      if (operator === '>') {
+        return leftNumber > rightNumber;
+      }
+      if (operator === '<') {
+        return leftNumber < rightNumber;
+      }
+      if (operator === '>=') {
+        return leftNumber >= rightNumber;
+      }
+      if (operator === '<=') {
+        return leftNumber <= rightNumber;
+      }
+    }
+
+    const leftText = this.valueToString(leftValue);
+    const rightText = this.valueToString(rightValue);
+    if (operator === '>') {
+      return leftText > rightText;
+    }
+    if (operator === '<') {
+      return leftText < rightText;
+    }
+    if (operator === '>=') {
+      return leftText >= rightText;
+    }
+    if (operator === '<=') {
+      return leftText <= rightText;
+    }
+    return false;
+  }
+
+  private resolveJsonFilterValue(item: ESObject, expr: string): ESObject {
+    const trimmed = expr.trim();
+    if (trimmed.startsWith('@.')) {
+      return this.getJsonFilterFieldValue(item, trimmed.substring(2));
+    }
+    if (trimmed === '@') {
+      return item;
+    }
+    return this.parseJsonFilterLiteral(trimmed) as ESObject;
+  }
+
+  private getJsonFilterFieldValue(item: ESObject, fieldPath: string): ESObject {
+    if (item === null || item === undefined || typeof item !== 'object') {
+      return null;
+    }
+    const normalizedPath = fieldPath.startsWith('$.') || fieldPath.startsWith('$[') ? fieldPath : '$.' + fieldPath;
+    return this.evaluateJsonPath(item, normalizedPath);
+  }
+
+  private parseJsonFilterLiteral(raw: string): string | number | boolean | null {
+    const trimmed = raw.trim();
+    if ((trimmed.startsWith("'") && trimmed.endsWith("'")) || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+      return trimmed.substring(1, trimmed.length - 1);
+    }
+    if (trimmed === 'true') {
+      return true;
+    }
+    if (trimmed === 'false') {
+      return false;
+    }
+    if (trimmed === 'null') {
+      return null;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isNaN(numeric) && trimmed.length > 0) {
+      return numeric;
+    }
+    return trimmed;
+  }
+
+  private compareJsonFilterEquality(leftValue: ESObject, rightValue: ESObject): boolean {
+    if (leftValue === null || leftValue === undefined || rightValue === null || rightValue === undefined) {
+      return leftValue === rightValue;
+    }
+    if (typeof leftValue === 'number' || typeof rightValue === 'number') {
+      const leftNumber = Number(this.valueToString(leftValue));
+      const rightNumber = Number(this.valueToString(rightValue));
+      if (!Number.isNaN(leftNumber) && !Number.isNaN(rightNumber)) {
+        return leftNumber === rightNumber;
+      }
+    }
+    if (typeof leftValue === 'boolean' || typeof rightValue === 'boolean') {
+      return this.valueToString(leftValue) === this.valueToString(rightValue);
+    }
+    return this.valueToString(leftValue) === this.valueToString(rightValue);
+  }
+
+  private isTruthyJsonValue(value: ESObject): boolean {
+    if (value === null || value === undefined) {
+      return false;
+    }
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      return value !== 0;
+    }
+    if (typeof value === 'string') {
+      return value.length > 0;
+    }
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    return true;
+  }
+
+  private matchJsonFilterRegex(actual: string, regexExpr: string): boolean {
+    const trimmed = regexExpr.trim();
+    if (!trimmed.startsWith('/')) {
+      return actual.indexOf(this.parseJsonFilterLiteral(trimmed) as string) >= 0;
+    }
+    let end = -1;
+    let escaped = false;
+    for (let i = 1; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '/') {
+        end = i;
+        break;
+      }
+    }
+    if (end <= 0) {
+      return false;
+    }
+    const pattern = trimmed.substring(1, end);
+    const flags = trimmed.substring(end + 1);
+    try {
+      const regex = new RegExp(pattern, flags);
+      return regex.test(actual);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private appendJsonArraySlice(results: ESObject[], items: ESObject[], sliceExpr: string): void {
+    const len = items.length;
+    if (len === 0) {
+      return;
+    }
+    const parts = sliceExpr.split(':');
+    const rawStep = parts.length > 2 && parts[2].trim().length > 0 ? parseInt(parts[2].trim()) : 1;
+    const step = Number.isNaN(rawStep) || rawStep === 0 ? 1 : rawStep;
+    const isReverse = step < 0;
+    const startOmitted = parts.length > 0 && parts[0].trim().length === 0;
+    const endOmitted = parts.length > 1 && parts[1].trim().length === 0;
+
+    let start = startOmitted ? (isReverse ? len - 1 : 0) : parseInt(parts[0].trim());
+    let end = endOmitted ? (isReverse ? 0 : len - 1) : parseInt(parts[1].trim());
+    if (Number.isNaN(start) || Number.isNaN(end)) {
+      return;
+    }
+
+    if (start < 0) {
+      start += len;
+    }
+    if (end < 0) {
+      end += len;
+    }
+
+    if ((start < 0 && end < 0) || (start >= len && end >= len)) {
+      return;
+    }
+
+    if (start < 0) {
+      start = 0;
+    } else if (start >= len) {
+      start = len - 1;
+    }
+
+    if (end < 0) {
+      end = 0;
+    } else if (end >= len) {
+      end = len - 1;
+    }
+
+    if (isReverse) {
+      const positiveStep = -step;
+      for (let i = start; i >= end; i -= positiveStep) {
+        results.push(items[i]);
+      }
+      return;
+    }
+
+    for (let i = start; i <= end; i += step) {
+      results.push(items[i]);
+    }
   }
 
   /**
@@ -1784,9 +2929,29 @@ export class LegadoRuleAnalyzer {
     const parts: string[] = [];
     let current = '';
     let inBracket = false;
+    let quote = '';
+    let escaped = false;
 
     for (let i = 0; i < path.length; i++) {
       const char = path[i];
+      if (quote.length > 0) {
+        current += char;
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === quote) {
+          quote = '';
+        }
+        continue;
+      }
+
+      if (char === '"' || char === "'") {
+        quote = char;
+        current += char;
+        continue;
+      }
+
       if (char === '[') {
         if (current) {
           parts.push(current);
@@ -2058,7 +3223,8 @@ export class LegadoRuleAnalyzer {
       hasIndex: false,
       exclude: false,
       indexes: [],
-      ranges: []
+      ranges: [],
+      items: []
     };
     
     // 检查[]式索引
@@ -2081,13 +3247,14 @@ export class LegadoRuleAnalyzer {
     }
     
     // 检查.式范围索引 (tag.td.5:4 或 tag.a.0:3)
-    const dotRangeMatch = rule.match(/\.(-?\d+):(-?\d+)$/);
+    const dotRangeMatch = rule.match(/\.(-?\d+):(-?\d+)(?::(-?\d+))?$/);
     if (dotRangeMatch) {
       result.selector = rule.substring(0, rule.length - dotRangeMatch[0].length);
       result.hasIndex = true;
       const start = parseInt(dotRangeMatch[1]);
       const end = parseInt(dotRangeMatch[2]);
-      result.ranges.push({ start, end, step: 1 });
+      const step = dotRangeMatch[3] ? parseInt(dotRangeMatch[3]) : 1;
+      this.addIndexRange(result, start, end, step, false, false);
       return result;
     }
     
@@ -2096,7 +3263,7 @@ export class LegadoRuleAnalyzer {
     if (dotIndexMatch) {
       result.selector = rule.substring(0, rule.length - dotIndexMatch[0].length);
       result.hasIndex = true;
-      result.indexes.push(parseInt(dotIndexMatch[1]));
+      this.addIndexSingle(result, parseInt(dotIndexMatch[1]));
       return result;
     }
     
@@ -2106,7 +3273,7 @@ export class LegadoRuleAnalyzer {
       result.selector = rule.substring(0, rule.length - excludeMatch[0].length);
       result.hasIndex = true;
       result.exclude = true;
-      result.indexes.push(parseInt(excludeMatch[1]));
+      this.addIndexSingle(result, parseInt(excludeMatch[1]));
       return result;
     }
     
@@ -2121,18 +3288,75 @@ export class LegadoRuleAnalyzer {
     const parts = indexStr.split(',');
     for (const part of parts) {
       const trimmed = part.trim();
+      if (!trimmed) {
+        continue;
+      }
       if (trimmed.includes(':')) {
         // 范围索引 start:end:step
         const rangeParts = trimmed.split(':');
-        const start = rangeParts[0] ? parseInt(rangeParts[0]) : 0;
-        const end = rangeParts.length > 1 && rangeParts[1] ? parseInt(rangeParts[1]) : -1;
-        const step = rangeParts.length > 2 && rangeParts[2] ? parseInt(rangeParts[2]) : 1;
-        result.ranges.push({ start, end, step });
-      } else if (trimmed) {
+        const startOmitted = rangeParts.length > 0 && rangeParts[0].trim().length === 0;
+        const endOmitted = rangeParts.length > 1 && rangeParts[1].trim().length === 0;
+        const start = startOmitted ? 0 : parseInt(rangeParts[0].trim());
+        const end = endOmitted ? -1 : parseInt(rangeParts[1].trim());
+        const step = rangeParts.length > 2 && rangeParts[2].trim().length > 0 ? parseInt(rangeParts[2].trim()) : 1;
+        if (!Number.isNaN(start) && !Number.isNaN(end) && !Number.isNaN(step)) {
+          this.addIndexRange(result, start, end, step, startOmitted, endOmitted);
+        }
+      } else {
         // 单个索引
-        result.indexes.push(parseInt(trimmed));
+        const index = parseInt(trimmed);
+        if (!Number.isNaN(index)) {
+          this.addIndexSingle(result, index);
+        }
       }
     }
+  }
+
+  private valueToElementString(value: ESObject): string {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+    return String(value);
+  }
+
+  private addIndexSingle(result: IndexSelectorResult, index: number): void {
+    result.indexes.push(index);
+    const item: IndexSelectorItem = {
+      itemType: IndexSelectorItemType.Single,
+      index: index,
+      start: 0,
+      end: 0,
+      step: 1,
+      startOmitted: false,
+      endOmitted: false
+    };
+    result.items.push(item);
+  }
+
+  private addIndexRange(result: IndexSelectorResult, start: number, end: number, step: number,
+    startOmitted: boolean, endOmitted: boolean): void {
+    const normalizedStep = step === 0 ? 1 : step;
+    const range: IndexRange = {
+      start: start,
+      end: end,
+      step: normalizedStep,
+      startOmitted: startOmitted,
+      endOmitted: endOmitted
+    };
+    result.ranges.push(range);
+    const item: IndexSelectorItem = {
+      itemType: IndexSelectorItemType.Range,
+      index: 0,
+      start: start,
+      end: end,
+      step: normalizedStep,
+      startOmitted: startOmitted,
+      endOmitted: endOmitted
+    };
+    result.items.push(item);
   }
 
   /**
@@ -2181,51 +3405,106 @@ export class LegadoRuleAnalyzer {
     if (len === 0) {
       return [];
     }
-    
-    const indexSet = new Set<number>();
-    
-    // 处理单个索引
-    for (const idx of indexResult.indexes) {
-      const actualIdx = idx < 0 ? len + idx : idx;
-      if (actualIdx >= 0 && actualIdx < len) {
-        indexSet.add(actualIdx);
-      }
-    }
-    
-    // 处理范围索引
-    for (const range of indexResult.ranges) {
-      let start = range.start < 0 ? len + range.start : range.start;
-      let end = range.end < 0 ? len + range.end : range.end;
-      const step = range.step > 0 ? range.step : 1;
-      
-      // 边界检查
-      start = Math.max(0, Math.min(start, len - 1));
-      end = Math.max(0, Math.min(end, len - 1));
-      
-      if (start <= end) {
-        for (let i = start; i <= end; i += step) {
-          indexSet.add(i);
-        }
-      } else {
-        for (let i = start; i >= end; i -= step) {
-          indexSet.add(i);
-        }
-      }
-    }
-    
+
     // 如果没有指定索引，返回所有元素
-    if (indexSet.size === 0 && indexResult.indexes.length === 0 && indexResult.ranges.length === 0) {
+    if (indexResult.items.length === 0 && indexResult.indexes.length === 0 && indexResult.ranges.length === 0) {
       return elements;
     }
-    
-    // 应用筛选
+
+    const indexes = this.collectIndexFilterIndexes(len, indexResult);
     if (indexResult.exclude) {
-      // 排除模式
-      return elements.filter((_, i) => !indexSet.has(i));
+      const excludeSet = new Set<number>();
+      for (const idx of indexes) {
+        excludeSet.add(idx);
+      }
+      return elements.filter((_: string, i: number): boolean => !excludeSet.has(i));
+    }
+
+    const results: string[] = [];
+    const addedSet = new Set<number>();
+    for (const idx of indexes) {
+      if (!addedSet.has(idx)) {
+        results.push(elements[idx]);
+        addedSet.add(idx);
+      }
+    }
+    return results;
+  }
+
+  private collectIndexFilterIndexes(len: number, indexResult: IndexSelectorResult): number[] {
+    const indexes: number[] = [];
+    if (indexResult.items.length > 0) {
+      for (const item of indexResult.items) {
+        if (item.itemType === IndexSelectorItemType.Single) {
+          this.appendSingleIndex(indexes, len, item.index);
+        } else {
+          this.appendRangeIndexes(indexes, len, item.start, item.end, item.step, item.startOmitted, item.endOmitted);
+        }
+      }
+      return indexes;
+    }
+
+    for (const idx of indexResult.indexes) {
+      this.appendSingleIndex(indexes, len, idx);
+    }
+
+    for (const range of indexResult.ranges) {
+      this.appendRangeIndexes(indexes, len, range.start, range.end, range.step, range.startOmitted, range.endOmitted);
+    }
+
+    return indexes;
+  }
+
+  private appendSingleIndex(indexes: number[], len: number, index: number): void {
+    const actualIdx = index < 0 ? len + index : index;
+    if (actualIdx >= 0 && actualIdx < len) {
+      indexes.push(actualIdx);
+    }
+  }
+
+  private appendRangeIndexes(indexes: number[], len: number, startValue: number, endValue: number,
+    stepValue: number, startOmitted: boolean, endOmitted: boolean): void {
+    let start = startOmitted ? 0 : startValue;
+    if (start < 0) {
+      start += len;
+    }
+
+    let end = endOmitted ? len - 1 : endValue;
+    if (end < 0) {
+      end += len;
+    }
+
+    if ((start < 0 && end < 0) || (start >= len && end >= len)) {
+      return;
+    }
+
+    if (start >= len) {
+      start = len - 1;
+    } else if (start < 0) {
+      start = 0;
+    }
+
+    if (end >= len) {
+      end = len - 1;
+    } else if (end < 0) {
+      end = 0;
+    }
+
+    const rawStep = stepValue === 0 ? 1 : stepValue;
+    let step = rawStep > 0 ? rawStep : -rawStep;
+    if (step >= len) {
+      indexes.push(start);
+      return;
+    }
+
+    if (start <= end) {
+      for (let i = start; i <= end; i += step) {
+        indexes.push(i);
+      }
     } else {
-      // 选择模式
-      const sorted = Array.from(indexSet).sort((a, b) => a - b);
-      return sorted.map(i => elements[i]);
+      for (let i = start; i >= end; i -= step) {
+        indexes.push(i);
+      }
     }
   }
   
@@ -3466,20 +4745,29 @@ export class LegadoRuleAnalyzer {
         const ownTextMatch = element.match(/^<[^>]+>([^<]*)/);
         return ownTextMatch ? ownTextMatch[1].trim() : '';
       case 'html':
+        // Legado JSoup @html returns outerHtml after removing script/style.
+        return this.removeScriptAndStyleElements(element);
       case 'innerhtml':
         // 获取内部HTML（移除script和style）
-        let innerHtml = element
-          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+        const innerHtml = this.removeScriptAndStyleElements(element);
         const innerMatch = innerHtml.match(/^<[^>]+>([\s\S]*)<\/[^>]+>$/);
         return innerMatch ? innerMatch[1] : '';
       case 'all':
       case 'outerhtml':
         // 获取完整外部HTML
         return element;
+      case 'srcset':
+      case 'data-srcset':
+        return this.extractSrcSetUrl(element, attr);
       case 'href':
       case 'src':
       case 'data-src':
+      case 'data-original':
+      case 'data-lazy-src':
+      case 'data-original-src':
+      case 'data-url':
+      case 'data-img':
+      case 'data-cover':
         // 获取属性值并解析为绝对URL
         const urlAttrValue = this.extractAttributeValueFromTagContent(element, attr);
         if (urlAttrValue && urlAttrValue.length > 0) {
@@ -3495,6 +4783,31 @@ export class LegadoRuleAnalyzer {
         const defaultValue = this.extractAttributeValueFromTagContent(element, attr);
         return defaultValue === null ? '' : defaultValue;
     }
+  }
+
+  private removeScriptAndStyleElements(html: string): string {
+    return html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+  }
+
+  private extractSrcSetUrl(element: string, attr: string): string {
+    const srcsetValue = this.extractAttributeValueFromTagContent(element, attr);
+    if (srcsetValue === null || srcsetValue.trim().length === 0) {
+      return '';
+    }
+    const candidates = srcsetValue.split(',');
+    for (const candidate of candidates) {
+      const trimmed = candidate.trim();
+      if (!trimmed) {
+        continue;
+      }
+      const firstPart = trimmed.split(/\s+/)[0].trim();
+      if (firstPart.length > 0) {
+        return this.resolveUrl(firstPart);
+      }
+    }
+    return '';
   }
 
   /**
@@ -5040,6 +6353,126 @@ export class LegadoRuleAnalyzer {
     return results;
   }
 
+  private getElementsByRegex(pattern: string): string[] {
+    const results: string[] = [];
+    if (!pattern || pattern.trim().length <= 0) {
+      return results;
+    }
+    try {
+      const patterns = pattern.split('&&').map((p: string): string => p.trim()).filter((p: string): boolean => p.length > 0);
+      if (patterns.length <= 0) {
+        return results;
+      }
+
+      let sourceText = this.content;
+      for (let i = 0; i < patterns.length - 1; i++) {
+        const regex = new RegExp(patterns[i], 'gs');
+        let match = regex.exec(sourceText);
+        let merged = '';
+        while (match !== null) {
+          merged += match[0];
+          match = regex.exec(sourceText);
+        }
+        if (merged.length <= 0) {
+          return results;
+        }
+        sourceText = merged;
+      }
+
+      const finalRegex = new RegExp(patterns[patterns.length - 1], 'gs');
+      let finalMatch = finalRegex.exec(sourceText);
+      while (finalMatch !== null) {
+        const groups: string[] = [];
+        for (let i = 0; i < finalMatch.length && i <= 99; i++) {
+          groups.push(finalMatch[i] !== undefined ? finalMatch[i] : '');
+        }
+        const payload: RegexGroupPayload = {
+          __legadoRegexGroups: groups,
+          __legadoRegexText: finalMatch[0] || ''
+        };
+        results.push(JSON.stringify(payload));
+        finalMatch = finalRegex.exec(sourceText);
+      }
+    } catch (e) {
+      logger.warn(TAG, `正则元素匹配失败: ${pattern}, 错误=${String(e)}`);
+    }
+    return results;
+  }
+
+  private getStringFromRegexGroupPayload(ruleStr: string): string | null {
+    const payload = this.parseRegexGroupPayload(this.content);
+    if (payload === null) {
+      return null;
+    }
+
+    const trimmedRule = ruleStr.trim();
+    if (trimmedRule.length <= 0 || trimmedRule === 'text' || trimmedRule === 'all') {
+      return payload.__legadoRegexText;
+    }
+
+    if (/\$\d{1,2}/.test(trimmedRule)) {
+      return trimmedRule.replace(/\$(\d{1,2})/g, (token: string, groupIndexText: string): string => {
+        const groupIndex = Number(groupIndexText);
+        if (Number.isNaN(groupIndex) || groupIndex < 0 || groupIndex >= payload.__legadoRegexGroups.length) {
+          return '';
+        }
+        return payload.__legadoRegexGroups[groupIndex] || '';
+      });
+    }
+
+    if (/^\d{1,2}$/.test(trimmedRule)) {
+      const groupIndex = Number(trimmedRule);
+      if (!Number.isNaN(groupIndex) && groupIndex >= 0 && groupIndex < payload.__legadoRegexGroups.length) {
+        return payload.__legadoRegexGroups[groupIndex] || '';
+      }
+    }
+
+    if (this.shouldParseRegexPayloadTextWithRule(trimmedRule)) {
+      return this.getStringSingleInternalWithContent(trimmedRule, payload.__legadoRegexText);
+    }
+
+    return null;
+  }
+
+  private shouldParseRegexPayloadTextWithRule(rule: string): boolean {
+    if (rule.length <= 0) {
+      return false;
+    }
+    if (rule.includes('<js>') || rule.toLowerCase().includes('@js:')) {
+      return false;
+    }
+    return this.looksLikeRuleExpression(rule) ||
+      rule.includes('@') ||
+      rule.startsWith('class.') ||
+      rule.startsWith('id.') ||
+      rule.startsWith('tag.') ||
+      rule.startsWith('text.') ||
+      /^[a-zA-Z][a-zA-Z0-9_-]*(?:[.#].*)?$/.test(rule);
+  }
+
+  private parseRegexGroupPayload(content: string): RegexGroupPayload | null {
+    if (!content || content.indexOf(REGEX_GROUP_PAYLOAD_KEY) < 0) {
+      return null;
+    }
+    try {
+      const parsed = SafeUtils.parseObj(content) as RegexGroupPayload;
+      if (!parsed || !Array.isArray(parsed.__legadoRegexGroups)) {
+        return null;
+      }
+      const groups: string[] = [];
+      for (let i = 0; i < parsed.__legadoRegexGroups.length; i++) {
+        groups.push(String(parsed.__legadoRegexGroups[i] || ''));
+      }
+      const payload: RegexGroupPayload = {
+        __legadoRegexGroups: groups,
+        __legadoRegexText: String(parsed.__legadoRegexText || groups[0] || '')
+      };
+      return payload;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   // ==================== JS执行 ====================
 
   /**
@@ -5067,6 +6500,8 @@ export class LegadoRuleAnalyzer {
     
     // 异步执行，结果会被丢弃（同步上下文无法等待）
     jsEngine.execute(code, context).then((result) => {
+      this.syncVariablesFromRecord(result.variables);
+      this.syncSourceEffects(result.sourceEffects);
       if (result.success && result.result) {
         if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
           logger.debug(TAG, `JS异步执行完成: ${result.result.substring(0, 50)}...`);
@@ -5093,6 +6528,8 @@ export class LegadoRuleAnalyzer {
     };
     
     const result = await jsEngine.execute(code, context);
+    this.syncVariablesFromRecord(result.variables);
+    this.syncSourceEffects(result.sourceEffects);
     if (result.success) {
       return result.result;
     } else {
@@ -5112,7 +6549,87 @@ export class LegadoRuleAnalyzer {
     return obj;
   }
 
+  private syncVariablesFromRecord(variables?: Record<string, string>): void {
+    if (!variables) {
+      return;
+    }
+    const keys = Object.keys(variables);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = variables[key];
+      if (key && key.length > 0 && value !== undefined && value !== null) {
+        this.variables.set(key, String(value));
+      }
+    }
+  }
+
+  private syncSourceEffects(effects?: LegadoJsSourceEffects): void {
+    if (!effects) {
+      return;
+    }
+    if (effects.loginInfo !== undefined && effects.loginInfo !== null) {
+      this.sourceEffects.loginInfo = String(effects.loginInfo);
+    }
+    if (effects.loginHeader !== undefined && effects.loginHeader !== null) {
+      this.sourceEffects.loginHeader = String(effects.loginHeader);
+    }
+    if (effects.sourceVariable !== undefined && effects.sourceVariable !== null) {
+      this.sourceEffects.sourceVariable = String(effects.sourceVariable);
+    }
+    if (effects.removeLoginHeader === true) {
+      this.sourceEffects.removeLoginHeader = true;
+    }
+    if (effects.data && effects.data.length > 0) {
+      const existing: LegadoJsSourceDataChange[] = this.sourceEffects.data ? this.sourceEffects.data : [];
+      for (let i = 0; i < effects.data.length; i++) {
+        const item = effects.data[i];
+        if (!item) {
+          continue;
+        }
+        const key = String(item.key || '').trim();
+        if (key.length <= 0) {
+          continue;
+        }
+        existing.push({
+          key: key,
+          value: String(item.value || '')
+        });
+      }
+      if (existing.length > 0) {
+        this.sourceEffects.data = existing;
+      }
+    }
+  }
+
   // ==================== 工具方法 ====================
+
+  private splitReplaceRule(ruleText: string): RuleReplaceParts {
+    const result: RuleReplaceParts = {
+      rule: ruleText,
+      replaceFirst: false
+    };
+    const firstSep = ruleText.indexOf('##');
+    if (firstSep < 0) {
+      return result;
+    }
+
+    result.rule = ruleText.substring(0, firstSep).trim();
+    const rest = ruleText.substring(firstSep + 2);
+    const secondSep = rest.indexOf('##');
+    if (secondSep < 0) {
+      result.replaceRegex = rest;
+      return result;
+    }
+
+    result.replaceRegex = rest.substring(0, secondSep);
+    let replacement = rest.substring(secondSep + 2);
+    if (replacement.endsWith('#')) {
+      result.replaceFirst = true;
+      replacement = replacement.substring(0, replacement.length - 1);
+    }
+    result.replacement = replacement;
+    return result;
+  }
 
   /**
    * 应用替换规则
@@ -5121,24 +6638,39 @@ export class LegadoRuleAnalyzer {
   private applyReplace(input: string, pattern: string, replacement: string, first: boolean): string {
     try {
       const regex = new RegExp(pattern, first ? '' : 'g');
+      if (first) {
+        const firstMatch = input.match(regex);
+        if (!firstMatch || firstMatch.length <= 0) {
+          return '';
+        }
+        return firstMatch[0].replace(regex, (...args: string[]): string => {
+          return this.applyRegexReplacementArgs(replacement, args);
+        });
+      }
       
       // 使用函数替换以支持$1, $2等捕获组
       return input.replace(regex, (...args: string[]): string => {
-        let result = replacement;
-        // args: [match, group1, group2, ..., offset, string]
-        // 替换$0为完整匹配
-        result = result.replace(/\$0/g, args[0]);
-        // 替换$1, $2, ... $9为对应捕获组
-        for (let i = 1; i < args.length - 2 && i <= 9; i++) {
-          const groupValue = args[i] !== undefined ? args[i] : '';
-          result = result.replace(new RegExp('\\$' + i, 'g'), groupValue);
-        }
-        return result;
+        return this.applyRegexReplacementArgs(replacement, args);
       });
     } catch (e) {
       logger.warn(TAG, `替换规则执行失败: ${pattern}`);
       return input.replace(pattern, replacement);
     }
+  }
+
+  private applyRegexReplacementArgs(replacement: string, args: string[]): string {
+    // args: [match, group1, group2, ..., offset, string]
+    return replacement.replace(/\$(\d{1,2})/g, (token: string, groupIndexText: string): string => {
+      const groupIndex = Number(groupIndexText);
+      if (Number.isNaN(groupIndex) || groupIndex < 0 || groupIndex > 99) {
+        return token;
+      }
+      if (groupIndex < args.length - 2) {
+        const groupValue = args[groupIndex];
+        return groupValue !== undefined ? groupValue : '';
+      }
+      return '';
+    });
   }
 
   /**
@@ -5211,10 +6743,43 @@ export class LegadoRuleAnalyzer {
     return snapshot;
   }
 
+  getSourceEffectsSnapshot(): LegadoJsSourceEffects {
+    const snapshot: LegadoJsSourceEffects = {};
+    if (this.sourceEffects.loginInfo !== undefined) {
+      snapshot.loginInfo = this.sourceEffects.loginInfo;
+    }
+    if (this.sourceEffects.loginHeader !== undefined) {
+      snapshot.loginHeader = this.sourceEffects.loginHeader;
+    }
+    if (this.sourceEffects.sourceVariable !== undefined) {
+      snapshot.sourceVariable = this.sourceEffects.sourceVariable;
+    }
+    if (this.sourceEffects.removeLoginHeader === true) {
+      snapshot.removeLoginHeader = true;
+    }
+    if (this.sourceEffects.data && this.sourceEffects.data.length > 0) {
+      const changes: LegadoJsSourceDataChange[] = [];
+      for (let i = 0; i < this.sourceEffects.data.length; i++) {
+        const item = this.sourceEffects.data[i];
+        changes.push({
+          key: item.key,
+          value: item.value
+        });
+      }
+      snapshot.data = changes;
+    }
+    return snapshot;
+  }
+
+  clearSourceEffects(): void {
+    this.sourceEffects = {};
+  }
+
   /**
    * 清除变量
    */
   clearVariables(): void {
     this.variables.clear();
+    this.sourceEffects = {};
   }
 }

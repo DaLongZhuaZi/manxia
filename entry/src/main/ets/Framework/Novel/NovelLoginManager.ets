@@ -987,6 +987,23 @@ export class NovelLoginManager {
   }
 
   /**
+   * 获取书源持久化数据快照（对应Legado的source.get）
+   */
+  getSourceDataSnapshot(sourceId: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    const prefix = `${sourceId}_`;
+    this.sourceDataStore.forEach((value: string, key: string): void => {
+      if (key.startsWith(prefix)) {
+        const dataKey = key.substring(prefix.length);
+        if (dataKey.length > 0) {
+          result[dataKey] = value;
+        }
+      }
+    });
+    return result;
+  }
+
+  /**
    * 解析Cookie字符串并保存
    */
   private parseCookieString(sourceId: string, cookieStr: string): void {

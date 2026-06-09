@@ -31,6 +31,11 @@ interface OnlineDownloadSourceIdentity {
   sourcePkg: string;
 }
 
+interface NormalizedDownloadPages {
+  urls: string[];
+  pageRequestHeaders: (Record<string, string> | undefined)[];
+}
+
 /**
  * 下载任务状态
  */
@@ -53,7 +58,14 @@ export enum DownloadTaskType {
 /**
  * 图片获取回调函数类型
  */
-export type PageListFetcher = (chapterId: string, mangaId: string) => Promise<string[]>;
+export interface DownloadPageItem {
+  url: string;
+  headers?: Record<string, string>;
+}
+
+export type DownloadPageListResult = string[] | DownloadPageItem[];
+
+export type PageListFetcher = (chapterId: string, mangaId: string) => Promise<DownloadPageListResult>;
 
 /**
  * 下载任务信息
@@ -82,6 +94,8 @@ export interface DownloadTaskInfo {
   archivePath?: string;          // 在线漫画CBZ归档路径
   needFetchPages?: boolean;      // 是否需要先获取图片列表
   pageListFetcher?: PageListFetcher; // 图片列表获取函数
+  defaultRequestHeaders?: Record<string, string>; // 默认请求头
+  pageRequestHeaders?: (Record<string, string> | undefined)[]; // 页面级请求头
   failedPageIndexes?: number[];  // 所有重试后仍失败的页码索引
 }
 
@@ -321,6 +335,7 @@ export class MangaDownloadManager {
         sourceName: sourceIdentity.sourceName,
         sourcePkg: sourceIdentity.sourcePkg
       };
+      taskInfo.defaultRequestHeaders = this.cloneHeaderRecord(headers);
 
       // 保存到内存
       this.tasks.set(taskId, taskInfo);
@@ -479,13 +494,15 @@ export class MangaDownloadManager {
       if (task.needFetchPages && task.pageListFetcher && task.urls.length === 0) {
         logger.info(TAG, `获取章节图片列表: ${task.chapterTitle}`);
         try {
-          const imageUrls = await task.pageListFetcher(task.chapterId, task.mangaId);
-          if (imageUrls.length === 0) {
+          const pageListResult = await task.pageListFetcher(task.chapterId, task.mangaId);
+          const normalizedPages = this.normalizePageListResult(pageListResult);
+          if (normalizedPages.urls.length === 0) {
             throw new Error('获取图片列表为空');
           }
-          task.urls = imageUrls;
-          task.totalCount = imageUrls.length;
-          logger.info(TAG, `获取到 ${imageUrls.length} 张图片`);
+          task.urls = normalizedPages.urls;
+          task.pageRequestHeaders = normalizedPages.pageRequestHeaders;
+          task.totalCount = normalizedPages.urls.length;
+          logger.info(TAG, `获取到 ${normalizedPages.urls.length} 张图片`);
           
           // 更新数据库中的任务信息
           await this.updateTaskInDatabase(task);
@@ -530,7 +547,7 @@ export class MangaDownloadManager {
         const filePath = `${task.savePath}/${fileName}`;
 
         try {
-          await this.downloadImageWithRetry(url, filePath, !!task.isOnlineManga);
+          await this.downloadImageWithRetry(url, filePath, !!task.isOnlineManga, this.resolveRequestHeadersForPage(task, i));
           task.downloadedCount++;
           task.progress = Math.floor((task.downloadedCount / task.totalCount) * 100);
 
@@ -1416,6 +1433,90 @@ export class MangaDownloadManager {
       }
     }
     return headers;
+  }
+
+  private normalizePageListResult(pageList: DownloadPageListResult): NormalizedDownloadPages {
+    const urls: string[] = [];
+    const pageRequestHeaders: (Record<string, string> | undefined)[] = [];
+    if (pageList.length <= 0) {
+      return {
+        urls: urls,
+        pageRequestHeaders: pageRequestHeaders
+      };
+    }
+
+    const firstItem = pageList[0];
+    if (typeof firstItem === 'string') {
+      const stringPages = pageList as string[];
+      for (let i = 0; i < stringPages.length; i++) {
+        const url = String(stringPages[i] || '').trim();
+        if (url.length > 0) {
+          urls.push(url);
+          pageRequestHeaders.push(undefined);
+        }
+      }
+      return {
+        urls: urls,
+        pageRequestHeaders: pageRequestHeaders
+      };
+    }
+
+    const itemPages = pageList as DownloadPageItem[];
+    for (let i = 0; i < itemPages.length; i++) {
+      const item = itemPages[i];
+      if (!item || !item.url) {
+        continue;
+      }
+      const url = String(item.url).trim();
+      if (url.length <= 0) {
+        continue;
+      }
+      urls.push(url);
+      pageRequestHeaders.push(this.cloneHeaderRecord(item.headers));
+    }
+    return {
+      urls: urls,
+      pageRequestHeaders: pageRequestHeaders
+    };
+  }
+
+  private resolveRequestHeadersForPage(task: DownloadTaskInfo, pageIndex: number): Record<string, string> | undefined {
+    const defaultHeaders = this.cloneHeaderRecord(task.defaultRequestHeaders);
+    let pageHeaders: Record<string, string> | undefined = undefined;
+    if (task.pageRequestHeaders && pageIndex >= 0 && pageIndex < task.pageRequestHeaders.length) {
+      pageHeaders = this.cloneHeaderRecord(task.pageRequestHeaders[pageIndex]);
+    }
+    if (!defaultHeaders) {
+      return pageHeaders;
+    }
+    if (!pageHeaders) {
+      return defaultHeaders;
+    }
+
+    const result: Record<string, string> = {};
+    this.mergeHeaderRecord(result, defaultHeaders);
+    this.mergeHeaderRecord(result, pageHeaders);
+    return result;
+  }
+
+  private cloneHeaderRecord(headers?: Record<string, string>): Record<string, string> | undefined {
+    if (!headers) {
+      return undefined;
+    }
+    const result: Record<string, string> = {};
+    this.mergeHeaderRecord(result, headers);
+    return Object.keys(result).length > 0 ? result : undefined;
+  }
+
+  private mergeHeaderRecord(target: Record<string, string>, headers: Record<string, string>): void {
+    const keys = Object.keys(headers);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = headers[key];
+      if (key && key.length > 0 && value && String(value).length > 0) {
+        target[key] = String(value);
+      }
+    }
   }
 
   /**

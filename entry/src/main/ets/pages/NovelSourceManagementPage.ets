@@ -319,11 +319,14 @@ export struct NovelSourceManagementPage {
     if (this.searchKeyword.trim()) {
       const keyword = this.searchKeyword.toLowerCase();
       const isAudioKeyword: boolean = keyword.includes('听书') || keyword.includes('有声') || keyword.includes('audio');
+      const isImageMangaKeyword: boolean = keyword.includes('漫画') || keyword.includes('图片') ||
+        keyword.includes('image') || keyword.includes('manga');
       result = result.filter(s => 
         s.name.toLowerCase().includes(keyword) || 
         (s.group && s.group.toLowerCase().includes(keyword)) ||
         s.url.toLowerCase().includes(keyword) ||
-        (isAudioKeyword && this.isAudioSource(s))
+        (isAudioKeyword && this.isAudioSource(s)) ||
+        (isImageMangaKeyword && this.isImageMangaSource(s))
       );
     }
     
@@ -393,6 +396,10 @@ export struct NovelSourceManagementPage {
 
   private isAudioSource(source: NovelSourceInfo): boolean {
     return source.bookSourceType === LegadoBookSourceType.AUDIO;
+  }
+
+  private isImageMangaSource(source: NovelSourceInfo): boolean {
+    return source.bookSourceType === LegadoBookSourceType.IMAGE;
   }
 
   private toggleSearchBar(): void {
@@ -2165,6 +2172,17 @@ export struct NovelSourceManagementPage {
               .fontFamily(this.appFontFamily)
               .fontColor('#1677FF')
               .backgroundColor('#E6F4FF')
+              .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+              .borderRadius(2)
+              .margin({ left: 4 })
+          }
+
+          if (this.isImageMangaSource(source)) {
+            Text('漫画/图片')
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
               .padding({ left: 4, right: 4, top: 2, bottom: 2 })
               .borderRadius(2)
               .margin({ left: 4 })

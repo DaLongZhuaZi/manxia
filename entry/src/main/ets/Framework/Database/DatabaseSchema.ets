@@ -82,6 +82,7 @@ export interface PageTable {
   chapterId: string;            // 章节ID（内部ID），外键，关联到chapter表的id字段
   pageNumber: number;           // 页码（从0开始）
   imageUrl: string;             // 图片URL（从图源获取的原始URL）
+  requestHeaders: string;        // 页面级图片请求头JSON
   localPath: string;            // 本地路径（下载后的本地文件路径）
   width: number;                // 图片宽度
   height: number;               // 图片高度
@@ -401,6 +402,7 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       chapterId TEXT NOT NULL,
       pageNumber INTEGER NOT NULL,
       imageUrl TEXT NOT NULL,
+      requestHeaders TEXT DEFAULT '',
       localPath TEXT,
       width INTEGER DEFAULT 0,
       height INTEGER DEFAULT 0,
@@ -1030,5 +1032,9 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
     'CREATE INDEX IF NOT EXISTS idx_track_record_content ON track_record (contentId)',
     'CREATE INDEX IF NOT EXISTS idx_track_record_tracker ON track_record (trackerId)',
     'CREATE INDEX IF NOT EXISTS idx_track_record_sync ON track_record (syncStatus)'
+  ],
+  15: [
+    // 版本15：在线漫画页面保存页面级请求头，用于 Legado IMAGE / 反盗链图源缓存恢复
+    'ALTER TABLE online_page ADD COLUMN requestHeaders TEXT DEFAULT \'\''
   ]
 };
