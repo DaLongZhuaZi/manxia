@@ -1,15 +1,24 @@
 # 更新日志
 
-## v0.1.2 (104802308)
+## v0.1.2 (104802309)
 
-### 核心重构
-- 全面升级 Legado 书源引擎，新增完整的 JS 运行时（`LegadoJsEngine`）与多层规则分析器。
-- 首创引入 Legado 漫画源桥接模块（`LegadoMangaSourceBridge`），实现通过小说“阅读”规则体系直接解析并阅读漫画。
+### 书源引擎
+- 新增“书源引擎”独立页面，并在小说设置页增加入口。
+- 支持用户自管 Legado 书源索引同步、仓库记录、同步进度、日志和更新提示展示。
+- 明确漫匣 App 与仓库不提供、不内置、不维护任何书源，用户需要自行导入或维护。
 
-### 功能与优化
-- 详情页面（`SourceDetailPage`）新增高自由度的交互式 WebView 悬浮球调试入口，改善图源及书源开发者调试体验。
-- 详情与阅读页面（`UnifiedDetailPage`, `MangaReaderPage`）全面接入桥接源，实现图文跨载体逻辑的合一展示与兼容。
+### 运行时更新
+- 新增 Legado 运行时资产管理器，支持 `staging/active/rollback` 安装、切换与回滚。
+- WebView 与 Rhino 沙箱优先加载已验证 active 运行时，失败后回退内置 rawfile。
+- 书源引擎页面新增运行时版本、code、runtimeApi、健康状态、激活时间与 rawfile 回退状态展示。
 
-### 底层与修复
-- 本地数据库（`DatabaseSchema`）扩容更新，用于支持复合类型的源结构与状态。
-- 下载中心及 `UnifiedDownloadManager` 同步升级，实现对桥接类图源的下载支持与 Headers 参数精准提取。
+### 版本管理
+- `VersionHistoryManager` 新增 Legado 书源索引与运行时仓库版本 target。
+- 默认仓库同步成功后记录 GitHub commit marker，页面可展示本地标记、远端最新 commit 与检查状态。
+- 自动检查调整为 MainMenuPage 显示后执行，每日最多一次，只提示更新状态，不自动下载。
+
+### 修复优化
+- 修复书源引擎弹窗缺少出现和消失动画的问题。
+- 修复仓库连通性探测中代理失败日志误导问题。
+- 修复运行时文件大小与 GitHub raw 内容不一致导致同步失败的问题。
+- 修复空书源索引同步被误判为失败的问题。

@@ -283,8 +283,10 @@ export class LegadoMangaSourceBridge {
     mangaExternalId: string,
     chapterExternalId: string
   ): Promise<LegadoMangaPageResult | null> {
+    logger.info(TAG, `开始加载Legado漫画页面列表: sourceId=${sourceId}, manga=${mangaExternalId}, chapter=${chapterExternalId}`);
     const source = await this.resolveLegadoSourceByComicSourceId(sourceId);
     if (!source) {
+      logger.warn(TAG, `无法解析Legado漫画虚拟图源: sourceId=${sourceId}`);
       return null;
     }
     const executor = new NovelSourceExecutor(source);
@@ -293,10 +295,12 @@ export class LegadoMangaSourceBridge {
       logger.warn(TAG, `无法定位Legado漫画章节: sourceId=${sourceId}, manga=${mangaExternalId}, chapter=${chapterExternalId}`);
       return null;
     }
+    logger.info(TAG, `Legado漫画章节定位成功: source=${source.bookSourceName}, chapterTitle=${chapter.title}, chapterUrl=${chapter.url}`);
 
     const content = await this.getContentWithExecutor(executor, chapter);
     const images: LegadoMangaExtractedImage[] =
       LegadoMangaImageExtractor.extractImages(content, chapter.url || mangaExternalId);
+    logger.info(TAG, `Legado漫画正文解析完成: contentLength=${content.length}, images=${images.length}, chapterUrl=${chapter.url || mangaExternalId}`);
     const pages: SourcePageInfo[] = [];
     const mangaPages: MangaPage[] = [];
 
@@ -325,6 +329,11 @@ export class LegadoMangaSourceBridge {
         requestHeaders: this.convertToMangaHeaders(headers),
         isLoaded: false
       });
+    }
+    if (pages.length <= 0) {
+      logger.warn(TAG, `Legado漫画页面列表为空: sourceId=${sourceId}, manga=${mangaExternalId}, chapter=${chapterExternalId}, contentLength=${content.length}`);
+    } else {
+      logger.info(TAG, `Legado漫画页面列表加载完成: sourceId=${sourceId}, pages=${pages.length}`);
     }
 
     const result: LegadoMangaPageResult = {
@@ -546,6 +555,10 @@ export class LegadoMangaSourceBridge {
     const internalComicId = await this.dataManager.saveOnlineComicFromSource(sourceId, comicData, book.bookUrl);
     manga.id = internalComicId;
 
+    if (source.bookSourceType === LegadoBookSourceType.IMAGE && this.shouldReplaceExistingImageChapters(book, chapters)) {
+      await this.dataManager.deleteOnlineChaptersAndPages(internalComicId);
+    }
+
     for (let i = 0; i < chapters.length; i++) {
       const chapter = chapters[i];
       const chapterInput: OnlineChapterInfoInput = {
@@ -634,6 +647,11 @@ export class LegadoMangaSourceBridge {
         return chapter;
       }
     }
+    if (source.bookSourceType === LegadoBookSourceType.IMAGE && chapters.length === 1 &&
+      this.isSameUrlIdentity(actualBook.bookUrl, chapters[0].url)) {
+      logger.warn(TAG, `Legado图片书源章节ID未命中，回退到详情页单章: manga=${mangaExternalId}, requested=${chapterExternalId}`);
+      return chapters[0];
+    }
     if (chapterExternalId.length > 0) {
       return {
         id: chapterExternalId,
@@ -681,11 +699,149 @@ export class LegadoMangaSourceBridge {
   }
 
   private async getChapterListWithExecutor(executor: NovelSourceExecutor, book: LegadoBook): Promise<LegadoChapter[]> {
-    return await executor.getChapterList(book);
+    const chapters = await executor.getChapterList(book);
+    return await this.normalizeImageBookChapters(executor, book, chapters);
   }
 
   private async getContentWithExecutor(executor: NovelSourceExecutor, chapter: LegadoChapter): Promise<string> {
     return await executor.getContent(chapter);
+  }
+
+  private async normalizeImageBookChapters(
+    executor: NovelSourceExecutor,
+    book: LegadoBook,
+    chapters: LegadoChapter[]
+  ): Promise<LegadoChapter[]> {
+    if (book.type !== LegadoBookSourceType.IMAGE) {
+      return chapters;
+    }
+    const singleChapter = this.buildSingleImageBookChapter(book);
+    const content = await this.getContentWithExecutor(executor, singleChapter);
+    const images = LegadoMangaImageExtractor.extractImages(content, singleChapter.url || book.bookUrl);
+    if (images.length <= 0) {
+      return chapters;
+    }
+    this.applyImageBookCoverFallback(book, images);
+    if (!this.shouldPreferSingleImageBookChapter(book, chapters, images.length)) {
+      return chapters;
+    }
+    logger.info(TAG, `Legado图片书源使用详情页作为单章: book=${book.name || book.bookUrl}, images=${images.length}, originalChapters=${chapters.length}`);
+    return [singleChapter];
+  }
+
+  private applyImageBookCoverFallback(book: LegadoBook, images: LegadoMangaExtractedImage[]): void {
+    const currentCover = book.coverUrl ? book.coverUrl.trim() : '';
+    if (currentCover.length > 0) {
+      return;
+    }
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      const coverUrl = image.imageUrl ? image.imageUrl.trim() : '';
+      if (this.isUsableImageCoverUrl(coverUrl)) {
+        book.coverUrl = coverUrl;
+        logger.info(TAG, `Legado图片书源使用首图作为封面: book=${book.name || book.bookUrl}, cover=${coverUrl}`);
+        return;
+      }
+    }
+  }
+
+  private isUsableImageCoverUrl(url: string): boolean {
+    if (!url || url.trim().length <= 0) {
+      return false;
+    }
+    const normalized = url.trim().toLowerCase();
+    if (normalized === '#' || normalized === 'about:blank' || normalized.startsWith('javascript:')) {
+      return false;
+    }
+    if (normalized.startsWith('data:') && normalized.indexOf('data:image/') !== 0) {
+      return false;
+    }
+    if (normalized.indexOf('img@src') >= 0 || normalized.indexOf('img@data-src') >= 0) {
+      return false;
+    }
+    if (normalized.indexOf('placeholder') >= 0 || normalized.indexOf('blank.gif') >= 0 ||
+      normalized.indexOf('spacer.gif') >= 0 || normalized.indexOf('transparent.gif') >= 0) {
+      return false;
+    }
+    return true;
+  }
+
+  private buildSingleImageBookChapter(book: LegadoBook): LegadoChapter {
+    const chapterUrl = book.tocUrl && book.tocUrl.trim().length > 0 ? book.tocUrl : book.bookUrl;
+    const title = book.latestChapterTitle && book.latestChapterTitle.trim().length > 0
+      ? book.latestChapterTitle
+      : '全文';
+    return {
+      id: `${book.bookUrl}#full`,
+      bookUrl: book.bookUrl,
+      url: chapterUrl,
+      title: title,
+      index: 0,
+      updateTime: book.updateTime || Date.now()
+    };
+  }
+
+  private shouldPreferSingleImageBookChapter(book: LegadoBook, chapters: LegadoChapter[], imageCount: number): boolean {
+    if (imageCount <= 1) {
+      return false;
+    }
+    if (chapters.length <= 0) {
+      return true;
+    }
+    if (chapters.length === 1 && this.isSameUrlIdentity(book.bookUrl, chapters[0].url)) {
+      return true;
+    }
+    return !this.hasChapterWithBookIdentity(book, chapters);
+  }
+
+  private shouldReplaceExistingImageChapters(book: LegadoBook, chapters: MangaChapter[]): boolean {
+    if (chapters.length !== 1) {
+      return false;
+    }
+    const firstChapter = chapters[0];
+    const chapterUrl = firstChapter.externalId || firstChapter.id;
+    const expectedUrl = book.tocUrl && book.tocUrl.trim().length > 0 ? book.tocUrl : book.bookUrl;
+    return this.isSameUrlIdentity(book.bookUrl, expectedUrl) && chapterUrl === expectedUrl;
+  }
+
+  private hasChapterWithBookIdentity(book: LegadoBook, chapters: LegadoChapter[]): boolean {
+    const bookIdentity = this.normalizeUrlIdentity(book.bookUrl);
+    if (bookIdentity.length <= 0) {
+      return false;
+    }
+    for (let i = 0; i < chapters.length; i++) {
+      const chapter = chapters[i];
+      if (this.normalizeUrlIdentity(chapter.url) === bookIdentity) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isSameUrlIdentity(left: string, right: string): boolean {
+    const leftIdentity = this.normalizeUrlIdentity(left);
+    const rightIdentity = this.normalizeUrlIdentity(right);
+    return leftIdentity.length > 0 && leftIdentity === rightIdentity;
+  }
+
+  private normalizeUrlIdentity(url: string): string {
+    const trimmed = url ? url.trim() : '';
+    if (trimmed.length <= 0) {
+      return '';
+    }
+    let result = trimmed;
+    const hashIndex = result.indexOf('#');
+    if (hashIndex >= 0) {
+      result = result.substring(0, hashIndex);
+    }
+    const queryIndex = result.indexOf('?');
+    if (queryIndex >= 0) {
+      result = result.substring(0, queryIndex);
+    }
+    while (result.endsWith('/') && result.length > 1) {
+      result = result.substring(0, result.length - 1);
+    }
+    return result.toLowerCase();
   }
 
   private convertSearchBooksToComicInfo(books: LegadoSearchBook[]): ComicInfo[] {

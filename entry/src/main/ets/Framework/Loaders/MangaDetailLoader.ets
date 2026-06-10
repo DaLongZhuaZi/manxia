@@ -35,6 +35,7 @@ import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../Web
 import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo, PageRequestHeader } from '../WebView/MangaSourceTypes';
 import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
 import { getLegadoMangaSourceBridge, LegadoMangaDetailResult } from '../Novel/LegadoMangaSourceBridge';
+import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Reader/MangaIdentityResolver';
 import webview from '@ohos.web.webview';
 
 const TAG = 'MangaDetailLoader';
@@ -186,13 +187,56 @@ export class MangaDetailLoader {
       this.currentSourcePkg = params.sourcePkg || '';
       this.coverHttpHeaders = {};
 
-      if (this.currentSourceId > 0 && await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.currentSourceId)) {
+      let resolvedIdentity: MangaIdentityResolveResult | null = null;
+      const identityInput = MangaIdentityResolver.getInstance().buildInput(
+        params.mangaId,
+        '',
+        this.currentSourceId,
+        this.currentSourceId > 0 ? 'OnlineUndownloaded' : '',
+        'MangaDetailLoader.loadMangaDetailWithProgress'
+      );
+      identityInput.sourceName = this.currentSourceName;
+      identityInput.sourcePkg = this.currentSourcePkg;
+      resolvedIdentity = await MangaIdentityResolver.getInstance().resolve(identityInput);
+      if (resolvedIdentity.success) {
+        if (resolvedIdentity.canonicalMangaId.length > 0 && resolvedIdentity.canonicalMangaId !== params.mangaId) {
+          logger.info(TAG, `[分阶段] 漫画ID已校准: ${params.mangaId} -> ${resolvedIdentity.canonicalMangaId}`);
+          params.mangaId = resolvedIdentity.canonicalMangaId;
+        }
+        if (!params.externalMangaId && resolvedIdentity.externalMangaId.length > 0) {
+          params.externalMangaId = resolvedIdentity.externalMangaId;
+        }
+        if (resolvedIdentity.sourceId > 0) {
+          params.sourceId = resolvedIdentity.sourceId;
+          this.currentSourceId = resolvedIdentity.sourceId;
+        }
+        if (resolvedIdentity.onlineComicInfo) {
+          if (resolvedIdentity.onlineComicInfo.sourceName.length > 0) {
+            this.currentSourceName = resolvedIdentity.onlineComicInfo.sourceName;
+          }
+          if (resolvedIdentity.onlineComicInfo.sourcePkg.length > 0) {
+            this.currentSourcePkg = resolvedIdentity.onlineComicInfo.sourcePkg;
+          }
+        }
+      } else {
+        logger.warn(TAG, `[分阶段] 漫画身份未解析，继续原始加载: ${resolvedIdentity.detail}`);
+      }
+
+      // 第一阶段：获取基本信息
+      let comicInfo = resolvedIdentity && resolvedIdentity.comicInfo
+        ? resolvedIdentity.comicInfo
+        : await this.dataManager.getComicById(params.mangaId);
+      if (comicInfo === null) {
+        comicInfo = await this.tryBuildFallbackLocalComicInfo(params, '[分阶段]');
+      }
+
+      const shouldLoadLegadoFromNetwork: boolean = this.currentSourceId > 0 &&
+        await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.currentSourceId) &&
+        (params.forceRefresh === true || comicInfo === null);
+      if (shouldLoadLegadoFromNetwork) {
         const legadoResult = await this.loadLegadoMangaWithProgress(params, callback);
         return legadoResult;
       }
-      
-      // 第一阶段：获取基本信息
-      const comicInfo = await this.dataManager.getComicById(params.mangaId);
       
       // [修复] 如果forceRefresh=true且有sourceId，强制从网络重新获取
       if (params.forceRefresh && params.sourceId && params.sourceId > 0) {
@@ -306,6 +350,51 @@ export class MangaDetailLoader {
       lastUpdatedAt: comicInfo.lastUpdateTime || Date.now(),
       isNSFW: Boolean(comicInfo.isNSFW)
     };
+  }
+
+  private async tryBuildFallbackLocalComicInfo(
+    params: MangaDetailLoadParams,
+    logPrefix: string
+  ): Promise<ComicInfo | null> {
+    if (params.mangaId.length <= 0) {
+      return null;
+    }
+
+    try {
+      const chapters: ChapterInfo[] = await this.dataManager.getComicChapters(params.mangaId);
+      if (chapters.length <= 0) {
+        logger.warn(TAG, `${logPrefix}本地漫画兜底失败：未找到章节，mangaId=${params.mangaId}`);
+        return null;
+      }
+
+      const coverPath: string = params.cachedCoverPath && params.cachedCoverPath.length > 0
+        ? params.cachedCoverPath
+        : (params.cachedCover || '');
+      const now: number = Date.now();
+      const fallback: ComicInfo = {
+        id: params.mangaId,
+        title: params.cachedTitle && params.cachedTitle.length > 0 ? params.cachedTitle : params.mangaId,
+        author: '',
+        description: '',
+        coverUrl: coverPath,
+        coverLocalPath: coverPath.length > 0 ? coverPath : undefined,
+        sourceId: 'local_import',
+        status: MangaStatus.UNKNOWN,
+        tags: [],
+        rating: 0,
+        chapterCount: chapters.length,
+        lastUpdateTime: now,
+        addTime: now,
+        contentType: 'manga',
+        isNSFW: false,
+        isPrivate: false
+      };
+      logger.warn(TAG, `${logPrefix}已启用本地漫画详情兜底: mangaId=${params.mangaId}, chapters=${chapters.length}`);
+      return fallback;
+    } catch (error) {
+      logger.warn(TAG, `${logPrefix}本地漫画详情兜底异常: mangaId=${params.mangaId}, ${String(error)}`);
+      return null;
+    }
   }
   
   /**
@@ -914,9 +1003,41 @@ export class MangaDetailLoader {
       this.currentSourceName = params.sourceName || '';
       this.currentSourcePkg = params.sourcePkg || '';
       this.coverHttpHeaders = {};
+
+      let resolvedIdentity: MangaIdentityResolveResult | null = null;
+      const identityInput = MangaIdentityResolver.getInstance().buildInput(
+        params.mangaId,
+        '',
+        this.currentSourceId,
+        this.currentSourceId > 0 ? 'OnlineUndownloaded' : '',
+        'MangaDetailLoader.loadMangaDetail'
+      );
+      identityInput.sourceName = this.currentSourceName;
+      identityInput.sourcePkg = this.currentSourcePkg;
+      resolvedIdentity = await MangaIdentityResolver.getInstance().resolve(identityInput);
+      if (resolvedIdentity.success) {
+        if (resolvedIdentity.canonicalMangaId.length > 0 && resolvedIdentity.canonicalMangaId !== params.mangaId) {
+          logger.info(TAG, `漫画ID已校准: ${params.mangaId} -> ${resolvedIdentity.canonicalMangaId}`);
+          params.mangaId = resolvedIdentity.canonicalMangaId;
+        }
+        if (!params.externalMangaId && resolvedIdentity.externalMangaId.length > 0) {
+          params.externalMangaId = resolvedIdentity.externalMangaId;
+        }
+        if (resolvedIdentity.sourceId > 0) {
+          params.sourceId = resolvedIdentity.sourceId;
+          this.currentSourceId = resolvedIdentity.sourceId;
+        }
+      } else {
+        logger.warn(TAG, `漫画身份未解析，继续原始加载: ${resolvedIdentity.detail}`);
+      }
       
       // 判断是本地漫画还是网络漫画
-      const comicInfo = await this.dataManager.getComicById(params.mangaId);
+      let comicInfo = resolvedIdentity && resolvedIdentity.comicInfo
+        ? resolvedIdentity.comicInfo
+        : await this.dataManager.getComicById(params.mangaId);
+      if (comicInfo === null) {
+        comicInfo = await this.tryBuildFallbackLocalComicInfo(params, '');
+      }
       
       if (comicInfo) {
         // 数据库中存在，判断类型

@@ -75,12 +75,15 @@ export interface SourceConfigResult {
 
 // 定义明确的配置对象接口，避免使用索引签名
 export interface ConfigObject {
+  id?: string;
   name?: string;
   baseUrl?: string;
   pluginId?: string;
+  type?: string;
   version?: string;
   description?: string;
   author?: string;
+  language?: string;
   enabled?: boolean;
   priority?: number;
   timeout?: number;
@@ -88,6 +91,13 @@ export interface ConfigObject {
   userAgent?: string;
   headers?: string;
   cookies?: string;
+  Internet?: boolean;
+  nsfw?: boolean | number;
+}
+
+interface ComicSourceConfigPatch {
+  metadata?: ConfigObject;
+  baseUrl?: string;
 }
 
 /**
@@ -1689,6 +1699,25 @@ export class DataManager {
     }
   }
 
+  public async updateOnlineComicCoverUrl(comicId: string, coverUrl: string): Promise<void> {
+    const normalizedCoverUrl: string = coverUrl ? coverUrl.trim() : '';
+    if (normalizedCoverUrl.length <= 0) {
+      logger.debug(TAG, `跳过空在线漫画封面更新: comicId=${comicId}`);
+      return;
+    }
+    try {
+      const now: number = Date.now();
+      await this.databaseManager.executeSql(
+        'UPDATE online_comic_info SET coverUrl = ?, updateTime = ? WHERE id = ? OR externalId = ?',
+        [normalizedCoverUrl, now, comicId, comicId]
+      );
+      logger.info(TAG, `成功更新在线漫画封面: ${comicId} -> ${normalizedCoverUrl}`);
+    } catch (error) {
+      logger.error(TAG, `更新在线漫画封面失败: comicId=${comicId}`, String(error));
+      throw error as Error;
+    }
+  }
+
   public async updateComicCoverForLibrary(comicId: string, coverPath: string): Promise<void> {
     try {
       const now = Date.now();
@@ -1699,8 +1728,8 @@ export class DataManager {
         [coverPath, coverPath, now, comicId]
       );
       await this.databaseManager.executeSql(
-        'UPDATE online_comic_info SET coverUrl = ?, updateTime = ? WHERE id = ?',
-        [coverPath, now, comicId]
+        'UPDATE online_comic_info SET coverUrl = ?, updateTime = ? WHERE id = ? OR externalId = ?',
+        [coverPath, now, comicId, comicId]
       );
       logger.info(TAG, `已更新书库封面路径: comicId=${comicId}, coverPath=${coverPath}`);
     } catch (error) {
@@ -4932,9 +4961,32 @@ export class DataManager {
    */
   async updateSourceBaseUrl(sourceId: number, newBaseUrl: string): Promise<void> {
     try {
-      const sql = 'UPDATE comic_source SET baseUrl = ?, updateTime = ? WHERE id = ?';
-      await this.databaseManager.executeSql(sql, [newBaseUrl, Date.now(), sourceId]);
-      logger.info(TAG, `图源baseUrl已更新: id=${sourceId}, newBaseUrl=${newBaseUrl}`);
+      const normalizedBaseUrl: string = newBaseUrl.trim();
+      if (normalizedBaseUrl.length <= 0) {
+        throw new Error('图源baseUrl不能为空');
+      }
+
+      const sourceRecord: ComicSourceDatabaseRecord | null = await this.getComicSourceById(sourceId);
+      if (!sourceRecord) {
+        throw new Error(`图源不存在: id=${sourceId}`);
+      }
+
+      let patchedConfigJson: string = sourceRecord.configJson || '';
+      if (patchedConfigJson.trim().length > 0) {
+        const patchedConfig: ComicSourceConfigPatch = SafeUtils.parseObj<ComicSourceConfigPatch>(patchedConfigJson);
+        if (!patchedConfig.metadata) {
+          patchedConfig.metadata = {} as ConfigObject;
+        }
+        patchedConfig.metadata.baseUrl = normalizedBaseUrl;
+        if (patchedConfig.baseUrl !== undefined) {
+          patchedConfig.baseUrl = normalizedBaseUrl;
+        }
+        patchedConfigJson = JSON.stringify(patchedConfig);
+      }
+
+      const sql = 'UPDATE comic_source SET baseUrl = ?, lastUpdateTime = ?, configJson = ? WHERE id = ?';
+      await this.databaseManager.executeSql(sql, [normalizedBaseUrl, Date.now(), patchedConfigJson, sourceId]);
+      logger.info(TAG, `图源baseUrl已更新: id=${sourceId}, newBaseUrl=${normalizedBaseUrl}`);
     } catch (error) {
       logger.error(TAG, `更新图源baseUrl失败: id=${sourceId}`, String(error));
       throw new Error(`更新图源baseUrl失败: ${String(error)}`);
@@ -4980,8 +5032,14 @@ export class DataManager {
     try {
       const now = Date.now();
       
-      // finalExternalId用于online_comic_info表的externalId字段
-      const finalExternalId = comicData.id || externalId || this.generateId();
+      // finalExternalId用于online_comic_info表的externalId字段；显式传入的外部ID优先于漫画对象ID。
+      const explicitExternalId: string = externalId && externalId.length > 0 && !this.validateId(externalId)
+        ? externalId
+        : '';
+      const comicDataExternalId: string = comicData.id && comicData.id.length > 0 && !this.validateId(comicData.id)
+        ? comicData.id
+        : '';
+      const finalExternalId = explicitExternalId || comicDataExternalId || this.generateId();
       
       logger.info(TAG, `📝 [SQL] 开始保存在线漫画: title="${comicData.title}", sourceId=${sourceId}, externalId="${finalExternalId}"`);
       
@@ -4998,8 +5056,9 @@ export class DataManager {
         existingCoverUrl = existingRecord.coverUrl || '';
         logger.info(TAG, `📝 [SQL] 找到现有记录，将更新: id="${comicId}"`);
       } else {
-        // 不存在，生成新ID
-        comicId = externalId || this.generateId();
+        // 不存在时只沿用内部数据库ID，外部URL/站点ID必须保存在externalId字段，不能作为主键。
+        const requestedInternalId: string = externalId && this.validateId(externalId) ? externalId : '';
+        comicId = requestedInternalId.length > 0 ? requestedInternalId : this.generateId();
         logger.info(TAG, `📝 [SQL] 创建新记录: id="${comicId}"`);
       }
       
@@ -5063,13 +5122,18 @@ export class DataManager {
         }
       }
       
-      let incomingCoverUrl = String(comicData.coverUrl || '');
-      if (existingCoverUrl && this.isLocalCoverPath(existingCoverUrl)) {
+      let incomingCoverUrl = String(comicData.coverUrl || '').trim();
+      const normalizedExistingCover = existingCoverUrl ? existingCoverUrl.trim() : '';
+      if (incomingCoverUrl.length <= 0 && normalizedExistingCover.length > 0) {
+        incomingCoverUrl = normalizedExistingCover;
+        logger.debug(TAG, `本次解析封面为空，保留已有封面: ${incomingCoverUrl}`);
+      }
+      if (normalizedExistingCover.length > 0 && this.isLocalCoverPath(normalizedExistingCover)) {
         const normalizedExistingCoverUrl = existingCoverUrl.startsWith('file://')
           ? existingCoverUrl.substring(7)
           : existingCoverUrl;
         if (SafeFileUtils.accessSync(normalizedExistingCoverUrl)) {
-          incomingCoverUrl = existingCoverUrl;
+          incomingCoverUrl = normalizedExistingCover;
         }
         logger.debug(TAG, `保留已持久化封面路径: ${incomingCoverUrl}`);
       }
@@ -5309,6 +5373,20 @@ export class DataManager {
       logger.debug(TAG, `已删除章节 ${chapterId} 的所有页面数据`);
     } catch (error) {
       logger.error(TAG, `删除章节页面数据失败: chapterId=${chapterId}`, String(error));
+      throw error as Error;
+    }
+  }
+
+  public async deleteOnlineChaptersAndPages(comicId: string): Promise<void> {
+    try {
+      await this.databaseManager.executeSql(
+        'DELETE FROM online_page WHERE chapterId IN (SELECT id FROM online_chapter WHERE comicId = ?)',
+        [comicId]
+      );
+      await this.databaseManager.executeSql('DELETE FROM online_chapter WHERE comicId = ?', [comicId]);
+      logger.info(TAG, `已清理在线漫画旧章节和页面: comicId=${comicId}`);
+    } catch (error) {
+      logger.error(TAG, `清理在线漫画旧章节和页面失败: comicId=${comicId}`, String(error));
       throw error as Error;
     }
   }
@@ -5606,6 +5684,63 @@ export class DataManager {
     } catch (error) {
       logger.error(TAG, `findSourceIdByPkgOrName 失败`, String(error));
       return null;
+    }
+  }
+
+  /**
+   * 获取指定图源下所有已加入书库的漫画的 externalId 列表
+   */
+  async getAddedExternalIdsBySource(sourceId: string | number, sourcePkg?: string, sourceName?: string): Promise<string[]> {
+    try {
+      const sourceIdText: string = String(sourceId);
+      const normalizedSourcePkg: string = sourcePkg ? sourcePkg.trim() : '';
+      const normalizedSourceName: string = sourceName ? sourceName.trim() : '';
+      const params: string[] = [
+        'default_user',
+        sourceIdText,
+        'default_user',
+        sourceIdText
+      ];
+      let sourcePkgCondition: string = '';
+      if (normalizedSourcePkg.length > 0) {
+        sourcePkgCondition = ' OR o.sourcePkg = ?';
+        params.push(normalizedSourcePkg);
+      }
+      let sourceNameCondition: string = '';
+      if (normalizedSourceName.length > 0) {
+        sourceNameCondition = ' OR (o.sourceName = ? AND (o.sourcePkg IS NULL OR o.sourcePkg = \'\'))';
+        params.push(normalizedSourceName);
+      }
+
+      const sql = `
+        SELECT DISTINCT externalId FROM (
+          SELECT c.externalId AS externalId
+          FROM comic_info c
+          INNER JOIN favorite f ON f.comicId = c.id AND f.userId = ?
+          WHERE c.sourceId = ? AND c.externalId IS NOT NULL AND c.externalId != ''
+          UNION
+          SELECT o.externalId AS externalId
+          FROM online_comic_info o
+          INNER JOIN favorite f ON f.comicId = o.id AND f.userId = ?
+          WHERE (o.sourceId = ?${sourcePkgCondition}${sourceNameCondition}) AND o.externalId IS NOT NULL AND o.externalId != ''
+        )
+      `;
+      const results = await this.databaseManager.querySql(sql, params);
+      const externalIds: string[] = [];
+      for (let index = 0; index < results.length; index++) {
+        const row = results[index] as GenericQueryRecord;
+        const rawExternalId: DatabaseValue | undefined = row.externalId;
+        if (typeof rawExternalId === 'string' && rawExternalId.trim().length > 0) {
+          externalIds.push(rawExternalId.trim());
+        } else if (typeof rawExternalId === 'number') {
+          externalIds.push(String(rawExternalId));
+        }
+      }
+      logger.debug(TAG, `获取已收藏 externalIds 完成: sourceId=${sourceIdText}, sourcePkg=${normalizedSourcePkg}, sourceName=${normalizedSourceName}, count=${externalIds.length}`);
+      return externalIds;
+    } catch (error) {
+      logger.error(TAG, `获取已添加 externalIds 失败: sourceId=${sourceId}`, String(error));
+      return [];
     }
   }
 

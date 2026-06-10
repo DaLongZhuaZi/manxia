@@ -9,6 +9,8 @@ import { webview } from '@kit.ArkWeb';
 import { logger } from '../../Utils/Logger';
 import { getWebViewExecutor } from './LegadoWebViewExecutor';
 import { getLegadoJsEngine } from './LegadoJsEngine';
+import { getLegadoRuntimeV2 } from './LegadoRuntimeV2';
+import { getLegadoRuntimeAssetManager } from './LegadoRuntimeAssetManager';
 
 const TAG = 'LegadoWebViewComponent';
 
@@ -20,9 +22,13 @@ const TAG = 'LegadoWebViewComponent';
 export struct LegadoWebViewComponent {
   private webviewController: webview.WebviewController = new webview.WebviewController();
   @State private isInitialized: boolean = false;
+  @State private runtimeSrc: ResourceStr = $rawfile('legado_runtime.html');
+  private usingBundledRuntime: boolean = true;
+  private runtimeReady: boolean = false;
 
   aboutToAppear(): void {
     logger.info(TAG, 'LegadoWebView组件初始化');
+    this.resolveRuntimeSource();
   }
 
   aboutToDisappear(): void {
@@ -35,13 +41,16 @@ export struct LegadoWebViewComponent {
     try {
       getLegadoJsEngine().reset();
     } catch (_e) {}
+    try {
+      getLegadoRuntimeV2().reset();
+    } catch (_e) {}
   }
 
   build() {
     Stack() {
       // 使用本地HTML页面而不是about:blank，避免跨域限制
       Web({
-        src: $rawfile('js_executor.html'),
+        src: this.runtimeSrc,
         controller: this.webviewController
       })
         .width(1)
@@ -116,6 +125,22 @@ export struct LegadoWebViewComponent {
     this.configureWebView();
   }
 
+  private resolveRuntimeSource(): void {
+    try {
+      const runtimeUrl = getLegadoRuntimeAssetManager().getRuntimeEntryUrl('legado');
+      if (runtimeUrl.startsWith('file://')) {
+        this.runtimeSrc = runtimeUrl;
+        this.usingBundledRuntime = false;
+        logger.info(TAG, `使用云端Legado运行时: ${runtimeUrl}`);
+        return;
+      }
+    } catch (error) {
+      logger.warn(TAG, `读取云端Legado运行时失败，回退内置资源: ${String(error)}`);
+    }
+    this.runtimeSrc = $rawfile('legado_runtime.html');
+    this.usingBundledRuntime = true;
+  }
+
   /**
    * 配置WebView
    */
@@ -141,6 +166,22 @@ export struct LegadoWebViewComponent {
     logger.debug(TAG, `页面加载完成: ${url}`);
     const executor = getWebViewExecutor();
     executor.onPageFinish(url);
+    void this.checkRuntimeHealthAfterPageFinish();
+  }
+
+  private async checkRuntimeHealthAfterPageFinish(): Promise<void> {
+    if (this.runtimeReady) {
+      return;
+    }
+    const ok = await getLegadoRuntimeV2().setWebviewControllerWhenReady(this.webviewController);
+    if (ok) {
+      this.runtimeReady = true;
+      return;
+    }
+    if (!this.usingBundledRuntime) {
+      logger.warn(TAG, '云端Legado运行时健康检查失败，回退内置运行时');
+      this.loadBundledRuntime();
+    }
   }
 
   /**
@@ -158,6 +199,21 @@ export struct LegadoWebViewComponent {
     logger.error(TAG, `页面加载错误: ${url}, code: ${errorCode}, desc: ${description}`);
     const executor = getWebViewExecutor();
     executor.onPageError(errorCode, description, url);
+    if (!this.usingBundledRuntime) {
+      logger.warn(TAG, '云端Legado运行时加载失败，回退内置运行时');
+      this.loadBundledRuntime();
+    }
+  }
+
+  private loadBundledRuntime(): void {
+    this.usingBundledRuntime = true;
+    this.runtimeReady = false;
+    this.runtimeSrc = $rawfile('legado_runtime.html');
+    try {
+      this.webviewController.loadUrl($rawfile('legado_runtime.html'));
+    } catch (error) {
+      logger.warn(TAG, `加载内置Legado运行时失败: ${String(error)}`);
+    }
   }
 }
 

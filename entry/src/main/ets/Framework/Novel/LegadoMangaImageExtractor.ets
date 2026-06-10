@@ -60,14 +60,98 @@ export class LegadoMangaImageExtractor {
       match = LegadoMangaImageExtractor.imgTagRegex.exec(content);
     }
 
+    if (result.length > 0 && LegadoMangaImageExtractor.hasOnlyDecorativeImages(result)) {
+      const fallbackResult: LegadoMangaExtractedImage[] = [];
+      const fallbackSeen: Set<string> = new Set<string>();
+      const plainCandidates: string[] = LegadoMangaImageExtractor.extractPlainImageCandidates(content);
+      for (let i = 0; i < plainCandidates.length; i++) {
+        LegadoMangaImageExtractor.addImageCandidate(fallbackResult, fallbackSeen, plainCandidates[i], baseUrl);
+      }
+      const filteredFallback: LegadoMangaExtractedImage[] =
+        LegadoMangaImageExtractor.collectNonDecorativeImages(fallbackResult);
+      if (filteredFallback.length > 0) {
+        return filteredFallback;
+      }
+    }
+
     if (result.length <= 0) {
-      const plainCandidates = LegadoMangaImageExtractor.extractPlainImageCandidates(content);
+      const plainCandidates: string[] = LegadoMangaImageExtractor.extractPlainImageCandidates(content);
       for (let i = 0; i < plainCandidates.length; i++) {
         LegadoMangaImageExtractor.addImageCandidate(result, seen, plainCandidates[i], baseUrl);
       }
     }
 
+    return LegadoMangaImageExtractor.filterDecorativeImages(result);
+  }
+
+  private static filterDecorativeImages(images: LegadoMangaExtractedImage[]): LegadoMangaExtractedImage[] {
+    if (images.length <= 1) {
+      return images;
+    }
+    const filtered: LegadoMangaExtractedImage[] = LegadoMangaImageExtractor.collectNonDecorativeImages(images);
+    if (filtered.length > 0) {
+      return filtered;
+    }
+    return images;
+  }
+
+  private static hasOnlyDecorativeImages(images: LegadoMangaExtractedImage[]): boolean {
+    return images.length > 0 && LegadoMangaImageExtractor.collectNonDecorativeImages(images).length <= 0;
+  }
+
+  private static collectNonDecorativeImages(images: LegadoMangaExtractedImage[]): LegadoMangaExtractedImage[] {
+    const filtered: LegadoMangaExtractedImage[] = [];
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      if (!LegadoMangaImageExtractor.isLikelyDecorativeImageUrl(image.imageUrl)) {
+        filtered.push(image);
+      }
+    }
+    return filtered;
+  }
+
+  private static isLikelyDecorativeImageUrl(url: string): boolean {
+    if (!url || url.trim().length <= 0) {
+      return false;
+    }
+    const normalized = LegadoMangaImageExtractor.stripUrlQueryAndHash(url).toLowerCase();
+    if (normalized.indexOf('/theme/') >= 0 || normalized.indexOf('/themes/') >= 0 ||
+      normalized.indexOf('/style/') >= 0 || normalized.indexOf('/styles/') >= 0 ||
+      normalized.indexOf('/skin/') >= 0 || normalized.indexOf('/template/') >= 0 ||
+      normalized.indexOf('/wp-content/themes/') >= 0) {
+      return true;
+    }
+    const fileName = LegadoMangaImageExtractor.getUrlFileName(normalized);
+    if (fileName.indexOf('logo') >= 0 || fileName.indexOf('favicon') >= 0 ||
+      fileName.indexOf('avatar') >= 0 || fileName.indexOf('qrcode') >= 0) {
+      return true;
+    }
+    if (normalized.indexOf('/ads/') >= 0 || normalized.indexOf('/ad/') >= 0 ||
+      normalized.indexOf('/banner/') >= 0) {
+      return true;
+    }
+    return false;
+  }
+
+  private static stripUrlQueryAndHash(url: string): string {
+    let result = url.trim();
+    const hashIndex = result.indexOf('#');
+    if (hashIndex >= 0) {
+      result = result.substring(0, hashIndex);
+    }
+    const queryIndex = result.indexOf('?');
+    if (queryIndex >= 0) {
+      result = result.substring(0, queryIndex);
+    }
     return result;
+  }
+
+  private static getUrlFileName(url: string): string {
+    const slashIndex = url.lastIndexOf('/');
+    if (slashIndex >= 0 && slashIndex + 1 < url.length) {
+      return url.substring(slashIndex + 1);
+    }
+    return url;
   }
 
   private static addImageCandidate(

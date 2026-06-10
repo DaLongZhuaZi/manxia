@@ -38,6 +38,26 @@ export { NovelSourceExecutor } from './NovelSourceExecutor';
 
 // 管理器
 export { NovelSourceManager, getNovelSourceManager } from './NovelSourceManager';
+export {
+  DEFAULT_NOVEL_SOURCE_REPOSITORY_URL,
+  NovelSourceRepositoryManager,
+  getNovelSourceRepositoryManager,
+  NovelSourceRepositoryEntry,
+  NovelSourceRepositoryIndex,
+  NovelSourceSavedRepository,
+  NovelSourceRepositorySyncResult,
+  NovelSourceRepositoryUpdateStatus
+} from './NovelSourceRepositoryManager';
+export {
+  DEFAULT_LEGADO_RUNTIME_REPOSITORY_URL,
+  LegadoRuntimeAssetManager,
+  getLegadoRuntimeAssetManager,
+  LegadoRuntimeAssetFile,
+  LegadoRuntimeAssetIndex,
+  LegadoRuntimeActiveStatus,
+  LegadoRuntimeSyncResult,
+  LegadoRuntimeRepositoryUpdateStatus
+} from './LegadoRuntimeAssetManager';
 
 // 数据库
 export { NOVEL_CREATE_TABLE_SQL, NOVEL_CREATE_INDEX_SQL } from './NovelDatabaseSchema';

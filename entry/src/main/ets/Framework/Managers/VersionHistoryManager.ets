@@ -195,6 +195,8 @@ export interface VersionRepositoryUpdateCheckResult {
 
 export const DEFAULT_VERSION_COMMIT_FETCH_LIMIT = VERSION_HISTORY_DEFAULT_FETCH_LIMIT;
 export const MANXIA_EXTENSIONS_REPOSITORY_KEY = 'manxia_extensions';
+export const MANXIA_LEGADO_SOURCES_REPOSITORY_KEY = 'manxia_legado_sources';
+export const MANXIA_LEGADO_RUNTIME_REPOSITORY_KEY = 'manxia_legado_runtime';
 
 export const DEFAULT_VERSION_COMMIT_REPOSITORIES: VersionCommitRepositoryTarget[] = [
   {
@@ -212,6 +214,22 @@ export const DEFAULT_VERSION_COMMIT_REPOSITORIES: VersionCommitRepositoryTarget[
     repo: 'manxia-extensions-source',
     branch: 'master',
     commitsPageUrl: 'https://github.com/DaLongZhuaZi/manxia-extensions-source/commits/master/'
+  },
+  {
+    key: MANXIA_LEGADO_SOURCES_REPOSITORY_KEY,
+    name: '漫匣Legado书源',
+    owner: 'DaLongZhuaZi',
+    repo: 'manxia-legado-sources',
+    branch: 'master',
+    commitsPageUrl: 'https://github.com/DaLongZhuaZi/manxia-legado-sources/commits/master/'
+  },
+  {
+    key: MANXIA_LEGADO_RUNTIME_REPOSITORY_KEY,
+    name: '漫匣Legado运行时',
+    owner: 'DaLongZhuaZi',
+    repo: 'manxia-legado-runtime',
+    branch: 'master',
+    commitsPageUrl: 'https://github.com/DaLongZhuaZi/manxia-legado-runtime/commits/master/'
   }
 ];
 
@@ -412,6 +430,44 @@ export class VersionHistoryManager {
         localMarker: null,
         latestCommit: null,
         errorMessage: '未找到漫匣图源仓库配置'
+      };
+    }
+
+    return await this.checkRepositoryUpdateByTarget(target);
+  }
+
+  public async checkManxiaLegadoSourcesRepositoryUpdate(): Promise<VersionRepositoryUpdateCheckResult> {
+    const target = DEFAULT_VERSION_COMMIT_REPOSITORIES.find(
+      (item: VersionCommitRepositoryTarget) => item.key === MANXIA_LEGADO_SOURCES_REPOSITORY_KEY
+    );
+    if (!target) {
+      return {
+        canCheck: false,
+        hasUpdate: false,
+        key: MANXIA_LEGADO_SOURCES_REPOSITORY_KEY,
+        name: '漫匣Legado书源',
+        localMarker: null,
+        latestCommit: null,
+        errorMessage: '未找到漫匣Legado书源仓库配置'
+      };
+    }
+
+    return await this.checkRepositoryUpdateByTarget(target);
+  }
+
+  public async checkManxiaLegadoRuntimeRepositoryUpdate(): Promise<VersionRepositoryUpdateCheckResult> {
+    const target = DEFAULT_VERSION_COMMIT_REPOSITORIES.find(
+      (item: VersionCommitRepositoryTarget) => item.key === MANXIA_LEGADO_RUNTIME_REPOSITORY_KEY
+    );
+    if (!target) {
+      return {
+        canCheck: false,
+        hasUpdate: false,
+        key: MANXIA_LEGADO_RUNTIME_REPOSITORY_KEY,
+        name: '漫匣Legado运行时',
+        localMarker: null,
+        latestCommit: null,
+        errorMessage: '未找到漫匣Legado运行时仓库配置'
       };
     }
 
@@ -971,23 +1027,25 @@ export class VersionHistoryManager {
     }
     const probeResults = await Promise.all(probeTasks);
 
-    for (const probeResult of probeResults) {
-      if (probeResult.check.reachable) {
-        logger.info(TAG, `连通性通过: ${probeResult.candidate.url}`);
-      } else {
-        logger.warn(
-          TAG,
-          `连通性失败: ${probeResult.candidate.url}, detail=${probeResult.check.errorMessage || String(probeResult.check.responseCode)}`
-        );
-      }
-    }
-
     let selected: RepositoryRouteCandidate | null = null;
     for (const candidate of candidates) {
       const matched = probeResults.find((result: RepositoryProbeResult) => result.candidate.url === candidate.url);
       if (matched && matched.check.reachable) {
         selected = candidate;
         break;
+      }
+    }
+
+    for (const probeResult of probeResults) {
+      if (probeResult.check.reachable) {
+        logger.info(TAG, `连通性通过: ${probeResult.candidate.url}`);
+      } else {
+        const detail = probeResult.check.errorMessage || String(probeResult.check.responseCode);
+        if (!selected || (probeResult.candidate.kind === 'origin' && selected.kind !== 'origin')) {
+          logger.warn(TAG, `连通性失败: ${probeResult.candidate.url}, detail=${detail}`);
+        } else {
+          logger.info(TAG, `备用连通性不可用: ${probeResult.candidate.url}, detail=${detail}`);
+        }
       }
     }
 

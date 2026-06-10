@@ -273,6 +273,18 @@ export struct BookOpenTransition {
   private async loadCoverImage(): Promise<void> {
     if (!this.coverImagePath || this.coverImagePath.length === 0) {
       logger.warn(TAG, '封面图片路径为空');
+      if (this.mode === TransitionMode.OPEN) {
+        this.coverOriginalWidth = 210;
+        this.coverOriginalHeight = 300;
+        this.isSystemResource = true;
+        if (this.componentWidth > 0 && this.componentHeight > 0) {
+          this.startTransition();
+        } else {
+          this.pendingAnimationStart = true;
+          logger.info(TAG, '等待组件尺寸就绪后启动无封面翻开动画');
+        }
+        return;
+      }
       // 关闭模式：需要等待isReaderReady为true（截图完成）后才能开始动画
       if (this.mode === TransitionMode.CLOSE) {
         if (this.isReaderReady && this.componentWidth > 0 && this.componentHeight > 0) {

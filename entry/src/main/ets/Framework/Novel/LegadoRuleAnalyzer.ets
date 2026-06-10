@@ -452,7 +452,6 @@ export class LegadoRuleAnalyzer {
       this.baseUrl = baseUrl;
     }
     this.isJSON = this.checkIsJSON(content);
-    this.variables.clear();
     this.htmlToTextCache.clear();
     
     // HTML大小阈值：超过此大小不创建DOM桥接，使用字符串解析
@@ -6575,9 +6574,11 @@ export class LegadoRuleAnalyzer {
     }
     if (effects.sourceVariable !== undefined && effects.sourceVariable !== null) {
       this.sourceEffects.sourceVariable = String(effects.sourceVariable);
+      this.variables.set('__sourceVariable', this.sourceEffects.sourceVariable);
     }
     if (effects.removeLoginHeader === true) {
       this.sourceEffects.removeLoginHeader = true;
+      this.variables.set('__loginHeader', '');
     }
     if (effects.data && effects.data.length > 0) {
       const existing: LegadoJsSourceDataChange[] = this.sourceEffects.data ? this.sourceEffects.data : [];
@@ -6594,11 +6595,33 @@ export class LegadoRuleAnalyzer {
           key: key,
           value: String(item.value || '')
         });
+        this.variables.set(key, String(item.value || ''));
       }
       if (existing.length > 0) {
         this.sourceEffects.data = existing;
+        this.variables.set('__sourceData', this.mergeSourceDataVariable(existing));
       }
     }
+  }
+
+  private mergeSourceDataVariable(changes: LegadoJsSourceDataChange[]): string {
+    const merged: Record<string, string> = {};
+    const raw = this.variables.get('__sourceData') || '';
+    if (raw.length > 0) {
+      try {
+        const parsed = SafeUtils.parseObj(raw) as Record<string, string>;
+        const keys = Object.keys(parsed);
+        for (let i = 0; i < keys.length; i++) {
+          merged[keys[i]] = String(parsed[keys[i]]);
+        }
+      } catch (_error) {
+      }
+    }
+    for (let i = 0; i < changes.length; i++) {
+      const item = changes[i];
+      merged[item.key] = item.value;
+    }
+    return JSON.stringify(merged);
   }
 
   // ==================== 工具方法 ====================

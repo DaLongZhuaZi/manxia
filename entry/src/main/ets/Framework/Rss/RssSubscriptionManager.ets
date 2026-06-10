@@ -1383,6 +1383,7 @@ export class RssSubscriptionManager {
     fallbackDescription: string
   ): Promise<ParsedPageContent> {
     const analyzer = new LegadoRuleAnalyzer();
+    analyzer.setJsLib(source.jsLib || '');
     analyzer.setContent(htmlText, pageUrl, false);
 
     const ruleContent = source.ruleContent ? source.ruleContent.trim() : '';
@@ -1659,6 +1660,7 @@ export class RssSubscriptionManager {
       'application/rss+xml, application/atom+xml, application/xml, text/xml, */*'
     );
     const analyzer = new LegadoRuleAnalyzer();
+    analyzer.setJsLib(source.jsLib || '');
     analyzer.setContent(content, requestUrl, false);
 
     let selector = ruleArticles;
@@ -1696,6 +1698,7 @@ export class RssSubscriptionManager {
       try {
         const block = blocks[index];
         const itemAnalyzer = new LegadoRuleAnalyzer();
+        itemAnalyzer.setJsLib(source.jsLib || '');
         itemAnalyzer.setContent(block, requestUrl, false);
         const titleRaw = titleRule.length > 0 ? await itemAnalyzer.getStringAsync(titleRule) : '';
         const linkRaw = linkRule.length > 0 ? await itemAnalyzer.getStringAsync(linkRule) : '';
@@ -2021,7 +2024,7 @@ export class RssSubscriptionManager {
     acceptValue: string,
     includeConditionalCache: boolean
   ): Promise<ResolvedSourceRequestOption> {
-    const analyzer = new LegadoUrlAnalyzer(source.url, source.url);
+    const analyzer = new LegadoUrlAnalyzer(source.url, source.url, source.jsLib || '');
     let parsedRequest: ParsedUrlRequest;
     try {
       parsedRequest = await analyzer.analyzeUrlAsync(rawRequestUrl, '', 1);

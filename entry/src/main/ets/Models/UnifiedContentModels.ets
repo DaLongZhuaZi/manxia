@@ -5,6 +5,8 @@
  * 注意：这只是展示层的适配，不会修改原有数据结构
  */
 
+import { Manga } from './MangaModels';
+
 /**
  * 内容类型枚举
  */
@@ -139,6 +141,7 @@ export interface UnifiedDetailPageParams {
   cachedCoverPath?: string;
   cachedCover?: string;
   cachedAuthor?: string;
+  cachedManga?: Manga;
   // 换源相关参数
   isFromChangeSource?: boolean;       // 是否来自换源
   originalBookInfo?: OriginalBookInfo; // 原书信息（仅当isFromChangeSource为true时有效）

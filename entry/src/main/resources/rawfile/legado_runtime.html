@@ -1,0 +1,1481 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Legado Runtime V2</title>
+</head>
+<body>
+<script>
+(function () {
+  var RUNTIME_MARKER = 'manxia-legado-runtime-v2';
+  var sharedScopes = {};
+
+  function emptyObject(source) {
+    var target = {};
+    if (!source || typeof source !== 'object') return target;
+    Object.keys(source).forEach(function (key) {
+      target[key] = source[key] === undefined || source[key] === null ? '' : String(source[key]);
+    });
+    return target;
+  }
+
+  function buildResponse(status, extra) {
+    var result = { marker: RUNTIME_MARKER, status: status };
+    if (extra && typeof extra === 'object') {
+      Object.keys(extra).forEach(function (key) {
+        result[key] = extra[key];
+      });
+    }
+    return JSON.stringify(result);
+  }
+
+  function normalizeCode(code) {
+    var text = code === undefined || code === null ? '' : String(code).trim();
+    text = text.replace(/^(?:@|＠)\s*js(?:\:|：)\s*/i, '');
+    if (text.indexOf('<js>') === 0 && text.lastIndexOf('</js>') === text.length - 5) {
+      text = text.substring(4, text.length - 5).trim();
+    }
+    return text;
+  }
+
+  function createRandom(seed) {
+    var current = (Number(seed) || 1) >>> 0;
+    return function () {
+      current = (Math.imul(current, 1664525) + 1013904223) >>> 0;
+      return current / 4294967296;
+    };
+  }
+
+  function toText(value) {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' && isFinite(value) && Math.floor(value) === value) return String(value);
+    if (typeof value === 'object') {
+      try { return JSON.stringify(value); } catch (e) { return String(value); }
+    }
+    return String(value);
+  }
+
+  function textHash(text) {
+    var hash = 2166136261;
+    var value = String(text || '');
+    for (var i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return String(hash >>> 0);
+  }
+
+  function buildSourceFromContext(context, variables, sourceUrl) {
+    var source = context && context.source && typeof context.source === 'object' ? context.source : {};
+    return {
+      bookSourceUrl: source.bookSourceUrl || sourceUrl,
+      bookSourceName: source.bookSourceName || variables.__source_bookSourceName || '',
+      bookSourceType: source.bookSourceType || variables.__source_bookSourceType || variables.type || '',
+      bookSourceGroup: source.bookSourceGroup || variables.__source_bookSourceGroup || '',
+      bookSourceComment: source.bookSourceComment || variables.__source_bookSourceComment || '',
+      header: source.header || variables.__source_header || '',
+      loginUrl: source.loginUrl || variables.__source_loginUrl || '',
+      loginUi: source.loginUi || variables.__source_loginUi || '',
+      loginCheckJs: source.loginCheckJs || variables.__source_loginCheckJs || '',
+      variableComment: source.variableComment || variables.__source_variableComment || '',
+      enabledCookieJar: source.enabledCookieJar !== undefined ? !!source.enabledCookieJar : true
+    };
+  }
+
+  function createJavaMap(object) {
+    var data = object || {};
+    return {
+      get: function (key) { return data[String(key)] || ''; },
+      put: function (key, value) { data[String(key)] = toText(value); return value; },
+      containsKey: function (key) { return data[String(key)] !== undefined; },
+      keys: function () { return Object.keys(data); },
+      keySet: function () { return Object.keys(data); },
+      toJSON: function () { return data; },
+      toString: function () { return JSON.stringify(data); }
+    };
+  }
+
+  function stableHexHash(value, salt, length) {
+    var text = String(salt || '') + '|' + String(value || '');
+    var h1 = 0x811c9dc5;
+    var h2 = 0x9e3779b9;
+    var hex = '';
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charCodeAt(i);
+      h1 ^= c;
+      h1 = Math.imul(h1, 0x01000193) >>> 0;
+      h2 ^= c + i;
+      h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
+    }
+    while (hex.length < length) {
+      h1 = (Math.imul(h1 ^ (h1 >>> 16), 0x7feb352d) + h2) >>> 0;
+      h2 = (Math.imul(h2 ^ (h2 >>> 13), 0x846ca68b) + h1) >>> 0;
+      hex += ('00000000' + h1.toString(16)).slice(-8);
+      if (hex.length < length) hex += ('00000000' + h2.toString(16)).slice(-8);
+    }
+    return hex.substring(0, length);
+  }
+
+  function digestHexLength(algorithm) {
+    var upper = String(algorithm || '').toUpperCase().replace(/-/g, '');
+    if (upper.indexOf('SHA512') >= 0) return 128;
+    if (upper.indexOf('SHA384') >= 0) return 96;
+    if (upper.indexOf('SHA256') >= 0) return 64;
+    if (upper.indexOf('SHA1') >= 0) return 40;
+    return 32;
+  }
+
+  function parseHeaderText(text) {
+    var headers = {};
+    if (!text) return headers;
+    String(text).split(/\r?\n/).forEach(function (line) {
+      var index = line.indexOf(':');
+      if (index > 0) {
+        headers[line.substring(0, index).trim()] = line.substring(index + 1).trim();
+      }
+    });
+    return headers;
+  }
+
+  function bytesToHex(bytes) {
+    var hex = '';
+    for (var i = 0; i < bytes.length; i++) {
+      hex += ('0' + (Number(bytes[i]) & 255).toString(16)).slice(-2);
+    }
+    return hex;
+  }
+
+  function stringToUtf8Bytes(value) {
+    var text = String(value || '');
+    var bytes = [];
+    for (var i = 0; i < text.length; i++) {
+      var code = text.charCodeAt(i);
+      if (code < 0x80) {
+        bytes.push(code);
+      } else if (code < 0x800) {
+        bytes.push(0xc0 | (code >> 6));
+        bytes.push(0x80 | (code & 0x3f));
+      } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+        var next = text.charCodeAt(++i);
+        var point = 0x10000 + ((code & 0x3ff) << 10) + (next & 0x3ff);
+        bytes.push(0xf0 | (point >> 18));
+        bytes.push(0x80 | ((point >> 12) & 0x3f));
+        bytes.push(0x80 | ((point >> 6) & 0x3f));
+        bytes.push(0x80 | (point & 0x3f));
+      } else {
+        bytes.push(0xe0 | (code >> 12));
+        bytes.push(0x80 | ((code >> 6) & 0x3f));
+        bytes.push(0x80 | (code & 0x3f));
+      }
+    }
+    return bytes;
+  }
+
+  function utf8BytesToString(bytes) {
+    var result = '';
+    for (var i = 0; i < bytes.length; i++) {
+      var first = Number(bytes[i]) & 255;
+      if (first < 0x80) {
+        result += String.fromCharCode(first);
+      } else if ((first & 0xe0) === 0xc0 && i + 1 < bytes.length) {
+        var second = Number(bytes[++i]) & 0x3f;
+        result += String.fromCharCode(((first & 0x1f) << 6) | second);
+      } else if ((first & 0xf0) === 0xe0 && i + 2 < bytes.length) {
+        var second3 = Number(bytes[++i]) & 0x3f;
+        var third3 = Number(bytes[++i]) & 0x3f;
+        result += String.fromCharCode(((first & 0x0f) << 12) | (second3 << 6) | third3);
+      } else if ((first & 0xf8) === 0xf0 && i + 3 < bytes.length) {
+        var second4 = Number(bytes[++i]) & 0x3f;
+        var third4 = Number(bytes[++i]) & 0x3f;
+        var fourth4 = Number(bytes[++i]) & 0x3f;
+        var point = ((first & 0x07) << 18) | (second4 << 12) | (third4 << 6) | fourth4;
+        point -= 0x10000;
+        result += String.fromCharCode(0xd800 + (point >> 10), 0xdc00 + (point & 0x3ff));
+      }
+    }
+    return result;
+  }
+
+  function hexToByteArray(hex) {
+    var clean = String(hex || '').replace(/[^0-9a-f]/gi, '');
+    var result = [];
+    for (var i = 0; i + 1 < clean.length; i += 2) {
+      result.push(parseInt(clean.substring(i, i + 2), 16) & 255);
+    }
+    return result;
+  }
+
+  function formatDate(date, pattern, utcOffsetMs) {
+    var d = new Date(date.getTime() + (Number(utcOffsetMs) || 0));
+    function pad(value, length) {
+      var text = String(value);
+      while (text.length < length) text = '0' + text;
+      return text;
+    }
+    var map = {
+      yyyy: pad(d.getUTCFullYear(), 4),
+      MM: pad(d.getUTCMonth() + 1, 2),
+      dd: pad(d.getUTCDate(), 2),
+      HH: pad(d.getUTCHours(), 2),
+      mm: pad(d.getUTCMinutes(), 2),
+      ss: pad(d.getUTCSeconds(), 2),
+      SSS: pad(d.getUTCMilliseconds(), 3)
+    };
+    return String(pattern || 'yyyy-MM-dd HH:mm:ss').replace(/yyyy|MM|dd|HH|mm|ss|SSS/g, function (token) {
+      return map[token] || token;
+    });
+  }
+
+  function normalizeByteArray(value) {
+    if (value === undefined || value === null) return [];
+    if (Array.isArray(value)) {
+      return value.map(function (item) { return Number(item) & 255; });
+    }
+    if (typeof value === 'object' && typeof value.length === 'number') {
+      var array = [];
+      for (var i = 0; i < value.length; i++) {
+        array.push(Number(value[i]) & 255);
+      }
+      return array;
+    }
+    return stringToUtf8Bytes(String(value));
+  }
+
+  function binaryStringToBytes(value) {
+    var bytes = [];
+    var text = String(value || '');
+    for (var i = 0; i < text.length; i++) {
+      bytes.push(text.charCodeAt(i) & 255);
+    }
+    return bytes;
+  }
+
+  function bytesToBinaryString(bytes) {
+    var text = '';
+    var normalized = normalizeByteArray(bytes);
+    for (var i = 0; i < normalized.length; i++) {
+      text += String.fromCharCode(normalized[i] & 255);
+    }
+    return text;
+  }
+
+  function base64DecodeBytes(value) {
+    try {
+      return binaryStringToBytes(atob(String(value || '')));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function base64EncodeBytes(bytes) {
+    try {
+      return btoa(bytesToBinaryString(bytes));
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function legacyEncodeComponent(text) {
+    return encodeURIComponent(String(text || ''))
+      .replace(/%20/g, '+')
+      .replace(/[!'()~]/g, function (char) {
+        return '%' + char.charCodeAt(0).toString(16).toUpperCase();
+      });
+  }
+
+  function legacyDecodeComponent(text) {
+    try {
+      return decodeURIComponent(String(text || '').replace(/\+/g, '%20'));
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function htmlFormatText(value) {
+    return String(value || '')
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<(?:br|hr)\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|section|article|li|tr|h[1-6])>/gi, '\n')
+      .replace(/<img\b([^>]*)>/gi, function (match, attrs) {
+        var srcMatch = String(attrs || '').match(/\bsrc=["']?([^"'\s>]+)/i);
+        return srcMatch ? '\n<img src="' + srcMatch[1] + '">\n' : '';
+      })
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function createJsUrl(url, baseUrl) {
+    var resolved = String(url || '');
+    try {
+      resolved = baseUrl ? new URL(resolved, String(baseUrl)).toString() : new URL(resolved).toString();
+    } catch (e) {
+      if (baseUrl && resolved && !/^https?:\/\//i.test(resolved)) {
+        var base = String(baseUrl);
+        if (resolved.indexOf('/') === 0) {
+          var origin = base.match(/^(https?:\/\/[^\/?#]+)/i);
+          resolved = origin ? origin[1] + resolved : resolved;
+        } else {
+          var hashIndex = base.indexOf('#');
+          if (hashIndex >= 0) base = base.substring(0, hashIndex);
+          var queryIndex = base.indexOf('?');
+          if (queryIndex >= 0) base = base.substring(0, queryIndex);
+          if (!base.endsWith('/')) {
+            base = base.substring(0, base.lastIndexOf('/') + 1);
+          }
+          resolved = base + resolved;
+        }
+      }
+    }
+    return {
+      toString: function () { return resolved; },
+      toExternalForm: function () { return resolved; },
+      getHost: function () {
+        var match = resolved.match(/^[a-z][a-z0-9+.-]*:\/\/([^\/?#:]+)/i);
+        return match ? match[1] : '';
+      },
+      getPath: function () {
+        var match = resolved.match(/^[a-z][a-z0-9+.-]*:\/\/[^\/?#]+([^?#]*)/i);
+        return match ? match[1] : '';
+      },
+      getProtocol: function () {
+        var match = resolved.match(/^([a-z][a-z0-9+.-]*):/i);
+        return match ? match[1].toLowerCase() : '';
+      },
+      getQuery: function () {
+        var match = resolved.match(/\?([^#]*)/);
+        return match ? match[1] : '';
+      },
+      getRef: function () {
+        var index = resolved.indexOf('#');
+        return index >= 0 ? resolved.substring(index + 1) : '';
+      },
+      getFile: function () {
+        var path = this.getPath();
+        var query = this.getQuery();
+        return query ? path + '?' + query : path;
+      }
+    };
+  }
+
+  function normalizeHeaders(headers) {
+    var result = {};
+    if (!headers) return result;
+    if (typeof headers === 'string') {
+      try {
+        headers = JSON.parse(headers);
+      } catch (e) {
+        return result;
+      }
+    }
+    if (headers && typeof headers === 'object') {
+      Object.keys(headers).forEach(function (key) {
+        result[key] = String(headers[key]);
+      });
+    }
+    return result;
+  }
+
+  function normalizeOption(option) {
+    if (!option) return { method: 'GET', body: '', headers: {} };
+    if (typeof option === 'string') {
+      try {
+        option = JSON.parse(option);
+      } catch (e) {
+        return { method: 'GET', body: '', headers: {} };
+      }
+    }
+    var headers = {};
+    var rawHeaders = option.headers || option.header;
+    if (rawHeaders && typeof rawHeaders === 'object') {
+      Object.keys(rawHeaders).forEach(function (key) {
+        headers[key] = String(rawHeaders[key]);
+      });
+    } else if (!option.method && option.body === undefined && option.header === undefined && option.headers === undefined) {
+      headers = normalizeHeaders(option);
+    }
+    return {
+      method: String(option.method || 'GET').toUpperCase(),
+      body: option.body === undefined || option.body === null ? '' : String(option.body),
+      headers: headers
+    };
+  }
+
+  function splitUrlOption(url) {
+    var text = String(url || '');
+    var index = text.indexOf(',');
+    if (index <= 0) return { url: text, option: null };
+    var before = text.substring(0, index).trim();
+    var after = text.substring(index + 1).trim();
+    if (!after || (after.charAt(0) !== '{' && after.charAt(0) !== '[')) {
+      return { url: text, option: null };
+    }
+    try {
+      return { url: before, option: JSON.parse(after) };
+    } catch (e) {
+      return { url: text, option: null };
+    }
+  }
+
+  function makeBridgeId(type, url, method, body, headers, key) {
+    return [
+      type || '',
+      url || '',
+      method || '',
+      body || '',
+      key || '',
+      JSON.stringify(headers || {})
+    ].join('|');
+  }
+
+  function createPendingError(request) {
+    var error = new Error('__LEGADO_PENDING_BRIDGE__');
+    error.legadoPendingRequest = request;
+    return error;
+  }
+
+  function buildRuntimeObjects(payload, state, scope, pendingRequests, logs, cookieChanges, toasts) {
+    var context = payload.context || {};
+    var variables = emptyObject(state.variables || context.variables);
+    var sourceUrl = context.sourceUrl || variables.sourceUrl || context.baseUrl || '';
+    var sourceSnapshot = buildSourceFromContext(context, variables, sourceUrl);
+    var sourceData = emptyObject(state.sourceData);
+    var sourceEffects = {};
+    var sourceDataChanges = [];
+    var cache = state.cache || {};
+
+    function requestBridge(request) {
+      if (state.bridgeResponses && state.bridgeResponses[request.id]) {
+        return state.bridgeResponses[request.id];
+      }
+      pendingRequests.push(request);
+      throw createPendingError(request);
+    }
+
+    function doHttp(url, method, body, headers) {
+      var split = splitUrlOption(url);
+      var requestUrl = split.url;
+      var option = normalizeOption(split.option);
+      var actualMethod = String(method || option.method || 'GET').toUpperCase();
+      var actualBody = body !== undefined && body !== null ? String(body) : option.body;
+      var actualHeaders = {};
+      Object.keys(option.headers || {}).forEach(function (key) { actualHeaders[key] = option.headers[key]; });
+      Object.keys(headers || {}).forEach(function (key) { actualHeaders[key] = String(headers[key]); });
+      var id = makeBridgeId('http', requestUrl, actualMethod, actualBody, actualHeaders, '');
+      var response = requestBridge({
+        id: id,
+        type: 'http',
+        url: requestUrl,
+        method: actualMethod,
+        body: actualBody || '',
+        headers: actualHeaders
+      });
+      return wrapResponse(response);
+    }
+
+    function doDigest(value, algorithm) {
+      var text = toText(value);
+      var alg = String(algorithm || 'MD5');
+      var id = makeBridgeId('crypto-digest', '', alg, text, {}, '');
+      var response = requestBridge({
+        id: id,
+        type: 'crypto-digest',
+        algorithm: alg,
+        value: text
+      });
+      return response.success ? (response.body || '') : stableHexHash(text, alg, digestHexLength(alg));
+    }
+
+    function doHmac(value, key, algorithm) {
+      var text = toText(value);
+      var secret = toText(key);
+      var alg = String(algorithm || 'HmacMD5');
+      var id = makeBridgeId('crypto-hmac', '', alg, text, {}, secret);
+      var response = requestBridge({
+        id: id,
+        type: 'crypto-hmac',
+        algorithm: alg,
+        key: secret,
+        value: text
+      });
+      return response.success ? (response.body || '') : stableHexHash(secret + '|' + text, alg, 64);
+    }
+
+    function readRuntimeFile(path) {
+      var cleanPath = String(path || '');
+      var id = makeBridgeId('file-read', cleanPath, '', '', {}, '');
+      var response = requestBridge({
+        id: id,
+        type: 'file-read',
+        path: cleanPath
+      });
+      return response.success ? (response.body || '') : '';
+    }
+
+    function writeRuntimeFile(path, value) {
+      var cleanPath = String(path || '');
+      var text = toText(value);
+      var id = makeBridgeId('file-write', cleanPath, '', text, {}, '');
+      var response = requestBridge({
+        id: id,
+        type: 'file-write',
+        path: cleanPath,
+        value: text
+      });
+      return response.path || response.url || cleanPath;
+    }
+
+    function deleteRuntimeFile(path) {
+      var cleanPath = String(path || '');
+      var id = makeBridgeId('file-delete', cleanPath, '', '', {}, '');
+      var response = requestBridge({
+        id: id,
+        type: 'file-delete',
+        path: cleanPath
+      });
+      return !!response.success;
+    }
+
+    function downloadRuntimeFile(url) {
+      var urlText = String(url || '');
+      var id = makeBridgeId('download-file', urlText, 'GET', '', {}, '');
+      var response = requestBridge({
+        id: id,
+        type: 'download-file',
+        url: urlText,
+        method: 'GET'
+      });
+      return response.path || response.url || '';
+    }
+
+    function executeJsInScope(js, html, url) {
+      if (!js) return html || '';
+      return executeCode(
+        String(js),
+        {
+          java: java,
+          source: source,
+          cookie: cookie,
+          cache: cacheObject,
+          resultValue: html || '',
+          baseUrl: url || '',
+          key: context.key || '',
+          page: context.page || 1,
+          book: context.book || {},
+          chapter: context.chapter || {},
+          src: html || ''
+        },
+        scope,
+        state.now,
+        state.randomSeed
+      );
+    }
+
+    function wrapResponse(response) {
+      var headerObject = parseHeaderText(response.headers || '');
+      return {
+        body: function () { return response.body || ''; },
+        bodyString: function () { return response.body || ''; },
+        text: function () { return response.body || ''; },
+        html: function () { return response.body || ''; },
+        url: function () { return response.url || ''; },
+        request: function () { return { url: function () { return response.url || ''; } }; },
+        code: function () { return response.code || 0; },
+        statusCode: function () { return response.code || 0; },
+        headers: function () { return headerObject; },
+        header: function (name) {
+          var target = String(name || '').toLowerCase();
+          var keys = Object.keys(headerObject);
+          for (var i = 0; i < keys.length; i++) {
+            if (keys[i].toLowerCase() === target) return headerObject[keys[i]];
+          }
+          return '';
+        },
+        cookies: function () { return {}; },
+        cookie: function () { return ''; },
+        toString: function () { return response.body || ''; }
+      };
+    }
+
+    var source = {
+      key: sourceUrl,
+      bookSourceUrl: sourceUrl,
+      bookSourceName: sourceSnapshot.bookSourceName,
+      bookSourceType: sourceSnapshot.bookSourceType,
+      bookSourceGroup: sourceSnapshot.bookSourceGroup,
+      bookSourceComment: sourceSnapshot.bookSourceComment,
+      header: sourceSnapshot.header,
+      loginUrl: sourceSnapshot.loginUrl,
+      loginUi: sourceSnapshot.loginUi,
+      loginCheckJs: sourceSnapshot.loginCheckJs,
+      variableComment: sourceSnapshot.variableComment,
+      enabledCookieJar: sourceSnapshot.enabledCookieJar,
+      getKey: function () { return sourceUrl; },
+      getTag: function () { return this.bookSourceName || sourceUrl; },
+      getHeaderMap: function () {
+        try { return createJavaMap(this.header ? JSON.parse(this.header) : {}); } catch (e) { return createJavaMap({}); }
+      },
+      get: function (key) {
+        if (key === 'key' || key === 'bookSourceUrl') return sourceUrl;
+        if (key === 'type' || key === 'bookSourceType') return sourceSnapshot.bookSourceType;
+        if (key === 'bookSourceName') return sourceSnapshot.bookSourceName;
+        if (key === 'bookSourceGroup') return sourceSnapshot.bookSourceGroup;
+        if (key === 'bookSourceComment') return sourceSnapshot.bookSourceComment;
+        if (key === 'header') return sourceSnapshot.header;
+        if (key === 'loginUrl') return sourceSnapshot.loginUrl;
+        if (key === 'loginUi') return sourceSnapshot.loginUi;
+        if (key === 'loginCheckJs') return sourceSnapshot.loginCheckJs;
+        if (key === 'variableComment') return sourceSnapshot.variableComment;
+        if (sourceData[key] !== undefined) return sourceData[key];
+        if (variables[key] !== undefined) return variables[key];
+        return '';
+      },
+      put: function (key, value) {
+        var text = toText(value);
+        sourceData[key] = text;
+        sourceDataChanges.push({ key: String(key), value: text });
+        return text;
+      },
+      getVariable: function () { return variables.__sourceVariable || ''; },
+      setVariable: function (value) {
+        sourceEffects.sourceVariable = toText(value);
+        variables.__sourceVariable = sourceEffects.sourceVariable;
+        return sourceEffects.sourceVariable;
+      },
+      getLoginInfo: function () { return variables.__loginInfo || ''; },
+      putLoginInfo: function (value) {
+        sourceEffects.loginInfo = toText(value);
+        return true;
+      },
+      removeLoginInfo: function () {
+        sourceEffects.loginInfo = '';
+        return true;
+      },
+      getLoginHeader: function () { return variables.__loginHeader || ''; },
+      getLoginHeaderMap: function () {
+        try { return createJavaMap(this.getLoginHeader() ? JSON.parse(this.getLoginHeader()) : {}); } catch (e) { return createJavaMap({}); }
+      },
+      putLoginHeader: function (value) {
+        sourceEffects.loginHeader = toText(value);
+        return true;
+      },
+      removeLoginHeader: function () {
+        sourceEffects.removeLoginHeader = true;
+        return true;
+      }
+    };
+
+    var cookie = {
+      getCookie: function (url, key) {
+        var cookieText = variables.cookie || '';
+        if (!cookieText) {
+          var cookieUrl = String(url || sourceUrl);
+          var id = makeBridgeId('cookie-get', cookieUrl, '', '', {}, String(key || ''));
+          var response = requestBridge({ id: id, type: 'cookie-get', url: cookieUrl, key: String(key || '') });
+          cookieText = response.body || '';
+          variables.cookie = cookieText;
+        }
+        if (!key) return cookieText;
+        var match = new RegExp(String(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)').exec(cookieText);
+        return match ? match[1] : '';
+      },
+      getKey: function (tag, key) {
+        return this.getCookie(tag, key);
+      },
+      setCookie: function (url, value) {
+        cookieChanges.push({ action: 'set', url: String(url || sourceUrl), value: toText(value) });
+        return value;
+      },
+      removeCookie: function (url) {
+        cookieChanges.push({ action: 'remove', url: String(url || sourceUrl) });
+        return '';
+      }
+    };
+
+    var cacheObject = {
+      get: function (key) {
+        var cacheKey = String(key || '');
+        if (cache[cacheKey] !== undefined) return cache[cacheKey];
+        var id = makeBridgeId('cache-get', '', '', '', {}, cacheKey);
+        var response = requestBridge({ id: id, type: 'cache-get', key: cacheKey });
+        cache[cacheKey] = response.body || '';
+        return cache[cacheKey];
+      },
+      put: function (key, value, saveTime) {
+        var cacheKey = String(key || '');
+        var text = toText(value);
+        cache[cacheKey] = text;
+        var id = makeBridgeId('cache-put', '', '', '', {}, cacheKey + '=' + text);
+        requestBridge({ id: id, type: 'cache-put', key: cacheKey, value: text, saveTime: Number(saveTime) || 0 });
+        return text;
+      },
+      delete: function (key) {
+        var cacheKey = String(key || '');
+        delete cache[cacheKey];
+        var id = makeBridgeId('cache-delete', '', '', '', {}, cacheKey);
+        requestBridge({ id: id, type: 'cache-delete', key: cacheKey });
+        return '';
+      },
+      getMemory: function (key) { return this.get(key); },
+      putMemory: function (key, value) { return this.put(key, value); },
+      getFromMemory: function (key) { return this.get(key); },
+      putFromMemory: function (key, value) { return this.put(key, value); },
+      deleteMemory: function (key) { return this.delete(key); },
+      getFromCache: function (key) { return this.get(key); },
+      putToCache: function (key, value, saveTime) { return this.put(key, value, saveTime); },
+      getFromCacheObject: function (key, defaultValue) {
+        var raw = this.get(key);
+        if (raw === undefined || raw === null || raw === '') {
+          return defaultValue === undefined ? null : defaultValue;
+        }
+        if (typeof raw !== 'string') return raw;
+        try { return JSON.parse(raw); } catch (e) { return raw; }
+      },
+      putToCacheObject: function (key, value, saveTime) {
+        var text = '';
+        if (value === undefined || value === null) {
+          text = '';
+        } else if (typeof value === 'string') {
+          text = value;
+        } else {
+          try { text = JSON.stringify(value); } catch (e) { text = String(value); }
+        }
+        this.put(key, text, saveTime);
+        return value;
+      },
+      getCacheObject: function (key, defaultValue) { return this.getFromCacheObject(key, defaultValue); },
+      putCacheObject: function (key, value, saveTime) { return this.putToCacheObject(key, value, saveTime); },
+      deleteCacheObject: function (key) { return this.delete(key); }
+    };
+
+    var java = {
+      ajax: function (url) {
+        var urlText = Array.isArray(url) ? url[0] : url;
+        return doHttp(urlText, 'GET', '', {}).body();
+      },
+      ajaxAll: function (urls) {
+        var result = [];
+        for (var i = 0; i < urls.length; i++) result.push(doHttp(urls[i], 'GET', '', {}));
+        return result;
+      },
+      connect: function (url, header) {
+        var option = normalizeOption(header);
+        return doHttp(url, option.method, option.body, option.headers);
+      },
+      head: function (url, headers) {
+        return doHttp(url, 'HEAD', '', headers || {});
+      },
+      get: function (nameOrUrl, headers) {
+        if (nameOrUrl === 'key') return context.key || '';
+        if (nameOrUrl === 'page') return context.page || 1;
+        if (nameOrUrl === 'result') return context.result || '';
+        if (nameOrUrl === 'baseUrl') return context.baseUrl || '';
+        if (nameOrUrl === 'sourceUrl') return sourceUrl;
+        if (variables[String(nameOrUrl)] !== undefined && headers === undefined) return variables[String(nameOrUrl)];
+        if (/^https?:\/\//i.test(String(nameOrUrl))) return doHttp(nameOrUrl, 'GET', '', normalizeHeaders(headers));
+        return variables[String(nameOrUrl)] || '';
+      },
+      post: function (url, body, headers) {
+        return doHttp(url, 'POST', body || '', normalizeHeaders(headers));
+      },
+      put: function (key, value) {
+        variables[String(key)] = toText(value);
+        return value;
+      },
+      getCache: function (key) { return cacheObject.get(key); },
+      putCache: function (key, value, saveTime) { return cacheObject.put(key, value, saveTime); },
+      deleteCache: function (key) { return cacheObject.delete(key); },
+      getFromCache: function (key) { return cacheObject.getFromCache(key); },
+      putToCache: function (key, value, saveTime) { return cacheObject.putToCache(key, value, saveTime); },
+      getFromCacheObject: function (key, defaultValue) { return cacheObject.getFromCacheObject(key, defaultValue); },
+      putToCacheObject: function (key, value, saveTime) { return cacheObject.putToCacheObject(key, value, saveTime); },
+      getCacheObject: function (key, defaultValue) { return cacheObject.getCacheObject(key, defaultValue); },
+      putCacheObject: function (key, value, saveTime) { return cacheObject.putCacheObject(key, value, saveTime); },
+      deleteCacheObject: function (key) { return cacheObject.deleteCacheObject(key); },
+      getCookie: function (tag, key) { return cookie.getCookie(tag, key); },
+      setCookie: function (url, value) { return cookie.setCookie(url, value); },
+      removeCookie: function (url) { return cookie.removeCookie(url); },
+      getString: function (value) { return toText(value); },
+      encodeURI: function (value, enc) { return legacyEncodeComponent(value); },
+      decodeURI: function (value) { return legacyDecodeComponent(value); },
+      encodeURIComponent: function (value) { return encodeURIComponent(String(value || '')); },
+      decodeURIComponent: function (value) {
+        try { return decodeURIComponent(String(value || '').replace(/\+/g, '%20')); } catch (e) { return ''; }
+      },
+      base64Encode: function (value) {
+        return base64EncodeBytes(stringToUtf8Bytes(value));
+      },
+      base64Decode: function (value) {
+        return utf8BytesToString(base64DecodeBytes(value));
+      },
+      base64DecodeToByteArray: function (value, flags) {
+        return base64DecodeBytes(value);
+      },
+      strToBytes: function (value, charset) {
+        return stringToUtf8Bytes(value);
+      },
+      bytesToStr: function (bytes, charset) {
+        return utf8BytesToString(normalizeByteArray(bytes));
+      },
+      hexDecodeToByteArray: function (hex) {
+        return hexToByteArray(hex);
+      },
+      hexDecodeToString: function (hex) {
+        return utf8BytesToString(hexToByteArray(hex));
+      },
+      hexEncodeToString: function (value) {
+        return bytesToHex(stringToUtf8Bytes(value));
+      },
+      md5Encode: function (value) {
+        return doDigest(value, 'MD5');
+      },
+      md5Encode16: function (value) {
+        return this.md5Encode(value).substring(8, 24);
+      },
+      sha1Encode: function (value) {
+        return doDigest(value, 'SHA1');
+      },
+      sha256Encode: function (value) {
+        return doDigest(value, 'SHA256');
+      },
+      HMacHex: function (value, key, algorithm) {
+        return doHmac(value, key, algorithm || 'HmacMD5');
+      },
+      timeFormat: function (time) {
+        var n = Number(time);
+        if (!isFinite(n)) n = Date.now();
+        return formatDate(new Date(n), 'yyyy-MM-dd HH:mm:ss', -new Date(n).getTimezoneOffset() * 60000);
+      },
+      timeFormatUTC: function (time, pattern, sh) {
+        var n = Number(time);
+        if (!isFinite(n)) n = Date.now();
+        return formatDate(new Date(n), pattern || 'yyyy-MM-dd HH:mm:ss', Number(sh) || 0);
+      },
+      toURL: function (url, baseUrl) {
+        return createJsUrl(url, baseUrl || context.baseUrl || '');
+      },
+      htmlFormat: function (value) {
+        return htmlFormatText(value);
+      },
+      randomUUID: function () {
+        var random = Math.random;
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+          var r = random() * 16 | 0;
+          var v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      },
+      util: {
+        UUID: {
+          randomUUID: function () {
+            var value = java.randomUUID();
+            return { toString: function () { return value; } };
+          }
+        }
+      },
+      log: function (value) {
+        logs.push(String(value));
+        return value;
+      },
+      toast: function (value) {
+        var text = String(value);
+        logs.push('[toast] ' + text);
+        toasts.push({ type: 'short', msg: text });
+        return value;
+      },
+      longToast: function (value) {
+        var text = String(value);
+        logs.push('[longToast] ' + text);
+        toasts.push({ type: 'long', msg: text });
+        return value;
+      },
+      webView: function (html, url, js) {
+        if (js) return executeJsInScope(js, html || '', url || '');
+        return html || '';
+      },
+      webViewGetSource: function (html, url, js) {
+        return this.webView(html, url, js);
+      },
+      webViewGetOverrideUrl: function (html, url, js) {
+        return this.webView(html, url, js);
+      },
+      cacheFile: function (url, saveTime) {
+        var urlText = String(url || '');
+        var cacheKey = 'cacheFile:' + java.md5Encode16(urlText);
+        var cached = cacheObject.get(cacheKey);
+        if (cached) return cached;
+        var body = java.ajax(urlText);
+        if (body) cacheObject.put(cacheKey, body, saveTime || 0);
+        return body;
+      },
+      importScript: function (path) {
+        var pathText = String(path || '');
+        if (/^https?:\/\//i.test(pathText)) return java.cacheFile(pathText);
+        var body = readRuntimeFile(pathText);
+        if (!body) throw new Error(pathText + ' 内容获取失败或者为空');
+        return body;
+      },
+      downloadFile: function (url) {
+        return downloadRuntimeFile(url);
+      },
+      writeTxtFile: function (path, value) {
+        return writeRuntimeFile(path, value);
+      },
+      readTxtFile: function (path) {
+        return readRuntimeFile(path);
+      },
+      readFile: function (path) {
+        return stringToUtf8Bytes(readRuntimeFile(path));
+      },
+      deleteFile: function (path) {
+        return deleteRuntimeFile(path);
+      }
+    };
+
+    var downloadFile = function (url) { return java.downloadFile(url); };
+    var cacheFile = function (url, saveTime) { return java.cacheFile(url, saveTime); };
+    var importScript = function (path) { return java.importScript(path); };
+    var readTxtFile = function (path) { return java.readTxtFile(path); };
+    var writeTxtFile = function (path, value) { return java.writeTxtFile(path, value); };
+    var readFile = function (path) { return java.readFile(path); };
+    var deleteFile = function (path) { return java.deleteFile(path); };
+
+    var Jsoup = {
+      connect: function (url) {
+        var requestHeaders = {};
+        var requestBody = '';
+        var requestMethod = 'GET';
+        var api = {
+          header: function (key, value) {
+            requestHeaders[String(key)] = String(value);
+            return api;
+          },
+          headers: function (headers) {
+            Object.keys(headers || {}).forEach(function (key) { requestHeaders[key] = String(headers[key]); });
+            return api;
+          },
+          data: function (key, value) {
+            var pair = encodeURIComponent(String(key)) + '=' + encodeURIComponent(String(value));
+            requestBody = requestBody ? requestBody + '&' + pair : pair;
+            requestMethod = 'POST';
+            return api;
+          },
+          requestBody: function (body) {
+            requestBody = toText(body);
+            requestMethod = 'POST';
+            return api;
+          },
+          method: function (method) {
+            requestMethod = String(method || 'GET').toUpperCase();
+            return api;
+          },
+          get: function () { return doHttp(url, 'GET', '', requestHeaders); },
+          post: function () { return doHttp(url, 'POST', requestBody, requestHeaders); },
+          execute: function () { return doHttp(url, requestMethod, requestBody, requestHeaders); }
+        };
+        return api;
+      },
+      parse: function (html) {
+        return {
+          html: function () { return html || ''; },
+          text: function () { return String(html || '').replace(/<[^>]+>/g, '').trim(); },
+          select: function () { return { remove: function () { return this; }, html: function () { return html || ''; }, text: function () { return String(html || '').replace(/<[^>]+>/g, '').trim(); } }; },
+          selectFirst: function () { return null; },
+          toString: function () { return html || ''; }
+        };
+      }
+    };
+
+    function toByteArray(value) {
+      if (value === undefined || value === null) return [];
+      if (Array.isArray(value)) return value.map(function (item) { return Number(item) & 255; });
+      var text = String(value);
+      var bytes = [];
+      for (var i = 0; i < text.length; i++) {
+        var code = text.charCodeAt(i);
+        if (code < 0x80) {
+          bytes.push(code);
+        } else if (code < 0x800) {
+          bytes.push(0xc0 | (code >> 6));
+          bytes.push(0x80 | (code & 0x3f));
+        } else {
+          bytes.push(0xe0 | (code >> 12));
+          bytes.push(0x80 | ((code >> 6) & 0x3f));
+          bytes.push(0x80 | (code & 0x3f));
+        }
+      }
+      return bytes;
+    }
+
+    function bytesToString(bytes) {
+      var result = '';
+      for (var i = 0; i < bytes.length; i++) {
+        result += String.fromCharCode(bytes[i] & 255);
+      }
+      try { return decodeURIComponent(escape(result)); } catch (e) { return result; }
+    }
+
+    function hexToBytes(hex) {
+      var clean = String(hex || '').replace(/[^0-9a-f]/gi, '');
+      var bytes = [];
+      for (var i = 0; i + 1 < clean.length; i += 2) {
+        bytes.push(parseInt(clean.substring(i, i + 2), 16) & 255);
+      }
+      return bytes;
+    }
+
+    function createMessageDigest(algorithm) {
+      var alg = String(algorithm || 'MD5');
+      var pending = [];
+      return {
+        update: function (input) {
+          pending = pending.concat(toByteArray(input));
+          return this;
+        },
+        digest: function (input) {
+          if (input !== undefined) pending = pending.concat(toByteArray(input));
+          var hex = doDigest(bytesToString(pending), alg);
+          pending = [];
+          return hexToBytes(hex);
+        },
+        reset: function () {
+          pending = [];
+          return this;
+        },
+        getAlgorithm: function () { return alg; }
+      };
+    }
+
+    function extractSecretKey(value) {
+      if (!value) return '';
+      if (typeof value.getEncoded === 'function') return bytesToString(toByteArray(value.getEncoded()));
+      if (value.value !== undefined) return toText(value.value);
+      return toText(value);
+    }
+
+    function createMac(algorithm) {
+      var alg = String(algorithm || 'HmacMD5');
+      var secret = '';
+      var pending = [];
+      return {
+        init: function (keySpec) {
+          secret = extractSecretKey(keySpec);
+          return this;
+        },
+        update: function (input) {
+          pending = pending.concat(toByteArray(input));
+          return this;
+        },
+        doFinal: function (input) {
+          if (input !== undefined) pending = pending.concat(toByteArray(input));
+          var hex = doHmac(bytesToString(pending), secret, alg);
+          pending = [];
+          return hexToBytes(hex);
+        },
+        reset: function () {
+          pending = [];
+          return this;
+        },
+        getAlgorithm: function () { return alg; }
+      };
+    }
+
+    var javaRoot = {
+      security: {
+        MessageDigest: {
+          getInstance: function (algorithm) {
+            return createMessageDigest(algorithm);
+          }
+        }
+      },
+      util: java.util || {},
+      net: {
+        URL: function (urlValue) {
+          return {
+            toString: function () { return String(urlValue || ''); },
+            getHost: function () {
+              var match = String(urlValue || '').match(/^https?:\/\/([^\/]+)/i);
+              return match ? match[1] : '';
+            },
+            getPath: function () {
+              var match = String(urlValue || '').match(/^https?:\/\/[^\/]+([^?#]*)/i);
+              return match ? match[1] : '';
+            },
+            getProtocol: function () {
+              return String(urlValue || '').toLowerCase().indexOf('https:') === 0 ? 'https' : 'http';
+            }
+          };
+        }
+      }
+    };
+
+    var javaxRoot = {
+      crypto: {
+        Mac: {
+          getInstance: function (algorithm) {
+            return createMac(algorithm);
+          }
+        },
+        spec: {
+          SecretKeySpec: function (value, algorithm) {
+            return {
+              value: bytesToString(toByteArray(value)),
+              algorithm: String(algorithm || ''),
+              getAlgorithm: function () { return this.algorithm; },
+              getEncoded: function () { return toByteArray(this.value); }
+            };
+          }
+        }
+      }
+    };
+
+    var org = {
+      jsoup: { Jsoup: Jsoup },
+      apache: {
+        commons: {
+          codec: {
+            digest: {
+              DigestUtils: {
+                md5Hex: function (value) { return doDigest(value, 'MD5'); },
+                sha1Hex: function (value) { return doDigest(value, 'SHA1'); },
+                sha256Hex: function (value) { return doDigest(value, 'SHA256'); }
+              }
+            }
+          }
+        }
+      }
+    };
+
+    if (sourceDataChanges.length > 0) {
+      sourceEffects.data = sourceDataChanges;
+    }
+
+    return {
+      variables: variables,
+      sourceEffects: sourceEffects,
+      sourceDataChanges: sourceDataChanges,
+      source: source,
+      java: java,
+      cookie: cookie,
+      cache: cacheObject,
+      Jsoup: Jsoup,
+      org: org,
+      javaRoot: javaRoot,
+      javaxRoot: javaxRoot,
+      resultValue: context.result,
+      baseUrl: context.baseUrl || '',
+      key: context.key || '',
+      page: context.page || 1,
+      book: context.book || {},
+      chapter: context.chapter || {},
+      src: context.src || context.result || ''
+    };
+  }
+
+  function loadJsLib(jsLib, runtimeObjects) {
+    if (!jsLib) return '';
+    return String(jsLib) + '\n';
+  }
+
+  function isIdentifierPartChar(ch) {
+    return /[A-Za-z0-9_$]/.test(ch);
+  }
+
+  function isIdentifierStartChar(ch) {
+    return /[A-Za-z_$]/.test(ch);
+  }
+
+  function previousSignificantChar(text, index) {
+    for (var i = index - 1; i >= 0; i--) {
+      var ch = text.charAt(i);
+      if (ch !== ' ' && ch !== '\t' && ch !== '\r' && ch !== '\n') {
+        return ch;
+      }
+    }
+    return '';
+  }
+
+  function isAtLineStatementStart(text, index) {
+    for (var i = index - 1; i >= 0; i--) {
+      var ch = text.charAt(i);
+      if (ch === '\n' || ch === '\r') {
+        return true;
+      }
+      if (ch !== ' ' && ch !== '\t') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function shouldRewriteFunctionDeclaration(text, index) {
+    var before = index > 0 ? text.charAt(index - 1) : '';
+    var after = text.charAt(index + 8);
+    if (isIdentifierPartChar(before) || isIdentifierPartChar(after)) {
+      return false;
+    }
+    if (isAtLineStatementStart(text, index)) {
+      return true;
+    }
+    var prev = previousSignificantChar(text, index);
+    return prev === '' || prev === ';' || prev === '{' || prev === '}';
+  }
+
+  function rewriteTopLevelFunctionDeclarations(code) {
+    var output = '';
+    var last = 0;
+    var depth = 0;
+    var i = 0;
+    while (i < code.length) {
+      var ch = code.charAt(i);
+      var next = i + 1 < code.length ? code.charAt(i + 1) : '';
+
+      if (ch === '"' || ch === "'" || ch === '`') {
+        var quote = ch;
+        i++;
+        while (i < code.length) {
+          var qch = code.charAt(i);
+          if (qch === '\\') {
+            i += 2;
+            continue;
+          }
+          if (qch === quote) {
+            i++;
+            break;
+          }
+          i++;
+        }
+        continue;
+      }
+
+      if (ch === '/' && next === '/') {
+        i += 2;
+        while (i < code.length && code.charAt(i) !== '\n' && code.charAt(i) !== '\r') {
+          i++;
+        }
+        continue;
+      }
+
+      if (ch === '/' && next === '*') {
+        i += 2;
+        while (i + 1 < code.length && !(code.charAt(i) === '*' && code.charAt(i + 1) === '/')) {
+          i++;
+        }
+        i += 2;
+        continue;
+      }
+
+      if (ch === '{') {
+        depth++;
+        i++;
+        continue;
+      }
+      if (ch === '}') {
+        if (depth > 0) depth--;
+        i++;
+        continue;
+      }
+
+      if (depth === 0 && code.substring(i, i + 8) === 'function' && shouldRewriteFunctionDeclaration(code, i)) {
+        var nameStart = i + 8;
+        while (nameStart < code.length && /\s/.test(code.charAt(nameStart))) {
+          nameStart++;
+        }
+        if (isIdentifierStartChar(code.charAt(nameStart))) {
+          var nameEnd = nameStart + 1;
+          while (nameEnd < code.length && isIdentifierPartChar(code.charAt(nameEnd))) {
+            nameEnd++;
+          }
+          var name = code.substring(nameStart, nameEnd);
+          output += code.substring(last, i);
+          output += ';__scope.' + name + ' = function ' + name;
+          last = nameEnd;
+          i = nameEnd;
+          continue;
+        }
+      }
+
+      i++;
+    }
+    if (last <= 0) {
+      return code;
+    }
+    output += code.substring(last);
+    return output;
+  }
+
+  function executeCode(code, runtimeObjects, scope, fixedNow, randomSeed, jsLib) {
+    var normalized = normalizeCode(code);
+    var libCode = jsLib ? String(jsLib) + '\n' : '';
+    var evalCode = rewriteTopLevelFunctionDeclarations(libCode + normalized);
+    var runtimeValues = [
+      runtimeObjects.java,
+      runtimeObjects.source,
+      runtimeObjects.cookie,
+      runtimeObjects.cache,
+      runtimeObjects.resultValue,
+      runtimeObjects.baseUrl,
+      runtimeObjects.key,
+      runtimeObjects.page,
+      runtimeObjects.book,
+      runtimeObjects.chapter,
+      runtimeObjects.src,
+      runtimeObjects.Jsoup || {},
+      runtimeObjects.org || {},
+      runtimeObjects.javaRoot || {},
+      runtimeObjects.javaRoot ? runtimeObjects.javaRoot.security : {},
+      runtimeObjects.javaRoot ? runtimeObjects.javaRoot.util : {},
+      runtimeObjects.javaRoot ? runtimeObjects.javaRoot.net : {},
+      runtimeObjects.javaxRoot || {}
+    ];
+      var wrapped =
+      'var __scope = this;\n' +
+      'var __java = arguments[0];\n' +
+      'var __source = arguments[1];\n' +
+      'var __cookie = arguments[2];\n' +
+      'var __cache = arguments[3];\n' +
+      'var __org = arguments[12];\n' +
+      '__java.security = arguments[13].security || arguments[14] || {};\n' +
+      '__java.util = arguments[13].util || arguments[15] || __java.util || {};\n' +
+      '__java.net = arguments[13].net || arguments[16] || {};\n' +
+      '__scope.java = __java;\n' +
+      '__scope.source = __source;\n' +
+      '__scope.cookie = __cookie;\n' +
+      '__scope.cache = __cache;\n' +
+      '__scope.result = arguments[4];\n' +
+      '__scope.baseUrl = arguments[5];\n' +
+      '__scope.key = arguments[6];\n' +
+      '__scope.page = arguments[7];\n' +
+      '__scope.book = arguments[8];\n' +
+      '__scope.chapter = arguments[9];\n' +
+      '__scope.src = arguments[10];\n' +
+      '__scope.Jsoup = arguments[11];\n' +
+      '__scope.org = __org;\n' +
+      '__scope.Packages = { java: arguments[13], javax: arguments[17], org: __org };\n' +
+      '__scope.javax = arguments[17];\n' +
+      '__scope.downloadFile = __java.downloadFile.bind(__java);\n' +
+      '__scope.cacheFile = __java.cacheFile.bind(__java);\n' +
+      '__scope.importScript = __java.importScript.bind(__java);\n' +
+      '__scope.readTxtFile = __java.readTxtFile.bind(__java);\n' +
+      '__scope.writeTxtFile = __java.writeTxtFile.bind(__java);\n' +
+      '__scope.readFile = __java.readFile.bind(__java);\n' +
+      '__scope.deleteFile = __java.deleteFile.bind(__java);\n' +
+      '__scope.getFromCacheObject = __java.getFromCacheObject.bind(__java);\n' +
+      '__scope.putToCacheObject = __java.putToCacheObject.bind(__java);\n' +
+      '__scope.getCacheObject = __java.getCacheObject.bind(__java);\n' +
+      '__scope.putCacheObject = __java.putCacheObject.bind(__java);\n' +
+      'var __oldDateNow = Date.now;\n' +
+      'var __oldRandom = Math.random;\n' +
+      'var __global = window;\n' +
+      'var __oldGlobalJava = __global.java;\n' +
+      'var __oldGlobalSource = __global.source;\n' +
+      'var __oldGlobalCookie = __global.cookie;\n' +
+      'var __oldGlobalCache = __global.cache;\n' +
+      'var __oldGlobalGetFromCacheObject = __global.getFromCacheObject;\n' +
+      'var __oldGlobalPutToCacheObject = __global.putToCacheObject;\n' +
+      'var __oldGlobalGetCacheObject = __global.getCacheObject;\n' +
+      'var __oldGlobalPutCacheObject = __global.putCacheObject;\n' +
+      'Date.now = function(){ return ' + Number(fixedNow || Date.now()) + '; };\n' +
+      'Math.random = (' + createRandom.toString() + ')(' + Number(randomSeed || 1) + ');\n' +
+      '__global.java = __scope.java;\n' +
+      '__global.source = __scope.source;\n' +
+      '__global.cookie = __scope.cookie;\n' +
+      '__global.cache = __scope.cache;\n' +
+      '__global.getFromCacheObject = __scope.getFromCacheObject;\n' +
+      '__global.putToCacheObject = __scope.putToCacheObject;\n' +
+      '__global.getCacheObject = __scope.getCacheObject;\n' +
+      '__global.putCacheObject = __scope.putCacheObject;\n' +
+      'try {\n' +
+      '  var __legadoEvalCode = ' + JSON.stringify(evalCode) + ';\n' +
+      '  with (__scope) { return eval(__legadoEvalCode); }\n' +
+      '} finally {\n' +
+      '  Date.now = __oldDateNow;\n' +
+      '  Math.random = __oldRandom;\n' +
+      '  __global.java = __oldGlobalJava;\n' +
+      '  __global.source = __oldGlobalSource;\n' +
+      '  __global.cookie = __oldGlobalCookie;\n' +
+      '  __global.cache = __oldGlobalCache;\n' +
+      '  __global.getFromCacheObject = __oldGlobalGetFromCacheObject;\n' +
+      '  __global.putToCacheObject = __oldGlobalPutToCacheObject;\n' +
+      '  __global.getCacheObject = __oldGlobalGetCacheObject;\n' +
+      '  __global.putCacheObject = __oldGlobalPutCacheObject;\n' +
+      '}\n';
+    var runner = scope.__runner;
+    if (!runner) {
+      runner = Function(wrapped);
+      scope.__runner = runner;
+    } else {
+      runner = Function(wrapped);
+      scope.__runner = runner;
+    }
+    return runner.apply(scope, runtimeValues);
+  }
+
+  window.__manxiaLegadoRuntimeExecute = function (payload) {
+    var pendingRequests = [];
+    var logs = [];
+    var cookieChanges = [];
+    var toasts = [];
+    var state = payload.state || {};
+    var context = payload.context || {};
+    var sourceUrl = context.sourceUrl || (context.variables && context.variables.sourceUrl) || context.baseUrl || 'default';
+    var scope = sharedScopes[sourceUrl];
+    if (!scope) {
+      scope = {};
+      sharedScopes[sourceUrl] = scope;
+    }
+
+    try {
+      var runtimeObjects = buildRuntimeObjects(payload, state, scope, pendingRequests, logs, cookieChanges, toasts);
+      runtimeObjects.scope = scope;
+      var value = executeCode(payload.code || '', runtimeObjects, scope, state.now, state.randomSeed, loadJsLib(context.jsLib || '', runtimeObjects));
+      if (runtimeObjects.sourceDataChanges.length > 0) {
+        runtimeObjects.sourceEffects.data = runtimeObjects.sourceDataChanges;
+      }
+      Object.keys(runtimeObjects.variables).forEach(function (key) {
+        state.variables[key] = runtimeObjects.variables[key];
+      });
+      if (pendingRequests.length > 0) {
+        return buildResponse('pending', {
+          bridgeRequests: pendingRequests,
+          logs: logs
+        });
+      }
+      return buildResponse('ok', {
+        result: toText(value),
+        variables: runtimeObjects.variables,
+        sourceEffects: runtimeObjects.sourceEffects,
+        cache: state.cache || {},
+        cookieChanges: cookieChanges,
+        toasts: toasts,
+        logs: logs
+      });
+    } catch (error) {
+      if (error && error.legadoPendingRequest) {
+        return buildResponse('pending', {
+          bridgeRequests: pendingRequests,
+          logs: logs
+        });
+      }
+      return buildResponse('error', {
+        errorCode: error && error.name === 'SyntaxError' ? 'SCRIPT_SYNTAX' : 'RUNTIME_ERROR',
+        error: error && error.stack ? String(error.stack) : String(error),
+        logs: logs
+      });
+    }
+  };
+
+  console.log('[LegadoRuntimeV2] ready');
+})();
+</script>
+</body>
+</html>

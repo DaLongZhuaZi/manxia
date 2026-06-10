@@ -96,6 +96,13 @@ export struct NovelSettingsPage {
       route: 'NovelSourceManagementPage'
     },
     {
+      title: '书源引擎',
+      subtitle: '自管索引与运行时',
+      icon: $r('sys.symbol.cloud'),
+      iconColor: '#00A8E8',
+      route: 'NovelSourceEnginePage'
+    },
+    {
       title: '订阅源',
       subtitle: '查看 RSS 订阅内容',
       icon: $r('sys.symbol.list_bullet'),
