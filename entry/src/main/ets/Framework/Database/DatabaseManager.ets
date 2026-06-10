@@ -237,9 +237,13 @@ export class DatabaseManager {
           try { await store.executeSql('UPDATE comic_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
           logger.info(TAG, '✅ [COMIC_INFO] 列添加完成');
         } else if (tableName === 'ONLINE_COMIC_INFO') {
-          logger.info(TAG, '🔧 [ONLINE_COMIC_INFO] 添加隐私列');
+          logger.info(TAG, '🔧 [ONLINE_COMIC_INFO] 添加兼容列');
+          try { await store.executeSql("ALTER TABLE online_comic_info ADD COLUMN sourceName TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE online_comic_info ADD COLUMN sourcePkg TEXT DEFAULT ''"); } catch (e) {}
           try { await store.executeSql('ALTER TABLE online_comic_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
           try { await store.executeSql('ALTER TABLE online_comic_info ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql("UPDATE online_comic_info SET sourceName = '' WHERE sourceName IS NULL"); } catch (e) {}
+          try { await store.executeSql("UPDATE online_comic_info SET sourcePkg = '' WHERE sourcePkg IS NULL"); } catch (e) {}
           try { await store.executeSql('UPDATE online_comic_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
           try { await store.executeSql('UPDATE online_comic_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
           logger.info(TAG, '✅ [ONLINE_COMIC_INFO] 列添加完成');

@@ -78,6 +78,7 @@ import { DataManager, ComicInfo, ChapterInfo, PageInfo, OnlineChapterInfo, Onlin
 import { DatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DataService } from '../Framework/Services/DataService';
 import { MangaDetailLoader, MangaDetailLoadParams, MangaDetailLoadResult, MangaLoadProgressCallback, ChapterProgressInfo } from '../Framework/Loaders/MangaDetailLoader';
+import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
 import webview from '@ohos.web.webview';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
@@ -113,6 +114,7 @@ import {
   CoverChangedPayload,
   BasePayload,
   MangaDeletedPayload,
+  MangaFavoriteChangedPayload,
   ReadAloudCacheUpdatedPayload,
   MangaCacheUpdatedPayload
 } from '../Framework/EventBus';
@@ -2393,8 +2395,8 @@ export struct UnifiedDetailPage {
   private async loadMangaContent(): Promise<void> {
     if (!this.pageParams) return;
 
-    const mangaId = this.pageParams.contentId;
-    const sourceId = this.pageParams.sourceId;
+    let mangaId = this.pageParams.contentId;
+    let sourceId = this.pageParams.sourceId;
     logger.info(TAG, `加载漫画内容: mangaId=${mangaId}, sourceId=${sourceId}`);
 
     // 解析图源名称和包名（优先用 pageParams，fallback 到 SourceManager 查找）
@@ -2409,6 +2411,34 @@ export struct UnifiedDetailPage {
       this.resolvedSourceName = resolvedMangaSourceName;
       this.resolvedDisplaySourceName = resolvedMangaSourceName;
       logger.info(TAG, `图源信息已解析: name=${this.resolvedSourceName}, pkg=${this.resolvedSourcePkg}`);
+    }
+
+    let externalMangaId: string = '';
+    const identityInput = MangaIdentityResolver.getInstance().buildInput(
+      mangaId,
+      '',
+      sourceId ? Number(sourceId) : -1,
+      String(this.pageParams.contentType),
+      'UnifiedDetailPage.loadMangaContent'
+    );
+    identityInput.sourceName = this.resolvedSourceName;
+    identityInput.sourcePkg = this.resolvedSourcePkg;
+    const identityResult: MangaIdentityResolveResult = await MangaIdentityResolver.getInstance().resolve(identityInput);
+    if (identityResult.success) {
+      if (identityResult.canonicalMangaId.length > 0 && identityResult.canonicalMangaId !== mangaId) {
+        logger.info(TAG, `统一详情页漫画ID已校准: ${mangaId} -> ${identityResult.canonicalMangaId}`);
+        mangaId = identityResult.canonicalMangaId;
+        this.pageParams.contentId = mangaId;
+      }
+      if (identityResult.sourceId > 0 && String(identityResult.sourceId) !== String(sourceId || '')) {
+        sourceId = String(identityResult.sourceId);
+        this.pageParams.sourceId = sourceId;
+      }
+      if (identityResult.externalMangaId.length > 0) {
+        externalMangaId = identityResult.externalMangaId;
+      }
+    } else {
+      logger.warn(TAG, `统一详情页漫画身份未解析，继续使用原始参数: ${identityResult.detail}`);
     }
 
     // 重置加载状态
@@ -2430,7 +2460,8 @@ export struct UnifiedDetailPage {
       cachedTitle: this.pageParams.cachedTitle,
       cachedCoverPath: this.pageParams.cachedCoverPath,
       cachedCover: this.pageParams.cachedCover,
-      forceRefresh: false
+      forceRefresh: false,
+      externalMangaId: externalMangaId.length > 0 ? externalMangaId : undefined
     };
 
     // 构建已读/已下载/书签章节ID集合
@@ -2441,7 +2472,7 @@ export struct UnifiedDetailPage {
 
     // 分阶段加载回调
     const progressCallback: MangaLoadProgressCallback = {
-      onBasicInfoLoaded: (manga: Manga, isFavorite: boolean) => {
+      onBasicInfoLoaded: async (manga: Manga, isFavorite: boolean): Promise<void> => {
         logger.info(TAG, `[分阶段] 基本信息已加载: ${manga.title}`);
         this.isFavorite = isFavorite;
         this.isBasicInfoLoaded = true;
@@ -2467,7 +2498,9 @@ export struct UnifiedDetailPage {
         
         // 在线漫画：加载本地缓存的封面
         if (sourceId && Number(sourceId) > 0) {
-          this.loadCachedCover(Number(sourceId), mangaId);
+          const coverExternalId: string = this.getOnlineMangaExternalIdForCover(manga, mangaId);
+          await this.persistOnlineMangaCoverUrlForMainMenu(coverExternalId, manga.coverImagePath || '');
+          void this.loadCachedCover(Number(sourceId), coverExternalId);
         }
       },
       
@@ -2539,10 +2572,8 @@ export struct UnifiedDetailPage {
           // 获取原始Manga对象以保留genres等元数据
           logger.debug(TAG, `[DEBUG-14] 开始获取原始Manga`);
           const originalManga = MangaAdapter.getOriginalManga(this.content);
-          const finalCoverPath = this.localCoverPath || this.content.coverUrl || originalManga?.coverImagePath || '';
-          const finalCoverSourceType = this.localCoverPath
-            ? ImageSourceType.LOCAL
-            : (this.content.isLocal ? ImageSourceType.LOCAL : ImageSourceType.NETWORK);
+          const finalCoverPath = this.resolveUnifiedCoverImagePath(originalManga);
+          const finalCoverSourceType = this.resolveCoverSourceType(finalCoverPath);
           logger.debug(TAG, `[DEBUG-15] 原始Manga获取完成: ${originalManga !== null}`);
           
           logger.debug(TAG, `[DEBUG-16] 开始构建 updatedManga`);
@@ -2631,11 +2662,85 @@ export struct UnifiedDetailPage {
     if (!result.success) {
       logger.error(TAG, `漫画加载失败: ${result.errorMessage}`);
       if (!this.isBasicInfoLoaded) {
-        this.errorMessage = result.errorMessage || '漫画加载失败';
+        const fallbackApplied: boolean = await this.applyCachedMangaFallbackContent(
+          mangaId,
+          sourceId,
+          readChapterIds,
+          downloadedChapterIds,
+          bookmarkedChapterIds
+        );
+        if (!fallbackApplied) {
+          this.errorMessage = result.errorMessage || '漫画加载失败';
+        }
       }
     } else {
       logger.info(TAG, `漫画内容加载完成: ${this.content?.title}`);
     }
+  }
+
+  private async applyCachedMangaFallbackContent(
+    mangaId: string,
+    sourceId: string | undefined,
+    readChapterIds: Set<string>,
+    downloadedChapterIds: Set<string>,
+    bookmarkedChapterIds: Set<string>
+  ): Promise<boolean> {
+    if (!this.pageParams || !this.pageParams.cachedManga) {
+      return false;
+    }
+
+    const cachedManga: Manga = this.pageParams.cachedManga;
+    const chapters: MangaChapter[] = cachedManga.chapters || [];
+    const isOnline: boolean = sourceId !== undefined && Number(sourceId) > 0;
+    let lastReadChapterIndex: number = -1;
+
+    try {
+      for (let i: number = 0; i < chapters.length; i++) {
+        const chapter = chapters[i];
+        if (chapter.isDownloaded) {
+          downloadedChapterIds.add(chapter.id);
+        }
+      }
+
+      if (chapters.length > 0) {
+        const progressData = await this.mangaDetailLoader.loadChapterProgressData(
+          mangaId,
+          chapters,
+          isOnline
+        );
+        progressData.readChapterIds.forEach((id: string) => readChapterIds.add(id));
+        const newProgressMap = new Map<string, ChapterProgressInfo>();
+        progressData.progressList.forEach((progress: ChapterProgressInfo) => {
+          newProgressMap.set(progress.chapterId, progress);
+        });
+        this.chapterProgressMap = newProgressMap;
+        lastReadChapterIndex = progressData.lastReadChapterIndex;
+      }
+    } catch (error) {
+      logger.warn(TAG, `缓存漫画兜底加载进度失败: mangaId=${mangaId}, ${String(error)}`);
+    }
+
+    this.content = MangaAdapter.toUnifiedContent(
+      cachedManga,
+      chapters,
+      cachedManga.isFavorite || this.isFavorite,
+      readChapterIds,
+      downloadedChapterIds,
+      bookmarkedChapterIds,
+      lastReadChapterIndex,
+      sourceId,
+      this.resolvedSourceName,
+      this.resolvedSourcePkg
+    );
+    this.isFavorite = cachedManga.isFavorite || this.isFavorite;
+    this.isBasicInfoLoaded = true;
+    this.isPrimarySectionReady = true;
+    this.isLoading = false;
+    this.isCoverLoading = false;
+    this.isChaptersLoading = false;
+    this.errorMessage = '';
+    logger.warn(TAG, `已使用导航缓存漫画恢复详情页: mangaId=${mangaId}, title=${cachedManga.title}, chapters=${chapters.length}`);
+    return true;
   }
 
   /**
@@ -3930,13 +4035,14 @@ export struct UnifiedDetailPage {
       
       logger.info(TAG, `在线漫画阅读: sourceId=${readerParams.sourceId}, mangaId=${readerParams.mangaId}, chapterId=${readerParams.chapterId}`);
     } else {
-      // 本地漫画：不传递manga对象，让MangaReaderPage从数据库加载完整的章节和页面信息
+      // 本地漫画：传递详情页已恢复的 Manga 对象，阅读器会继续水合章节和页面
+      if (originalManga) {
+        readerParams.manga = originalManga;
+      }
       readerParams.mangaId = this.content.id;
       readerParams.chapterId = chapter.id;
       readerParams.contentType = MangaReaderContentType.Local;
       readerParams.sourceName = 'LOCAL';
-      // 注意：不传递manga对象，因为传递的manga对象中章节的pages数组可能为空
-      // MangaReaderPage会通过mangaId从数据库加载完整的章节和页面信息
       logger.info(TAG, `本地漫画阅读: mangaId=${readerParams.mangaId}, chapterId=${readerParams.chapterId}`);
     }
     
@@ -3948,11 +4054,11 @@ export struct UnifiedDetailPage {
 
     // 触发翻开过渡动画
     // 优先使用本地缓存的封面路径（可直接加载PixelMap），回退到网络URL
-    const coverPath: string = this.localCoverPath || this.content.coverUrl || '';
+    const coverPath: string = this.resolveUnifiedCoverImagePath(originalManga);
     const coverComponentId: string = `cover_${this.componentId}`;
     readerParams.coverComponentId = coverComponentId;
     
-    logger.info(TAG, `触发漫画翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
+    logger.info(TAG, `触发漫画翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}, candidates=${this.buildCoverCandidateDebugText(originalManga)}`);
     startBookOpenTransitionWithComponentId(
       coverPath,
       coverComponentId,
@@ -4975,6 +5081,39 @@ export struct UnifiedDetailPage {
       partitionKey: headers.cachePartition
     };
     return loadOptions;
+  }
+
+  private getOnlineMangaExternalIdForCover(manga: Manga, fallbackId: string): string {
+    const sourceExternalId: string = typeof manga.sourceInfo?.externalId === 'string'
+      ? manga.sourceInfo.externalId.trim()
+      : '';
+    if (sourceExternalId.length > 0) {
+      return sourceExternalId;
+    }
+    const mangaId: string = manga.id ? manga.id.trim() : '';
+    if (mangaId.length > 0) {
+      return mangaId;
+    }
+    return fallbackId ? fallbackId.trim() : '';
+  }
+
+  private async persistOnlineMangaCoverUrlForMainMenu(comicId: string, coverUrl: string): Promise<void> {
+    const normalizedComicId: string = comicId ? comicId.trim() : '';
+    const normalizedCoverUrl: string = coverUrl ? coverUrl.trim() : '';
+    if (normalizedComicId.length <= 0 || normalizedCoverUrl.length <= 0) {
+      return;
+    }
+    if (normalizedCoverUrl.startsWith('app.media.') || normalizedCoverUrl.startsWith('$r(')) {
+      return;
+    }
+    try {
+      await this.dataManager.updateOnlineComicCoverUrl(normalizedComicId, normalizedCoverUrl);
+    } catch (error) {
+      logger.warn(
+        TAG,
+        `同步在线漫画封面到MainMenu失败: comicId=${normalizedComicId}, cover=${normalizedCoverUrl}, error=${String(error)}`
+      );
+    }
   }
   
   /**
@@ -6000,7 +6139,61 @@ export struct UnifiedDetailPage {
   }
 
   private getRawCoverImagePath(): string {
-    return this.localCoverPath || this.content?.coverUrl || this.pageParams?.cachedCover || '';
+    const originalManga = this.content && this.content.contentType === UnifiedContentType.MANGA
+      ? MangaAdapter.getOriginalManga(this.content)
+      : null;
+    return this.resolveUnifiedCoverImagePath(originalManga);
+  }
+
+  private normalizeCoverPathCandidate(value: string | undefined | null): string {
+    if (value === undefined || value === null) {
+      return '';
+    }
+    return String(value).trim();
+  }
+
+  private resolveUnifiedCoverImagePath(originalManga?: Manga | null): string {
+    const candidates: string[] = [
+      this.normalizeCoverPathCandidate(this.localCoverPath),
+      this.normalizeCoverPathCandidate(this.content?.coverUrl),
+      this.normalizeCoverPathCandidate(originalManga?.coverImagePath),
+      this.normalizeCoverPathCandidate(this.pageParams?.cachedCoverPath),
+      this.normalizeCoverPathCandidate(this.pageParams?.cachedCover)
+    ];
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      if (candidate.length > 0) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
+  private resolveCoverSourceType(coverPath: string): ImageSourceType {
+    if (coverPath.startsWith('http://') || coverPath.startsWith('https://')) {
+      return ImageSourceType.NETWORK;
+    }
+    if (coverPath.startsWith('app.media.')) {
+      return ImageSourceType.RESOURCE;
+    }
+    if (coverPath.length > 0) {
+      return ImageSourceType.LOCAL;
+    }
+    if (this.content?.isLocal) {
+      return ImageSourceType.LOCAL;
+    }
+    return ImageSourceType.NETWORK;
+  }
+
+  private buildCoverCandidateDebugText(originalManga?: Manga | null): string {
+    const parts: string[] = [];
+    parts.push(`local=${this.localCoverPath ? 'yes' : 'no'}`);
+    parts.push(`content=${this.content?.coverUrl ? 'yes' : 'no'}`);
+    parts.push(`original=${originalManga?.coverImagePath ? 'yes' : 'no'}`);
+    parts.push(`cachedPath=${this.pageParams?.cachedCoverPath ? 'yes' : 'no'}`);
+    parts.push(`cached=${this.pageParams?.cachedCover ? 'yes' : 'no'}`);
+    parts.push(`pixelMap=${this.coverPixelMap ? 'yes' : 'no'}`);
+    return parts.join(',');
   }
 
   private getDisplayTitleText(): string {
@@ -8139,7 +8332,7 @@ export struct UnifiedDetailPage {
       };
 
       const progressCallback: MangaLoadProgressCallback = {
-        onBasicInfoLoaded: (manga: Manga, isFavorite: boolean) => {
+        onBasicInfoLoaded: async (manga: Manga, isFavorite: boolean): Promise<void> => {
           logger.info(TAG, `[重新获取] 基本信息已更新: ${manga.title}, 封面=${manga.coverImagePath}, 简介长度=${manga.description?.length || 0}`);
           this.isFavorite = isFavorite;
           if (this.content) {
@@ -8157,6 +8350,10 @@ export struct UnifiedDetailPage {
             }
             if (manga.coverImagePath && manga.coverImagePath.trim() !== '') {
               this.content.coverUrl = manga.coverImagePath;
+              await this.persistOnlineMangaCoverUrlForMainMenu(
+                this.getOnlineMangaExternalIdForCover(manga, mangaId),
+                manga.coverImagePath
+              );
             }
             logger.info(TAG, `[重新获取] UI已更新: 标题=${this.content.title}, 封面=${this.content.coverUrl}`);
           }
@@ -8232,7 +8429,7 @@ export struct UnifiedDetailPage {
           if (this.content) {
             this.content.coverUrl = newCoverUrl;
           }
-          await this.dataManager.updateComicCoverUrl(mangaId, newCoverUrl);
+          await this.persistOnlineMangaCoverUrlForMainMenu(mangaId, newCoverUrl);
           this.getUIContext().getPromptAction().showToast({ message: '封面已更新', duration: 1500 });
         } else {
           this.getUIContext().getPromptAction().showToast({ message: '获取封面失败', duration: 2000 });
@@ -11112,6 +11309,33 @@ export struct UnifiedDetailPage {
     return '';
   }
 
+  private publishMangaFavoriteChanged(isFavorite: boolean): void {
+    if (!this.content || this.content.contentType !== UnifiedContentType.MANGA) {
+      return;
+    }
+
+    let externalId: string = this.content.id || '';
+    const originalManga: Manga | null = MangaAdapter.getOriginalManga(this.content);
+    if (originalManga) {
+      if (originalManga.sourceInfo && originalManga.sourceInfo.externalId && originalManga.sourceInfo.externalId.length > 0) {
+        externalId = originalManga.sourceInfo.externalId;
+      } else if (originalManga.id && originalManga.id.length > 0) {
+        externalId = originalManga.id;
+      }
+    }
+
+    const payload = new MangaFavoriteChangedPayload(
+      this.content.id || '',
+      externalId,
+      this.content.sourceId || '',
+      this.content.sourceName || '',
+      this.content.sourcePkg || '',
+      isFavorite
+    );
+    eventBus.publish(GameEvent.MANGA_FAVORITE_CHANGED, payload);
+    logger.debug(TAG, `漫画收藏状态事件已发布: sourceId=${payload.sourceId}, sourcePkg=${payload.sourcePkg}, externalId=${payload.externalId}, isFavorite=${String(isFavorite)}`);
+  }
+
   private async setFavoriteStatus(isFavorite: boolean): Promise<void> {
     if (!this.content) return;
     
@@ -11245,6 +11469,7 @@ export struct UnifiedDetailPage {
         break;
     }
 
+    this.publishMangaFavoriteChanged(isFavorite);
     this.trackingLoadSignal++;
   }
 }

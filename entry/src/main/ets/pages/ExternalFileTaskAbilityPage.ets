@@ -9,9 +9,6 @@ import { DataManagementPage, DataManagementExternalFileParams } from './DataMana
 import { BackupPage, BackupExternalImportParams } from './BackupPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
 import { FileEditorPage } from './FileEditorPage';
-import { SourceManagementPage } from './SourceManagementPage';
-import { NovelSourceManagementPage } from './NovelSourceManagementPage';
-import { FontSettingsSubPage } from './settings/FontSettingsSubPage';
 import { SourceManager } from '../Framework/Source/SourceManager';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { LegadoSourceImportResult } from '../Framework/Novel/LegadoSourceTypes';
@@ -34,6 +31,12 @@ import {
   ExternalFileTaskParams,
   ExternalFileTaskSource
 } from '../Framework/ExternalFile/ExternalFileTaskTypes';
+import {
+  ExternalImportNavigationCoordinator,
+  ExternalImportNavigationRequest,
+  ExternalImportNavigationSource,
+  ExternalImportNavigationTarget
+} from '../Framework/ExternalFile/ExternalImportNavigationCoordinator';
 
 const TAG: string = 'ExternalFileTaskAbilityPage';
 const APP_STORAGE_TRANSFER_RECORD_ID: string = 'pendingTransferRecordId';
@@ -334,6 +337,34 @@ struct ExternalFileTaskAbilityPage {
     }
   }
 
+  private resolveAbilityContext(): common.UIAbilityContext | null {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext() as common.UIAbilityContext;
+      return hostContext ? hostContext : null;
+    } catch (error) {
+      logger.warn(TAG, `获取外部文件任务 AbilityContext 失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async navigateMainAfterSuccessfulImport(
+    target: ExternalImportNavigationTarget,
+    title: string
+  ): Promise<void> {
+    const request = new ExternalImportNavigationRequest();
+    request.target = target;
+    request.source = ExternalImportNavigationSource.EXTERNAL_FILE_TASK;
+    request.title = title;
+    request.taskInstanceId = this.taskInstanceId;
+    ExternalImportNavigationCoordinator.requestNavigation(request);
+
+    const abilityContext = this.resolveAbilityContext();
+    const broughtToFront = await ExternalImportNavigationCoordinator.bringEntryAbilityToFront(abilityContext, TAG);
+    if (broughtToFront) {
+      await ExternalImportNavigationCoordinator.closeCurrentAbility(abilityContext, TAG);
+    }
+  }
+
   private async importJsonAsNovelSource(jsonUri: string): Promise<void> {
     try {
       this.statusText = '正在导入书源';
@@ -343,9 +374,12 @@ struct ExternalFileTaskAbilityPage {
       const failCount = results.length - successCount;
       if (successCount > 0) {
         this.showToast(`成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}`);
-        this.pathStack.pushPathByName('NovelSourceManagementPage', undefined);
         this.statusText = '书源导入完成';
         this.finalizeTrackedTransferImport('imported');
+        await this.navigateMainAfterSuccessfulImport(
+          ExternalImportNavigationTarget.NOVEL_SOURCE_MANAGEMENT,
+          '书源导入完成'
+        );
       } else {
         this.errorText = '导入失败：没有有效的书源数据';
         this.showToast(this.errorText);
@@ -366,9 +400,12 @@ struct ExternalFileTaskAbilityPage {
       const result = await SourceManager.getInstance().importFromJSON(jsonContent);
       if (result.success) {
         this.showToast(`成功导入图源: ${result.sourceName || '未知'}`);
-        this.pathStack.pushPathByName('SourceManagementPage', undefined);
         this.statusText = '图源导入完成';
         this.finalizeTrackedTransferImport('imported');
+        await this.navigateMainAfterSuccessfulImport(
+          ExternalImportNavigationTarget.SOURCE_MANAGEMENT,
+          '图源导入完成'
+        );
       } else {
         this.errorText = `导入失败: ${result.error || '未知错误'}`;
         this.showToast(this.errorText);
@@ -428,8 +465,11 @@ struct ExternalFileTaskAbilityPage {
       const customFont: CustomFont = await FontManager.getInstance().addCustomFont(displayName, readablePath, this.getUIContext());
       this.showToast(`成功导入字体: ${customFont.displayName}`);
       this.statusText = '字体导入完成';
-      this.pathStack.pushPathByName('FontSettingsSubPage', undefined);
       this.finalizeTrackedTransferImport('imported');
+      await this.navigateMainAfterSuccessfulImport(
+        ExternalImportNavigationTarget.FONT_SETTINGS,
+        '字体导入完成'
+      );
     } catch (error) {
       this.errorText = `导入字体失败: ${String(error)}`;
       logger.error(TAG, this.errorText);
@@ -500,12 +540,6 @@ struct ExternalFileTaskAbilityPage {
       AvifTestPage()
     } else if (name === 'FileEditorPage') {
       FileEditorPage()
-    } else if (name === 'SourceManagementPage') {
-      SourceManagementPage()
-    } else if (name === 'NovelSourceManagementPage') {
-      NovelSourceManagementPage()
-    } else if (name === 'FontSettingsSubPage') {
-      FontSettingsSubPage()
     }
   }
 

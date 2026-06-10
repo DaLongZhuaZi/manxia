@@ -432,12 +432,10 @@ export class LegadoRhinoEngine {
       variables: context.variables
     };
     
-    // 如果有source对象，添加相关信息
-    if (context.source) {
-      const sourceObj = context.source as Record<string, ESObject>;
-      rhinoContext.sourceVariable = sourceObj['variable'] as string || '';
-      rhinoContext.loginInfo = sourceObj['loginInfo'] as string || '';
-      rhinoContext.loginHeader = sourceObj['loginHeader'] as string || '';
+    if (context.variables) {
+      rhinoContext.sourceVariable = context.variables['__sourceVariable'] || '';
+      rhinoContext.loginInfo = context.variables['__loginInfo'] || '';
+      rhinoContext.loginHeader = context.variables['__loginHeader'] || '';
     }
     
     const result = await this.rhinoExecutor.execute(code, rhinoContext, this.config.executeTimeout);

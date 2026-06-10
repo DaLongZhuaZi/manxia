@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { MangaReaderPage, MangaReaderPageParams } from './MangaReaderPage';
+import { AnnotationCenterPage } from './AnnotationCenterPage';
 import { MANGA_READER_ABILITY_HOST_MULTITON } from '../Framework/Reader/MangaReaderAbilityConstants';
 import { ReaderAbilityBackgroundBlurOverlay } from '../Framework/Reader/ReaderAbilityBackgroundBlurOverlay';
 import {
@@ -102,6 +103,8 @@ struct MangaReaderAbilityPage {
   private buildDestination(name: string, _param: Object) {
     if (name === 'MangaReaderPage') {
       MangaReaderPage()
+    } else if (name === 'AnnotationCenterPage') {
+      AnnotationCenterPage()
     }
   }
 

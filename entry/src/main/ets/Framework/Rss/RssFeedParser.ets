@@ -53,6 +53,7 @@ export class RssFeedParser {
 
     try {
       const analyzer = new LegadoRuleAnalyzer();
+      analyzer.setJsLib(source.jsLib || '');
       analyzer.setContent(content, source.url, false);
       const blocks = await analyzer.getElementsAsync(ruleArticles);
       if (blocks.length === 0) {
@@ -65,6 +66,7 @@ export class RssFeedParser {
       for (let i = 0; i < blocks.length && items.length < MAX_FEED_ITEMS; i++) {
         const block = blocks[i];
         const itemAnalyzer = new LegadoRuleAnalyzer();
+        itemAnalyzer.setJsLib(source.jsLib || '');
         itemAnalyzer.setContent(block, source.url, false);
 
         const titleRule = (source.ruleTitle || 'title').trim();

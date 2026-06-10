@@ -209,6 +209,27 @@ export class MangaImportCompletedPayload implements IEventPayload {
 }
 
 /**
+ * 图源运行配置变更事件载荷
+ */
+export class SourceRuntimeConfigChangedPayload implements IEventPayload {
+  public sourceId: number;
+  public sourceName: string;
+  public baseUrl: string;
+  public reason: string;
+
+  constructor(sourceId: number, sourceName: string, baseUrl: string, reason: string) {
+    this.sourceId = sourceId;
+    this.sourceName = sourceName;
+    this.baseUrl = baseUrl;
+    this.reason = reason;
+  }
+}
+
+export function buildSourceRuntimeConfigVersionKey(sourceId: number): string {
+  return `source_runtime_config_version_${sourceId}`;
+}
+
+/**
  * 文件导入请求事件的载荷
  */
 export class FileImportRequestedPayload implements IEventPayload {
@@ -308,6 +329,34 @@ export class MangaDeletedPayload implements IEventPayload {
 }
 
 /**
+ * 漫画收藏状态变化事件的载荷
+ */
+export class MangaFavoriteChangedPayload implements IEventPayload {
+  public comicId: string;
+  public externalId: string;
+  public sourceId: string;
+  public sourceName: string;
+  public sourcePkg: string;
+  public isFavorite: boolean;
+
+  constructor(
+    comicId: string,
+    externalId: string,
+    sourceId: string,
+    sourceName: string,
+    sourcePkg: string,
+    isFavorite: boolean
+  ) {
+    this.comicId = comicId;
+    this.externalId = externalId;
+    this.sourceId = sourceId;
+    this.sourceName = sourceName;
+    this.sourcePkg = sourcePkg;
+    this.isFavorite = isFavorite;
+  }
+}
+
+/**
  * 封面选择完成事件的载荷
  */
 export class CoverSelectionCompletedPayload implements IEventPayload {
@@ -391,8 +440,10 @@ interface GameEventConstants {
   // 漫画数据
   MANGA_IMPORT_COMPLETED: string;
   MANGA_DELETED: string;
+  MANGA_FAVORITE_CHANGED: string;
   MANGA_READING_PROGRESS_UPDATED: string;
   MANGA_CACHE_UPDATED: string;
+  SOURCE_RUNTIME_CONFIG_CHANGED: string;
   // 电子书数据
   EBOOK_UPDATED: string;
   EBOOK_COVER_CHANGED: string;
@@ -460,8 +511,10 @@ export const GameEvent: GameEventConstants = {
   // --- 漫画数据事件 ---
   MANGA_IMPORT_COMPLETED: 'mangaImportCompleted',
   MANGA_DELETED: 'mangaDeleted',
+  MANGA_FAVORITE_CHANGED: 'mangaFavoriteChanged',
   MANGA_READING_PROGRESS_UPDATED: 'mangaReadingProgressUpdated',
   MANGA_CACHE_UPDATED: 'mangaCacheUpdated',
+  SOURCE_RUNTIME_CONFIG_CHANGED: 'sourceRuntimeConfigChanged',
 
   // --- 电子书数据事件 ---
   EBOOK_UPDATED: 'ebookUpdated',

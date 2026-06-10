@@ -32,6 +32,19 @@ import { ValidationProgressDialog, ValidationProgressController, ValidationProgr
 import { GroupManagementDialog, GroupInfo, SplitCondition } from '../Framework/Components/GroupManagementDialog';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import {
+  DEFAULT_NOVEL_SOURCE_REPOSITORY_URL,
+  getNovelSourceRepositoryManager,
+  NovelSourceRepositoryEntry,
+  NovelSourceRepositorySyncProgressCallback,
+  NovelSourceSavedRepository
+} from '../Framework/Novel/NovelSourceRepositoryManager';
+import {
+  DEFAULT_LEGADO_RUNTIME_REPOSITORY_URL,
+  getLegadoRuntimeAssetManager,
+  LegadoRuntimeActiveStatus,
+  LegadoRuntimeSyncProgressCallback
+} from '../Framework/Novel/LegadoRuntimeAssetManager';
+import {
   fileEditorService,
   FileEditorOpenParams,
   FileEditorOpenSource,
@@ -122,8 +135,20 @@ export struct NovelSourceManagementPage {
   @State showImportEntryDialog: boolean = false;
   @State showImportDialog: boolean = false;
   @State showImportUrlDialog: boolean = false;
+  @State showSourceEngineDialog: boolean = false;
   @State importText: string = '';
   @State importUrl: string = '';
+  @State sourceEngineRepositoryUrl: string = DEFAULT_NOVEL_SOURCE_REPOSITORY_URL;
+  @State sourceEngineRuntimeUrl: string = DEFAULT_LEGADO_RUNTIME_REPOSITORY_URL;
+  @State sourceEngineSavedRepositories: NovelSourceSavedRepository[] = [];
+  @State sourceEngineRepositorySources: NovelSourceRepositoryEntry[] = [];
+  @State sourceEngineRuntimeStatusText: string = '未安装云端运行时';
+  @State sourceEngineProgress: number = 0;
+  @State sourceEngineProgressMessage: string = '';
+  @State sourceEngineLogs: string[] = [];
+  @State isSourceEngineSyncing: boolean = false;
+  @StorageLink('legadoSourceEngineSourceUpdateAvailable') sourceEngineSourceUpdateAvailable: boolean = false;
+  @StorageLink('legadoSourceEngineRuntimeUpdateAvailable') sourceEngineRuntimeUpdateAvailable: boolean = false;
   @State isImporting: boolean = false;
   @State isValidating: boolean = false;
   @State validationProgress: string = '';
@@ -394,6 +419,15 @@ export struct NovelSourceManagementPage {
     this.applyFilter();
   }
 
+  private clearSourceSearch(): void {
+    this.searchKeyword = '';
+    this.applyFilter();
+  }
+
+  private hasActiveSourceFilter(): boolean {
+    return this.searchKeyword.trim().length > 0 || this.selectedGroup.length > 0;
+  }
+
   private isAudioSource(source: NovelSourceInfo): boolean {
     return source.bookSourceType === LegadoBookSourceType.AUDIO;
   }
@@ -405,8 +439,7 @@ export struct NovelSourceManagementPage {
   private toggleSearchBar(): void {
     this.showSearchBar = !this.showSearchBar;
     if (!this.showSearchBar) {
-      this.searchKeyword = '';
-      this.applyFilter();
+      this.clearSourceSearch();
     }
   }
 
@@ -595,6 +628,14 @@ export struct NovelSourceManagementPage {
         }
       },
       {
+        id: 'sourceEngine',
+        label: '书源引擎',
+        symbol: $r('sys.symbol.cloud'),
+        onClick: () => {
+          this.openSourceEngineDialog();
+        }
+      },
+      {
         id: 'validate',
         label: '一键校验',
         symbol: $r('sys.symbol.wrench_arrow_counterclockwise'),
@@ -682,7 +723,7 @@ export struct NovelSourceManagementPage {
           // 书源列表
           if (this.isLoading) {
             this.buildLoading()
-          } else if (this.allSources.length === 0) {
+          } else if (this.allSources.length === 0 || this.filteredSources.length === 0) {
             this.buildEmpty()
           } else {
             this.buildSourceList()
@@ -703,6 +744,10 @@ export struct NovelSourceManagementPage {
 
         if (this.showImportUrlDialog) {
           this.buildImportUrlDialog()
+        }
+
+        if (this.showSourceEngineDialog) {
+          this.buildSourceEngineDialog()
         }
 
         if (this.showGroupInputDialog) {
@@ -776,8 +821,7 @@ export struct NovelSourceManagementPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .margin({ left: 12 })
           .onClick(() => {
-            this.searchKeyword = '';
-            this.applyFilter();
+            this.clearSourceSearch();
           })
       }
     }
@@ -1272,6 +1316,208 @@ export struct NovelSourceManagementPage {
    */
   showImportOptions(): void {
     this.showImportEntryDialog = true;
+  }
+
+  private openSourceEngineDialog(): void {
+    this.showSourceEngineDialog = true;
+    void this.refreshSourceEngineState();
+  }
+
+  private async ensureSourceEngineManagers(): Promise<boolean> {
+    try {
+      const uiContext = this.getUIContext();
+      if (uiContext === undefined || uiContext === null) {
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取页面上下文' });
+        return false;
+      }
+      const hostContext = uiContext.getHostContext() as common.UIAbilityContext;
+      if (hostContext === undefined || hostContext === null) {
+        this.getUIContext().getPromptAction().showToast({ message: '无法获取应用上下文' });
+        return false;
+      }
+      await getNovelSourceRepositoryManager().initialize(hostContext);
+      getLegadoRuntimeAssetManager().initialize(hostContext);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `书源引擎初始化失败: ${String(error)}`);
+      this.getUIContext().getPromptAction().showToast({ message: `书源引擎初始化失败: ${String(error)}` });
+      return false;
+    }
+  }
+
+  private async refreshSourceEngineState(): Promise<void> {
+    const ready = await this.ensureSourceEngineManagers();
+    if (!ready) {
+      return;
+    }
+    try {
+      this.sourceEngineSavedRepositories = getNovelSourceRepositoryManager().getSavedRepositories();
+      this.sourceEngineRepositorySources = getNovelSourceRepositoryManager().getRepositorySources();
+      const runtimeStatus: LegadoRuntimeActiveStatus = getLegadoRuntimeAssetManager().getActiveRuntimeStatus();
+      this.sourceEngineRuntimeStatusText = runtimeStatus.installed
+        ? `active ${runtimeStatus.version} (${runtimeStatus.code}) · ${runtimeStatus.healthOk ? '健康' : '异常'}`
+        : runtimeStatus.message;
+    } catch (error) {
+      logger.warn(TAG, `刷新书源引擎状态失败: ${String(error)}`);
+    }
+  }
+
+  private getSourceEngineUpdateHintText(): string {
+    if (this.sourceEngineSourceUpdateAvailable && this.sourceEngineRuntimeUpdateAvailable) {
+      return '默认书源索引和运行时仓库检测到更新';
+    }
+    if (this.sourceEngineSourceUpdateAvailable) {
+      return '默认书源索引检测到更新';
+    }
+    if (this.sourceEngineRuntimeUpdateAvailable) {
+      return '官方运行时仓库检测到更新';
+    }
+    return '';
+  }
+
+  private appendSourceEngineLog(level: string, message: string): void {
+    const logs = this.sourceEngineLogs.slice();
+    logs.push(`[${level}] ${message}`);
+    while (logs.length > 80) {
+      logs.shift();
+    }
+    this.sourceEngineLogs = logs;
+  }
+
+  private buildSourceRepositoryProgressCallback(): NovelSourceRepositorySyncProgressCallback {
+    const callback: NovelSourceRepositorySyncProgressCallback = {
+      onProgress: (current: number, total: number, message: string) => {
+        this.sourceEngineProgress = total > 0 ? Math.floor((current / total) * 100) : current;
+        this.sourceEngineProgressMessage = message;
+      },
+      onLog: (level: 'info' | 'warn' | 'error', message: string) => {
+        this.appendSourceEngineLog(level, message);
+      }
+    };
+    return callback;
+  }
+
+  private buildRuntimeProgressCallback(): LegadoRuntimeSyncProgressCallback {
+    const callback: LegadoRuntimeSyncProgressCallback = {
+      onProgress: (current: number, total: number, message: string) => {
+        this.sourceEngineProgress = total > 0 ? Math.floor((current / total) * 100) : current;
+        this.sourceEngineProgressMessage = message;
+      },
+      onLog: (level: 'info' | 'warn' | 'error', message: string) => {
+        this.appendSourceEngineLog(level, message);
+      }
+    };
+    return callback;
+  }
+
+  private async syncSourceEngineRepository(): Promise<void> {
+    if (this.isSourceEngineSyncing) {
+      return;
+    }
+    if (this.sourceEngineRepositoryUrl.trim().length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '请输入自管书源索引地址' });
+      return;
+    }
+    const ready = await this.ensureSourceEngineManagers();
+    if (!ready) {
+      return;
+    }
+
+    this.isSourceEngineSyncing = true;
+    this.sourceEngineProgress = 0;
+    this.sourceEngineProgressMessage = '准备同步自管书源索引...';
+    this.appendSourceEngineLog('info', '开始同步自管书源索引');
+    try {
+      const result = await getNovelSourceRepositoryManager().syncRepositoryFromUrl(
+        this.sourceEngineRepositoryUrl,
+        undefined,
+        this.buildSourceRepositoryProgressCallback()
+      );
+      this.appendSourceEngineLog(result.success ? 'info' : 'warn', result.message);
+      if (result.success) {
+        this.sourceEngineSourceUpdateAvailable = false;
+        AppStorage.setOrCreate('legadoSourceEngineSourceUpdateAvailable', false);
+        this.loadSources();
+      }
+      await this.refreshSourceEngineState();
+      this.getUIContext().getPromptAction().showToast({ message: result.message });
+    } catch (error) {
+      const message = `自管书源索引同步失败: ${String(error)}`;
+      this.appendSourceEngineLog('error', message);
+      this.getUIContext().getPromptAction().showToast({ message: message });
+    } finally {
+      this.isSourceEngineSyncing = false;
+    }
+  }
+
+  private async syncSourceEngineRuntime(): Promise<void> {
+    if (this.isSourceEngineSyncing) {
+      return;
+    }
+    if (this.sourceEngineRuntimeUrl.trim().length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '请输入运行时仓库地址' });
+      return;
+    }
+    const ready = await this.ensureSourceEngineManagers();
+    if (!ready) {
+      return;
+    }
+
+    this.isSourceEngineSyncing = true;
+    this.sourceEngineProgress = 0;
+    this.sourceEngineProgressMessage = '准备同步运行时资产...';
+    this.appendSourceEngineLog('info', '开始同步运行时资产');
+    try {
+      const result = await getLegadoRuntimeAssetManager().syncRuntimeFromUrl(
+        this.sourceEngineRuntimeUrl,
+        this.buildRuntimeProgressCallback()
+      );
+      this.appendSourceEngineLog(result.success ? 'info' : 'warn', result.message);
+      if (result.success) {
+        this.sourceEngineRuntimeUpdateAvailable = false;
+        AppStorage.setOrCreate('legadoSourceEngineRuntimeUpdateAvailable', false);
+      }
+      await this.refreshSourceEngineState();
+      this.getUIContext().getPromptAction().showToast({ message: result.message });
+    } catch (error) {
+      const message = `运行时同步失败: ${String(error)}`;
+      this.appendSourceEngineLog('error', message);
+      this.getUIContext().getPromptAction().showToast({ message: message });
+    } finally {
+      this.isSourceEngineSyncing = false;
+    }
+  }
+
+  private deleteSourceEngineRepository(repoId: string): void {
+    const deleted = getNovelSourceRepositoryManager().deleteRepository(repoId);
+    if (deleted) {
+      void this.refreshSourceEngineState();
+      this.getUIContext().getPromptAction().showToast({ message: '已删除仓库记录' });
+    } else {
+      this.getUIContext().getPromptAction().showToast({ message: '删除仓库记录失败' });
+    }
+  }
+
+  private rollbackSourceEngineRuntime(): void {
+    try {
+      const ok = getLegadoRuntimeAssetManager().rollbackRuntime();
+      void this.refreshSourceEngineState();
+      this.getUIContext().getPromptAction().showToast({ message: ok ? '运行时已回滚' : '没有可回滚的运行时' });
+    } catch (error) {
+      this.getUIContext().getPromptAction().showToast({ message: `运行时回滚失败: ${String(error)}` });
+    }
+  }
+
+  private formatSourceEngineTime(timestamp: number): string {
+    if (timestamp <= 0) {
+      return '未同步';
+    }
+    const date = new Date(timestamp);
+    return `${date.getFullYear()}-${this.padSourceEngineTimePart(date.getMonth() + 1)}-${this.padSourceEngineTimePart(date.getDate())} ${this.padSourceEngineTimePart(date.getHours())}:${this.padSourceEngineTimePart(date.getMinutes())}`;
+  }
+
+  private padSourceEngineTimePart(value: number): string {
+    return value < 10 ? `0${value}` : String(value);
   }
 
   /**
@@ -2011,12 +2257,12 @@ export struct NovelSourceManagementPage {
   buildEmpty() {
     Column() {
       Column() {
-        Text('暂无书源')
+        Text(this.hasActiveSourceFilter() ? '未找到匹配的书源' : '暂无书源')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
 
-        Text('前往右上角更多菜单中"导入书源"')
+        Text(this.hasActiveSourceFilter() ? '换个关键词或清除分组筛选后再试' : '前往右上角更多菜单中"导入书源"')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -2062,7 +2308,7 @@ export struct NovelSourceManagementPage {
         .swipeAction(this.isSortMode ? undefined : {
           end: this.buildSwipeActions(source)
         })
-      })
+      }, (source: NovelSourceInfo): string => source.id)
 
       // 加载更多指示器（排序模式下不显示）
       if (this.hasMoreData && !this.isSortMode) {
@@ -3060,6 +3306,302 @@ export struct NovelSourceManagementPage {
     .position({ x: 0, y: 0 })
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .zIndex(3000)
+  }
+
+  @Builder
+  buildSourceEngineDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        if (!this.isSourceEngineSyncing) {
+          this.showSourceEngineDialog = false;
+        }
+      }
+    }) {
+      Column({ space: 14 }) {
+        Text('书源引擎')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        if (this.sourceEngineSourceUpdateAvailable || this.sourceEngineRuntimeUpdateAvailable) {
+          Text(this.getSourceEngineUpdateHintText())
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme))
+        }
+
+        Text('漫匣不提供、不内置、不维护任何书源；这里仅同步用户自行维护或导入的 Legado 兼容索引。')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .lineHeight(18)
+
+        Scroll() {
+          Column({ space: 16 }) {
+            this.buildSourceEngineRepositorySection()
+            Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+            this.buildSourceEngineRuntimeSection()
+            Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+            this.buildSourceEngineStatusSection()
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .constraintSize({ maxHeight: 520 })
+
+        Row({ space: 12 }) {
+          Button('关闭')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('neutral'))
+            .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('neutral')
+            })
+            .enabled(!this.isSourceEngineSyncing)
+            .onClick(() => {
+              this.showSourceEngineDialog = false;
+            })
+
+          Button('刷新状态')
+            .layoutWeight(1)
+            .height(34)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getGlassActionButtonTextColor('primary'))
+            .backgroundColor(this.getGlassActionButtonBackground('primary'))
+            .linearGradient(this.getGlassActionButtonGradient())
+            .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+            .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+            .border({
+              width: 1,
+              color: this.getGlassActionButtonBorderColor('primary')
+            })
+            .enabled(!this.isSourceEngineSyncing)
+            .onClick(() => {
+              void this.refreshSourceEngineState();
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  buildSourceEngineRepositorySection() {
+    Column({ space: 10 }) {
+      Text('自管书源索引')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      TextInput({ placeholder: '用户自管 index.main.json 地址', text: this.sourceEngineRepositoryUrl })
+        .width('100%')
+        .height(42)
+        .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+        .linearGradient(this.getGlassActionButtonGradient())
+        .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+        .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+        .border({
+          width: 1,
+          color: this.getGlassActionButtonBorderColor('neutral')
+        })
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .borderRadius(8)
+        .padding({ left: 12, right: 12 })
+        .onChange((value: string) => {
+          this.sourceEngineRepositoryUrl = value;
+        })
+
+      Button(this.isSourceEngineSyncing ? '同步中...' : '同步自管索引')
+        .height(34)
+        .width('100%')
+        .borderRadius(8)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getGlassActionButtonTextColor('primary'))
+        .backgroundColor(this.getGlassActionButtonBackground('primary'))
+        .linearGradient(this.getGlassActionButtonGradient())
+        .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+        .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+        .border({
+          width: 1,
+          color: this.getGlassActionButtonBorderColor('primary')
+        })
+        .enabled(!this.isSourceEngineSyncing)
+        .onClick(() => {
+          void this.syncSourceEngineRepository();
+        })
+
+      Text(`索引内书源：${this.sourceEngineRepositorySources.length} 个`)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+      if (this.sourceEngineSavedRepositories.length > 0) {
+        Column({ space: 6 }) {
+          ForEach(this.sourceEngineSavedRepositories, (repo: NovelSourceSavedRepository) => {
+            Row({ space: 8 }) {
+              Column({ space: 2 }) {
+                Text(repo.name)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(`${repo.sourceCount} 个 · ${this.formatSourceEngineTime(repo.lastSync)}`)
+                  .fontSize(10)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+
+              Button('删除')
+                .height(28)
+                .borderRadius(6)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.getGlassActionButtonTextColor('danger'))
+                .backgroundColor(this.getGlassActionButtonBackground('danger'))
+                .linearGradient(this.getGlassActionButtonGradient())
+                .border({
+                  width: 1,
+                  color: this.getGlassActionButtonBorderColor('danger')
+                })
+                .enabled(!this.isSourceEngineSyncing)
+                .onClick(() => {
+                  this.deleteSourceEngineRepository(repo.id);
+                })
+            }
+            .width('100%')
+          }, (repo: NovelSourceSavedRepository): string => repo.id)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  buildSourceEngineRuntimeSection() {
+    Column({ space: 10 }) {
+      Text('运行时资产')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      TextInput({ placeholder: '运行时仓库 index.main.json 地址', text: this.sourceEngineRuntimeUrl })
+        .width('100%')
+        .height(42)
+        .backgroundColor(this.getGlassActionButtonBackground('neutral'))
+        .linearGradient(this.getGlassActionButtonGradient())
+        .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+        .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+        .border({
+          width: 1,
+          color: this.getGlassActionButtonBorderColor('neutral')
+        })
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .borderRadius(8)
+        .padding({ left: 12, right: 12 })
+        .onChange((value: string) => {
+          this.sourceEngineRuntimeUrl = value;
+        })
+
+      Row({ space: 10 }) {
+        Button(this.isSourceEngineSyncing ? '同步中...' : '同步运行时')
+          .layoutWeight(1)
+          .height(34)
+          .borderRadius(8)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('primary'))
+          .backgroundColor(this.getGlassActionButtonBackground('primary'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('primary')
+          })
+          .enabled(!this.isSourceEngineSyncing)
+          .onClick(() => {
+            void this.syncSourceEngineRuntime();
+          })
+
+        Button('回滚')
+          .layoutWeight(1)
+          .height(34)
+          .borderRadius(8)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getGlassActionButtonTextColor('warning'))
+          .backgroundColor(this.getGlassActionButtonBackground('warning'))
+          .linearGradient(this.getGlassActionButtonGradient())
+          .backgroundBlurStyle(this.getGlassActionButtonBlurStyle(), this.getGlassActionButtonBlurOptions())
+          .backgroundEffect(this.getGlassActionButtonBackgroundEffect())
+          .border({
+            width: 1,
+            color: this.getGlassActionButtonBorderColor('warning')
+          })
+          .enabled(!this.isSourceEngineSyncing)
+          .onClick(() => {
+            this.rollbackSourceEngineRuntime();
+          })
+      }
+      .width('100%')
+
+      Text(this.sourceEngineRuntimeStatusText)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .width('100%')
+  }
+
+  @Builder
+  buildSourceEngineStatusSection() {
+    Column({ space: 10 }) {
+      Text('同步状态')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      Progress({ value: this.sourceEngineProgress, total: 100, type: ProgressType.Linear })
+        .width('100%')
+        .height(6)
+        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+      Text(this.sourceEngineProgressMessage.length > 0 ? this.sourceEngineProgressMessage : '等待操作')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+      Column({ space: 4 }) {
+        ForEach(this.sourceEngineLogs, (item: string, index: number) => {
+          Text(item)
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }, (item: string, index: number): string => `${index}_${item}`)
+      }
+      .width('100%')
+      .constraintSize({ maxHeight: 160 })
+    }
+    .width('100%')
   }
 
   @Builder

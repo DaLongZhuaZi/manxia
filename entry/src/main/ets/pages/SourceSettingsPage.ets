@@ -17,6 +17,8 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from '../Fr
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
+import { SourceContentCache } from '../Framework/Cache/SourceContentCache';
+import { eventBus, GameEvent, SourceRuntimeConfigChangedPayload, buildSourceRuntimeConfigVersionKey } from '../Framework/EventBus';
 import CookieManager from '../Framework/Managers/CookieManager';
 import { SourceLoginPageParams } from './SourceLoginPage';
 import { ReadingMode, ReadingDirection, PageTurnAnimationType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
@@ -107,6 +109,7 @@ export struct SourceSettingsPage {
   private dataManager: DataManager = DataManager.getInstance();
   private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private authManager: WebViewAuthManager = WebViewAuthManager.getInstance();
+  private contentCache: SourceContentCache = SourceContentCache.getInstance();
   private scroller: Scroller = new Scroller();
   private sourceLoginConfig: SourceLoginConfig = {
     url: '',
@@ -634,10 +637,41 @@ export struct SourceSettingsPage {
       
       await this.dataManager.saveSourceUserSetting(sid, `custom.${key}`, value, 'string');
       this.sourceCustomSettingValues.set(key, value);
+      if (this.isRuntimeAffectingCustomSetting(key)) {
+        this.invalidateSourceRuntimeAfterSettingsChange(sourceRecord, `custom.${key}`);
+      }
       logger.info(TAG, `自定义设置已保存: ${key}=${value}`);
     } catch (error) {
       logger.error(TAG, `保存自定义设置失败: ${key}`, String(error));
     }
+  }
+
+  private isRuntimeAffectingCustomSetting(key: string): boolean {
+    const normalizedKey: string = key.trim().toLowerCase();
+    return normalizedKey === 'domain' ||
+      normalizedKey === 'apidomain' ||
+      normalizedKey === 'baseurl' ||
+      normalizedKey.endsWith('domain') ||
+      normalizedKey.endsWith('baseurl');
+  }
+
+  private invalidateSourceRuntimeAfterSettingsChange(sourceRecord: ComicSourceDatabaseRecord, reason: string): void {
+    const sid: number = Number(sourceRecord.id);
+    const sourceName: string = sourceRecord.name || this.pageParams?.sourceName || '';
+    const baseUrl: string = this.currentBaseUrl || sourceRecord.baseUrl || '';
+
+    this.contentCache.clearSource(sid);
+    this.webViewManager.invalidateSourceRuntime(sid, sourceName);
+    AppStorage.setOrCreate<number>(buildSourceRuntimeConfigVersionKey(sid), Date.now());
+
+    const payload: SourceRuntimeConfigChangedPayload = new SourceRuntimeConfigChangedPayload(
+      sid,
+      sourceName,
+      baseUrl,
+      reason
+    );
+    eventBus.emit(GameEvent.SOURCE_RUNTIME_CONFIG_CHANGED, payload);
+    logger.info(TAG, `已通知图源运行配置变更: sourceId=${sid}, reason=${reason}, baseUrl=${baseUrl}`);
   }
 
   /**
@@ -677,6 +711,7 @@ export struct SourceSettingsPage {
       // 更新数据库中的baseUrl
       await this.dataManager.updateSourceBaseUrl(sid, mirrorUrl);
       this.currentBaseUrl = mirrorUrl;
+      this.invalidateSourceRuntimeAfterSettingsChange(sourceRecord, 'mirror');
       
       this.showToast(`已切换到: ${mirrorUrl}`);
       logger.info(TAG, `镜像站点已切换: index=${index}, url=${mirrorUrl}`);

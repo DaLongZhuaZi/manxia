@@ -10,6 +10,7 @@ import { ComicSourceUpdateData, DownloadTaskUpdateData } from '../Database/Datab
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { DownloadStatus } from '../Types/StatusEnums';
+import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Reader/MangaIdentityResolver';
 
 const TAG = 'DataService';
 
@@ -469,15 +470,50 @@ export class DataService {
     mangaData?: OnlineComicSourceSaveInput
   ): Promise<void> {
     try {
+      let effectiveComicId: string = comicId;
+      let effectiveChapterId: string = chapterId;
+      let effectiveSourceId: number | undefined = sourceId;
+      let resolvedExternalMangaId: string = '';
+      const identityInput = MangaIdentityResolver.getInstance().buildInput(
+        comicId,
+        chapterId,
+        sourceId !== undefined ? sourceId : -1,
+        sourceId !== undefined ? 'OnlineUndownloaded' : 'Local',
+        'DataService.saveReadingProgress'
+      );
+      const identityResult: MangaIdentityResolveResult = await MangaIdentityResolver.getInstance().resolve(identityInput);
+      if (identityResult.success) {
+        if (identityResult.canonicalMangaId.length > 0) {
+          effectiveComicId = identityResult.canonicalMangaId;
+        }
+        if (identityResult.canonicalChapterId.length > 0) {
+          effectiveChapterId = identityResult.canonicalChapterId;
+        }
+        if (identityResult.sourceId > 0 && effectiveSourceId === undefined) {
+          effectiveSourceId = identityResult.sourceId;
+        }
+        resolvedExternalMangaId = identityResult.externalMangaId;
+        if (effectiveComicId !== comicId || effectiveChapterId !== chapterId) {
+          logger.info(TAG, `保存阅读进度前已校准漫画身份: ${identityResult.detail}`);
+        }
+      } else {
+        logger.warn(TAG, `保存阅读进度前漫画身份未解析，使用原始ID: ${identityResult.detail}`);
+      }
+
       // 如果提供了sourceId和mangaData，说明是在线漫画，需要先确保漫画存在于数据库
-      if (sourceId !== undefined && mangaData) {
+      if (effectiveSourceId !== undefined && mangaData) {
         try {
           // 检查漫画是否已存在
-          const existingComic = await this.dataManager.getOnlineComicById(comicId);
+          const existingComic = await this.dataManager.getOnlineComicById(effectiveComicId);
           if (!existingComic) {
             // 漫画不存在，保存到数据库（使用原始ID）
-            logger.info(TAG, `在线漫画 ${comicId} 不存在于数据库，自动保存`);
-            await this.dataManager.saveOnlineComicFromSource(sourceId, mangaData, comicId);
+            const externalMangaId: string = this.resolveOnlineExternalMangaIdForSave(
+              effectiveComicId,
+              mangaData,
+              resolvedExternalMangaId
+            );
+            logger.info(TAG, `在线漫画 ${effectiveComicId} 不存在于数据库，自动保存，externalId=${externalMangaId}`);
+            effectiveComicId = await this.dataManager.saveOnlineComicFromSource(effectiveSourceId, mangaData, externalMangaId);
           }
         } catch (err) {
           logger.warn(TAG, `检查/保存在线漫画失败: ${String(err)}`);
@@ -486,25 +522,49 @@ export class DataService {
       }
       
       const readHistoryData: ReadHistoryInput = {
-        comicId,
-        chapterId,
+        comicId: effectiveComicId,
+        chapterId: effectiveChapterId,
         pageIndex,
         userId: this.currentUserId,
         readTime: Date.now(),
         readDuration
       };
       
-      if (sourceId !== undefined) {
+      if (effectiveSourceId !== undefined) {
         await this.dataManager.addOnlineReadHistory(readHistoryData);
       } else {
         await this.dataManager.addReadHistory(readHistoryData);
       }
       
-      logger.debug(TAG, `保存阅读进度: ${comicId}/${chapterId} -> ${pageIndex}`);
+      logger.debug(TAG, `保存阅读进度: ${effectiveComicId}/${effectiveChapterId} -> ${pageIndex}`);
     } catch (error) {
       logger.error(TAG, '保存阅读进度失败' + String(error));
       throw error as Error;
     }
+  }
+
+  private resolveOnlineExternalMangaIdForSave(
+    comicId: string,
+    mangaData: OnlineComicSourceSaveInput | undefined,
+    resolvedExternalMangaId: string
+  ): string {
+    if (resolvedExternalMangaId.length > 0) {
+      return resolvedExternalMangaId;
+    }
+    if (mangaData && mangaData.id && mangaData.id.length > 0 && !this.isLikelyInternalMangaId(mangaData.id)) {
+      return mangaData.id;
+    }
+    if (comicId.length > 0 && !this.isLikelyInternalMangaId(comicId)) {
+      return comicId;
+    }
+    if (mangaData && mangaData.id && mangaData.id.length > 0) {
+      return mangaData.id;
+    }
+    return comicId;
+  }
+
+  private isLikelyInternalMangaId(value: string): boolean {
+    return value.startsWith('id_') || value.startsWith('legacy_') || value.startsWith('local_');
   }
 
   /**

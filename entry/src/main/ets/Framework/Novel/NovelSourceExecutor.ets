@@ -25,9 +25,11 @@ import { getNovelReplaceRuleManager, ReplaceScope } from './NovelReplaceRuleMana
 import { getNovelLoginManager } from './NovelLoginManager';
 import { HtmlFormatter } from './HtmlFormatter';
 import { ProxyManager } from '../Network/ProxyManager';
+import { LegadoMangaExtractedImage, LegadoMangaImageExtractor } from './LegadoMangaImageExtractor';
 
 const TAG = 'NovelSourceExecutor';
 const REQUEST_TIMEOUT_MS = 15000;
+const EXPLORE_KIND_JS_RETRY_DELAYS_MS: number[] = [120, 260, 500, 900];
 
 /**
  * 章节列表解析结果
@@ -362,6 +364,33 @@ export class NovelSourceExecutor {
     return false;
   }
 
+  private shouldReadRuleAsync(ruleText?: string): boolean {
+    if (!ruleText) {
+      return false;
+    }
+    const lowerRule = ruleText.toLowerCase();
+    return lowerRule.includes('<js>') ||
+      lowerRule.includes('@js:') ||
+      lowerRule.includes('@js：') ||
+      lowerRule.includes('＠js:') ||
+      lowerRule.includes('＠js：') ||
+      lowerRule.includes('@put:{') ||
+      lowerRule.includes('@get:{') ||
+      lowerRule.startsWith('js:') ||
+      lowerRule.startsWith('js：') ||
+      (ruleText.includes('{{') && this.containsJsExpression(ruleText));
+  }
+
+  private async readRuleString(analyzer: LegadoRuleAnalyzer, ruleText?: string): Promise<string> {
+    if (!ruleText) {
+      return '';
+    }
+    if (this.shouldReadRuleAsync(ruleText)) {
+      return await analyzer.getStringAsync(ruleText);
+    }
+    return analyzer.getString(ruleText);
+  }
+
   /**
    * 判断URL模板是否需要异步JS解析
    */
@@ -575,7 +604,7 @@ export class NovelSourceExecutor {
         return null;
       }
 
-      return this.parseBookInfo(response, request.url, request.url);
+      return await this.parseBookInfoAsync(response, request.url, request.url);
     } catch (error) {
       logger.error(TAG, `获取书籍详情失败: ${String(error)}`);
       return null;
@@ -868,7 +897,7 @@ export class NovelSourceExecutor {
         return;
       }
 
-      const parsedBook = this.parseBookInfo(response, request.url, normalizedBookUrl);
+      const parsedBook = await this.parseBookInfoAsync(response, request.url, normalizedBookUrl);
       if (!parsedBook) {
         logger.warn(TAG, `正文变量预热失败: 详情解析为空, bookUrl=${normalizedBookUrl}`);
         return;
@@ -939,28 +968,45 @@ export class NovelSourceExecutor {
     if (jsCode.trim().length <= 0) {
       return '';
     }
-    try {
-      const context: JsContext = {
-        result: '',
-        src: '',
-        baseUrl: LegadoSourceParser.getBaseUrl(this.source),
-        key: '',
-        page: 1,
-        variables: this.buildRuleAnalyzerContextVariables(),
-        jsLib: this.source.jsLib || '',
-        source: this.source as ESObject
-      };
-      const executeResult = await getLegadoJsEngine().execute(jsCode, context);
-      this.persistSourceEffects(executeResult.sourceEffects);
-      if (!executeResult.success) {
-        logger.warn(TAG, `发现分类JS执行失败 [${this.source.bookSourceName}]: ${executeResult.error || ''}`);
+    const context: JsContext = {
+      result: '',
+      src: '',
+      baseUrl: LegadoSourceParser.getBaseUrl(this.source),
+      key: '',
+      page: 1,
+      variables: this.buildRuleAnalyzerContextVariables(),
+      jsLib: this.source.jsLib || '',
+      source: this.source
+    };
+
+    for (let attempt = 0; attempt <= EXPLORE_KIND_JS_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const executeResult = await getLegadoJsEngine().execute(jsCode, context);
+        this.persistSourceEffects(executeResult.sourceEffects);
+        if (!executeResult.success) {
+          const errorMessage = executeResult.error || '';
+          if (errorMessage === 'WEBVIEW_NOT_READY' && attempt < EXPLORE_KIND_JS_RETRY_DELAYS_MS.length) {
+            const delayMs = EXPLORE_KIND_JS_RETRY_DELAYS_MS[attempt];
+            logger.warn(TAG, `发现分类JS等待WebView就绪后重试 [${this.source.bookSourceName}]: attempt=${attempt + 1}, delay=${delayMs}ms`);
+            await this.sleep(delayMs);
+            continue;
+          }
+          logger.warn(TAG, `发现分类JS执行失败 [${this.source.bookSourceName}]: ${executeResult.error || ''}`);
+          return '';
+        }
+        return String(executeResult.result || '').trim();
+      } catch (error) {
+        if (attempt < EXPLORE_KIND_JS_RETRY_DELAYS_MS.length) {
+          const delayMs = EXPLORE_KIND_JS_RETRY_DELAYS_MS[attempt];
+          logger.warn(TAG, `发现分类JS执行异常，等待后重试 [${this.source.bookSourceName}]: attempt=${attempt + 1}, delay=${delayMs}ms, ${String(error)}`);
+          await this.sleep(delayMs);
+          continue;
+        }
+        logger.warn(TAG, `发现分类JS执行异常 [${this.source.bookSourceName}]: ${String(error)}`);
         return '';
       }
-      return String(executeResult.result || '').trim();
-    } catch (error) {
-      logger.warn(TAG, `发现分类JS执行异常 [${this.source.bookSourceName}]: ${String(error)}`);
-      return '';
     }
+    return '';
   }
 
   private extractExploreKindsJsCode(exploreUrl: string): string {
@@ -1007,13 +1053,13 @@ export class NovelSourceExecutor {
         return [];
       }
 
-      return this.parseExploreResult(response, request.url);
+      return await this.parseExploreResultAsync(response, request.url);
     } catch (error) {
       logger.error(TAG, `发现页获取失败: ${String(error)}`);
       return [];
     }
   }
-  private parseExploreResult(html: string, baseUrl: string): LegadoSearchBook[] {
+  private async parseExploreResultAsync(html: string, baseUrl: string): Promise<LegadoSearchBook[]> {
     const results: LegadoSearchBook[] = [];
     const rule = this.source.ruleExplore;
     
@@ -1024,13 +1070,14 @@ export class NovelSourceExecutor {
     const analyzer = this.createRuleAnalyzer();
     analyzer.setContent(html, baseUrl);
 
-    const bookElements = analyzer.getElements(rule.bookList);
+    const bookElements = await analyzer.getElementsAsync(rule.bookList);
+    this.persistRuleAnalyzerSourceEffects(analyzer);
     
     for (let i = 0; i < bookElements.length; i++) {
       const itemAnalyzer = this.createRuleAnalyzer();
       itemAnalyzer.setContent(bookElements[i], baseUrl);
 
-      const name = itemAnalyzer.getString(rule.name);
+      const name = await this.readRuleString(itemAnalyzer, rule.name);
       if (!name) {
         continue;
       }
@@ -1038,17 +1085,19 @@ export class NovelSourceExecutor {
       const searchBook: LegadoSearchBook = {
         origin: this.source.bookSourceUrl,
         originName: this.source.bookSourceName,
-        bookUrl: this.normalizeParsedUrl(itemAnalyzer.getString(rule.bookUrl), baseUrl, baseUrl),
+        bookUrl: this.normalizeParsedUrl(await this.readRuleString(itemAnalyzer, rule.bookUrl), baseUrl, baseUrl),
         name: name,
-        author: itemAnalyzer.getString(rule.author) || '',
-        kind: itemAnalyzer.getString(rule.kind),
-        intro: itemAnalyzer.getString(rule.intro),
-        coverUrl: this.normalizeParsedUrl(itemAnalyzer.getString(rule.coverUrl), baseUrl),
-        latestChapterTitle: itemAnalyzer.getString(rule.lastChapter),
-        wordCount: itemAnalyzer.getString(rule.wordCount),
+        author: await this.readRuleString(itemAnalyzer, rule.author) || '',
+        kind: await this.readRuleString(itemAnalyzer, rule.kind),
+        intro: await this.readRuleString(itemAnalyzer, rule.intro),
+        coverUrl: this.normalizeParsedUrl(await this.readRuleString(itemAnalyzer, rule.coverUrl), baseUrl),
+        latestChapterTitle: await this.readRuleString(itemAnalyzer, rule.lastChapter),
+        wordCount: await this.readRuleString(itemAnalyzer, rule.wordCount),
         type: this.source.bookSourceType
       };
 
+      this.syncRuleVariablesToUrlAnalyzer(itemAnalyzer.getVariablesSnapshot());
+      this.persistRuleAnalyzerSourceEffects(itemAnalyzer);
       results.push(searchBook);
     }
 
@@ -1109,7 +1158,7 @@ export class NovelSourceExecutor {
       const httpRequest = http.createHttp();
       const options: http.HttpRequestOptions = {
         method: request.method === RequestMethod.POST ? http.RequestMethod.POST : http.RequestMethod.GET,
-        header: this.buildHeaders(request.headers),
+        header: await this.buildHeaders(request.headers),
         connectTimeout: REQUEST_TIMEOUT_MS,
         readTimeout: REQUEST_TIMEOUT_MS,
         expectDataType: http.HttpDataType.ARRAY_BUFFER
@@ -1496,7 +1545,7 @@ export class NovelSourceExecutor {
       const httpRequest = http.createHttp();
       const options: http.HttpRequestOptions = {
         method: request.method === RequestMethod.POST ? http.RequestMethod.POST : http.RequestMethod.GET,
-        header: this.buildHeaders(request.headers),
+        header: await this.buildHeaders(request.headers),
         connectTimeout: REQUEST_TIMEOUT_MS,
         readTimeout: REQUEST_TIMEOUT_MS,
         expectDataType: http.HttpDataType.ARRAY_BUFFER
@@ -1609,21 +1658,17 @@ export class NovelSourceExecutor {
   /**
    * 构建请求头
    */
-  private buildHeaders(customHeaders: Record<string, string>): Record<string, string> {
+  private async buildHeaders(customHeaders: Record<string, string>): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Chrome/91.0.4472.120 Mobile Safari/537.36'
     };
 
     // 合并书源配置的请求头
     if (this.source.header) {
-      try {
-        const sourceHeaders = SafeUtils.parseObj(this.source.header) as Record<string, string>;
-        Object.keys(sourceHeaders).forEach(key => {
-          headers[key] = sourceHeaders[key];
-        });
-      } catch (e) {
-        // 忽略解析错误
-      }
+      const sourceHeaders = await this.resolveSourceHeaders(this.source.header);
+      Object.keys(sourceHeaders).forEach(key => {
+        headers[key] = sourceHeaders[key];
+      });
     }
 
     // 添加登录Cookie
@@ -1642,6 +1687,158 @@ export class NovelSourceExecutor {
     });
 
     return headers;
+  }
+
+  private async resolveSourceHeaders(headerText: string): Promise<Record<string, string>> {
+    const jsCode = this.extractHeaderJsCode(headerText);
+    if (jsCode.length > 0) {
+      const jsHeaders = await this.evaluateHeaderScript(jsCode);
+      if (Object.keys(jsHeaders).length > 0) {
+        return jsHeaders;
+      }
+    }
+
+    const parsed = this.parseHeaderText(headerText);
+    if (parsed) {
+      return parsed;
+    }
+    return {};
+  }
+
+  private extractHeaderJsCode(headerText: string): string {
+    const trimmed = headerText.trim();
+    if (trimmed.length <= 0) {
+      return '';
+    }
+
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith('<js>')) {
+      const endIndex = lower.lastIndexOf('</js>');
+      if (endIndex > 4) {
+        return trimmed.substring(4, endIndex).trim();
+      }
+      return trimmed.substring(4).trim();
+    }
+
+    const jsPrefixPattern: RegExp = /^(?:@|＠)\s*js(?:\:|：)\s*/i;
+    if (jsPrefixPattern.test(trimmed)) {
+      return trimmed.replace(jsPrefixPattern, '').trim();
+    }
+    return '';
+  }
+
+  private async evaluateHeaderScript(jsCode: string): Promise<Record<string, string>> {
+    try {
+      const context: JsContext = {
+        result: '',
+        src: '',
+        baseUrl: LegadoSourceParser.getBaseUrl(this.source),
+        key: '',
+        page: 1,
+        variables: this.buildRuleAnalyzerContextVariables(),
+        jsLib: this.source.jsLib || '',
+        source: this.source
+      };
+      const executeResult = await getLegadoJsEngine().execute(jsCode, context);
+      this.persistSourceEffects(executeResult.sourceEffects);
+      if (!executeResult.success) {
+        logger.warn(TAG, `书源Header JS执行失败 [${this.source.bookSourceName}]: ${executeResult.error || ''}`);
+        return {};
+      }
+      const parsed = this.parseHeaderText(String(executeResult.result || ''));
+      return parsed || {};
+    } catch (error) {
+      logger.warn(TAG, `书源Header JS执行异常 [${this.source.bookSourceName}]: ${String(error)}`);
+      return {};
+    }
+  }
+
+  private parseHeaderText(headerText: string): Record<string, string> | null {
+    const trimmed = headerText.trim();
+    if (trimmed.length <= 0) {
+      return null;
+    }
+    if (this.extractHeaderJsCode(trimmed).length > 0) {
+      return null;
+    }
+
+    const strictParsed = this.tryParseHeaderJson(trimmed);
+    if (strictParsed) {
+      return strictParsed;
+    }
+
+    const fixedHeader = trimmed
+      .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$-]*)\s*:/g, '$1"$2":')
+      .replace(/([{,]\s*)'([^']+)'\s*:/g, '$1"$2":')
+      .replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, (match: string, value: string): string => {
+        const escapedValue = value.replace(/"/g, '\\"');
+        return `:"${escapedValue}"`;
+      });
+    const fixedParsed = this.tryParseHeaderJson(fixedHeader);
+    if (fixedParsed) {
+      return fixedParsed;
+    }
+
+    return this.parseHeaderPairs(trimmed);
+  }
+
+  private tryParseHeaderJson(headerJson: string): Record<string, string> | null {
+    try {
+      const parsed = JSON.parse(headerJson) as Object;
+      if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return null;
+      }
+      return this.normalizeHeaderRecord(parsed as Record<string, Object>);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  private normalizeHeaderRecord(record: Record<string, Object>): Record<string, string> | null {
+    const headers: Record<string, string> = {};
+    const keys = Object.keys(record);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i].trim();
+      const value = record[key];
+      if (key.length > 0 && value !== undefined && value !== null) {
+        headers[key] = String(value);
+      }
+    }
+    return Object.keys(headers).length > 0 ? headers : null;
+  }
+
+  private parseHeaderPairs(headerText: string): Record<string, string> | null {
+    let body = headerText.trim();
+    if (body.startsWith('{') && body.endsWith('}')) {
+      body = body.substring(1, body.length - 1);
+    }
+    const headers: Record<string, string> = {};
+    const pairs = body.split(',');
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i].trim();
+      const splitIndex = pair.indexOf(':');
+      if (splitIndex <= 0) {
+        continue;
+      }
+      const key = this.trimHeaderToken(pair.substring(0, splitIndex));
+      const value = this.trimHeaderToken(pair.substring(splitIndex + 1));
+      if (key.length > 0 && value.length > 0) {
+        headers[key] = value;
+      }
+    }
+    return Object.keys(headers).length > 0 ? headers : null;
+  }
+
+  private trimHeaderToken(value: string): string {
+    let result = value.trim();
+    if (result.length >= 2) {
+      const first = result.charAt(0);
+      const last = result.charAt(result.length - 1);
+      if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
+        result = result.substring(1, result.length - 1).trim();
+      }
+    }
+    return result;
   }
 
   private hasHeader(headers: Record<string, string>, name: string): boolean {
@@ -1726,27 +1923,14 @@ export class NovelSourceExecutor {
         lastYieldTime = Date.now();
       }
     };
-    const shouldUseAsyncRule = (ruleText?: string): boolean => {
-      if (!ruleText) {
-        return false;
-      }
-      const lowerRule = ruleText.toLowerCase();
-      return lowerRule.includes('<js>') ||
-        lowerRule.includes('@js:') ||
-        lowerRule.includes('@js：') ||
-        lowerRule.includes('＠js:') ||
-        lowerRule.includes('＠js：') ||
-        lowerRule.startsWith('js:') ||
-        lowerRule.startsWith('js：');
-    };
-    const nameUseAsync = shouldUseAsyncRule(rule.name);
-    const bookUrlUseAsync = shouldUseAsyncRule(rule.bookUrl);
-    const authorUseAsync = shouldUseAsyncRule(rule.author);
-    const kindUseAsync = shouldUseAsyncRule(rule.kind);
-    const introUseAsync = shouldUseAsyncRule(rule.intro);
-    const coverUrlUseAsync = shouldUseAsyncRule(rule.coverUrl);
-    const latestChapterUseAsync = shouldUseAsyncRule(rule.lastChapter);
-    const wordCountUseAsync = shouldUseAsyncRule(rule.wordCount);
+    const nameUseAsync = this.shouldReadRuleAsync(rule.name);
+    const bookUrlUseAsync = this.shouldReadRuleAsync(rule.bookUrl);
+    const authorUseAsync = this.shouldReadRuleAsync(rule.author);
+    const kindUseAsync = this.shouldReadRuleAsync(rule.kind);
+    const introUseAsync = this.shouldReadRuleAsync(rule.intro);
+    const coverUrlUseAsync = this.shouldReadRuleAsync(rule.coverUrl);
+    const latestChapterUseAsync = this.shouldReadRuleAsync(rule.lastChapter);
+    const wordCountUseAsync = this.shouldReadRuleAsync(rule.wordCount);
     const shouldDisableItemDomBridge = disableItemDomBridge || scanLimit > 40;
     const itemAnalyzer = this.createRuleAnalyzer();
     if (shouldDisableItemDomBridge) {
@@ -1878,12 +2062,20 @@ export class NovelSourceExecutor {
     return new Promise(resolve => setTimeout(resolve, 0));
   }
 
+  private async sleep(milliseconds: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      setTimeout((): void => {
+        resolve();
+      }, milliseconds);
+    });
+  }
+
   /**
    * 解析书籍详情
    * 注意：即使name规则为空，也会尝试解析其他字段（如tocUrl），返回部分结果
    * 调用方可以使用fallback信息补充缺失的字段
    */
-  private parseBookInfo(html: string, baseUrl: string, bookUrl: string): LegadoBook | null {
+  private async parseBookInfoAsync(html: string, baseUrl: string, bookUrl: string): Promise<LegadoBook | null> {
     const rule = this.source.ruleBookInfo;
 
     const analyzer = this.createRuleAnalyzer();
@@ -1892,7 +2084,9 @@ export class NovelSourceExecutor {
     if (rule && rule.init) {
       const initAnalyzer = this.createRuleAnalyzer();
       initAnalyzer.setContent(html, baseUrl);
-      const initData = initAnalyzer.getString(rule.init);
+      const initData = await this.readRuleString(initAnalyzer, rule.init);
+      this.syncRuleVariablesToUrlAnalyzer(initAnalyzer.getVariablesSnapshot());
+      this.persistRuleAnalyzerSourceEffects(initAnalyzer);
       if (initData) {
         contentToAnalyze = initData;
         logger.debug(TAG, `应用init规则: ${rule.init}, 提取数据长度: ${initData.length}`);
@@ -1906,14 +2100,14 @@ export class NovelSourceExecutor {
       logger.debug(TAG, `HTML长度: ${contentToAnalyze.length}, 前500字符: ${contentToAnalyze.substring(0, 500)}`);
     }
 
-    const name = rule?.name ? analyzer.getString(rule.name) : '';
+    const name = rule?.name ? await this.readRuleString(analyzer, rule.name) : '';
     const fallbackName = this.extractFallbackBookName(contentToAnalyze);
     const resolvedName = name || fallbackName;
     if (contentToAnalyze.length < 50000) {
       logger.debug(TAG, `解析书名结果: "${resolvedName}", 规则: ${rule?.name}`);
     }
 
-    const tocUrl = rule?.tocUrl ? this.normalizeParsedUrl(analyzer.getString(rule.tocUrl), baseUrl) : '';
+    const tocUrl = rule?.tocUrl ? this.normalizeParsedUrl(await this.readRuleString(analyzer, rule.tocUrl), baseUrl) : '';
     if (this.isInvalidParsedTocUrl(tocUrl)) {
       logger.warn(TAG, `目录URL疑似缺少关键参数，详情解析失败: ${tocUrl}`);
       return null;
@@ -1939,13 +2133,13 @@ export class NovelSourceExecutor {
       originName: this.source.bookSourceName,
       bookUrl: bookUrl,
       name: resolvedName,
-      author: rule?.author ? analyzer.getString(rule.author) : '',
-      kind: rule?.kind ? analyzer.getString(rule.kind) : undefined,
-      intro: rule?.intro ? analyzer.getString(rule.intro) : undefined,
-      coverUrl: rule?.coverUrl ? this.normalizeParsedUrl(analyzer.getString(rule.coverUrl), baseUrl) : undefined,
+      author: rule?.author ? await this.readRuleString(analyzer, rule.author) : '',
+      kind: rule?.kind ? await this.readRuleString(analyzer, rule.kind) : undefined,
+      intro: rule?.intro ? await this.readRuleString(analyzer, rule.intro) : undefined,
+      coverUrl: rule?.coverUrl ? this.normalizeParsedUrl(await this.readRuleString(analyzer, rule.coverUrl), baseUrl) : undefined,
       tocUrl: tocUrl || bookUrl,
-      latestChapterTitle: rule?.lastChapter ? analyzer.getString(rule.lastChapter) : undefined,
-      wordCount: rule?.wordCount ? analyzer.getString(rule.wordCount) : undefined,
+      latestChapterTitle: rule?.lastChapter ? await this.readRuleString(analyzer, rule.lastChapter) : undefined,
+      wordCount: rule?.wordCount ? await this.readRuleString(analyzer, rule.wordCount) : undefined,
       type: this.source.bookSourceType
     };
 
@@ -2010,20 +2204,23 @@ export class NovelSourceExecutor {
       return '';
     }
 
-    try {
-      const parsed = SafeUtils.parseObj(trimmedContent) as Object;
-      const directName = this.readObjectStringField(parsed, ['name', 'title', 'book_name', 'bookTitle']);
-      if (directName) {
-        return directName;
-      }
+    const firstChar = trimmedContent.charAt(0);
+    if (firstChar === '{' || firstChar === '[') {
+      try {
+        const parsed = JSON.parse(trimmedContent) as Object;
+        const directName = this.readObjectStringField(parsed, ['name', 'title', 'book_name', 'bookTitle']);
+        if (directName) {
+          return directName;
+        }
 
-      const nestedData = this.readObjectField(parsed, 'data');
-      const nestedName = this.readObjectStringField(nestedData, ['name', 'title', 'book_name', 'bookTitle']);
-      if (nestedName) {
-        return nestedName;
+        const nestedData = this.readObjectField(parsed, 'data');
+        const nestedName = this.readObjectStringField(nestedData, ['name', 'title', 'book_name', 'bookTitle']);
+        if (nestedName) {
+          return nestedName;
+        }
+      } catch {
+        // 非标准 JSON 时继续尝试 HTML title。
       }
-    } catch {
-      // ignore
     }
 
     const titleMatch = trimmedContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
@@ -2122,26 +2319,6 @@ export class NovelSourceExecutor {
     return baseUrl;
   }
 
-  private extractFirstNonEmptyLine(input: string): string | null {
-    if (!input || input.trim().length <= 0) {
-      return null;
-    }
-    const urls = input.split('\n').filter((item: string): boolean => item.trim().length > 0);
-    if (urls.length <= 0) {
-      return null;
-    }
-    return urls[0].trim();
-  }
-
-  private extractFirstParsedUrl(input: string, baseUrl: string): string | null {
-    const rawUrl = this.extractFirstNonEmptyLine(input);
-    if (rawUrl === null) {
-      return null;
-    }
-    const parsedUrl = this.normalizeParsedUrl(rawUrl, baseUrl);
-    return parsedUrl.length > 0 ? parsedUrl : null;
-  }
-
   private extractParsedUrlList(inputs: string[], baseUrl: string): string[] {
     const result: string[] = [];
     for (let i = 0; i < inputs.length; i++) {
@@ -2162,6 +2339,132 @@ export class NovelSourceExecutor {
       }
     }
     return result;
+  }
+
+  private async extractParsedUrlListFromRule(
+    analyzer: LegadoRuleAnalyzer,
+    ruleText: string | undefined,
+    baseUrl: string
+  ): Promise<string[]> {
+    if (!ruleText || ruleText.trim().length <= 0) {
+      return [];
+    }
+    if (this.shouldReadRuleAsync(ruleText)) {
+      const value = await analyzer.getStringAsync(ruleText);
+      this.syncRuleVariablesToUrlAnalyzer(analyzer.getVariablesSnapshot());
+      this.persistRuleAnalyzerSourceEffects(analyzer);
+      return this.extractParsedUrlList([value], baseUrl);
+    }
+    const values = analyzer.getStringList(ruleText);
+    this.syncRuleVariablesToUrlAnalyzer(analyzer.getVariablesSnapshot());
+    this.persistRuleAnalyzerSourceEffects(analyzer);
+    return this.extractParsedUrlList(values, baseUrl);
+  }
+
+  private async extractFirstParsedUrlFromRule(
+    analyzer: LegadoRuleAnalyzer,
+    ruleText: string | undefined,
+    baseUrl: string
+  ): Promise<string | null> {
+    const urls = await this.extractParsedUrlListFromRule(analyzer, ruleText, baseUrl);
+    return urls.length > 0 ? urls[0] : null;
+  }
+
+  private buildImageContentFromParsedUrls(urls: string[], baseUrl: string): string {
+    const result: string[] = [];
+    const seen: Set<string> = new Set<string>();
+    for (let i = 0; i < urls.length; i++) {
+      const rawUrl = urls[i] ? urls[i].trim() : '';
+      if (rawUrl.length <= 0) {
+        continue;
+      }
+      const resolvedUrl = HtmlFormatter.resolveUrlForImage(rawUrl, baseUrl);
+      const imageUrl = HtmlFormatter.getUrlWithoutLegadoOption(resolvedUrl);
+      if (!this.isUsableParsedImageUrl(imageUrl) || seen.has(resolvedUrl)) {
+        continue;
+      }
+      seen.add(resolvedUrl);
+      result.push(`<img src="${this.escapeHtmlAttribute(resolvedUrl)}">`);
+    }
+    return result.join('\n');
+  }
+
+  private buildImageContentFromRawHtml(html: string, baseUrl: string): string {
+    const images: LegadoMangaExtractedImage[] = LegadoMangaImageExtractor.extractImages(html, baseUrl);
+    if (images.length <= 0) {
+      return '';
+    }
+    const urls: string[] = [];
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      const requestUrl = image.requestUrl && image.requestUrl.trim().length > 0 ? image.requestUrl : image.imageUrl;
+      if (requestUrl && requestUrl.trim().length > 0) {
+        urls.push(requestUrl);
+      }
+    }
+    return this.buildImageContentFromParsedUrls(urls, baseUrl);
+  }
+
+  private hasUnresolvedImageRuleToken(content: string): boolean {
+    if (!content || content.trim().length <= 0) {
+      return false;
+    }
+    const normalized = content.trim().toLowerCase();
+    if (normalized.indexOf('img@src') >= 0 || normalized.indexOf('img@data-src') >= 0 ||
+      normalized.indexOf('img@data-original') >= 0) {
+      return true;
+    }
+    return /(?:^|[\/\s"'(])(?:img|image|picture)@(?:src|data-src|data-original|href)(?:$|[\s"'?#),])/i.test(normalized);
+  }
+
+  private hasExtractableImageContent(content: string, baseUrl: string): boolean {
+    if (!content || content.trim().length <= 0) {
+      return false;
+    }
+    const images: LegadoMangaExtractedImage[] = LegadoMangaImageExtractor.extractImages(content, baseUrl);
+    return images.length > 0;
+  }
+
+  private shouldSkipImageNextContentUrl(baseUrl: string, content: string): boolean {
+    if (!baseUrl || !content) {
+      return false;
+    }
+    const normalizedBaseUrl = baseUrl.toLowerCase();
+    const isAllPagesUrl = normalizedBaseUrl.indexOf('?page=all') >= 0 ||
+      normalizedBaseUrl.indexOf('&page=all') >= 0;
+    return isAllPagesUrl && this.hasExtractableImageContent(content, baseUrl);
+  }
+
+  private isUsableParsedImageUrl(url: string): boolean {
+    if (!url || url.trim().length <= 0) {
+      return false;
+    }
+    const normalized = url.trim().toLowerCase();
+    if (normalized === '#' || normalized === 'about:blank' || normalized.startsWith('javascript:')) {
+      return false;
+    }
+    if (normalized.indexOf('<') >= 0 || normalized.indexOf('>') >= 0 || normalized.indexOf('"') >= 0) {
+      return false;
+    }
+    if (normalized.startsWith('data:') && normalized.indexOf('data:image/') !== 0) {
+      return false;
+    }
+    if (normalized.indexOf('@') >= 0 && !/\.(?:jpg|jpeg|png|webp|gif|bmp|avif)(?:[?#,@]|$)/i.test(normalized)) {
+      return false;
+    }
+    if (normalized.indexOf('placeholder') >= 0 || normalized.indexOf('blank.gif') >= 0 ||
+      normalized.indexOf('spacer.gif') >= 0 || normalized.indexOf('transparent.gif') >= 0) {
+      return false;
+    }
+    return true;
+  }
+
+  private escapeHtmlAttribute(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   private resolveContentFallbackWhenRuleMissing(chapter: LegadoChapter): string {
@@ -2231,9 +2534,7 @@ export class NovelSourceExecutor {
 
     let nextUrl: string | null = null;
     if (rule.nextTocUrl) {
-      const nextUrlStr = await analyzer.getStringAsync(rule.nextTocUrl);
-      this.persistRuleAnalyzerSourceEffects(analyzer);
-      nextUrl = this.extractFirstParsedUrl(nextUrlStr, baseUrl);
+      nextUrl = await this.extractFirstParsedUrlFromRule(analyzer, rule.nextTocUrl, baseUrl);
     }
 
     const result: ChapterListParseResult = { chapters: chapters, nextUrl: nextUrl };
@@ -2249,6 +2550,13 @@ export class NovelSourceExecutor {
     const rule = this.source.ruleContent;
 
     if (!rule || !rule.content) {
+      if (this.source.bookSourceType === LegadoBookSourceType.IMAGE) {
+        const imageFallbackContent = this.buildImageContentFromRawHtml(html, baseUrl);
+        if (imageFallbackContent.length > 0) {
+          const imageFallbackResult: ContentParseResult = { content: imageFallbackContent, nextUrl: null };
+          return imageFallbackResult;
+        }
+      }
       const fallbackContent = this.resolveContentFallbackWhenRuleMissing(chapter);
       const fallbackResult: ContentParseResult = { content: fallbackContent, nextUrl: null };
       return fallbackResult;
@@ -2257,11 +2565,28 @@ export class NovelSourceExecutor {
     const analyzer = this.createRuleAnalyzer();
     analyzer.setContent(html, baseUrl);
 
-    let content = await analyzer.getStringAsync(rule.content);
-    this.persistRuleAnalyzerSourceEffects(analyzer);
-    if (!content) {
-      const emptyResult: ContentParseResult = { content: '', nextUrl: null };
-      return emptyResult;
+    let content = '';
+    let contentBuiltFromParsedImageUrls = false;
+
+    if (this.source.bookSourceType === LegadoBookSourceType.IMAGE && !this.shouldReadRuleAsync(rule.content)) {
+      const parsedImageUrls = await this.extractParsedUrlListFromRule(analyzer, rule.content, baseUrl);
+      content = this.buildImageContentFromParsedUrls(parsedImageUrls, baseUrl);
+      contentBuiltFromParsedImageUrls = content.length > 0;
+    }
+
+    if (content.length <= 0) {
+      content = await analyzer.getStringAsync(rule.content);
+      this.persistRuleAnalyzerSourceEffects(analyzer);
+      if (!content) {
+        if (this.source.bookSourceType === LegadoBookSourceType.IMAGE) {
+          content = this.buildImageContentFromRawHtml(html, baseUrl);
+          contentBuiltFromParsedImageUrls = content.length > 0;
+        }
+        if (!content) {
+          const emptyResult: ContentParseResult = { content: '', nextUrl: null };
+          return emptyResult;
+        }
+      }
     }
 
     if (this.source.bookSourceType === LegadoBookSourceType.AUDIO) {
@@ -2272,14 +2597,8 @@ export class NovelSourceExecutor {
       let nextUrl: string | null = null;
       let nextUrls: string[] = [];
       if (rule.nextContentUrl) {
-        nextUrls = this.extractParsedUrlList(analyzer.getStringList(rule.nextContentUrl), baseUrl);
-        if (nextUrls.length <= 0) {
-          const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
-          this.persistRuleAnalyzerSourceEffects(analyzer);
-          nextUrl = this.extractFirstParsedUrl(nextUrlStr, baseUrl);
-        } else {
-          nextUrl = nextUrls[0];
-        }
+        nextUrls = await this.extractParsedUrlListFromRule(analyzer, rule.nextContentUrl, baseUrl);
+        nextUrl = nextUrls.length > 0 ? nextUrls[0] : null;
       }
       logger.debug(TAG, `听书源正文保持原始模式: chapter=${chapter.title}, contentLength=${audioContent.length}`);
       const audioResult: ContentParseResult = { content: audioContent, nextUrl: nextUrl, nextUrls: nextUrls };
@@ -2287,7 +2606,19 @@ export class NovelSourceExecutor {
     }
 
     if (this.source.bookSourceType === LegadoBookSourceType.IMAGE) {
-      content = HtmlFormatter.formatKeepImg(content, baseUrl);
+      if (!contentBuiltFromParsedImageUrls) {
+        content = HtmlFormatter.formatKeepImg(content, baseUrl);
+      }
+      const shouldUseRawHtmlFallback: boolean = content.length <= 0 ||
+        this.hasUnresolvedImageRuleToken(content) ||
+        !this.hasExtractableImageContent(content, baseUrl);
+      if (shouldUseRawHtmlFallback) {
+        const imageFallbackContent = this.buildImageContentFromRawHtml(html, baseUrl);
+        if (imageFallbackContent.length > 0) {
+          logger.warn(TAG, `漫画书源正文规则未产出有效图片，回退原始HTML图片解析: chapter=${chapter.title}, ruleContentLength=${content.length}, fallbackLength=${imageFallbackContent.length}`);
+          content = imageFallbackContent;
+        }
+      }
       if (content.indexOf('&') > -1) {
         content = HtmlFormatter.unescapeHtml(content);
       }
@@ -2298,15 +2629,11 @@ export class NovelSourceExecutor {
 
       let nextUrl: string | null = null;
       let nextUrls: string[] = [];
-      if (rule.nextContentUrl) {
-        nextUrls = this.extractParsedUrlList(analyzer.getStringList(rule.nextContentUrl), baseUrl);
-        if (nextUrls.length <= 0) {
-          const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
-          this.persistRuleAnalyzerSourceEffects(analyzer);
-          nextUrl = this.extractFirstParsedUrl(nextUrlStr, baseUrl);
-        } else {
-          nextUrl = nextUrls[0];
-        }
+      if (rule.nextContentUrl && !this.shouldSkipImageNextContentUrl(baseUrl, content)) {
+        nextUrls = await this.extractParsedUrlListFromRule(analyzer, rule.nextContentUrl, baseUrl);
+        nextUrl = nextUrls.length > 0 ? nextUrls[0] : null;
+      } else if (rule.nextContentUrl) {
+        logger.info(TAG, `漫画书源当前URL已包含全部页面，跳过正文下一页规则: chapter=${chapter.title}, url=${baseUrl}`);
       }
 
       logger.debug(TAG, `漫画书源正文保持图片模式: chapter=${chapter.title}, contentLength=${content.length}`);
@@ -2331,14 +2658,8 @@ export class NovelSourceExecutor {
     let nextUrl: string | null = null;
     let nextUrls: string[] = [];
     if (rule.nextContentUrl) {
-      nextUrls = this.extractParsedUrlList(analyzer.getStringList(rule.nextContentUrl), baseUrl);
-      if (nextUrls.length <= 0) {
-        const nextUrlStr = await analyzer.getStringAsync(rule.nextContentUrl);
-        this.persistRuleAnalyzerSourceEffects(analyzer);
-        nextUrl = this.extractFirstParsedUrl(nextUrlStr, baseUrl);
-      } else {
-        nextUrl = nextUrls[0];
-      }
+      nextUrls = await this.extractParsedUrlListFromRule(analyzer, rule.nextContentUrl, baseUrl);
+      nextUrl = nextUrls.length > 0 ? nextUrls[0] : null;
     }
 
     const result: ContentParseResult = { content: content, nextUrl: nextUrl, nextUrls: nextUrls };

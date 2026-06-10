@@ -561,6 +561,31 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   }
 
   /**
+   * 图源运行配置已变化时清理内存状态。
+   * 用于镜像站点、domain/apiDomain 等会影响工作流变量的设置变更。
+   */
+  invalidateSourceRuntime(sourceId: number, sourceName?: string): void {
+    try {
+      const sourceIdText: string = String(sourceId);
+      this.destroyWebViewInstance(sourceIdText);
+      this.sourceConfigs.delete(sourceIdText);
+
+      const mappedName: string | undefined = this.sourceIdToName.get(sourceId);
+      if (mappedName && this.mangaEngines.has(mappedName)) {
+        this.mangaEngines.delete(mappedName);
+        logger.info(TAG, `已清理图源运行缓存: ${sourceId} -> "${mappedName}"`);
+      }
+      if (sourceName && this.mangaEngines.has(sourceName)) {
+        this.mangaEngines.delete(sourceName);
+        logger.info(TAG, `已清理图源运行缓存: "${sourceName}"`);
+      }
+      this.sourceIdToName.delete(sourceId);
+    } catch (error) {
+      logger.warn(TAG, `清理图源运行缓存失败: sourceId=${sourceId}, sourceName=${sourceName || ''}, error=${String(error)}`);
+    }
+  }
+
+  /**
    * 从数据库加载源配置
    */
   private async loadSourceConfigsFromDatabase(): Promise<void> {

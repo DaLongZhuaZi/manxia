@@ -53,6 +53,7 @@ import {
   getSourceDetailSearchExecutor
 } from '../Framework/Services/SourceDetailSearchExecutor';
 import { getLegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
+import { eventBus, GameEvent, IEventPayload, MangaFavoriteChangedPayload } from '../Framework/EventBus';
 
 
 const TAG = 'SourceDetailPage';
@@ -386,6 +387,7 @@ export struct SourceDetailPage {
   @State hasLoadedOnce: boolean = false;
   @State comicContentRenderVersion: number = 0;
   @State private showInitialLoadingSkeleton: boolean = false;
+  @State private favoritedExternalIds: Set<string> = new Set<string>();
   
   // 筛选历史记录（可折叠显示上次筛选结果）
   @State filterHistory: FilterHistoryItem[] = []; // 筛选历史列表
@@ -438,6 +440,10 @@ export struct SourceDetailPage {
   private photos18CoverBootstrapPromise: Promise<void> | null = null;
   private photos18CurrentReferer: string = '';
   private configuredCoverHeaders: RequestHeaders = {} as RequestHeaders;
+  private favoriteBadgeRefreshToken: number = 0;
+  private favoriteChangedListener: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
+    this.handleMangaFavoriteChanged(payload);
+  };
 
 
   aboutToAppear(): void {
@@ -461,6 +467,8 @@ export struct SourceDetailPage {
         this.fontState = newState;
       }
     );
+
+    eventBus.subscribe(GameEvent.MANGA_FAVORITE_CHANGED, this.favoriteChangedListener);
 
     // 初始化设备方向
     this.updateDeviceOrientation();
@@ -492,6 +500,12 @@ export struct SourceDetailPage {
       logger.info(TAG, `设备方向变化: ${this.isLandscape ? '横屏' : '竖屏'}, 屏幕高度: ${this.screenHeight}`);
     };
     this.deviceAdaptationManager.addListener(this.deviceOrientationListener);
+  }
+
+  onPageShow(): void {
+    if (this.sourceId > 0) {
+      void this.refreshFavoriteBadges('page_show');
+    }
   }
 
   /**
@@ -620,6 +634,7 @@ export struct SourceDetailPage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    eventBus.unsubscribe(GameEvent.MANGA_FAVORITE_CHANGED, this.favoriteChangedListener);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -748,6 +763,7 @@ export struct SourceDetailPage {
       this.comicList = [...comics];
       this.comicDataSource.updateItems([...this.comicList]);
       this.touchComicContentRender();
+      void this.refreshFavoriteBadges('global_search_cache');
       this.hasMore = false;  // 全局搜索缓存不支持分页
       this.lastSearchKeyword = keyword;
       
@@ -770,6 +786,71 @@ export struct SourceDetailPage {
     this.comicContentRenderVersion = this.comicContentRenderVersion + 1;
   }
 
+  private normalizeExternalId(externalId: string | undefined): string {
+    if (!externalId) {
+      return '';
+    }
+    return externalId.trim();
+  }
+
+  private isComicFavoritedInSource(comic: ComicInfo): boolean {
+    const externalId = this.normalizeExternalId(comic.id);
+    if (externalId.length <= 0) {
+      return false;
+    }
+    return this.favoritedExternalIds.has(externalId);
+  }
+
+  private handleMangaFavoriteChanged(payload: IEventPayload): void {
+    const favoritePayload = payload as MangaFavoriteChangedPayload;
+    const payloadSourceId: number = Number(favoritePayload.sourceId || '0');
+    const payloadSourcePkg: string = favoritePayload.sourcePkg || '';
+    const currentSourcePkg: string = this.sourceInfo?.pkg || '';
+    const payloadSourceName: string = favoritePayload.sourceName || '';
+    const currentSourceName: string = this.sourceInfo?.name || this.sourceName || '';
+    const hasSourceHint: boolean = payloadSourceId > 0 || payloadSourcePkg.length > 0 || payloadSourceName.length > 0;
+    const sameSource: boolean =
+      payloadSourceId === this.sourceId ||
+        (payloadSourcePkg.length > 0 && currentSourcePkg.length > 0 && payloadSourcePkg === currentSourcePkg) ||
+        (payloadSourceName.length > 0 && currentSourceName.length > 0 && payloadSourceName === currentSourceName);
+
+    if (hasSourceHint && !sameSource) {
+      return;
+    }
+
+    logger.debug(TAG, `收到漫画收藏变化事件: sourceId=${favoritePayload.sourceId}, externalId=${favoritePayload.externalId}, isFavorite=${String(favoritePayload.isFavorite)}`);
+    void this.refreshFavoriteBadges('favorite_event');
+  }
+
+  private async refreshFavoriteBadges(trigger: string): Promise<void> {
+    if (this.sourceId <= 0) {
+      return;
+    }
+    const refreshToken = this.favoriteBadgeRefreshToken + 1;
+    this.favoriteBadgeRefreshToken = refreshToken;
+    try {
+      const sourcePkg: string = this.sourceInfo?.pkg || '';
+      const sourceName: string = this.sourceInfo?.name || this.sourceName || '';
+      const externalIds: string[] = await this.dataManager.getAddedExternalIdsBySource(this.sourceId, sourcePkg, sourceName);
+      if (refreshToken !== this.favoriteBadgeRefreshToken) {
+        return;
+      }
+      const nextSet: Set<string> = new Set<string>();
+      for (let index = 0; index < externalIds.length; index++) {
+        const normalizedId = this.normalizeExternalId(externalIds[index]);
+        if (normalizedId.length > 0) {
+          nextSet.add(normalizedId);
+        }
+      }
+      const previousSize = this.favoritedExternalIds.size;
+      this.favoritedExternalIds = nextSet;
+      this.touchComicContentRender();
+      logger.debug(TAG, `图源详情收藏标记已刷新: trigger=${trigger}, sourceId=${this.sourceId}, old=${previousSize}, next=${nextSet.size}`);
+    } catch (error) {
+      logger.warn(TAG, `刷新图源详情收藏标记失败: trigger=${trigger}, sourceId=${this.sourceId}, error=${String(error)}`);
+    }
+  }
+
   private async loadComics(): Promise<void> {
     if (this.isLoading) return;
 
@@ -788,6 +869,7 @@ export struct SourceDetailPage {
           this.hasMore = cached.hasMore;
           this.comicDataSource.updateItems([...this.comicList]);
           this.touchComicContentRender();
+          void this.refreshFavoriteBadges('cache');
           
           // 检查是否需要刷新
           if (!this.contentCache.needsRefresh(this.sourceId, workflowKey)) {
@@ -848,6 +930,7 @@ export struct SourceDetailPage {
       this.hasMore = comics.length >= 20;
       this.comicDataSource.updateItems([...this.comicList]);
       this.touchComicContentRender();
+      void this.refreshFavoriteBadges('load_comics');
       logger.info(TAG, `数据源已刷新: ${this.comicList.length} 条数据`);
 
     } catch (error) {
@@ -2034,6 +2117,7 @@ export struct SourceDetailPage {
         .alignItems(VerticalAlign.Top)
         .hitTestBehavior(HitTestMode.None)
       }
+
     }
     .width('100%')
     .height('100%')
@@ -2055,6 +2139,53 @@ export struct SourceDetailPage {
       offsetX: 0,
       offsetY: 2
     })
+  }
+
+  @Builder
+  private buildFavoriteMarkedCover(comic: ComicInfo, coverPadding: number) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Stack() {
+        this.buildReadingStyleComicCover(comic)
+      }
+      .width('100%')
+      .height('100%')
+      .padding(coverPadding)
+
+      if (this.isComicFavoritedInSource(comic)) {
+        Column() {
+          this.buildFavoritedBadge()
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.End)
+        .alignItems(HorizontalAlign.Start)
+        .hitTestBehavior(HitTestMode.None)
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private buildFavoritedBadge() {
+    Row({ space: 3 }) {
+      SymbolGlyph($r('sys.symbol.bookshelf'))
+        .fontSize(11)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme)])
+
+      Text('已收藏')
+        .fontSize(10)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+        .maxLines(1)
+    }
+    .height(22)
+    .padding({ left: 6, right: 7 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+    .backgroundBlurStyle(BlurStyle.Thin)
+    .borderRadius({ topRight: 6, bottomLeft: this.getReadingStyleCoverRadius() })
+    .hitTestBehavior(HitTestMode.None)
   }
 
   private async loadCoverPixelMap(comic: ComicInfo): Promise<void> {
@@ -2437,6 +2568,7 @@ export struct SourceDetailPage {
       this.comicList = [...this.searchResults];
       this.comicDataSource.updateItems([...this.comicList]);
       this.touchComicContentRender();
+      void this.refreshFavoriteBadges('switch_search_tab');
       return;
     }
     
@@ -2444,6 +2576,7 @@ export struct SourceDetailPage {
     this.comicList = [];
     this.comicDataSource.updateItems([]);
     this.touchComicContentRender();
+    void this.refreshFavoriteBadges('switch_tab_clear');
     await this.loadComics();
   }
 
@@ -2858,6 +2991,7 @@ export struct SourceDetailPage {
     this.comicList = [];
     this.comicDataSource.updateItems([]);
     this.touchComicContentRender();
+    void this.refreshFavoriteBadges('search_clear');
 
     try {
       if (this.useWebView) {
@@ -2914,6 +3048,7 @@ export struct SourceDetailPage {
     this.comicList = [...comics];
     this.comicDataSource.updateItems([...this.comicList]);
     this.touchComicContentRender();
+    void this.refreshFavoriteBadges('search_result');
     this.hasMore = result.hasMore;
     logger.info(TAG, `搜索完成，找到 ${comics.length} 个结果, route=${result.route}, duration=${result.duration}ms`);
   }
@@ -3707,6 +3842,8 @@ export struct SourceDetailPage {
       this.pathStack = context.pathStack;
     })
     .onShown(() => {
+      logger.debug(TAG, 'HdsNavDestination onShown: refresh favorite badges');
+      void this.refreshFavoriteBadges('nav_shown');
       this.touchComicContentRender();
     })
     .backgroundColor(Color.Transparent)
@@ -4475,6 +4612,7 @@ export struct SourceDetailPage {
           this.comicList = [...newItems, ...this.comicList];
           this.comicDataSource.updateItems([...this.comicList]);
           this.touchComicContentRender();
+          void this.refreshFavoriteBadges('refresh_new_items');
           
           // 后台异步处理封面缓存
           this.processCoverCacheAsync(newItems);
@@ -4490,9 +4628,11 @@ export struct SourceDetailPage {
         this.comicList = this.comicList.map((item: ComicInfo) => updatedItems.get(item.id) || item);
         this.comicDataSource.updateExistingItems(updatedItems);
         this.touchComicContentRender();
+        void this.refreshFavoriteBadges('refresh_updated_items');
         this.showRefreshHint('内容已是最新', 'info');
       } else {
         // 完全无变化
+        void this.refreshFavoriteBadges('refresh_unchanged');
         this.showRefreshHint('内容已是最新', 'info');
       }
       
@@ -5818,7 +5958,7 @@ export struct SourceDetailPage {
             // 列表模式
             ForEach(historyItem.results, (comic: ComicInfo) => {
               this.buildComicListItem(comic)
-            }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
+            }, (comic: ComicInfo) => `history_${this.comicContentRenderVersion}_${historyItem.id}_${comic.id}`)
           } else {
             Grid() {
               ForEach(historyItem.results, (comic: ComicInfo) => {
@@ -5829,7 +5969,7 @@ export struct SourceDetailPage {
                     this.buildComicCard(comic)
                   }
                 }
-              }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
+              }, (comic: ComicInfo) => `history_${this.comicContentRenderVersion}_${historyItem.id}_${comic.id}`)
             }
             .columnsTemplate(this.getContentGridColumnsTemplate(historyItem.results))
             .columnsGap(this.isLandscape ? 16 : 12)
@@ -6134,11 +6274,10 @@ export struct SourceDetailPage {
       Column({ space: 8 }) {
         // 封面容器 - 使用Stack实现加载动画效果
         Stack() {
-          this.buildReadingStyleComicCover(comic)
+          this.buildFavoriteMarkedCover(comic, 4)
         }
         .width('100%')
         .aspectRatio(this.getComicCoverAspectRatio(comic))
-        .padding(4)
 
         // 标题 - 固定高度确保卡片一致
         Text(comic.title)
@@ -6211,11 +6350,10 @@ export struct SourceDetailPage {
       Row({ space: 12 }) {
         // 封面 - 精致的封面卡片
         Stack() {
-          this.buildReadingStyleComicCover(comic)
+          this.buildFavoriteMarkedCover(comic, 3)
         }
         .width(this.getListCoverWidth(comic))
         .aspectRatio(this.getComicCoverAspectRatio(comic))
-        .padding(3)
 
         // 信息区域
         Column({ space: 4 }) {
@@ -6320,11 +6458,10 @@ export struct SourceDetailPage {
       Column({ space: 10 }) {
         // 大封面 - 添加加载动画
         Stack() {
-          this.buildReadingStyleComicCover(comic)
+          this.buildFavoriteMarkedCover(comic, 4)
         }
         .width('100%')
         .aspectRatio(this.getComicCoverAspectRatio(comic))
-        .padding(4)
 
         // 标题
         Text(comic.title)

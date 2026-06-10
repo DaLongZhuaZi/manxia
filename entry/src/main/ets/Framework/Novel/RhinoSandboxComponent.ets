@@ -11,6 +11,7 @@
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../../Utils/Logger';
 import { getRhinoWasmExecutor, RhinoWasmExecutor } from './RhinoWasmExecutor';
+import { getLegadoRuntimeAssetManager } from './LegadoRuntimeAssetManager';
 
 const TAG = 'RhinoSandboxComponent';
 const RHINO_SANDBOX_USER_AGENT: string = 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36 RhinoSandbox/1.0';
@@ -54,9 +55,12 @@ export struct RhinoSandboxWebView {
   
   /** 错误信息 */
   @State private errorMessage: string = '';
+  @State private runtimeSrc: string = 'resource://rawfile/rhino_sandbox/index.html';
+  private usingBundledRuntime: boolean = true;
 
   aboutToAppear() {
     logger.info(TAG, 'Rhino沙箱组件初始化');
+    this.resolveRuntimeSource();
     
     // 启用网页调试功能（仅开发环境）
     try {
@@ -75,10 +79,36 @@ export struct RhinoSandboxWebView {
     logger.info(TAG, 'Rhino沙箱组件销毁');
   }
 
+  private resolveRuntimeSource(): void {
+    try {
+      const runtimeUrl = getLegadoRuntimeAssetManager().getRuntimeEntryUrl('rhino');
+      if (runtimeUrl.startsWith('file://')) {
+        this.runtimeSrc = runtimeUrl;
+        this.usingBundledRuntime = false;
+        logger.info(TAG, `使用云端Rhino沙箱运行时: ${runtimeUrl}`);
+        return;
+      }
+    } catch (error) {
+      logger.warn(TAG, `读取云端Rhino沙箱失败，回退内置资源: ${String(error)}`);
+    }
+    this.runtimeSrc = 'resource://rawfile/rhino_sandbox/index.html';
+    this.usingBundledRuntime = true;
+  }
+
+  private loadBundledRuntime(): void {
+    this.usingBundledRuntime = true;
+    this.runtimeSrc = 'resource://rawfile/rhino_sandbox/index.html';
+    try {
+      this.controller.loadUrl('resource://rawfile/rhino_sandbox/index.html');
+    } catch (error) {
+      logger.warn(TAG, `加载内置Rhino沙箱失败: ${String(error)}`);
+    }
+  }
+
   build() {
     Stack() {
       Web({
-        src: 'resource://rawfile/rhino_sandbox/index.html',
+        src: this.runtimeSrc,
         controller: this.controller
       })
         // ==================== 基础配置 ====================
@@ -121,6 +151,9 @@ export struct RhinoSandboxWebView {
           const errorInfo = event.error.getErrorInfo();
           logger.error(TAG, `页面加载错误: ${errorInfo}`);
           this.errorMessage = errorInfo;
+          if (!this.usingBundledRuntime) {
+            this.loadBundledRuntime();
+          }
           
           if (this.callbacks?.onError) {
             this.callbacks.onError(errorInfo);
@@ -131,6 +164,9 @@ export struct RhinoSandboxWebView {
           const code = event.response.getResponseCode();
           logger.error(TAG, `HTTP错误: ${code}`);
           this.errorMessage = `HTTP Error: ${code}`;
+          if (!this.usingBundledRuntime) {
+            this.loadBundledRuntime();
+          }
         })
         
         // ==================== 控制台消息 ====================

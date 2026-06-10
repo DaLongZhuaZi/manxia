@@ -72,6 +72,11 @@ export interface LargeFileImportResult {
   elapsedMs: number;
 }
 
+export interface NovelSourceImportOptions {
+  preserveLocalState?: boolean;
+  defaultNSFW?: boolean;
+}
+
 /**
  * 小说源管理器类
  */
@@ -96,7 +101,11 @@ export class NovelSourceManager {
    * 导入书源（从JSON字符串）
    * 支持单个书源或书源数组，同时持久化到数据库
    */
-  async importFromJSON(jsonStr: string, persistToDb: boolean = true): Promise<LegadoSourceImportResult[]> {
+  async importFromJSON(
+    jsonStr: string,
+    persistToDb: boolean = true,
+    options?: NovelSourceImportOptions
+  ): Promise<LegadoSourceImportResult[]> {
     const results: LegadoSourceImportResult[] = [];
     const parser = new LegadoSourceParser();
     const sources = parser.parseMultipleFromJSON(jsonStr);
@@ -118,6 +127,7 @@ export class NovelSourceManager {
           continue;
         }
 
+        this.applyImportOptions(source, options);
         const isUpdate = this.sources.has(source.bookSourceUrl);
         
         // 添加或更新内存中的书源
@@ -159,6 +169,26 @@ export class NovelSourceManager {
     logger.info(TAG, `书源导入完成: 成功 ${successCount}/${totalCount}`);
 
     return results;
+  }
+
+  private applyImportOptions(source: LegadoBookSource, options?: NovelSourceImportOptions): void {
+    if (!options) {
+      return;
+    }
+
+    const existing = this.sources.get(source.bookSourceUrl);
+    if (options.preserveLocalState === true && existing) {
+      source.enabled = existing.enabled;
+      source.weight = existing.weight;
+      source.customOrder = existing.customOrder;
+      source.bookSourceGroup = existing.bookSourceGroup;
+      source.isNSFW = existing.isNSFW;
+      return;
+    }
+
+    if (!existing && options.defaultNSFW !== undefined) {
+      source.isNSFW = options.defaultNSFW;
+    }
   }
   
   /**

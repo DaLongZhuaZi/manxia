@@ -120,6 +120,7 @@ import { EpubWebViewReaderPage } from './EpubWebViewReaderPage';
 import { resolveEBookReaderRouteName } from '../Framework/Adapters/EBookImageReaderAdapter';
 import { openEBookReaderRouterPage } from '../Framework/Adapters/EBookReaderRouteNavigator';
 import { openMangaReaderInIsolatedAbility } from '../Framework/Reader/MangaReaderAbilityLauncher';
+import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
 import { openEBookReaderInIsolatedAbility } from '../Framework/Reader/EBookReaderAbilityLauncher';
 import { openNovelReaderInIsolatedAbility } from '../Framework/Reader/NovelReaderAbilityLauncher';
 import { openReadAloudPlayerInIsolatedAbility } from '../Framework/ReadAloud/ReadAloudPlayerAbilityLauncher';
@@ -148,6 +149,7 @@ import { NovelReaderPage } from './NovelReaderPage';
 import { NovelReadAloudPage } from './NovelReadAloudPage';
 import { ReadAloudPlayerPage } from './ReadAloudPlayerPage';
 import { NovelSourceManagementPage } from './NovelSourceManagementPage';
+import { NovelSourceEnginePage } from './NovelSourceEnginePage';
 import { NovelExplorePage } from './NovelExplorePage';
 import { NovelSourceLoginPage } from './NovelSourceLoginPage';
 import { NovelReplaceRulePage } from './NovelReplaceRulePage';
@@ -155,6 +157,8 @@ import { NovelSettingsPage } from './NovelSettingsPage';
 import { NovelSourceDebugPage } from './NovelSourceDebugPage';
 import { NovelTxtTocRulePage } from './NovelTxtTocRulePage';
 import { NovelDictRulePage } from './NovelDictRulePage';
+import { getNovelSourceRepositoryManager, NovelSourceRepositoryUpdateStatus } from '../Framework/Novel/NovelSourceRepositoryManager';
+import { getLegadoRuntimeAssetManager, LegadoRuntimeRepositoryUpdateStatus } from '../Framework/Novel/LegadoRuntimeAssetManager';
 import { RssSubscriptionPage } from './RssSubscriptionPage';
 import { RssFavoritesPage } from './RssFavoritesPage';
 import { RssSubscriptionManagementPage } from './RssSubscriptionManagementPage';
@@ -183,8 +187,14 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { UnifiedDetailPage } from './UnifiedDetailPage';
 import { AnnotationCenterPage, AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
+import {
+  ExternalImportNavigationCoordinator,
+  ExternalImportNavigationPayload,
+  ExternalImportNavigationTarget
+} from '../Framework/ExternalFile/ExternalImportNavigationCoordinator';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
+import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';
 import { RemoteControlPage } from './RemoteControlPage';
@@ -232,6 +242,7 @@ import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { LegadoBook, LegadoBookSource, LegadoSourceImportResult, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoMangaSourceBridge } from '../Framework/Novel/LegadoMangaSourceBridge';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { FontManager } from '../Framework/Managers/FontManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
@@ -383,6 +394,20 @@ interface SourceDetailPageParams {
   initialTab?: string;  // 初始标签ID（如 'popular', 'latest', 'search'）
   searchKeyword?: string;  // 搜索关键词（当initialTab为'search'时使用）
   searchType?: string;  // 搜索类型（如 'search', 'searchById', 'searchByAuthor'）
+}
+
+interface BookStyleSourceConfigMetadata {
+  bookSourceUrl?: string;
+  bookSourceName?: string;
+}
+
+interface BookStyleSourceConfig {
+  metadata?: BookStyleSourceConfigMetadata;
+}
+
+interface BookStyleSourceIdentity {
+  bookSourceUrl: string;
+  bookSourceName: string;
 }
 
 /**
@@ -672,7 +697,11 @@ struct MainMenuPage {
   private localLibraryCoverLoadingKeys: Set<string> = new Set();
   private localLibraryCoverFailedKeys: Set<string> = new Set();
   private localLibraryCoverRepairingKeys: Set<string> = new Set();
+  private onlineMangaResolvedCoverPaths: Map<string, string> = new Map<string, string>();
+  private onlineMangaDiskCoverLoadingKeys: Set<string> = new Set<string>();
+  private onlineMangaDiskCoverMissTimes: Map<string, number> = new Map<string, number>();
   private static readonly LOCAL_COVER_REPAIR_SCAN_LIMIT: number = 160;
+  private static readonly ONLINE_MANGA_COVER_CACHE_MISS_RETRY_MS: number = 5000;
   private static readonly REPAIR_EBOOK_COVER_WIDTH: number = 400;
   private static readonly REPAIR_EBOOK_COVER_HEIGHT: number = 600;
   private static readonly REPAIR_EBOOK_TITLE_AREA_TOP_PERCENT: number = 0.130;
@@ -1435,12 +1464,14 @@ struct MainMenuPage {
   private startupRouteHandling: boolean = false;
   // Bug 1 fix: onNewWant通知机制——解决app在前台时onPageShow不触发的问题
   @StorageProp('fileOpenNewWantTrigger') @Watch('onFileOpenNewWantTrigger') private fileOpenTrigger: number = 0;
+  @StorageProp('externalImportNavigationTrigger') @Watch('onExternalImportNavigationTriggerChanged') private externalImportNavigationTrigger: number = 0;
   // 深度链接对话框触发器——响应 DeepLinkDialogManager 设置的跳转请求
   @StorageProp('deepLinkTrigger') @Watch('onDeepLinkTriggerChanged') private deepLinkTrigger: number = 0;
   private deepLinkHandling: boolean = false;
   private deepLinkRetryTimer: number = -1;
   private deepLinkRetryCount: number = 0;
   private readonly maxDeepLinkRetryCount: number = 3;
+  private legadoCloudUpdateCheckScheduled: boolean = false;
   // Bug 3 fix: 防止aboutToAppear/onPageShow/@Watch三路同时触发重复导入调度
   private fileImportScheduled: boolean = false;
   private readonly startupTraceBeforeTabConfigs: boolean = this.logStartupTrace('startup_trace_before_tab_configs');
@@ -2154,6 +2185,28 @@ struct MainMenuPage {
       const onlineComic = await this.dataManager.getOnlineComicInfoById(contentId);
       if (onlineComic) {
         return await ComicConverter.convertOnlineComicInfoToMangaAsync(onlineComic);
+      }
+
+      const identityInput = MangaIdentityResolver.getInstance().buildInput(
+        contentId,
+        '',
+        -1,
+        '',
+        'MainMenuPage.resolveWidgetManga'
+      );
+      const identityResult: MangaIdentityResolveResult = await MangaIdentityResolver.getInstance().resolve(identityInput);
+      if (identityResult.success) {
+        if (identityResult.comicInfo && !identityResult.onlineComicInfo) {
+          try {
+            return await ComicConverter.convertComicInfoToMangaAsync(identityResult.comicInfo);
+          } catch (error) {
+            logger.warn(TAG, `resolveWidgetManga身份解析后同步转换: ${String(error)}`);
+            return ComicConverter.convertComicInfoToManga(identityResult.comicInfo);
+          }
+        }
+        if (identityResult.onlineComicInfo) {
+          return await ComicConverter.convertOnlineComicInfoToMangaAsync(identityResult.onlineComicInfo);
+        }
       }
     } catch (error) {
       logger.warn(TAG, `resolveWidgetManga失败: ${String(error)}`);
@@ -3721,6 +3774,99 @@ struct MainMenuPage {
   }
 
   /**
+   * 书源型图源不提供浏览详情页，只允许从搜索入口进入。
+   */
+  private isBookStyleSource(source: SourceInfo): boolean {
+    return source.type === 'novel' || LegadoMangaSourceBridge.isLegadoMangaPkg(source.pkg);
+  }
+
+  private createEmptyBookStyleSourceIdentity(): BookStyleSourceIdentity {
+    const identity: BookStyleSourceIdentity = {
+      bookSourceUrl: '',
+      bookSourceName: ''
+    };
+    return identity;
+  }
+
+  private async resolveBookStyleSourceIdentity(source: SourceInfo): Promise<BookStyleSourceIdentity> {
+    const identity: BookStyleSourceIdentity = this.createEmptyBookStyleSourceIdentity();
+    try {
+      const sourceRecord: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(source.id);
+      if (!sourceRecord || !sourceRecord.configJson) {
+        return identity;
+      }
+      const config: BookStyleSourceConfig = SafeUtils.parseObj<BookStyleSourceConfig>(sourceRecord.configJson);
+      const metadata: BookStyleSourceConfigMetadata | undefined = config.metadata;
+      if (!metadata) {
+        return identity;
+      }
+      if (metadata.bookSourceUrl) {
+        identity.bookSourceUrl = metadata.bookSourceUrl.trim();
+      }
+      if (metadata.bookSourceName) {
+        identity.bookSourceName = metadata.bookSourceName.trim();
+      }
+    } catch (error) {
+      logger.warn(TAG, `解析书源型图源身份失败: ${source.name}, ${String(error)}`);
+    }
+    return identity;
+  }
+
+  private findNovelSourceByIdentity(
+    sources: NovelSourceInfo[],
+    source: SourceInfo,
+    identity: BookStyleSourceIdentity
+  ): NovelSourceInfo | null {
+    const bookSourceUrl: string = identity.bookSourceUrl;
+    if (bookSourceUrl.length > 0) {
+      const byUrl: NovelSourceInfo | undefined = sources.find((item: NovelSourceInfo): boolean => {
+        return item.id === bookSourceUrl || item.url === bookSourceUrl;
+      });
+      if (byUrl) {
+        return byUrl;
+      }
+    }
+
+    const bookSourceName: string = identity.bookSourceName.length > 0 ? identity.bookSourceName : source.name;
+    const sourceBaseUrl: string = source.baseUrl ? source.baseUrl.trim() : '';
+    const byDirectIdentity: NovelSourceInfo | undefined = sources.find((item: NovelSourceInfo): boolean => {
+      return item.name === bookSourceName ||
+        (sourceBaseUrl.length > 0 && (item.id === sourceBaseUrl || item.url === sourceBaseUrl));
+    });
+    if (byDirectIdentity) {
+      return byDirectIdentity;
+    }
+
+    const loweredName: string = bookSourceName.toLowerCase();
+    const byLowerName: NovelSourceInfo | undefined = sources.find((item: NovelSourceInfo): boolean => {
+      return item.name.toLowerCase() === loweredName;
+    });
+    return byLowerName ? byLowerName : null;
+  }
+
+  private async navigateBookStyleSourceSearch(source: SourceInfo, keyword: string): Promise<boolean> {
+    await this.waitForNovelSourcesReady();
+    const novelSourceManager: NovelSourceManager = getNovelSourceManager();
+    const novelSources: NovelSourceInfo[] = novelSourceManager.getAllSources();
+    const identity: BookStyleSourceIdentity = await this.resolveBookStyleSourceIdentity(source);
+    const novelSource: NovelSourceInfo | null = this.findNovelSourceByIdentity(novelSources, source, identity);
+    if (!novelSource) {
+      logger.warn(TAG, `未找到书源型图源对应的书源: ${source.name} (ID: ${source.id})`);
+      this.showToast('未找到对应书源，无法搜索');
+      return false;
+    }
+
+    const params: NovelSearchPageParams = {
+      keyword: keyword,
+      sourceId: novelSource.id,
+      sourceName: novelSource.name
+    };
+    logger.info(TAG, `书源型图源跳转小说搜索页: ${novelSource.name}, keyword=${keyword}`);
+    this.pathStack.pushPathByName('NovelSearchPage', params);
+    return true;
+  }
+
+  /**
    * 构建图源使用说明
    */
   @Builder
@@ -3818,12 +3964,12 @@ struct MainMenuPage {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
-        Text('• 小说源用于获取在线小说内容，支持章节阅读')
+        Text('• 小说源用于获取在线小说内容，当前仅提供搜索入口')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
-        Text('• 点击小说源卡片可进入该图源浏览小说')
+        Text('• 点击小说源卡片会打开搜索框，不进入图源详情页')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -4515,6 +4661,12 @@ struct MainMenuPage {
    * 打开图源详情页
    */
   private openSourceDetail(source: SourceInfo): void {
+    if (this.isBookStyleSource(source)) {
+      logger.info(TAG, `书源型图源仅打开搜索框: ${source.name} (ID: ${source.id})`);
+      void this.openSourceDetailWithSearch(source);
+      return;
+    }
+
     try {
       logger.info(TAG, `打开图源详情页: ${source.name} (ID: ${source.id})`);
       const params: SourceDetailPageParams = { sourceId: source.id };
@@ -4529,6 +4681,12 @@ struct MainMenuPage {
    * 打开图源详情页并指定初始标签
    */
   private openSourceDetailWithTab(source: SourceInfo, initialTab: string): void {
+    if (this.isBookStyleSource(source)) {
+      logger.info(TAG, `书源型图源忽略详情标签并打开搜索框: ${source.name} (ID: ${source.id}), requestedTab=${initialTab}`);
+      void this.openSourceDetailWithSearch(source);
+      return;
+    }
+
     try {
       logger.info(TAG, `打开图源详情页: ${source.name} (ID: ${source.id}), 初始标签: ${initialTab}`);
       const params: SourceDetailPageParams = { sourceId: source.id, initialTab: initialTab };
@@ -4546,9 +4704,13 @@ struct MainMenuPage {
     logger.info(TAG, `显示图源搜索对话框: ${source.name} (ID: ${source.id})`);
     this.searchTargetSource = source;
     this.sourceSearchInput = '';
-    
-    // 加载图源的搜索类型配置
-    await this.loadSourceSearchTypes(source);
+
+    if (this.isBookStyleSource(source)) {
+      this.applyDefaultSourceSearchTypes('输入关键词搜索');
+    } else {
+      // 加载图源的搜索类型配置
+      await this.loadSourceSearchTypes(source);
+    }
 
     this.openSourceSearchDialog();
   }
@@ -4600,15 +4762,23 @@ struct MainMenuPage {
     this.resetSourceSearchDialogState();
   }
 
+  private applyDefaultSourceSearchTypes(placeholderText: string): void {
+    const defaultType: SearchTypeOption = {
+      id: 'search',
+      label: '关键词',
+      placeholder: placeholderText,
+      isDefault: true
+    };
+    const defaultTypes: SearchTypeOption[] = [defaultType];
+    this.sourceSearchTypes = defaultTypes;
+    this.selectedSourceSearchType = defaultType.id;
+    this.sourceSearchPlaceholder = defaultType.placeholder ? defaultType.placeholder : '输入搜索内容';
+  }
+
   /**
    * 加载图源的搜索类型配置
    */
   private async loadSourceSearchTypes(source: SourceInfo): Promise<void> {
-    // 默认搜索类型
-    const defaultTypes: SearchTypeOption[] = [
-      { id: 'search', label: '关键词', placeholder: '输入漫画名称或标签', isDefault: true }
-    ];
-
     try {
       // 尝试从图源配置中读取searchConfig
       const sourceRecord: ComicSourceDatabaseRecord | null = await DataManager.getInstance().getComicSourceByName(source.name);
@@ -4635,9 +4805,7 @@ struct MainMenuPage {
     }
 
     // 使用默认配置
-    this.sourceSearchTypes = defaultTypes;
-    this.selectedSourceSearchType = 'search';
-    this.sourceSearchPlaceholder = defaultTypes[0].placeholder || '输入搜索内容';
+    this.applyDefaultSourceSearchTypes('输入漫画名称或标签');
   }
 
   /**
@@ -4687,6 +4855,15 @@ struct MainMenuPage {
     const source = this.sourceList.find((s: SourceInfo) => s.name === prefixData.sourceName);
     if (!source) {
       this.showToast(`未找到图源: ${prefixData.sourceName}`);
+      return true;
+    }
+
+    if (this.isBookStyleSource(source)) {
+      if (prefixData.searchType !== 'search') {
+        this.showToast('书源型图源仅支持关键词搜索');
+        return true;
+      }
+      await this.navigateBookStyleSourceSearch(source, prefixData.query);
       return true;
     }
 
@@ -4754,6 +4931,17 @@ struct MainMenuPage {
 
     // 普通图源搜索
     if (!this.searchTargetSource) {
+      return;
+    }
+    if (this.isBookStyleSource(this.searchTargetSource)) {
+      if (this.selectedSourceSearchType !== 'search') {
+        this.showToast('书源型图源仅支持关键词搜索');
+        return;
+      }
+      const navigated: boolean = await this.navigateBookStyleSourceSearch(this.searchTargetSource, keyword);
+      if (navigated) {
+        this.closeSourceSearchDialog();
+      }
       return;
     }
     try {
@@ -5575,9 +5763,9 @@ struct MainMenuPage {
         GridItem() {
           Column({ space: 8 }) {
             Stack() {
-              if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+              if (this.shouldUseMangaCoverAvifRenderer(manga)) {
                 AvifImage({
-                  src: manga.coverImagePath,
+                  src: this.getMangaCoverAvifSource(manga),
                   imageWidth: '100%',
                   imageHeight: '100%',
                   objectFit: ImageFit.Cover,
@@ -7107,6 +7295,9 @@ struct MainMenuPage {
       }
 
       // 检查是否有待导入的文件
+      if (this.handlePendingExternalImportNavigation('route_params')) {
+        return;
+      }
       this.checkPendingFileImport();
     } catch (error) {
       logger.error(TAG, '处理路由参数失败', String(error));
@@ -7119,7 +7310,15 @@ struct MainMenuPage {
    */
   private onFileOpenNewWantTrigger(): void {
     logger.info(TAG, `📣 收到onNewWant文件打开通知，检查待处理文件`);
+    if (this.handlePendingExternalImportNavigation('file_open_trigger')) {
+      return;
+    }
     this.checkPendingFileImport();
+  }
+
+  onExternalImportNavigationTriggerChanged(): void {
+    logger.info(TAG, '📣 收到外部导入完成跳转通知');
+    this.handlePendingExternalImportNavigation('navigation_trigger');
   }
 
   /**
@@ -7137,6 +7336,47 @@ struct MainMenuPage {
       logger.info(TAG, `🔗 收到Deep Link跳转通知`);
       void this.handleDeepLinkIfPresent();
     }
+  }
+
+  private handlePendingExternalImportNavigation(source: string): boolean {
+    const payload: ExternalImportNavigationPayload | null = ExternalImportNavigationCoordinator.consumePendingNavigation();
+    if (!payload) {
+      return false;
+    }
+    const target = payload.target;
+    if (target.length <= 0) {
+      logger.warn(TAG, `外部导入完成跳转目标为空: source=${source}`);
+      return false;
+    }
+    const targetTab = this.resolveExternalImportTargetTab(target);
+    if (targetTab >= 0) {
+      this.currentTabIndex = targetTab;
+    }
+    setTimeout((): void => {
+      try {
+        this.pathStack.removeByName(target);
+        this.pathStack.pushPathByName(target, null);
+        logger.info(TAG, `✅ 已执行外部导入完成跳转: target=${target}, source=${source}, title=${payload.title}`);
+      } catch (error) {
+        logger.error(TAG, `外部导入完成跳转失败: target=${target}, reason=${String(error)}`);
+      }
+    }, 120);
+    return true;
+  }
+
+  private resolveExternalImportTargetTab(target: string): number {
+    if (target === ExternalImportNavigationTarget.NOVEL_SOURCE_MANAGEMENT) {
+      return TabIndex.BOOK_SOURCE;
+    }
+    if (target === ExternalImportNavigationTarget.SOURCE_MANAGEMENT) {
+      return TabIndex.SOURCE;
+    }
+    if (target === ExternalImportNavigationTarget.FONT_SETTINGS ||
+      target === ExternalImportNavigationTarget.BACKUP ||
+      target === ExternalImportNavigationTarget.DATA_MANAGEMENT) {
+      return TabIndex.SETTINGS;
+    }
+    return -1;
   }
 
   private finalizeTrackedTransferImport(
@@ -7177,6 +7417,10 @@ struct MainMenuPage {
    */
   private checkPendingFileImport(): void {
     try {
+      if (this.handlePendingExternalImportNavigation('pending_file_import')) {
+        return;
+      }
+
       // 优先检查AVIF文件打开
       const pendingAvifUri = AppStorage.get<string>('pendingAvifUri');
       if (pendingAvifUri) {
@@ -8615,6 +8859,9 @@ struct MainMenuPage {
         // 某些子页面回退到根页面时不会触发 onPageShow，这里兜底触发一次待导入检查
         setTimeout(() => {
           logger.info(TAG, '检测到导航栈返回首页，执行待导入文件兜底检查');
+          if (this.handlePendingExternalImportNavigation('nav_stack_return')) {
+            return;
+          }
           this.checkPendingFileImport();
         }, 80);
       }
@@ -8629,6 +8876,57 @@ struct MainMenuPage {
     }
   }
 
+  private scheduleLegadoCloudUpdateCheckAfterShow(trigger: string): void {
+    if (this.legadoCloudUpdateCheckScheduled) {
+      return;
+    }
+    this.legadoCloudUpdateCheckScheduled = true;
+    logger.info(TAG, `调度Legado书源引擎更新检查: ${trigger}`);
+    setTimeout(() => {
+      void this.runLegadoCloudUpdateCheckAfterShow(trigger);
+    }, 800);
+  }
+
+  private async runLegadoCloudUpdateCheckAfterShow(trigger: string): Promise<void> {
+    try {
+      const uiContext = this.getUIContext();
+      if (uiContext === undefined || uiContext === null) {
+        logger.warn(TAG, 'Legado书源引擎更新检查跳过: UIContext不可用');
+        return;
+      }
+      const hostContext = uiContext.getHostContext() as common.UIAbilityContext;
+      if (hostContext === undefined || hostContext === null) {
+        logger.warn(TAG, 'Legado书源引擎更新检查跳过: HostContext不可用');
+        return;
+      }
+
+      const sourceRepositoryManager = getNovelSourceRepositoryManager();
+      await sourceRepositoryManager.initialize(hostContext);
+      const runtimeAssetManager = getLegadoRuntimeAssetManager();
+      runtimeAssetManager.initialize(hostContext);
+
+      const sourceStatus: NovelSourceRepositoryUpdateStatus =
+        await sourceRepositoryManager.checkOfficialRepositoryUpdateIfNeeded(false);
+      const runtimeStatus: LegadoRuntimeRepositoryUpdateStatus =
+        await runtimeAssetManager.checkOfficialRepositoryUpdateIfNeeded(false);
+
+      AppStorage.setOrCreate('legadoSourceEngineSourceUpdateAvailable', sourceStatus.hasUpdate);
+      AppStorage.setOrCreate('legadoSourceEngineRuntimeUpdateAvailable', runtimeStatus.hasUpdate);
+      AppStorage.setOrCreate('legadoSourceEngineLastCheckAt', Date.now());
+
+      if (sourceStatus.hasUpdate || runtimeStatus.hasUpdate) {
+        logger.info(
+          TAG,
+          `Legado书源引擎检测到更新: source=${sourceStatus.hasUpdate}, runtime=${runtimeStatus.hasUpdate}, trigger=${trigger}`
+        );
+      } else {
+        logger.info(TAG, `Legado书源引擎更新检查完成，无需同步: trigger=${trigger}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `Legado书源引擎更新检查失败: ${String(error)}`);
+    }
+  }
+
   /**
    * 页面显示时静默刷新数据
    * 确保从任何页面返回时都能正确显示最新的阅读情况
@@ -8636,6 +8934,7 @@ struct MainMenuPage {
    */
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
+    this.scheduleLegadoCloudUpdateCheckAfterShow('onPageShow');
     void this.holdingAwarenessManager.resume();
     this.logHoldingAwareFloatingSearchDecision('页面显示');
     this.updateMainMenuGlobalBackgroundVisibility();
@@ -8660,6 +8959,9 @@ struct MainMenuPage {
     }
 
     // 检查是否有待处理的文件打开请求（来自onNewWant）
+    if (this.handlePendingExternalImportNavigation('page_show')) {
+      return;
+    }
     this.checkPendingFileImport();
 
     // 检查是否有卡片跳转请求（来自onNewWant或onCreate）
@@ -11467,11 +11769,124 @@ struct MainMenuPage {
   }
 
   private resolveMangaCoverAsset(manga: Manga): LibraryResolvedCoverAsset {
-    const raw = this.getPreferredMangaCoverPath(manga);
-    const cachedNetworkPixelMap = this.isNetworkUrl(raw)
-      ? getCoverImageManager().getCachedPixelMap(raw)
+    const raw: string = this.getPreferredMangaCoverPath(manga);
+    const resolvedOnlineCoverPath: string = this.getOnlineMangaResolvedCoverPathForDisplay(manga, raw);
+    const displayRaw: string = resolvedOnlineCoverPath.length > 0 ? resolvedOnlineCoverPath : raw;
+    const cachedNetworkPixelMap: image.PixelMap | null = this.isNetworkUrl(displayRaw)
+      ? getCoverImageManager().getCachedPixelMap(displayRaw)
       : null;
-    return this.buildLibraryResolvedCoverAsset(raw, $r('app.media.mangabook'), cachedNetworkPixelMap);
+    return this.buildLibraryResolvedCoverAsset(displayRaw, $r('app.media.mangabook'), cachedNetworkPixelMap);
+  }
+
+  private getOnlineMangaResolvedCoverPathForDisplay(manga: Manga, coverPath: string): string {
+    if (!manga) {
+      return '';
+    }
+    const normalizedCoverPath: string = coverPath ? coverPath.trim() : '';
+    if (normalizedCoverPath.length > 0 && !this.isNetworkUrl(normalizedCoverPath)) {
+      return '';
+    }
+    const sourceId: number | undefined = this.getParsedMangaSourceId(manga);
+    if (sourceId === undefined) {
+      return '';
+    }
+    const externalId: string = this.getMangaExternalIdForCoverCache(manga);
+    if (externalId.length <= 0) {
+      return '';
+    }
+
+    const cacheKey: string = this.buildOnlineMangaCoverCacheKey(sourceId, externalId, normalizedCoverPath);
+    const cachedPath: string | undefined = this.onlineMangaResolvedCoverPaths.get(cacheKey);
+    if (cachedPath) {
+      if (this.isNetworkUrl(cachedPath) || this.hasAccessibleLocalLibraryCover(cachedPath)) {
+        return cachedPath;
+      }
+      this.onlineMangaResolvedCoverPaths.delete(cacheKey);
+    }
+
+    const missTime: number | undefined = this.onlineMangaDiskCoverMissTimes.get(cacheKey);
+    const isRecentMiss: boolean = missTime !== undefined &&
+      Date.now() - missTime < MainMenuPage.ONLINE_MANGA_COVER_CACHE_MISS_RETRY_MS;
+    if (!this.onlineMangaDiskCoverLoadingKeys.has(cacheKey) && !isRecentMiss) {
+      this.onlineMangaDiskCoverLoadingKeys.add(cacheKey);
+      void this.resolveOnlineMangaCoverPathAsync(sourceId, externalId, normalizedCoverPath, cacheKey);
+    }
+    return '';
+  }
+
+  private getMangaExternalIdForCoverCache(manga: Manga): string {
+    const sourceExternalId: string = typeof manga.sourceInfo?.externalId === 'string'
+      ? manga.sourceInfo.externalId.trim()
+      : '';
+    if (sourceExternalId.length > 0) {
+      return sourceExternalId;
+    }
+    return manga.id ? String(manga.id).trim() : '';
+  }
+
+  private buildOnlineMangaCoverCacheKey(sourceId: number, externalId: string, coverPath: string): string {
+    return `${sourceId}|${externalId}|${coverPath}`;
+  }
+
+  private async resolveOnlineMangaCoverPathAsync(
+    sourceId: number,
+    externalId: string,
+    coverPath: string,
+    cacheKey: string
+  ): Promise<void> {
+    try {
+      const localPath: string | null = await CoverCacheManager.getInstance().getLocalCoverPath(sourceId, externalId);
+      if (localPath && this.hasAccessibleLocalLibraryCover(localPath)) {
+        this.onlineMangaResolvedCoverPaths.set(cacheKey, localPath);
+        this.onlineMangaDiskCoverMissTimes.delete(cacheKey);
+        this.ensureLocalLibraryCoverPrepared(localPath);
+        this.localLibraryCoverRenderVersion = this.localLibraryCoverRenderVersion + 1;
+        logger.info(
+          TAG,
+          `[封面修复] MainMenu 命中在线漫画磁盘封面: sourceId=${sourceId}, externalId=${externalId}, cover=${coverPath}, local=${localPath}`
+        );
+        return;
+      }
+
+      const persistedCoverPath: string = await this.loadOnlineMangaPersistedCoverPath(externalId);
+      if (persistedCoverPath.length > 0) {
+        this.onlineMangaResolvedCoverPaths.set(cacheKey, persistedCoverPath);
+        this.onlineMangaDiskCoverMissTimes.delete(cacheKey);
+        if (!this.isNetworkUrl(persistedCoverPath)) {
+          this.ensureLocalLibraryCoverPrepared(persistedCoverPath);
+        }
+        this.localLibraryCoverRenderVersion = this.localLibraryCoverRenderVersion + 1;
+        logger.info(
+          TAG,
+          `[封面修复] MainMenu 使用在线漫画持久化封面: sourceId=${sourceId}, externalId=${externalId}, cover=${persistedCoverPath}`
+        );
+        return;
+      }
+      this.onlineMangaDiskCoverMissTimes.set(cacheKey, Date.now());
+    } catch (error) {
+      logger.warn(TAG, `[封面修复] 查询在线漫画磁盘封面失败: sourceId=${sourceId}, externalId=${externalId}, ${String(error)}`);
+      this.onlineMangaDiskCoverMissTimes.set(cacheKey, Date.now());
+    } finally {
+      this.onlineMangaDiskCoverLoadingKeys.delete(cacheKey);
+    }
+  }
+
+  private async loadOnlineMangaPersistedCoverPath(externalId: string): Promise<string> {
+    let onlineComicInfo: OnlineComicInfo | null = await this.dataManager.getOnlineComicInfoById(externalId);
+    if (!onlineComicInfo) {
+      onlineComicInfo = await this.dataManager.getOnlineComicByExternalId(externalId);
+    }
+    if (!onlineComicInfo || !onlineComicInfo.coverUrl) {
+      return '';
+    }
+    const coverPath: string = onlineComicInfo.coverUrl.trim();
+    if (coverPath.length <= 0 || coverPath.startsWith('app.media.') || coverPath.startsWith('$r(')) {
+      return '';
+    }
+    if (this.isNetworkUrl(coverPath) || this.hasAccessibleLocalLibraryCover(coverPath)) {
+      return coverPath;
+    }
+    return '';
   }
 
   private resolvePdfEBookCoverAsset(manga: Manga): LibraryResolvedCoverAsset {
@@ -11512,6 +11927,22 @@ struct MainMenuPage {
    */
   private isMangaNetworkCover(manga: Manga): boolean {
     return this.resolveMangaCoverAsset(manga).isNetwork;
+  }
+
+  private shouldUseMangaCoverAvifRenderer(manga: Manga): boolean {
+    const asset: LibraryResolvedCoverAsset = this.resolveMangaCoverAsset(manga);
+    return asset.isNetwork && asset.useAvifRenderer && this.getMangaCoverAvifSource(manga).length > 0;
+  }
+
+  private getMangaCoverAvifSource(manga: Manga): string {
+    const asset: LibraryResolvedCoverAsset = this.resolveMangaCoverAsset(manga);
+    if (!asset.isNetwork || !asset.useAvifRenderer) {
+      return '';
+    }
+    if (asset.displayPath.length > 0) {
+      return asset.displayPath;
+    }
+    return typeof asset.source === 'string' ? asset.source : '';
   }
 
   /**
@@ -15100,9 +15531,9 @@ struct MainMenuPage {
           Column() {
             if (this.isKomgaRemoteProviderManga(manga)) {
               this.buildKomgaLibraryCoverImage(manga)
-            } else if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+            } else if (this.shouldUseMangaCoverAvifRenderer(manga)) {
               AvifImage({
-                src: manga.coverImagePath,
+                src: this.getMangaCoverAvifSource(manga),
                 imageWidth: '100%',
                 imageHeight: '100%',
                 objectFit: ImageFit.Cover,
@@ -22213,9 +22644,9 @@ struct MainMenuPage {
             offsetY: 4
           })
           .id(`library_manga_${manga.id}`)
-        } else if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+        } else if (this.shouldUseMangaCoverAvifRenderer(manga)) {
           AvifImage({
-            src: manga.coverImagePath,
+            src: this.getMangaCoverAvifSource(manga),
             imageWidth: '100%',
             imageHeight: '100%',
             objectFit: ImageFit.Cover,
@@ -23412,9 +23843,9 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       // 封面图片
       Stack() {
-        if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+        if (this.shouldUseMangaCoverAvifRenderer(manga)) {
           AvifImage({
-            src: manga.coverImagePath,
+            src: this.getMangaCoverAvifSource(manga),
             imageWidth: '100%',
             imageHeight: '100%',
             objectFit: ImageFit.Cover,
@@ -23926,6 +24357,69 @@ struct MainMenuPage {
     return bgSettings;
   }
 
+  private async resolveMangaIdentityForNavigation(
+    manga: Manga,
+    chapterId: string,
+    sourceId: number | undefined,
+    caller: string
+  ): Promise<void> {
+    try {
+      const identityInput = MangaIdentityResolver.getInstance().buildInput(
+        manga.id,
+        chapterId,
+        sourceId !== undefined ? sourceId : -1,
+        sourceId !== undefined ? String(MangaReaderContentType.OnlineUndownloaded) : String(MangaReaderContentType.Local),
+        caller
+      );
+      identityInput.sourceName = this.getMangaSourceDisplayName(manga);
+      identityInput.sourcePkg = manga.sourceInfo?.sourcePkg || '';
+      const identityResult: MangaIdentityResolveResult = await MangaIdentityResolver.getInstance().resolve(identityInput);
+      if (!identityResult.success) {
+        logger.warn(TAG, `MainMenu漫画身份未解析，继续使用原始ID: ${identityResult.detail}`);
+        return;
+      }
+      const recoveredLocalWithoutComic: boolean = identityResult.comicInfo === null &&
+        identityResult.onlineComicInfo === null &&
+        identityResult.reason.indexOf('local_manga_missing_by') >= 0;
+
+      if (!recoveredLocalWithoutComic &&
+        identityResult.canonicalMangaId.length > 0 &&
+        identityResult.canonicalMangaId !== manga.id) {
+        logger.info(TAG, `MainMenu漫画ID已校准: ${manga.id} -> ${identityResult.canonicalMangaId}`);
+        manga.id = identityResult.canonicalMangaId;
+      } else if (recoveredLocalWithoutComic) {
+        logger.warn(TAG, `MainMenu检测到本地漫画父记录缺失，保留书库ID: ${manga.id}, resolved=${identityResult.canonicalMangaId}`);
+      }
+      if (identityResult.canonicalChapterId.length > 0 &&
+        identityResult.inputChapterId.length > 0 &&
+        manga.readingProgress.currentChapterId === identityResult.inputChapterId) {
+        manga.readingProgress.currentChapterId = identityResult.canonicalChapterId;
+      }
+      if (identityResult.sourceId > 0) {
+        if (manga.sourceInfo) {
+          manga.sourceInfo.sourceId = String(identityResult.sourceId);
+          if (identityResult.externalMangaId.length > 0) {
+            manga.sourceInfo.externalId = identityResult.externalMangaId;
+            if (!manga.sourceInfo.sourceUrl || manga.sourceInfo.sourceUrl.length <= 0) {
+              manga.sourceInfo.sourceUrl = identityResult.externalMangaId;
+            }
+          }
+        } else {
+          manga.sourceInfo = {
+            sourceName: identityResult.onlineComicInfo?.sourceName || identityInput.sourceName,
+            sourceUrl: identityResult.externalMangaId,
+            sourceId: String(identityResult.sourceId),
+            sourcePkg: identityResult.onlineComicInfo?.sourcePkg || identityInput.sourcePkg,
+            sourceLanguage: 'zh',
+            requiresLogin: false
+          };
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `MainMenu漫画身份解析异常，继续原始导航: ${String(error)}`);
+    }
+  }
+
   /**
    * 打开漫画阅读器（带翻开动画）
    * @param manga 漫画对象
@@ -23961,12 +24455,20 @@ struct MainMenuPage {
         return;
       }
 
-      const sourceIdNum = this.getParsedMangaSourceId(manga);
+      let sourceIdNum = this.getParsedMangaSourceId(manga);
+      await this.resolveMangaIdentityForNavigation(
+        manga,
+        manga.readingProgress.currentChapterId || '',
+        sourceIdNum,
+        'MainMenuPage.openMangaReaderWithAnimation'
+      );
+      sourceIdNum = this.getParsedMangaSourceId(manga);
       const hasWebSource = sourceIdNum !== undefined;
       const sourceNameVal = this.getMangaSourceDisplayName(manga);
 
       // 确定恢复目标
-      const target = await this.determineResumeTarget(manga);
+      let target = await this.determineResumeTarget(manga);
+      target = await this.normalizeOnlineMangaResumeTarget(manga, target);
       
       // 准备阅读器参数
       let readerParams: MangaReaderPageParams;
@@ -23977,6 +24479,7 @@ struct MainMenuPage {
           const firstLoadedChapter = this.getFirstLoadedMangaChapter(manga);
           if (firstLoadedChapter) {
             readerParams = {
+              manga: manga,
               mangaId: manga.id,
               chapterId: firstLoadedChapter.id,
               pageIndex: 0,
@@ -23985,7 +24488,8 @@ struct MainMenuPage {
                 ? MangaReaderContentType.OnlineDownloaded
                 : MangaReaderContentType.OnlineUndownloaded,
               sourceId: sourceIdNum,
-              sourceName: sourceNameVal
+              sourceName: sourceNameVal,
+              sourcePkg: manga.sourceInfo?.sourcePkg
             } as MangaReaderPageParams;
           } else {
             const onlineChapterInfos = await this.dataManager.getOnlineComicChapters(manga.id);
@@ -24006,13 +24510,15 @@ struct MainMenuPage {
                 : MangaReaderContentType.OnlineUndownloaded;
 
               readerParams = {
+                manga: manga,
                 mangaId: manga.id,
                 chapterId: firstChapterId,
                 pageIndex: 0,
                 fromPage: 'MainMenuPage',
                 contentType: ct,
                 sourceId: sourceIdNum,
-                sourceName: sourceNameVal
+                sourceName: sourceNameVal,
+                sourcePkg: manga.sourceInfo?.sourcePkg
               } as MangaReaderPageParams;
             } else {
               this.showToast('未找到章节，无法进入阅读器');
@@ -24023,6 +24529,7 @@ struct MainMenuPage {
           const firstLoadedChapter = this.getFirstLoadedMangaChapter(manga);
           if (firstLoadedChapter) {
             readerParams = {
+              manga: manga,
               mangaId: manga.id,
               chapterId: firstLoadedChapter.id,
               pageIndex: 0,
@@ -24044,6 +24551,7 @@ struct MainMenuPage {
                 }
               }
               readerParams = {
+                manga: manga,
                 mangaId: manga.id,
                 chapterId: firstChapterId,
                 pageIndex: 0,
@@ -24077,13 +24585,15 @@ struct MainMenuPage {
           }
         }
         readerParams = {
+          manga: manga,
           mangaId: manga.id,
           chapterId: target.chapterId,
           pageIndex: target.pageIndex,
           fromPage: 'MainMenuPage',
           contentType: ct2,
           sourceId: sourceIdNum,
-          sourceName: sourceNameVal
+          sourceName: sourceNameVal,
+          sourcePkg: manga.sourceInfo?.sourcePkg
         } as MangaReaderPageParams;
       }
 
@@ -25740,9 +26250,9 @@ struct MainMenuPage {
         // 封面图片
         Stack() {
           Column() {
-            if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+            if (this.shouldUseMangaCoverAvifRenderer(manga)) {
               AvifImage({
-                src: manga.coverImagePath,
+                src: this.getMangaCoverAvifSource(manga),
                 imageWidth: '100%',
                 imageHeight: '100%',
                 objectFit: ImageFit.Cover,
@@ -25914,9 +26424,9 @@ struct MainMenuPage {
         // 封面区域
         Stack() {
           Column() {
-            if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+            if (this.shouldUseMangaCoverAvifRenderer(manga)) {
               AvifImage({
-                src: manga.coverImagePath,
+                src: this.getMangaCoverAvifSource(manga),
                 imageWidth: '100%',
                 imageHeight: '100%',
                 objectFit: ImageFit.Cover,
@@ -26252,7 +26762,14 @@ struct MainMenuPage {
         return;
       }
 
-      const sourceId = this.getParsedMangaSourceId(manga);
+      let sourceId = this.getParsedMangaSourceId(manga);
+      await this.resolveMangaIdentityForNavigation(
+        manga,
+        manga.readingProgress.currentChapterId || '',
+        sourceId,
+        'MainMenuPage.openMangaDetail'
+      );
+      sourceId = this.getParsedMangaSourceId(manga);
       const rawCoverPath: string = String(manga.coverImagePath || '').trim();
       const cachedCoverPath: string | undefined = rawCoverPath.length > 0
         && !this.isNetworkUrl(rawCoverPath)
@@ -26276,7 +26793,8 @@ struct MainMenuPage {
           cachedTitle: manga.title,
           cachedCoverPath: cachedCoverPath,
           cachedCover: rawCoverPath,
-          cachedAuthor: cachedAuthor
+          cachedAuthor: cachedAuthor,
+          cachedManga: manga
         };
         this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
         logger.info(TAG, `打开统一详情页(漫画): ${manga.title}`);
@@ -26333,28 +26851,20 @@ struct MainMenuPage {
         return;
       }
 
-      const comicInfo: ComicInfo | null = await this.dataManager.getComicById(manga.id);
-      let sourceIdNum: number = -1;
-      let hasWebSource: boolean = false;
-      if (comicInfo && typeof comicInfo.sourceId === 'string' && comicInfo.sourceId.length > 0) {
-        const parsed: number = Number(comicInfo.sourceId);
-        if (!isNaN(parsed)) {
-          sourceIdNum = parsed;
-          hasWebSource = true;
-          logger.info(TAG, `漫画 ${manga.title} 的sourceId: ${sourceIdNum}`);
-        }
-      }
-      let sourceNameVal: string = 'LOCAL';
-      if (hasWebSource) {
-        const srcRecord: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(sourceIdNum);
-        if (srcRecord && typeof srcRecord.name === 'string' && srcRecord.name.length > 0) {
-          sourceNameVal = srcRecord.name;
-        } else {
-          sourceNameVal = 'WEBVIEW';
-        }
-      }
+      let parsedSourceId = this.getParsedMangaSourceId(manga);
+      await this.resolveMangaIdentityForNavigation(
+        manga,
+        manga.readingProgress.currentChapterId || '',
+        parsedSourceId,
+        'MainMenuPage.openMangaReader'
+      );
+      parsedSourceId = this.getParsedMangaSourceId(manga);
+      const sourceIdNum: number = parsedSourceId !== undefined ? parsedSourceId : -1;
+      const hasWebSource: boolean = parsedSourceId !== undefined;
+      const sourceNameVal: string = this.getMangaSourceDisplayName(manga);
 
-      const target = await this.determineResumeTarget(manga);
+      let target = await this.determineResumeTarget(manga);
+      target = await this.normalizeOnlineMangaResumeTarget(manga, target);
       if (!target) {
         // [重构] 根据是否为在线漫画选择加载方法
         if (hasWebSource) {
@@ -26375,6 +26885,7 @@ struct MainMenuPage {
               : MangaReaderContentType.OnlineUndownloaded;
 
             const paramsFallback: MangaReaderPageParams = {
+              manga: manga,
               mangaId: manga.id,
               chapterId: firstChapterId,
               pageIndex: 0,
@@ -26382,6 +26893,7 @@ struct MainMenuPage {
               contentType: ct,
               sourceId: sourceIdNum,
               sourceName: sourceNameVal,
+              sourcePkg: manga.sourceInfo?.sourcePkg,
               readerTitle: manga.title
             } as MangaReaderPageParams;
             openMangaReaderInIsolatedAbility(this.getUIContext(), this.pathStack, paramsFallback, TAG);
@@ -26407,6 +26919,7 @@ struct MainMenuPage {
             }
             const ct: MangaReaderContentType = MangaReaderContentType.Local;
             const paramsFallback: MangaReaderPageParams = {
+              manga: manga,
               mangaId: manga.id,
               chapterId: firstChapterId,
               pageIndex: 0,
@@ -26438,6 +26951,7 @@ struct MainMenuPage {
         }
       }
       const params: MangaReaderPageParams = {
+        manga: manga,
         mangaId: manga.id,
         chapterId: target.chapterId,
         pageIndex: target.pageIndex,
@@ -26445,6 +26959,7 @@ struct MainMenuPage {
         contentType: ct2,
         sourceId: hasWebSource ? sourceIdNum : undefined,
         sourceName: sourceNameVal,
+        sourcePkg: manga.sourceInfo?.sourcePkg,
         readerTitle: manga.title
       } as MangaReaderPageParams;
 
@@ -26509,6 +27024,50 @@ struct MainMenuPage {
       logger.warn(TAG, String(err2));
     }
     return null;
+  }
+
+  private async normalizeOnlineMangaResumeTarget(manga: Manga, target: ResumeTarget | null): Promise<ResumeTarget | null> {
+    const sourceId = this.getParsedMangaSourceId(manga);
+    if (sourceId === undefined) {
+      return target;
+    }
+
+    if (target && target.chapterId && target.chapterId.length > 0) {
+      const loadedChapter = this.findLoadedMangaChapter(manga, target.chapterId);
+      if (loadedChapter) {
+        return target;
+      }
+      try {
+        const onlineChapter = await this.dataManager.getOnlineChapterById(target.chapterId);
+        if (onlineChapter) {
+          return target;
+        }
+      } catch (error) {
+        logger.warn(TAG, `校验在线漫画历史章节失败: manga=${manga.title}, chapterId=${target.chapterId}, ${String(error)}`);
+      }
+      logger.warn(TAG, `在线漫画历史章节已失效，将回退到当前章节表第一章: manga=${manga.title}, chapterId=${target.chapterId}`);
+    }
+
+    try {
+      const onlineChapterInfos = await this.dataManager.getOnlineComicChapters(manga.id);
+      if (onlineChapterInfos && onlineChapterInfos.length > 0) {
+        let firstChapterInfo = onlineChapterInfos[0];
+        for (let i = 1; i < onlineChapterInfos.length; i++) {
+          const current = onlineChapterInfos[i];
+          if (current.chapterNumber < firstChapterInfo.chapterNumber) {
+            firstChapterInfo = current;
+          }
+        }
+        return {
+          chapterId: firstChapterInfo.id,
+          pageIndex: 0
+        } as ResumeTarget;
+      }
+    } catch (error) {
+      logger.warn(TAG, `回退在线漫画第一章失败: manga=${manga.title}, ${String(error)}`);
+    }
+
+    return target;
   }
 
   /**
@@ -28777,11 +29336,18 @@ struct MainMenuPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        // 箭头图标
-        SymbolGlyph($r('sys.symbol.arrow_right'))
-          .fontSize(20)
-          .fontColor([this.getSettingsAnalyticsCardChevronColor()])
-          .opacity(this.getSettingsAnalyticsCardChevronOpacity())
+        // 书源型图源仅进入搜索。
+        if (this.isBookStyleSource(source)) {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(20)
+            .fontColor([this.getSettingsAnalyticsCardChevronColor()])
+            .opacity(this.getSettingsAnalyticsCardChevronOpacity())
+        } else {
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(20)
+            .fontColor([this.getSettingsAnalyticsCardChevronColor()])
+            .opacity(this.getSettingsAnalyticsCardChevronOpacity())
+        }
       }
       .width('100%')
       .padding(12)
@@ -28833,90 +29399,132 @@ struct MainMenuPage {
   @Builder
   buildSourceContextMenu(source: SourceInfo) {
     Column({ space: 0 }) {
-      // 编辑按钮
-      Button({ type: ButtonType.Normal }) {
-        Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.square_and_pencil'))
-            .fontSize(18)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('编辑')
-            .fontSize(15)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      if (this.isBookStyleSource(source)) {
+        Button({ type: ButtonType.Normal }) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('搜索')
+              .fontSize(15)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Start)
         }
         .width('100%')
-        .justifyContent(FlexAlign.Start)
-      }
-      .width('100%')
-      .height(44)
-      .padding({ left: 16, right: 16 })
-      .backgroundColor(this.getSettingsAnalyticsCardBackground())
-      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-      .border({
-        width: this.getSettingsAnalyticsCardBorderWidth(),
-        color: this.getSettingsAnalyticsCardBorderColor()
-      })
-      .borderRadius(10)
-      .shadow({
-        radius: this.getSettingsAnalyticsCardRadius(),
-        color: this.getSettingsAnalyticsCardShadowColor(),
-        offsetX: 0,
-        offsetY: 2
-      })
-      .clip(true)
-      .onClick(() => {
-        logger.info(TAG, '点击编辑按钮');
-        const sourceToEdit = this.sourceContextMenu.item;
-        this.hideSourceContextMenu();
-        if (sourceToEdit) {
-          this.editSourceConfig(sourceToEdit);
-        }
-      })
-
-      Divider()
-        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
-
-      // 删除按钮
-      Button({ type: ButtonType.Normal }) {
-        Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.trash'))
-            .fontSize(18)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
-          Text('删除')
-            .fontSize(15)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+        .height(44)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(10)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
+        .onClick(() => {
+          logger.info(TAG, '点击书源型图源搜索按钮');
+          const sourceToSearch = this.sourceContextMenu.item;
+          this.hideSourceContextMenu();
+          if (sourceToSearch) {
+            void this.openSourceDetailWithSearch(sourceToSearch);
+          }
+        })
+      } else {
+        // 编辑按钮
+        Button({ type: ButtonType.Normal }) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.square_and_pencil'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('编辑')
+              .fontSize(15)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Start)
         }
         .width('100%')
-        .justifyContent(FlexAlign.Start)
-      }
-      .width('100%')
-      .height(44)
-      .padding({ left: 16, right: 16 })
-      .backgroundColor(this.getSettingsAnalyticsCardBackground())
-      .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
-      .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
-      .border({
-        width: this.getSettingsAnalyticsCardBorderWidth(),
-        color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
-      })
-      .borderRadius(10)
-      .shadow({
-        radius: this.getSettingsAnalyticsCardRadius(),
-        color: this.getSettingsAnalyticsCardShadowColor(),
-        offsetX: 0,
-        offsetY: 2
-      })
-      .clip(true)
-      .onClick(() => {
-        logger.info(TAG, '点击删除按钮');
-        const sourceToDelete = this.sourceContextMenu.item;
-        this.hideSourceContextMenu();
-        if (sourceToDelete) {
-          this.confirmDeleteSource(sourceToDelete);
+        .height(44)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: this.getSettingsAnalyticsCardBorderColor()
+        })
+        .borderRadius(10)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
+        .onClick(() => {
+          logger.info(TAG, '点击编辑按钮');
+          const sourceToEdit = this.sourceContextMenu.item;
+          this.hideSourceContextMenu();
+          if (sourceToEdit) {
+            this.editSourceConfig(sourceToEdit);
+          }
+        })
+
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+        // 删除按钮
+        Button({ type: ButtonType.Normal }) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+            Text('删除')
+              .fontSize(15)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Start)
         }
-      })
+        .width('100%')
+        .height(44)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(this.getSettingsAnalyticsCardBackground())
+        .backgroundBlurStyle(this.getSettingsAnalyticsCardBlurStyle(), this.getSettingsAnalyticsCardBlurOptions())
+        .backgroundEffect(this.getSettingsAnalyticsCardBackgroundEffect())
+        .border({
+          width: this.getSettingsAnalyticsCardBorderWidth(),
+          color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
+        })
+        .borderRadius(10)
+        .shadow({
+          radius: this.getSettingsAnalyticsCardRadius(),
+          color: this.getSettingsAnalyticsCardShadowColor(),
+          offsetX: 0,
+          offsetY: 2
+        })
+        .clip(true)
+        .onClick(() => {
+          logger.info(TAG, '点击删除按钮');
+          const sourceToDelete = this.sourceContextMenu.item;
+          this.hideSourceContextMenu();
+          if (sourceToDelete) {
+            this.confirmDeleteSource(sourceToDelete);
+          }
+        })
+      }
     }
     .width(120)
     .borderRadius(8)
@@ -29026,8 +29634,9 @@ struct MainMenuPage {
           this.openSourceDetail(source);
         })
 
-          // 快捷操作按钮：按图源实际支持的工作流显示
-          Column({ space: 4 }) {
+        // 快捷操作按钮：书源型图源只显示搜索入口。
+        Column({ space: 4 }) {
+          if (!this.isBookStyleSource(source)) {
             if (source.supportsPopular) {
               Row({ space: 4 }) {
                 SymbolGlyph($r('sys.symbol.star'))
@@ -29101,7 +29710,27 @@ struct MainMenuPage {
                 .height(24)
             }
 
-          // 搜索按钮
+            // 设置按钮
+            Row({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.gearshape'))
+                .fontSize(12)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+              Text('管理')
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.getSettingsAnalyticsCardTitleColor())
+            }
+            .width('100%')
+            .height(24)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(6)
+            .onClick(() => {
+              this.openSourceSettings(source);
+            })
+          }
+
+          // 搜索按钮：书源型图源在本卡片中只保留此功能。
           Row({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.magnifyingglass'))
               .fontSize(12)
@@ -29118,25 +29747,6 @@ struct MainMenuPage {
           .borderRadius(6)
           .onClick(() => {
             this.openSourceDetailWithSearch(source);
-          })
-
-          // 设置按钮
-          Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.gearshape'))
-              .fontSize(12)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-            Text('管理')
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor(this.getSettingsAnalyticsCardTitleColor())
-          }
-          .width('100%')
-          .height(24)
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .borderRadius(6)
-          .onClick(() => {
-            this.openSourceSettings(source);
           })
         }
         .width('100%')
@@ -29467,6 +30077,8 @@ struct MainMenuPage {
         ReadAloudPlayerPage()
       } else if (name === 'NovelSourceManagementPage') {
         NovelSourceManagementPage()
+      } else if (name === 'NovelSourceEnginePage') {
+        NovelSourceEnginePage()
       } else if (name === 'NovelExplorePage') {
         NovelExplorePage()
       } else if (name === 'NovelSourceLoginPage') {
@@ -31471,6 +32083,7 @@ struct MainMenuPage {
       // 注意：由于组件引用限制，这里暂时无法直接获取WebViewContainer实例
       // 需要通过GlobalWebViewContainer的静态方法来管理
       logger.info(TAG, '全局WebView容器已创建');
+      this.scheduleLegadoCloudUpdateCheckAfterShow('navigation_onAppear');
     })
       
     // 书籍翻开/关闭过渡动画覆盖层（放在Navigation外部的最顶层）

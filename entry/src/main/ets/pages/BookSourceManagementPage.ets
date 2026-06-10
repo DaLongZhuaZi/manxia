@@ -654,10 +654,13 @@ export struct BookSourceManagementPage {
   buildSearchBar() {
     Column({ space: 12 }) {
       Row({ space: 8 }) {
-        Search({ placeholder: '搜索书源名称、URL或描述' })
+        Search({ placeholder: '搜索书源名称、URL或描述', value: this.searchText })
           .searchButton('搜索')
           .layoutWeight(1)
           .onChange((value: string) => {
+            this.searchSources(value);
+          })
+          .onSubmit((value: string) => {
             this.searchSources(value);
           })
         

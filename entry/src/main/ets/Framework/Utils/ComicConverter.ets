@@ -898,6 +898,7 @@ export class ComicConverter {
         sourceId: onlineComic.sourceId,
         sourceName: resolvedSourceName,
         sourcePkg: resolvedSourcePkg || undefined,
+        externalId: onlineComic.externalId,
         sourceUrl: '',
         sourceLanguage: 'zh-CN',
         requiresLogin: false
@@ -1014,6 +1015,7 @@ export class ComicConverter {
         sourceId: onlineComic.sourceId,
         sourceName: resolvedSourceName,
         sourcePkg: resolvedSourcePkg || undefined,
+        externalId: onlineComic.externalId,
         sourceUrl: '',
         sourceLanguage: 'zh-CN',
         requiresLogin: false

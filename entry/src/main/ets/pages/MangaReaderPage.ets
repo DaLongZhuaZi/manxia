@@ -49,9 +49,15 @@ import {
 import { MangaViewer } from '../components/MangaViewer';
 import { MangaReaderSettings } from '../components/MangaReaderSettings';
 import { ImageCacheManager, RequestHeaderEntry, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
-import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
+import {
+  OnlineImageLoader,
+  OnlineLoadOptions,
+  RequestHeaderEntry as OnlineRequestHeaderEntry,
+  RequestHeaders as OnlineRequestHeaders
+} from '../Framework/Cache/OnlineImageLoader';
 import { PreloadDebugOverlay, PreloadDebugInfo } from '../components/PreloadDebugOverlay';
 import fs from '@ohos.file.fs';
+import { image } from '@kit.ImageKit';
 import { MangaQuickSettings } from '../components/MangaQuickSettings';
 import { MangaReaderChapterList } from '../components/MangaReaderChapterList';
 import { MangaInteractionOverlay, MangaInteractionOverlayParams } from '../components/MangaInteractionOverlay';
@@ -129,6 +135,7 @@ import {
   MangaChapterResolveGuardInput,
   MangaChapterResolveGuardPlan
 } from '../Framework/Reader/MangaChapterResolveGuard';
+import { MangaIdentityResolver, MangaIdentityResolveResult } from '../Framework/Reader/MangaIdentityResolver';
 import { distributedReadingService } from '../Framework/Distributed/DistributedReadingService';
 import { distributedDataSyncManager, SyncReadingState } from '../Framework/Distributed/DistributedDataSyncManager';
 
@@ -363,6 +370,20 @@ interface MangaBookmarkContext {
   currentPage: number;
   totalPages: number;
   chapterTitle: string;
+}
+
+interface CurrentPageImageSelection {
+  chapter: MangaChapter;
+  page: MangaPage;
+  pageIndex: number;
+}
+
+interface ReaderImageFileInfo {
+  filePath: string;
+  fileUri: string;
+  fileExtension: string;
+  uniformDataType: string;
+  title: string;
 }
 
 type RemoteDataChangedCallback = (state: SyncReadingState) => void;
@@ -1980,6 +2001,38 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
     return false;
   }
 
+  private hasUnresolvedLegadoImageRulePages(pages: MangaPage[]): boolean {
+    if (!pages || pages.length <= 0) {
+      return false;
+    }
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      if (!page) {
+        continue;
+      }
+      const imageUrl = page.imageUrl || page.imagePath || '';
+      if (this.isUnresolvedLegadoImageRuleUrl(imageUrl)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isUsableCachedOnlineImageUrl(imageUrl: string): boolean {
+    return imageUrl.trim().length > 0 && !this.isUnresolvedLegadoImageRuleUrl(imageUrl);
+  }
+
+  private isUnresolvedLegadoImageRuleUrl(imageUrl: string): boolean {
+    if (!imageUrl || imageUrl.trim().length <= 0) {
+      return false;
+    }
+    const normalized = imageUrl.trim().toLowerCase();
+    if (normalized.indexOf('img@src') >= 0 || normalized.indexOf('img@data-src') >= 0) {
+      return true;
+    }
+    return /\/[a-z][a-z0-9_-]*@(?:src|data-src|href)(?:$|[?#])/i.test(normalized);
+  }
+
   private isKomiicSourceForReader(): boolean {
     let baseUrl = '';
     const engine: MangaSourceEngine | null = this.mangaEngine;
@@ -3363,6 +3416,152 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
     return mangaPages;
   }
 
+  private resolveLocalPageSourceType(imagePath: string, imageUrl: string): ImageSourceType {
+    const pathValue: string = imagePath.length > 0 ? imagePath : imageUrl;
+    if (pathValue.startsWith('http://') || pathValue.startsWith('https://')) {
+      return ImageSourceType.NETWORK;
+    }
+    if (pathValue.startsWith('/') || pathValue.startsWith('file://') ||
+      pathValue.includes('data/') || pathValue.includes('storage/')) {
+      return ImageSourceType.LOCAL;
+    }
+    if (pathValue.startsWith('app.media.')) {
+      return ImageSourceType.RESOURCE;
+    }
+    return ImageSourceType.RAWFILE;
+  }
+
+  private convertLocalPageInfoToMangaPage(pageInfo: PageInfo, pageIndex: number): MangaPage {
+    const localPath: string = pageInfo.localPath || '';
+    const imageUrl: string = pageInfo.imageUrl || localPath;
+    const imagePath: string = localPath.length > 0 ? localPath : imageUrl;
+    const page: MangaPage = {
+      id: pageInfo.id,
+      index: pageIndex,
+      sourceType: this.resolveLocalPageSourceType(imagePath, imageUrl),
+      imagePath: imagePath,
+      imageUrl: imageUrl,
+      localPath: localPath.length > 0 ? localPath : undefined,
+      width: pageInfo.width,
+      height: pageInfo.height,
+      fileSize: pageInfo.fileSize,
+      isLoaded: false
+    };
+    return page;
+  }
+
+  private convertLocalChapterInfoToMangaChapter(
+    chapterInfo: ChapterInfo,
+    chapterIndex: number,
+    pages: MangaPage[]
+  ): MangaChapter {
+    const chapter: MangaChapter = {
+      id: chapterInfo.id,
+      title: chapterInfo.title,
+      chapterNumber: chapterInfo.index || chapterIndex,
+      pages: pages,
+      totalPages: chapterInfo.pageCount > 0 ? chapterInfo.pageCount : pages.length,
+      publishDate: chapterInfo.publishTime || Date.now(),
+      language: 'zh-CN',
+      scanlationGroup: '',
+      isDownloaded: chapterInfo.isDownloaded || false,
+      downloadProgress: chapterInfo.isDownloaded ? 100 : 0,
+      downloadStatus: chapterInfo.isDownloaded ? DownloadStatus.COMPLETED : DownloadStatus.PENDING,
+      localPath: chapterInfo.downloadPath,
+      externalId: chapterInfo.externalId
+    };
+    return chapter;
+  }
+
+  private async hydrateLocalMangaFromDatabase(manga: Manga, params: MangaReaderPageParams): Promise<void> {
+    const mangaId: string = params.mangaId || manga.id;
+    const requestedChapterId: string = params.chapterId || manga.readingProgress.currentChapterId || '';
+    let hydratedComicId: string = mangaId;
+    let chapters: ChapterInfo[] = [];
+
+    try {
+      if (mangaId.length > 0) {
+        chapters = await DataManager.getInstance().getComicChapters(mangaId);
+      }
+    } catch (error) {
+      logger.warn(TAG, `本地漫画按漫画ID加载章节失败: mangaId=${mangaId}, ${String(error)}`);
+      chapters = [];
+    }
+
+    if (chapters.length <= 0 && requestedChapterId.length > 0) {
+      try {
+        const chapterById: ChapterInfo | null = await DataManager.getInstance().getChapterById(requestedChapterId);
+        if (chapterById) {
+          if (chapterById.comicId.length > 0) {
+            try {
+              const siblingChapters: ChapterInfo[] = await DataManager.getInstance().getComicChapters(chapterById.comicId);
+              if (siblingChapters.length > 0) {
+                chapters = siblingChapters;
+                params.mangaId = chapterById.comicId;
+                hydratedComicId = chapterById.comicId;
+              } else {
+                chapters.push(chapterById);
+              }
+            } catch (siblingError) {
+              logger.warn(TAG, `本地漫画按章节父ID加载整本章节失败: comicId=${chapterById.comicId}, ${String(siblingError)}`);
+              chapters.push(chapterById);
+            }
+          } else {
+            chapters.push(chapterById);
+          }
+        }
+      } catch (error) {
+        logger.warn(TAG, `本地漫画按章节ID恢复章节失败: chapterId=${requestedChapterId}, ${String(error)}`);
+      }
+    }
+
+    if (chapters.length <= 0) {
+      logger.warn(TAG, `本地漫画未能从数据库水合章节，保留传入章节: mangaId=${mangaId}, cachedChapters=${manga.chapters.length}`);
+      return;
+    }
+
+    const pageMap: Map<string, PageInfo[]> = new Map<string, PageInfo[]>();
+    for (let i: number = 0; i < chapters.length; i++) {
+      const chapterInfo = chapters[i];
+      try {
+        const pages: PageInfo[] = await DataManager.getInstance().getChapterPages(chapterInfo.id);
+        pageMap.set(chapterInfo.id, pages);
+      } catch (error) {
+        logger.warn(TAG, `本地漫画章节页面加载失败: chapterId=${chapterInfo.id}, ${String(error)}`);
+        pageMap.set(chapterInfo.id, []);
+      }
+    }
+
+    const hydratedChapters: MangaChapter[] = [];
+    for (let i: number = 0; i < chapters.length; i++) {
+      const chapterInfo = chapters[i];
+      const pageInfos: PageInfo[] = pageMap.get(chapterInfo.id) || [];
+      const pages: MangaPage[] = [];
+      for (let pageIndex: number = 0; pageIndex < pageInfos.length; pageIndex++) {
+        pages.push(this.convertLocalPageInfoToMangaPage(pageInfos[pageIndex], pageIndex));
+      }
+      hydratedChapters.push(this.convertLocalChapterInfoToMangaChapter(chapterInfo, i, pages));
+    }
+
+    manga.chapters = hydratedChapters;
+    if (params.chapterId && params.chapterId.length > 0) {
+      const matchedByExternal = manga.chapters.find((chapter: MangaChapter): boolean =>
+        chapter.externalId === params.chapterId
+      );
+      if (matchedByExternal) {
+        params.chapterId = matchedByExternal.id;
+      }
+    }
+    if (!this.isNetworkConfigReady) {
+      this.isNetworkConfigReady = true;
+    }
+    this.recordMangaReadFlowRecovered(
+      'local_manga_hydrated_from_database',
+      `mangaId=${mangaId}, hydratedComicId=${hydratedComicId}, chapters=${hydratedChapters.length}`
+    );
+    logger.info(TAG, `本地漫画已从数据库水合: mangaId=${mangaId}, hydratedComicId=${hydratedComicId}, chapters=${hydratedChapters.length}`);
+  }
+
   private isCbzArchivePath(path: string): boolean {
     return path.toLowerCase().endsWith('.cbz');
   }
@@ -3378,9 +3577,9 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
 
     // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
     // 1. 判定是否为 Komiic (Source ID 6 或 14，或名称包含 Komiic)
-      const srcId = params.sourceId || this.currentSourceId;
+      let srcId = params.sourceId || this.currentSourceId;
       const srcName = params.sourceName || params.manga?.sourceInfo?.sourceName || '';
-      const isKomiic = (srcId === 6 || srcId === 14) || srcName.toLowerCase().includes('komiic');
+      let isKomiic = (srcId === 6 || srcId === 14) || srcName.toLowerCase().includes('komiic');
 
       if (params.sourceId && typeof params.sourceId === 'number' && params.sourceId > 0) {
         this.currentSourceId = params.sourceId;
@@ -3408,6 +3607,95 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
     // 尝试从 SourceURL 获取外部 Manga ID (针对内部 ID 格式)
     let targetMangaId = params.mangaId || (params.manga ? params.manga.id : '');
     let targetChapterId = params.chapterId || '';
+
+    let resolvedIdentity: MangaIdentityResolveResult | null = null;
+    const identityMangaId: string = targetMangaId.length > 0
+      ? targetMangaId
+      : (params.manga?.sourceInfo?.externalId || params.manga?.sourceInfo?.sourceUrl || '');
+    const identityInput = MangaIdentityResolver.getInstance().buildInput(
+      identityMangaId,
+      targetChapterId,
+      srcId && typeof srcId === 'number' ? srcId : -1,
+      String(params.contentType || ''),
+      'MangaReaderPage.doActualInitialization'
+    );
+    identityInput.sourceName = srcName;
+    identityInput.sourcePkg = params.sourcePkg || params.manga?.sourceInfo?.sourcePkg || '';
+    const identityResult: MangaIdentityResolveResult = await MangaIdentityResolver.getInstance().resolve(identityInput);
+    if (identityResult.success) {
+      resolvedIdentity = identityResult;
+      const previousMangaId: string = params.mangaId || params.manga?.id || '';
+      const previousChapterId: string = params.chapterId || '';
+      const recoveredLocalWithoutComic: boolean = identityResult.comicInfo === null &&
+        identityResult.onlineComicInfo === null &&
+        identityResult.reason.indexOf('local_manga_missing_by') >= 0;
+      if (identityResult.canonicalMangaId.length > 0 && !recoveredLocalWithoutComic) {
+        params.mangaId = identityResult.canonicalMangaId;
+        targetMangaId = identityResult.externalMangaId.length > 0
+          ? identityResult.externalMangaId
+          : identityResult.canonicalMangaId;
+        if (params.manga && params.manga.id !== identityResult.canonicalMangaId) {
+          params.manga.id = identityResult.canonicalMangaId;
+        }
+      } else if (recoveredLocalWithoutComic) {
+        logger.warn(TAG, `阅读器检测到本地漫画父记录缺失，保留传入漫画ID: ${previousMangaId}, resolved=${identityResult.canonicalMangaId}`);
+      }
+      if (identityResult.canonicalChapterId.length > 0) {
+        params.chapterId = identityResult.canonicalChapterId;
+        targetChapterId = identityResult.externalChapterId.length > 0
+          ? identityResult.externalChapterId
+          : identityResult.canonicalChapterId;
+      }
+      if (identityResult.sourceId > 0) {
+        params.sourceId = identityResult.sourceId;
+        this.currentSourceId = identityResult.sourceId;
+        srcId = identityResult.sourceId;
+        isKomiic = (srcId === 6 || srcId === 14) || srcName.toLowerCase().includes('komiic');
+        if (cookies.length <= 0) {
+          try {
+            const resolvedCookieManager: CookieManager = CookieManager.getInstance();
+            if (await resolvedCookieManager.hasCookie(identityResult.sourceId)) {
+              cookies = await resolvedCookieManager.getCookieString(identityResult.sourceId);
+              logger.info(TAG, `身份解析后已补充图源Cookie: sourceId=${identityResult.sourceId}, length=${cookies.length}`);
+            }
+          } catch (cookieError) {
+            logger.warn(TAG, `身份解析后补充Cookie失败: ${String(cookieError)}`);
+          }
+        }
+      }
+      if (params.manga && params.manga.sourceInfo) {
+        if (identityResult.externalMangaId.length > 0) {
+          params.manga.sourceInfo.externalId = identityResult.externalMangaId;
+        }
+        if (identityResult.externalChapterId.length > 0 && params.manga.readingProgress.currentChapterId === previousChapterId) {
+          params.manga.readingProgress.currentChapterId = identityResult.canonicalChapterId;
+        }
+      }
+      this.recordMangaReadFlowStatus(
+        MangaReadFlowEventType.CHAPTER_RESOLVED,
+        'identity_resolved',
+        params.pageIndex !== undefined ? params.pageIndex : 0,
+        identityResult.detail,
+        MangaReadFlowSeverity.INFO,
+        true
+      );
+      if ((previousMangaId.length > 0 && previousMangaId !== params.mangaId) ||
+        (previousChapterId.length > 0 && previousChapterId !== params.chapterId)) {
+        this.recordMangaReadFlowRecovered(
+          'identity_canonicalized',
+          identityResult.detail
+        );
+      }
+    } else {
+      this.recordMangaReadFlowStatus(
+        MangaReadFlowEventType.CHAPTER_RESOLVED,
+        'identity_unresolved',
+        params.pageIndex !== undefined ? params.pageIndex : 0,
+        identityResult.detail,
+        MangaReadFlowSeverity.WARN,
+        false
+      );
+    }
 
     // [重构] 根据是否有sourceId判断是在线还是本地漫画
     if (params.manga && params.manga.sourceInfo && params.manga.sourceInfo.sourceUrl) {
@@ -3562,6 +3850,8 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
           if (params.chapterTitle) {
             logger.info(TAG, `🔍 当前章节标题: "${params.chapterTitle}"`);
           }
+        } else if (!isWebViewSource) {
+          await this.hydrateLocalMangaFromDatabase(manga, params);
         }
         
         // 如果是WebView图源，初始化MangaSourceEngine
@@ -3755,7 +4045,9 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
       } else if (params.mangaId) {
         // 从DataManager加载漫画数据
         logger.debug(TAG, `🔍 从DataManager加载漫画数据，ID: ${params.mangaId}, sourceId: ${params.sourceId || 'none'}`);
-        const comicInfo = await DataManager.getInstance().getComicById(params.mangaId);
+        const comicInfo = resolvedIdentity && resolvedIdentity.comicInfo
+          ? resolvedIdentity.comicInfo
+          : await DataManager.getInstance().getComicById(params.mangaId);
         if (!comicInfo) {
           throw new Error(`未找到漫画信息: mangaId=${params.mangaId}`);
         }
@@ -4001,6 +4293,9 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
           // 非WebView图源：通过id匹配
           logger.debug(TAG, `📚 非WebView图源，使用id匹配章节`);
           chapter = manga.chapters.find(ch => ch.id === params.chapterId);
+          if (!chapter) {
+            chapter = manga.chapters.find(ch => ch.externalId === params.chapterId);
+          }
           if (chapter) {
             logger.info(TAG, `✅ 通过id找到章节: ${chapter.title} (ID: ${chapter.id}, 页数: ${chapter.pages.length})`);
           } else {
@@ -4140,7 +4435,8 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
         ? await getLegadoMangaSourceBridge().isLegadoMangaSourceId(this.currentSourceId)
         : false;
       const shouldReloadLegadoBridgePages: boolean = isLegadoBridgeCurrentSource &&
-        (!hasValidPages || this.hasNetworkPagesWithoutRequestHeaders(this.readerState.currentChapter.pages));
+        (!hasValidPages || this.hasNetworkPagesWithoutRequestHeaders(this.readerState.currentChapter.pages) ||
+          this.hasUnresolvedLegadoImageRulePages(this.readerState.currentChapter.pages));
       if (isWebViewSource && shouldReloadLegadoBridgePages) {
         const externalMangaId = await this.getExternalMangaIdForOnlineUndownloaded(params.mangaId || manga.id);
         let externalChapterId: string;
@@ -4154,6 +4450,10 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
           await getLegadoMangaSourceBridge().loadPageList(this.currentSourceId, externalMangaId, externalChapterId);
         if (!bridgePages || bridgePages.pages.length === 0) {
           const errorMsg = 'Legado漫画页面列表为空';
+          this.recordMangaReadFlowError(
+            'legado_bridge_page_list_empty',
+            `sourceId=${this.currentSourceId}, mangaExternalId=${externalMangaId}, chapterExternalId=${externalChapterId}`
+          );
           this.readerState.errorMessage = errorMsg;
           this.readerState.isLoading = false;
           throw new Error(errorMsg);
@@ -4205,7 +4505,10 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
           try {
             const cachedDataManager = DataManager.getInstance();
             const cachedDbPages = await cachedDataManager.getOnlineChapterPages(this.readerState.currentChapter.id);
-            validCachedDbPages = cachedDbPages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
+            validCachedDbPages = cachedDbPages.filter((p: OnlinePageInfo): boolean => {
+              const imageUrl = p.imageUrl || '';
+              return this.isUsableCachedOnlineImageUrl(imageUrl);
+            });
           } catch (cacheError) {
             logger.warn(TAG, `[缓存优先] 查询失败，回退到引擎路径: ${String(cacheError)}`);
             this.recordMangaReadFlowDegraded(
@@ -4372,13 +4675,17 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
 
           // 如果网络获取的页面列表为空，但数据库有数据，则使用数据库数据作为后备
           let sourcePages: SourcePageInfo[] = sourcePageData;
-          if (!shouldRefreshVolatilePages && sourcePages.length === 0 && dbPages.length > 0) {
+          const usableDbPages = dbPages.filter((p: OnlinePageInfo): boolean => {
+            const imageUrl = p.imageUrl || '';
+            return this.isUsableCachedOnlineImageUrl(imageUrl);
+          });
+          if (!shouldRefreshVolatilePages && sourcePages.length === 0 && usableDbPages.length > 0) {
             logger.warn(TAG, '⚠️ 网络获取页面列表为空，回退使用online_page表缓存页面');
             this.recordMangaReadFlowDegraded(
               'source_page_list_empty_cache_fallback',
-              `chapterId=${this.readerState.currentChapter.id}, cachedPages=${dbPages.length}`
+              `chapterId=${this.readerState.currentChapter.id}, cachedPages=${usableDbPages.length}`
             );
-            sourcePages = dbPages.map((p: OnlinePageInfo): SourcePageInfo => {
+            sourcePages = usableDbPages.map((p: OnlinePageInfo): SourcePageInfo => {
               const sp: SourcePageInfo = {
                 page: p.pageNumber,
                 imageUrl: p.imageUrl,
@@ -4391,7 +4698,10 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
           }
 
           // [修复] 检查是否有有效的图片URL
-          const validPages = sourcePages.filter(p => p.imageUrl && p.imageUrl.trim().length > 0);
+          const validPages = sourcePages.filter((p: SourcePageInfo): boolean => {
+            const imageUrl = p.imageUrl || '';
+            return this.isUsableCachedOnlineImageUrl(imageUrl);
+          });
           
           if (validPages.length === 0) {
             const errorMsg = 'No valid page URL found in source response';
@@ -4463,8 +4773,8 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
           
         // [修改] 仅当 sourcePages 有数据且来自网络时保存
         // [修改] 仅当 sourcePages 有数据且来自网络时保存
-        if (sourcePages.length > 0) {
-          this.savePageInfoToDatabase(this.readerState.currentChapter.id, sourcePages).catch((err: Error) => {
+        if (validPages.length > 0) {
+          this.savePageInfoToDatabase(this.readerState.currentChapter.id, validPages).catch((err: Error) => {
             logger.warn(TAG, `保存page表页面列表失败: ${err.message}`);
           });
           
@@ -6493,54 +6803,454 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
     );
   }
 
+  private getCurrentPageImageSelection(): CurrentPageImageSelection | null {
+    const chapter = this.readerState.currentChapter;
+    if (!chapter || !chapter.pages || chapter.pages.length <= 0) {
+      return null;
+    }
+
+    let pageIndex = this.readerState.currentPageIndex;
+    if (this.mangaViewerComponent) {
+      const viewerPageIndex = this.mangaViewerComponent.getCurrentViewPageIndex();
+      if (viewerPageIndex >= 0 && viewerPageIndex < chapter.pages.length) {
+        pageIndex = viewerPageIndex;
+      }
+    }
+
+    pageIndex = this.normalizeReaderPageIndexForChapter(chapter, pageIndex);
+    if (pageIndex < 0 || pageIndex >= chapter.pages.length) {
+      return null;
+    }
+
+    return {
+      chapter: chapter,
+      page: chapter.pages[pageIndex],
+      pageIndex: pageIndex
+    } as CurrentPageImageSelection;
+  }
+
+  private buildPageRequestHeaders(page: MangaPage): RequestHeaders {
+    const headers: RequestHeaders = this.networkHeaders
+      ? this.cloneRequestHeaders(this.networkHeaders)
+      : {} as RequestHeaders;
+    if (!page.requestHeaders || page.requestHeaders.length <= 0) {
+      return headers;
+    }
+    for (let i = 0; i < page.requestHeaders.length; i++) {
+      const header = page.requestHeaders[i];
+      if (!header) {
+        continue;
+      }
+      this.applyConfiguredRequestHeader(headers, header.name, header.value, true, true);
+    }
+    return headers;
+  }
+
+  private getCurrentReaderSourceId(): number | undefined {
+    if (this.currentSourceId > 0) {
+      return this.currentSourceId;
+    }
+    return this.pageParams?.sourceId;
+  }
+
+  private cloneOnlineRequestHeaderEntries(entries?: RequestHeaderEntry[]): OnlineRequestHeaderEntry[] | undefined {
+    if (!entries || entries.length <= 0) {
+      return undefined;
+    }
+    const clonedEntries: OnlineRequestHeaderEntry[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (!entry || !entry.name || !entry.value) {
+        continue;
+      }
+      clonedEntries.push({
+        name: String(entry.name),
+        value: String(entry.value)
+      } as OnlineRequestHeaderEntry);
+    }
+    return clonedEntries.length > 0 ? clonedEntries : undefined;
+  }
+
+  private buildOnlineRequestHeaders(headers: RequestHeaders): OnlineRequestHeaders {
+    return {
+      userAgent: headers.userAgent,
+      accept: headers.accept,
+      referer: headers.referer,
+      origin: headers.origin,
+      cookie: headers.cookie,
+      authorization: headers.authorization,
+      acceptLanguage: headers.acceptLanguage,
+      cacheControl: headers.cacheControl,
+      pragma: headers.pragma,
+      secFetchDest: headers.secFetchDest,
+      secFetchMode: headers.secFetchMode,
+      secFetchSite: headers.secFetchSite,
+      cachePartition: headers.cachePartition,
+      extraHeaders: this.cloneOnlineRequestHeaderEntries(headers.extraHeaders)
+    } as OnlineRequestHeaders;
+  }
+
+  private buildOnlineLoadOptionsForPage(page: MangaPage, headers: RequestHeaders): OnlineLoadOptions {
+    return {
+      width: page.width,
+      height: page.height,
+      headers: this.buildOnlineRequestHeaders(headers),
+      sourceId: this.getCurrentReaderSourceId(),
+      priority: 10,
+      partitionKey: headers.cachePartition
+    } as OnlineLoadOptions;
+  }
+
+  private normalizeLocalImageFilePath(rawPathInput: string | undefined): string {
+    const rawPath = rawPathInput ? rawPathInput.trim() : '';
+    if (rawPath.length <= 0) {
+      return '';
+    }
+    if (rawPath.startsWith('http://') || rawPath.startsWith('https://')) {
+      return '';
+    }
+    if (rawPath.startsWith('file://')) {
+      try {
+        const uriObj: fileUri.FileUri = new fileUri.FileUri(rawPath);
+        const parsedPath = uriObj.path;
+        if (parsedPath && parsedPath.length > 0) {
+          return parsedPath;
+        }
+      } catch (error) {
+        logger.debug(TAG, `fileUri 转本地路径失败，使用截断路径: ${String(error)}`);
+      }
+      return rawPath.substring(7);
+    }
+    if (rawPath.startsWith('/')) {
+      return rawPath;
+    }
+    if (rawPath.startsWith('data/') || rawPath.startsWith('storage/')) {
+      return `/${rawPath}`;
+    }
+    return '';
+  }
+
+  private async isExistingImageFilePath(filePath: string): Promise<boolean> {
+    if (!filePath || filePath.length <= 0) {
+      return false;
+    }
+    try {
+      const canAccess = await fs.access(filePath);
+      if (!canAccess) {
+        return false;
+      }
+      const stat = await fs.stat(filePath);
+      return stat.size > 0;
+    } catch (error) {
+      logger.debug(TAG, `图片文件不可访问: ${filePath}, error=${String(error)}`);
+      return false;
+    }
+  }
+
+  private async resolveExistingLocalImagePath(rawPathInput: string | undefined): Promise<string> {
+    const filePath = this.normalizeLocalImageFilePath(rawPathInput);
+    if (filePath.length <= 0) {
+      return '';
+    }
+    return await this.isExistingImageFilePath(filePath) ? filePath : '';
+  }
+
+  private async resolveExistingPageLocalImagePath(page: MangaPage): Promise<string> {
+    const localPath = await this.resolveExistingLocalImagePath(page.localPath);
+    if (localPath.length > 0) {
+      return localPath;
+    }
+
+    const imagePath = await this.resolveExistingLocalImagePath(page.imagePath);
+    if (imagePath.length > 0) {
+      return imagePath;
+    }
+
+    return await this.resolveExistingLocalImagePath(page.imageUrl);
+  }
+
+  private isSameImageUrl(left: string | undefined, right: string | undefined): boolean {
+    const normalizedLeft = left ? left.trim() : '';
+    const normalizedRight = right ? right.trim() : '';
+    return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
+  }
+
+  private async resolveOnlinePageCachePathFromDatabase(
+    chapterId: string,
+    pageIndex: number,
+    page: MangaPage
+  ): Promise<string> {
+    if (!this.isOnlineReaderContentType()) {
+      return '';
+    }
+
+    try {
+      const dbPages = await DataManager.getInstance().getOnlineChapterPages(chapterId);
+      for (let i = 0; i < dbPages.length; i++) {
+        const dbPage = dbPages[i];
+        if (dbPage.id === page.id || this.isSameImageUrl(dbPage.imageUrl, page.imageUrl)) {
+          const localPath = await this.resolveExistingLocalImagePath(dbPage.localPath);
+          if (localPath.length > 0) {
+            return localPath;
+          }
+        }
+      }
+      for (let i = 0; i < dbPages.length; i++) {
+        const dbPage = dbPages[i];
+        if (dbPage.pageNumber === pageIndex) {
+          const localPath = await this.resolveExistingLocalImagePath(dbPage.localPath);
+          if (localPath.length > 0) {
+            return localPath;
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug(TAG, `查询当前页在线缓存路径失败: chapterId=${chapterId}, page=${pageIndex + 1}, error=${String(error)}`);
+    }
+    return '';
+  }
+
+  private resolvePageNetworkImageUrl(page: MangaPage): string {
+    const imageUrl = page.imageUrl ? page.imageUrl.trim() : '';
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      return imageUrl;
+    }
+    const imagePath = page.imagePath ? page.imagePath.trim() : '';
+    if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+      return imagePath;
+    }
+    return '';
+  }
+
+  private async resolveOnlineImageDiskCachePath(page: MangaPage, headers: RequestHeaders): Promise<string> {
+    const imageUrl = this.resolvePageNetworkImageUrl(page);
+    if (imageUrl.length <= 0) {
+      return '';
+    }
+
+    try {
+      const onlineOptions = this.buildOnlineLoadOptionsForPage(page, headers);
+      const cachedPath = await OnlineImageLoader.getInstance().getCachedFilePath(imageUrl, onlineOptions);
+      return await this.resolveExistingLocalImagePath(cachedPath || '');
+    } catch (error) {
+      logger.debug(TAG, `查询当前页在线磁盘缓存失败: ${String(error)}`);
+      return '';
+    }
+  }
+
+  private getReaderImageActionTempDir(): string {
+    const hostContext = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
+    return `${hostContext.cacheDir}/reader_image_actions`;
+  }
+
+  private ensureReaderImageActionTempDir(): string {
+    const tempDir = this.getReaderImageActionTempDir();
+    if (!SafeFileUtils.accessSync(tempDir)) {
+      SafeFileUtils.mkdirSync(tempDir, true);
+    }
+    return tempDir;
+  }
+
+  private async exportPixelMapToTempJpeg(pixelMap: image.PixelMap, pageIndex: number): Promise<string> {
+    const tempDir = this.ensureReaderImageActionTempDir();
+    const filePath = `${tempDir}/manga_page_${Date.now()}_${pageIndex + 1}.jpg`;
+    let outputFile: fs.File | null = null;
+    const packer = image.createImagePacker();
+    try {
+      outputFile = await fs.open(filePath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      const packOption: image.PackingOption = {
+        format: 'image/jpeg',
+        quality: 95
+      } as image.PackingOption;
+      await packer.packToFile(pixelMap, outputFile.fd, packOption);
+      return filePath;
+    } finally {
+      if (outputFile) {
+        SafeFileUtils.closeSync(outputFile);
+      }
+      try {
+        await packer.release();
+      } catch (error) {
+        logger.debug(TAG, `释放图片打包器失败: ${String(error)}`);
+      }
+    }
+  }
+
+  private async exportCachedCurrentPageImageToTempFile(
+    page: MangaPage,
+    pageIndex: number,
+    headers: RequestHeaders
+  ): Promise<string> {
+    const imageUrl = this.resolvePageNetworkImageUrl(page);
+    if (imageUrl.length <= 0) {
+      return '';
+    }
+
+    let pixelMap: image.PixelMap | null = null;
+    try {
+      const onlineOptions = this.buildOnlineLoadOptionsForPage(page, headers);
+      pixelMap = await OnlineImageLoader.getInstance().getCachedPixelMap(imageUrl, onlineOptions);
+      if (!pixelMap) {
+        return '';
+      }
+      const exportedPath = await this.exportPixelMapToTempJpeg(pixelMap, pageIndex);
+      logger.info(TAG, `当前页图片已导出为临时文件: page=${pageIndex + 1}, path=${exportedPath}`);
+      return exportedPath;
+    } catch (error) {
+      logger.warn(TAG, `当前页图片临时导出失败: page=${pageIndex + 1}, error=${String(error)}`);
+      return '';
+    } finally {
+      if (pixelMap) {
+        try {
+          pixelMap.release();
+        } catch (error) {
+          logger.debug(TAG, `释放当前页临时PixelMap失败: ${String(error)}`);
+        }
+      }
+    }
+  }
+
+  private normalizeImageFileExtension(filePath: string): string {
+    let cleanPath = filePath;
+    const queryIndex = cleanPath.indexOf('?');
+    if (queryIndex >= 0) {
+      cleanPath = cleanPath.substring(0, queryIndex);
+    }
+    const fragmentIndex = cleanPath.indexOf('#');
+    if (fragmentIndex >= 0) {
+      cleanPath = cleanPath.substring(0, fragmentIndex);
+    }
+    const slashIndex = cleanPath.lastIndexOf('/');
+    const dotIndex = cleanPath.lastIndexOf('.');
+    if (dotIndex <= slashIndex || dotIndex < 0 || dotIndex >= cleanPath.length - 1) {
+      return 'jpg';
+    }
+    const extension = cleanPath.substring(dotIndex + 1).toLowerCase();
+    if (extension === 'jpeg') {
+      return 'jpg';
+    }
+    if (extension === 'jpg' || extension === 'png' || extension === 'webp' || extension === 'gif' ||
+        extension === 'bmp' || extension === 'tif' || extension === 'tiff') {
+      return extension;
+    }
+    return 'jpg';
+  }
+
+  private getUniformDataTypeForImageExtension(extension: string): string {
+    const normalized = extension.toLowerCase();
+    if (normalized === 'jpg' || normalized === 'jpeg') {
+      return utd.UniformDataType.JPEG;
+    }
+    if (normalized === 'png') {
+      return utd.UniformDataType.PNG;
+    }
+    if (normalized === 'gif') {
+      return utd.UniformDataType.GIF;
+    }
+    if (normalized === 'bmp') {
+      return utd.UniformDataType.BMP;
+    }
+    if (normalized === 'tif' || normalized === 'tiff') {
+      return utd.UniformDataType.TIFF;
+    }
+    try {
+      const detected = utd.getUniformDataTypeByFilenameExtension(normalized, utd.UniformDataType.IMAGE);
+      if (detected && detected.length > 0) {
+        return detected;
+      }
+    } catch (error) {
+      logger.debug(TAG, `按扩展名解析UTD失败: extension=${extension}, error=${String(error)}`);
+    }
+    return utd.UniformDataType.IMAGE;
+  }
+
+  private buildImageActionTitle(pageIndex: number): string {
+    const mangaTitle = this.readerState.currentManga?.title || 'manga';
+    const normalizedTitle = mangaTitle.replace(/[\\.\/:*?"'`<>|{}\[\]]/g, '_').trim();
+    const shortTitle = normalizedTitle.length > 0
+      ? normalizedTitle.substring(0, Math.min(120, normalizedTitle.length))
+      : 'manga';
+    return `${shortTitle}_page_${pageIndex + 1}`;
+  }
+
+  private buildReaderImageFileInfo(filePath: string, pageIndex: number): ReaderImageFileInfo {
+    const fileExtension = this.normalizeImageFileExtension(filePath);
+    return {
+      filePath: filePath,
+      fileUri: fileUri.getUriFromPath(filePath),
+      fileExtension: fileExtension,
+      uniformDataType: this.getUniformDataTypeForImageExtension(fileExtension),
+      title: this.buildImageActionTitle(pageIndex)
+    } as ReaderImageFileInfo;
+  }
+
+  private async resolveCurrentPageImageFile(): Promise<ReaderImageFileInfo | null> {
+    const selection = this.getCurrentPageImageSelection();
+    if (!selection) {
+      return null;
+    }
+
+    const page = selection.page;
+    const headers = this.buildPageRequestHeaders(page);
+
+    let filePath = await this.resolveExistingPageLocalImagePath(page);
+    if (filePath.length <= 0) {
+      filePath = await this.resolveOnlinePageCachePathFromDatabase(selection.chapter.id, selection.pageIndex, page);
+    }
+    if (filePath.length <= 0) {
+      filePath = await this.resolveOnlineImageDiskCachePath(page, headers);
+    }
+    if (filePath.length <= 0) {
+      filePath = await this.exportCachedCurrentPageImageToTempFile(page, selection.pageIndex, headers);
+    }
+
+    if (filePath.length <= 0) {
+      logger.warn(TAG, `未能解析当前页可用图片文件: page=${selection.pageIndex + 1}`);
+      return null;
+    }
+
+    return this.buildReaderImageFileInfo(filePath, selection.pageIndex);
+  }
+
+  private async copyImageFileToMediaUri(sourceFileUri: string, targetFileUri: string): Promise<void> {
+    let srcFile: fs.File | null = null;
+    let destFile: fs.File | null = null;
+    try {
+      srcFile = await fs.open(sourceFileUri, fs.OpenMode.READ_ONLY);
+      destFile = await fs.open(targetFileUri, fs.OpenMode.WRITE_ONLY);
+      await fs.copyFile(srcFile.fd, destFile.fd);
+    } finally {
+      if (destFile) {
+        SafeFileUtils.closeSync(destFile);
+      }
+      if (srcFile) {
+        SafeFileUtils.closeSync(srcFile);
+      }
+    }
+  }
+
   /**
    * 保存当前页面到图库
    */
   private async saveCurrentPageToGallery(): Promise<void> {
     try {
-      const chapter = this.readerState.currentChapter;
-      const pageIndex = this.readerState.currentPageIndex;
-      
-      if (!chapter || !chapter.pages || pageIndex < 0 || pageIndex >= chapter.pages.length) {
+      const imageFile = await this.resolveCurrentPageImageFile();
+      if (!imageFile) {
         logger.error(TAG, '无法保存：当前页面无效');
-        this.getUIContext().showAlertDialog({ message: '无法保存：当前页面无效' });
-        return;
-      }
-      
-      const currentPage = chapter.pages[pageIndex];
-      let imagePath = currentPage.imagePath;
-      
-      // 如果是网络图片，需要先下载到沙箱
-      if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
-        logger.info(TAG, `保存网络图片到图库: ${imagePath}`);
-        this.getUIContext().showAlertDialog({ message: '暂不支持直接保存网络图片，请先缓存到本地' });
-        return;
-      }
-      
-      // 本地图片路径
-      if (!imagePath.startsWith('/')) {
-        logger.error(TAG, `无效的图片路径: ${imagePath}`);
-        this.getUIContext().showAlertDialog({ message: '保存失败：图片路径无效' });
+        this.getUIContext().showAlertDialog({ message: '无法保存：未找到可用的当前页图片缓存' });
         return;
       }
       
       const context = (this.getUIContext().getHostContext() as common.UIAbilityContext);
       
-      // 获取文件后缀名
-      const lastDotIndex = imagePath.lastIndexOf('.');
-      const fileExtension = lastDotIndex > 0 ? imagePath.substring(lastDotIndex + 1) : 'jpg';
-      
-      // 转换为沙箱文件URI
-      const sandboxUri = fileUri.getUriFromPath(imagePath);
-      
       // 创建photoAccessHelper
       const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
       
       // 准备保存配置
-      const srcFileUris: Array<string> = [sandboxUri];
+      const srcFileUris: Array<string> = [imageFile.fileUri];
       const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
-        title: `manga_page_${pageIndex + 1}`,
-        fileNameExtension: fileExtension,
+        title: imageFile.title,
+        fileNameExtension: imageFile.fileExtension,
         photoType: photoAccessHelper.PhotoType.IMAGE,
         subtype: photoAccessHelper.PhotoSubtype.DEFAULT
       }];
@@ -6549,17 +7259,7 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
       const desFileUris: Array<string> = await phAccessHelper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs);
       
       if (desFileUris.length > 0) {
-        // 打开目标文件和源文件
-        const destFile = await fs.open(desFileUris[0], fs.OpenMode.WRITE_ONLY);
-        const srcFile = await fs.open(sandboxUri, fs.OpenMode.READ_ONLY);
-        
-        // 复制文件内容
-        await fs.copyFile(srcFile.fd, destFile.fd);
-        
-        // 关闭文件
-        SafeFileUtils.closeSync(destFile);
-        SafeFileUtils.closeSync(srcFile);
-        
+        await this.copyImageFileToMediaUri(imageFile.fileUri, desFileUris[0]);
         logger.info(TAG, `图片保存成功: ${desFileUris[0]}`);
         this.getUIContext().showAlertDialog({ message: '图片已保存到图库' });
       } else {
@@ -7237,7 +7937,10 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
         try {
           const dataManager = DataManager.getInstance();
           const cachedOnlinePages = await dataManager.getOnlineChapterPages(chapter.id);
-          const validCachedOnlinePages = cachedOnlinePages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
+          const validCachedOnlinePages = cachedOnlinePages.filter((p: OnlinePageInfo): boolean => {
+            const imageUrl = p.imageUrl || '';
+            return this.isUsableCachedOnlineImageUrl(imageUrl);
+          });
           if (validCachedOnlinePages.length > 0) {
             const cachedMangaPages: MangaPage[] = validCachedOnlinePages.map((p: OnlinePageInfo, index: number): MangaPage => {
               return {
@@ -7274,6 +7977,7 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
       const bridgePages: LegadoMangaPageResult | null =
         await getLegadoMangaSourceBridge().loadPageList(this.currentSourceId, externalMangaId, externalChapterId);
       if (!bridgePages || bridgePages.pages.length === 0) {
+        logger.warn(TAG, `Legado漫画预加载页面列表为空: sourceId=${this.currentSourceId}, mangaExternalId=${externalMangaId}, chapterExternalId=${externalChapterId}`);
         throw new Error('Legado漫画页面列表为空');
       }
 
@@ -7349,12 +8053,16 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
         
         // 本地page表没有数据，尝试从online_page表加载
         const dbPages = await dataManager.getOnlineChapterPages(chapter.id);
+        const usableDbPages = dbPages.filter((dbPage: OnlinePageInfo): boolean => {
+          const imageUrl = dbPage.imageUrl || '';
+          return this.isUsableCachedOnlineImageUrl(imageUrl);
+        });
         
-        if (dbPages && dbPages.length > 0) {
-          logger.info(TAG, `Loaded page records from online_page table: ${chapter.title}, count=${dbPages.length}`);
+        if (usableDbPages && usableDbPages.length > 0) {
+          logger.info(TAG, `Loaded page records from online_page table: ${chapter.title}, count=${usableDbPages.length}`);
           
           // 转换为MangaPage格式
-          chapter.pages = dbPages.map((dbPage, index): MangaPage => {
+          chapter.pages = usableDbPages.map((dbPage, index): MangaPage => {
             const localPath = dbPage.localPath || '';
             const imagePath = localPath.length > 0 ? localPath : dbPage.imageUrl;
             let sourceType: ImageSourceType;
@@ -7408,7 +8116,10 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
       try {
         const dataManager = DataManager.getInstance();
         const cachedOnlinePages = await dataManager.getOnlineChapterPages(chapter.id);
-        const validCachedOnlinePages = cachedOnlinePages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
+        const validCachedOnlinePages = cachedOnlinePages.filter((p: OnlinePageInfo): boolean => {
+          const imageUrl = p.imageUrl || '';
+          return this.isUsableCachedOnlineImageUrl(imageUrl);
+        });
         if (validCachedOnlinePages.length > 0) {
           chapter.pages = validCachedOnlinePages.map((p: OnlinePageInfo, index: number): MangaPage => {
             // OnlineUndownloaded 场景统一按网络源处理，避免缓存记录中的失效 localPath 导致章节切换加载异常
@@ -7581,7 +8292,9 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
     let sourceId: number | undefined = undefined;
     let mangaData: OnlineComicSourceSaveInput | undefined = undefined;
     
-    if (this.currentSourceId > 0 && this.mangaEngine) {
+    const isOnlineReaderContent: boolean = this.pageParams?.contentType === MangaReaderContentType.OnlineUndownloaded ||
+      this.pageParams?.contentType === MangaReaderContentType.OnlineDownloaded;
+    if (this.currentSourceId > 0 && isOnlineReaderContent) {
       sourceId = this.currentSourceId;
       const tempData: OnlineComicSourceSaveInput = {
         id: manga.id,
@@ -7592,6 +8305,8 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
         tags: manga.metadata.genres,
         rating: 0,
         updateTime: Date.now(),
+        sourceName: manga.sourceInfo?.sourceName || this.pageParams?.sourceName || '',
+        sourcePkg: manga.sourceInfo?.sourcePkg || this.pageParams?.sourcePkg || this.currentSourcePkg || '',
         status: String(manga.status),
         chapterCount: manga.chapters.length
       };
@@ -8867,42 +9582,26 @@ private mangaChapterResolveGuard: MangaChapterResolveGuard = new MangaChapterRes
    */
   private async shareCurrentPageImage(): Promise<void> {
     try {
-      const chapter = this.readerState.currentChapter;
-      const pageIndex = this.readerState.currentPageIndex;
-      if (!chapter || !chapter.pages || pageIndex < 0 || pageIndex >= chapter.pages.length) {
+      const imageFile = await this.resolveCurrentPageImageFile();
+      if (!imageFile) {
         logger.error(TAG, '无法分享：当前页面无效');
-        this.getUIContext().showAlertDialog({ message: '无法分享：当前页面无效' });
-        return;
-      }
-
-      const currentPage = chapter.pages[pageIndex];
-      const imagePath = currentPage.imagePath;
-      if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
-        logger.warn(TAG, `当前页为网络图片，无法直接分享: ${imagePath}`);
-        this.getUIContext().showAlertDialog({ message: '当前页为网络图片，请先缓存后再分享' });
-        return;
-      }
-      if (!imagePath.startsWith('/')) {
-        logger.error(TAG, `无法分享：图片路径无效: ${imagePath}`);
-        this.getUIContext().showAlertDialog({ message: '分享失败：图片路径无效' });
+        this.getUIContext().showAlertDialog({ message: '无法分享：未找到可用的当前页图片缓存' });
         return;
       }
 
       const context = (this.getUIContext().getHostContext() as common.UIAbilityContext) as common.UIAbilityContext;
-      const shareUri = fileUri.getUriFromPath(imagePath);
-      const title = `${this.readerState.currentManga?.title || '漫画'} 第${pageIndex + 1}页`;
       const shareData: systemShare.SharedData = new systemShare.SharedData({
-        utd: utd.UniformDataType.JPEG,
-        uri: shareUri,
-        title: title,
-        description: title
+        utd: imageFile.uniformDataType,
+        uri: imageFile.fileUri,
+        title: imageFile.title,
+        description: imageFile.title
       });
       const controller: systemShare.ShareController = new systemShare.ShareController(shareData);
       await controller.show(context, {
         previewMode: systemShare.SharePreviewMode.DETAIL,
         selectionMode: systemShare.SelectionMode.SINGLE
       });
-      logger.info(TAG, `分享当前页面成功: page=${pageIndex + 1}`);
+      logger.info(TAG, `分享当前页面成功: path=${imageFile.filePath}`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `分享当前页面失败: ${errorMessage}`);

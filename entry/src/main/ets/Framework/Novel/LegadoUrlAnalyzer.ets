@@ -192,29 +192,20 @@ export class LegadoUrlAnalyzer {
       };
     }
 
-    // 步骤1: 分离URL和选项JSON（在JS执行之前）
+    // 步骤1: 执行 @js: 和 <js></js> 格式的JS代码。
+    // Legado原版 AnalyzeUrl 的顺序是先 analyzeJs()，再 replaceKeyPageJs()，最后 analyzeUrl() 拆 URL option。
+    ruleUrl = this.analyzeJs(ruleUrl);
+
+    // 步骤2: 替换 {{...}} 内嵌JS/变量
+    ruleUrl = this.replaceKeyPageJs(ruleUrl);
+
+    // 步骤3: 分离URL和选项JSON
     // 参考Legado原版: paramPattern = Pattern.compile("\\s*,\\s*(?=\\{)")
-    // 使用正向前瞻匹配逗号后紧跟{的位置
     let optionStr = '';
     const separatorResult = this.findOptionSeparator(ruleUrl);
     if (separatorResult.found) {
       optionStr = ruleUrl.substring(separatorResult.index + 1).trim();
       ruleUrl = ruleUrl.substring(0, separatorResult.index).trim();
-    }
-
-    // 步骤2: 执行 @js: 和 <js></js> 格式的JS代码
-    ruleUrl = this.analyzeJs(ruleUrl);
-
-    // 步骤3: 替换 {{...}} 内嵌JS/变量
-    ruleUrl = this.replaceKeyPageJs(ruleUrl);
-    
-    // 步骤3.5: 再次检查JS执行结果是否包含选项JSON
-    const postJsSeparatorResult = this.findOptionSeparator(ruleUrl);
-    if (postJsSeparatorResult.found) {
-      const postJsOptionStr = ruleUrl.substring(postJsSeparatorResult.index + 1).trim();
-      ruleUrl = ruleUrl.substring(0, postJsSeparatorResult.index).trim();
-      // JS返回的选项优先
-      optionStr = postJsOptionStr;
     }
 
     // 步骤4: 解析选项JSON（支持单引号格式）
@@ -310,29 +301,20 @@ export class LegadoUrlAnalyzer {
       };
     }
 
-    // 步骤1: 分离URL和选项JSON（第一次，处理原始模板中的选项）
+    // 步骤1: 执行 @js: 和 <js></js> 格式的JS代码（异步）
+    // Legado原版 AnalyzeUrl 的顺序是先 analyzeJs()，再 replaceKeyPageJs()，最后 analyzeUrl() 拆 URL option。
+    ruleUrl = await this.analyzeJsAsync(ruleUrl);
+
+    // 步骤2: 替换 {{...}} 内嵌JS/变量（异步）
+    ruleUrl = await this.replaceKeyPageJsAsync(ruleUrl);
+
+    // 步骤3: 分离URL和选项JSON
     // 参考Legado原版: paramPattern = Pattern.compile("\\s*,\\s*(?=\\{)")
     let optionStr = '';
     const separatorResult = this.findOptionSeparator(ruleUrl);
     if (separatorResult.found) {
       optionStr = ruleUrl.substring(separatorResult.index + 1).trim();
       ruleUrl = ruleUrl.substring(0, separatorResult.index).trim();
-    }
-
-    // 步骤2: 执行 @js: 和 <js></js> 格式的JS代码（异步）
-    ruleUrl = await this.analyzeJsAsync(ruleUrl);
-
-    // 步骤3: 替换 {{...}} 内嵌JS/变量（异步）
-    ruleUrl = await this.replaceKeyPageJsAsync(ruleUrl);
-    
-    // 步骤3.5: 再次检查JS执行结果是否包含选项JSON
-    // 有些书源的JS会返回完整的URL+选项格式
-    const postJsSeparatorResult = this.findOptionSeparator(ruleUrl);
-    if (postJsSeparatorResult.found) {
-      const postJsOptionStr = ruleUrl.substring(postJsSeparatorResult.index + 1).trim();
-      ruleUrl = ruleUrl.substring(0, postJsSeparatorResult.index).trim();
-      // JS返回的选项优先
-      optionStr = postJsOptionStr;
     }
 
     // 步骤4: 解析选项JSON（支持单引号格式）
@@ -454,18 +436,18 @@ export class LegadoUrlAnalyzer {
 
       const matchStart = start + (jsMatch.index || 0);
       const matchEnd = matchStart + jsMatch[0].length;
+      const beforeJs = result.substring(0, matchStart).trim();
+      const afterJs = result.substring(matchEnd).trim();
 
       // 执行JS
-      const contextResult = this.variables.has('result') ? (this.variables.get('result') || result) : result;
+      const contextResult = this.variables.has('result') ? (this.variables.get('result') || beforeJs) : beforeJs;
       const jsResult = await this.executeJsAsync(jsCode, contextResult);
       if (jsResult.success && jsResult.result.trim().length === 0 && this.isLikelyComplexJs(jsCode)) {
         // 复杂JS可能仅做副作用，优先移除当前JS片段继续解析，避免残留@js导致URL无效
-        const beforeJsOnEmpty = result.substring(0, matchStart).trim();
-        const afterJsOnEmpty = result.substring(matchEnd).trim();
-        const mergedEmptyResult = this.mergeJsRuleResult(beforeJsOnEmpty, '', afterJsOnEmpty);
+        const mergedEmptyResult = this.mergeJsRuleResult(beforeJs, '', afterJs);
         if (mergedEmptyResult !== result) {
           result = mergedEmptyResult;
-          start = beforeJsOnEmpty.length;
+          start = beforeJs.length;
           continue;
         }
         logger.warn(TAG, `JS执行结果为空，保留原规则片段: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
@@ -473,16 +455,19 @@ export class LegadoUrlAnalyzer {
         continue;
       }
       if (!jsResult.success) {
-        logger.warn(TAG, `JS执行失败，保留原规则片段: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
-        // 保持原规则不变，继续向后扫描，避免在同一片段死循环
+        logger.warn(TAG, `JS执行失败，移除当前规则片段避免污染URL: ${jsCode.substring(0, Math.min(80, jsCode.length))}`);
+        const mergedFailedResult = this.mergeJsRuleResult(beforeJs, '', afterJs);
+        if (mergedFailedResult !== result) {
+          result = mergedFailedResult;
+          start = beforeJs.length;
+          continue;
+        }
         start = matchEnd;
         continue;
       }
       this.variables.set('result', jsResult.result);
 
       // 替换结果
-      const beforeJs = result.substring(0, matchStart).trim();
-      const afterJs = result.substring(matchEnd).trim();
       const mergedResult = this.mergeJsRuleResult(beforeJs, jsResult.result, afterJs);
 
       // 避免“JS返回原始规则”导致在同一位置无限循环
@@ -897,26 +882,17 @@ export class LegadoUrlAnalyzer {
     // 直接使用JS引擎执行，不再使用简单执行绕过JSVM
     try {
       const jsEngine = getLegadoJsEngine();
-      // 将Map转换为Record对象（ArkTS不支持Object.fromEntries）
-      const varsRecord: Record<string, string> = {};
-      this.variables.forEach((value: string, key: string) => {
-        varsRecord[key] = value;
-      });
-      // 添加sourceUrl到变量中，供buildNativeScript使用
-      varsRecord['sourceUrl'] = this.sourceUrl;
-      
-      const context: JsContext = {
-        result: result,
-        src: result,
-        baseUrl: this.baseUrl,
-        key: this.key,
-        page: this.page,
-        variables: varsRecord,
-        jsLib: this.jsLib
-      };
+      const activeJsLib = this.shouldLoadJsLibForUrlRule(jsCode) ? this.jsLib : '';
+      const context: JsContext = this.buildJsContext(result, activeJsLib);
 
       // 直接传递jsCode，buildNativeScript会自动添加source对象
-      const executeResult = await jsEngine.execute(jsCode, context);
+      let executeResult = await jsEngine.execute(jsCode, context);
+      if (!activeJsLib && this.jsLib.trim().length > 0 &&
+        executeResult.error && this.isMissingFunctionError(executeResult.error)) {
+        logger.info(TAG, `JS执行缺少函数，加载jsLib重试: ${executeResult.error}`);
+        const retryContext = this.buildJsContext(result, this.jsLib);
+        executeResult = await jsEngine.execute(jsCode, retryContext);
+      }
       this.syncVariablesFromRecord(executeResult.variables);
       this.syncSourceEffects(executeResult.sourceEffects);
       if (executeResult.success && !executeResult.error) {
@@ -973,6 +949,118 @@ export class LegadoUrlAnalyzer {
       };
       return failedResult;
     }
+  }
+
+  private buildJsContext(result: string | undefined, jsLib: string): JsContext {
+    const varsRecord: Record<string, string> = {};
+    this.variables.forEach((value: string, key: string) => {
+      varsRecord[key] = value;
+    });
+    varsRecord['sourceUrl'] = this.sourceUrl;
+
+    const context: JsContext = {
+      result: result,
+      src: result,
+      baseUrl: this.baseUrl,
+      key: this.key,
+      page: this.page,
+      variables: varsRecord,
+      jsLib: jsLib
+    };
+    return context;
+  }
+
+  private isMissingFunctionError(error: string): boolean {
+    const lowerError = error.toLowerCase();
+    return lowerError.includes('is not defined') ||
+      lowerError.includes('not defined') ||
+      lowerError.includes('is not a function') ||
+      lowerError.includes('undefined is not a function');
+  }
+
+  private shouldLoadJsLibForUrlRule(jsCode: string): boolean {
+    if (!this.jsLib || this.jsLib.trim().length <= 0) {
+      return false;
+    }
+
+    let strippedCode = jsCode
+      .replace(/"(?:\\.|[^"\\])*"/g, '')
+      .replace(/'(?:\\.|[^'\\])*'/g, '')
+      .replace(/`(?:\\.|[^`\\])*`/g, '')
+      .replace(/\/\/[^\n\r]*/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+
+    const builtinObjects: string[] = [
+      'source',
+      'java',
+      'cookie',
+      'cache',
+      'JSON',
+      'String',
+      'Number',
+      'Date',
+      'Math',
+      'Array',
+      'Object',
+      'RegExp',
+      'parseInt',
+      'parseFloat',
+      'isNaN',
+      'encodeURI',
+      'encodeURIComponent',
+      'decodeURI',
+      'decodeURIComponent',
+      'console'
+    ];
+
+    for (let i = 0; i < builtinObjects.length; i++) {
+      const name = builtinObjects[i];
+      const pattern = new RegExp(`\\b${name}\\s*\\.\\s*[A-Za-z_$][0-9A-Za-z_$]*\\s*\\(`, 'g');
+      strippedCode = strippedCode.replace(pattern, '');
+    }
+
+    const localDeclarationPattern = /\b(?:var|let|const|function)\s+([A-Za-z_$][0-9A-Za-z_$]*)/g;
+    const localNames: string[] = [];
+    let localMatch: RegExpExecArray | null = localDeclarationPattern.exec(strippedCode);
+    while (localMatch) {
+      localNames.push(localMatch[1]);
+      localMatch = localDeclarationPattern.exec(strippedCode);
+    }
+
+    const functionCallPattern = /\b([A-Za-z_$][0-9A-Za-z_$]*)\s*\(/g;
+    let callMatch: RegExpExecArray | null = functionCallPattern.exec(strippedCode);
+    while (callMatch) {
+      const name = callMatch[1];
+      if (this.isObjectMethodCall(strippedCode, callMatch.index)) {
+        callMatch = functionCallPattern.exec(strippedCode);
+        continue;
+      }
+      if (builtinObjects.indexOf(name) < 0 &&
+        localNames.indexOf(name) < 0 &&
+        name !== 'if' &&
+        name !== 'for' &&
+        name !== 'while' &&
+        name !== 'switch' &&
+        name !== 'function' &&
+        name !== 'catch') {
+        return true;
+      }
+      callMatch = functionCallPattern.exec(strippedCode);
+    }
+
+    return false;
+  }
+
+  private isObjectMethodCall(code: string, callIndex: number): boolean {
+    let index = callIndex - 1;
+    while (index >= 0) {
+      const char = code.charAt(index);
+      if (char !== ' ' && char !== '\t' && char !== '\n' && char !== '\r') {
+        return char === '.';
+      }
+      index--;
+    }
+    return false;
   }
 
   private isUrlSideEffectExpression(expr: string): boolean {

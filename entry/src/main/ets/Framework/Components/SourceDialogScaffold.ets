@@ -85,6 +85,10 @@ export struct SourceDialogScaffold {
       offsetY: this.shadowOffsetY
     })
     .zIndex(1)
+    .transition(
+      TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: 220, curve: Curve.EaseOut }))
+    )
     .onClick(() => {
     })
   }
@@ -144,6 +148,7 @@ export struct SourceDialogScaffold {
     .position({ x: 0, y: 0 })
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .zIndex(this.zIndexValue)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   aboutToAppear(): void {

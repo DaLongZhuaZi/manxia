@@ -13,6 +13,8 @@ import { util } from '@kit.ArkTS';
 import { logger } from '../../Utils/Logger';
 import { NativeJsEngine, JsContext as NativeJsContext, JsResult } from './NativeJsEngine';
 import { getCookieStore } from './LegadoCookieStore';
+import { getLegadoRuntimeV2 } from './LegadoRuntimeV2';
+import type { LegadoBookSource } from './LegadoSourceTypes';
 
 const TAG = 'LegadoJsEngine';
 
@@ -114,7 +116,7 @@ export interface JsContext {
   /** 本次执行绑定的jsLib快照（可选，优先级高于全局jsLib） */
   jsLib?: string;
   /** 书源对象 */
-  source?: ESObject;
+  source?: LegadoBookSource;
 }
 
 /**
@@ -166,11 +168,13 @@ export class LegadoJsEngine {
   // Native JSVM引擎
   private nativeEngine: NativeJsEngine | null = null;
   private nativeEngineReady: boolean = false;
-  private useNativeEngine: boolean = true; // 是否优先使用Native引擎
+  private useNativeEngine: boolean = false; // V2默认走WebView运行层，Native仅保留诊断入口
 
   private constructor() {
-    // 尝试初始化Native引擎
-    this.initNativeEngine();
+    // V2已直接接管默认执行路径；Native JSVM仅在诊断开关打开时初始化。
+    if (this.useNativeEngine) {
+      this.initNativeEngine();
+    }
   }
   
   /**
@@ -211,6 +215,7 @@ export class LegadoJsEngine {
   setWebviewController(controller: webview.WebviewController): void {
     this.webviewController = controller;
     this.isReady = true;
+    getLegadoRuntimeV2().setWebviewController(controller);
     logger.info(TAG, 'WebView控制器已设置');
     
     // 处理等待中的任务
@@ -582,6 +587,11 @@ export class LegadoJsEngine {
       return { success: true, result: '' };
     }
 
+    const runtimeContext: JsContext = this.mergeDefaultContext(context);
+    if (!this.useNativeEngine) {
+      return getLegadoRuntimeV2().execute(code, runtimeContext);
+    }
+
     // 检测是否需要网络请求功能
     const needsNetwork = this.needsNetworkCapability(code);
     
@@ -672,6 +682,22 @@ export class LegadoJsEngine {
     // 最后使用简单的表达式求值（仅当所有引擎都不可用时）
     logger.warn(TAG, 'Native和WebView都不可用，使用简单求值');
     return this.executeSimple(code, context);
+  }
+
+  private mergeDefaultContext(context: JsContext): JsContext {
+    const merged: JsContext = {
+      result: context.result,
+      baseUrl: context.baseUrl,
+      book: context.book,
+      chapter: context.chapter,
+      key: context.key,
+      page: context.page,
+      variables: context.variables,
+      src: context.src,
+      jsLib: context.jsLib !== undefined ? context.jsLib : this.jsLib,
+      source: context.source
+    };
+    return merged;
   }
 
   private canUseWebView(): boolean {
@@ -1466,6 +1492,76 @@ export class LegadoJsEngine {
       normalized = normalized.substring(4, normalized.length - 5).trim();
     }
     return normalized;
+  }
+
+  private prepareLegadoExecutableCode(code: string): string {
+    const normalized = this.normalizeJsCode(code);
+    if (normalized.includes('return ')) {
+      return normalized;
+    }
+    return this.addReturnToLastExpressionLine(normalized);
+  }
+
+  private addReturnToLastExpressionLine(code: string): string {
+    const lines = code.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line.length <= 0 || line.startsWith('//')) {
+        continue;
+      }
+      if (!this.canAutoReturnLine(line)) {
+        return code;
+      }
+      lines[i] = `${this.getLineIndent(lines[i])}return ${line}`;
+      return lines.join('\n');
+    }
+    return code;
+  }
+
+  private canAutoReturnLine(line: string): boolean {
+    const expressionLine = line.endsWith(';') ? line.substring(0, line.length - 1).trim() : line;
+    if (expressionLine.includes(';')) {
+      return false;
+    }
+    if (line.startsWith('var ') ||
+      line.startsWith('let ') ||
+      line.startsWith('const ') ||
+      line.startsWith('function ') ||
+      line.startsWith('if ') ||
+      line.startsWith('for ') ||
+      line.startsWith('while ') ||
+      line.startsWith('switch ') ||
+      line.startsWith('try ') ||
+      line.startsWith('catch ') ||
+      line.startsWith('else') ||
+      line.startsWith('return ') ||
+      line.endsWith('{') ||
+      line.endsWith('}')) {
+      return false;
+    }
+    if (this.isAssignmentLikeLine(line)) {
+      return false;
+    }
+    return true;
+  }
+
+  private isAssignmentLikeLine(line: string): boolean {
+    const normalized = line.endsWith(';') ? line.substring(0, line.length - 1).trim() : line;
+    const assignmentPattern =
+      /^[A-Za-z_$][0-9A-Za-z_$]*(?:\s*\.\s*[A-Za-z_$][0-9A-Za-z_$]*|\s*\[[^\]]+\])*\s*(?:\|\||&&|\?\?|>>>|<<|>>|[+\-*\/%&|^])?=(?!=|>)/;
+    return assignmentPattern.test(normalized);
+  }
+
+  private getLineIndent(line: string): string {
+    let index = 0;
+    while (index < line.length) {
+      const char = line.charAt(index);
+      if (char !== ' ' && char !== '\t') {
+        break;
+      }
+      index++;
+    }
+    return line.substring(0, index);
   }
 
   /**
@@ -4123,29 +4219,7 @@ export class LegadoJsEngine {
       var okhttp3 = global.okhttp;
     `;
 
-    // 处理代码，确保最后一个表达式被返回
-    // Legado使用Rhino引擎，会自动返回最后一个表达式的值
-    let processedCode = this.normalizeJsCode(code);
-    if (!processedCode.includes('return ')) {
-      const lines = processedCode.split('\n');
-      if (lines.length > 0) {
-        const lastLine = lines[lines.length - 1].trim();
-        if (lastLine && 
-            !lastLine.startsWith('var ') && 
-            !lastLine.startsWith('let ') && 
-            !lastLine.startsWith('const ') &&
-            !lastLine.startsWith('function ') &&
-            !lastLine.startsWith('if ') &&
-            !lastLine.startsWith('for ') &&
-            !lastLine.startsWith('while ') &&
-            !lastLine.startsWith('//') &&
-            !lastLine.endsWith('{') &&
-            !lastLine.endsWith('}')) {
-          lines[lines.length - 1] = 'return ' + lastLine;
-          processedCode = lines.join('\n');
-        }
-      }
-    }
+    const processedCode = this.prepareLegadoExecutableCode(code);
 
     // 组合完整脚本
     // jsLib中的某些函数使用 const { source } = this; 解构this对象
@@ -6050,35 +6124,7 @@ export class LegadoJsEngine {
       org.jsoup.Jsoup = Jsoup;
     `;
 
-    // 处理代码，确保最后一个表达式被返回
-    // Legado使用Rhino引擎，会自动返回最后一个表达式的值
-    // 我们需要手动添加return语句
-    let processedCode = this.normalizeJsCode(code);
-    
-    // 如果代码不包含return语句，尝试在最后一个语句前添加return
-    if (!processedCode.includes('return ')) {
-      // 按分号分割语句（处理单行多语句的情况）
-      const statements = processedCode.split(';').map(s => s.trim()).filter(s => s.length > 0);
-      if (statements.length > 0) {
-        const lastStatement = statements[statements.length - 1];
-        // 如果最后一个语句是表达式（不是声明或控制语句）
-        if (lastStatement && 
-            !lastStatement.startsWith('var ') && 
-            !lastStatement.startsWith('let ') && 
-            !lastStatement.startsWith('const ') &&
-            !lastStatement.startsWith('function ') &&
-            !lastStatement.startsWith('if ') &&
-            !lastStatement.startsWith('for ') &&
-            !lastStatement.startsWith('while ') &&
-            !lastStatement.startsWith('//') &&
-            !lastStatement.endsWith('{') &&
-            !lastStatement.endsWith('}')) {
-          // 在最后一个语句前添加return
-          statements[statements.length - 1] = 'return ' + lastStatement;
-          processedCode = statements.join(';\n');
-        }
-      }
-    }
+    const processedCode = this.prepareLegadoExecutableCode(code);
 
     // 组合完整脚本
     // 注意：jsLib必须在nativeUtilFunctions之后加载，这样jsLib中的函数可以使用我们定义的source等对象
@@ -6423,6 +6469,7 @@ export class LegadoJsEngine {
     this.isReady = false;
     this.pendingTasks = [];
     this.jsLib = '';
+    getLegadoRuntimeV2().reset();
     
     // 销毁Native引擎
     if (this.nativeEngine) {

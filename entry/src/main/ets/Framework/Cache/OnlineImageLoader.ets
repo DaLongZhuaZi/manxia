@@ -368,6 +368,56 @@ export class OnlineImageLoader {
     return DiskCacheManager.getInstance();
   }
 
+  /**
+   * 获取在线图片磁盘缓存文件路径。
+   * 这里复用内部 cache partition 规则，避免调用方复制图源特例逻辑。
+   */
+  public async getCachedFilePath(url: string, options?: OnlineLoadOptions): Promise<string | null> {
+    try {
+      const diskCache = await this.getDiskCacheForRequest(options);
+      if (!diskCache || !diskCache.isInitialized()) {
+        return null;
+      }
+      const diskCacheUrl = this.buildDiskCacheUrl(url, options);
+      return await diskCache.getCacheFilePath(diskCacheUrl);
+    } catch (error) {
+      logger.warn(TAG, `获取在线图片缓存文件路径失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * 从已有在线图片缓存读取 PixelMap，不触发新的网络请求。
+   * 调用方获得的是独立 PixelMap，使用完成后需要释放。
+   */
+  public async getCachedPixelMap(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
+    try {
+      const cacheKey = this.generateCacheKey(url, options);
+      const memoryCached = this.getFromCache(cacheKey);
+      if (memoryCached) {
+        return memoryCached;
+      }
+
+      const diskCache = await this.getDiskCacheForRequest(options);
+      if (!diskCache || !diskCache.isInitialized()) {
+        return null;
+      }
+
+      const diskCacheUrl = this.buildDiskCacheUrl(url, options);
+      const diskCached = await diskCache.get(diskCacheUrl);
+      if (!diskCached) {
+        return null;
+      }
+
+      await this.putToCache(cacheKey, diskCached);
+      this.syncCacheStatusToDatabaseAsync(url, diskCacheUrl, diskCache);
+      return diskCached;
+    } catch (error) {
+      logger.warn(TAG, `获取在线图片缓存PixelMap失败: ${String(error)}`);
+      return null;
+    }
+  }
+
   private buildDiskCacheUrl(url: string, options?: OnlineLoadOptions): string {
     if (!this.isPhotos18Request(options || {} as OnlineLoadOptions, url)) {
       return url;
