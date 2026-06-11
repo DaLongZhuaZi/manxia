@@ -286,6 +286,8 @@ export interface CreateTableSQLCollection {
   TRACK_RECORD?: string;
   TRACK_RECORD_UNIQUE_INDEX?: string;
   UNIFIED_ANNOTATION?: string;
+  GLOBAL_SEARCH_INDEX?: string;
+  GLOBAL_SEARCH_TOKEN_INDEX?: string;
 }
 
 // 数据库表创建SQL语句
@@ -852,6 +854,34 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       updateTime INTEGER NOT NULL,
       isDeleted INTEGER DEFAULT 0
     )
+  `,
+
+  GLOBAL_SEARCH_INDEX: `
+    CREATE TABLE IF NOT EXISTS global_search_index (
+      contentType TEXT NOT NULL,
+      contentId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      author TEXT DEFAULT '',
+      tags TEXT DEFAULT '',
+      coverUrl TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      sourceId TEXT DEFAULT '',
+      sourceName TEXT DEFAULT '',
+      sourcePkg TEXT DEFAULT '',
+      updateTime INTEGER DEFAULT 0,
+      isReady INTEGER DEFAULT 0,
+      PRIMARY KEY(contentType, contentId)
+    )
+  `,
+
+  GLOBAL_SEARCH_TOKEN_INDEX: `
+    CREATE TABLE IF NOT EXISTS global_search_token_index (
+      token TEXT NOT NULL,
+      contentType TEXT NOT NULL,
+      contentId TEXT NOT NULL,
+      weight INTEGER DEFAULT 1,
+      PRIMARY KEY(token, contentType, contentId)
+    )
   `
 };
 
@@ -909,7 +939,10 @@ export const CREATE_INDEX_SQL: string[] = [
   'CREATE INDEX IF NOT EXISTS idx_track_record_update ON track_record (updateTime)',
   'CREATE INDEX IF NOT EXISTS idx_unified_annotation_content ON unified_annotation (contentType, contentId, createTime DESC)',
   'CREATE INDEX IF NOT EXISTS idx_unified_annotation_type ON unified_annotation (annotationType, createTime DESC)',
-  'CREATE INDEX IF NOT EXISTS idx_unified_annotation_linked ON unified_annotation (linkedAnnotationId)'
+  'CREATE INDEX IF NOT EXISTS idx_unified_annotation_linked ON unified_annotation (linkedAnnotationId)',
+  'CREATE INDEX IF NOT EXISTS idx_global_search_index_type_ready ON global_search_index (contentType, isReady, updateTime)',
+  'CREATE INDEX IF NOT EXISTS idx_global_search_token_token ON global_search_token_index (token)',
+  'CREATE INDEX IF NOT EXISTS idx_global_search_token_content ON global_search_token_index (contentType, contentId)'
 ];
 
 // 数据库版本升级脚本

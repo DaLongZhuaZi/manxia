@@ -20,8 +20,37 @@ import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../../Models/Nove
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { SourceDetailSearchExecutor, SourceDetailSearchResult, getSourceDetailSearchExecutor } from './SourceDetailSearchExecutor';
 import { LegadoBookSourceType } from '../Novel/LegadoSourceTypes';
+import { SettingsManager } from '../Managers/SettingsManager';
+import { GlobalSearchScheduler, GlobalSearchQueuedTask } from '../Search/GlobalSearchScheduler';
+import {
+  GlobalSearchCancelSignal,
+  GlobalSearchMetrics,
+  GlobalSearchPatchCallback,
+  GlobalSearchPatchType,
+  GlobalSearchProgressPatch,
+  GlobalSearchSessionHandle,
+  GlobalSearchTaskKind,
+  GlobalSearchTimeoutResult
+} from '../Search/GlobalSearchSessionTypes';
+import {
+  getGlobalSearchIndexManager,
+  GlobalSearchIndexManager,
+  GlobalSearchIndexSummary,
+  GlobalSearchLocalIndexContentType
+} from '../Search/GlobalSearchIndexManager';
 
 const TAG = 'GlobalSearchService';
+const DEFAULT_LOCAL_TIMEOUT_MS: number = 2500;
+const DEFAULT_NETWORK_TIMEOUT_MS: number = 12000;
+const DEFAULT_WEBVIEW_TIMEOUT_MS: number = 30000;
+const DEFAULT_GLOBAL_TIMEOUT_MS: number = 75000;
+const DEFAULT_LOCAL_RESULT_LIMIT: number = 1000;
+const DEFAULT_ONLINE_RESULT_LIMIT_PER_SOURCE: number = 80;
+const DEFAULT_LOCAL_CONCURRENCY: number = 2;
+const DEFAULT_NETWORK_CONCURRENCY: number = 3;
+const DEFAULT_WEBVIEW_CONCURRENCY: number = 1;
+const DEFAULT_SUWAYOMI_CONCURRENCY: number = 1;
+const RUNTIME_CACHE_TTL_MS: number = 5 * 60 * 1000;
 
 // ==================== 类型定义 ====================
 
@@ -102,6 +131,12 @@ export interface SearchFilterConfig {
   selectedNovelSources: string[];     // 选中的小说书源ID列表
   enableSuwayomi: boolean;            // 是否启用Suwayomi搜索
   maxConcurrent: number;              // 最大并发数
+  sessionId?: string;                  // 搜索会话ID
+  perSourceTimeoutMs?: number;         // 单源超时
+  globalTimeoutMs?: number;            // 全局超时
+  localResultLimit?: number;           // 本地结果上限
+  onlineResultLimitPerSource?: number; // 在线单源结果上限
+  enableRuntimeCache?: boolean;        // 是否启用在线短期缓存
 }
 
 /**
@@ -125,6 +160,12 @@ interface ClassifiedTasks {
   suwayomi: Array<() => Promise<void>>;
 }
 
+interface GlobalSearchRuntimeCacheEntry {
+  cacheKey: string;
+  createTime: number;
+  items: UnifiedSearchItem[];
+}
+
 /**
  * 全局搜索服务类
  */
@@ -139,6 +180,11 @@ export class GlobalSearchService {
   private suwayomiExecutor: SuwayomiSourceExecutor;
   private webViewSourceManager: WebViewSourceManager;
   private sourceDetailSearchExecutor: SourceDetailSearchExecutor;
+  private settingsManager: SettingsManager;
+  private indexManager: GlobalSearchIndexManager;
+  private sessionCounter: number = 0;
+  private runtimeCache: Map<string, GlobalSearchRuntimeCacheEntry> = new Map();
+  private inFlightRequests: Map<string, Promise<UnifiedSearchItem[]>> = new Map();
 
   private constructor() {
     this.dataService = DataService.getInstance();
@@ -149,6 +195,8 @@ export class GlobalSearchService {
     this.suwayomiExecutor = SuwayomiSourceExecutor.getInstance();
     this.webViewSourceManager = WebViewSourceManager.getInstance();
     this.sourceDetailSearchExecutor = getSourceDetailSearchExecutor();
+    this.settingsManager = SettingsManager.getInstance();
+    this.indexManager = getGlobalSearchIndexManager();
   }
 
   /**
@@ -285,6 +333,64 @@ export class GlobalSearchService {
     }
   }
 
+  private async searchLocalMangaV2(keyword: string, limit: number): Promise<UnifiedSearchItem[]> {
+    const indexedItems: UnifiedSearchItem[] | null = await this.searchLocalIndex(
+      keyword,
+      limit,
+      GlobalSearchLocalIndexContentType.MANGA
+    );
+    if (indexedItems !== null) {
+      return indexedItems;
+    }
+    const items: UnifiedSearchItem[] = await this.searchLocalManga(keyword);
+    return this.limitItems(items, limit);
+  }
+
+  private async searchLocalEbooksV2(keyword: string, limit: number): Promise<UnifiedSearchItem[]> {
+    const indexedItems: UnifiedSearchItem[] | null = await this.searchLocalIndex(
+      keyword,
+      limit,
+      GlobalSearchLocalIndexContentType.EBOOK
+    );
+    if (indexedItems !== null) {
+      return indexedItems;
+    }
+    const items: UnifiedSearchItem[] = await this.searchLocalEbooks(keyword);
+    return this.limitItems(items, limit);
+  }
+
+  private async searchLocalNovelsV2(keyword: string, limit: number): Promise<UnifiedSearchItem[]> {
+    const items: UnifiedSearchItem[] = await this.searchLocalNovels(keyword);
+    return this.limitItems(items, limit);
+  }
+
+  private async searchLocalIndex(
+    keyword: string,
+    limit: number,
+    contentType: GlobalSearchLocalIndexContentType
+  ): Promise<UnifiedSearchItem[] | null> {
+    const summaries: GlobalSearchIndexSummary[] | null = await this.indexManager.search(contentType, keyword, limit);
+    if (summaries === null) {
+      return null;
+    }
+    const items: UnifiedSearchItem[] = [];
+    for (const summary of summaries) {
+      const item: UnifiedSearchItem = {
+        id: `${summary.contentType === GlobalSearchLocalIndexContentType.EBOOK ? 'local-ebook' : 'local-manga'}-${summary.contentId}`,
+        title: summary.title,
+        author: summary.author,
+        coverUrl: summary.coverUrl,
+        description: summary.description,
+        contentType: summary.contentType === GlobalSearchLocalIndexContentType.EBOOK ? SearchContentType.EBOOK : SearchContentType.MANGA,
+        sourceType: SearchSourceType.LOCAL,
+        sourceId: summary.sourceId.length > 0 ? summary.sourceId : summary.sourceName,
+        sourceName: summary.sourceName
+      };
+      items.push(item);
+    }
+    return items;
+  }
+
   // ==================== 在线搜索 ====================
 
   /**
@@ -296,19 +402,29 @@ export class GlobalSearchService {
   async searchOnlineManga(
     sourceId: number,
     keyword: string,
-    page: number = 1
+    page: number = 1,
+    sourceInfo?: SourceInfo,
+    signal?: GlobalSearchCancelSignal,
+    searchGeneration?: number
   ): Promise<UnifiedSearchItem[]> {
     try {
       // 获取图源信息
-      const sources = await this.sourceManager.getAllSources();
-      const source = sources.find(s => s.id === sourceId);
+      const source = sourceInfo ? sourceInfo : null;
       const sourceName = source?.name || `图源${sourceId}`;
+      if (signal && signal.isCancelled()) {
+        return [];
+      }
       const sourceSearchResult: SourceDetailSearchResult = await this.sourceDetailSearchExecutor.search({
         sourceId: sourceId,
         query: keyword,
         searchType: 'search',
-        page: page
+        page: page,
+        cancelSignal: signal,
+        searchGeneration: searchGeneration
       });
+      if (signal && signal.isCancelled()) {
+        return [];
+      }
       if (!sourceSearchResult.success) {
         throw new Error(sourceSearchResult.errorMessage || '图源搜索失败');
       }
@@ -402,12 +518,496 @@ export class GlobalSearchService {
   // ==================== 统一搜索 ====================
 
   /**
+   * 执行全局搜索。默认走 v2 session runner；关闭回滚开关后走旧流程。
+   */
+  async searchAll(
+    keyword: string,
+    filter: SearchFilterConfig,
+    onProgress?: SearchProgressCallback,
+    onPatch?: GlobalSearchPatchCallback
+  ): Promise<SearchSourceGroup[]> {
+    if (!this.settingsManager.getGlobalSearchV2Enabled()) {
+      return await this.searchAllLegacy(keyword, filter, onProgress);
+    }
+    const handle: GlobalSearchSessionHandle<SearchSourceGroup[]> = this.createSearchSession(
+      keyword,
+      filter,
+      onProgress,
+      onPatch
+    );
+    return await handle.completion;
+  }
+
+  createSearchSession(
+    keyword: string,
+    filter: SearchFilterConfig,
+    onProgress?: SearchProgressCallback,
+    onPatch?: GlobalSearchPatchCallback
+  ): GlobalSearchSessionHandle<SearchSourceGroup[]> {
+    const sessionId: string = filter.sessionId && filter.sessionId.length > 0 ? filter.sessionId : this.createSessionId();
+    const signal: GlobalSearchCancelSignal = new GlobalSearchCancelSignal();
+    const normalizedFilter: SearchFilterConfig = this.normalizeFilterConfig(filter, sessionId);
+    const completion: Promise<SearchSourceGroup[]> = this.runSearchSession(
+      sessionId,
+      keyword,
+      normalizedFilter,
+      signal,
+      onProgress,
+      onPatch
+    );
+    return new GlobalSearchSessionHandle<SearchSourceGroup[]>(
+      sessionId,
+      signal,
+      completion,
+      (reason: string): void => {
+        signal.cancel(reason);
+        this.sourceDetailSearchExecutor.cancelGlobalSearchWork(reason);
+      }
+    );
+  }
+
+  private async runSearchSession(
+    sessionId: string,
+    keyword: string,
+    filter: SearchFilterConfig,
+    signal: GlobalSearchCancelSignal,
+    onProgress?: SearchProgressCallback,
+    onPatch?: GlobalSearchPatchCallback
+  ): Promise<SearchSourceGroup[]> {
+    const groups: SearchSourceGroup[] = [];
+    const tasks: GlobalSearchQueuedTask[] = [];
+    const metrics: GlobalSearchMetrics = new GlobalSearchMetrics();
+    const scheduler: GlobalSearchScheduler = new GlobalSearchScheduler({
+      localConcurrency: DEFAULT_LOCAL_CONCURRENCY,
+      networkConcurrency: Math.max(1, Math.min(filter.maxConcurrent || DEFAULT_NETWORK_CONCURRENCY, DEFAULT_NETWORK_CONCURRENCY)),
+      webViewConcurrency: DEFAULT_WEBVIEW_CONCURRENCY,
+      suwayomiConcurrency: DEFAULT_SUWAYOMI_CONCURRENCY
+    });
+
+    await this.buildSessionTasks(sessionId, keyword, filter, signal, scheduler, groups, tasks, metrics, onProgress, onPatch);
+    metrics.begin(sessionId, keyword, groups.length);
+
+    logger.info(TAG, `开始全局搜索v2: session=${sessionId}, keyword="${keyword}", groups=${groups.length}`);
+    this.emitSnapshot(onProgress, 0, groups.length, '', groups, false);
+
+    const globalTimeoutMs: number = filter.globalTimeoutMs || DEFAULT_GLOBAL_TIMEOUT_MS;
+    const runResult: GlobalSearchTimeoutResult<void> = await scheduler.waitWithTimeout<void>(
+      scheduler.run(tasks, signal),
+      globalTimeoutMs,
+      signal
+    );
+
+    if (runResult.timedOut) {
+      logger.warn(TAG, `全局搜索v2超时: session=${sessionId}, timeout=${globalTimeoutMs}ms`);
+      signal.cancel('global_timeout');
+      this.sourceDetailSearchExecutor.cancelGlobalSearchWork('global_timeout');
+      this.finishRemainingGroupsAsTimeout(groups, metrics);
+    }
+
+    for (const group of groups) {
+      group.isSearching = false;
+    }
+
+    const resultCount: number = this.countItems(groups);
+    metrics.finish(resultCount);
+    if (!signal.isCancelled() || runResult.timedOut) {
+      this.emitSnapshot(onProgress, groups.length, groups.length, '', groups, true);
+      const donePatch: GlobalSearchProgressPatch = {
+        sessionId: sessionId,
+        patchType: GlobalSearchPatchType.SESSION_DONE,
+        completedGroups: groups.length,
+        totalGroups: groups.length,
+        itemCount: resultCount
+      };
+      this.emitPatch(onPatch, donePatch, metrics);
+    }
+    this.logMetricsIfEnabled(metrics);
+    return groups;
+  }
+
+  private async buildSessionTasks(
+    sessionId: string,
+    keyword: string,
+    filter: SearchFilterConfig,
+    signal: GlobalSearchCancelSignal,
+    scheduler: GlobalSearchScheduler,
+    groups: SearchSourceGroup[],
+    tasks: GlobalSearchQueuedTask[],
+    metrics: GlobalSearchMetrics,
+    onProgress?: SearchProgressCallback,
+    onPatch?: GlobalSearchPatchCallback
+  ): Promise<void> {
+    const localLimit: number = filter.localResultLimit || DEFAULT_LOCAL_RESULT_LIMIT;
+    const onlineLimit: number = filter.onlineResultLimitPerSource || DEFAULT_ONLINE_RESULT_LIMIT_PER_SOURCE;
+
+    if (filter.sourceType === SearchSourceType.ALL || filter.sourceType === SearchSourceType.LOCAL) {
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.MANGA) {
+        const group: SearchSourceGroup = this.createGroup('local-manga', '本地漫画', SearchContentType.MANGA, SearchSourceType.LOCAL);
+        groups.push(group);
+        this.addSessionTask(sessionId, group, GlobalSearchTaskKind.LOCAL, DEFAULT_LOCAL_TIMEOUT_MS, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
+          return await this.searchLocalMangaV2(keyword, localLimit);
+        });
+      }
+
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.EBOOK) {
+        const group: SearchSourceGroup = this.createGroup('local-ebook', '本地电子书', SearchContentType.EBOOK, SearchSourceType.LOCAL);
+        groups.push(group);
+        this.addSessionTask(sessionId, group, GlobalSearchTaskKind.LOCAL, DEFAULT_LOCAL_TIMEOUT_MS, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
+          return await this.searchLocalEbooksV2(keyword, localLimit);
+        });
+      }
+
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.NOVEL) {
+        const group: SearchSourceGroup = this.createGroup('local-novel', '本地小说', SearchContentType.NOVEL, SearchSourceType.LOCAL);
+        groups.push(group);
+        this.addSessionTask(sessionId, group, GlobalSearchTaskKind.LOCAL, DEFAULT_LOCAL_TIMEOUT_MS, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
+          return await this.searchLocalNovelsV2(keyword, localLimit);
+        });
+      }
+    }
+
+    if (filter.sourceType === SearchSourceType.ALL || filter.sourceType === SearchSourceType.ONLINE) {
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.MANGA) {
+        const allSources: SourceInfo[] = await this.sourceManager.getAllSources();
+        const searchGeneration: number = this.sourceDetailSearchExecutor.getGlobalSearchGeneration();
+        for (const sourceId of filter.selectedMangaSources) {
+          const numSourceId: number = parseInt(sourceId);
+          if (isNaN(numSourceId)) {
+            continue;
+          }
+          const source: SourceInfo | null = this.findSourceById(allSources, numSourceId);
+          const sourceName: string = source ? source.name : `图源${sourceId}`;
+          const isWebViewSource: boolean = await this.webViewSourceManager.isWebViewSource(numSourceId);
+          const group: SearchSourceGroup = this.createGroup(
+            `online-manga-${sourceId}`,
+            sourceName,
+            SearchContentType.MANGA,
+            SearchSourceType.ONLINE,
+            OnlineSourceType.MANGA_SOURCE,
+            isWebViewSource
+          );
+          groups.push(group);
+          const taskKind: GlobalSearchTaskKind = isWebViewSource ? GlobalSearchTaskKind.MANGA_WEBVIEW : GlobalSearchTaskKind.MANGA_HTTP;
+          const timeoutMs: number = isWebViewSource ? DEFAULT_WEBVIEW_TIMEOUT_MS : (filter.perSourceTimeoutMs || DEFAULT_NETWORK_TIMEOUT_MS);
+          const cacheKey: string = this.buildRuntimeCacheKey('manga', sourceId, keyword);
+          this.addSessionTask(sessionId, group, taskKind, timeoutMs, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
+            return await this.searchWithRuntimeCache(cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
+              const items: UnifiedSearchItem[] = await this.searchOnlineManga(numSourceId, keyword, 1, source || undefined, signal, searchGeneration);
+              return this.limitItems(items, onlineLimit);
+            });
+          });
+        }
+
+        if (filter.enableSuwayomi && this.isSuwayomiConfigured()) {
+          const group: SearchSourceGroup = this.createGroup(
+            'suwayomi-library',
+            'Suwayomi',
+            SearchContentType.MANGA,
+            SearchSourceType.ONLINE,
+            OnlineSourceType.SUWAYOMI
+          );
+          groups.push(group);
+          const cacheKey: string = this.buildRuntimeCacheKey('suwayomi', 'library', keyword);
+          this.addSessionTask(sessionId, group, GlobalSearchTaskKind.SUWAYOMI, filter.perSourceTimeoutMs || DEFAULT_NETWORK_TIMEOUT_MS, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
+            return await this.searchWithRuntimeCache(cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
+              const items: UnifiedSearchItem[] = await this.searchSuwayomi(keyword);
+              return this.limitItems(items, onlineLimit);
+            });
+          });
+        }
+      }
+
+      if (filter.contentType === SearchContentType.ALL || filter.contentType === SearchContentType.NOVEL) {
+        for (const sourceId of filter.selectedNovelSources) {
+          const sourceObj = this.novelSourceManager.getSource(sourceId);
+          const sourceName: string = sourceObj?.bookSourceName || sourceId;
+          const group: SearchSourceGroup = this.createGroup(
+            `online-novel-${sourceId}`,
+            sourceName,
+            SearchContentType.NOVEL,
+            SearchSourceType.ONLINE,
+            OnlineSourceType.NOVEL_SOURCE
+          );
+          groups.push(group);
+          const cacheKey: string = this.buildRuntimeCacheKey('novel', sourceId, keyword);
+          this.addSessionTask(sessionId, group, GlobalSearchTaskKind.NOVEL, filter.perSourceTimeoutMs || DEFAULT_NETWORK_TIMEOUT_MS, groups, tasks, scheduler, signal, metrics, onProgress, onPatch, async (): Promise<UnifiedSearchItem[]> => {
+            return await this.searchWithRuntimeCache(cacheKey, filter.enableRuntimeCache === true, async (): Promise<UnifiedSearchItem[]> => {
+              const items: UnifiedSearchItem[] = await this.searchOnlineNovel(sourceId, keyword);
+              return this.limitItems(items, onlineLimit);
+            });
+          });
+        }
+      }
+    }
+  }
+
+  private addSessionTask(
+    sessionId: string,
+    group: SearchSourceGroup,
+    kind: GlobalSearchTaskKind,
+    timeoutMs: number,
+    groups: SearchSourceGroup[],
+    tasks: GlobalSearchQueuedTask[],
+    scheduler: GlobalSearchScheduler,
+    signal: GlobalSearchCancelSignal,
+    metrics: GlobalSearchMetrics,
+    onProgress: SearchProgressCallback | undefined,
+    onPatch: GlobalSearchPatchCallback | undefined,
+    searchWork: () => Promise<UnifiedSearchItem[]>
+  ): void {
+    const task: GlobalSearchQueuedTask = {
+      taskId: group.groupId,
+      taskName: group.groupName,
+      kind: kind,
+      run: async (): Promise<void> => {
+        if (signal.isCancelled()) {
+          metrics.cancelledGroups++;
+          group.isSearching = false;
+          return;
+        }
+        this.emitGroupPatch(sessionId, group, GlobalSearchPatchType.GROUP_START, metrics, onPatch);
+        const result: GlobalSearchTimeoutResult<UnifiedSearchItem[]> = await scheduler.waitWithTimeout<UnifiedSearchItem[]>(
+          searchWork(),
+          timeoutMs,
+          signal
+        );
+        if (signal.isCancelled() && !result.timedOut) {
+          metrics.cancelledGroups++;
+          group.isSearching = false;
+          return;
+        }
+        if (result.completed) {
+          group.items = result.value ? result.value : [];
+          group.hasError = false;
+          group.errorMessage = undefined;
+        } else {
+          group.items = [];
+          group.hasError = true;
+          group.errorMessage = result.timedOut ? '搜索超时' : result.errorMessage;
+          if (result.timedOut) {
+            metrics.timeoutGroups++;
+          } else {
+            metrics.failedGroups++;
+          }
+        }
+        group.isSearching = false;
+        metrics.completedGroups++;
+        this.emitGroupPatch(sessionId, group, result.completed ? GlobalSearchPatchType.GROUP_ITEMS : GlobalSearchPatchType.GROUP_ERROR, metrics, onPatch);
+        this.emitGroupPatch(sessionId, group, GlobalSearchPatchType.GROUP_DONE, metrics, onPatch);
+        this.emitSnapshot(onProgress, metrics.completedGroups, metrics.totalGroups, group.groupName, groups, false);
+      }
+    };
+    tasks.push(task);
+  }
+
+  private normalizeFilterConfig(filter: SearchFilterConfig, sessionId: string): SearchFilterConfig {
+    const config: SearchFilterConfig = {
+      contentType: filter.contentType,
+      sourceType: filter.sourceType,
+      selectedMangaSources: filter.selectedMangaSources,
+      selectedNovelSources: filter.selectedNovelSources,
+      enableSuwayomi: filter.enableSuwayomi,
+      maxConcurrent: filter.maxConcurrent > 0 ? filter.maxConcurrent : DEFAULT_NETWORK_CONCURRENCY,
+      sessionId: sessionId,
+      perSourceTimeoutMs: filter.perSourceTimeoutMs && filter.perSourceTimeoutMs > 0 ? filter.perSourceTimeoutMs : DEFAULT_NETWORK_TIMEOUT_MS,
+      globalTimeoutMs: filter.globalTimeoutMs && filter.globalTimeoutMs > 0 ? filter.globalTimeoutMs : DEFAULT_GLOBAL_TIMEOUT_MS,
+      localResultLimit: filter.localResultLimit && filter.localResultLimit > 0 ? filter.localResultLimit : DEFAULT_LOCAL_RESULT_LIMIT,
+      onlineResultLimitPerSource: filter.onlineResultLimitPerSource && filter.onlineResultLimitPerSource > 0 ? filter.onlineResultLimitPerSource : DEFAULT_ONLINE_RESULT_LIMIT_PER_SOURCE,
+      enableRuntimeCache: filter.enableRuntimeCache === undefined ? this.settingsManager.getGlobalSearchOnlineCacheEnabled() : filter.enableRuntimeCache
+    };
+    return config;
+  }
+
+  private createGroup(
+    groupId: string,
+    groupName: string,
+    contentType: SearchContentType,
+    sourceType: SearchSourceType,
+    onlineSourceType?: OnlineSourceType,
+    usesWebViewEngine?: boolean
+  ): SearchSourceGroup {
+    const group: SearchSourceGroup = {
+      groupId: groupId,
+      groupName: groupName,
+      contentType: contentType,
+      sourceType: sourceType,
+      onlineSourceType: onlineSourceType,
+      usesWebViewEngine: usesWebViewEngine,
+      items: [],
+      isSearching: true,
+      hasError: false
+    };
+    return group;
+  }
+
+  private createSessionId(): string {
+    this.sessionCounter++;
+    return `gsearch_${Date.now()}_${this.sessionCounter}`;
+  }
+
+  private findSourceById(sources: SourceInfo[], sourceId: number): SourceInfo | null {
+    for (const source of sources) {
+      if (source.id === sourceId) {
+        return source;
+      }
+    }
+    return null;
+  }
+
+  private async searchWithRuntimeCache(
+    cacheKey: string,
+    enabled: boolean,
+    work: () => Promise<UnifiedSearchItem[]>
+  ): Promise<UnifiedSearchItem[]> {
+    if (!enabled) {
+      return await work();
+    }
+
+    const cached: GlobalSearchRuntimeCacheEntry | undefined = this.runtimeCache.get(cacheKey);
+    if (cached && Date.now() - cached.createTime <= RUNTIME_CACHE_TTL_MS) {
+      logger.debug(TAG, `命中全局搜索运行期缓存: ${cacheKey}, count=${cached.items.length}`);
+      return cached.items;
+    }
+
+    const inFlight: Promise<UnifiedSearchItem[]> | undefined = this.inFlightRequests.get(cacheKey);
+    if (inFlight) {
+      logger.debug(TAG, `复用全局搜索进行中请求: ${cacheKey}`);
+      return await inFlight;
+    }
+
+    const promise: Promise<UnifiedSearchItem[]> = work().then((items: UnifiedSearchItem[]): UnifiedSearchItem[] => {
+      const entry: GlobalSearchRuntimeCacheEntry = {
+        cacheKey: cacheKey,
+        createTime: Date.now(),
+        items: items
+      };
+      this.runtimeCache.set(cacheKey, entry);
+      return items;
+    }).catch((error) => {
+      throw error as Error;
+    });
+    this.inFlightRequests.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.inFlightRequests.delete(cacheKey);
+    }
+  }
+
+  private buildRuntimeCacheKey(sourceType: string, sourceId: string, keyword: string): string {
+    return `${sourceType}_${sourceId}_${keyword.trim().toLowerCase()}`;
+  }
+
+  private limitItems(items: UnifiedSearchItem[], limit: number): UnifiedSearchItem[] {
+    if (limit <= 0 || items.length <= limit) {
+      return items;
+    }
+    return items.slice(0, limit);
+  }
+
+  private countItems(groups: SearchSourceGroup[]): number {
+    let total: number = 0;
+    for (const group of groups) {
+      total += group.items.length;
+    }
+    return total;
+  }
+
+  private finishRemainingGroupsAsTimeout(groups: SearchSourceGroup[], metrics: GlobalSearchMetrics): void {
+    for (const group of groups) {
+      if (group.isSearching) {
+        group.isSearching = false;
+        group.hasError = true;
+        group.errorMessage = '搜索超时';
+        metrics.timeoutGroups++;
+      }
+    }
+  }
+
+  private emitSnapshot(
+    onProgress: SearchProgressCallback | undefined,
+    completed: number,
+    total: number,
+    groupName: string,
+    groups: SearchSourceGroup[],
+    forceCompleted: boolean
+  ): void {
+    if (!onProgress) {
+      return;
+    }
+    const snapshot: SearchSourceGroup[] = this.cloneSearchGroupsForProgress(groups, forceCompleted);
+    onProgress(completed, total, groupName, snapshot);
+  }
+
+  private emitGroupPatch(
+    sessionId: string,
+    group: SearchSourceGroup,
+    patchType: GlobalSearchPatchType,
+    metrics: GlobalSearchMetrics,
+    onPatch?: GlobalSearchPatchCallback
+  ): void {
+    const patch: GlobalSearchProgressPatch = {
+      sessionId: sessionId,
+      patchType: patchType,
+      completedGroups: metrics.completedGroups,
+      totalGroups: metrics.totalGroups,
+      groupId: group.groupId,
+      groupName: group.groupName,
+      itemCount: group.items.length,
+      errorMessage: group.errorMessage
+    };
+    this.emitPatch(onPatch, patch, metrics);
+  }
+
+  private emitPatch(
+    onPatch: GlobalSearchPatchCallback | undefined,
+    patch: GlobalSearchProgressPatch,
+    metrics: GlobalSearchMetrics
+  ): void {
+    if (!onPatch) {
+      return;
+    }
+    metrics.uiPatchCount++;
+    onPatch(patch);
+  }
+
+  private cloneSearchGroupsForProgress(groups: SearchSourceGroup[], forceCompleted: boolean): SearchSourceGroup[] {
+    const snapshot: SearchSourceGroup[] = [];
+    for (const group of groups) {
+      const cloned: SearchSourceGroup = {
+        groupId: group.groupId,
+        groupName: group.groupName,
+        contentType: group.contentType,
+        sourceType: group.sourceType,
+        onlineSourceType: group.onlineSourceType,
+        usesWebViewEngine: group.usesWebViewEngine,
+        items: group.items,
+        isSearching: forceCompleted ? false : group.isSearching,
+        hasError: group.hasError,
+        errorMessage: group.errorMessage
+      };
+      snapshot.push(cloned);
+    }
+    return snapshot;
+  }
+
+  private logMetricsIfEnabled(metrics: GlobalSearchMetrics): void {
+    if (!this.settingsManager.getGlobalSearchDebugMetricsEnabled()) {
+      return;
+    }
+    logger.info(
+      TAG,
+      `globalSearch session=${metrics.sessionId}, keyword="${metrics.keyword}", duration=${metrics.getDurationMs()}ms, groups=${metrics.totalGroups}, completed=${metrics.completedGroups}, timeouts=${metrics.timeoutGroups}, cancelled=${metrics.cancelledGroups}, failed=${metrics.failedGroups}, results=${metrics.resultCount}, patches=${metrics.uiPatchCount}`
+    );
+  }
+
+  /**
    * 执行全局搜索
    * @param keyword 搜索关键词
    * @param filter 筛选配置
    * @param onProgress 进度回调
    */
-  async searchAll(
+  private async searchAllLegacy(
     keyword: string,
     filter: SearchFilterConfig,
     onProgress?: SearchProgressCallback

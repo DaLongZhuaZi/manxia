@@ -17,6 +17,7 @@ import { DirectSearchResult, MangaInfo } from '../WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import CookieManager from '../Managers/CookieManager';
 import { getLegadoMangaSourceBridge } from '../Novel/LegadoMangaSourceBridge';
+import { GlobalSearchCancelSignal } from '../Search/GlobalSearchSessionTypes';
 
 const TAG = 'SourceDetailSearchExecutor';
 const DEFAULT_MOBILE_USER_AGENT: string = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
@@ -49,6 +50,8 @@ export interface SourceDetailSearchParams {
   query: string;
   searchType?: string;
   page?: number;
+  cancelSignal?: GlobalSearchCancelSignal;
+  searchGeneration?: number;
 }
 
 export interface SourceDetailSearchResult {
@@ -93,6 +96,8 @@ interface SourceDetailSearchContext {
   query: string;
   searchType: string;
   page: number;
+  cancelSignal?: GlobalSearchCancelSignal;
+  searchGeneration: number;
   usedWebView: boolean;
   webViewPrepared: boolean;
   sourceRecord: ComicSourceDatabaseRecord;
@@ -107,6 +112,7 @@ export class SourceDetailSearchExecutor {
   private webViewSourceManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private webViewController: webview.WebviewController | null = null;
   private webViewQueue: Promise<void> = Promise.resolve();
+  private globalSearchGeneration: number = 0;
 
   private constructor() {}
 
@@ -127,10 +133,29 @@ export class SourceDetailSearchExecutor {
     return this.resolveWebViewController() !== null;
   }
 
+  getGlobalSearchGeneration(): number {
+    return this.globalSearchGeneration;
+  }
+
+  cancelGlobalSearchWork(reason: string): void {
+    this.globalSearchGeneration++;
+    this.webViewQueue = Promise.resolve();
+    const controller: webview.WebviewController | null = this.resolveWebViewController();
+    if (controller) {
+      try {
+        controller.loadUrl('about:blank');
+      } catch (error) {
+        logger.warn(TAG, `重置全局搜索 WebView 失败: reason=${reason}, error=${String(error)}`);
+      }
+    }
+    logger.info(TAG, `全局搜索 WebView 队列已取消: reason=${reason}, generation=${this.globalSearchGeneration}`);
+  }
+
   async search(params: SourceDetailSearchParams): Promise<SourceDetailSearchResult> {
     const query: string = params.query.trim();
     const searchType: string = params.searchType && params.searchType.trim().length > 0 ? params.searchType.trim() : 'search';
     const page: number = params.page && params.page > 0 ? params.page : 1;
+    const searchGeneration: number = params.searchGeneration !== undefined ? params.searchGeneration : this.globalSearchGeneration;
     const sourceRecord: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(params.sourceId);
     if (!sourceRecord) {
       return this.buildFailureResult(params.sourceId, `图源${params.sourceId}`, query, searchType, page, false, SourceDetailSearchRoute.KEYWORD, Date.now(), `图源不存在: ${params.sourceId}`);
@@ -143,6 +168,8 @@ export class SourceDetailSearchExecutor {
       query: query,
       searchType: searchType,
       page: page,
+      cancelSignal: params.cancelSignal,
+      searchGeneration: searchGeneration,
       usedWebView: usedWebView,
       webViewPrepared: false,
       sourceRecord: sourceRecord,
@@ -153,12 +180,19 @@ export class SourceDetailSearchExecutor {
       return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索关键词为空');
     }
 
+    if (this.isContextCancelled(context)) {
+      return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索已取消');
+    }
+
     if (getLegadoMangaSourceBridge().isLegadoMangaRecord(sourceRecord)) {
       return await this.executeLegadoMangaSearch(context, query);
     }
 
     if (usedWebView) {
       return await this.runWebViewExclusive<SourceDetailSearchResult>(async (): Promise<SourceDetailSearchResult> => {
+        if (this.isContextCancelled(context)) {
+          return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索已取消');
+        }
         return await this.executeSearch(context);
       });
     }
@@ -178,6 +212,9 @@ export class SourceDetailSearchExecutor {
     logger.info(TAG, `执行图源详情后台搜索: source=${context.sourceName}(${context.sourceId}), type=${context.searchType}, query="${context.query}", webView=${context.usedWebView}`);
 
     try {
+      if (this.isContextCancelled(context)) {
+        return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索已取消');
+      }
       if (context.searchType === 'search') {
         const intent: SearchIntent = SearchIntentParser.parse(context.query);
         if (intent.type === SearchIntentType.URL) {
@@ -216,14 +253,23 @@ export class SourceDetailSearchExecutor {
     keyword: string,
     fallbackReason?: string
   ): Promise<SourceDetailSearchResult> {
+    if (this.isContextCancelled(context)) {
+      return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索已取消');
+    }
     if (context.usedWebView) {
       await this.prepareWebViewSource(context);
+      if (this.isContextCancelled(context)) {
+        return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索已取消');
+      }
       const engine = await this.webViewSourceManager.getMangaEngine(context.sourceId, context.sourceName);
       const controller = this.resolveRequiredWebViewController();
       engine.updateWebViewController(controller);
 
       logger.info(TAG, `使用 SourceDetail WebView 搜索流程: source=${context.sourceName}, keyword="${keyword}"`);
       const result: EngineResult<SearchResult> = await engine.searchManga(keyword, context.page);
+      if (this.isContextCancelled(context)) {
+        return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, '搜索已取消');
+      }
       if (!result.success || !result.data) {
         return this.buildFailureFromContext(context, SourceDetailSearchRoute.KEYWORD, result.error || '搜索失败');
       }
@@ -241,6 +287,9 @@ export class SourceDetailSearchExecutor {
 
     logger.info(TAG, `使用 SourceDetail HTTP 搜索流程: source=${context.sourceName}, keyword="${keyword}"`);
     const comics: ComicInfo[] = await this.sourceManager.search(context.sourceId, keyword, context.page, DEFAULT_PAGE_SIZE);
+    if (this.isContextCancelled(context)) {
+      return this.buildFailureFromContext(context, SourceDetailSearchRoute.HTTP, '搜索已取消');
+    }
     return this.buildHttpListResult(context, keyword, comics, comics.length >= DEFAULT_PAGE_SIZE, fallbackReason);
   }
 
@@ -446,6 +495,9 @@ export class SourceDetailSearchExecutor {
     if (context.webViewPrepared) {
       return;
     }
+    if (this.isContextCancelled(context)) {
+      throw new Error('搜索已取消');
+    }
 
     const controller = this.resolveRequiredWebViewController();
     this.webViewSourceManager.setGlobalWebViewController(controller);
@@ -466,11 +518,20 @@ export class SourceDetailSearchExecutor {
       controller.loadUrl(baseUrl);
       logger.info(TAG, `SourceDetail 后台搜索已预加载图源站点: ${baseUrl}`);
       await this.sleep(WEBVIEW_PRELOAD_SETTLE_MS);
+      if (this.isContextCancelled(context)) {
+        throw new Error('搜索已取消');
+      }
       const ready: boolean = await this.waitForExecutableJavaScript(controller, context.sourceName);
+      if (this.isContextCancelled(context)) {
+        throw new Error('搜索已取消');
+      }
       if (!ready) {
         logger.warn(TAG, `预加载站点后JS上下文未就绪，切换到about:blank承接搜索脚本: source=${context.sourceName}`);
         controller.loadUrl('about:blank');
         await this.sleep(WEBVIEW_PRELOAD_SETTLE_MS);
+        if (this.isContextCancelled(context)) {
+          throw new Error('搜索已取消');
+        }
         const blankReady: boolean = await this.waitForExecutableJavaScript(controller, context.sourceName);
         if (!blankReady) {
           throw new Error(`WebView JavaScript上下文未就绪: ${context.sourceName}`);
@@ -482,6 +543,9 @@ export class SourceDetailSearchExecutor {
       }, 800);
     } else {
       const ready: boolean = await this.waitForExecutableJavaScript(controller, context.sourceName);
+      if (this.isContextCancelled(context)) {
+        throw new Error('搜索已取消');
+      }
       if (!ready) {
         throw new Error(`WebView JavaScript上下文未就绪: ${context.sourceName}`);
       }
@@ -545,6 +609,16 @@ export class SourceDetailSearchExecutor {
       throw new Error('WebView控制器未设置，无法执行WebView图源搜索');
     }
     return controller;
+  }
+
+  private isContextCancelled(context: SourceDetailSearchContext): boolean {
+    if (context.searchGeneration !== this.globalSearchGeneration) {
+      return true;
+    }
+    if (context.cancelSignal && context.cancelSignal.isCancelled()) {
+      return true;
+    }
+    return false;
   }
 
   private async waitForExecutableJavaScript(controller: webview.WebviewController, sourceName: string): Promise<boolean> {

@@ -71,7 +71,7 @@ interface DatabaseConfigType {
 // 数据库配置常量
 const DATABASE_CONFIG: DatabaseConfigType = {
   DATABASE_NAME: 'manxia_comic.db',
-  DATABASE_VERSION: 15,
+  DATABASE_VERSION: 16,
   ENCRYPT: false
 };
 
@@ -184,7 +184,9 @@ export class DatabaseManager {
       'ONLINE_READ_HISTORY',
       'TRACK_RECORD',
       'TRACK_RECORD_UNIQUE_INDEX',
-      'UNIFIED_ANNOTATION'
+      'UNIFIED_ANNOTATION',
+      'GLOBAL_SEARCH_INDEX',
+      'GLOBAL_SEARCH_TOKEN_INDEX'
     ];
     
     const tableCreationOrder = [
@@ -216,7 +218,9 @@ export class DatabaseManager {
       , CREATE_TABLE_SQL.ONLINE_READ_HISTORY as string,
       CREATE_TABLE_SQL.TRACK_RECORD as string,
       CREATE_TABLE_SQL.TRACK_RECORD_UNIQUE_INDEX as string,
-      CREATE_TABLE_SQL.UNIFIED_ANNOTATION as string
+      CREATE_TABLE_SQL.UNIFIED_ANNOTATION as string,
+      CREATE_TABLE_SQL.GLOBAL_SEARCH_INDEX as string,
+      CREATE_TABLE_SQL.GLOBAL_SEARCH_TOKEN_INDEX as string
     ];
     
     for (let i = 0; i < tableCreationOrder.length; i++) {

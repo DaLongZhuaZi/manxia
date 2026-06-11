@@ -20,6 +20,9 @@ export class SettingKeys {
   static readonly SOURCE_SETTINGS_VISIBLE = 'source_settings_visible';
   static readonly ENABLE_LOG_FLOATING_WINDOW = 'enable_log_floating_window';
   static readonly PRELOAD_DEBUG_MODE = 'preload_debug_mode'; // 预加载调试模式：off/on/always
+  static readonly GLOBAL_SEARCH_V2_ENABLED = 'global_search_v2_enabled';
+  static readonly GLOBAL_SEARCH_DEBUG_METRICS_ENABLED = 'global_search_debug_metrics_enabled';
+  static readonly GLOBAL_SEARCH_ONLINE_CACHE_ENABLED = 'global_search_online_cache_enabled';
   
   // 生命周期监控
   static readonly LIFECYCLE_MONITOR_ENABLED = 'lifecycle_monitor_enabled'; // 启用生命周期监控
@@ -380,28 +383,20 @@ export class SettingsManager {
 
   /**
    * 获取底部导航栏可见标签
-   * 默认显示基本标签: 书库(1), 图源(3), 书源(4), Suwayomi(5), 设置(6), Komga(7)
+   * 默认显示基本标签: 书库(1), 图源(3), 书源(4), Suwayomi(5), Komga(7), 管理(6)
    */
   async getVisibleTabs(): Promise<number[]> {
     const defaultTabs: number[] = [1, 3, 4, 5, 7, 6];
+    const savedValue = this.settingsCache.get(SettingKeys.VISIBLE_TABS);
+    if (savedValue === undefined || savedValue.trim().length === 0) {
+      return defaultTabs;
+    }
     const savedTabs = this.getJSON<number[]>(SettingKeys.VISIBLE_TABS, defaultTabs);
-    const legacyDefaultTabs: number[] = [1, 3, 4, 6];
-    if (this.isSameNumberArray(savedTabs, legacyDefaultTabs)) {
+    if (!Array.isArray(savedTabs)) {
+      logger.warn(TAG, `底栏可见标签配置格式无效，使用默认配置: ${savedValue}`);
       return defaultTabs;
     }
     return savedTabs;
-  }
-
-  private isSameNumberArray(left: number[], right: number[]): boolean {
-    if (left.length !== right.length) {
-      return false;
-    }
-    for (let index = 0; index < left.length; index++) {
-      if (left[index] !== right[index]) {
-        return false;
-      }
-    }
-    return true;
   }
 
   /**
@@ -452,6 +447,30 @@ export class SettingsManager {
    */
   async setBottomBarStyle(style: string): Promise<void> {
     await this.setString(SettingKeys.BOTTOM_BAR_STYLE, style);
+  }
+
+  getGlobalSearchV2Enabled(): boolean {
+    return this.getBoolean(SettingKeys.GLOBAL_SEARCH_V2_ENABLED, true);
+  }
+
+  async setGlobalSearchV2Enabled(enabled: boolean): Promise<void> {
+    await this.setBoolean(SettingKeys.GLOBAL_SEARCH_V2_ENABLED, enabled);
+  }
+
+  getGlobalSearchDebugMetricsEnabled(): boolean {
+    return this.getBoolean(SettingKeys.GLOBAL_SEARCH_DEBUG_METRICS_ENABLED, false);
+  }
+
+  async setGlobalSearchDebugMetricsEnabled(enabled: boolean): Promise<void> {
+    await this.setBoolean(SettingKeys.GLOBAL_SEARCH_DEBUG_METRICS_ENABLED, enabled);
+  }
+
+  getGlobalSearchOnlineCacheEnabled(): boolean {
+    return this.getBoolean(SettingKeys.GLOBAL_SEARCH_ONLINE_CACHE_ENABLED, true);
+  }
+
+  async setGlobalSearchOnlineCacheEnabled(enabled: boolean): Promise<void> {
+    await this.setBoolean(SettingKeys.GLOBAL_SEARCH_ONLINE_CACHE_ENABLED, enabled);
   }
 
   /**

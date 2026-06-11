@@ -179,8 +179,6 @@ export class OnlineMangaArchiveService {
   private readonly supportedImageExtensions: string[] = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif'];
   private activeReaderArchiveChapterIds: Set<string> = new Set<string>();
   private pendingReaderArchiveChapterIds: Set<string> = new Set<string>();
-  private activeArchiveLocks: Set<string> = new Set<string>();
-  private archiveTempSequence: number = 0;
 
   private constructor() {}
 
@@ -208,7 +206,7 @@ export class OnlineMangaArchiveService {
    * 生成最小占位PNG图片（白色1x1像素，约67字节）
    * 用于部分归档中缺失的页面位置
    */
-  private async generatePlaceholderPng(targetPath: string): Promise<void> {
+  private generatePlaceholderPng(targetPath: string): void {
     // 最小合法PNG: 1x1 白色像素
     const placeholder = new Uint8Array([
       0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
@@ -221,7 +219,9 @@ export class OnlineMangaArchiveService {
       0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND length + type
       0x44, 0xAE, 0x42, 0x60, 0x82                    // IEND CRC
     ]);
-    await this.writeArrayBufferToFile(targetPath, placeholder.buffer as ArrayBuffer);
+    const file = SafeFileUtils.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    SafeFileUtils.writeSync(file.fd, placeholder.buffer);
+    SafeFileUtils.closeSync(file.fd);
   }
 
   public async createArchiveFromPageFiles(request: OnlineArchiveCreateRequest): Promise<OnlineArchiveCreateResult> {
@@ -234,54 +234,48 @@ export class OnlineMangaArchiveService {
       && request.totalPageCount !== undefined
       && request.totalPageCount > request.pageFiles.length;
 
-    const archivePath = this.resolveArchivePath(request);
-    const lockKey = this.buildArchiveLockKey(request.chapterId, archivePath);
-    await this.acquireArchiveLock(lockKey);
-    let workDir = '';
+    const workDir = this.createWorkDir(request.chapterId);
     try {
-      workDir = this.createWorkDir(request.chapterId);
       const sortedPages = request.pageFiles.slice().sort((left: OnlineArchivePageFile, right: OnlineArchivePageFile) => {
         return left.pageIndex - right.pageIndex;
       });
 
       if (isPartialArchive) {
         // 部分归档：按总页数创建完整序列，缺失页用占位图填充
-        const totalPageCount = request.totalPageCount !== undefined ? request.totalPageCount : sortedPages.length;
-        const failedPageIndexes = request.failedPageIndexes !== undefined ? request.failedPageIndexes : [];
-        const failedSet = new Set(failedPageIndexes);
+        const totalPageCount = request.totalPageCount!;
+        const failedSet = new Set(request.failedPageIndexes!);
         let realPageIdx = 0;
 
         for (let i = 0; i < totalPageCount; i++) {
           const targetPath = `${workDir}/${String(i + 1).padStart(4, '0')}.png`;
           if (failedSet.has(i)) {
             // 失败页：生成占位图
-            await this.generatePlaceholderPng(targetPath);
+            this.generatePlaceholderPng(targetPath);
           } else {
             // 成功页：从已下载的页面中取
             if (realPageIdx < sortedPages.length) {
               const page = sortedPages[realPageIdx];
               if (!this.pathExists(page.sourcePath)) {
-                await this.generatePlaceholderPng(targetPath);
+                this.generatePlaceholderPng(targetPath);
               } else {
                 const extension = this.resolveImageExtension(page.sourcePath, page.imageUrl);
                 const finalTarget = `${workDir}/${String(i + 1).padStart(4, '0')}.${extension}`;
-                await fs.copyFile(page.sourcePath, finalTarget);
+                SafeFileUtils.copyFileSync(page.sourcePath, finalTarget);
               }
               realPageIdx++;
             } else {
-              await this.generatePlaceholderPng(targetPath);
+              this.generatePlaceholderPng(targetPath);
             }
           }
-          await this.yieldArchiveBatch(i);
         }
 
-        const comicInfoXml = this.buildComicInfoXml(request.metadata, totalPageCount, failedPageIndexes);
-        await this.writeTextFile(`${workDir}/ComicInfo.xml`, comicInfoXml);
+        const comicInfoXml = this.buildComicInfoXml(request.metadata, totalPageCount, request.failedPageIndexes);
+        this.writeTextFile(`${workDir}/ComicInfo.xml`, comicInfoXml);
 
-        const tempArchivePath = this.buildUniqueTempArchivePath(archivePath);
+        const archivePath = this.resolveArchivePath(request);
+        const tempArchivePath = `${archivePath}.tmp.zip`;
         const legacyTempArchivePath = `${archivePath}.tmp`;
-        this.deleteArchiveTempFiles(archivePath);
-        this.deleteUniqueArchiveTempFiles(tempArchivePath);
+        this.deleteArchiveOutputFiles(archivePath);
 
         await zlib.compressFile(workDir, tempArchivePath, {
           level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
@@ -289,13 +283,11 @@ export class OnlineMangaArchiveService {
           strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY
         });
         const compressedOutputPath = this.resolveCompressedOutputPath(tempArchivePath, legacyTempArchivePath);
-        this.deleteFileIfExists(archivePath);
-        await fs.rename(compressedOutputPath, archivePath);
-        this.deleteUniqueArchiveTempFiles(tempArchivePath);
+        SafeFileUtils.renameSync(compressedOutputPath, archivePath);
         this.deleteArchiveTempFiles(archivePath);
 
         const archiveSize = this.getFileSize(archivePath);
-        logger.info(TAG, `在线漫画CBZ部分归档完成: ${archivePath}, pages=${sortedPages.length}/${totalPageCount}, failed=${failedPageIndexes.length}, size=${archiveSize}`);
+        logger.info(TAG, `在线漫画CBZ部分归档完成: ${archivePath}, pages=${sortedPages.length}/${totalPageCount}, failed=${request.failedPageIndexes!.length}, size=${archiveSize}`);
         return {
           archivePath: archivePath,
           archiveSize: archiveSize,
@@ -310,17 +302,16 @@ export class OnlineMangaArchiveService {
           }
           const extension = this.resolveImageExtension(page.sourcePath, page.imageUrl);
           const targetPath = `${workDir}/${String(i + 1).padStart(4, '0')}.${extension}`;
-          await fs.copyFile(page.sourcePath, targetPath);
-          await this.yieldArchiveBatch(i);
+          SafeFileUtils.copyFileSync(page.sourcePath, targetPath);
         }
 
         const comicInfoXml = this.buildComicInfoXml(request.metadata, sortedPages.length);
-        await this.writeTextFile(`${workDir}/ComicInfo.xml`, comicInfoXml);
+        this.writeTextFile(`${workDir}/ComicInfo.xml`, comicInfoXml);
 
-        const tempArchivePath = this.buildUniqueTempArchivePath(archivePath);
+        const archivePath = this.resolveArchivePath(request);
+        const tempArchivePath = `${archivePath}.tmp.zip`;
         const legacyTempArchivePath = `${archivePath}.tmp`;
-        this.deleteArchiveTempFiles(archivePath);
-        this.deleteUniqueArchiveTempFiles(tempArchivePath);
+        this.deleteArchiveOutputFiles(archivePath);
 
         await zlib.compressFile(workDir, tempArchivePath, {
           level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
@@ -328,9 +319,7 @@ export class OnlineMangaArchiveService {
           strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY
         });
         const compressedOutputPath = this.resolveCompressedOutputPath(tempArchivePath, legacyTempArchivePath);
-        this.deleteFileIfExists(archivePath);
-        await fs.rename(compressedOutputPath, archivePath);
-        this.deleteUniqueArchiveTempFiles(tempArchivePath);
+        SafeFileUtils.renameSync(compressedOutputPath, archivePath);
         this.deleteArchiveTempFiles(archivePath);
 
         const archiveSize = this.getFileSize(archivePath);
@@ -342,10 +331,7 @@ export class OnlineMangaArchiveService {
         };
       }
     } finally {
-      if (workDir.length > 0) {
-        await this.deleteDirectoryRecursiveAsync(workDir);
-      }
-      this.releaseArchiveLock(lockKey);
+      this.deleteDirectoryRecursive(workDir);
     }
   }
 
@@ -359,7 +345,7 @@ export class OnlineMangaArchiveService {
 
     const extractDir = this.resolveReaderExtractDir(request.chapterId, request.archivePath);
     if (!this.hasReadableExtractedImages(extractDir)) {
-      await this.deleteDirectoryRecursiveAsync(extractDir);
+      this.deleteDirectoryRecursive(extractDir);
       this.ensureDirectory(extractDir);
       await zlib.decompressFile(request.archivePath, extractDir);
       logger.info(TAG, `在线漫画CBZ已解压: ${request.archivePath} -> ${extractDir}`);
@@ -426,18 +412,6 @@ export class OnlineMangaArchiveService {
         this.retryArchiveCachedOnlineChapter(normalizedChapterId, reason);
       }
     }
-  }
-
-  public enqueueArchiveCachedOnlineChapter(
-    chapterId: string,
-    reason: string = 'reader_cache_complete'
-  ): void {
-    const normalizedChapterId = chapterId.trim();
-    if (normalizedChapterId.length === 0) {
-      return;
-    }
-    logger.debug(TAG, `阅读缓存归档已投递: chapterId=${normalizedChapterId}, reason=${reason}`);
-    this.retryArchiveCachedOnlineChapter(normalizedChapterId, reason);
   }
 
   private async tryArchiveCachedOnlineChapterInternal(
@@ -1805,62 +1779,6 @@ export class OnlineMangaArchiveService {
     return this.context;
   }
 
-  private buildArchiveLockKey(chapterId: string, archivePath: string): string {
-    return `${chapterId}::${archivePath}`;
-  }
-
-  private async acquireArchiveLock(lockKey: string): Promise<void> {
-    let waitCount = 0;
-    while (this.activeArchiveLocks.has(lockKey)) {
-      if (waitCount === 0) {
-        logger.info(TAG, `归档锁等待: ${lockKey}`);
-      }
-      waitCount++;
-      if (waitCount > 1200) {
-        throw new Error(`等待归档锁超时: ${lockKey}`);
-      }
-      await this.sleep(100);
-    }
-    this.activeArchiveLocks.add(lockKey);
-    if (waitCount > 0) {
-      logger.info(TAG, `归档锁等待结束: ${lockKey}, waitMs=${waitCount * 100}`);
-    } else {
-      logger.debug(TAG, `归档锁已获取: ${lockKey}`);
-    }
-  }
-
-  private releaseArchiveLock(lockKey: string): void {
-    if (this.activeArchiveLocks.delete(lockKey)) {
-      logger.debug(TAG, `归档锁已释放: ${lockKey}`);
-    }
-  }
-
-  private buildUniqueTempArchivePath(archivePath: string): string {
-    this.archiveTempSequence++;
-    if (this.archiveTempSequence > 999999) {
-      this.archiveTempSequence = 1;
-    }
-    return `${archivePath}.${Date.now()}_${this.archiveTempSequence}.tmp.zip`;
-  }
-
-  private async yieldArchiveBatch(index: number): Promise<void> {
-    if (index > 0 && index % 8 === 0) {
-      await this.yieldToEventLoop();
-    }
-  }
-
-  private async yieldToEventLoop(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
-    });
-  }
-
-  private async sleep(ms: number): Promise<void> {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, ms);
-    });
-  }
-
   private ensureDirectory(dirPath: string): void {
     try {
       const stat = SafeFileUtils.statSync(dirPath);
@@ -1890,16 +1808,16 @@ export class OnlineMangaArchiveService {
     }
   }
 
+  private deleteArchiveOutputFiles(archivePath: string): void {
+    this.deleteArchiveTempFiles(archivePath);
+    this.deleteFileIfExists(archivePath);
+  }
+
   private deleteArchiveTempFiles(archivePath: string): void {
     const tempPaths = this.buildArchiveTempPathCandidates(archivePath);
     for (let i = 0; i < tempPaths.length; i++) {
       this.deleteFileIfExists(tempPaths[i]);
     }
-  }
-
-  private deleteUniqueArchiveTempFiles(tempArchivePath: string): void {
-    this.deleteFileIfExists(tempArchivePath);
-    this.deleteFileIfExists(`${tempArchivePath}.zip`);
   }
 
   private buildArchiveTempPathCandidates(archivePath: string): string[] {
@@ -1928,7 +1846,7 @@ export class OnlineMangaArchiveService {
     throw new Error(`压缩输出文件不存在: ${candidates.join(', ')}`);
   }
 
-  private async deleteDirectoryRecursiveAsync(dirPath: string): Promise<void> {
+  private deleteDirectoryRecursive(dirPath: string): void {
     try {
       if (!this.pathExists(dirPath)) {
         return;
@@ -1938,44 +1856,25 @@ export class OnlineMangaArchiveService {
         const fullPath = `${dirPath}/${entries[i]}`;
         const stat = SafeFileUtils.statSync(fullPath);
         if (stat.isDirectory()) {
-          await this.deleteDirectoryRecursiveAsync(fullPath);
+          this.deleteDirectoryRecursive(fullPath);
         } else {
           SafeFileUtils.unlinkSync(fullPath);
         }
-        await this.yieldArchiveBatch(i);
       }
       SafeFileUtils.rmdirSync(dirPath);
     } catch (error) {
-      logger.warn(TAG, `异步分批删除目录失败: ${dirPath}, ${String(error)}`);
+      logger.warn(TAG, `删除目录失败: ${dirPath}, ${String(error)}`);
     }
   }
 
-  private async writeTextFile(path: string, content: string): Promise<void> {
-    const encoder = new util.TextEncoder();
-    const buffer = encoder.encodeInto(content);
-    await this.writeArrayBufferToFile(path, buffer.buffer as ArrayBuffer);
-  }
-
-  private async writeArrayBufferToFile(path: string, content: ArrayBuffer): Promise<void> {
-    let file: fs.File | null = null;
-    let operationError: Error | null = null;
+  private writeTextFile(path: string, content: string): void {
+    const file = SafeFileUtils.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
     try {
-      file = await fs.open(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      await fs.write(file.fd, content);
-    } catch (error) {
-      operationError = error as Error;
-      throw operationError;
+      const encoder = new util.TextEncoder();
+      const buffer = encoder.encodeInto(content);
+      SafeFileUtils.writeSync(file.fd, buffer.buffer);
     } finally {
-      if (file !== null) {
-        try {
-          await fs.close(file);
-        } catch (closeError) {
-          logger.warn(TAG, `关闭归档写入文件句柄失败: ${path}, ${String(closeError)}`);
-          if (operationError === null) {
-            throw closeError as Error;
-          }
-        }
-      }
+      SafeFileUtils.closeSync(file.fd);
     }
   }
 

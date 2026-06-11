@@ -45,6 +45,8 @@ import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBac
 import { SettingsPanelSurfaceHelper } from './settings/SettingsPanelSurfaceHelper';
 import { SourceDetailSearchExecutor, getSourceDetailSearchExecutor } from '../Framework/Services/SourceDetailSearchExecutor';
 import { MangaDetailPageParams } from './MangaDetailPage';
+import { GlobalSearchSessionHandle } from '../Framework/Search/GlobalSearchSessionTypes';
+import { SearchResultDataSource } from '../Framework/Search/SearchResultDataSource';
 
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -145,6 +147,7 @@ export struct GlobalSearchPage {
   // 结果相关
   @State sourceGroups: SearchSourceGroup[] = [];
   @State filteredGroups: SearchSourceGroup[] = [];  // 缓存筛选结果
+  private filteredGroupDataSource: SearchResultDataSource<SearchSourceGroup> = new SearchResultDataSource<SearchSourceGroup>();
   
   // 历史记录
   @State searchHistory: string[] = [];
@@ -182,6 +185,7 @@ export struct GlobalSearchPage {
   private pendingProgressCompleted: number = 0;
   private pendingProgressTotal: number = 0;
   private activeSearchToken: number = 0;
+  private currentSearchHandle: GlobalSearchSessionHandle<SearchSourceGroup[]> | null = null;
   private searchPreferenceSaveTimer: number = -1;
   
   // WebView 相关（用于后台搜索 WebView 格式图源）
@@ -438,14 +442,14 @@ export struct GlobalSearchPage {
 
   private clearSearchPreferencesSaveTimer(): void {
     if (this.searchPreferenceSaveTimer !== -1) {
-      clearTimeout(this.searchPreferenceSaveTimer);
+      this.lifecycle.clearTimeout(this.searchPreferenceSaveTimer);
       this.searchPreferenceSaveTimer = -1;
     }
   }
 
   private scheduleSearchPreferencesSave(): void {
     this.clearSearchPreferencesSaveTimer();
-    this.searchPreferenceSaveTimer = setTimeout(() => {
+    this.searchPreferenceSaveTimer = this.lifecycle.setTimeout(() => {
       this.searchPreferenceSaveTimer = -1;
       void this.saveSearchPreferences();
     }, SEARCH_PREF_SAVE_DEBOUNCE_MS);
@@ -529,9 +533,19 @@ export struct GlobalSearchPage {
 
   private lifecycle = new PageLifecycleManager('GlobalSearchPage', { enableDebug: true });
 
+  private cancelCurrentSearch(reason: string): void {
+    if (this.currentSearchHandle) {
+      this.currentSearchHandle.cancel(reason);
+      this.currentSearchHandle = null;
+    } else {
+      this.sourceDetailSearchExecutor.cancelGlobalSearchWork(reason);
+    }
+  }
+
   aboutToDisappear(): void {
     WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.activeSearchToken++;
+    this.cancelCurrentSearch('page_disappear');
     this.flushSearchPreferencesSave();
     this.lifecycle.destroy();
     this.stopSearchLoadingMotion();
@@ -629,6 +643,7 @@ export struct GlobalSearchPage {
   private updateFilteredGroups(): void {
     if (!this.searchKeyword || this.searchKeyword.trim().length === 0) {
       this.filteredGroups = [];
+      this.filteredGroupDataSource.replaceData([]);
       return;
     }
     
@@ -643,6 +658,7 @@ export struct GlobalSearchPage {
     }
 
     this.filteredGroups = groups;
+    this.filteredGroupDataSource.replaceData(groups);
   }
 
   private cloneSearchGroup(group: SearchSourceGroup, forceCompleted: boolean): SearchSourceGroup {
@@ -653,7 +669,7 @@ export struct GlobalSearchPage {
       sourceType: group.sourceType,
       onlineSourceType: group.onlineSourceType,
       usesWebViewEngine: group.usesWebViewEngine,
-      items: group.items.slice(),
+      items: group.items,
       isSearching: forceCompleted ? false : group.isSearching,
       hasError: group.hasError,
       errorMessage: group.errorMessage
@@ -672,11 +688,11 @@ export struct GlobalSearchPage {
   private buildSearchGroupRenderKey(group: SearchSourceGroup): string {
     const searchingFlag: string = group.isSearching ? 'searching' : 'done';
     const errorFlag: string = group.hasError ? 'error' : 'ok';
-    return `${this.searchResultRenderVersion}_${group.groupId}_${group.items.length}_${searchingFlag}_${errorFlag}`;
+    return `${group.groupId}_${group.items.length}_${searchingFlag}_${errorFlag}`;
   }
 
   private buildSearchItemRenderKey(item: UnifiedSearchItem, index: number): string {
-    return `${this.searchResultRenderVersion}_${item.id}_${index}`;
+    return `${item.sourceId}_${item.id}_${index}`;
   }
 
   private runSearchAnimation(duration: number, curve: Curve, callback: () => void): void {
@@ -713,21 +729,21 @@ export struct GlobalSearchPage {
 
   private clearResultRevealTimer(): void {
     if (this.resultRevealTimer !== -1) {
-      clearTimeout(this.resultRevealTimer);
+      this.lifecycle.clearTimeout(this.resultRevealTimer);
       this.resultRevealTimer = -1;
     }
   }
 
   private clearCoverPlaceholderReleaseTimer(): void {
     if (this.coverPlaceholderReleaseTimer !== -1) {
-      clearTimeout(this.coverPlaceholderReleaseTimer);
+      this.lifecycle.clearTimeout(this.coverPlaceholderReleaseTimer);
       this.coverPlaceholderReleaseTimer = -1;
     }
   }
 
   private scheduleCoverPlaceholderRelease(): void {
     this.clearCoverPlaceholderReleaseTimer();
-    this.coverPlaceholderReleaseTimer = setTimeout(() => {
+    this.coverPlaceholderReleaseTimer = this.lifecycle.setTimeout(() => {
       this.coverPlaceholderReleaseTimer = -1;
       this.runSearchAnimation(SEARCH_COVER_FADE_DURATION_MS, Curve.EaseOut, () => {
         this.allowSearchCoverPlaceholders = false;
@@ -739,7 +755,7 @@ export struct GlobalSearchPage {
   private triggerResultRevealMotion(): void {
     this.clearResultRevealTimer();
     this.resultRevealPhase = 0;
-    this.resultRevealTimer = setTimeout(() => {
+    this.resultRevealTimer = this.lifecycle.setTimeout(() => {
       this.resultRevealTimer = -1;
       this.runSearchAnimation(SEARCH_RESULT_REVEAL_DURATION_MS, Curve.EaseOut, () => {
         this.resultRevealPhase = 1;
@@ -756,7 +772,7 @@ export struct GlobalSearchPage {
     this.runSearchAnimation(SEARCH_SHIMMER_INTERVAL_MS, Curve.Linear, () => {
       this.searchLoadingMotionPhase = 1;
     });
-    this.searchLoadingMotionTimer = setInterval(() => {
+    this.searchLoadingMotionTimer = this.lifecycle.setInterval(() => {
       const nextPhase = this.searchLoadingMotionPhase === 0 ? 1 : 0;
       this.runSearchAnimation(SEARCH_SHIMMER_INTERVAL_MS, Curve.Linear, () => {
         this.searchLoadingMotionPhase = nextPhase;
@@ -766,13 +782,17 @@ export struct GlobalSearchPage {
 
   private stopSearchLoadingMotion(): void {
     if (this.searchLoadingMotionTimer !== -1) {
-      clearInterval(this.searchLoadingMotionTimer);
+      this.lifecycle.clearInterval(this.searchLoadingMotionTimer);
       this.searchLoadingMotionTimer = -1;
     }
     this.searchLoadingMotionPhase = 0;
   }
 
   private syncSearchLoadingMotion(): void {
+    if (this.isResultsScrolling) {
+      this.stopSearchLoadingMotion();
+      return;
+    }
     if (this.isSearchInProgress() || this.countPendingSearchCovers(this.filteredGroups) > 0) {
       this.startSearchLoadingMotion();
       return;
@@ -787,7 +807,6 @@ export struct GlobalSearchPage {
     this.allowSearchCoverPlaceholders = true;
     this.lastVisibleResultItemCount = 0;
     this.resultRevealPhase = 0;
-    this.searchResultRenderVersion = this.searchResultRenderVersion + 1;
     this.startSearchLoadingMotion();
   }
 
@@ -810,7 +829,6 @@ export struct GlobalSearchPage {
     this.sourceGroups = clonedGroups;
     this.updateFilteredGroups();
     this.lastVisibleResultItemCount = nextItemCount;
-    this.searchResultRenderVersion = this.searchResultRenderVersion + 1;
     logger.info(TAG, `应用搜索快照: completed=${completed}/${total}, final=${isFinalSnapshot}, groups=${this.sourceGroups.length}, filtered=${this.filteredGroups.length}, items=${nextItemCount}, searching=${this.isSearchInProgress()}`);
     if (isFinalSnapshot) {
       if (nextItemCount > 0) {
@@ -857,11 +875,13 @@ export struct GlobalSearchPage {
 
   private onResultsScrollStart(): void {
     this.isResultsScrolling = true;
+    this.syncSearchLoadingMotion();
   }
 
   private onResultsScrollStop(): void {
     this.isResultsScrolling = false;
     this.flushPendingProgressSnapshot();
+    this.syncSearchLoadingMotion();
   }
 
   /**
@@ -898,6 +918,7 @@ export struct GlobalSearchPage {
     const searchToken: number = this.activeSearchToken + 1;
     this.activeSearchToken = searchToken;
     const keyword: string = this.searchKeyword.trim();
+    this.cancelCurrentSearch('new_search');
 
     try {
       this.isSearching = true;
@@ -931,11 +952,12 @@ export struct GlobalSearchPage {
         selectedMangaSources: this.selectedMangaSources,
         selectedNovelSources: this.selectedNovelSources,
         enableSuwayomi: this.sourceFeaturesEnabled ? this.enableSuwayomi : false,
-        maxConcurrent: this.maxConcurrent
+        maxConcurrent: this.maxConcurrent,
+        sessionId: `global_search_page_${searchToken}_${Date.now()}`
       };
 
       // 执行搜索
-      const results = await this.searchService.searchAll(
+      const handle: GlobalSearchSessionHandle<SearchSourceGroup[]> = this.searchService.createSearchSession(
         keyword,
         filterConfig,
         (completed: number, total: number, _groupName: string, groups: SearchSourceGroup[]) => {
@@ -955,10 +977,15 @@ export struct GlobalSearchPage {
           }
         }
       );
+      this.currentSearchHandle = handle;
+      const results = await handle.completion;
 
       if (searchToken !== this.activeSearchToken) {
         logger.debug(TAG, `丢弃过期搜索结果: "${keyword}"`);
         return;
+      }
+      if (this.currentSearchHandle && this.currentSearchHandle.sessionId === handle.sessionId) {
+        this.currentSearchHandle = null;
       }
       const finalTotal = this.pendingProgressTotal > 0 ? this.pendingProgressTotal : results.length;
       this.applyProgressSnapshot(finalTotal, finalTotal, results, true);
@@ -973,6 +1000,9 @@ export struct GlobalSearchPage {
       if (searchToken !== this.activeSearchToken) {
         logger.debug(TAG, `忽略过期搜索异常: "${keyword}", ${String(error)}`);
         return;
+      }
+      if (this.currentSearchHandle && this.currentSearchHandle.sessionId.indexOf(`global_search_page_${searchToken}_`) === 0) {
+        this.currentSearchHandle = null;
       }
       logger.error(TAG, `搜索失败: ${error}`);
       this.pendingProgressGroups = null;
@@ -1144,6 +1174,7 @@ export struct GlobalSearchPage {
    * 切换漫画图源选中状态
    */
   private toggleMangaSource(sourceId: string): void {
+    this.cancelCurrentSearch('manga_source_changed');
     const index = this.selectedMangaSources.indexOf(sourceId);
     if (index >= 0) {
       this.selectedMangaSources = this.selectedMangaSources.filter(id => id !== sourceId);
@@ -1157,6 +1188,7 @@ export struct GlobalSearchPage {
    * 切换小说书源选中状态
    */
   private toggleNovelSource(sourceId: string): void {
+    this.cancelCurrentSearch('novel_source_changed');
     const index = this.selectedNovelSources.indexOf(sourceId);
     if (index >= 0) {
       this.selectedNovelSources = this.selectedNovelSources.filter(id => id !== sourceId);
@@ -1182,6 +1214,13 @@ export struct GlobalSearchPage {
     });
   }
 
+  private extractLocalContentId(itemId: string, prefix: string): string {
+    if (itemId.startsWith(prefix)) {
+      return itemId.substring(prefix.length);
+    }
+    return itemId;
+  }
+
   /**
    * 打开详情页 - 支持统一搜索结果项
    * 根据设置判断跳转到默认详情页还是统一详情页
@@ -1192,13 +1231,18 @@ export struct GlobalSearchPage {
       const stack = globalStack || this.pathStack;
       
       // 本地漫画
-      if (item.contentType === SearchContentType.MANGA && item.sourceType === SearchSourceType.LOCAL && item.rawManga) {
+      if (item.contentType === SearchContentType.MANGA && item.sourceType === SearchSourceType.LOCAL) {
+        const mangaId: string = item.rawManga ? item.rawManga.id : this.extractLocalContentId(item.id, 'local-manga-');
+        if (mangaId.length === 0) {
+          logger.warn(TAG, `本地漫画搜索结果缺少ID，无法打开详情: ${item.title}`);
+          return;
+        }
         const pageType = PageSettingsHelper.getMangaDetailPageType();
         if (pageType === DetailPageType.UNIFIED) {
           // 统一详情页
           const unifiedParam: UnifiedDetailPageParams = {
             contentType: UnifiedContentType.MANGA,
-            contentId: item.rawManga.id,
+            contentId: mangaId,
             cachedTitle: item.title,
             cachedCoverPath: this.getUnifiedDetailCachedCoverPath(item),
             cachedCover: this.getUnifiedDetailCachedCover(item),
@@ -1207,18 +1251,23 @@ export struct GlobalSearchPage {
           stack.pushPath({ name: 'UnifiedDetailPage', param: unifiedParam });
         } else {
           // 默认详情页
-          const navParam: MangaDetailNavParam = { mangaId: item.rawManga.id };
+          const navParam: MangaDetailNavParam = { mangaId: mangaId };
           stack.pushPath({ name: 'MangaDetailPage', param: navParam });
         }
-        logger.debug(TAG, `导航到本地漫画详情页: ${item.rawManga.id}, pageType=${pageType}`);
+        logger.debug(TAG, `导航到本地漫画详情页: ${mangaId}, pageType=${pageType}`);
       }
       // 本地电子书
-      else if (item.contentType === SearchContentType.EBOOK && item.rawEbook) {
+      else if (item.contentType === SearchContentType.EBOOK) {
+        const bookId: string = item.rawEbook ? item.rawEbook.id : this.extractLocalContentId(item.id, 'local-ebook-');
+        if (bookId.length === 0) {
+          logger.warn(TAG, `本地电子书搜索结果缺少ID，无法打开详情: ${item.title}`);
+          return;
+        }
         const pageType = PageSettingsHelper.getEBookDetailPageType();
         if (pageType === DetailPageType.UNIFIED) {
           const unifiedParam: UnifiedDetailPageParams = {
             contentType: UnifiedContentType.EBOOK,
-            contentId: item.rawEbook.id,
+            contentId: bookId,
             cachedTitle: item.title,
             cachedCoverPath: this.getUnifiedDetailCachedCoverPath(item),
             cachedCover: this.getUnifiedDetailCachedCover(item),
@@ -1226,10 +1275,10 @@ export struct GlobalSearchPage {
           };
           stack.pushPath({ name: 'UnifiedDetailPage', param: unifiedParam });
         } else {
-          const navParam: EBookDetailNavParam = { bookId: item.rawEbook.id };
+          const navParam: EBookDetailNavParam = { bookId: bookId };
           stack.pushPath({ name: 'EBookDetailPage', param: navParam });
         }
-        logger.debug(TAG, `导航到电子书详情页: ${item.rawEbook.id}, pageType=${pageType}`);
+        logger.debug(TAG, `导航到电子书详情页: ${bookId}, pageType=${pageType}`);
       }
       // 本地小说
       else if (item.contentType === SearchContentType.NOVEL && item.sourceType === SearchSourceType.LOCAL && item.rawNovelBook) {
@@ -1563,6 +1612,7 @@ export struct GlobalSearchPage {
                   })
                   .animation({ duration: 200, curve: Curve.EaseInOut })
                   .onClick(() => {
+                    this.cancelCurrentSearch('suwayomi_toggle_changed');
                     this.enableSuwayomi = !this.enableSuwayomi;
                     this.scheduleSearchPreferencesSave();
                   })
@@ -1597,17 +1647,19 @@ export struct GlobalSearchPage {
               .id('guide_global_search_content_area' as string)
             } else {
               // 竖屏模式：使用列表布局
-              Scroll() {
-                Column({ space: 16 }) {
-                  ForEach(this.filteredGroups, (group: SearchSourceGroup, index: number) => {
+              List({ space: 16 }) {
+                ForEach(this.filteredGroups, (group: SearchSourceGroup, index: number) => {
+                  ListItem() {
                     this.buildSourceGroupCard(group, index)
-                  }, (group: SearchSourceGroup) => this.buildSearchGroupRenderKey(group))
+                  }
+                }, (group: SearchSourceGroup) => this.buildSearchGroupRenderKey(group))
+                ListItem() {
                   Blank().height(40 + this.navigationBarHeight)
                 }
-                .width('100%')
-                .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, top: 8 })
               }
               .width('100%')
+              .height('100%')
+              .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, top: 8 })
               .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
               .layoutWeight(1)
               .scrollBar(BarState.Auto)
@@ -2188,14 +2240,16 @@ export struct GlobalSearchPage {
         // 判断是否展开显示所有结果
         if (this.expandedGroups.has(group.groupId)) {
           // 展开模式：显示所有结果（网格布局）
-          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          Grid() {
             ForEach(group.items, (item: UnifiedSearchItem, index: number) => {
-              Column() {
+              GridItem() {
                 this.buildAnimatedItemCard(item, index)
               }
-              .margin({ right: 12, bottom: 12 })
             }, (item: UnifiedSearchItem, index: number) => this.buildSearchItemRenderKey(item, index))
           }
+          .columnsTemplate('repeat(3, 100px)')
+          .columnsGap(12)
+          .rowsGap(12)
           .width('100%')
           .animation({ duration: SEARCH_GROUP_EXPAND_DURATION_MS, curve: Curve.EaseInOut })
           .transition(
@@ -2637,6 +2691,7 @@ export struct GlobalSearchPage {
       })
       .animation({ duration: 200, curve: Curve.EaseInOut })
       .onClick(() => {
+        this.cancelCurrentSearch('content_filter_changed');
         this.contentTypeFilter = type;
         this.scheduleSearchPreferencesSave();
         this.updateFilteredGroups();
@@ -2671,6 +2726,7 @@ export struct GlobalSearchPage {
     })
     .animation({ duration: 200, curve: Curve.EaseInOut })
     .onClick(() => {
+      this.cancelCurrentSearch('source_filter_changed');
       this.sourceTypeFilter = type;
       this.scheduleSearchPreferencesSave();
       this.updateFilteredGroups();

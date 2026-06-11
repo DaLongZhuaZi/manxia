@@ -97,19 +97,7 @@ import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Framework
 import { getLegadoMangaSourceBridge, LegadoMangaPageResult } from '../Framework/Novel/LegadoMangaSourceBridge';
 
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
-import {
-  getUnifiedDownloadManager,
-  UnifiedDownloadManager,
-  UnifiedDownloadType,
-  UnifiedTaskStatus,
-  UnifiedDownloadTask,
-  UnifiedDownloadCallback,
-  MangaChapterDownloadItem,
-  MangaBatchDownloadResult,
-  ContentDownloadAggregate,
-  PageListFetcher,
-  DownloadPageItem
-} from '../Framework/Download/UnifiedDownloadManager';
+import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadType, UnifiedTaskStatus, UnifiedDownloadTask, UnifiedDownloadCallback, MangaChapterDownloadItem, PageListFetcher, DownloadPageItem } from '../Framework/Download/UnifiedDownloadManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { getCoverImageManager, CoverImageManager } from '../Framework/Image/CoverImageManager';
 import { OnlineLoadOptions, RequestHeaders } from '../Framework/Cache/OnlineImageLoader';
@@ -426,7 +414,7 @@ export struct UnifiedDetailPage {
     if (!this.content || !this.isOnlineManga() || cachePayload.mangaId !== this.content.id) {
       return;
     }
-    this.scheduleCacheStatusRefresh();
+    void this.loadCacheStatus();
     logger.info(TAG, `收到漫画缓存更新事件，刷新详情页缓存状态: chapterId=${cachePayload.chapterId}, reason=${cachePayload.reason}`);
   };
   
@@ -446,10 +434,6 @@ export struct UnifiedDetailPage {
   private downloadCallbackRegistered: boolean = false;  // 是否已注册下载回调
   private downloadCallback: UnifiedDownloadCallback | null = null;
   private cacheStatusRefreshTimer: number = -1;
-  private cacheStatusLoadingInFlight: boolean = false;
-  private cacheStatusRefreshPending: boolean = false;
-  private cacheStatusLoadVersion: number = 0;
-  private cacheStatusRefreshMergedCount: number = 0;
   
   // 换源对话框状态（已提取至 ChangeSourceDialogComponent）
   @State changeSourceDialogLoadSignal: number = 0;
@@ -1061,16 +1045,10 @@ export struct UnifiedDetailPage {
 
   private scheduleCacheStatusRefresh(): void {
     if (this.cacheStatusRefreshTimer >= 0) {
-      this.cacheStatusRefreshMergedCount++;
       return;
     }
     this.cacheStatusRefreshTimer = setTimeout(() => {
-      const mergedCount = this.cacheStatusRefreshMergedCount;
-      this.cacheStatusRefreshMergedCount = 0;
       this.cacheStatusRefreshTimer = -1;
-      if (mergedCount > 0) {
-        logger.info(TAG, `缓存状态刷新请求已合并: merged=${mergedCount}`);
-      }
       void this.loadCacheStatus();
     }, 800);
   }
@@ -5324,18 +5302,6 @@ export struct UnifiedDetailPage {
    */
   private async loadCacheStatus(): Promise<void> {
     if (!this.content || !this.pageParams) return;
-    if (this.cacheStatusLoadingInFlight) {
-      this.cacheStatusRefreshPending = true;
-      this.cacheStatusRefreshMergedCount++;
-      logger.info(TAG, `缓存状态刷新已合并到进行中的请求: pendingMerged=${this.cacheStatusRefreshMergedCount}`);
-      return;
-    }
-
-    const loadVersion = ++this.cacheStatusLoadVersion;
-    const contentId = this.content.id;
-    const contentTitle = this.content.title;
-    const pageParams = this.pageParams;
-    this.cacheStatusLoadingInFlight = true;
     
     try {
       // 判断是否需要显示缓存卡片
@@ -5344,9 +5310,7 @@ export struct UnifiedDetailPage {
       
       // 只有在线漫画和小说需要显示缓存状态
       if (!isOnline && !isNovel) {
-        if (this.isCacheStatusLoadCurrent(loadVersion, contentId)) {
-          this.showCacheStatusCard = false;
-        }
+        this.showCacheStatusCard = false;
         return;
       }
       
@@ -5354,65 +5318,46 @@ export struct UnifiedDetailPage {
       
       if (isOnline) {
         // 在线漫画：检查边看边下载是否开启
-        const sourceId = Number(pageParams.sourceId);
+        const sourceId = Number(this.pageParams.sourceId);
         const downloadWhileReadingEnabled = await this.cacheStatusService.isDownloadWhileReadingEnabled(sourceId);
         
         if (downloadWhileReadingEnabled) {
           // 加载漫画缓存状态
-          const cacheStats = await this.cacheStatusService.getMangaCacheStatus(
+          this.cacheStats = await this.cacheStatusService.getMangaCacheStatus(
             sourceId,
-            contentId,
-            contentTitle
+            this.content.id,
+            this.content.title
           );
-          if (this.isCacheStatusLoadCurrent(loadVersion, contentId)) {
-            this.cacheStats = cacheStats;
-            this.showCacheStatusCard = true;
-            logger.info(TAG, `漫画缓存状态加载完成: ${cacheStats.cachedChapterCount}/${cacheStats.totalChapterCount}章`);
-          }
+          this.showCacheStatusCard = true;
+          logger.info(TAG, `漫画缓存状态加载完成: ${this.cacheStats.cachedChapterCount}/${this.cacheStats.totalChapterCount}章`);
         } else {
           // 边看边下载未开启，不显示缓存卡片
-          if (this.isCacheStatusLoadCurrent(loadVersion, contentId)) {
-            this.showCacheStatusCard = false;
-            this.cacheStats = null;
-          }
+          this.showCacheStatusCard = false;
+          this.cacheStats = null;
         }
       } else if (isNovel) {
         // 小说：始终加载并显示缓存状态（使用与NovelReaderPage一致的bookId格式）
         const sourceId = this.getCurrentNovelSourceId();
-        const novelCacheBookId = this.getNovelCacheBookId(sourceId, contentId);
-        const cacheStats = await this.cacheStatusService.getNovelCacheStatus(
+        const novelCacheBookId = this.getNovelCacheBookId(sourceId, this.content.id);
+        this.cacheStats = await this.cacheStatusService.getNovelCacheStatus(
           novelCacheBookId,
-          contentTitle,
+          this.content.title,
           this.content.totalChapters
         );
-        if (this.isCacheStatusLoadCurrent(loadVersion, contentId)) {
-          this.cacheStats = cacheStats;
-          // 小说始终显示缓存卡片，方便用户了解缓存情况和进行下载操作
-          this.showCacheStatusCard = true;
-          logger.info(
-            TAG,
-            `${this.isCurrentNovelAudioSource() ? '听书缓存' : '小说缓存'}状态加载完成: ${cacheStats.cachedChapterCount}/${cacheStats.totalChapterCount}章`
-          );
-        }
+        // 小说始终显示缓存卡片，方便用户了解缓存情况和进行下载操作
+        this.showCacheStatusCard = true;
+        logger.info(
+          TAG,
+          `${this.isCurrentNovelAudioSource() ? '听书缓存' : '小说缓存'}状态加载完成: ${this.cacheStats.cachedChapterCount}/${this.cacheStats.totalChapterCount}章`
+        );
       }
     } catch (error) {
       logger.error(TAG, `加载缓存状态失败: ${String(error)}`);
-      if (this.isCacheStatusLoadCurrent(loadVersion, contentId)) {
-        this.showCacheStatusCard = false;
-        this.cacheStats = null;
-      }
+      this.showCacheStatusCard = false;
+      this.cacheStats = null;
     } finally {
       this.isCacheStatsLoading = false;
-      this.cacheStatusLoadingInFlight = false;
-      if (this.cacheStatusRefreshPending) {
-        this.cacheStatusRefreshPending = false;
-        this.scheduleCacheStatusRefresh();
-      }
     }
-  }
-
-  private isCacheStatusLoadCurrent(loadVersion: number, contentId: string): boolean {
-    return loadVersion === this.cacheStatusLoadVersion && this.content !== null && this.content.id === contentId;
   }
 
   private supportsReadAloudCacheSection(): boolean {
@@ -8655,14 +8600,9 @@ export struct UnifiedDetailPage {
       return;
     }
 
-    const content = this.content;
-    if (!content) {
-      return;
-    }
-
     const chaptersToDownload = selectedIndexes
-      .filter((idx: number) => idx >= 0 && idx < content.chapters.length && !this.isChapterFullyCached(content.chapters[idx].id))
-      .map((idx: number) => content.chapters[idx]);
+      .filter((idx: number) => idx < this.content!.chapters.length && !this.isChapterFullyCached(this.content!.chapters[idx].id))
+      .map((idx: number) => this.content!.chapters[idx]);
 
     if (chaptersToDownload.length === 0) {
       this.getUIContext().getPromptAction().showToast({ message: '选中的章节已全部缓存' });
@@ -8689,34 +8629,13 @@ export struct UnifiedDetailPage {
         downloadChapters.push(item);
       }
 
-      const batchResult: MangaBatchDownloadResult = await this.unifiedDownloadManager.downloadMangaChapters(
-        content.id,
-        content.title,
+      await this.unifiedDownloadManager.downloadMangaChapters(
+        this.content.id,
+        this.content.title,
         sourceId,
         downloadChapters
       );
-      if (batchResult.createdCount <= 0) {
-        const failureReason = batchResult.failedChapters.length > 0 ? batchResult.failedChapters[0].reason : '没有章节任务创建成功';
-        this.getUIContext().getPromptAction().showToast({ message: `缓存任务创建失败: ${failureReason}` });
-        this.isDownloading = false;
-        this.downloadProgressCurrent = 0;
-        this.downloadProgressTotal = 0;
-        this.downloadCurrentChapterTitle = '';
-        logger.error(TAG, `漫画缓存批量任务全部创建失败: manga=${content.title}, failed=${batchResult.failedCount}`);
-        return;
-      }
-
-      if (batchResult.failedCount > 0) {
-        this.getUIContext().getPromptAction().showToast({
-          message: `已提交 ${batchResult.createdCount} 个缓存任务，${batchResult.failedCount} 个章节创建失败`
-        });
-        logger.warn(
-          TAG,
-          `漫画缓存批量任务部分创建失败: manga=${content.title}, created=${batchResult.createdCount}, failed=${batchResult.failedCount}`
-        );
-      } else {
-        this.getUIContext().getPromptAction().showToast({ message: '缓存任务已提交，后台继续处理中...' });
-      }
+      this.getUIContext().getPromptAction().showToast({ message: '缓存任务已创建，后台继续处理中...' });
     } catch (error) {
       logger.error(TAG, `缓存漫画选中章节失败: ${String(error)}`);
       this.getUIContext().getPromptAction().showToast({ message: `缓存失败: ${String(error)}` });
@@ -8724,20 +8643,6 @@ export struct UnifiedDetailPage {
       this.downloadProgressCurrent = 0;
       this.downloadProgressTotal = 0;
     }
-  }
-
-  private applyMangaDownloadAggregate(task: UnifiedDownloadTask, refreshOnProgress: boolean): ContentDownloadAggregate {
-    const aggregate = this.unifiedDownloadManager.getContentDownloadAggregate(task.contentId, UnifiedDownloadType.MANGA);
-    const previousDownloaded = this.downloadProgressCurrent;
-    const fallbackTotal = aggregate.activeCount + aggregate.completedCount + aggregate.failedCount;
-    this.downloadProgressCurrent = aggregate.downloadedCount;
-    this.downloadProgressTotal = aggregate.totalCount > 0 ? aggregate.totalCount : fallbackTotal;
-    this.downloadCurrentChapterTitle = aggregate.currentTitle.length > 0 ? aggregate.currentTitle : (task.chapterTitle || '');
-    this.isDownloading = aggregate.activeCount > 0;
-    if (refreshOnProgress && aggregate.downloadedCount > 0 && aggregate.downloadedCount !== previousDownloaded) {
-      this.scheduleCacheStatusRefresh();
-    }
-    return aggregate;
   }
 
   private registerDownloadCallback(): void {
@@ -8748,55 +8653,32 @@ export struct UnifiedDetailPage {
     const callback: UnifiedDownloadCallback = {
       onProgress: (task: UnifiedDownloadTask) => {
         if (this.content && this.isCurrentContentTask(task)) {
-          if (task.type === UnifiedDownloadType.MANGA) {
-            this.applyMangaDownloadAggregate(task, true);
-          } else {
-            const previousDownloaded = this.downloadProgressCurrent;
-            this.downloadProgressCurrent = task.downloadedCount;
-            this.downloadProgressTotal = task.totalCount;
-            this.downloadCurrentChapterTitle = task.chapterTitle || '';
-            this.isDownloading = task.status === UnifiedTaskStatus.DOWNLOADING || task.status === UnifiedTaskStatus.PENDING;
-            if (task.downloadedCount > 0 && task.downloadedCount !== previousDownloaded) {
-              this.scheduleCacheStatusRefresh();
-            }
+          const previousDownloaded = this.downloadProgressCurrent;
+          this.downloadProgressCurrent = task.downloadedCount;
+          this.downloadProgressTotal = task.totalCount;
+          this.downloadCurrentChapterTitle = task.chapterTitle || '';
+          this.isDownloading = task.status === UnifiedTaskStatus.DOWNLOADING || task.status === UnifiedTaskStatus.PENDING;
+          if (task.downloadedCount > 0 && task.downloadedCount !== previousDownloaded) {
+            this.scheduleCacheStatusRefresh();
           }
         }
       },
       onComplete: (task: UnifiedDownloadTask) => {
         if (this.content && this.isCurrentContentTask(task)) {
-          if (task.type === UnifiedDownloadType.MANGA) {
-            const aggregate = this.applyMangaDownloadAggregate(task, false);
-            if (aggregate.activeCount <= 0) {
-              this.isDownloading = false;
-              this.downloadProgressCurrent = 0;
-              this.downloadProgressTotal = 0;
-              this.downloadCurrentChapterTitle = '';
-            }
-          } else {
-            this.isDownloading = false;
-            this.downloadProgressCurrent = 0;
-            this.downloadProgressTotal = 0;
-            this.downloadCurrentChapterTitle = '';
-          }
+          this.isDownloading = false;
+          this.downloadProgressCurrent = 0;
+          this.downloadProgressTotal = 0;
+          this.downloadCurrentChapterTitle = '';
           this.clearCacheStatusRefreshTimer();
-          this.scheduleCacheStatusRefresh();
+          void this.loadCacheStatus();
           logger.info(TAG, `缓存完成: ${task.contentTitle}`);
         }
       },
       onError: (task: UnifiedDownloadTask, error: string) => {
         if (this.content && this.isCurrentContentTask(task)) {
-          if (task.type === UnifiedDownloadType.MANGA) {
-            const aggregate = this.applyMangaDownloadAggregate(task, false);
-            if (aggregate.activeCount <= 0) {
-              this.isDownloading = false;
-              this.downloadCurrentChapterTitle = '';
-            }
-          } else {
-            this.isDownloading = false;
-            this.downloadCurrentChapterTitle = '';
-          }
+          this.isDownloading = false;
+          this.downloadCurrentChapterTitle = '';
           this.clearCacheStatusRefreshTimer();
-          this.scheduleCacheStatusRefresh();
           logger.error(TAG, `缓存失败: ${task.contentTitle}, ${error}`);
         }
       }

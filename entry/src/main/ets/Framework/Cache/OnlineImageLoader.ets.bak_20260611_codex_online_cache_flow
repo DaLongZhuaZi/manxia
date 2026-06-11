@@ -515,12 +515,9 @@ export class OnlineImageLoader {
     }
 
     const archiveService = OnlineMangaArchiveService.getInstance();
-    let queuedCount = 0;
     for (let i = 0; i < chapterIds.length; i++) {
-      archiveService.enqueueArchiveCachedOnlineChapter(chapterIds[i], 'reader_cache_complete');
-      queuedCount++;
+      await archiveService.tryArchiveCachedOnlineChapter(chapterIds[i], 'reader_cache_complete');
     }
-    logger.debug(TAG, `阅读缓存归档任务已投递: count=${queuedCount}`);
   }
 
   /**
