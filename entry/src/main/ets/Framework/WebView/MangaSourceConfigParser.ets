@@ -33,9 +33,11 @@ import {
   APIRequestAction,
   HTTPRequestAction,
   ExtractConfig,
+  ExtractField,
   BaseAction,
   AuthenticationConfig,
-  APIPaginationConfig
+  APIPaginationConfig,
+  ValidationRule
 } from './MangaSourceTypes';
 
 const TAG = 'MangaSourceConfigParser';
@@ -1011,7 +1013,8 @@ export class MangaSourceConfigParser {
           source: extractAction.source,
           variable: extractAction.variable,
           multiple: extractAction.multiple,
-          fields: extractAction.fields
+          fields: this.cloneExtractFields(extractAction.fields),
+          validation: this.cloneValidationRules(extractAction.validation)
         };
         return clonedExtract;
 
@@ -1025,8 +1028,8 @@ export class MangaSourceConfigParser {
           selector: conditionAction.selector,
           exists: conditionAction.exists,
           text: conditionAction.text,
-          then: conditionAction.then,
-          else: conditionAction.else
+          then: this.cloneActionArray(conditionAction.then),
+          else: this.cloneOptionalActionArray(conditionAction.else)
         };
         return clonedCondition;
 
@@ -1049,7 +1052,7 @@ export class MangaSourceConfigParser {
           optional: cloudflareAction.optional,
           waitAfter: cloudflareAction.waitAfter,
           maxWaitTime: cloudflareAction.maxWaitTime,
-          indicators: cloudflareAction.indicators,
+          indicators: this.cloneStringArray(cloudflareAction.indicators),
           method: 'wait'
         };
         return clonedCloudflare;
@@ -1074,7 +1077,7 @@ export class MangaSourceConfigParser {
           description: ipBlockAction.description,
           optional: ipBlockAction.optional,
           waitAfter: ipBlockAction.waitAfter,
-          indicators: ipBlockAction.indicators,
+          indicators: this.cloneRequiredStringArray(ipBlockAction.indicators),
           action: ipBlockAction.action,
           delay: ipBlockAction.delay
         };
@@ -1089,11 +1092,11 @@ export class MangaSourceConfigParser {
           waitAfter: apiAction.waitAfter,
           method: apiAction.method,
           url: apiAction.url,
-          params: apiAction.params,
-          headers: apiAction.headers,
-          body: apiAction.body,
-          extract: apiAction.extract,
-          pagination: apiAction.pagination
+          params: this.cloneStringRecord(apiAction.params),
+          headers: this.cloneStringRecord(apiAction.headers),
+          body: this.cloneObjectRecord(apiAction.body),
+          extract: this.cloneExtractConfig(apiAction.extract),
+          pagination: this.cloneAPIPaginationConfig(apiAction.pagination)
         };
         return clonedAPI;
 
@@ -1106,8 +1109,8 @@ export class MangaSourceConfigParser {
           waitAfter: httpAction.waitAfter,
           method: httpAction.method,
           url: httpAction.url,
-          headers: httpAction.headers,
-          body: httpAction.body
+          headers: this.cloneStringRecord(httpAction.headers),
+          body: typeof httpAction.body === 'string' ? httpAction.body : this.cloneObjectRecord(httpAction.body)
         };
         return clonedHTTP;
 
@@ -1115,6 +1118,166 @@ export class MangaSourceConfigParser {
         // 默认情况下返回基础克隆（不应该到达这里）
         return baseCloned as Action;
     }
+  }
+
+  private cloneStringArray(values?: string[]): string[] | undefined {
+    if (!values) {
+      return undefined;
+    }
+    const cloned: string[] = [];
+    for (let i = 0; i < values.length; i++) {
+      cloned.push(values[i]);
+    }
+    return cloned;
+  }
+
+  private cloneRequiredStringArray(values?: string[]): string[] {
+    const cloned: string[] = [];
+    if (!values) {
+      return cloned;
+    }
+    for (let i = 0; i < values.length; i++) {
+      cloned.push(values[i]);
+    }
+    return cloned;
+  }
+
+  private cloneActionArray(actions: Action[]): Action[] {
+    const cloned: Action[] = [];
+    for (let i = 0; i < actions.length; i++) {
+      cloned.push(this.cloneAction(actions[i]));
+    }
+    return cloned;
+  }
+
+  private cloneOptionalActionArray(actions?: Action[]): Action[] | undefined {
+    if (!actions) {
+      return undefined;
+    }
+    return this.cloneActionArray(actions);
+  }
+
+  private cloneStringRecord(record?: Record<string, string>): Record<string, string> | undefined {
+    if (!record) {
+      return undefined;
+    }
+    const cloned: Record<string, string> = {};
+    const keys = Object.keys(record);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      cloned[key] = record[key];
+    }
+    return cloned;
+  }
+
+  private cloneObjectRecord(record?: Record<string, Object | undefined>): Record<string, Object | undefined> | undefined {
+    if (!record) {
+      return undefined;
+    }
+    const cloned: Record<string, Object | undefined> = {};
+    const keys = Object.keys(record);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      cloned[key] = this.cloneObjectValue(record[key]);
+    }
+    return cloned;
+  }
+
+  private cloneObjectValue(value: Object | undefined): Object | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (Array.isArray(value)) {
+      const sourceArray = value as Object[];
+      const clonedArray: Object[] = [];
+      for (let i = 0; i < sourceArray.length; i++) {
+        const clonedValue = this.cloneObjectValue(sourceArray[i]);
+        if (clonedValue !== undefined) {
+          clonedArray.push(clonedValue);
+        }
+      }
+      return clonedArray;
+    }
+    if (typeof value === 'object' && value !== null) {
+      const sourceRecord = value as Record<string, Object | undefined>;
+      const clonedRecord = this.cloneObjectRecord(sourceRecord);
+      if (clonedRecord) {
+        return clonedRecord;
+      }
+      const emptyRecord: Record<string, Object | undefined> = {};
+      return emptyRecord;
+    }
+    return value;
+  }
+
+  private cloneExtractConfig(config?: ExtractConfig): ExtractConfig | undefined {
+    if (!config) {
+      return undefined;
+    }
+    const cloned: ExtractConfig = {
+      path: config.path,
+      fields: this.cloneStringRecord(config.fields)
+    };
+    return cloned;
+  }
+
+  private cloneAPIPaginationConfig(config?: APIPaginationConfig): APIPaginationConfig | undefined {
+    if (!config) {
+      return undefined;
+    }
+    const cloned: APIPaginationConfig = {
+      enabled: config.enabled,
+      type: config.type,
+      pageParam: config.pageParam,
+      hasMorePath: config.hasMorePath
+    };
+    return cloned;
+  }
+
+  private cloneExtractFields(fields: Record<string, string> | ExtractField[]): Record<string, string> | ExtractField[] {
+    if (Array.isArray(fields)) {
+      const clonedFields: ExtractField[] = [];
+      for (let i = 0; i < fields.length; i++) {
+        const field = fields[i];
+        const clonedField: ExtractField = {
+          field: field.field,
+          selector: field.selector,
+          attribute: field.attribute,
+          transform: field.transform,
+          regex: field.regex,
+          group: field.group
+        };
+        clonedFields.push(clonedField);
+      }
+      return clonedFields;
+    }
+    const clonedRecord = this.cloneStringRecord(fields);
+    if (clonedRecord) {
+      return clonedRecord;
+    }
+    const emptyFields: Record<string, string> = {};
+    return emptyFields;
+  }
+
+  private cloneValidationRules(rules?: ValidationRule[]): ValidationRule[] | undefined {
+    if (!rules) {
+      return undefined;
+    }
+    const clonedRules: ValidationRule[] = [];
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i];
+      const clonedRule: ValidationRule = {
+        field: rule.field,
+        type: rule.type,
+        pattern: rule.pattern,
+        min: rule.min,
+        max: rule.max,
+        validator: rule.validator,
+        message: rule.message
+      };
+      clonedRules.push(clonedRule);
+    }
+    return clonedRules;
   }
 
   // 属性检查方法（使用instanceof和as替代is类型守卫）

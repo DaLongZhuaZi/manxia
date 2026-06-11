@@ -143,11 +143,15 @@ export interface MangaBatchDownloadResult {
 }
 
 export interface ContentDownloadAggregate {
+  taskCount: number;
   activeCount: number;
   completedCount: number;
   failedCount: number;
+  finishedCount: number;
   downloadedCount: number;
   totalCount: number;
+  currentDownloadedCount: number;
+  currentTotalCount: number;
   currentTitle: string;
 }
 
@@ -599,13 +603,20 @@ export class UnifiedDownloadManager {
     return this.getIndexedTasks(this.taskIdsByContent.get(contentId));
   }
 
-  public getContentDownloadAggregate(contentId: string, type?: UnifiedDownloadType): ContentDownloadAggregate {
-    const tasks = this.getTasksByContent(contentId);
+  public getContentDownloadAggregate(
+    contentId: string,
+    type?: UnifiedDownloadType,
+    taskIds?: string[]
+  ): ContentDownloadAggregate {
+    const tasks = taskIds && taskIds.length > 0 ? this.getTasksByIds(taskIds) : this.getTasksByContent(contentId);
     let activeCount = 0;
     let completedCount = 0;
     let failedCount = 0;
+    let taskCount = 0;
     let downloadedCount = 0;
     let totalCount = 0;
+    let currentDownloadedCount = 0;
+    let currentTotalCount = 0;
     let currentTitle = '';
 
     for (const task of tasks) {
@@ -613,10 +624,13 @@ export class UnifiedDownloadManager {
         continue;
       }
 
+      taskCount++;
       if (task.status === UnifiedTaskStatus.PENDING || task.status === UnifiedTaskStatus.DOWNLOADING) {
         activeCount++;
         if (currentTitle.length === 0 && task.chapterTitle && task.chapterTitle.length > 0) {
           currentTitle = task.chapterTitle;
+          currentDownloadedCount = Math.max(0, task.downloadedCount);
+          currentTotalCount = Math.max(0, task.totalCount);
         }
       } else if (task.status === UnifiedTaskStatus.COMPLETED) {
         completedCount++;
@@ -629,14 +643,29 @@ export class UnifiedDownloadManager {
     }
 
     const aggregate: ContentDownloadAggregate = {
+      taskCount: taskCount,
       activeCount: activeCount,
       completedCount: completedCount,
       failedCount: failedCount,
+      finishedCount: completedCount + failedCount,
       downloadedCount: downloadedCount,
       totalCount: totalCount,
+      currentDownloadedCount: currentDownloadedCount,
+      currentTotalCount: currentTotalCount,
       currentTitle: currentTitle
     };
     return aggregate;
+  }
+
+  private getTasksByIds(taskIds: string[]): UnifiedDownloadTask[] {
+    const tasks: UnifiedDownloadTask[] = [];
+    for (let i = 0; i < taskIds.length; i++) {
+      const task = this.unifiedTasks.get(taskIds[i]);
+      if (task) {
+        tasks.push(task);
+      }
+    }
+    return tasks;
   }
   
   /**

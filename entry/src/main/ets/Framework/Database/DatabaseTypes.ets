@@ -1082,6 +1082,10 @@ export interface GenericQueryRecord {
   // unified_annotation 字段
   contentType?: DatabaseValue;
   contentId?: DatabaseValue;
+  chapterStableKey?: DatabaseValue;
+  orderIndex?: DatabaseValue;
+  originalOrderIndex?: DatabaseValue;
+  titleSnapshot?: DatabaseValue;
   annotationType?: DatabaseValue;
   textContent?: DatabaseValue;
   quoteText?: DatabaseValue;

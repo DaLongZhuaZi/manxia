@@ -109,6 +109,7 @@ export struct TrackingSettingsDialogComponent {
   @State trackingEnableNotify: boolean = true;
   @State trackingAutoCreateAttempted: boolean = false;
   @State trackingAutoCreatedThisSession: boolean = false;
+  @State trackingAutoCreatedTargetId: string = '';
 
   // 生命周期
   aboutToAppear(): void {
@@ -887,6 +888,7 @@ export struct TrackingSettingsDialogComponent {
       unsupportedReason: this.trackingUnsupportedReason,
       hasRule: this.trackingRule !== null,
       enabled: this.trackingRule !== null && this.trackingRule.enabled,
+      autoCreatedThisSession: this.trackingAutoCreatedThisSession,
       ruleName: this.trackingRule !== null ? this.trackingRule.name : '',
       providerText: this.getTrackingProviderText(),
       conditionSummary: this.getTrackingConditionSummary(this.trackingRule),
@@ -945,6 +947,10 @@ export struct TrackingSettingsDialogComponent {
       this.trackingTargetInfo = targetInfo;
       this.trackingSupported = targetInfo.supported;
       this.trackingUnsupportedReason = targetInfo.unsupportedReason;
+      if (this.trackingAutoCreatedTargetId.length > 0 && this.trackingAutoCreatedTargetId !== targetInfo.targetId) {
+        this.trackingAutoCreatedThisSession = false;
+        this.trackingAutoCreatedTargetId = '';
+      }
 
       if (!targetInfo.supported) {
         this.trackingRule = null;
@@ -968,6 +974,7 @@ export struct TrackingSettingsDialogComponent {
           currentRule = await this.autoCreateTrackingRule(targetInfo);
           if (currentRule !== null) {
             this.trackingAutoCreatedThisSession = true;
+            this.trackingAutoCreatedTargetId = targetInfo.targetId;
             logger.info(TAG, `统一详情页首次进入已自动建立内容跟踪: ${targetInfo.targetTitle}`);
           }
         } catch (autoCreateError) {

@@ -29,7 +29,9 @@ import {
   TaskResult,
   DirectSearchResult,
   DirectSearchResultType,
-  APIRequestAction
+  APIRequestAction,
+  ExtractConfig,
+  APIPaginationConfig
 } from './MangaSourceTypes';
 import { TaskExecutor, TaskExecutorConfig } from './TaskExecutor';
 
@@ -195,6 +197,8 @@ export class MangaSourceEngine {
   private static readonly SOURCE_SETTINGS_CACHE_TTL_MS: number = 60000; // 60s TTL
   // [优化] 缓存 rawConfigJson 解析结果，避免重复 JSON.parse
   private parsedConfigCache: Record<string, Object> | null = null;
+  private pageListRequestTail: Promise<void> = Promise.resolve();
+  private pageListQueueDepth: number = 0;
 
   constructor(engineConfig: EngineConfig) {
     this.engineConfig = engineConfig;
@@ -2453,13 +2457,11 @@ export class MangaSourceEngine {
             logger.info(TAG, `检测到章节列表API分页配置: pageParam=${pageParam}, 开始分页加载`);
             
             for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-              if (apiAction.params) {
-                apiAction.params[pageParam] = String(pageNum);
-              }
+              const pageAction = this.buildPagedApiAction(apiAction, pageParam, pageNum);
               
               logger.info(TAG, `分页加载章节列表: 第${pageNum}页`);
               
-              const result = await this.actionEngine.executeAction(action, context);
+              const result = await this.actionEngine.executeAction(pageAction, context);
               
               if (!result.success) {
                 if (pageNum === 1) {
@@ -2776,6 +2778,28 @@ export class MangaSourceEngine {
    * 获取页面列表
    */
   async getPageList(chapterId: string, mangaId?: string): Promise<EngineResult<PageInfo[]>> {
+    const previousTail = this.pageListRequestTail;
+    let releaseCurrent: () => void = () => {};
+    this.pageListRequestTail = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+
+    const waitDepth = this.pageListQueueDepth;
+    this.pageListQueueDepth++;
+    if (waitDepth > 0) {
+      logger.debug(TAG, `页面列表请求进入串行队列: chapter=${chapterId}, waitDepth=${waitDepth}`);
+    }
+
+    await previousTail;
+    try {
+      return await this.doGetPageList(chapterId, mangaId);
+    } finally {
+      this.pageListQueueDepth = Math.max(0, this.pageListQueueDepth - 1);
+      releaseCurrent();
+    }
+  }
+
+  private async doGetPageList(chapterId: string, mangaId?: string): Promise<EngineResult<PageInfo[]>> {
     if (!this.config) {
       throw new MangaSourceError(
         MangaSourceErrorCode.CONFIG_NOT_LOADED,
@@ -2813,14 +2837,11 @@ export class MangaSourceEngine {
             logger.info(TAG, `检测到API分页配置: pageParam=${pageParam}, 开始分页加载`);
             
             for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-              // 更新页码参数
-              if (apiAction.params) {
-                apiAction.params[pageParam] = String(pageNum);
-              }
+              const pageAction = this.buildPagedApiAction(apiAction, pageParam, pageNum);
               
               logger.info(TAG, `分页加载图片列表: 第${pageNum}页`);
               
-              const result = await this.actionEngine.executeAction(action, context);
+              const result = await this.actionEngine.executeAction(pageAction, context);
               
               if (!result.success) {
                 if (pageNum === 1) {
@@ -3300,6 +3321,105 @@ export class MangaSourceEngine {
       webViewController: this.engineConfig.webViewController,
       variables: variables
     };
+  }
+
+  private buildPagedApiAction(action: APIRequestAction, pageParam: string, pageNum: number): APIRequestAction {
+    let params: Record<string, string> | undefined = this.cloneStringRecord(action.params);
+    if (!params) {
+      params = {};
+    }
+    params[pageParam] = String(pageNum);
+    const pageAction: APIRequestAction = {
+      type: action.type,
+      description: action.description,
+      optional: action.optional,
+      waitAfter: action.waitAfter,
+      method: action.method,
+      url: action.url,
+      params: params,
+      headers: this.cloneStringRecord(action.headers),
+      body: this.cloneObjectRecord(action.body),
+      extract: this.cloneExtractConfig(action.extract),
+      pagination: this.cloneAPIPaginationConfig(action.pagination)
+    };
+    return pageAction;
+  }
+
+  private cloneStringRecord(record?: Record<string, string>): Record<string, string> | undefined {
+    if (!record) {
+      return undefined;
+    }
+    const cloned: Record<string, string> = {};
+    const keys = Object.keys(record);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      cloned[key] = record[key];
+    }
+    return cloned;
+  }
+
+  private cloneObjectRecord(record?: Record<string, Object | undefined>): Record<string, Object | undefined> | undefined {
+    if (!record) {
+      return undefined;
+    }
+    const cloned: Record<string, Object | undefined> = {};
+    const keys = Object.keys(record);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      cloned[key] = this.cloneObjectValue(record[key]);
+    }
+    return cloned;
+  }
+
+  private cloneObjectValue(value: Object | undefined): Object | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (Array.isArray(value)) {
+      const sourceArray = value as Object[];
+      const clonedArray: Object[] = [];
+      for (let i = 0; i < sourceArray.length; i++) {
+        const clonedValue = this.cloneObjectValue(sourceArray[i]);
+        if (clonedValue !== undefined) {
+          clonedArray.push(clonedValue);
+        }
+      }
+      return clonedArray;
+    }
+    if (typeof value === 'object' && value !== null) {
+      const sourceRecord = value as Record<string, Object | undefined>;
+      const clonedRecord = this.cloneObjectRecord(sourceRecord);
+      if (clonedRecord) {
+        return clonedRecord;
+      }
+      const emptyRecord: Record<string, Object | undefined> = {};
+      return emptyRecord;
+    }
+    return value;
+  }
+
+  private cloneExtractConfig(config?: ExtractConfig): ExtractConfig | undefined {
+    if (!config) {
+      return undefined;
+    }
+    const cloned: ExtractConfig = {
+      path: config.path,
+      fields: this.cloneStringRecord(config.fields)
+    };
+    return cloned;
+  }
+
+  private cloneAPIPaginationConfig(config?: APIPaginationConfig): APIPaginationConfig | undefined {
+    if (!config) {
+      return undefined;
+    }
+    const cloned: APIPaginationConfig = {
+      enabled: config.enabled,
+      type: config.type,
+      pageParam: config.pageParam,
+      hasMorePath: config.hasMorePath
+    };
+    return cloned;
   }
 
   /**

@@ -93,6 +93,7 @@ export interface OnlineArchiveExtractedPage {
 export interface OnlineArchiveExtractResult {
   extractDir: string;
   pages: OnlineArchiveExtractedPage[];
+  reusedExtract: boolean;
 }
 
 export interface OnlineArchiveMigrationItem {
@@ -358,11 +359,14 @@ export class OnlineMangaArchiveService {
     }
 
     const extractDir = this.resolveReaderExtractDir(request.chapterId, request.archivePath);
-    if (!this.hasReadableExtractedImages(extractDir)) {
+    const reusedExtract: boolean = this.hasReadableExtractedImages(extractDir);
+    if (!reusedExtract) {
       await this.deleteDirectoryRecursiveAsync(extractDir);
       this.ensureDirectory(extractDir);
       await zlib.decompressFile(request.archivePath, extractDir);
       logger.info(TAG, `在线漫画CBZ已解压: ${request.archivePath} -> ${extractDir}`);
+    } else {
+      logger.debug(TAG, `在线漫画CBZ复用已解压目录: ${request.archivePath} -> ${extractDir}`);
     }
 
     const imageFiles = this.scanImageFilesRecursive(extractDir);
@@ -398,7 +402,8 @@ export class OnlineMangaArchiveService {
 
     return {
       extractDir: extractDir,
-      pages: pages
+      pages: pages,
+      reusedExtract: reusedExtract
     };
   }
 

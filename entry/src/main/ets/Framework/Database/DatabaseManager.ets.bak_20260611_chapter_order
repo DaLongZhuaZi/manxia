@@ -188,7 +188,6 @@ export class DatabaseManager {
       'TRACK_RECORD',
       'TRACK_RECORD_UNIQUE_INDEX',
       'UNIFIED_ANNOTATION',
-      'CHAPTER_ORDER_OVERRIDE',
       'GLOBAL_SEARCH_INDEX',
       'GLOBAL_SEARCH_TOKEN_INDEX'
     ];
@@ -223,7 +222,6 @@ export class DatabaseManager {
       CREATE_TABLE_SQL.TRACK_RECORD as string,
       CREATE_TABLE_SQL.TRACK_RECORD_UNIQUE_INDEX as string,
       CREATE_TABLE_SQL.UNIFIED_ANNOTATION as string,
-      CREATE_TABLE_SQL.CHAPTER_ORDER_OVERRIDE as string,
       CREATE_TABLE_SQL.GLOBAL_SEARCH_INDEX as string,
       CREATE_TABLE_SQL.GLOBAL_SEARCH_TOKEN_INDEX as string
     ];
@@ -1240,10 +1238,6 @@ export class DatabaseManager {
     // unified_annotation fields
     m.set('contentType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.contentType = v; });
     m.set('contentId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.contentId = v; });
-    m.set('chapterStableKey', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterStableKey = v; });
-    m.set('orderIndex', (r: GenericQueryRecord, v: DatabaseValue): void => { r.orderIndex = v; });
-    m.set('originalOrderIndex', (r: GenericQueryRecord, v: DatabaseValue): void => { r.originalOrderIndex = v; });
-    m.set('titleSnapshot', (r: GenericQueryRecord, v: DatabaseValue): void => { r.titleSnapshot = v; });
     m.set('annotationType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.annotationType = v; });
     m.set('textContent', (r: GenericQueryRecord, v: DatabaseValue): void => { r.textContent = v; });
     m.set('quoteText', (r: GenericQueryRecord, v: DatabaseValue): void => { r.quoteText = v; });

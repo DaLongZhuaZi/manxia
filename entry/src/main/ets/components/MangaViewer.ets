@@ -312,6 +312,7 @@ interface MangaViewerCallbacks {
   onDoubleTap: (event: ClickEvent) => void;
   onScrollPositionChange?: (position: number) => void;
   onComponentReady?: (component: MangaViewer) => void;
+  onFirstVisibleDisplayCommitted?: (pageIndex: number, pageId: string, sourceType: ImageSourceType) => void;
   onWebtoonDetected?: (isWebtoon: boolean, avgAspectRatio: number) => void;  // 条漫检测回调
   // [新增] 条漫模式章节切换回调 - 当滚动到其他章节时通知父组件
   onWebtoonChapterSwitch?: (chapterId: string, chapterTitle: string, pageIndex: number) => void;
@@ -344,6 +345,12 @@ export struct MangaViewer {
   @Prop sourceId?: number;
   @Prop mangaId?: string;
   @Prop readFlowSessionId: string = '';
+  @Prop onlineDownloadedWarmupState?: string;
+  @Prop onlineDownloadedArchivePath?: string;
+  @Prop onlineDownloadedExtractDir?: string;
+  @Prop onlineDownloadedReusedExtract: boolean = false;
+  @Prop onlineDownloadedArchivePageCount: number = 0;
+  @Prop onlineDownloadedNetworkPageCount: number = 0;
 
   // [新增] 条漫模式多章节支持
   @Prop @Watch('onAdjacentChapterChange') prevChapter?: MangaChapter; // 前一章节
@@ -412,6 +419,7 @@ export struct MangaViewer {
   private mangaReadFlowSessionBridge: MangaReadFlowSessionBridge = new MangaReadFlowSessionBridge();
   private mangaScrollableReadFlowReporter: MangaScrollableReadFlowReporter = new MangaScrollableReadFlowReporter();
   private mangaReaderCacheOwnershipLogged: boolean = false;
+  private firstVisibleDisplayCommitted: boolean = false;
 
   // 屏幕尺寸属性
   @State private screenWidth: number = 0;
@@ -802,6 +810,7 @@ export struct MangaViewer {
     this.lastNextAdjacentRequestAt = 0;
     this.webtoonBoundaryCacheProtectUntil = 0;
     this.lastBoundaryPrewarmAt.clear();
+    this.firstVisibleDisplayCommitted = false;
 
     // 重置条漫多章节状态
     this.webtoonDataItems = [];
@@ -3850,6 +3859,12 @@ export struct MangaViewer {
     input.managedLoadStateLoading = loadStats.loading;
     input.managedLoadStateCompleted = loadStats.completed;
     input.managedLoadStateError = loadStats.error;
+    input.warmupState = this.onlineDownloadedWarmupState ? this.onlineDownloadedWarmupState : '';
+    input.archivePath = this.onlineDownloadedArchivePath ? this.onlineDownloadedArchivePath : '';
+    input.extractDir = this.onlineDownloadedExtractDir ? this.onlineDownloadedExtractDir : '';
+    input.reusedExtract = this.onlineDownloadedReusedExtract;
+    input.archivePageCount = this.onlineDownloadedArchivePageCount;
+    input.networkPageCount = this.onlineDownloadedNetworkPageCount;
     return input;
   }
 
@@ -3958,6 +3973,19 @@ export struct MangaViewer {
     this.mangaReadFlowMonitor.record(event);
   }
 
+  private notifyFirstVisibleDisplayCommitted(page: MangaPage, pageIndex: number): void {
+    if (this.firstVisibleDisplayCommitted) {
+      return;
+    }
+    if (!this.isPageCurrentlyVisible(page)) {
+      return;
+    }
+    this.firstVisibleDisplayCommitted = true;
+    if (this.callbacks.onFirstVisibleDisplayCommitted) {
+      this.callbacks.onFirstVisibleDisplayCommitted(pageIndex, page.id, page.sourceType);
+    }
+  }
+
   private recordReadFlowAssetEvent(
     eventType: MangaReadFlowEventType,
     page: MangaPage,
@@ -4012,7 +4040,7 @@ export struct MangaViewer {
     event.metricName = 'manga_read_flow_cache_active_pixel_maps';
     event.metricValue = snapshot.pagePixelMapCount;
     event.metricUnit = 'count';
-    event.detail = `activePM=${snapshot.pagePixelMapCount}, localLRU=${snapshot.localCacheCount}, loading=${snapshot.managedLoadStateLoading}, error=${snapshot.managedLoadStateError}`;
+    event.detail = `activePM=${snapshot.pagePixelMapCount}, localLRU=${snapshot.localCacheCount}, loading=${snapshot.managedLoadStateLoading}, error=${snapshot.managedLoadStateError}, warmupState=${snapshot.warmupState}, archivePath=${snapshot.archivePath}, extractDir=${snapshot.extractDir}, reusedExtract=${snapshot.reusedExtract}, pageCount=${snapshot.archivePageCount}, networkPageCount=${snapshot.networkPageCount}`;
     event.severity = snapshot.hasLegacyMetaPressure || snapshot.hasLocalCachePressure || snapshot.hasSplitPixelMapOwnership
       ? MangaReadFlowSeverity.WARN
       : MangaReadFlowSeverity.DEBUG;
@@ -4195,6 +4223,7 @@ export struct MangaViewer {
       this.isPageCurrentlyVisible(page) ? 'visible_pixelmap_ready' : 'preload_pixelmap_ready',
       'pixel_map_committed'
     );
+    this.notifyFirstVisibleDisplayCommitted(page, this.resolveManagedPageIndex(page));
   }
 
   private markPagePixelMapLoadFailed(page: MangaPage, errorMessage: string): void {
@@ -9138,6 +9167,7 @@ export struct MangaViewer {
       'webtoon_image_complete',
       `chapter=${chapterId}`
     );
+    this.notifyFirstVisibleDisplayCommitted(page, pageIndex);
   }
 
   /**
@@ -11258,7 +11288,7 @@ export struct MangaViewer {
     input.visibleItemIndices = this.getWebtoonVisibleItemIndicesForPreload();
     input.visiblePageIndices = this.visiblePageIndices;
     input.currentItemIndex = this.getCurrentWebtoonItemIndexForPreload();
-    input.range = 8;
+    input.range = this.preloadCurrentPages !== undefined ? Math.max(1, this.preloadCurrentPages) : 8;
 
     const plan: MangaPreloadPlan = this.mangaPreloadPlanner.buildWebtoonPlan(input);
     this.applyPreloadPlan(plan);

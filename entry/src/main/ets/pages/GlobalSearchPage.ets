@@ -51,6 +51,7 @@ import { SearchResultDataSource } from '../Framework/Search/SearchResultDataSour
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 const SEARCH_PREFS_NAME = 'global_search_preferences';
+const SEARCH_HISTORY_PREF_KEY: string = 'searchHistory';
 const SEARCH_LOADING_GROUP_KEYS: number[] = [0, 1];
 const SEARCH_LOADING_ITEM_KEYS: number[] = [0, 1, 2, 3];
 const SEARCH_LOADING_LANDSCAPE_ITEM_KEYS: number[] = [0, 1, 2, 3, 4, 5];
@@ -60,6 +61,11 @@ const SEARCH_GROUP_EXPAND_DURATION_MS: number = 320;
 const SEARCH_COVER_FADE_DURATION_MS: number = 260;
 const SEARCH_SHIMMER_BLADE_WIDTH: number = 5;
 const SEARCH_PREF_SAVE_DEBOUNCE_MS: number = 350;
+const SEARCH_RESULT_ITEM_WIDTH: number = 100;
+const SEARCH_RESULT_ITEM_HEIGHT: number = 184;
+const SEARCH_RESULT_EXPANDED_GRID_COLUMNS: number = 3;
+const SEARCH_RESULT_EXPANDED_GRID_COLUMN_GAP: number = 12;
+const SEARCH_RESULT_EXPANDED_GRID_ROW_GAP: number = 12;
 
 function buildGlobalSearchCacheKey(sourceId: number, keyword: string): string {
   const normalizedKeyword = keyword.trim().toLowerCase();
@@ -130,6 +136,10 @@ export struct GlobalSearchPage {
   @State searchKeyword: string = '';
   @State isSearching: boolean = false;
   @State searchProgress: string = '';
+  @State onlineSourceProgressCompleted: number = 0;
+  @State onlineSourceProgressTotal: number = 0;
+  @State onlineSourceProgressFinished: boolean = false;
+  @State hasOnlineSourceProgress: boolean = false;
   
   // 筛选配置
   @State contentTypeFilter: SearchContentType = SearchContentType.ALL;
@@ -151,6 +161,7 @@ export struct GlobalSearchPage {
   
   // 历史记录
   @State searchHistory: string[] = [];
+  @State isSearchHistoryLoaded: boolean = false;
   
   // UI 状态
   @State showSourceExpanded: boolean = false;  // 源选择区域是否展开
@@ -208,6 +219,7 @@ export struct GlobalSearchPage {
     if (!this.sourceFeaturesEnabled) {
       this.sourceTypeFilter = SearchSourceType.LOCAL;
       this.showSourceExpanded = false;
+      this.resetOnlineSourceProgressStatus();
     }
   }
 
@@ -227,7 +239,7 @@ export struct GlobalSearchPage {
     WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.initThemeAware();
     this.initFontAware();
-    this.loadSearchHistory();
+    void this.loadSearchHistory();
     this.initResponsiveLayout();
     this.loadSearchPreferences();
     this.loadAvailableSources();
@@ -647,14 +659,20 @@ export struct GlobalSearchPage {
       return;
     }
     
-    // 返回有结果、正在搜索或有错误的分组（全部显示，让用户看到搜索进度）
-    let groups = this.sourceGroups.filter(g => g.items.length > 0 || g.isSearching || g.hasError);
+    // 搜索中的分组保留进度；已结束后失败或无结果的源自动隐藏。
+    let groups = this.sourceGroups.filter((group: SearchSourceGroup): boolean => {
+      return group.isSearching || (!group.hasError && group.items.length > 0);
+    });
     const effectiveSourceType = this.getEffectiveSourceTypeFilter();
 
     if (effectiveSourceType === SearchSourceType.LOCAL) {
       groups = groups.filter((group: SearchSourceGroup) => group.sourceType === SearchSourceType.LOCAL);
     } else if (effectiveSourceType === SearchSourceType.ONLINE) {
       groups = groups.filter((group: SearchSourceGroup) => group.sourceType === SearchSourceType.ONLINE);
+    }
+
+    if (!this.isSearchInProgress()) {
+      groups = this.sortGroupsBySearchRelevance(groups);
     }
 
     this.filteredGroups = groups;
@@ -669,7 +687,7 @@ export struct GlobalSearchPage {
       sourceType: group.sourceType,
       onlineSourceType: group.onlineSourceType,
       usesWebViewEngine: group.usesWebViewEngine,
-      items: group.items,
+      items: this.cloneSearchItems(group.items),
       isSearching: forceCompleted ? false : group.isSearching,
       hasError: group.hasError,
       errorMessage: group.errorMessage
@@ -685,6 +703,32 @@ export struct GlobalSearchPage {
     return clonedGroups;
   }
 
+  private cloneSearchItems(items: UnifiedSearchItem[]): UnifiedSearchItem[] {
+    const clonedItems: UnifiedSearchItem[] = [];
+    for (const item of items) {
+      const clonedItem: UnifiedSearchItem = {
+        id: item.id,
+        title: item.title,
+        author: item.author,
+        coverUrl: item.coverUrl,
+        description: item.description,
+        contentType: item.contentType,
+        sourceType: item.sourceType,
+        onlineSourceType: item.onlineSourceType,
+        sourceId: item.sourceId,
+        sourceName: item.sourceName,
+        sourcePkg: item.sourcePkg,
+        rawManga: item.rawManga,
+        rawEbook: item.rawEbook,
+        rawNovelBook: item.rawNovelBook,
+        rawNovelSearch: item.rawNovelSearch,
+        rawOnlineComic: item.rawOnlineComic
+      };
+      clonedItems.push(clonedItem);
+    }
+    return clonedItems;
+  }
+
   private buildSearchGroupRenderKey(group: SearchSourceGroup): string {
     const searchingFlag: string = group.isSearching ? 'searching' : 'done';
     const errorFlag: string = group.hasError ? 'error' : 'ok';
@@ -693,6 +737,25 @@ export struct GlobalSearchPage {
 
   private buildSearchItemRenderKey(item: UnifiedSearchItem, index: number): string {
     return `${item.sourceId}_${item.id}_${index}`;
+  }
+
+  private buildExpandedSearchItemRenderKey(item: UnifiedSearchItem, index: number): string {
+    return `expanded_${this.buildSearchItemRenderKey(item, index)}`;
+  }
+
+  private getExpandedSearchGridRows(itemCount: number): number {
+    if (itemCount <= 0) {
+      return 0;
+    }
+    return Math.ceil(itemCount / SEARCH_RESULT_EXPANDED_GRID_COLUMNS);
+  }
+
+  private getExpandedSearchGridHeight(itemCount: number): number {
+    const rows: number = this.getExpandedSearchGridRows(itemCount);
+    if (rows <= 0) {
+      return 0;
+    }
+    return rows * SEARCH_RESULT_ITEM_HEIGHT + (rows - 1) * SEARCH_RESULT_EXPANDED_GRID_ROW_GAP;
   }
 
   private runSearchAnimation(duration: number, curve: Curve, callback: () => void): void {
@@ -709,6 +772,73 @@ export struct GlobalSearchPage {
       total += group.items.length;
     }
     return total;
+  }
+
+  private sortGroupsBySearchRelevance(groups: SearchSourceGroup[]): SearchSourceGroup[] {
+    const sortedGroups: SearchSourceGroup[] = groups.slice();
+    sortedGroups.sort((left: SearchSourceGroup, right: SearchSourceGroup): number => {
+      const rightScore: number = this.calculateGroupRelevanceScore(right);
+      const leftScore: number = this.calculateGroupRelevanceScore(left);
+      if (rightScore !== leftScore) {
+        return rightScore - leftScore;
+      }
+      return this.resolveSourceGroupOriginalIndex(left.groupId) - this.resolveSourceGroupOriginalIndex(right.groupId);
+    });
+    return sortedGroups;
+  }
+
+  private calculateGroupRelevanceScore(group: SearchSourceGroup): number {
+    const keyword: string = this.searchKeyword.trim().toLowerCase();
+    if (keyword.length === 0 || group.items.length === 0) {
+      return group.items.length;
+    }
+
+    let bestItemScore: number = 0;
+    for (let i = 0; i < group.items.length; i++) {
+      const score: number = this.calculateItemRelevanceScore(group.items[i], keyword, i);
+      if (score > bestItemScore) {
+        bestItemScore = score;
+      }
+    }
+    return bestItemScore + Math.min(group.items.length, 100);
+  }
+
+  private calculateItemRelevanceScore(item: UnifiedSearchItem, keyword: string, index: number): number {
+    const title: string = item.title.toLowerCase();
+    const author: string = item.author ? item.author.toLowerCase() : '';
+    const description: string = item.description ? item.description.toLowerCase() : '';
+    let score: number = Math.max(0, 100 - Math.min(index, 30) * 3);
+
+    if (title === keyword) {
+      score += 10000;
+    } else if (title.startsWith(keyword)) {
+      score += 8000;
+    } else if (title.indexOf(keyword) >= 0) {
+      score += 6000;
+    }
+
+    if (author.length > 0) {
+      if (author === keyword) {
+        score += 3500;
+      } else if (author.indexOf(keyword) >= 0) {
+        score += 2500;
+      }
+    }
+
+    if (description.length > 0 && description.indexOf(keyword) >= 0) {
+      score += 500;
+    }
+
+    return score;
+  }
+
+  private resolveSourceGroupOriginalIndex(groupId: string): number {
+    for (let i = 0; i < this.sourceGroups.length; i++) {
+      if (this.sourceGroups[i].groupId === groupId) {
+        return i;
+      }
+    }
+    return 999999;
   }
 
   private countPendingSearchCovers(groups: SearchSourceGroup[]): number {
@@ -826,6 +956,7 @@ export struct GlobalSearchPage {
     const previousItemCount = this.lastVisibleResultItemCount;
     const clonedGroups: SearchSourceGroup[] = this.cloneSearchGroups(groups, isFinalSnapshot);
     const nextItemCount = this.countResultItems(clonedGroups);
+    this.updateOnlineSourceProgressStatus(clonedGroups, isFinalSnapshot);
     this.sourceGroups = clonedGroups;
     this.updateFilteredGroups();
     this.lastVisibleResultItemCount = nextItemCount;
@@ -887,12 +1018,83 @@ export struct GlobalSearchPage {
   /**
    * 加载搜索历史
    */
-  private loadSearchHistory(): void {
+  private normalizeSearchHistoryKeywords(keywords: string[]): string[] {
+    const normalized: string[] = [];
+    for (const keyword of keywords) {
+      const trimmedKeyword: string = keyword.trim();
+      if (trimmedKeyword.length === 0) {
+        continue;
+      }
+      if (!normalized.includes(trimmedKeyword)) {
+        normalized.push(trimmedKeyword);
+      }
+      if (normalized.length >= 10) {
+        break;
+      }
+    }
+    return normalized;
+  }
+
+  private mergeSearchHistory(primary: string[], secondary: string[]): string[] {
+    const merged: string[] = [];
+    const normalizedPrimary: string[] = this.normalizeSearchHistoryKeywords(primary);
+    const normalizedSecondary: string[] = this.normalizeSearchHistoryKeywords(secondary);
+
+    for (const keyword of normalizedPrimary) {
+      if (!merged.includes(keyword)) {
+        merged.push(keyword);
+      }
+      if (merged.length >= 10) {
+        return merged;
+      }
+    }
+
+    for (const keyword of normalizedSecondary) {
+      if (!merged.includes(keyword)) {
+        merged.push(keyword);
+      }
+      if (merged.length >= 10) {
+        break;
+      }
+    }
+    return merged;
+  }
+
+  private getRuntimeSearchHistory(): string[] {
+    const history: string[] = AppStorage.get<string[]>(SEARCH_HISTORY_PREF_KEY) || [];
+    return this.normalizeSearchHistoryKeywords(history);
+  }
+
+  private async loadSearchHistory(): Promise<void> {
     try {
-      const history = AppStorage.get<string[]>('searchHistory') || [];
-      this.searchHistory = history.slice(0, 10);
+      const runtimeHistory: string[] = this.getRuntimeSearchHistory();
+      if (runtimeHistory.length > 0) {
+        this.searchHistory = runtimeHistory;
+      }
+
+      const hostContext = this.getUIContext()?.getHostContext();
+      if (!hostContext) {
+        logger.warn(TAG, '加载搜索历史失败: 页面上下文不可用');
+        return;
+      }
+
+      const context = hostContext as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, { name: SEARCH_PREFS_NAME });
+      const storedHistoryJson = await store.get(SEARCH_HISTORY_PREF_KEY, '[]') as string;
+      const persistedHistory: string[] = SafeUtils.parseArr<string[]>(storedHistoryJson);
+      const mergedRuntimeHistory: string[] = this.mergeSearchHistory(this.searchHistory, runtimeHistory);
+      const mergedHistory: string[] = this.mergeSearchHistory(mergedRuntimeHistory, persistedHistory);
+
+      this.searchHistory = mergedHistory;
+      AppStorage.setOrCreate(SEARCH_HISTORY_PREF_KEY, mergedHistory);
+      if (JSON.stringify(persistedHistory) !== JSON.stringify(mergedHistory)) {
+        await store.put(SEARCH_HISTORY_PREF_KEY, JSON.stringify(mergedHistory));
+        await store.flush();
+      }
     } catch (error) {
-      logger.error(TAG, `加载搜索历史失败: ${error}`);
+      logger.error(TAG, `加载搜索历史失败: ${String(error)}`);
+    } finally {
+      this.isSearchHistoryLoaded = true;
     }
   }
 
@@ -900,11 +1102,35 @@ export struct GlobalSearchPage {
    * 保存搜索历史
    */
   private saveSearchHistory(keyword: string): void {
-    if (!keyword || keyword.trim() === '') return;
-    
-    const history = [keyword, ...this.searchHistory.filter(h => h !== keyword)];
-    this.searchHistory = history.slice(0, 10);
-    AppStorage.setOrCreate('searchHistory', this.searchHistory);
+    const trimmedKeyword: string = keyword.trim();
+    if (trimmedKeyword.length === 0) {
+      return;
+    }
+
+    const history: string[] = this.mergeSearchHistory([trimmedKeyword], this.searchHistory);
+    this.searchHistory = history;
+    this.isSearchHistoryLoaded = true;
+    AppStorage.setOrCreate(SEARCH_HISTORY_PREF_KEY, history);
+    void this.persistSearchHistory(history);
+  }
+
+  private async persistSearchHistory(history: string[]): Promise<void> {
+    try {
+      const hostContext = this.getUIContext()?.getHostContext();
+      if (!hostContext) {
+        logger.warn(TAG, '保存搜索历史失败: 页面上下文不可用');
+        return;
+      }
+
+      const context = hostContext as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, { name: SEARCH_PREFS_NAME });
+      const normalizedHistory: string[] = this.normalizeSearchHistoryKeywords(history);
+      await store.put(SEARCH_HISTORY_PREF_KEY, JSON.stringify(normalizedHistory));
+      await store.flush();
+      logger.debug(TAG, `搜索历史已保存: ${normalizedHistory.length}条`);
+    } catch (error) {
+      logger.warn(TAG, `保存搜索历史失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -912,6 +1138,7 @@ export struct GlobalSearchPage {
    */
   private async performSearch(): Promise<void> {
     if (!this.searchKeyword || this.searchKeyword.trim() === '') {
+      this.resetOnlineSourceProgressStatus();
       return;
     }
 
@@ -919,12 +1146,48 @@ export struct GlobalSearchPage {
     this.activeSearchToken = searchToken;
     const keyword: string = this.searchKeyword.trim();
     this.cancelCurrentSearch('new_search');
+    this.saveSearchHistory(keyword);
 
     try {
+      const effectiveSourceType = this.getEffectiveSourceTypeFilter();
+      const filterConfig: SearchFilterConfig = {
+        contentType: this.contentTypeFilter,
+        sourceType: effectiveSourceType,
+        selectedMangaSources: this.selectedMangaSources,
+        selectedNovelSources: this.selectedNovelSources,
+        enableSuwayomi: this.sourceFeaturesEnabled ? this.enableSuwayomi : false,
+        maxConcurrent: this.maxConcurrent,
+        sessionId: `global_search_page_${searchToken}_${Date.now()}`
+      };
+
+      const cachedGroups: SearchSourceGroup[] | null = this.searchService.getCachedFullSearchResult(keyword, filterConfig);
+      if (cachedGroups !== null) {
+        if (searchToken !== this.activeSearchToken) {
+          logger.debug(TAG, `丢弃过期缓存搜索结果: "${keyword}"`);
+          return;
+        }
+        this.showSourceExpanded = false;
+        this.clearResultRevealTimer();
+        this.clearCoverPlaceholderReleaseTimer();
+        this.allowSearchCoverPlaceholders = false;
+        this.resultRevealPhase = 1;
+        const cachedTotal: number = cachedGroups.length;
+        this.applyProgressSnapshot(cachedTotal, cachedTotal, cachedGroups, true);
+        this.pendingProgressGroups = null;
+        this.pendingProgressCompleted = 0;
+        this.pendingProgressTotal = 0;
+        this.syncSearchLoadingMotion();
+        const cachedItemCount: number = this.countResultItems(cachedGroups);
+        logger.info(TAG, `搜索命中完整结果缓存: "${keyword}", groups=${cachedGroups.length}, items=${cachedItemCount}`);
+        return;
+      }
+
       this.isSearching = true;
       this.searchProgress = '正在搜索...';
+      this.prepareOnlineSourceProgressStatus();
       this.sourceGroups = [];
       this.filteredGroups = [];
+      this.filteredGroupDataSource.replaceData([]);
       this.pendingProgressGroups = null;
       this.pendingProgressCompleted = 0;
       this.pendingProgressTotal = 0;
@@ -932,7 +1195,6 @@ export struct GlobalSearchPage {
       
       // 自动收起在线源列表
       this.showSourceExpanded = false;
-      const effectiveSourceType = this.getEffectiveSourceTypeFilter();
       if (this.shouldWaitForMangaSourceWebView(effectiveSourceType)) {
         await this.waitForWebViewReady();
         if (searchToken !== this.activeSearchToken) {
@@ -943,18 +1205,6 @@ export struct GlobalSearchPage {
       }
       
       logger.info(TAG, `开始搜索: "${keyword}", 内容类型=${this.contentTypeFilter}, 来源=${effectiveSourceType}`);
-      this.saveSearchHistory(keyword);
-
-      // 构建筛选配置
-      const filterConfig: SearchFilterConfig = {
-        contentType: this.contentTypeFilter,
-        sourceType: effectiveSourceType,
-        selectedMangaSources: this.selectedMangaSources,
-        selectedNovelSources: this.selectedNovelSources,
-        enableSuwayomi: this.sourceFeaturesEnabled ? this.enableSuwayomi : false,
-        maxConcurrent: this.maxConcurrent,
-        sessionId: `global_search_page_${searchToken}_${Date.now()}`
-      };
 
       // 执行搜索
       const handle: GlobalSearchSessionHandle<SearchSourceGroup[]> = this.searchService.createSearchSession(
@@ -989,6 +1239,7 @@ export struct GlobalSearchPage {
       }
       const finalTotal = this.pendingProgressTotal > 0 ? this.pendingProgressTotal : results.length;
       this.applyProgressSnapshot(finalTotal, finalTotal, results, true);
+      this.searchService.cacheFullSearchResult(keyword, filterConfig, results);
       this.pendingProgressGroups = null;
       this.pendingProgressCompleted = 0;
       this.pendingProgressTotal = 0;
@@ -1010,6 +1261,7 @@ export struct GlobalSearchPage {
       this.pendingProgressTotal = 0;
       this.isSearching = false;
       this.searchProgress = '';
+      this.resetOnlineSourceProgressStatus();
       this.allowSearchCoverPlaceholders = false;
       this.stopSearchLoadingMotion();
     }
@@ -1175,6 +1427,7 @@ export struct GlobalSearchPage {
    */
   private toggleMangaSource(sourceId: string): void {
     this.cancelCurrentSearch('manga_source_changed');
+    this.resetOnlineSourceProgressStatus();
     const index = this.selectedMangaSources.indexOf(sourceId);
     if (index >= 0) {
       this.selectedMangaSources = this.selectedMangaSources.filter(id => id !== sourceId);
@@ -1189,6 +1442,7 @@ export struct GlobalSearchPage {
    */
   private toggleNovelSource(sourceId: string): void {
     this.cancelCurrentSearch('novel_source_changed');
+    this.resetOnlineSourceProgressStatus();
     const index = this.selectedNovelSources.indexOf(sourceId);
     if (index >= 0) {
       this.selectedNovelSources = this.selectedNovelSources.filter(id => id !== sourceId);
@@ -1516,6 +1770,9 @@ export struct GlobalSearchPage {
               })
               .onChange((value: string) => {
                 this.searchKeyword = value;
+                if (!this.isSearchInProgress()) {
+                  this.resetOnlineSourceProgressStatus();
+                }
               })
               .onSubmit(() => {
                 this.performSearch();
@@ -1613,6 +1870,7 @@ export struct GlobalSearchPage {
                   .animation({ duration: 200, curve: Curve.EaseInOut })
                   .onClick(() => {
                     this.cancelCurrentSearch('suwayomi_toggle_changed');
+                    this.resetOnlineSourceProgressStatus();
                     this.enableSuwayomi = !this.enableSuwayomi;
                     this.scheduleSearchPreferencesSave();
                   })
@@ -1648,13 +1906,15 @@ export struct GlobalSearchPage {
             } else {
               // 竖屏模式：使用列表布局
               List({ space: 16 }) {
-                ForEach(this.filteredGroups, (group: SearchSourceGroup, index: number) => {
+                LazyForEach(this.filteredGroupDataSource, (group: SearchSourceGroup, index: number) => {
                   ListItem() {
                     this.buildSourceGroupCard(group, index)
                   }
                 }, (group: SearchSourceGroup) => this.buildSearchGroupRenderKey(group))
                 ListItem() {
-                  Blank().height(40 + this.navigationBarHeight)
+                  Column() {
+                    Blank().height(40 + this.navigationBarHeight)
+                  }
                 }
               }
               .width('100%')
@@ -1735,6 +1995,24 @@ export struct GlobalSearchPage {
                 }
                 .width('100%')
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
+              } else if (!this.isSearchHistoryLoaded) {
+                Column({ space: 8 }) {
+                  LoadingProgress()
+                    .width(24)
+                    .height(24)
+                    .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  Text('正在加载搜索历史...')
+                    .fontSize(14)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                }
+                .width('100%')
+                .padding({
+                  left: this.responsive_contentPadding,
+                  right: this.responsive_contentPadding,
+                  top: 24,
+                  bottom: 24
+                })
               } else {
                 Column({ space: 8 }) {
                   SymbolGlyph($r('sys.symbol.clock'))
@@ -2245,12 +2523,17 @@ export struct GlobalSearchPage {
               GridItem() {
                 this.buildAnimatedItemCard(item, index)
               }
-            }, (item: UnifiedSearchItem, index: number) => this.buildSearchItemRenderKey(item, index))
+              .width(SEARCH_RESULT_ITEM_WIDTH)
+              .height(SEARCH_RESULT_ITEM_HEIGHT)
+            }, (item: UnifiedSearchItem, index: number) => this.buildExpandedSearchItemRenderKey(item, index))
           }
-          .columnsTemplate('repeat(3, 100px)')
-          .columnsGap(12)
-          .rowsGap(12)
+          .columnsTemplate('1fr 1fr 1fr')
+          .rowsTemplate(`repeat(auto-fill, ${SEARCH_RESULT_ITEM_HEIGHT})`)
+          .columnsGap(SEARCH_RESULT_EXPANDED_GRID_COLUMN_GAP)
+          .rowsGap(SEARCH_RESULT_EXPANDED_GRID_ROW_GAP)
           .width('100%')
+          .height(this.getExpandedSearchGridHeight(group.items.length))
+          .enableScrollInteraction(false)
           .animation({ duration: SEARCH_GROUP_EXPAND_DURATION_MS, curve: Curve.EaseInOut })
           .transition(
             TransitionEffect.OPACITY.animation({ duration: 240, curve: Curve.EaseOut })
@@ -2693,6 +2976,7 @@ export struct GlobalSearchPage {
       .onClick(() => {
         this.cancelCurrentSearch('content_filter_changed');
         this.contentTypeFilter = type;
+        this.resetOnlineSourceProgressStatus();
         this.scheduleSearchPreferencesSave();
         this.updateFilteredGroups();
         this.syncSearchLoadingMotion();
@@ -2728,6 +3012,7 @@ export struct GlobalSearchPage {
     .onClick(() => {
       this.cancelCurrentSearch('source_filter_changed');
       this.sourceTypeFilter = type;
+      this.resetOnlineSourceProgressStatus();
       this.scheduleSearchPreferencesSave();
       this.updateFilteredGroups();
       this.syncSearchLoadingMotion();
@@ -2756,14 +3041,24 @@ export struct GlobalSearchPage {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
-        // 已选源数量标记
-        Text(this.getSelectedSourcesCountForCurrentType())
+        // 已选源数量/当前搜索进度标记
+        Text(this.getOnlineSourceStatusText())
           .fontSize(11)
           .fontFamily(this.appFontFamily)
           .fontColor(Color.White)
           .padding({ left: 8, right: 8, top: 3, bottom: 3 })
           .borderRadius(12)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+        if (this.shouldShowOnlineSourceFinishedBadge()) {
+          Text('搜索完成')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .borderRadius(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) + '20')
+        }
         
         Blank()
         
@@ -2988,6 +3283,7 @@ export struct GlobalSearchPage {
    * 注：Suwayomi 已独立，不在此处控制
    */
   private selectAllSources(): void {
+    this.resetOnlineSourceProgressStatus();
     this.selectedMangaSources = this.availableMangaSources.map(s => s.id.toString());
     this.selectedNovelSources = this.availableNovelSources.map(s => s.id);
     this.scheduleSearchPreferencesSave();
@@ -2998,6 +3294,7 @@ export struct GlobalSearchPage {
    * 注：Suwayomi 已独立，不在此处控制
    */
   private clearAllSources(): void {
+    this.resetOnlineSourceProgressStatus();
     this.selectedMangaSources = [];
     this.selectedNovelSources = [];
     this.scheduleSearchPreferencesSave();
@@ -3042,6 +3339,80 @@ export struct GlobalSearchPage {
     return `${selected}/${total}`;
   }
 
+  private resetOnlineSourceProgressStatus(): void {
+    this.onlineSourceProgressCompleted = 0;
+    this.onlineSourceProgressTotal = 0;
+    this.onlineSourceProgressFinished = false;
+    this.hasOnlineSourceProgress = false;
+  }
+
+  private prepareOnlineSourceProgressStatus(): void {
+    const total: number = this.getSelectedOnlineSearchSourceCountForCurrentType();
+    this.onlineSourceProgressCompleted = 0;
+    this.onlineSourceProgressTotal = total;
+    this.onlineSourceProgressFinished = false;
+    this.hasOnlineSourceProgress = total > 0;
+  }
+
+  private updateOnlineSourceProgressStatus(groups: SearchSourceGroup[], isFinalSnapshot: boolean): void {
+    let groupTotal: number = 0;
+    let groupCompleted: number = 0;
+    for (const group of groups) {
+      if (group.sourceType === SearchSourceType.ONLINE) {
+        groupTotal++;
+        if (!group.isSearching) {
+          groupCompleted++;
+        }
+      }
+    }
+
+    let total: number = Math.max(this.onlineSourceProgressTotal, groupTotal);
+    if (total === 0) {
+      total = this.getSelectedOnlineSearchSourceCountForCurrentType();
+    }
+    if (total === 0) {
+      this.resetOnlineSourceProgressStatus();
+      return;
+    }
+
+    const completed: number = isFinalSnapshot ? total : Math.min(groupCompleted, total);
+    this.onlineSourceProgressCompleted = completed;
+    this.onlineSourceProgressTotal = total;
+    this.onlineSourceProgressFinished = isFinalSnapshot;
+    this.hasOnlineSourceProgress = true;
+  }
+
+  private getOnlineSourceStatusText(): string {
+    if (this.hasOnlineSourceProgress && this.onlineSourceProgressTotal > 0) {
+      return `搜索 ${this.onlineSourceProgressCompleted}/${this.onlineSourceProgressTotal}`;
+    }
+
+    return this.getSelectedSourcesCountForCurrentType();
+  }
+
+  private shouldShowOnlineSourceFinishedBadge(): boolean {
+    return this.hasOnlineSourceProgress && this.onlineSourceProgressFinished && this.onlineSourceProgressTotal > 0;
+  }
+
+  private getSelectedOnlineSearchSourceCountForCurrentType(): number {
+    const effectiveSourceType: SearchSourceType = this.getEffectiveSourceTypeFilter();
+    if (effectiveSourceType === SearchSourceType.LOCAL) {
+      return 0;
+    }
+
+    let total: number = 0;
+    if (this.contentTypeFilter === SearchContentType.ALL || this.contentTypeFilter === SearchContentType.MANGA) {
+      total += this.selectedMangaSources.length;
+      if (this.sourceFeaturesEnabled && this.enableSuwayomi && this.isSuwayomiAvailable) {
+        total += 1;
+      }
+    }
+    if (this.contentTypeFilter === SearchContentType.ALL || this.contentTypeFilter === SearchContentType.NOVEL) {
+      total += this.selectedNovelSources.length;
+    }
+    return total;
+  }
+
   /**
    * 获取当前类型可用源数量
    * 注：Suwayomi 已独立，不计入此处
@@ -3065,6 +3436,7 @@ export struct GlobalSearchPage {
    * 注：Suwayomi 已独立，不在此处控制
    */
   private selectAllSourcesForCurrentType(): void {
+    this.resetOnlineSourceProgressStatus();
     if (this.contentTypeFilter === SearchContentType.ALL || this.contentTypeFilter === SearchContentType.MANGA) {
       this.selectedMangaSources = this.availableMangaSources.map(s => s.id.toString());
     }
@@ -3081,6 +3453,7 @@ export struct GlobalSearchPage {
    * 注：Suwayomi 已独立，不在此处控制
    */
   private clearAllSourcesForCurrentType(): void {
+    this.resetOnlineSourceProgressStatus();
     if (this.contentTypeFilter === SearchContentType.ALL || this.contentTypeFilter === SearchContentType.MANGA) {
       this.selectedMangaSources = [];
     }

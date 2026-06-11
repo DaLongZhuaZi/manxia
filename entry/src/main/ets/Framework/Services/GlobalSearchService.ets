@@ -166,6 +166,13 @@ interface GlobalSearchRuntimeCacheEntry {
   items: UnifiedSearchItem[];
 }
 
+interface GlobalSearchFullResultCacheEntry {
+  cacheKey: string;
+  createTime: number;
+  groups: SearchSourceGroup[];
+  itemCount: number;
+}
+
 /**
  * 全局搜索服务类
  */
@@ -185,6 +192,8 @@ export class GlobalSearchService {
   private sessionCounter: number = 0;
   private runtimeCache: Map<string, GlobalSearchRuntimeCacheEntry> = new Map();
   private inFlightRequests: Map<string, Promise<UnifiedSearchItem[]>> = new Map();
+  private fullResultCache: Map<string, GlobalSearchFullResultCacheEntry> = new Map();
+  private readonly FULL_RESULT_CACHE_LIMIT: number = 20;
 
   private constructor() {
     this.dataService = DataService.getInstance();
@@ -566,6 +575,45 @@ export class GlobalSearchService {
     );
   }
 
+  public getCachedFullSearchResult(keyword: string, filter: SearchFilterConfig): SearchSourceGroup[] | null {
+    const cacheKey: string = this.buildFullResultCacheKey(keyword, this.normalizeFilterConfig(filter, 'full_result_cache_lookup'));
+    const entry: GlobalSearchFullResultCacheEntry | undefined = this.fullResultCache.get(cacheKey);
+    if (!entry) {
+      return null;
+    }
+    logger.info(TAG, `命中完整搜索结果运行期缓存: key=${cacheKey}, groups=${entry.groups.length}, items=${entry.itemCount}`);
+    entry.createTime = Date.now();
+    return this.cloneSearchGroupsForProgress(entry.groups, true);
+  }
+
+  public cacheFullSearchResult(keyword: string, filter: SearchFilterConfig, groups: SearchSourceGroup[]): void {
+    if (!this.canCacheFullSearchResult(groups)) {
+      logger.info(TAG, `完整搜索结果未写入运行期缓存: keyword=${keyword}, groups=${groups.length}, reason=not_complete`);
+      return;
+    }
+    const normalizedFilter: SearchFilterConfig = this.normalizeFilterConfig(filter, 'full_result_cache_store');
+    const cacheKey: string = this.buildFullResultCacheKey(keyword, normalizedFilter);
+    const snapshot: SearchSourceGroup[] = this.cloneSearchGroupsForProgress(groups, true);
+    const entry: GlobalSearchFullResultCacheEntry = {
+      cacheKey: cacheKey,
+      createTime: Date.now(),
+      groups: snapshot,
+      itemCount: this.countItems(snapshot)
+    };
+    this.fullResultCache.set(cacheKey, entry);
+    this.trimFullResultCache();
+    logger.info(TAG, `完整搜索结果已写入运行期缓存: key=${cacheKey}, groups=${snapshot.length}, items=${entry.itemCount}`);
+  }
+
+  private canCacheFullSearchResult(groups: SearchSourceGroup[]): boolean {
+    for (const group of groups) {
+      if (group.isSearching || group.hasError) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private async runSearchSession(
     sessionId: string,
     keyword: string,
@@ -883,8 +931,6 @@ export class GlobalSearchService {
       };
       this.runtimeCache.set(cacheKey, entry);
       return items;
-    }).catch((error) => {
-      throw error as Error;
     });
     this.inFlightRequests.set(cacheKey, promise);
     try {
@@ -896,6 +942,42 @@ export class GlobalSearchService {
 
   private buildRuntimeCacheKey(sourceType: string, sourceId: string, keyword: string): string {
     return `${sourceType}_${sourceId}_${keyword.trim().toLowerCase()}`;
+  }
+
+  private buildFullResultCacheKey(keyword: string, filter: SearchFilterConfig): string {
+    const selectedMangaSources: string[] = filter.selectedMangaSources.slice().sort();
+    const selectedNovelSources: string[] = filter.selectedNovelSources.slice().sort();
+    const parts: string[] = [];
+    parts.push(keyword.trim().toLowerCase());
+    parts.push(filter.contentType);
+    parts.push(filter.sourceType);
+    parts.push(selectedMangaSources.join(','));
+    parts.push(selectedNovelSources.join(','));
+    parts.push(filter.enableSuwayomi ? 'suwayomi_on' : 'suwayomi_off');
+    parts.push(`${filter.maxConcurrent}`);
+    parts.push(`${filter.perSourceTimeoutMs || DEFAULT_NETWORK_TIMEOUT_MS}`);
+    parts.push(`${filter.globalTimeoutMs || DEFAULT_GLOBAL_TIMEOUT_MS}`);
+    parts.push(`${filter.localResultLimit || DEFAULT_LOCAL_RESULT_LIMIT}`);
+    parts.push(`${filter.onlineResultLimitPerSource || DEFAULT_ONLINE_RESULT_LIMIT_PER_SOURCE}`);
+    parts.push(filter.enableRuntimeCache === true ? 'runtime_cache_on' : 'runtime_cache_off');
+    return parts.join('|');
+  }
+
+  private trimFullResultCache(): void {
+    if (this.fullResultCache.size <= this.FULL_RESULT_CACHE_LIMIT) {
+      return;
+    }
+
+    const entries: GlobalSearchFullResultCacheEntry[] = Array.from(this.fullResultCache.values());
+    entries.sort((left: GlobalSearchFullResultCacheEntry, right: GlobalSearchFullResultCacheEntry): number => {
+      return left.createTime - right.createTime;
+    });
+    while (entries.length > this.FULL_RESULT_CACHE_LIMIT) {
+      const entry: GlobalSearchFullResultCacheEntry | undefined = entries.shift();
+      if (entry) {
+        this.fullResultCache.delete(entry.cacheKey);
+      }
+    }
   }
 
   private limitItems(items: UnifiedSearchItem[], limit: number): UnifiedSearchItem[] {
@@ -981,7 +1063,7 @@ export class GlobalSearchService {
         sourceType: group.sourceType,
         onlineSourceType: group.onlineSourceType,
         usesWebViewEngine: group.usesWebViewEngine,
-        items: group.items,
+        items: this.cloneSearchItems(group.items),
         isSearching: forceCompleted ? false : group.isSearching,
         hasError: group.hasError,
         errorMessage: group.errorMessage
@@ -989,6 +1071,32 @@ export class GlobalSearchService {
       snapshot.push(cloned);
     }
     return snapshot;
+  }
+
+  private cloneSearchItems(items: UnifiedSearchItem[]): UnifiedSearchItem[] {
+    const clonedItems: UnifiedSearchItem[] = [];
+    for (const item of items) {
+      const clonedItem: UnifiedSearchItem = {
+        id: item.id,
+        title: item.title,
+        author: item.author,
+        coverUrl: item.coverUrl,
+        description: item.description,
+        contentType: item.contentType,
+        sourceType: item.sourceType,
+        onlineSourceType: item.onlineSourceType,
+        sourceId: item.sourceId,
+        sourceName: item.sourceName,
+        sourcePkg: item.sourcePkg,
+        rawManga: item.rawManga,
+        rawEbook: item.rawEbook,
+        rawNovelBook: item.rawNovelBook,
+        rawNovelSearch: item.rawNovelSearch,
+        rawOnlineComic: item.rawOnlineComic
+      };
+      clonedItems.push(clonedItem);
+    }
+    return clonedItems;
   }
 
   private logMetricsIfEnabled(metrics: GlobalSearchMetrics): void {

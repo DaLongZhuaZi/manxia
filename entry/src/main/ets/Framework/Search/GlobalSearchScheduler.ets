@@ -107,7 +107,7 @@ export class GlobalSearchScheduler {
           errorMessage: ''
         };
         resolve(successResult);
-      }).catch((error) => {
+      }).catch((error: Error) => {
         if (settled) {
           return;
         }
@@ -168,7 +168,7 @@ export class GlobalSearchScheduler {
 
       await this.sleep(DEFAULT_YIELD_MS);
 
-      const promise: Promise<void> = task.run().catch((error) => {
+      const promise: Promise<void> = task.run().catch((error: Error) => {
         logger.warn(TAG, `搜索任务执行失败: ${task.taskName}, error=${String(error)}`);
       }).then(() => {
         const index: number = executing.indexOf(promise);

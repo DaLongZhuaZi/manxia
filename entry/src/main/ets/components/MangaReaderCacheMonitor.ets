@@ -40,6 +40,12 @@ export class MangaReaderCacheSnapshotInput {
   public managedLoadStateLoading: number = 0;
   public managedLoadStateCompleted: number = 0;
   public managedLoadStateError: number = 0;
+  public warmupState: string = '';
+  public archivePath: string = '';
+  public extractDir: string = '';
+  public reusedExtract: boolean = false;
+  public archivePageCount: number = 0;
+  public networkPageCount: number = 0;
 }
 
 export class MangaReaderCacheSnapshot {
@@ -66,6 +72,12 @@ export class MangaReaderCacheSnapshot {
   public managedLoadStateLoading: number = 0;
   public managedLoadStateCompleted: number = 0;
   public managedLoadStateError: number = 0;
+  public warmupState: string = '';
+  public archivePath: string = '';
+  public extractDir: string = '';
+  public reusedExtract: boolean = false;
+  public archivePageCount: number = 0;
+  public networkPageCount: number = 0;
   public hasActivity: boolean = false;
   public hasLegacyMetaPressure: boolean = false;
   public hasLocalCachePressure: boolean = false;
@@ -133,6 +145,12 @@ export class MangaReaderCacheMonitor {
     snapshot.managedLoadStateLoading = input.managedLoadStateLoading;
     snapshot.managedLoadStateCompleted = input.managedLoadStateCompleted;
     snapshot.managedLoadStateError = input.managedLoadStateError;
+    snapshot.warmupState = input.warmupState;
+    snapshot.archivePath = input.archivePath;
+    snapshot.extractDir = input.extractDir;
+    snapshot.reusedExtract = input.reusedExtract;
+    snapshot.archivePageCount = input.archivePageCount;
+    snapshot.networkPageCount = input.networkPageCount;
     snapshot.hasActivity = this.hasActivity(input);
     snapshot.hasLegacyMetaPressure = this.isOverPressure(input.legacyImageMetaBytes, input.legacyImageMetaMaxBytes);
     snapshot.hasLocalCachePressure = this.isOverPressure(input.localCacheBytes, input.localCacheMaxBytes);
@@ -141,7 +159,7 @@ export class MangaReaderCacheMonitor {
   }
 
   public describe(snapshot: MangaReaderCacheSnapshot): string {
-    return `缓存快照(${snapshot.reason}): activePM=${snapshot.pagePixelMapCount}, localLRU=${snapshot.localCacheCount}, legacyMeta=${snapshot.legacyImageMetaCount}, preloadQueue=${snapshot.preloadQueueCount}, loading=${snapshot.managedLoadStateLoading}, error=${snapshot.managedLoadStateError}`;
+    return `缓存快照(${snapshot.reason}): activePM=${snapshot.pagePixelMapCount}, localLRU=${snapshot.localCacheCount}, legacyMeta=${snapshot.legacyImageMetaCount}, preloadQueue=${snapshot.preloadQueueCount}, loading=${snapshot.managedLoadStateLoading}, error=${snapshot.managedLoadStateError}, warmupState=${snapshot.warmupState}, archivePath=${snapshot.archivePath}, extractDir=${snapshot.extractDir}, reusedExtract=${snapshot.reusedExtract}, pageCount=${snapshot.archivePageCount}, networkPageCount=${snapshot.networkPageCount}`;
   }
 
   private buildOwnershipItem(
@@ -167,7 +185,8 @@ export class MangaReaderCacheMonitor {
       input.preloadCompletedCount > 0 ||
       input.preloadFailedCount > 0 ||
       input.managedLoadStateTotal > 0 ||
-      input.reactiveImageLoadStateCount > 0;
+      input.reactiveImageLoadStateCount > 0 ||
+      input.warmupState.length > 0;
   }
 
   private isOverPressure(size: number, maxSize: number): boolean {

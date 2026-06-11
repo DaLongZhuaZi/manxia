@@ -22,6 +22,7 @@ export interface ContentTrackingCardState {
   unsupportedReason: string;
   hasRule: boolean;
   enabled: boolean;
+  autoCreatedThisSession: boolean;
   ruleName: string;
   providerText: string;
   conditionSummary: string;
@@ -51,6 +52,7 @@ const DEFAULT_CONTENT_TRACKING_CARD_STATE: ContentTrackingCardState = {
   unsupportedReason: '',
   hasRule: false,
   enabled: false,
+  autoCreatedThisSession: false,
   ruleName: '',
   providerText: '',
   conditionSummary: '',
@@ -73,11 +75,34 @@ const DEFAULT_CONTENT_TRACKING_CARD_CALLBACKS: ContentTrackingCardCallbacks = {
 
 @Component
 export struct ContentTrackingStatusCard {
-  @Prop state: ContentTrackingCardState = DEFAULT_CONTENT_TRACKING_CARD_STATE;
+  @Prop @Watch('onContentKeyChanged') contentKey: string = '';
+  @Prop @Watch('onDefaultExpandedChanged') defaultExpanded: boolean = true;
+  @Prop @Watch('onCardStateChanged') state: ContentTrackingCardState = DEFAULT_CONTENT_TRACKING_CARD_STATE;
   @Prop themeState: ThemeAwareState = new ThemeAwareState();
   @Prop appFontFamily: string = 'HarmonyOS Sans';
   @Prop callbacks: ContentTrackingCardCallbacks = DEFAULT_CONTENT_TRACKING_CARD_CALLBACKS;
-  @State private isExpanded: boolean = false;
+  @State private isBodyExpanded: boolean = false;
+  @State private isMoreExpanded: boolean = false;
+  @State private hasManualBodyToggle: boolean = false;
+  private uiContext: UIContext | null = null;
+
+  aboutToAppear(): void {
+    this.uiContext = this.getUIContext();
+    this.applyDefaultBodyExpanded(false);
+  }
+
+  onDefaultExpandedChanged(): void {
+    this.applyDefaultBodyExpanded(true);
+  }
+
+  onCardStateChanged(): void {
+    this.applyDefaultBodyExpanded(true);
+  }
+
+  onContentKeyChanged(): void {
+    this.hasManualBodyToggle = false;
+    this.applyDefaultBodyExpanded(false);
+  }
 
   private getStatusPillText(): string {
     if (this.state.isLoading) {
@@ -164,8 +189,55 @@ export struct ContentTrackingStatusCard {
     return '还没检查过';
   }
 
-  private toggleExpanded(): void {
-    this.isExpanded = !this.isExpanded;
+  private ensureUIContext(): UIContext | null {
+    if (this.uiContext === null) {
+      this.uiContext = this.getUIContext();
+    }
+    return this.uiContext;
+  }
+
+  private applyDefaultBodyExpanded(animated: boolean): void {
+    if (this.hasManualBodyToggle || this.isBodyExpanded === this.defaultExpanded) {
+      return;
+    }
+    this.setBodyExpanded(this.defaultExpanded, animated);
+  }
+
+  private setBodyExpanded(expanded: boolean, animated: boolean): void {
+    const updateState = (): void => {
+      this.isBodyExpanded = expanded;
+      if (!expanded) {
+        this.isMoreExpanded = false;
+      }
+    };
+    if (!animated) {
+      updateState();
+      return;
+    }
+
+    const uiContext = this.ensureUIContext();
+    if (uiContext === null) {
+      updateState();
+      return;
+    }
+    uiContext.animateTo({ duration: 260, curve: Curve.EaseInOut }, updateState);
+  }
+
+  private toggleBodyExpanded(): void {
+    this.hasManualBodyToggle = true;
+    this.setBodyExpanded(!this.isBodyExpanded, true);
+  }
+
+  private toggleMoreExpanded(): void {
+    const uiContext = this.ensureUIContext();
+    const updateState = (): void => {
+      this.isMoreExpanded = !this.isMoreExpanded;
+    };
+    if (uiContext === null) {
+      updateState();
+      return;
+    }
+    uiContext.animateTo({ duration: 220, curve: Curve.EaseInOut }, updateState);
   }
 
   private getChapterSummaryAccentColor(): ResourceColor {
@@ -457,66 +529,99 @@ export struct ContentTrackingStatusCard {
 
         Blank()
 
-        Text(this.getStatusPillText())
-          .fontSize(11)
-          .fontFamily(this.appFontFamily)
-          .fontColor(this.getStatusPillColor())
-          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-          .backgroundColor(this.getStatusPillColor() + '18')
-          .borderRadius(12)
+        Row({ space: 8 }) {
+          Text(this.getStatusPillText())
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.getStatusPillColor())
+            .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+            .backgroundColor(this.getStatusPillColor() + '18')
+            .borderRadius(12)
+
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(15)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            .rotate({ angle: this.isBodyExpanded ? 0 : -90 })
+            .animation({ duration: 220, curve: Curve.EaseInOut })
+        }
       }
       .width('100%')
+      .onClick(() => {
+        this.toggleBodyExpanded();
+      })
 
-      Column({ space: 10 }) {
-        this.buildSummaryRow('当前状态', this.getHeadlineText(), this.getStatusPillColor())
-        this.buildSummaryRow(
-          '上次检查',
-          this.state.lastCheckText.length > 0 ? this.state.lastCheckText : '还没检查过',
-          ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-        )
-        this.buildSummaryRow(
-          '更新情况',
-          this.getChapterSummaryText(),
-          this.getChapterSummaryAccentColor()
-        )
-        Text('自动检查目前只会在 APP 回到前台时补查，后台不会定时执行。')
-          .fontSize(11)
-          .lineHeight(17)
+      if (!this.isBodyExpanded) {
+        Text(this.getHeadlineText())
+          .fontSize(13)
+          .lineHeight(19)
+          .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
+          .transition(
+            TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+              .combine(TransitionEffect.translate({ y: -6 }).animation({ duration: 180, curve: Curve.EaseOut }))
+          )
+      }
 
-        Button() {
-          Row({ space: 8 }) {
-            Text(this.isExpanded ? '收起更多设置' : '展开更多设置')
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            Blank()
-            SymbolGlyph($r('sys.symbol.chevron_down'))
-              .fontSize(14)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
-              .rotate({ angle: this.isExpanded ? 0 : -90 })
-              .animation({ duration: 220, curve: Curve.EaseInOut })
+      if (this.isBodyExpanded) {
+        Column({ space: 10 }) {
+          this.buildSummaryRow('当前状态', this.getHeadlineText(), this.getStatusPillColor())
+          this.buildSummaryRow(
+            '上次检查',
+            this.state.lastCheckText.length > 0 ? this.state.lastCheckText : '还没检查过',
+            ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+          )
+          this.buildSummaryRow(
+            '更新情况',
+            this.getChapterSummaryText(),
+            this.getChapterSummaryAccentColor()
+          )
+          Text('自动检查目前只会在 APP 回到前台时补查，后台不会定时执行。')
+            .fontSize(11)
+            .lineHeight(17)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+
+          Button() {
+            Row({ space: 8 }) {
+              Text(this.isMoreExpanded ? '收起更多设置' : '展开更多设置')
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Blank()
+              SymbolGlyph($r('sys.symbol.chevron_down'))
+                .fontSize(14)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+                .rotate({ angle: this.isMoreExpanded ? 0 : -90 })
+                .animation({ duration: 220, curve: Curve.EaseInOut })
+            }
+            .width('100%')
           }
           .width('100%')
+          .height(38)
+          .padding({ left: 12, right: 12 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .borderRadius(19)
+          .onClick(() => {
+            this.toggleMoreExpanded();
+          })
         }
         .width('100%')
-        .height(38)
-        .padding({ left: 12, right: 12 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-        .borderRadius(19)
-        .onClick(() => {
-          this.toggleExpanded();
-        })
+        .padding(14)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(16)
+        .transition(
+          TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+            .combine(TransitionEffect.translate({ y: -8 }).animation({ duration: 220, curve: Curve.EaseOut }))
+        )
       }
-      .width('100%')
-      .padding(14)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(16)
 
-      if (this.isExpanded) {
+      if (this.isBodyExpanded && this.isMoreExpanded) {
         Column({ space: 12 }) {
           if (this.state.providerText.length > 0) {
             this.buildExpandedDetailItem(

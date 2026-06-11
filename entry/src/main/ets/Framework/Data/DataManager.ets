@@ -2060,11 +2060,12 @@ export class DataManager {
    */
   public async getChapterById(chapterId: string): Promise<ChapterInfo | null> {
     try {
-      const records = await this.databaseManager.query(
-        'chapter',
-        undefined, // columns
-        `id = ?`, // whereClause
-        [chapterId] // whereArgs
+      const records = await this.databaseManager.querySql(
+        `SELECT id, comicId, externalId, title, chapterNumber AS chapterIndex, chapterNumber,
+                pageCount, isDownloaded, downloadPath, publishTime, addTime, createTime, updateTime
+         FROM chapter
+         WHERE id = ?`,
+        [chapterId]
       );
 
       if (records.length === 0) {
@@ -2273,11 +2274,12 @@ export class DataManager {
    */
   public async getChapterInfo(chapterId: string): Promise<ChapterInfo | null> {
     try {
-      const records = await this.databaseManager.query(
-        'chapter',
-        undefined, // columns
-        `id = ?`, // whereClause
-        [chapterId] // whereArgs
+      const records = await this.databaseManager.querySql(
+        `SELECT id, comicId, externalId, title, chapterNumber AS chapterIndex, chapterNumber,
+                pageCount, isDownloaded, downloadPath, publishTime, addTime, createTime, updateTime
+         FROM chapter
+         WHERE id = ?`,
+        [chapterId]
       );
 
       if (records.length === 0) {
@@ -2299,12 +2301,13 @@ export class DataManager {
     try {
       logger.info(TAG, `🔍 [数据库QUERY] 表名=chapter, 查询条件: comicId=${comicId}, 排序: chapterNumber ASC`);
       
-      const records = await this.databaseManager.query(
-        'chapter',
-        undefined,
-        'comicId = ?',
-        [comicId],
-        'chapterNumber ASC'
+      const records = await this.databaseManager.querySql(
+        `SELECT id, comicId, externalId, title, chapterNumber AS chapterIndex, chapterNumber,
+                pageCount, isDownloaded, downloadPath, publishTime, addTime, createTime, updateTime
+         FROM chapter
+         WHERE comicId = ?
+         ORDER BY chapterNumber ASC`,
+        [comicId]
       );
       
       logger.info(TAG, `📊 [数据库QUERY结果] 表名=chapter, 查询到章节记录数量: ${records.length}`);
@@ -2442,12 +2445,13 @@ export class DataManager {
         whereArgs.push(comicId);
       }
 
-      const records = await this.databaseManager.query(
-        'chapter',
-        undefined,
-        whereClause,
-        whereArgs,
-        'chapterNumber ASC'
+      const records = await this.databaseManager.querySql(
+        `SELECT id, comicId, externalId, title, chapterNumber AS chapterIndex, chapterNumber,
+                pageCount, isDownloaded, downloadPath, publishTime, addTime, createTime, updateTime
+         FROM chapter
+         WHERE ${whereClause}
+         ORDER BY chapterNumber ASC`,
+        whereArgs as DatabaseValue[]
       );
 
       return records.map((record: object) => this.convertRecordToChapterInfo(record as ChapterInfoDatabaseRecord));
@@ -5873,7 +5877,7 @@ export class DataManager {
       }
       
       // 然后清理 chapter 表（本地图源）
-      const sql = `SELECT id, title, chapterIndex, addTime FROM chapter WHERE comicId = ? ORDER BY title, chapterIndex, addTime ASC`;
+      const sql = `SELECT id, title, chapterNumber AS chapterIndex, addTime FROM chapter WHERE comicId = ? ORDER BY title, chapterNumber, addTime ASC`;
       const chapters = await this.databaseManager.querySql(sql, [comicId]);
       
       if (chapters.length === 0) {
