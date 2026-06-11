@@ -36,6 +36,11 @@ interface NormalizedDownloadPages {
   pageRequestHeaders: (Record<string, string> | undefined)[];
 }
 
+interface ExistingOnlineTaskMatch {
+  taskId: string;
+  task: DownloadTaskInfo;
+}
+
 /**
  * 下载任务状态
  */
@@ -122,6 +127,9 @@ export class MangaDownloadManager {
   private tasks: Map<string, DownloadTaskInfo> = new Map();
   private downloadQueue: string[] = [];
   private activeDownloads: Set<string> = new Set();
+  private isProcessingQueue: boolean = false;
+  private queuePumpPending: boolean = false;
+  private onlineTaskIdsByChapterKey: Map<string, string> = new Map();
   private notificationManager: AppNotificationManager;
   private dataManager: DataManager;
   private databaseManager: DatabaseManager;
@@ -182,6 +190,68 @@ export class MangaDownloadManager {
    */
   public async requestDownloadDirAccess(): Promise<boolean> {
     return this.downloadDirManager.requestAccess();
+  }
+
+  private buildOnlineChapterTaskKey(sourceId: number, mangaId: string, chapterId: string): string {
+    return `${sourceId}::${mangaId}::${chapterId}`;
+  }
+
+  private findExistingOnlineTask(sourceId: number, mangaId: string, chapterId: string): ExistingOnlineTaskMatch | null {
+    const taskKey = this.buildOnlineChapterTaskKey(sourceId, mangaId, chapterId);
+    const existingTaskId = this.onlineTaskIdsByChapterKey.get(taskKey);
+    if (!existingTaskId) {
+      return null;
+    }
+
+    const existingTask = this.tasks.get(existingTaskId);
+    if (!existingTask) {
+      this.onlineTaskIdsByChapterKey.delete(taskKey);
+      return null;
+    }
+
+    if (existingTask.status === TaskStatus.PENDING || existingTask.status === TaskStatus.DOWNLOADING) {
+      logger.info(TAG, `复用已存在的在线漫画下载任务: taskId=${existingTaskId}, chapter=${chapterId}`);
+      return {
+        taskId: existingTaskId,
+        task: existingTask
+      };
+    }
+
+    this.onlineTaskIdsByChapterKey.delete(taskKey);
+    return null;
+  }
+
+  private registerOnlineTaskIndex(task: DownloadTaskInfo): void {
+    if (!task.isOnlineManga || task.sourceId === undefined) {
+      return;
+    }
+    const taskKey = this.buildOnlineChapterTaskKey(task.sourceId, task.mangaId, task.chapterId);
+    this.onlineTaskIdsByChapterKey.set(taskKey, task.id);
+  }
+
+  private clearOnlineTaskIndexForTask(task: DownloadTaskInfo): void {
+    if (!task.isOnlineManga || task.sourceId === undefined) {
+      return;
+    }
+    const taskKey = this.buildOnlineChapterTaskKey(task.sourceId, task.mangaId, task.chapterId);
+    const existingTaskId = this.onlineTaskIdsByChapterKey.get(taskKey);
+    if (existingTaskId === task.id) {
+      this.onlineTaskIdsByChapterKey.delete(taskKey);
+    }
+  }
+
+  private enqueueTask(taskId: string): void {
+    if (this.downloadQueue.includes(taskId)) {
+      logger.debug(TAG, `下载任务已在队列中，跳过重复入队: ${taskId}`);
+      return;
+    }
+    this.downloadQueue.push(taskId);
+  }
+
+  private scheduleProcessQueue(reason: string): void {
+    this.processQueue().catch((error: Error) => {
+      logger.error(TAG, `下载队列调度入口失败: reason=${reason}, ${error.message}`);
+    });
   }
 
   /**
@@ -260,12 +330,12 @@ export class MangaDownloadManager {
       await this.saveTaskToDatabase(taskInfo);
 
       // 添加到下载队列
-      this.downloadQueue.push(taskId);
+      this.enqueueTask(taskId);
       
       logger.info(TAG, `下载任务已创建: ${taskId}, 章节: ${chapterTitle}, 图片数: ${imageUrls.length}`);
       
       // 开始处理队列
-      this.processQueue();
+      this.scheduleProcessQueue('create_download_task');
       
       return taskId;
     } catch (error) {
@@ -297,6 +367,11 @@ export class MangaDownloadManager {
     try {
       if (!this.context) {
         throw new Error('应用上下文未设置');
+      }
+
+      const existingTask = this.findExistingOnlineTask(sourceId, mangaId, chapterId);
+      if (existingTask) {
+        return existingTask.taskId;
       }
 
       // 检查Download目录是否已初始化
@@ -342,14 +417,15 @@ export class MangaDownloadManager {
       
       // 保存到数据库
       await this.saveTaskToDatabase(taskInfo);
+      this.registerOnlineTaskIndex(taskInfo);
 
       // 添加到下载队列
-      this.downloadQueue.push(taskId);
+      this.enqueueTask(taskId);
       
       logger.info(TAG, `在线漫画下载任务已创建: ${taskId}, 漫画: ${mangaTitle}, 章节: ${chapterTitle}, 图片数: ${imageUrls.length}`);
       
       // 开始处理队列
-      this.processQueue();
+      this.scheduleProcessQueue('create_online_manga_task');
       
       return taskId;
     } catch (error) {
@@ -374,6 +450,11 @@ export class MangaDownloadManager {
     try {
       if (!this.context) {
         throw new Error('应用上下文未设置');
+      }
+
+      const existingTask = this.findExistingOnlineTask(sourceId, mangaId, chapterId);
+      if (existingTask) {
+        return existingTask.taskId;
       }
 
       // 检查Download目录是否已初始化
@@ -419,14 +500,15 @@ export class MangaDownloadManager {
       
       // 保存到数据库
       await this.saveTaskToDatabase(taskInfo);
+      this.registerOnlineTaskIndex(taskInfo);
 
       // 添加到下载队列
-      this.downloadQueue.push(taskId);
+      this.enqueueTask(taskId);
       
       logger.info(TAG, `在线漫画下载任务已创建(延迟获取): ${taskId}, 漫画: ${mangaTitle}, 章节: ${chapterTitle}`);
       
       // 开始处理队列
-      this.processQueue();
+      this.scheduleProcessQueue('create_online_manga_fetcher_task');
       
       return taskId;
     } catch (error) {
@@ -440,6 +522,29 @@ export class MangaDownloadManager {
    * 处理下载队列
    */
   private async processQueue(): Promise<void> {
+    if (this.isProcessingQueue) {
+      this.queuePumpPending = true;
+      logger.debug(TAG, `下载队列正在处理，已合并新的调度请求: queue=${this.downloadQueue.length}, active=${this.activeDownloads.size}`);
+      return;
+    }
+
+    this.isProcessingQueue = true;
+    try {
+      do {
+        this.queuePumpPending = false;
+        await this.processQueueOnce();
+      } while (this.queuePumpPending);
+    } catch (error) {
+      logger.error(TAG, `下载队列调度失败: ${String(error)}`);
+    } finally {
+      this.isProcessingQueue = false;
+      if (this.queuePumpPending) {
+        this.scheduleProcessQueue('queue_pump_pending');
+      }
+    }
+  }
+
+  private async processQueueOnce(): Promise<void> {
     // 有待处理任务时确保后台长时任务已申请
     // await 确保任务注册完成后再派发下载，避免 APP 恰好在此期间进入后台
     if (this.context && (this.downloadQueue.length > 0 || this.activeDownloads.size > 0)) {
@@ -450,17 +555,26 @@ export class MangaDownloadManager {
     while (this.activeDownloads.size < this.config.maxConcurrent && this.downloadQueue.length > 0) {
       const taskId = this.downloadQueue.shift();
       if (taskId && this.tasks.has(taskId)) {
-        const task = this.tasks.get(taskId)!;
+        const task = this.tasks.get(taskId);
+        if (!task) {
+          continue;
+        }
         if (task.status === TaskStatus.PENDING) {
           this.activeDownloads.add(taskId);
           // 根据任务类型分发到不同的下载方法
           if (task.taskType === DownloadTaskType.EBOOK) {
             this.downloadEBookTask(taskId).catch((error: Error) => {
               logger.error(TAG, `电子书下载任务执行失败: ${taskId}, ${error.message}`);
+              this.markTaskDispatchFailure(taskId, error).catch((failureError: Error) => {
+                logger.error(TAG, `电子书下载任务失败状态同步失败: ${taskId}, ${failureError.message}`);
+              });
             });
           } else {
             this.downloadTask(taskId).catch((error: Error) => {
               logger.error(TAG, `下载任务执行失败: ${taskId}, ${error.message}`);
+              this.markTaskDispatchFailure(taskId, error).catch((failureError: Error) => {
+                logger.error(TAG, `下载任务失败状态同步失败: ${taskId}, ${failureError.message}`);
+              });
             });
           }
         }
@@ -473,6 +587,28 @@ export class MangaDownloadManager {
         logger.warn(TAG, `停止后台长时任务失败: ${err.message}`);
       });
     }
+  }
+
+  private async markTaskDispatchFailure(taskId: string, error: Error): Promise<void> {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      return;
+    }
+
+    task.status = TaskStatus.FAILED;
+    task.error = error.message || String(error);
+    this.activeDownloads.delete(taskId);
+    this.clearOnlineTaskIndexForTask(task);
+    try {
+      await this.updateTaskInDatabase(task);
+    } catch (dbError) {
+      logger.warn(TAG, `下载任务失败状态落库失败: ${taskId}, ${String(dbError)}`);
+    }
+    this.notifyProgressCallbacks(task);
+    if (task.isOnlineManga) {
+      this.publishMangaCacheUpdated(task, '', 'task_dispatch_failed');
+    }
+    this.scheduleProcessQueue('dispatch_failure');
   }
 
   /**
@@ -519,8 +655,11 @@ export class MangaDownloadManager {
       const isSelectiveRetry = task.failedPageIndexes !== undefined && task.failedPageIndexes.length > 0;
       const pagesToDownload: number[] = [];
       if (isSelectiveRetry) {
-        for (let idx = 0; idx < task.failedPageIndexes!.length; idx++) {
-          pagesToDownload.push(task.failedPageIndexes![idx]);
+        const failedPageIndexes = task.failedPageIndexes;
+        if (failedPageIndexes) {
+          for (let idx = 0; idx < failedPageIndexes.length; idx++) {
+            pagesToDownload.push(failedPageIndexes[idx]);
+          }
         }
       } else {
         for (let i = 0; i < task.urls.length; i++) {
@@ -730,9 +869,12 @@ export class MangaDownloadManager {
     } finally {
       // 从活动下载中移除
       this.activeDownloads.delete(taskId);
+      if (task.status === TaskStatus.COMPLETED || task.status === TaskStatus.FAILED) {
+        this.clearOnlineTaskIndexForTask(task);
+      }
       
       // 继续处理队列（内部会自动判断是否停止后台任务）
-      this.processQueue();
+      this.scheduleProcessQueue('download_task_finished');
     }
   }
 
@@ -844,43 +986,56 @@ export class MangaDownloadManager {
     filePath: string, 
     headers?: Record<string, string>
   ): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const httpRequest = http.createHttp();
-      
-      // 构建请求头
-      const requestHeaders: Record<string, string> = this.buildDownloadHeaders(headers);
+    const httpRequest = http.createHttp();
 
-      httpRequest.request(url, {
+    try {
+      const requestHeaders: Record<string, string> = this.buildDownloadHeaders(headers);
+      const response: http.HttpResponse = await httpRequest.request(url, {
         method: http.RequestMethod.GET,
         header: requestHeaders,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
         connectTimeout: 30000,
         readTimeout: 60000
-      }).then((response: http.HttpResponse) => {
-        if (response.responseCode === 200) {
-          const data = response.result as ArrayBuffer;
-          try {
-            // 写入文件
-            const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-            SafeFileUtils.writeSync(file.fd, data);
-            SafeFileUtils.closeSync(file.fd);
-            logger.debug(TAG, `HTTP下载完成: ${filePath}, 大小: ${data.byteLength}`);
-            resolve();
-          } catch (writeError) {
-            logger.error(TAG, `写入文件失败: ${filePath}, ${String(writeError)}`);
-            reject(new Error(`写入文件失败: ${String(writeError)}`));
-          }
-        } else {
-          logger.error(TAG, `HTTP下载失败: ${url}, 状态码: ${response.responseCode}`);
-          reject(new Error(`HTTP下载失败: ${response.responseCode}`));
-        }
-        httpRequest.destroy();
-      }).catch((error: Error) => {
-        logger.error(TAG, `HTTP请求失败: ${url}, ${error.message}`);
-        httpRequest.destroy();
-        reject(error);
       });
-    });
+
+      if (response.responseCode !== 200) {
+        logger.error(TAG, `HTTP下载失败: ${url}, 状态码: ${response.responseCode}`);
+        throw new Error(`HTTP下载失败: ${response.responseCode}`);
+      }
+
+      const data = response.result as ArrayBuffer;
+      await this.writeArrayBufferToFile(filePath, data);
+      logger.debug(TAG, `HTTP下载完成: ${filePath}, 大小: ${data.byteLength}`);
+    } catch (error) {
+      logger.error(TAG, `HTTP请求或写入失败: ${url}, ${String(error)}`);
+      throw error as Error;
+    } finally {
+      httpRequest.destroy();
+    }
+  }
+
+  private async writeArrayBufferToFile(filePath: string, data: ArrayBuffer): Promise<void> {
+    let file: fs.File | null = null;
+    let operationError: Error | null = null;
+    try {
+      file = await fs.open(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      await fs.write(file.fd, data);
+    } catch (error) {
+      operationError = error as Error;
+      logger.error(TAG, `写入文件失败: ${filePath}, ${String(error)}`);
+      throw operationError;
+    } finally {
+      if (file !== null) {
+        try {
+          await fs.close(file);
+        } catch (closeError) {
+          logger.warn(TAG, `关闭下载文件句柄失败: ${filePath}, ${String(closeError)}`);
+          if (operationError === null) {
+            throw closeError as Error;
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -962,9 +1117,12 @@ export class MangaDownloadManager {
     }
 
     task.status = TaskStatus.PENDING;
-    this.downloadQueue.push(taskId);
+    if (task.isOnlineManga) {
+      this.registerOnlineTaskIndex(task);
+    }
+    this.enqueueTask(taskId);
     await this.updateTaskInDatabase(task);
-    this.processQueue();
+    this.scheduleProcessQueue('resume_task');
     logger.info(TAG, `任务已恢复: ${taskId}`);
     return true;
   }
@@ -991,9 +1149,12 @@ export class MangaDownloadManager {
     }
 
     task.status = TaskStatus.PENDING;
-    this.downloadQueue.push(taskId);
+    if (task.isOnlineManga) {
+      this.registerOnlineTaskIndex(task);
+    }
+    this.enqueueTask(taskId);
     await this.updateTaskInDatabase(task);
-    this.processQueue();
+    this.scheduleProcessQueue('retry_failed_pages');
     logger.info(TAG, `任务已加入重试队列: ${taskId}, 待重试 ${task.failedPageIndexes.length} 页`);
     return true;
   }
@@ -1073,6 +1234,7 @@ export class MangaDownloadManager {
       task.error = `手动保存: ${task.downloadedCount}/${task.totalCount}页已下载, ${task.failedPageIndexes.length}页待补充`;
       task.failedPageIndexes = undefined;
       await this.updateTaskInDatabase(task);
+      this.clearOnlineTaskIndexForTask(task);
 
       // 更新章节下载状态
       await this.updateChapterDownloadStatus(task.chapterId, true, true, task.archivePath);
@@ -1105,6 +1267,7 @@ export class MangaDownloadManager {
       // 从内存中删除
       this.tasks.delete(taskId);
       this.activeDownloads.delete(taskId);
+      this.clearOnlineTaskIndexForTask(task);
       
       // 从数据库删除
       await this.databaseManager.delete('download_tasks', 'id = ?', [taskId]);
@@ -1692,12 +1855,12 @@ export class MangaDownloadManager {
       await this.saveTaskToDatabase(taskInfo);
 
       // 添加到下载队列
-      this.downloadQueue.push(taskId);
+      this.enqueueTask(taskId);
       
       logger.info(TAG, `电子书下载任务已创建: ${taskId}, 书名: ${bookTitle}, 格式: ${fileFormat}`);
       
       // 开始处理队列
-      this.processQueue();
+      this.scheduleProcessQueue('create_ebook_task');
       
       return taskId;
     } catch (error) {
@@ -1757,9 +1920,7 @@ export class MangaDownloadManager {
       // 解码 base64 并写入文件
       const base64Helper: util.Base64Helper = new util.Base64Helper();
       const fileBytes: Uint8Array = base64Helper.decodeSync(base64Data);
-      const file = SafeFileUtils.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      SafeFileUtils.writeSync(file.fd, fileBytes.buffer as ArrayBuffer);
-      SafeFileUtils.closeSync(file.fd);
+      await this.writeArrayBufferToFile(filePath, fileBytes.buffer as ArrayBuffer);
 
       logger.info(TAG, `WebView 数据下载完成: ${filePath}, 大小: ${fileBytes.length} bytes`);
 
@@ -1896,7 +2057,7 @@ export class MangaDownloadManager {
       this.activeDownloads.delete(taskId);
 
       // 继续处理队列
-      this.processQueue();
+      this.scheduleProcessQueue('ebook_task_finished');
     }
   }
 

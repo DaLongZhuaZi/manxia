@@ -250,9 +250,7 @@ export class PermanentImageCacheManager {
       this.ensureDirectoryExists(targetPath);
       
       // 写入文件
-      const file = SafeFileUtils.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      SafeFileUtils.writeSync(file.fd, imageData);
-      SafeFileUtils.closeSync(file);
+      await this.writeImageDataToFile(targetPath, imageData);
       
       logger.debug(TAG, `图片保存成功: ${targetPath}`);
       
@@ -265,6 +263,29 @@ export class PermanentImageCacheManager {
     } catch (error) {
       logger.error(TAG, `保存图片失败: ${error}`);
       return null;
+    }
+  }
+
+  private async writeImageDataToFile(targetPath: string, imageData: ArrayBuffer): Promise<void> {
+    let file: fs.File | null = null;
+    let operationError: Error | null = null;
+    try {
+      file = await fs.open(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      await fs.write(file.fd, imageData);
+    } catch (error) {
+      operationError = error as Error;
+      throw operationError;
+    } finally {
+      if (file !== null) {
+        try {
+          await fs.close(file);
+        } catch (closeError) {
+          logger.warn(TAG, `关闭图片缓存文件句柄失败: ${targetPath}, ${String(closeError)}`);
+          if (operationError === null) {
+            throw closeError as Error;
+          }
+        }
+      }
     }
   }
 

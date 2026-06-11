@@ -35,7 +35,12 @@ import { getNovelInitializer } from '../Novel/NovelInitializer';
 import { getNovelDataManager, NovelBook } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
 import { LegadoBook, LegadoBookSource, LegadoBookSourceType, LegadoChapter } from '../Novel/LegadoSourceTypes';
-import { getUnifiedDownloadManager, UnifiedDownloadManager, MangaChapterDownloadItem } from '../Download/UnifiedDownloadManager';
+import {
+  getUnifiedDownloadManager,
+  UnifiedDownloadManager,
+  MangaChapterDownloadItem,
+  MangaBatchDownloadResult
+} from '../Download/UnifiedDownloadManager';
 import { AppNotificationManager, NotificationType } from '../Managers/NotificationManager';
 import { Manga, MangaChapter, MangaPage } from '../../Models/MangaModels';
 import { ParsedRemoteMangaId, RemoteLibraryMangaBridge } from '../Source/RemoteLibraryMangaBridge';
@@ -1439,9 +1444,12 @@ export class SubscriptionManager {
       return 0;
     }
 
-    await this.unifiedDownloadManager.downloadMangaChapters(comicInfo.id, comicInfo.title, 0, items);
-    logger.info(TAG, `已触发在线漫画自动下载: ${comicInfo.title}, 数量=${items.length}`);
-    return items.length;
+    const batchResult: MangaBatchDownloadResult = await this.unifiedDownloadManager.downloadMangaChapters(comicInfo.id, comicInfo.title, 0, items);
+    logger.info(
+      TAG,
+      `已触发在线漫画自动下载: ${comicInfo.title}, requested=${items.length}, created=${batchResult.createdCount}, failed=${batchResult.failedCount}`
+    );
+    return batchResult.createdCount;
   }
 
   private async ensureShelfManagersReady(): Promise<boolean> {
@@ -2673,9 +2681,12 @@ export class SubscriptionManager {
       return 0;
     }
 
-    await this.unifiedDownloadManager.downloadMangaChapters(manga.id, manga.title, 0, items);
-    logger.info(TAG, `已触发远程漫画自动下载: ${manga.title}, 数量=${items.length}`);
-    return items.length;
+    const batchResult: MangaBatchDownloadResult = await this.unifiedDownloadManager.downloadMangaChapters(manga.id, manga.title, 0, items);
+    logger.info(
+      TAG,
+      `已触发远程漫画自动下载: ${manga.title}, requested=${items.length}, created=${batchResult.createdCount}, failed=${batchResult.failedCount}`
+    );
+    return batchResult.createdCount;
   }
 
   private extractPageUrls(pages: MangaPage[]): string[] {

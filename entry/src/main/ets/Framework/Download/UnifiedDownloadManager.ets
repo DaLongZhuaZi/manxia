@@ -129,6 +129,28 @@ export interface DownloadStatsResult {
   paused: number;
 }
 
+export interface MangaBatchDownloadFailure {
+  chapterId: string;
+  chapterTitle: string;
+  reason: string;
+}
+
+export interface MangaBatchDownloadResult {
+  taskIds: string[];
+  createdCount: number;
+  failedCount: number;
+  failedChapters: MangaBatchDownloadFailure[];
+}
+
+export interface ContentDownloadAggregate {
+  activeCount: number;
+  completedCount: number;
+  failedCount: number;
+  downloadedCount: number;
+  totalCount: number;
+  currentTitle: string;
+}
+
 /**
  * 统一下载管理器类
  */
@@ -184,6 +206,16 @@ export class UnifiedDownloadManager {
   public async downloadMangaChapter(params: MangaChapterDownloadParams): Promise<string> {
     try {
       logger.info(TAG, `创建漫画章节下载任务: ${params.mangaTitle} - ${params.chapterTitle}`);
+
+      const existingTask = this.findActiveMangaUnifiedTask(params.mangaId, params.sourceId, params.chapterId);
+      if (existingTask) {
+        logger.info(
+          TAG,
+          `统一漫画下载任务去重命中: manga=${params.mangaId}, chapter=${params.chapterId}, taskId=${existingTask.id}`
+        );
+        this.registerMangaProgressCallback(existingTask.id);
+        return existingTask.id;
+      }
       
       let taskId: string;
       
@@ -248,8 +280,9 @@ export class UnifiedDownloadManager {
     mangaTitle: string,
     sourceId: number,
     chapters: MangaChapterDownloadItem[]
-  ): Promise<string[]> {
+  ): Promise<MangaBatchDownloadResult> {
     const taskIds: string[] = [];
+    const failedChapters: MangaBatchDownloadFailure[] = [];
     
     for (const chapter of chapters) {
       try {
@@ -263,13 +296,32 @@ export class UnifiedDownloadManager {
           imageUrls: chapter.imageUrls,
           pageListFetcher: chapter.pageListFetcher
         });
-        taskIds.push(taskId);
+        if (!taskIds.includes(taskId)) {
+          taskIds.push(taskId);
+        }
       } catch (error) {
-        logger.error(TAG, `下载章节失败: ${chapter.chapterTitle}, ${String(error)}`);
+        const reason = String(error);
+        const failure: MangaBatchDownloadFailure = {
+          chapterId: chapter.chapterId,
+          chapterTitle: chapter.chapterTitle,
+          reason: reason
+        };
+        failedChapters.push(failure);
+        logger.error(TAG, `创建漫画下载章节任务失败: ${chapter.chapterTitle}, ${reason}`);
       }
     }
-    
-    return taskIds;
+
+    const result: MangaBatchDownloadResult = {
+      taskIds: taskIds,
+      createdCount: taskIds.length,
+      failedCount: failedChapters.length,
+      failedChapters: failedChapters
+    };
+    logger.info(
+      TAG,
+      `批量漫画下载任务创建完成: manga=${mangaTitle}, requested=${chapters.length}, created=${result.createdCount}, failed=${result.failedCount}`
+    );
+    return result;
   }
   
   /**
@@ -297,9 +349,11 @@ export class UnifiedDownloadManager {
           }
 
           if (sourceTask && sourceTask.status === TaskStatus.FAILED) {
-            this.updateTaskStatus(task, UnifiedTaskStatus.FAILED);
-            task.error = sourceTask.error || '下载失败';
-            this.notifyError(task, task.error);
+            if (task.status !== UnifiedTaskStatus.FAILED) {
+              this.updateTaskStatus(task, UnifiedTaskStatus.FAILED);
+              task.error = sourceTask.error || '下载失败';
+              this.notifyError(task, task.error);
+            }
             return;
           }
 
@@ -544,6 +598,46 @@ export class UnifiedDownloadManager {
   public getTasksByContent(contentId: string): UnifiedDownloadTask[] {
     return this.getIndexedTasks(this.taskIdsByContent.get(contentId));
   }
+
+  public getContentDownloadAggregate(contentId: string, type?: UnifiedDownloadType): ContentDownloadAggregate {
+    const tasks = this.getTasksByContent(contentId);
+    let activeCount = 0;
+    let completedCount = 0;
+    let failedCount = 0;
+    let downloadedCount = 0;
+    let totalCount = 0;
+    let currentTitle = '';
+
+    for (const task of tasks) {
+      if (type !== undefined && task.type !== type) {
+        continue;
+      }
+
+      if (task.status === UnifiedTaskStatus.PENDING || task.status === UnifiedTaskStatus.DOWNLOADING) {
+        activeCount++;
+        if (currentTitle.length === 0 && task.chapterTitle && task.chapterTitle.length > 0) {
+          currentTitle = task.chapterTitle;
+        }
+      } else if (task.status === UnifiedTaskStatus.COMPLETED) {
+        completedCount++;
+      } else if (task.status === UnifiedTaskStatus.FAILED) {
+        failedCount++;
+      }
+
+      downloadedCount += Math.max(0, task.downloadedCount);
+      totalCount += Math.max(0, task.totalCount);
+    }
+
+    const aggregate: ContentDownloadAggregate = {
+      activeCount: activeCount,
+      completedCount: completedCount,
+      failedCount: failedCount,
+      downloadedCount: downloadedCount,
+      totalCount: totalCount,
+      currentTitle: currentTitle
+    };
+    return aggregate;
+  }
   
   /**
    * 获取指定状态的下载任务
@@ -662,8 +756,27 @@ export class UnifiedDownloadManager {
   }
 
   private registerUnifiedTask(task: UnifiedDownloadTask): void {
+    const existingTask = this.unifiedTasks.get(task.id);
+    if (existingTask) {
+      this.removeTaskFromIndexes(existingTask);
+    }
     this.unifiedTasks.set(task.id, task);
     this.addTaskToIndexes(task);
+  }
+
+  private findActiveMangaUnifiedTask(mangaId: string, sourceId: number, chapterId: string): UnifiedDownloadTask | null {
+    const tasks = this.getTasksByContent(mangaId);
+    for (const task of tasks) {
+      if (
+        task.type === UnifiedDownloadType.MANGA &&
+        task.sourceId === sourceId &&
+        task.chapterId === chapterId &&
+        (task.status === UnifiedTaskStatus.PENDING || task.status === UnifiedTaskStatus.DOWNLOADING)
+      ) {
+        return task;
+      }
+    }
+    return null;
   }
 
   private unregisterUnifiedTask(taskId: string): void {

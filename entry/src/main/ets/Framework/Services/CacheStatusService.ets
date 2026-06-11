@@ -12,8 +12,8 @@ import { PermanentImageCacheManager } from '../Cache/PermanentImageCacheManager'
 import { getNovelChapterCacheManager, NovelChapterCacheManager } from '../Novel/NovelChapterCacheManager';
 import { DataManager, OnlinePageInfo } from '../Data/DataManager';
 import { DatabaseManager } from '../Database/DatabaseManager';
+import { DatabaseValue, GenericQueryRecord } from '../Database/DatabaseTypes';
 import { eventBus, GameEvent, MangaCacheUpdatedPayload } from '../EventBus';
-import fs from '@ohos.file.fs';
 
 const TAG = 'CacheStatusService';
 
@@ -66,6 +66,13 @@ export interface ContentCacheStats {
   lastCacheTime: number;
 }
 
+interface MangaChapterPageStats {
+  chapterId: string;
+  totalPages: number;
+  downloadedPages: number;
+  downloadedSize: number;
+}
+
 /**
  * 缓存状态服务类
  */
@@ -115,6 +122,7 @@ export class CacheStatusService {
       // 从数据库获取章节信息（使用已有的 getOnlineComicChapters 方法）
       const chapters = await this.dataManager.getOnlineComicChapters(mangaId);
       const totalChapterCount = chapters.length;
+      const pageStatsByChapterId = await this.getMangaChapterPageStats(mangaId);
       
       logger.info(TAG, `漫画 [${mangaTitle}] 章节数: ${totalChapterCount}`);
       
@@ -126,9 +134,14 @@ export class CacheStatusService {
       let totalCacheSize = mangaStats?.totalSize || 0;
       
       for (const chapter of chapters) {
-        // 获取章节的页面列表（使用已有的 getOnlineChapterPages 方法）
-        const pages = await this.dataManager.getOnlineChapterPages(chapter.id);
-        const chapterTotalPages = Math.max(pages.length, chapter.pageCount || 0);
+        const pageStats = pageStatsByChapterId.get(chapter.id);
+        let pages: OnlinePageInfo[] = [];
+        let chapterTotalPages = Math.max(pageStats ? pageStats.totalPages : 0, chapter.pageCount || 0);
+        if (!pageStats) {
+          // 只有旧数据或聚合缺失时才读取章节页面列表，避免下载中频繁逐章查询。
+          pages = await this.dataManager.getOnlineChapterPages(chapter.id);
+          chapterTotalPages = Math.max(pages.length, chapter.pageCount || 0);
+        }
         totalPageCount += chapterTotalPages;
         
         // 统计已缓存的页面：优先识别新CBZ归档，再兼容旧localPath散图。
@@ -139,15 +152,13 @@ export class CacheStatusService {
         const resolvedArchivePath = this.resolveReadableArchivePath(archivePath);
         const hasArchive = resolvedArchivePath.length > 0;
         if (hasArchive) {
-          // CBZ归档存在：通过online_page表检查实际已下载页数（区分完整归档和部分归档）
-          let downloadedPageCount = 0;
-          try {
-            const downloadedRows = await this.databaseManager.querySql(
-              'SELECT id FROM online_page WHERE chapterId = ? AND isDownloaded = 1', [chapter.id]);
-            downloadedPageCount = downloadedRows.length;
-          } catch (_e) { /* 查询失败时回退 */ }
+          // CBZ归档存在：通过批量统计检查实际已下载页数（区分完整归档和部分归档）
+          const downloadedPageCount = pageStats ? pageStats.downloadedPages : 0;
           chapterCachedPages = downloadedPageCount > 0 ? downloadedPageCount : chapterTotalPages;
-          chapterCacheSize = this.getFileSize(resolvedArchivePath);
+          chapterCacheSize = pageStats && pageStats.downloadedSize > 0 ? pageStats.downloadedSize : this.getFileSize(resolvedArchivePath);
+        } else if (pageStats && pageStats.downloadedPages > 0) {
+          chapterCachedPages = pageStats.downloadedPages;
+          chapterCacheSize = pageStats.downloadedSize;
         } else {
           for (const page of pages) {
             const cachedPath = await this.resolveCachedOnlinePagePath(sourceId, mangaId, chapter.id, page);
@@ -208,6 +219,60 @@ export class CacheStatusService {
       logger.error(TAG, `获取漫画缓存状态失败: ${String(error)}`);
       return this.createEmptyStats(mangaId, CacheContentType.MANGA, sourceId, mangaTitle);
     }
+  }
+
+  private async getMangaChapterPageStats(mangaId: string): Promise<Map<string, MangaChapterPageStats>> {
+    const statsMap: Map<string, MangaChapterPageStats> = new Map<string, MangaChapterPageStats>();
+    try {
+      const rows = await this.databaseManager.querySql(
+        'SELECT op.chapterId AS chapterId, COUNT(*) AS pageCount, ' +
+          'SUM(CASE WHEN op.isDownloaded = 1 THEN 1 ELSE 0 END) AS isDownloaded, ' +
+          'SUM(CASE WHEN op.isDownloaded = 1 THEN COALESCE(op.fileSize, 0) ELSE 0 END) AS fileSize ' +
+          'FROM online_page op INNER JOIN online_chapter oc ON op.chapterId = oc.id ' +
+          'WHERE oc.comicId = ? GROUP BY op.chapterId',
+        [mangaId]
+      );
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i] as GenericQueryRecord;
+        const chapterId = this.databaseValueToString(row.chapterId);
+        if (chapterId.length === 0) {
+          continue;
+        }
+        const stats: MangaChapterPageStats = {
+          chapterId: chapterId,
+          totalPages: this.databaseValueToNumber(row.pageCount),
+          downloadedPages: this.databaseValueToNumber(row.isDownloaded),
+          downloadedSize: this.databaseValueToNumber(row.fileSize)
+        };
+        statsMap.set(chapterId, stats);
+      }
+      logger.debug(TAG, `漫画缓存页统计批量查询完成: mangaId=${mangaId}, chapters=${statsMap.size}`);
+    } catch (error) {
+      logger.warn(TAG, `漫画缓存页统计批量查询失败，将回退旧扫描: mangaId=${mangaId}, ${String(error)}`);
+    }
+    return statsMap;
+  }
+
+  private databaseValueToString(value: DatabaseValue | undefined): string {
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      return `${value}`;
+    }
+    return '';
+  }
+
+  private databaseValueToNumber(value: DatabaseValue | undefined): number {
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
   }
 
   private fileExists(path: string): boolean {
